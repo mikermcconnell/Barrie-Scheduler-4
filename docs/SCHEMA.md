@@ -10,7 +10,6 @@
 firebase/
 ├── users/{userId}/
 │   ├── draftSchedules/{draftId}          # Working schedule copies
-│   ├── route8SandboxProjects/{projectId} # Standalone Route 8 sandbox copies + family workspace state
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
 │   └── files/{fileId}                    # Uploaded file metadata
 │
@@ -28,6 +27,8 @@ firebase/
 │   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
 │   ├── odMatrixData/{docId}              # Origin-destination datasets
 │   │   └── imports/{importId}            # OD import history
+│   ├── residentialGrowth/{docId}         # Monthly issued/occupied residential growth datasets
+│   │   └── imports/{importId}            # Residential Growth import history
 │   └── fleetPlan/default                 # Shared fleet-planning workbook metadata + active storage pointer
 │       └── versions/{versionId}          # Fleet Plan version history
 │
@@ -46,7 +47,6 @@ firebase/
 storage/
 ├── users/{userId}/
 │   ├── draftSchedules/{draftId}_{timestamp}.json
-│   ├── route8SandboxProjects/{projectId}_{timestamp}.json
 │   ├── newScheduleProjects/{projectId}_{timestamp}.json
 │   └── files/{timestamp}_{safeName}
 │
@@ -59,6 +59,7 @@ storage/
     ├── performanceData/{timestamp}-report.json
     ├── performanceImports/raw/{timestamp}.csv
     ├── odMatrixData/{allPaths}
+    ├── residentialGrowth/{allPaths}
     └── fleetPlan/v{versionNumber}_{timestamp}.json
 ```
 
@@ -159,45 +160,6 @@ interface DraftSchedule {
 }
 ```
 
-### Route8SandboxProject (`users/{userId}/route8SandboxProjects/{projectId}`)
-
-Route 8 sandbox projects are intentionally user-scoped experimental copies. They do **not** publish back to the live 8A/8B schedule paths.
-
-```typescript
-interface Route8SandboxProject {
-  id: string;
-  name: string;
-  dayType: DayType;
-  teamId?: string | null;
-  status: 'draft';
-  createdBy: string;
-  storagePath?: string;     // Cloud Storage JSON payload
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-}
-```
-
-### Route8SandboxContent (Cloud Storage JSON)
-
-```typescript
-interface Route8SandboxContent {
-  dayType: DayType;
-  sourceSnapshots: {
-    '8A': Route8SandboxSourceSnapshot;
-    '8B': Route8SandboxSourceSnapshot;
-  };
-  sourceCopies: {
-    '8A': MasterScheduleContent;
-    '8B': MasterScheduleContent;
-  };
-  workingCopies: {
-    '8A': MasterScheduleContent;
-    '8B': MasterScheduleContent;
-  };
-  notes?: string;
-}
-```
-
 ### PlatformConfig (`teams/{teamId}/platformConfig/default`)
 
 ```typescript
@@ -259,6 +221,32 @@ interface FleetPlanDocumentMetadata {
 ```
 
 The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The active pointer lives at `teams/{teamId}/fleetPlan/default`; each save increments `currentVersion`, writes `fleetPlan/default/versions/{versionNumber}`, and preserves that version's JSON object in Storage. Team members can read the shared Fleet Plan; writes are restricted to team owners/admins. Saves use the loaded `currentVersion` for conflict detection so users do not silently overwrite newer edits. Stored JSON still preserves source sheet keys for compatibility with the imported template, while the user-facing grid and Excel export are combined into one Fleet Plan sheet with a Bus Type column.
+
+### ResidentialGrowthMetadata (`teams/{teamId}/residentialGrowth/default`)
+
+```typescript
+interface ResidentialGrowthMetadata {
+  activeImportId: string;
+  period: string;                 // YYYY-MM
+  importedAt: Timestamp;
+  importedBy: string;
+  storagePath: string;            // teams/{teamId}/residentialGrowth/{importId}.json
+  pdfStoragePath?: string;        // teams/{teamId}/residentialGrowth/{importId}.pdf
+  issuedFileName?: string | null;
+  occupiedFileName?: string | null;
+  issuedRecords: number;
+  issuedUnits: number;
+  occupiedRecords: number;
+  occupiedUnits: number;
+  issuedGeocoded: number;
+  occupiedGeocoded: number;
+  reviewCount: number;
+}
+```
+
+The full monthly Residential Growth dataset is stored as JSON in Cloud Storage. Issuance Listing rows are treated as issued/planned units; Certificate of Occupancy rows are treated as occupied/completed units. Occupancy report rows count as one completed unit in v1 because the source report has no unit-count field.
+
+Automation uses `ingestResidentialGrowthReport` with the same API-key pattern as STREETS ingest. Monthly files are accepted one at a time and held under `teams/{teamId}/residentialGrowth/pending/{period}/...` until both the issued and occupied reports are available; then the function writes the combined dataset and a PDF report.
 
 Fleet Plan saves are validation-gated. Blocking issues include missing/duplicate unit numbers, invalid model years, missing lifecycle start markers, multiple retirement markers, and timeline activity or purchase/growth markers after retirement. Missing retirement markers are warnings only for buses already in service; future purchase/growth rows are allowed to plan future purchasing without a retirement year. The Fleet Plan resolver suggests setting missing retirement warnings to 13 years after the first in-service year. Non-standard timeline notes and unusual year ranges are also warnings.
 

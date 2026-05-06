@@ -60,7 +60,18 @@ vi.mock('../hooks/usePerformanceData', () => ({
   usePerformanceDataQuery: vi.fn(() => ({ data: null })),
 }));
 
+vi.mock('../utils/gtfs/corridorSpeed', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/gtfs/corridorSpeed')>();
+
+  return {
+    ...actual,
+    buildCorridorSpeedIndex: vi.fn(actual.buildCorridorSpeedIndex),
+    buildCorridorSpeedMapIndex: vi.fn(actual.buildCorridorSpeedMapIndex),
+  };
+});
+
 import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Workspace';
+import { buildCorridorSpeedIndex, buildCorridorSpeedMapIndex } from '../utils/gtfs/corridorSpeed';
 
 function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const prototype = input instanceof HTMLTextAreaElement
@@ -132,9 +143,10 @@ describe('RoutePlanner2Workspace local workspace', () => {
     const view = renderWorkspace();
     const notes = view.querySelector('#rp2-notes') as HTMLTextAreaElement | null;
 
-    expect(view.textContent).toContain('Route Planner 2');
+    expect(view.textContent).toContain('Route Planner');
     expect(view.textContent).toContain('Local draft');
     expect(view.textContent).toContain('Operator PDF');
+    expect(view.textContent).toContain('Import addresses');
     expect(view.textContent).toContain('Click the map to place Stop 1');
     expect(view.textContent).toContain('Route concepts');
     expect(view.textContent).toContain('Clean Concept A');
@@ -142,6 +154,33 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).not.toContain('Shuttle Template');
     expect(view.textContent).not.toContain('Project foundation');
     expect(view.textContent).not.toContain('Firebase persistence');
+  });
+
+  it('opens the address import preview flow', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Import addresses'));
+    });
+
+    expect(view.textContent).toContain('Import stops from addresses');
+    expect(view.textContent).toContain('Names are not imported');
+    expect(view.textContent).toContain('Supports .xlsx, .xls, and .csv');
+  });
+
+  it('opens a Camp Shuttle Focus view for the selected route concept', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Camp Focus'));
+    });
+
+    expect(view.querySelector('[data-testid="rp2-map-first-shell"]')?.getAttribute('data-focus-mode')).toBe('camp-shuttle');
+    expect(view.querySelector('[data-testid="rp2-right-rail"]')?.getAttribute('data-state')).toBe('closed');
+    expect(view.querySelector('[data-testid="rp2-camp-shuttle-focus"]')?.textContent).toContain('Summer camp shuttle');
+    expect(view.querySelector('[data-testid="rp2-camp-shuttle-focus"]')?.textContent).toContain('Summer service');
+    expect(view.querySelector('[data-testid="rp2-camp-shuttle-focus"]')?.textContent).toContain('Stops');
+    expect(view.textContent).toContain('Exit camp focus');
   });
 
 
@@ -203,12 +242,51 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Original: Scheduled GTFS · Route 400');
   });
 
+  it('keeps imported scheduled GTFS runtimes when the selected period has no replacement evidence', async () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Import GTFS'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    flushSync(() => {
+      click(findButton(view, 'Route 400'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Import as editable route'));
+    });
+
+    const runtimePeriodSelect = Array.from(view.querySelectorAll('select')).find((select) =>
+      Array.from(select.options).some((option) => option.value === 'am-peak'),
+    ) as HTMLSelectElement | undefined;
+
+    expect(runtimePeriodSelect).toBeTruthy();
+
+    flushSync(() => {
+      setInputValue(runtimePeriodSelect!, 'am-peak');
+    });
+
+    expect(view.textContent).toContain('Scheduled runtime / high');
+    expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Scheduled GTFS · Route 400');
+    expect(view.textContent).not.toContain('Fallback estimate / low');
+  });
+
   it('renders runtime day and period controls in service assumptions', () => {
     const view = renderWorkspace();
     const labels = Array.from(view.querySelectorAll('label'));
 
     expect(labels.some((label) => label.textContent?.includes('Runtime day'))).toBe(true);
     expect(labels.some((label) => label.textContent?.includes('Runtime period'))).toBe(true);
+  });
+
+  it('builds runtime evidence from the stop-to-stop GTFS speed index, not the map corridor index', () => {
+    vi.mocked(buildCorridorSpeedIndex).mockClear();
+    vi.mocked(buildCorridorSpeedMapIndex).mockClear();
+
+    renderWorkspace();
+
+    expect(buildCorridorSpeedIndex).toHaveBeenCalled();
+    expect(buildCorridorSpeedMapIndex).not.toHaveBeenCalled();
   });
 
   it('imports multiple GTFS routes into the same local workspace', async () => {
@@ -309,7 +387,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).not.toContain('drag the + handle');
   });
 
-  it('renders Route Planner 2 as a map-first workspace with route concepts in the header', () => {
+  it('renders Route Planner as a map-first workspace with route concepts in the header', () => {
     const view = renderWorkspace();
     const workspaceShell = view.querySelector('[data-testid="rp2-map-first-shell"]');
     const rightRail = view.querySelector('[data-testid="rp2-right-rail"]');
@@ -323,21 +401,26 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('8rem');
 
     flushSync(() => {
-      click(findButton(view, 'Show details'));
+      click(findButton(view, 'Review route'));
     });
 
     expect(rightRail?.getAttribute('data-state')).toBe('open');
     expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('2rem');
     expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('26.5rem');
-    expect(view.textContent).toContain('Hide details');
+    expect(view.textContent).toContain('Hide review');
   });
 
-  it('keeps the map-first workspace vertically scrollable on short screens', () => {
+  it('keeps the map-first workspace contained so the map can fill the available height', () => {
     const view = renderWorkspace();
     const workspaceShell = view.querySelector('[data-testid="rp2-map-first-shell"]') as HTMLElement | null;
+    const rightRail = view.querySelector('[data-testid="rp2-right-rail"]') as HTMLElement | null;
+    const mapCanvas = view.querySelector('[data-testid="rp2-map-canvas"]') as HTMLElement | null;
 
-    expect(workspaceShell?.className).toContain('overflow-y-auto');
-    expect(workspaceShell?.className).not.toContain('overflow-hidden');
+    expect(workspaceShell?.className).toContain('overflow-hidden');
+    expect(workspaceShell?.className).not.toContain('overflow-y-auto');
+    expect(rightRail?.className).toContain('overflow-y-auto');
+    expect(mapCanvas?.className).toContain('h-full');
+    expect(mapCanvas?.className).toContain('min-h-0');
   });
 
   it('opens and scrolls to runtime source details from the map runtime data source', async () => {
@@ -526,12 +609,12 @@ describe('RoutePlanner2Workspace local workspace', () => {
       setInputValue(updatedRoleSelect!, 'end-terminal');
     });
 
-    expect(view.textContent).toContain('Runtime uses fallback assumptions');
+    expect(view.textContent).toContain('Scheduled GTFS corridor estimate');
     expect(view.textContent).toContain('Segment runtimes');
     expect(view.textContent).toContain('Dwell / stop sec');
     expect(view.textContent).toContain('Terminal layover stays separate');
     expect(view.textContent).toContain('Override min');
-    expect(view.textContent).toContain('fallback');
+    expect(view.textContent).toContain('Route 8A');
   });
 
   it('lets planners choose closed-loop and out-and-back route shapes from the map guide', () => {

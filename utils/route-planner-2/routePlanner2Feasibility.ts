@@ -99,6 +99,7 @@ function estimateMatchesCurrentPath(estimate: RoutePlanner2SegmentRuntime | unde
         return estimate.source === 'manual'
             || estimate.source === 'observed-proxy'
             || estimate.source === 'observed-scheduled-blend'
+            || estimate.source === 'partial-scheduled-proxy'
             || estimate.source === 'scheduled-proxy';
     }
     return estimate.pathFingerprint === pathFingerprint;
@@ -206,6 +207,7 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
     const evidenceSegments = segmentSummaries.filter((segment) =>
         segment.source === 'observed-proxy'
         || segment.source === 'observed-scheduled-blend'
+        || segment.source === 'partial-scheduled-proxy'
         || segment.source === 'scheduled-proxy',
     );
     const evidenceSegmentRatio = segmentSummaries.length > 0
@@ -220,6 +222,7 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
             && (
                 segment.source === 'observed-proxy'
                 || segment.source === 'observed-scheduled-blend'
+                || segment.source === 'partial-scheduled-proxy'
                 || segment.source === 'scheduled-proxy'
             ),
         );

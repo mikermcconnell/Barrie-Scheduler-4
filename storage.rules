@@ -52,5 +52,10 @@ service firebase.storage {
       allow read: if isTeamMember(teamId);
       allow write: if isTeamManager(teamId);
     }
+
+    // Team Residential Growth planning data
+    match /teams/{teamId}/residentialGrowth/{allPaths=**} {
+      allow read, write: if isTeamMember(teamId);
+    }
   }
 }

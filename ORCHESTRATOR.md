@@ -49,6 +49,8 @@ Owns shift generation, optimization, validation, and saved-schedule workflows fo
 
 TOD slot math is centralized in `utils/demandConstants.ts` through the active slot-grid helpers (`SLOT_MINUTES`, `TIME_SLOTS_PER_DAY`, `hoursToSlots`, `minutesToSlotsCeil`, `slotDurationToHours`, `slotToMinutes`, `formatSlotToTime`). The active app grid is 5 minutes. Legacy saved TOD schedules without `slotGranularityMinutes` are treated as 15-minute data and converted on load by `utils/onDemandGridMigration.ts`; new saves include `slotGranularityMinutes: 5`.
 
+TOD shift rules use a max of 5 consecutive driving hours before lunch is required for non-straight shifts; the old fixed 45-minute / 4th-to-6th-hour break rule should not be reintroduced. New manual drivers can be placeholders until a shift time is set, and changeoff penalties are skipped for configured on-site handoff locations.
+
 ### Fixed Route
 Owns the core fixed-route workflow:
 - CSV/runtime import
@@ -67,12 +69,12 @@ Owns STREETS-style performance dashboards, imports, summaries, and reporting.
 The repo also contains planning-data tools, mostly under `components/Analytics/` and related `utils/` folders, including:
 - Transit App analytics
 - OD analysis
-- Legacy Route Planner, retained as historical background only under `docs/route-planner-legacy/`
+- Legacy Route Planner workspace has been removed; `docs/route-planner-legacy/` is historical background only, and remaining `utils/route-planner/` code is legacy support used by Shuttle Planner.
 - Route Planner 2, a fresh restart shell in `components/Analytics/RoutePlanner2Workspace.tsx` with current source-of-truth docs in `docs/route-planner-2/`; v1 is local-first, blank-concept operational feasibility and intentionally excludes Firebase persistence, coverage analysis, and downstream schedule handoff
 - Shuttle Planner
 - Network Connections
-- Route 8 sandbox
 - student-pass planning
+- Residential Growth, a Planning Data workspace that imports monthly Issuance Listing and Certificate of Occupancy Excel files, geocodes Barrie addresses with Mapbox, and maps issued/planned versus occupied/completed residential units as separate tabs.
 
 Fleet Plan is a team-shared analytics surface backed by `teams/{teamId}/fleetPlan/default` plus version metadata under `versions/{versionNumber}` and immutable JSON payloads in Storage. Reads are team-member scoped; writes are owner/admin scoped and use loaded-version conflict detection. Saves are validation-gated for duplicate/missing unit numbers, invalid years, and broken lifecycle timelines. Blocking issues can be fixed in a planner-approved resolver modal; Gemma 4 suggestions come from `api/fleet-plan-ai-resolver.ts` and are constrained to allowed deterministic fix IDs. Missing retirement years are warnings only for buses already in service, not future purchasing rows; the resolver defaults those warnings to a retirement year 13 years after first in service.
 
@@ -86,8 +88,8 @@ Fleet Plan is a team-shared analytics surface backed by `teams/{teamId}/fleetPla
 - `utils/newSchedule/`
 - `utils/transit-app/`
 - `utils/od-matrix/`
-- `utils/route-planner/`
-- `utils/route8-sandbox/`
+- `utils/route-planner-2/`
+- `utils/route-planner/` (legacy support only; do not use for Route Planner 2)
 - `utils/shuttle/`
 
 ## 4) Persistence and runtime model
@@ -118,7 +120,6 @@ High-value reminders:
 - AI suggests; planners decide.
 - New Schedule Step 2 is an internal workflow, not a hard human decision gate. Step 3 and Step 4 should still trust the approved runtime contract, but the UX may auto-approve on continue instead of forcing a separate approval decision.
 - New Schedule Step 4 exposes Compare to Master as a local planner review panel, not a header toggle. It loads the published master on demand, shows warning-only summary counts, and can show/hide editor deltas without blocking publish.
-- Route 8 sandbox work is intentionally isolated from live 8A/8B master/editor paths.
 - Brand-new added trips should not inherit delta-source fallback from template trips; compare-to-master deltas should only render when a real original/reference match exists.
 
 When a task touches these areas, load the matching Tier 1 or Tier 2 docs first instead of relying on memory.
@@ -153,7 +154,8 @@ These are worth remembering, but should still be verified before relying on them
 - Public timetable content is now team-managed config, not only static copy in the component.
 - Route Planner 2 can import one or more full GTFS route patterns as local editable planning-copy scenarios through `utils/route-planner-2/routePlanner2GtfsImport.ts`; imports filter out partial patterns, keep scheduled segment runtimes as high-confidence evidence when available, and do not create fixed-route schedule drafts or edit GTFS feeds.
 - Route Planner 2 supports local stop-range reassignment between route concepts through `reassignRoutePlanner2StopRange`; copied/moved stops get new local IDs, insertion position is planner-controlled, and stale runtime evidence/line anchors are cleaned when stop order changes.
-- Route Planner 2 runtime estimates use priority-protected segment evidence: planner manual overrides outrank observed evidence, blended observed+scheduled evidence, scheduled proxies, Mapbox estimates, and distance fallback. Evidence derivation lives in `utils/route-planner-2/routePlanner2RuntimeEvidence.ts` and depends on local scenario stops plus performance/schedule indexes, not legacy Route Planner modules.
+- Route Planner 2 runtime estimates use priority-protected segment evidence: planner manual overrides outrank observed evidence, blended observed+scheduled evidence, scheduled proxies, Mapbox estimates, and distance fallback. Evidence derivation lives in `utils/route-planner-2/routePlanner2RuntimeEvidence.ts` and depends on local scenario stops plus performance/schedule indexes, not legacy Route Planner modules. For Route Planner 2 GTFS segment runtimes, use the stop-to-stop `buildCorridorSpeedIndex` index; the map/corridor chunk index is for corridor visualization and will not reliably match adjacent stop pairs. Same-minute adjacent GTFS stop times are valid scheduled evidence and are clamped to a 1-minute minimum rather than being treated as missing. When period-specific evidence is missing, preserve existing imported scheduled GTFS runtimes instead of clearing them to Mapbox/fallback.
+- Route Planner 2 custom concepts can use scheduled GTFS corridor runtime evidence when the custom stops match GTFS stops but are not adjacent in GTFS. The resolver finds route-specific GTFS paths between the matched stops, aggregates scheduled runtime over the full path, and supports runtime-panel filtering between all matching routes and selected routes. Corridor estimates are labeled as scheduled GTFS corridor estimates with matched route names.
 
 ## 8) Guidance for future subagents
 

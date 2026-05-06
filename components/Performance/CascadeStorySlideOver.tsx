@@ -398,7 +398,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
                         <button
                             onClick={onClose}
-                            className="flex h-11 w-11 items-center justify-center rounded-2xl border-2 border-gray-200 bg-gray-50 text-gray-500 transition-colors hover:bg-white hover:text-gray-700"
+                            className="flex h-11 w-11 items-center justify-center text-gray-500 transition-colors hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             aria-label="Close"
                         >
                             <X size={18} />

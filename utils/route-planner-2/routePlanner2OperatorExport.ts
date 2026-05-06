@@ -283,7 +283,7 @@ export async function exportRoutePlanner2OperatorDirectionsPdf(
     options: ExportOptions,
 ): Promise<void> {
     const { jsPDF } = await import('jspdf');
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }) as JsPdfInstance;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }) as unknown as JsPdfInstance;
     const plan = await buildRoutePlanner2OperatorDirectionPlan(scenario, options);
     const pageWidth = doc.internal.pageSize.getWidth();
     const margin = 14;

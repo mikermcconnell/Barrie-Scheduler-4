@@ -1,0 +1,207 @@
+import { useState, type ChangeEvent } from 'react';
+import { AlertCircle, FileSpreadsheet, MapPin, Upload, X } from 'lucide-react';
+
+import {
+    geocodeRoutePlanner2ParsedAddresses,
+    parseRoutePlanner2AddressWorkbook,
+    type RoutePlanner2GeocodedAddressStop,
+    type RoutePlanner2UnresolvedAddress,
+} from '../../../utils/route-planner-2/routePlanner2AddressImport';
+
+interface RoutePlanner2AddressImportModalProps {
+    open: boolean;
+    onClose: () => void;
+    onImport: (stops: RoutePlanner2GeocodedAddressStop[]) => void;
+}
+
+interface ImportPreview {
+    fileName: string;
+    parsedCount: number;
+    duplicateCount: number;
+    warningCount: number;
+    mappedStops: RoutePlanner2GeocodedAddressStop[];
+    unresolved: RoutePlanner2UnresolvedAddress[];
+}
+
+export function RoutePlanner2AddressImportModal({
+    open,
+    onClose,
+    onImport,
+}: RoutePlanner2AddressImportModalProps) {
+    const [preview, setPreview] = useState<ImportPreview | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [processing, setProcessing] = useState(false);
+
+    if (!open) return null;
+
+    async function handleFile(file: File) {
+        setProcessing(true);
+        setError(null);
+        setPreview(null);
+
+        try {
+            if (!file.name.match(/\.(xlsx|xls|csv)$/i)) {
+                throw new Error('Please upload an Excel or CSV file.');
+            }
+
+            const buffer = await file.arrayBuffer();
+            const parsed = parseRoutePlanner2AddressWorkbook(buffer, file.name);
+            if (parsed.addresses.length === 0) {
+                throw new Error('No address rows were found. Check that the file includes street address, city, province, and postal code lines.');
+            }
+
+            const geocoded = await geocodeRoutePlanner2ParsedAddresses(parsed.addresses);
+            setPreview({
+                fileName: file.name,
+                parsedCount: parsed.addresses.length,
+                duplicateCount: parsed.duplicateCount,
+                warningCount: parsed.warningCount,
+                mappedStops: geocoded.mappedStops,
+                unresolved: geocoded.unresolved,
+            });
+        } catch (error) {
+            setError(error instanceof Error ? error.message : 'Address file could not be imported.');
+        } finally {
+            setProcessing(false);
+        }
+    }
+
+    function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        if (file) void handleFile(file);
+        event.target.value = '';
+    }
+
+    function confirmImport() {
+        if (!preview || preview.mappedStops.length === 0) return;
+        onImport(preview.mappedStops);
+        setPreview(null);
+        setError(null);
+    }
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6" role="dialog" aria-modal="true" aria-labelledby="rp2-address-import-title">
+            <section className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+                <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                    <div>
+                        <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-cyan-700">
+                            <FileSpreadsheet size={18} /> Address import
+                        </div>
+                        <h2 id="rp2-address-import-title" className="mt-1 text-2xl font-black text-slate-900">Import stops from addresses</h2>
+                        <p className="mt-2 text-sm font-semibold text-slate-600">
+                            Upload an Excel or CSV address list. Names are not imported; repeat addresses are merged into one stop.
+                        </p>
+                    </div>
+                    <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" aria-label="Close address import">
+                        <X size={18} />
+                    </button>
+                </header>
+
+                <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-6">
+                    <label className={`block rounded-3xl border-2 border-dashed p-6 text-center transition ${processing ? 'cursor-wait border-slate-200 bg-slate-100 opacity-70' : 'cursor-pointer border-cyan-200 bg-white hover:border-cyan-300'}`}>
+                        <input
+                            type="file"
+                            accept=".xlsx,.xls,.csv"
+                            className="sr-only"
+                            disabled={processing}
+                            onChange={handleFileChange}
+                        />
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-50 text-cyan-700">
+                            <Upload size={22} />
+                        </div>
+                        <div className="mt-3 text-base font-black text-slate-900">
+                            {processing ? 'Parsing and geocoding addresses…' : 'Choose address file'}
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-500">Supports .xlsx, .xls, and .csv</div>
+                    </label>
+
+                    {error && (
+                        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                            <div className="flex items-center gap-2 font-black"><AlertCircle size={18} /> Address import needs attention</div>
+                            <p className="mt-1">{error}</p>
+                        </div>
+                    )}
+
+                    {preview && (
+                        <div className="mt-5 space-y-4">
+                            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                <div className="text-sm font-black text-slate-900">{preview.fileName}</div>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                                    <div className="rounded-xl bg-slate-50 p-3">
+                                        <div className="text-xs font-black uppercase text-slate-500">Parsed</div>
+                                        <div className="text-xl font-black text-slate-900">{preview.parsedCount}</div>
+                                    </div>
+                                    <div className="rounded-xl bg-emerald-50 p-3">
+                                        <div className="text-xs font-black uppercase text-emerald-700">Ready</div>
+                                        <div className="text-xl font-black text-emerald-900">{preview.mappedStops.length}</div>
+                                    </div>
+                                    <div className="rounded-xl bg-cyan-50 p-3">
+                                        <div className="text-xs font-black uppercase text-cyan-700">Duplicates</div>
+                                        <div className="text-xl font-black text-cyan-900">{preview.duplicateCount}</div>
+                                    </div>
+                                    <div className="rounded-xl bg-amber-50 p-3">
+                                        <div className="text-xs font-black uppercase text-amber-700">Review</div>
+                                        <div className="text-xl font-black text-amber-900">{preview.unresolved.length + preview.warningCount}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {preview.mappedStops.length > 0 && (
+                                <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                                    <h3 className="flex items-center gap-2 text-sm font-black text-emerald-900">
+                                        <MapPin size={16} /> Stops ready to add in geographic order
+                                    </h3>
+                                    <div className="mt-3 max-h-60 space-y-2 overflow-y-auto pr-1">
+                                        {preview.mappedStops.slice(0, 30).map((stop, index) => (
+                                            <div key={stop.id} className="flex items-start gap-3 rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                                                <span className="rounded-full bg-cyan-600 px-2 py-1 text-xs font-black text-white">{index + 1}</span>
+                                                <div>
+                                                    <div className="font-black text-slate-900">{stop.name}</div>
+                                                    <div className="text-xs font-semibold text-slate-500">
+                                                        {stop.address}{stop.occurrenceCount > 1 ? ` · ${stop.occurrenceCount} rows merged` : ''}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {preview.unresolved.length > 0 && (
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                                    <h3 className="text-sm font-black text-amber-900">Needs manual review</h3>
+                                    <p className="mt-1 text-xs font-semibold text-amber-800">These addresses were not added because Mapbox did not return a confident match.</p>
+                                    <div className="mt-3 max-h-44 space-y-2 overflow-y-auto pr-1">
+                                        {preview.unresolved.map((item) => (
+                                            <div key={item.candidate.id} className="rounded-xl bg-white px-3 py-2 text-xs text-amber-900">
+                                                <div className="font-black">{item.candidate.address}</div>
+                                                <div className="font-semibold">{item.reason}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-6 py-4">
+                    <div className="text-sm font-semibold text-slate-500">
+                        {preview ? `${preview.mappedStops.length} stop${preview.mappedStops.length === 1 ? '' : 's'} ready · unresolved addresses are skipped` : 'Upload a file to preview stops before adding them.'}
+                    </div>
+                    <div className="flex gap-2">
+                        <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700">Cancel</button>
+                        <button
+                            type="button"
+                            onClick={confirmImport}
+                            disabled={!preview || preview.mappedStops.length === 0 || processing}
+                            className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            Add mapped stops
+                        </button>
+                    </div>
+                </footer>
+            </section>
+        </div>
+    );
+}

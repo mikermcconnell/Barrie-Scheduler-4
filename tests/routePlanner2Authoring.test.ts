@@ -4,6 +4,7 @@ import {
   addRoutePlanner2LineWaypoint,
   addRoutePlanner2RoutePoint,
   addRoutePlanner2Stop,
+  addRoutePlanner2Stops,
   clearRoutePlanner2SegmentRuntimeOverride,
   deleteRoutePlanner2Stop,
   moveRoutePlanner2Stop,
@@ -58,6 +59,24 @@ describe('Route Planner 2 authoring', () => {
       role: 'regular',
       source: 'custom',
     });
+  });
+
+  it('bulk adds imported address stops in the provided order', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+
+    project = addRoutePlanner2Stops(project, 'scenario-1', {
+      now,
+      stops: [
+        { id: 'import-1', name: 'North Address', lat: 44.43, lng: -79.76, notes: 'Imported from address file.' },
+        { id: 'import-2', name: 'East Address', lat: 44.42, lng: -79.7, notes: 'Imported from address file.' },
+      ],
+    });
+
+    expect(project.scenarios[0]?.stops.map((stop) => `${stop.sequence}:${stop.name}:${stop.role}:${stop.source}`)).toEqual([
+      '1:North Address:regular:custom',
+      '2:East Address:regular:custom',
+    ]);
+    expect(project.scenarios[0]?.stops[0]?.notes).toContain('Imported from address file');
   });
 
   it('renames, marks roles, moves, and deletes stops while preserving order', () => {

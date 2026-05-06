@@ -32,6 +32,7 @@ In scope:
 - simple route metrics comparison
 - on-screen planning summary
 - importing one or more full GTFS bus routes as editable local route concept templates
+- importing Excel/CSV address lists as custom stops, with duplicate addresses merged and unresolved geocodes held for review
 
 Out of scope for v1:
 - Firebase persistence

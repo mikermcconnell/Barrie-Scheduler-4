@@ -114,6 +114,16 @@ service cloud.firestore {
           allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
         }
       }
+
+      // Residential Growth planning data
+      match /residentialGrowth/{docId} {
+        allow read, write: if isTeamMember(teamId);
+
+        // Import history subcollection
+        match /imports/{importId} {
+          allow read, write: if isTeamMember(teamId);
+        }
+      }
     }
 
     // Invite lookup documents support the authenticated join flow.

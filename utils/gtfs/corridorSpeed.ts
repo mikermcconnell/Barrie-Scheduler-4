@@ -509,8 +509,9 @@ function buildStaticSpeedModel(): StaticSpeedModel {
             if (departureMinutes === null || arrivalMinutes === null) continue;
             if (arrivalMinutes < departureMinutes) arrivalMinutes += 24 * 60;
 
-            const runtimeMinutes = arrivalMinutes - departureMinutes;
-            if (!Number.isFinite(runtimeMinutes) || runtimeMinutes <= 0 || runtimeMinutes > 60) continue;
+            const rawRuntimeMinutes = arrivalMinutes - departureMinutes;
+            if (!Number.isFinite(rawRuntimeMinutes) || rawRuntimeMinutes < 0 || rawRuntimeMinutes > 60) continue;
+            const runtimeMinutes = Math.max(1, rawRuntimeMinutes);
 
             const fromCoords = stopCoords.get(fromStop.stopId);
             const toCoords = stopCoords.get(toStop.stopId);

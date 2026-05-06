@@ -83,12 +83,12 @@ Notable areas:
 - Transit App analytics → `components/Analytics/TransitApp*`, `utils/transit-app/`
 - OD analysis → `components/Analytics/OD*`, `utils/od-matrix/`
 - Fleet Plan → `components/Analytics/FleetPlan*.tsx`, `utils/fleet-plan/`; imports the legacy three-tab Excel template, but the app/editor and export present one combined Fleet Plan sheet with a Bus Type column. The active plan is team-shared, versioned under `fleetPlan/default/versions`, and writable only by team owners/admins.
-- Legacy Route Planner → `components/Analytics/RoutePlannerWorkspace.tsx`, `utils/route-planner/`; docs live in `docs/route-planner-legacy/` and are background only
+- Legacy Route Planner workspace has been removed; old docs live in `docs/route-planner-legacy/` as background only, and remaining `utils/route-planner/` helpers are legacy support code used by Shuttle Planner.
 - Route Planner 2 → `components/Analytics/RoutePlanner2Workspace.tsx`; fresh restart shell intentionally isolated from old Route Planner controllers/utilities; current docs live in `docs/route-planner-2/`
 - Shuttle Planner → `components/Analytics/ShuttlePlannerWorkspace.tsx`, `utils/shuttle/`
 - Network Connections → `components/Analytics/NetworkConnectionsWorkspace.tsx`, `utils/network-connections/`
-- Route 8 sandbox → `components/Analytics/Route8SandboxWorkspace.tsx`, `utils/route8-sandbox/`
 - student-pass planning → `components/Analytics/StudentPass*`
+- Residential Growth → `components/Analytics/ResidentialGrowthWorkspace.tsx`, `utils/residential-growth/`; imports monthly Issuance Listing and Certificate of Occupancy Excel reports, maps issued/planned and occupied/completed residential units as separate Mapbox tabs, and stores team-scoped planning datasets.
 
 ---
 
@@ -118,7 +118,8 @@ Primary logic folders:
 - `utils/newSchedule/` → Step 2 and related wizard-specific analysis logic
 - `utils/services/` → Firestore/Storage CRUD and workflow helpers
 - `utils/ai/` → optimization and AI review support
-- `utils/transit-app/`, `utils/od-matrix/`, `utils/route-planner/`, `utils/route8-sandbox/`, `utils/shuttle/` → specialized planning domains
+- `utils/transit-app/`, `utils/od-matrix/`, `utils/route-planner-2/`, `utils/shuttle/` → specialized planning domains
+- `utils/route-planner/` → legacy Route Planner utility layer retained only where still needed by Shuttle Planner
 
 ### Backend/runtime surfaces
 
@@ -164,9 +165,8 @@ These are the fastest entry points for understanding the codebase:
 - `components/Analytics/AnalyticsDashboard.tsx`
 - `components/Analytics/TransitAppWorkspace.tsx`
 - `components/Analytics/FleetPlanWorkspace.tsx`
-- `components/Analytics/RoutePlannerWorkspace.tsx`
+- `components/Analytics/RoutePlanner2Workspace.tsx`
 - `components/Analytics/NetworkConnectionsWorkspace.tsx`
-- `components/Analytics/Route8SandboxWorkspace.tsx`
 
 ---
 

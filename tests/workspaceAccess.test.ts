@@ -38,7 +38,6 @@ describe('workspace access', () => {
         expect(allowed).toContain('workspaceFixedRoute');
         expect(allowed).toContain('workspaceOperations');
         expect(allowed).not.toContain('workspaceOndemand');
-        expect(allowed).not.toContain('analyticsRoutePlanner');
         expect(allowed).not.toContain('analyticsRoutePlanner2');
     });
 
@@ -78,19 +77,15 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsCorridorSpeed');
         expect(allowed).not.toContain('analyticsCorridorHeadway');
         expect(allowed).not.toContain('analyticsNetworkConnections');
-        expect(allowed).not.toContain('analyticsRoutePlanner');
         expect(allowed).not.toContain('analyticsRoutePlanner2');
         expect(allowed).not.toContain('analyticsShuttlePlanner');
-        expect(allowed).not.toContain('analyticsRoute8Sandbox');
     });
 
     it('lets internal users access unfinished workspaces when globally enabled', () => {
         const internal = member({ accessLevel: 'internal' });
 
         expect(canAccessWorkspaceFeature('workspaceOndemand', internal)).toBe(true);
-        expect(canAccessWorkspaceFeature('analyticsRoutePlanner', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRoutePlanner2', internal)).toBe(true);
-        expect(canAccessWorkspaceFeature('analyticsRoute8Sandbox', internal)).toBe(true);
     });
 
     it('applies explicit workspace overrides after profile defaults', () => {

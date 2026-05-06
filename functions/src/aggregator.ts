@@ -344,11 +344,13 @@ function buildRouteHourMetrics(records: STREETSRecord[]): RouteHourMetrics[] {
     const [routeId, hourStr] = key.split('||');
     const hour = parseInt(hourStr, 10);
     let boardings = 0;
+    let alightings = 0;
     let loadSum = 0;
     let loadCount = 0;
 
     for (const r of recs) {
       boardings += r.boardings;
+      alightings += r.alightings;
       if (isLoadReliable(r)) {
         loadSum += r.departureLoad;
         loadCount++;
@@ -360,6 +362,7 @@ function buildRouteHourMetrics(records: STREETSRecord[]): RouteHourMetrics[] {
       hour,
       avgLoad: safeDivide(loadSum, loadCount),
       boardings,
+      alightings,
     });
   }
 

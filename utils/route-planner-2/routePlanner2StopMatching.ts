@@ -12,6 +12,7 @@ export interface RoutePlanner2GtfsStopMatch {
 }
 
 const NEARBY_STOP_MAX_METERS = 100;
+const CORRIDOR_NEARBY_STOP_MAX_METERS = 500;
 const EARTH_RADIUS_METERS = 6371000;
 
 function normalize(value: string | undefined): string {
@@ -61,44 +62,66 @@ export function matchRoutePlanner2StopToGtfsStop(
   stop: RoutePlanner2Stop,
   gtfsStops: readonly GtfsStopWithCoords[] = getAllStopsWithCoords(),
 ): RoutePlanner2GtfsStopMatch | null {
+  return matchRoutePlanner2StopToGtfsStops(stop, gtfsStops, {
+    nearbyMaxMeters: NEARBY_STOP_MAX_METERS,
+    maxNearbyStops: 1,
+  })[0] ?? null;
+}
+
+export function matchRoutePlanner2StopToGtfsStops(
+  stop: RoutePlanner2Stop,
+  gtfsStops: readonly GtfsStopWithCoords[] = getAllStopsWithCoords(),
+  options: {
+    nearbyMaxMeters?: number;
+    maxNearbyStops?: number;
+  } = {},
+): RoutePlanner2GtfsStopMatch[] {
   const stopCode = normalize(stop.stopCode);
 
   if (stopCode) {
-    const byCode = gtfsStops.find((gtfsStop) => (
+    const byCode = gtfsStops.filter((gtfsStop) => (
       normalize(gtfsStop.stop_id) === stopCode
       || normalize(gtfsStop.stop_code) === stopCode
     ));
 
-    if (byCode) {
-      return toMatch(stop, byCode, 'exact-code');
+    if (byCode.length > 0) {
+      return byCode.map((gtfsStop) => toMatch(stop, gtfsStop, 'exact-code'));
     }
   }
 
   const stopName = normalize(stop.name);
 
   if (stopName) {
-    const byName = gtfsStops.find((gtfsStop) => normalize(gtfsStop.stop_name) === stopName);
+    const byName = gtfsStops.filter((gtfsStop) => normalize(gtfsStop.stop_name) === stopName);
 
-    if (byName) {
-      return toMatch(stop, byName, 'name');
+    if (byName.length > 0) {
+      return byName.map((gtfsStop) => toMatch(stop, gtfsStop, 'name'));
     }
   }
 
-  let nearestStop: GtfsStopWithCoords | null = null;
-  let nearestDistanceMeters = NEARBY_STOP_MAX_METERS;
+  const nearbyMaxMeters = options.nearbyMaxMeters ?? CORRIDOR_NEARBY_STOP_MAX_METERS;
+  const maxNearbyStops = options.maxNearbyStops ?? 8;
+  const nearbyMatches: RoutePlanner2GtfsStopMatch[] = [];
 
   for (const gtfsStop of gtfsStops) {
     const distanceMeters = getDistanceMeters(stop, gtfsStop);
 
-    if (distanceMeters <= nearestDistanceMeters) {
-      nearestStop = gtfsStop;
-      nearestDistanceMeters = distanceMeters;
+    if (distanceMeters <= nearbyMaxMeters) {
+      nearbyMatches.push(toMatch(stop, gtfsStop, 'nearby', distanceMeters));
     }
   }
 
-  if (!nearestStop) {
-    return null;
-  }
+  return nearbyMatches
+    .sort((a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0))
+    .slice(0, maxNearbyStops);
+}
 
-  return toMatch(stop, nearestStop, 'nearby', nearestDistanceMeters);
+export function matchRoutePlanner2StopToGtfsCorridorStops(
+  stop: RoutePlanner2Stop,
+  gtfsStops: readonly GtfsStopWithCoords[] = getAllStopsWithCoords(),
+): RoutePlanner2GtfsStopMatch[] {
+  return matchRoutePlanner2StopToGtfsStops(stop, gtfsStops, {
+    nearbyMaxMeters: CORRIDOR_NEARBY_STOP_MAX_METERS,
+    maxNearbyStops: 8,
+  });
 }

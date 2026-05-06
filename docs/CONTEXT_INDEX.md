@@ -30,6 +30,7 @@ Load feature docs only when the task is directly related, including:
 - `docs/CONNECTIONS_FEATURE.md`
 - `docs/AUTO_INGEST_SETUP.md`
 - `docs/OD_WORKSPACE_GUIDE.md`
+- `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
 - `docs/DWELL_CASCADE_FEATURE.md`
 - `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
 - `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`
@@ -74,6 +75,7 @@ These should stay concise, current, and safe to use as default context.
 - `docs/CONNECTIONS_FEATURE.md`
 - `docs/AUTO_INGEST_SETUP.md`
 - `docs/OD_WORKSPACE_GUIDE.md`
+- `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
 - `docs/DWELL_CASCADE_FEATURE.md`
 - `docs/route-planner-2/README.md` and its numbered docs for current Route Planner 2 work
 - `docs/SHUTTLE_PLANNER_PRD.md`

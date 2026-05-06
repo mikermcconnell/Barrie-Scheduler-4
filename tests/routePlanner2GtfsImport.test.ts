@@ -79,6 +79,29 @@ describe('routePlanner2GtfsImport', () => {
     expect(deriveRoutePlanner2Feasibility(scenario).confidence).toBe('high');
   });
 
+  it('keeps adjacent same-minute GTFS stop times as scheduled evidence with a one-minute minimum', () => {
+    const sameMinuteFeed: RoutePlanner2GtfsImportFeed = {
+      ...feed,
+      stopTimes: [
+        { trip_id: 't1', arrival_time: '06:00:00', departure_time: '06:00:00', stop_id: 's1', stop_sequence: 1 },
+        { trip_id: 't1', arrival_time: '06:00:00', departure_time: '06:00:00', stop_id: 's2', stop_sequence: 2 },
+        { trip_id: 't1', arrival_time: '06:05:00', departure_time: '06:05:00', stop_id: 's3', stop_sequence: 3 },
+        { trip_id: 't2', arrival_time: '06:30:00', departure_time: '06:30:00', stop_id: 's1', stop_sequence: 1 },
+        { trip_id: 't2', arrival_time: '06:30:00', departure_time: '06:30:00', stop_id: 's2', stop_sequence: 2 },
+        { trip_id: 't2', arrival_time: '06:35:00', departure_time: '06:35:00', stop_id: 's3', stop_sequence: 3 },
+        { trip_id: 'partial-1', arrival_time: '07:00:00', departure_time: '07:00:00', stop_id: 's1', stop_sequence: 1 },
+        { trip_id: 'partial-1', arrival_time: '07:05:00', departure_time: '07:05:00', stop_id: 's2', stop_sequence: 2 },
+      ],
+    };
+
+    const pattern = buildRoutePlanner2GtfsImportPatterns(sameMinuteFeed)[0]!;
+    const scenario = createRoutePlanner2ScenarioFromGtfsPattern(pattern, { id: 'scenario-imported', now: '2026-05-01T12:00:00.000Z' });
+
+    expect(scenario.runtimeEstimates).toHaveLength(2);
+    expect(scenario.runtimeEstimates?.map((estimate) => estimate.runtimeMinutes)).toEqual([1, 5]);
+    expect(scenario.runtimeEstimates?.every((estimate) => estimate.source === 'scheduled-proxy')).toBe(true);
+  });
+
   it('simplifies dense shape points while preserving endpoints', () => {
     const dense = Array.from({ length: 80 }, (_, index) => ({ lat: 44 + index * 0.001, lng: -79 - index * 0.001, sequence: index + 1 }));
     const simplified = simplifyRoutePlanner2GtfsShapePoints(dense, 20);

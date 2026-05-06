@@ -297,6 +297,7 @@ export interface RouteHourMetrics {
   hour: number;        // 0-23
   avgLoad: number;
   boardings: number;
+  alightings?: number;
 }
 
 export interface SegmentRuntimeObservation {

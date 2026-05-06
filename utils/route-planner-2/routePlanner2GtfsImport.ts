@@ -408,7 +408,7 @@ function buildGtfsScheduledRuntimeEstimates(
 
         const fromMinutes = fromStop.departureMinutes ?? fromStop.arrivalMinutes;
         const toMinutes = toStop.arrivalMinutes ?? toStop.departureMinutes;
-        if (fromMinutes == null || toMinutes == null || toMinutes <= fromMinutes) return;
+        if (fromMinutes == null || toMinutes == null || toMinutes < fromMinutes) return;
 
         const runtimeMinutes = Math.max(1, Math.round(toMinutes - fromMinutes));
         estimates.push({

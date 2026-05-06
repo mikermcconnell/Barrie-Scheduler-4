@@ -204,6 +204,22 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                 )}
             </div>
 
+            {/* OD Map — with season filter synced */}
+            <ChartCard
+                title="Origin-Destination Map"
+                subtitle={`${fmt(locationDensity.totalPoints)} location points${odPairs ? `, ${fmt(odPairs.pairs.length)} OD pairs` : ''}`}
+            >
+                <TransitAppMap
+                    locationDensity={locationDensity}
+                    odPairs={odPairs}
+                    height={520}
+                    defaultLayer="od"
+                    seasonFilter={seasonFilter}
+                    onSeasonFilterChange={setSeasonFilter}
+                    onDisplayedODPairsChange={setDisplayedODPairs}
+                />
+            </ChartCard>
+
             {/* Hourly Trip Distribution */}
             <ChartCard
                 title="Hourly Trip Distribution"
@@ -222,22 +238,6 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                 ) : (
                     <NoData />
                 )}
-            </ChartCard>
-
-            {/* OD Map — with season filter synced */}
-            <ChartCard
-                title="Origin-Destination Map"
-                subtitle={`${fmt(locationDensity.totalPoints)} location points${odPairs ? `, ${fmt(odPairs.pairs.length)} OD pairs` : ''}`}
-            >
-                <TransitAppMap
-                    locationDensity={locationDensity}
-                    odPairs={odPairs}
-                    height={520}
-                    defaultLayer="od"
-                    seasonFilter={seasonFilter}
-                    onSeasonFilterChange={setSeasonFilter}
-                    onDisplayedODPairsChange={setDisplayedODPairs}
-                />
             </ChartCard>
 
             {/* Top OD Pairs Table */}

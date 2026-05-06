@@ -6,13 +6,14 @@
  */
 
 import React, { Suspense, useState, useEffect, useCallback } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, GitBranch, Bus } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
 import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, setActiveODMatrixImport } from '../../utils/od-matrix/odMatrixService';
 import { getFleetPlanMetadata, getFleetPlanWorkbook, isFleetPlanPermissionError } from '../../utils/fleet-plan/fleetPlanService';
+import { getResidentialGrowthDataset, getResidentialGrowthMetadata } from '../../utils/residential-growth/service';
 import { TeamManagement } from '../TeamManagement';
 import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
@@ -21,6 +22,7 @@ import { isFeatureUnderConstruction } from '../../utils/features';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
+import type { ResidentialGrowthMonthlyDataset } from '../../utils/residential-growth/types';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
 const TransitAppImport = lazyWithRetry(
@@ -63,21 +65,17 @@ const FleetPlanWorkspace = lazyWithRetry(
     () => import('./FleetPlanWorkspace').then(module => ({ default: module.FleetPlanWorkspace })),
     'analytics-fleet-plan-workspace'
 );
+const ResidentialGrowthWorkspace = lazyWithRetry(
+    () => import('./ResidentialGrowthWorkspace').then(module => ({ default: module.ResidentialGrowthWorkspace })),
+    'analytics-residential-growth-workspace'
+);
 const ShuttlePlannerWorkspace = lazyWithRetry(
     () => import('./ShuttlePlannerWorkspace').then(module => ({ default: module.ShuttlePlannerWorkspace })),
     'analytics-shuttle-planner-workspace'
 );
-const RoutePlannerWorkspace = lazyWithRetry(
-    () => import('./RoutePlannerWorkspace').then(module => ({ default: module.RoutePlannerWorkspace })),
-    'analytics-route-planner-workspace'
-);
 const RoutePlanner2Workspace = lazyWithRetry(
     () => import('./RoutePlanner2Workspace').then(module => ({ default: module.RoutePlanner2Workspace })),
     'analytics-route-planner-2-workspace'
-);
-const Route8SandboxWorkspace = lazyWithRetry(
-    () => import('./Route8SandboxWorkspace').then(module => ({ default: module.Route8SandboxWorkspace })),
-    'analytics-route8-sandbox-workspace'
 );
 const NetworkConnectionsWorkspace = lazyWithRetry(
     () => import('./NetworkConnectionsWorkspace').then(module => ({ default: module.NetworkConnectionsWorkspace })),
@@ -165,9 +163,8 @@ type AnalyticsView =
     | 'student-pass'
     | 'fleet-plan-import'
     | 'fleet-plan-workspace'
-    | 'route-planner'
+    | 'residential-growth'
     | 'route-planner-2'
-    | 'route8-sandbox'
     | 'network-connections'
     | 'shuttle-planner';
 
@@ -182,9 +179,8 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'student-pass': 'analyticsStudentPass',
     'fleet-plan-import': 'analyticsFleetPlan',
     'fleet-plan-workspace': 'analyticsFleetPlan',
-    'route-planner': 'analyticsRoutePlanner',
+    'residential-growth': 'analyticsResidentialGrowth',
     'route-planner-2': 'analyticsRoutePlanner2',
-    'route8-sandbox': 'analyticsRoute8Sandbox',
     'network-connections': 'analyticsNetworkConnections',
     'shuttle-planner': 'analyticsShuttlePlanner',
 };
@@ -220,10 +216,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     const [odData, setOdData] = useState<ODMatrixDataSummary | null>(null);
     const [odGeocodeCache, setOdGeocodeCache] = useState<GeocodeCache | null>(null);
     const [fleetPlanData, setFleetPlanData] = useState<FleetPlanWorkbook | null>(null);
+    const [residentialGrowthData, setResidentialGrowthData] = useState<ResidentialGrowthMonthlyDataset | null>(null);
     const [loading, setLoading] = useState(true);
     const [hasExistingData, setHasExistingData] = useState(false);
     const [hasODData, setHasODData] = useState(false);
     const [hasFleetPlanData, setHasFleetPlanData] = useState(false);
+    const [hasResidentialGrowthData, setHasResidentialGrowthData] = useState(false);
     const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasPerformanceData = !!performanceMetadataQuery.data;
     const { canAccess, loading: accessLoading } = useWorkspaceAccess();
@@ -251,14 +249,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 const canReadTransitApp = canAccess('analyticsTransitApp');
                 const canReadODMatrix = canAccess('analyticsOdMatrix');
                 const canReadFleetPlan = canAccess('analyticsFleetPlan');
-                const [transitMeta, odMeta, fleetPlanMeta] = await Promise.all([
+                const canReadResidentialGrowth = canAccess('analyticsResidentialGrowth');
+                const [transitMeta, odMeta, fleetPlanMeta, residentialGrowthMeta] = await Promise.all([
                     canReadTransitApp ? getTransitAppMetadata(team.id) : Promise.resolve(null),
                     canReadODMatrix ? getODMatrixMetadata(team.id) : Promise.resolve(null),
                     canReadFleetPlan ? getFleetPlanMetadata(team.id) : Promise.resolve(null),
+                    canReadResidentialGrowth ? getResidentialGrowthMetadata(team.id) : Promise.resolve(null),
                 ]);
                 setHasExistingData(!!transitMeta);
                 setHasODData(!!odMeta);
                 setHasFleetPlanData(!!fleetPlanMeta);
+                setHasResidentialGrowthData(!!residentialGrowthMeta);
             } catch (error) {
                 console.error('Error checking analytics data:', error);
             } finally {
@@ -405,6 +406,24 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
             await loadFleetPlan({ fallbackToImport: true });
         } else {
             setView('fleet-plan-import');
+        }
+    };
+
+    const handleResidentialGrowthClick = async () => {
+        if (!team?.id) return;
+        setLoading(true);
+        try {
+            const loaded = await getResidentialGrowthDataset(team.id);
+            setResidentialGrowthData(loaded);
+            setHasResidentialGrowthData(!!loaded);
+            setView('residential-growth');
+        } catch (error) {
+            console.error('Error loading Residential Growth data:', error);
+            toast?.error('Residential Growth unavailable', error instanceof Error ? error.message : 'Failed to load Residential Growth.');
+            setResidentialGrowthData(null);
+            setView('residential-growth');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -599,6 +618,30 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         );
     }
 
+    if (view === 'residential-growth' && user) {
+        return (
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsResidentialGrowth" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Residential Growth map..." />}>
+                        <ResidentialGrowthWorkspace
+                            data={residentialGrowthData}
+                            teamId={team.id}
+                            userId={user.uid}
+                            onBack={() => setView('dashboard')}
+                            onSaved={(dataset) => {
+                                setResidentialGrowthData(dataset);
+                                setHasResidentialGrowthData(true);
+                            }}
+                        />
+                    </Suspense>
+                </div>
+            </div>
+        );
+    }
+
     // Corridor Headway Map
     if (view === 'headway-map') {
         return (
@@ -630,25 +673,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         );
     }
 
-    if (view === 'route-planner') {
-        return (
-            <div className="flex h-full flex-col overflow-hidden">
-                <div className="px-6 pt-6 shrink-0">
-                    <AnalyticsFeatureNotice feature="analyticsRoutePlanner" />
-                </div>
-                <div className="min-h-0 flex-1 overflow-hidden">
-                    <Suspense fallback={<AnalyticsPanelLoading label="Loading route planner..." />}>
-                        <RoutePlannerWorkspace
-                            onBack={() => setView('dashboard')}
-                            userId={user?.uid ?? null}
-                            teamId={team.id}
-                        />
-                    </Suspense>
-                </div>
-            </div>
-        );
-    }
-
     if (view === 'route-planner-2') {
         return (
             <div className="flex h-full flex-col overflow-hidden">
@@ -656,27 +680,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                     <AnalyticsFeatureNotice feature="analyticsRoutePlanner2" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Route Planner 2..." />}>
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Route Planner..." />}>
                         <RoutePlanner2Workspace
-                            onBack={() => setView('dashboard')}
-                            userId={user?.uid ?? null}
-                            teamId={team.id}
-                        />
-                    </Suspense>
-                </div>
-            </div>
-        );
-    }
-
-    if (view === 'route8-sandbox') {
-        return (
-            <div className="flex h-full flex-col overflow-hidden">
-                <div className="px-6 pt-6 shrink-0">
-                    <AnalyticsFeatureNotice feature="analyticsRoute8Sandbox" />
-                </div>
-                <div className="min-h-0 flex-1 overflow-hidden">
-                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Route 8 sandbox..." />}>
-                        <Route8SandboxWorkspace
                             onBack={() => setView('dashboard')}
                             userId={user?.uid ?? null}
                             teamId={team.id}
@@ -802,6 +807,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                             onClick={handleFleetPlanClick}
                         />
                     )}
+                    {canAccess('analyticsResidentialGrowth') && (
+                        <AnalyticsCard
+                            color="teal"
+                            icon={<Building2 size={20} />}
+                            title="Residential Growth"
+                            description="Map issued residential permits and occupied units from monthly Excel reports for service planning."
+                            hasData={hasResidentialGrowthData}
+                            underConstruction={isFeatureUnderConstruction('analyticsResidentialGrowth')}
+                            onClick={() => void handleResidentialGrowthClick()}
+                        />
+                    )}
                     {canAccess('analyticsNetworkConnections') && (
                         <AnalyticsCard
                             color="violet"
@@ -813,37 +829,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                             onClick={() => setView('network-connections')}
                         />
                     )}
-                    {canAccess('analyticsRoutePlanner') && (
-                        <AnalyticsCard
-                            color="cyan"
-                            icon={<Route size={20} />}
-                            title="Route Planner"
-                            description="Test route concepts in a Friendly planning workspace. Shuttle Concept mode is live first, with existing-route tweaks and broader route planning to follow."
-                            hasData={false}
-                            underConstruction={isFeatureUnderConstruction('analyticsRoutePlanner')}
-                            onClick={() => setView('route-planner')}
-                        />
-                    )}
                     {canAccess('analyticsRoutePlanner2') && (
                         <AnalyticsCard
                             color="teal"
                             icon={<Route size={20} />}
-                            title="Route Planner 2"
+                            title="Route Planner"
                             description="A clean restart for route concept planning, isolated from the old Route Planner module."
                             hasData={false}
                             underConstruction={isFeatureUnderConstruction('analyticsRoutePlanner2')}
                             onClick={() => setView('route-planner-2')}
-                        />
-                    )}
-                    {canAccess('analyticsRoute8Sandbox') && (
-                        <AnalyticsCard
-                            color="violet"
-                            icon={<GitBranch size={20} />}
-                            title="Route 8 Sandbox"
-                            description="Create a protected copy of Route 8A and 8B, then test a simplified Route 8 family workspace without touching the live editor."
-                            hasData={false}
-                            underConstruction={isFeatureUnderConstruction('analyticsRoute8Sandbox')}
-                            onClick={() => setView('route8-sandbox')}
                         />
                     )}
                 </div>

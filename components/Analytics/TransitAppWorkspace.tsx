@@ -39,11 +39,11 @@ interface TabConfig {
 const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'complete' },
     { id: 'demand', label: 'OD Pair', icon: MapPin, status: 'partial' },
+    { id: 'stops', label: 'Stop Analysis', icon: MapPinned, status: 'complete' },
     { id: 'transfers', label: 'Transfer', icon: ArrowLeftRight, status: 'complete' },
     { id: 'heatmaps', label: 'Heatmap', icon: MapPinned, status: 'partial' },
     { id: 'route-performance', label: 'Route Performance', icon: TrendingUp, status: 'complete' },
     { id: 'app-usage', label: 'App Usage', icon: Smartphone, status: 'complete' },
-    { id: 'stops', label: 'Stop Analysis', icon: MapPinned, status: 'complete' },
     { id: 'go-integration', label: 'GO Integration', icon: Train, status: 'partial' },
     { id: 'validation', label: 'Validation', icon: CheckCircle2, status: 'not-started' },
     { id: 'service-gaps', label: 'Service Gaps', icon: Clock, status: 'partial', underDevelopment: true },

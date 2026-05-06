@@ -6,7 +6,6 @@ describe('feature flags', () => {
     const flags = buildFeatureFlags({});
 
     expect(flags.demoMode).toBe(false);
-    expect(flags.analyticsRoutePlanner).toBe(true);
     expect(flags.analyticsRoutePlanner2).toBe(true);
     expect(flags.analyticsNetworkConnections).toBe(true);
     expect(flags.fixedAnalytics).toBe(true);
@@ -21,7 +20,6 @@ describe('feature flags', () => {
     expect(flags.analyticsOdMatrix).toBe(true);
     expect(flags.analyticsCorridorSpeed).toBe(true);
     expect(flags.analyticsCorridorHeadway).toBe(true);
-    expect(flags.analyticsRoutePlanner).toBe(true);
     expect(flags.analyticsRoutePlanner2).toBe(true);
     expect(flags.analyticsNetworkConnections).toBe(true);
     expect(flags.operationsImportHealth).toBe(true);
@@ -33,11 +31,11 @@ describe('feature flags', () => {
   it('allows explicit per-feature overrides in demo mode', () => {
     const flags = buildFeatureFlags({
       VITE_DEMO_MODE: '1',
-      [getFeatureOverrideEnvVar('analyticsRoutePlanner')]: 'false',
+      [getFeatureOverrideEnvVar('analyticsRoutePlanner2')]: 'false',
       [getFeatureOverrideEnvVar('fixedAnalytics')]: 'false',
     });
 
-    expect(flags.analyticsRoutePlanner).toBe(false);
+    expect(flags.analyticsRoutePlanner2).toBe(false);
     expect(flags.fixedAnalytics).toBe(false);
   });
 

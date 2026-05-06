@@ -46,9 +46,23 @@ Header should show:
 - module label: Route Planner 2
 - local/draft status
 - operator turn-by-turn PDF export
+- Camp Focus action for the seasonal camp shuttle concept review
 - disabled or future-labelled save/export if not implemented
 
 Avoid implying Firebase persistence exists in v1.
+
+## Camp Shuttle Focus
+
+Camp Shuttle Focus is a Route Planner 2 view, not a separate recurring-service module.
+It should reuse the selected route concept and hide the generic review rail so the map
+and camp-specific shuttle summary are primary.
+
+The focus panel should emphasize:
+- summer service label
+- stop count and stop order
+- service span and headway
+- one-way runtime, cycle time, and buses required
+- clear note that detailed edits still happen in the normal Route Planner 2 review panel
 
 ## Left Rail
 
@@ -65,6 +79,8 @@ Map canvas should support stop-aware authoring without separate GIS-style modes.
 
 V1 interactions:
 - click the map to add stops in travel order
+- search for a Canadian address near Barrie, pick an autocomplete suggestion, and add it as the next stop
+- import an Excel/CSV address list, preview mapped/unresolved addresses, merge duplicate addresses, and add mapped stops in geographic order
 - drag numbered stop markers to move stops
 - delete stops from the stop order list
 - choose route type: one-way, closed loop, or out-and-back

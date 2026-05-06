@@ -10,7 +10,7 @@ It currently supports:
 - fixed-route schedule generation, editing, optimization, and publishing
 - Transit On-Demand planning and shift optimization
 - operations dashboards and reporting for STREETS data
-- planning-data workspaces such as Transit App analytics, OD analysis, Route 8 sandbox, Route Planner, Shuttle Planner, and Network Connections
+- planning-data workspaces such as Transit App analytics, OD analysis, Route Planner, Shuttle Planner, and Network Connections
 
 ## Main Workspaces
 

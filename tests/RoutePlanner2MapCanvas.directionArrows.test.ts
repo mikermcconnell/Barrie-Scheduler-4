@@ -21,6 +21,17 @@ describe('RoutePlanner2MapCanvas direction arrows', () => {
     expect(lanes).toEqual(['outbound', 'outbound', 'return', 'return']);
   });
 
+  it('adds clear arrow labels for map rendering', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.7, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Stop 2', lat: 44.39, lng: -79.68, now });
+
+    const geoJson = buildRoutePlanner2DirectionArrowGeoJson(project.scenarios[0]!, []);
+
+    expect(geoJson.features[0]?.properties.label).toBe('➜');
+    expect(geoJson.features[0]?.properties.lane).toBe('center');
+  });
+
   it('keeps closed-loop arrows as one-way center arrows', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.7, now });

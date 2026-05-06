@@ -1,0 +1,354 @@
+import * as XLSX from 'xlsx';
+
+import {
+    searchRoutePlanner2Addresses,
+    type RoutePlanner2AddressSearchOptions,
+    type RoutePlanner2AddressSuggestion,
+} from './routePlanner2AddressSearch';
+
+const CANADIAN_POSTAL_CODE = /\b([A-Z]\d[A-Z])[\s-]?(\d[A-Z]\d)\b/i;
+const CITY_PROVINCE_POSTAL = /\b([A-Z][A-Za-z .'-]+),?\s+(ON|ONTARIO)\s+([A-Z]\d[A-Z])[\s-]?(\d[A-Z]\d)\b/i;
+const STREET_TYPE = /\b(street|st\.?|road|rd\.?|avenue|ave\.?|drive|dr\.?|crescent|cres\.?|court|ct\.?|boulevard|blvd\.?|lane|ln\.?|way|place|pl\.?|trail|terrace|terr\.?|circle|cir\.?|parkway|pkwy|highway|hwy|line|sideroad|gate|grove|garden|gardens|square|sq\.?|bay|close|mews)\b/i;
+const CIVIC_NUMBER = /^\s*(?:[A-Z]?\d+[A-Z]?\s*[-/]\s*)?\d+[A-Z]?\b/;
+const STREET_ADDRESS_FRAGMENT = /((?:[A-Z]?\d+[A-Z]?\s*[-/]\s*)?\d+[A-Z]?\s+[A-Za-z0-9 .'’-]+?\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|drive|dr\.?|crescent|cres\.?|court|ct\.?|boulevard|blvd\.?|lane|ln\.?|way|place|pl\.?|trail|terrace|terr\.?|circle|cir\.?|parkway|pkwy|highway|hwy|line|sideroad|gate|grove|garden|gardens|square|sq\.?|bay|close|mews)\b(?:\s+(?:north|south|east|west|n|s|e|w)\b)?)/i;
+
+const NOISE_LINE = /\b(roster|report|date|time|program|enrollment|enrollee|receipt|payment|guardian|emergency|phone|gender|gndr|birth|grade|qty|total|fee|resident|waitlist|transfer|page|location|course|status)\b/i;
+
+export interface RoutePlanner2ParsedAddress {
+    id: string;
+    address: string;
+    streetLine: string;
+    city: string;
+    province: string;
+    postalCode: string;
+    normalizedKey: string;
+    sourceRows: number[];
+    sourceCells: string[];
+    occurrenceCount: number;
+}
+
+export interface RoutePlanner2AddressParseResult {
+    addresses: RoutePlanner2ParsedAddress[];
+    duplicateCount: number;
+    warningCount: number;
+}
+
+export interface RoutePlanner2GeocodedAddressStop {
+    id: string;
+    name: string;
+    address: string;
+    lat: number;
+    lng: number;
+    occurrenceCount: number;
+    notes: string;
+    sourceRows: number[];
+}
+
+export interface RoutePlanner2UnresolvedAddress {
+    candidate: RoutePlanner2ParsedAddress;
+    reason: string;
+}
+
+export interface RoutePlanner2AddressGeocodeResult {
+    mappedStops: RoutePlanner2GeocodedAddressStop[];
+    unresolved: RoutePlanner2UnresolvedAddress[];
+}
+
+interface ExtractedAddress {
+    streetLine: string;
+    city: string;
+    province: string;
+    postalCode: string;
+}
+
+function toCellText(value: unknown): string {
+    if (value == null) return '';
+    return String(value).replace(/\r/g, '\n').replace(/[ \t]+/g, ' ').trim();
+}
+
+function normalizeLines(text: string): string[] {
+    return text
+        .split('\n')
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+}
+
+function isNoiseLine(line: string): boolean {
+    return NOISE_LINE.test(line) && !CANADIAN_POSTAL_CODE.test(line) && !STREET_TYPE.test(line);
+}
+
+function isStreetLine(line: string): boolean {
+    if (isNoiseLine(line)) return false;
+    return CIVIC_NUMBER.test(line) && STREET_TYPE.test(line);
+}
+
+function extractStreetLine(line: string): string | null {
+    const trimmed = line.trim();
+    if (isStreetLine(trimmed)) return trimmed;
+    const fragment = trimmed.match(STREET_ADDRESS_FRAGMENT)?.[1]?.trim();
+    return fragment && isStreetLine(fragment) ? fragment : null;
+}
+
+function normalizePostalCode(value: string): string {
+    const match = value.match(CANADIAN_POSTAL_CODE);
+    return match ? `${match[1].toUpperCase()} ${match[2].toUpperCase()}` : value.toUpperCase();
+}
+
+function normalizeAddressKey(streetLine: string, city: string, province: string, postalCode: string): string {
+    return `${streetLine} ${city} ${province} ${postalCode}`
+        .toUpperCase()
+        .replace(/\bONTARIO\b/g, 'ON')
+        .replace(/\bSTREET\b/g, 'ST')
+        .replace(/\bROAD\b/g, 'RD')
+        .replace(/\bAVENUE\b/g, 'AVE')
+        .replace(/\bDRIVE\b/g, 'DR')
+        .replace(/\bCRESCENT\b/g, 'CRES')
+        .replace(/\bCOURT\b/g, 'CT')
+        .replace(/\bBOULEVARD\b/g, 'BLVD')
+        .replace(/\bLANE\b/g, 'LN')
+        .replace(/\bPLACE\b/g, 'PL')
+        .replace(/\bPARKWAY\b/g, 'PKWY')
+        .replace(/[^A-Z0-9]+/g, ' ')
+        .trim();
+}
+
+function extractAddressFromText(text: string): ExtractedAddress | null {
+    const lines = normalizeLines(text);
+    if (lines.length < 2) return null;
+
+    for (let postalIndex = 0; postalIndex < lines.length; postalIndex += 1) {
+        const postalLine = lines[postalIndex];
+        const cityMatch = postalLine.match(CITY_PROVINCE_POSTAL);
+        if (!cityMatch) continue;
+
+        for (let streetIndex = postalIndex - 1; streetIndex >= 0; streetIndex -= 1) {
+            const streetLine = extractStreetLine(lines[streetIndex]);
+            if (!streetLine) continue;
+
+            return {
+                streetLine,
+                city: cityMatch[1].trim(),
+                province: cityMatch[2].toUpperCase() === 'ONTARIO' ? 'ON' : cityMatch[2].toUpperCase(),
+                postalCode: normalizePostalCode(`${cityMatch[3]} ${cityMatch[4]}`),
+            };
+        }
+    }
+
+    return null;
+}
+
+function makeCellRef(rowIndex: number, columnIndex: number): string {
+    return `${XLSX.utils.encode_col(columnIndex)}${rowIndex + 1}`;
+}
+
+function pushExtractedAddress(
+    byKey: Map<string, RoutePlanner2ParsedAddress>,
+    extracted: ExtractedAddress,
+    sourceRow: number,
+    sourceCell: string,
+): void {
+    const normalizedKey = normalizeAddressKey(extracted.streetLine, extracted.city, extracted.province, extracted.postalCode);
+    const address = `${extracted.streetLine}, ${extracted.city}, ${extracted.province} ${extracted.postalCode}`;
+    const current = byKey.get(normalizedKey);
+
+    if (current) {
+        if (!current.sourceRows.includes(sourceRow)) {
+            current.sourceRows.push(sourceRow);
+            current.occurrenceCount = current.sourceRows.length;
+        }
+        if (!current.sourceCells.includes(sourceCell)) current.sourceCells.push(sourceCell);
+        return;
+    }
+
+    byKey.set(normalizedKey, {
+        id: `address-${byKey.size + 1}`,
+        address,
+        streetLine: extracted.streetLine,
+        city: extracted.city,
+        province: extracted.province,
+        postalCode: extracted.postalCode,
+        normalizedKey,
+        sourceRows: [sourceRow],
+        sourceCells: [sourceCell],
+        occurrenceCount: 1,
+    });
+}
+
+export function parseRoutePlanner2AddressWorkbook(buffer: ArrayBuffer, _fileName = 'addresses.xlsx'): RoutePlanner2AddressParseResult {
+    const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
+    const byKey = new Map<string, RoutePlanner2ParsedAddress>();
+    let warningCount = 0;
+
+    for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) continue;
+
+        const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false, blankrows: false });
+        const previousRowTexts: string[] = [];
+        rows.forEach((row, rowIndex) => {
+            const rowTextParts: string[] = [];
+            let rowHadExtraction = false;
+
+            row.forEach((cell, columnIndex) => {
+                const text = toCellText(cell);
+                if (!text) return;
+                rowTextParts.push(text);
+
+                const extracted = extractAddressFromText(text);
+                if (extracted) {
+                    pushExtractedAddress(byKey, extracted, rowIndex + 1, `${sheetName}!${makeCellRef(rowIndex, columnIndex)}`);
+                    rowHadExtraction = true;
+                }
+            });
+
+            const rowText = rowTextParts.join('\n');
+            const extracted = extractAddressFromText(rowText);
+            if (extracted) {
+                pushExtractedAddress(byKey, extracted, rowIndex + 1, `${sheetName}!row-${rowIndex + 1}`);
+                rowHadExtraction = true;
+            }
+
+            if (!rowHadExtraction && CANADIAN_POSTAL_CODE.test(rowText) && previousRowTexts.length > 0) {
+                const combinedText = [...previousRowTexts, rowText].join('\n');
+                const combinedExtracted = extractAddressFromText(combinedText);
+                if (combinedExtracted) {
+                    pushExtractedAddress(byKey, combinedExtracted, rowIndex + 1, `${sheetName}!rows-${Math.max(1, rowIndex + 1 - previousRowTexts.length)}-${rowIndex + 1}`);
+                    rowHadExtraction = true;
+                }
+            }
+
+            if (!rowHadExtraction && CANADIAN_POSTAL_CODE.test(rowText) && !isNoiseLine(rowText)) {
+                warningCount += 1;
+            }
+
+            if (rowText) {
+                previousRowTexts.push(rowText);
+                if (previousRowTexts.length > 2) previousRowTexts.shift();
+            }
+        });
+    }
+
+    const addresses = [...byKey.values()].sort((a, b) => {
+        const rowCompare = Math.min(...a.sourceRows) - Math.min(...b.sourceRows);
+        return rowCompare !== 0 ? rowCompare : a.address.localeCompare(b.address);
+    });
+
+    return {
+        addresses,
+        duplicateCount: addresses.reduce((sum, address) => sum + Math.max(0, address.sourceRows.length - 1), 0),
+        warningCount,
+    };
+}
+
+function getStreetMatchParts(streetLine: string): { civicNumber: string | null; streetToken: string | null } {
+    const civicMatch = streetLine.match(/^\s*(?:[A-Z]?\d+[A-Z]?\s*[-/]\s*)?(\d+[A-Z]?)\b/i);
+    const streetName = streetLine
+        .replace(/^\s*(?:[A-Z]?\d+[A-Z]?\s*[-/]\s*)?\d+[A-Z]?\b/i, '')
+        .trim()
+        .split(/\s+/)
+        .find((token) => token.length > 2 && !STREET_TYPE.test(token));
+
+    return {
+        civicNumber: civicMatch?.[1]?.toLowerCase() ?? null,
+        streetToken: streetName?.toLowerCase() ?? null,
+    };
+}
+
+function isWithinBarrieArea(suggestion: RoutePlanner2AddressSuggestion): boolean {
+    return suggestion.lat >= 44.25 && suggestion.lat <= 44.55 && suggestion.lng >= -79.9 && suggestion.lng <= -79.45;
+}
+
+function isConfidentAddressMatch(candidate: RoutePlanner2ParsedAddress, suggestion: RoutePlanner2AddressSuggestion): boolean {
+    if (!isWithinBarrieArea(suggestion)) return false;
+    const label = `${suggestion.name} ${suggestion.label}`.toLowerCase();
+    const { civicNumber, streetToken } = getStreetMatchParts(candidate.streetLine);
+
+    if (civicNumber && !label.includes(civicNumber)) return false;
+    if (streetToken && !label.includes(streetToken)) return false;
+    return true;
+}
+
+function distanceSquared(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+    const lngScale = Math.cos((a.lat * Math.PI) / 180);
+    const latDelta = a.lat - b.lat;
+    const lngDelta = (a.lng - b.lng) * lngScale;
+    return (latDelta * latDelta) + (lngDelta * lngDelta);
+}
+
+export function orderRoutePlanner2StopsGeographically<T extends { lat: number; lng: number; name?: string }>(stops: T[]): T[] {
+    if (stops.length <= 2) {
+        return [...stops].sort((a, b) => (b.lat - a.lat) || (a.lng - b.lng) || (a.name ?? '').localeCompare(b.name ?? ''));
+    }
+
+    const remaining = [...stops].sort((a, b) => (b.lat - a.lat) || (a.lng - b.lng) || (a.name ?? '').localeCompare(b.name ?? ''));
+    const ordered: T[] = [remaining.shift()!];
+
+    while (remaining.length > 0) {
+        const current = ordered[ordered.length - 1]!;
+        let nextIndex = 0;
+        let nextDistance = Number.POSITIVE_INFINITY;
+
+        remaining.forEach((candidate, index) => {
+            const distance = distanceSquared(current, candidate);
+            if (distance < nextDistance) {
+                nextDistance = distance;
+                nextIndex = index;
+            }
+        });
+
+        ordered.push(remaining.splice(nextIndex, 1)[0]!);
+    }
+
+    return ordered;
+}
+
+export async function geocodeRoutePlanner2ParsedAddresses(
+    candidates: RoutePlanner2ParsedAddress[],
+    options: RoutePlanner2AddressSearchOptions = {},
+): Promise<RoutePlanner2AddressGeocodeResult> {
+    const mappedStops: RoutePlanner2GeocodedAddressStop[] = [];
+    const unresolved: RoutePlanner2UnresolvedAddress[] = [];
+
+    for (const candidate of candidates) {
+        try {
+            const suggestions = await searchRoutePlanner2Addresses(candidate.address, { ...options, limit: 1 });
+            const bestSuggestion = suggestions[0];
+
+            if (!bestSuggestion) {
+                unresolved.push({ candidate, reason: 'No Mapbox match found.' });
+                continue;
+            }
+
+            if (!isConfidentAddressMatch(candidate, bestSuggestion)) {
+                unresolved.push({ candidate, reason: 'Mapbox match was not confident enough.' });
+                continue;
+            }
+
+            mappedStops.push({
+                id: candidate.id,
+                name: candidate.streetLine,
+                address: candidate.address,
+                lat: bestSuggestion.lat,
+                lng: bestSuggestion.lng,
+                occurrenceCount: candidate.occurrenceCount,
+                sourceRows: candidate.sourceRows,
+                notes: [
+                    `Imported from address file: ${candidate.address}.`,
+                    candidate.occurrenceCount > 1 ? `${candidate.occurrenceCount} source rows were merged into this stop.` : null,
+                    `Source rows: ${candidate.sourceRows.join(', ')}.`,
+                    `Mapbox match: ${bestSuggestion.label}.`,
+                ].filter(Boolean).join(' '),
+            });
+        } catch (error) {
+            unresolved.push({
+                candidate,
+                reason: error instanceof Error ? error.message : 'Address could not be geocoded.',
+            });
+        }
+    }
+
+    return {
+        mappedStops: orderRoutePlanner2StopsGeographically(mappedStops),
+        unresolved,
+    };
+}

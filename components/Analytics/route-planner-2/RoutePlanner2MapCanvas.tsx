@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Loader2, MapPin, Plus, Search, Trash2 } from 'lucide-react';
 import { Layer, Marker, Source } from 'react-map-gl/mapbox';
 import type { LayerProps, MapMouseEvent, MarkerDragEvent } from 'react-map-gl/mapbox';
 
 import { MapBase } from '../../shared';
 import { snapRoutePlanner2ScenarioToRoad } from '../../../utils/route-planner-2/routePlanner2RoadSnap';
+import {
+    searchRoutePlanner2Addresses,
+    type RoutePlanner2AddressSuggestion,
+} from '../../../utils/route-planner-2/routePlanner2AddressSearch';
 import {
     buildRoutePlanner2StopSegmentPairs,
     buildRoutePlanner2StopSegmentPaths,
@@ -18,12 +22,14 @@ const ROUTE_DIRECTION_ARROW_SOURCE_ID = 'route-planner-2-direction-arrows';
 const ROUTE_DIRECTION_ARROW_CENTER_LAYER_ID = 'route-planner-2-direction-arrows-center';
 const ROUTE_DIRECTION_ARROW_OUTBOUND_LAYER_ID = 'route-planner-2-direction-arrows-outbound';
 const ROUTE_DIRECTION_ARROW_RETURN_LAYER_ID = 'route-planner-2-direction-arrows-return';
+const ROUTE_RUNTIME_SOURCE_SOURCE_ID = 'route-planner-2-runtime-source-overlay';
+const ROUTE_RUNTIME_SOURCE_LAYER_ID = 'route-planner-2-runtime-source-line';
 
 interface RoutePlanner2MapCanvasProps {
     scenario: RoutePlanner2Scenario | null | undefined;
     selectedStopId: string | null;
     onSelectStop: (stopId: string) => void;
-    onAddStop: (coordinate: { lat: number; lng: number }) => void;
+    onAddStop: (coordinate: { lat: number; lng: number; name?: string }) => void;
     onDeleteStop: (stopId: string) => void;
     onMoveStop: (stopId: string, coordinate: { lat: number; lng: number }) => void;
     onAddLineWaypoint: (placement: {
@@ -70,6 +76,15 @@ interface PendingLineAction {
     coordinate: { lat: number; lng: number };
 }
 
+interface ActiveDragPreview {
+    type: 'stop' | 'waypoint';
+    id: string;
+    coordinate: { lat: number; lng: number };
+    committed?: boolean;
+}
+
+const DRAG_COMMIT_TOLERANCE = 0.000001;
+
 const routeLineLayer: LayerProps = {
     id: ROUTE_LINE_LAYER_ID,
     type: 'line',
@@ -98,15 +113,29 @@ const routeLineHitLayer: LayerProps = {
     },
 };
 
+const runtimeSourceLineLayer: LayerProps = {
+    id: ROUTE_RUNTIME_SOURCE_LAYER_ID,
+    type: 'line',
+    paint: {
+        'line-color': ['get', 'color'],
+        'line-width': 8,
+        'line-opacity': 0.9,
+    },
+    layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+    },
+};
+
 const routeDirectionArrowCenterLayer: LayerProps = {
     id: ROUTE_DIRECTION_ARROW_CENTER_LAYER_ID,
     type: 'symbol',
     filter: ['==', ['get', 'lane'], 'center'],
     layout: {
         'symbol-placement': 'line',
-        'symbol-spacing': 72,
-        'text-field': '▶',
-        'text-size': 17,
+        'symbol-spacing': 54,
+        'text-field': ['get', 'label'],
+        'text-size': 24,
         'text-allow-overlap': true,
         'text-ignore-placement': true,
         'text-rotation-alignment': 'map',
@@ -115,7 +144,7 @@ const routeDirectionArrowCenterLayer: LayerProps = {
     paint: {
         'text-color': '#0e7490',
         'text-halo-color': '#ffffff',
-        'text-halo-width': 2,
+        'text-halo-width': 3,
     },
 };
 
@@ -130,7 +159,7 @@ const routeDirectionArrowOutboundLayer: LayerProps = {
     paint: {
         'text-color': '#0891b2',
         'text-halo-color': '#ffffff',
-        'text-halo-width': 2,
+        'text-halo-width': 3,
     },
 };
 
@@ -145,7 +174,7 @@ const routeDirectionArrowReturnLayer: LayerProps = {
     paint: {
         'text-color': '#4f46e5',
         'text-halo-color': '#ffffff',
-        'text-halo-width': 2,
+        'text-halo-width': 3,
     },
 };
 
@@ -158,6 +187,94 @@ function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean): strin
                 ? 'bg-indigo-600'
                 : 'bg-cyan-600';
     return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'}`;
+}
+
+type RuntimeSourceOverlayItem = {
+    id: string;
+    source: RoutePlanner2SegmentRuntime['source'];
+    label: string;
+    color: string;
+    labelCoordinate: { lat: number; lng: number };
+    segmentName: string;
+};
+
+const runtimeSourceColors: Record<RoutePlanner2SegmentRuntime['source'], string> = {
+    'scheduled-proxy': '#059669',
+    'partial-scheduled-proxy': '#65a30d',
+    'observed-proxy': '#2563eb',
+    'observed-scheduled-blend': '#0f766e',
+    mapbox: '#0891b2',
+    manual: '#4f46e5',
+    fallback: '#d97706',
+    missing: '#64748b',
+};
+
+const runtimeSourceDotClasses: Record<RoutePlanner2SegmentRuntime['source'], string> = {
+    'scheduled-proxy': 'bg-emerald-600',
+    'partial-scheduled-proxy': 'bg-lime-600',
+    'observed-proxy': 'bg-blue-600',
+    'observed-scheduled-blend': 'bg-teal-700',
+    mapbox: 'bg-cyan-600',
+    manual: 'bg-indigo-600',
+    fallback: 'bg-amber-600',
+    missing: 'bg-slate-500',
+};
+
+function getRuntimeSourceOverlayLabel(source: RoutePlanner2SegmentRuntime['source'], evidenceMethod?: RoutePlanner2SegmentRuntime['evidenceMethod']): string {
+    if (source === 'scheduled-proxy') return evidenceMethod === 'shape-overlap' ? 'GTFS shape match' : 'Scheduled GTFS';
+    if (source === 'partial-scheduled-proxy') return 'Partial GTFS + estimate';
+    if (source === 'observed-proxy') return 'Observed';
+    if (source === 'observed-scheduled-blend') return 'Observed + schedule';
+    if (source === 'mapbox') return 'Mapbox';
+    if (source === 'manual') return 'Planner override';
+    if (source === 'fallback') return 'Fallback';
+    return 'Missing';
+}
+
+function getRuntimeSourceOverlayRuntime(
+    estimates: RoutePlanner2SegmentRuntime[],
+    geometry: RoutePlanner2SegmentGeometry,
+): RoutePlanner2SegmentRuntime | undefined {
+    return estimates.find((estimate) => estimate.id === geometry.id)
+        ?? estimates.find((estimate) => estimate.fromStopId === geometry.fromStopId && estimate.toStopId === geometry.toStopId);
+}
+
+function getCoordinateDistance(first: [number, number], second: [number, number]): number {
+    const latScale = 111.32;
+    const avgLat = ((first[1] + second[1]) / 2) * Math.PI / 180;
+    const lngScale = Math.cos(avgLat) * 111.32;
+    return Math.hypot((second[0] - first[0]) * lngScale, (second[1] - first[1]) * latScale);
+}
+
+function getLineMidpointCoordinate(coordinates: [number, number][]): { lat: number; lng: number } {
+    if (coordinates.length === 0) return { lat: 0, lng: 0 };
+    if (coordinates.length === 1) return { lng: coordinates[0]![0], lat: coordinates[0]![1] };
+
+    const segmentDistances = coordinates.slice(1).map((coordinate, index) => getCoordinateDistance(coordinates[index]!, coordinate));
+    const totalDistance = segmentDistances.reduce((sum, distance) => sum + distance, 0);
+    if (totalDistance <= 0) {
+        const middle = coordinates[Math.floor(coordinates.length / 2)]!;
+        return { lng: middle[0], lat: middle[1] };
+    }
+
+    let distanceSoFar = 0;
+    const halfDistance = totalDistance / 2;
+    for (let index = 0; index < segmentDistances.length; index += 1) {
+        const distance = segmentDistances[index]!;
+        if (distanceSoFar + distance >= halfDistance) {
+            const from = coordinates[index]!;
+            const to = coordinates[index + 1]!;
+            const ratio = distance === 0 ? 0 : (halfDistance - distanceSoFar) / distance;
+            return {
+                lng: from[0] + ((to[0] - from[0]) * ratio),
+                lat: from[1] + ((to[1] - from[1]) * ratio),
+            };
+        }
+        distanceSoFar += distance;
+    }
+
+    const last = coordinates[coordinates.length - 1]!;
+    return { lng: last[0], lat: last[1] };
 }
 
 interface RouteLineAnchorHandle {
@@ -183,6 +300,25 @@ function buildLineGeoJson(coordinates: [number, number][]) {
                 },
             }]
             : [],
+    };
+}
+
+function buildRuntimeSourceGeoJson(segments: Array<RuntimeSourceOverlayItem & { coordinates: [number, number][] }>) {
+    return {
+        type: 'FeatureCollection' as const,
+        features: segments.filter((segment) => segment.coordinates.length >= 2).map((segment) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: segment.id,
+                source: segment.source,
+                label: segment.label,
+                color: segment.color,
+            },
+            geometry: {
+                type: 'LineString' as const,
+                coordinates: segment.coordinates,
+            },
+        })),
     };
 }
 
@@ -227,6 +363,7 @@ export function buildRoutePlanner2DirectionArrowGeoJson(
                     properties: {
                         id: segment.id,
                         lane,
+                        label: '➜',
                     },
                     geometry: {
                         type: 'LineString' as const,
@@ -368,6 +505,14 @@ function getDragCoordinate(event: MarkerDragEvent): { lat: number; lng: number }
     return { lat: event.lngLat.lat, lng: event.lngLat.lng };
 }
 
+function coordinatesClose(
+    first: { lat: number; lng: number },
+    second: { lat: number; lng: number },
+): boolean {
+    return Math.abs(first.lat - second.lat) <= DRAG_COMMIT_TOLERANCE
+        && Math.abs(first.lng - second.lng) <= DRAG_COMMIT_TOLERANCE;
+}
+
 function getProjectedCoordinate(coordinate: { lat: number; lng: number }, referenceLat: number): { x: number; y: number } {
     return {
         x: coordinate.lng * Math.cos(referenceLat * Math.PI / 180),
@@ -472,6 +617,14 @@ export function RoutePlanner2MapCanvas({
     const [snappedSegmentGeometries, setSnappedSegmentGeometries] = useState<RoutePlanner2SegmentGeometry[]>([]);
     const [pendingLineAction, setPendingLineAction] = useState<PendingLineAction | null>(null);
     const [showLargeStopTray, setShowLargeStopTray] = useState(false);
+    const [activeDragPreview, setActiveDragPreview] = useState<ActiveDragPreview | null>(null);
+    const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
+    const [addressQuery, setAddressQuery] = useState('');
+    const [addressSuggestions, setAddressSuggestions] = useState<RoutePlanner2AddressSuggestion[]>([]);
+    const [selectedAddress, setSelectedAddress] = useState<RoutePlanner2AddressSuggestion | null>(null);
+    const [addressSearchLoading, setAddressSearchLoading] = useState(false);
+    const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
+    const suppressMapClickUntilRef = useRef(0);
 
     const waypoints = useMemo(() => scenario ? getScenarioWaypoints(scenario) : [], [scenario]);
     const lineAnchorHandles = useMemo(() => scenario ? getRouteLineAnchorHandles(scenario) : [], [scenario]);
@@ -480,7 +633,50 @@ export function RoutePlanner2MapCanvas({
         () => buildRoutePlanner2DirectionArrowGeoJson(scenario, snappedSegmentGeometries),
         [scenario, snappedSegmentGeometries],
     );
+    const runtimeSourceOverlaySegments = useMemo(() => {
+        if (!scenario) return [];
+
+        const fallbackGeometries = buildRoutePlanner2StopSegmentPaths(scenario);
+        const geometries = snappedSegmentGeometries.length > 0 ? snappedSegmentGeometries : fallbackGeometries;
+        const estimates = scenario.feasibility?.segmentSummaries?.length
+            ? scenario.feasibility.segmentSummaries
+            : scenario.runtimeEstimates ?? [];
+
+        return geometries.map((geometry) => {
+            const runtime = getRuntimeSourceOverlayRuntime(estimates, geometry);
+            const source = runtime?.source ?? 'missing';
+            const fromStop = scenario.stops.find((stop) => stop.id === geometry.fromStopId);
+            const toStop = scenario.stops.find((stop) => stop.id === geometry.toStopId);
+
+            return {
+                id: geometry.id,
+                source,
+                label: getRuntimeSourceOverlayLabel(source, runtime?.evidenceMethod),
+                color: runtimeSourceColors[source],
+                labelCoordinate: getLineMidpointCoordinate(geometry.coordinates),
+                segmentName: `${fromStop?.sequence ?? '?'}→${toStop?.sequence ?? '?'}`,
+                coordinates: geometry.coordinates,
+            };
+        });
+    }, [scenario, snappedSegmentGeometries]);
+    const runtimeSourceGeoJson = useMemo(
+        () => buildRuntimeSourceGeoJson(runtimeSourceOverlaySegments),
+        [runtimeSourceOverlaySegments],
+    );
+    const runtimeSourceLegendItems = useMemo(() => {
+        const summary = new Map<RoutePlanner2SegmentRuntime['source'], { source: RoutePlanner2SegmentRuntime['source']; label: string; count: number }>();
+        runtimeSourceOverlaySegments.forEach((segment) => {
+            const existing = summary.get(segment.source);
+            if (existing) {
+                existing.count += 1;
+                return;
+            }
+            summary.set(segment.source, { source: segment.source, label: segment.label, count: 1 });
+        });
+        return Array.from(summary.values());
+    }, [runtimeSourceOverlaySegments]);
     const hasRouteLine = lineGeoJson.features.length > 0;
+    const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
     const hasDirectionArrows = directionArrowGeoJson.features.length > 0;
     const drawingGuide = getDrawingGuide(scenario);
     const sortedStops = useMemo(() => scenario ? sortStops(scenario.stops) : [], [scenario]);
@@ -498,7 +694,58 @@ export function RoutePlanner2MapCanvas({
 
     useEffect(() => {
         setShowLargeStopTray(false);
+        setAddressQuery('');
+        setAddressSuggestions([]);
+        setSelectedAddress(null);
+        setAddressSearchError(null);
     }, [scenario?.id]);
+
+    useEffect(() => {
+        const trimmedQuery = addressQuery.trim();
+        if (trimmedQuery.length < 3) {
+            setAddressSuggestions([]);
+            setAddressSearchLoading(false);
+            setAddressSearchError(null);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => {
+            setAddressSearchLoading(true);
+            setAddressSearchError(null);
+            searchRoutePlanner2Addresses(trimmedQuery, { signal: controller.signal })
+                .then((suggestions) => {
+                    setAddressSuggestions(suggestions);
+                    if (suggestions.length === 0) {
+                        setAddressSearchError('No matching addresses found.');
+                    }
+                })
+                .catch((error) => {
+                    if (controller.signal.aborted) return;
+                    console.error('Route Planner 2 address search failed', error);
+                    setAddressSuggestions([]);
+                    setAddressSearchError('Address search is unavailable.');
+                })
+                .finally(() => {
+                    if (!controller.signal.aborted) setAddressSearchLoading(false);
+                });
+        }, 250);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+            controller.abort();
+        };
+    }, [addressQuery]);
+
+    useEffect(() => {
+        if (!activeDragPreview?.committed || !scenario) return;
+        const committedCoordinate = activeDragPreview.type === 'stop'
+            ? scenario.stops.find((stop) => stop.id === activeDragPreview.id)
+            : scenario.alignment.find((point) => point.id === activeDragPreview.id);
+        if (committedCoordinate && coordinatesClose(committedCoordinate, activeDragPreview.coordinate)) {
+            setActiveDragPreview(null);
+        }
+    }, [activeDragPreview, scenario]);
 
     useEffect(() => {
         let cancelled = false;
@@ -506,6 +753,12 @@ export function RoutePlanner2MapCanvas({
         if (!scenario) {
             setSnappedCoordinates([]);
             setSnappedSegmentGeometries([]);
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        if (activeDragPreview) {
             return () => {
                 cancelled = true;
             };
@@ -521,9 +774,10 @@ export function RoutePlanner2MapCanvas({
         return () => {
             cancelled = true;
         };
-    }, [scenario, onSegmentRuntimeEstimates]);
+    }, [scenario, onSegmentRuntimeEstimates, activeDragPreview]);
 
     function handleMapClick(event: MapMouseEvent) {
+        if (Date.now() < suppressMapClickUntilRef.current) return;
         if (!scenario) return;
         const coordinate = { lat: event.lngLat.lat, lng: event.lngLat.lng };
 
@@ -557,6 +811,61 @@ export function RoutePlanner2MapCanvas({
         setPendingLineAction(null);
     }
 
+    function selectAddressSuggestion(suggestion: RoutePlanner2AddressSuggestion) {
+        setSelectedAddress(suggestion);
+        setAddressQuery(suggestion.label);
+        setAddressSuggestions((current) => {
+            const exists = current.some((item) => item.id === suggestion.id);
+            return exists ? current : [suggestion, ...current];
+        });
+        setAddressSearchError(null);
+    }
+
+    function addSelectedAddressStop() {
+        const suggestion = selectedAddress ?? addressSuggestions[0];
+        if (!suggestion) return;
+
+        onAddStop({
+            lat: suggestion.lat,
+            lng: suggestion.lng,
+            name: suggestion.name,
+        });
+        setAddressQuery('');
+        setAddressSuggestions([]);
+        setSelectedAddress(null);
+        setAddressSearchError(null);
+    }
+
+    function getPreviewCoordinate(type: ActiveDragPreview['type'], id: string, fallback: { lat: number; lng: number }) {
+        return activeDragPreview?.type === type && activeDragPreview.id === id
+            ? activeDragPreview.coordinate
+            : fallback;
+    }
+
+    function startMarkerDrag(type: ActiveDragPreview['type'], id: string, coordinate: { lat: number; lng: number }) {
+        suppressMapClickUntilRef.current = Date.now() + 500;
+        setPendingLineAction(null);
+        setActiveDragPreview({ type, id, coordinate });
+    }
+
+    function updateMarkerDrag(type: ActiveDragPreview['type'], id: string, coordinate: { lat: number; lng: number }) {
+        setActiveDragPreview((current) => current?.type === type && current.id === id
+            ? { ...current, coordinate, committed: false }
+            : { type, id, coordinate });
+    }
+
+    function finishStopDrag(stopId: string, coordinate: { lat: number; lng: number }) {
+        suppressMapClickUntilRef.current = Date.now() + 500;
+        setActiveDragPreview({ type: 'stop', id: stopId, coordinate, committed: true });
+        onMoveStop(stopId, coordinate);
+    }
+
+    function finishWaypointDrag(waypointId: string, coordinate: { lat: number; lng: number }) {
+        suppressMapClickUntilRef.current = Date.now() + 500;
+        setActiveDragPreview({ type: 'waypoint', id: waypointId, coordinate, committed: true });
+        onMoveLineWaypoint(waypointId, coordinate);
+    }
+
     const overlayStyle = {
         '--rp2-overlay-left': overlayInsets.left,
         '--rp2-overlay-right': overlayInsets.right,
@@ -566,9 +875,9 @@ export function RoutePlanner2MapCanvas({
         <section
             data-testid="rp2-map-canvas"
             style={overlayStyle}
-            className="h-full min-h-[520px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
+            className="h-full min-h-0 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
         >
-            <div className="relative h-full min-h-[520px]">
+            <div className="relative h-full min-h-0">
                 <MapBase
                     longitude={-79.69}
                     latitude={44.38}
@@ -587,6 +896,11 @@ export function RoutePlanner2MapCanvas({
                             <Layer {...routeLineHitLayer} />
                         </Source>
                     )}
+                    {mapLoaded && showRuntimeSourceOverlay && hasRuntimeSourceOverlay && (
+                        <Source id={ROUTE_RUNTIME_SOURCE_SOURCE_ID} type="geojson" data={runtimeSourceGeoJson}>
+                            <Layer {...runtimeSourceLineLayer} />
+                        </Source>
+                    )}
                     {mapLoaded && hasDirectionArrows && (
                         <Source id={ROUTE_DIRECTION_ARROW_SOURCE_ID} type="geojson" data={directionArrowGeoJson}>
                             <Layer {...routeDirectionArrowCenterLayer} />
@@ -594,20 +908,41 @@ export function RoutePlanner2MapCanvas({
                             <Layer {...routeDirectionArrowReturnLayer} />
                         </Source>
                     )}
-                    {mapLoaded && lineAnchorHandles.map((handle) => (
+                    {mapLoaded && showRuntimeSourceOverlay && runtimeSourceOverlaySegments.map((segment) => (
+                        <Marker
+                            key={`runtime-source-${segment.id}`}
+                            longitude={segment.labelCoordinate.lng}
+                            latitude={segment.labelCoordinate.lat}
+                            anchor="center"
+                            style={{ pointerEvents: 'none' }}
+                        >
+                            <div
+                                className="pointer-events-none rounded-full border border-white bg-white/95 px-2.5 py-1 text-[11px] font-black text-slate-800 shadow-lg"
+                                title={`${segment.segmentName}: ${segment.label}`}
+                            >
+                                {segment.segmentName} · {segment.label}
+                            </div>
+                        </Marker>
+                    ))}
+                    {mapLoaded && lineAnchorHandles.map((handle) => {
+                        const coordinate = getPreviewCoordinate('waypoint', handle.id, handle);
+                        const isDragging = activeDragPreview?.type === 'waypoint' && activeDragPreview.id === handle.id;
+                        return (
                         <Marker
                             key={handle.id}
-                            longitude={handle.lng}
-                            latitude={handle.lat}
+                            longitude={coordinate.lng}
+                            latitude={coordinate.lat}
                             anchor="center"
                             draggable
-                            onDragEnd={(event) => onMoveLineWaypoint(handle.id, getDragCoordinate(event))}
+                            onDragStart={(event) => startMarkerDrag('waypoint', handle.id, getDragCoordinate(event))}
+                            onDrag={(event) => updateMarkerDrag('waypoint', handle.id, getDragCoordinate(event))}
+                            onDragEnd={(event) => finishWaypointDrag(handle.id, getDragCoordinate(event))}
                         >
                             <div className="relative">
                                 <button
                                     type="button"
                                     onClick={(event) => event.stopPropagation()}
-                                    className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-cyan-700 bg-white text-xs font-black text-cyan-700 shadow-lg"
+                                    className={`flex h-7 w-7 cursor-grab items-center justify-center rounded-full border-2 border-cyan-700 bg-white text-xs font-black text-cyan-700 shadow-lg ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''}`}
                                     aria-label="Drag route line anchor"
                                     title="Drag to bend this route segment"
                                 >
@@ -627,7 +962,8 @@ export function RoutePlanner2MapCanvas({
                                 </button>
                             </div>
                         </Marker>
-                    ))}
+                        );
+                    })}
                     {mapLoaded && pendingLineAction && (
                         <Marker
                             longitude={pendingLineAction.coordinate.lng}
@@ -665,15 +1001,22 @@ export function RoutePlanner2MapCanvas({
                             </div>
                         </Marker>
                     )}
-                    {mapLoaded && scenario?.stops.map((stop) => (
+                    {mapLoaded && scenario?.stops.map((stop) => {
+                        const coordinate = getPreviewCoordinate('stop', stop.id, stop);
+                        const isDragging = activeDragPreview?.type === 'stop' && activeDragPreview.id === stop.id;
+                        return (
                         <Marker
                             key={stop.id}
-                            longitude={stop.lng}
-                            latitude={stop.lat}
+                            longitude={coordinate.lng}
+                            latitude={coordinate.lat}
                             anchor="center"
                             draggable
-                            onDragStart={() => onSelectStop(stop.id)}
-                            onDragEnd={(event) => onMoveStop(stop.id, getDragCoordinate(event))}
+                            onDragStart={(event) => {
+                                onSelectStop(stop.id);
+                                startMarkerDrag('stop', stop.id, getDragCoordinate(event));
+                            }}
+                            onDrag={(event) => updateMarkerDrag('stop', stop.id, getDragCoordinate(event))}
+                            onDragEnd={(event) => finishStopDrag(stop.id, getDragCoordinate(event))}
                         >
                             <button
                                 type="button"
@@ -681,14 +1024,50 @@ export function RoutePlanner2MapCanvas({
                                     event.stopPropagation();
                                     onSelectStop(stop.id);
                                 }}
-                                className={getStopMarkerClass(stop, selectedStopId === stop.id)}
+                                className={`${getStopMarkerClass(stop, selectedStopId === stop.id)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''}`}
                                 aria-label={`Select ${stop.name}`}
                             >
                                 {stop.sequence}
                             </button>
                         </Marker>
-                    ))}
+                        );
+                    })}
                 </MapBase>
+
+                {scenario && (
+                    <div
+                        className="absolute top-6 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg"
+                        style={{ right: 'var(--rp2-overlay-right)' }}
+                    >
+                        <div className="mb-1 px-1 text-[10px] font-black uppercase tracking-wide text-slate-500">View</div>
+                        <button
+                            type="button"
+                            onClick={() => setShowRuntimeSourceOverlay((current) => !current)}
+                            disabled={runtimeSourceOverlaySegments.length === 0}
+                            data-testid="rp2-runtime-source-overlay-toggle"
+                            aria-pressed={showRuntimeSourceOverlay}
+                            className={`rounded-xl border px-3 py-2 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${showRuntimeSourceOverlay ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+                        >
+                            {showRuntimeSourceOverlay ? 'Hide source overlay' : 'Show source overlay'}
+                        </button>
+                        {showRuntimeSourceOverlay && runtimeSourceLegendItems.length > 0 && (
+                            <div data-testid="rp2-runtime-source-overlay-legend" className="mt-3 border-t border-slate-100 pt-2">
+                                <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Runtime sources</div>
+                                <div className="mt-2 space-y-1">
+                                    {runtimeSourceLegendItems.map((item) => (
+                                        <div key={item.source} className="flex items-center justify-between gap-3 text-xs font-bold text-slate-700">
+                                            <span className="inline-flex items-center gap-2">
+                                                <span className={`h-2.5 w-2.5 rounded-full ${runtimeSourceDotClasses[item.source]}`} />
+                                                {item.label}
+                                            </span>
+                                            <span className="text-slate-500">{item.count}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 <div
                     className="absolute top-6 max-w-sm rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg"
@@ -710,6 +1089,62 @@ export function RoutePlanner2MapCanvas({
                     {drawingGuide.body && (
                         <p className="mt-2 text-sm leading-5 text-slate-600">{drawingGuide.body}</p>
                     )}
+                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                        <label className="text-[10px] font-black uppercase tracking-wide text-slate-500" htmlFor="rp2-address-search">
+                            Add stop by address
+                        </label>
+                        <div className="mt-2 flex gap-2">
+                            <div className="relative min-w-0 flex-1">
+                                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    id="rp2-address-search"
+                                    type="text"
+                                    value={addressQuery}
+                                    onChange={(event) => {
+                                        setSelectedAddress(null);
+                                        setAddressQuery(event.target.value);
+                                    }}
+                                    placeholder="Start typing an address"
+                                    className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm font-semibold text-slate-900 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                                    autoComplete="off"
+                                />
+                                {addressSearchLoading && (
+                                    <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-cyan-600" />
+                                )}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={addSelectedAddressStop}
+                                disabled={addressSuggestions.length === 0}
+                                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-600 text-white shadow-sm transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                aria-label="Add selected address as stop"
+                                title="Add selected address as stop"
+                            >
+                                <Plus size={18} />
+                            </button>
+                        </div>
+                        {addressSuggestions.length > 0 && (
+                            <div className="mt-2 max-h-44 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                                {addressSuggestions.map((suggestion) => (
+                                    <button
+                                        key={suggestion.id}
+                                        type="button"
+                                        onClick={() => selectAddressSuggestion(suggestion)}
+                                        className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-cyan-50 ${selectedAddress?.id === suggestion.id ? 'bg-cyan-50 text-cyan-900' : 'text-slate-700'}`}
+                                    >
+                                        <MapPin size={14} className="mt-0.5 shrink-0 text-cyan-600" />
+                                        <span className="min-w-0">
+                                            <span className="block font-black">{suggestion.name}</span>
+                                            <span className="block truncate text-xs font-semibold text-slate-500">{suggestion.label}</span>
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {addressSearchError && (
+                            <p className="mt-2 text-xs font-semibold text-amber-700">{addressSearchError}</p>
+                        )}
+                    </div>
                     {scenario && scenario.stops.length >= 2 && (
                         <div className="mt-3 rounded-2xl bg-slate-50 p-2">
                             <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-slate-500">Route type</div>

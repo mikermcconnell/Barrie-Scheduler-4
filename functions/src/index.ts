@@ -4,6 +4,12 @@ import { defineSecret } from 'firebase-functions/params';
 import { parseSTREETSCSV } from './parser';
 export { sendDailyReport, testDailyReport, testStaleReportAlert } from './dailyReport';
 export { optimizeSchedule } from './optimize';
+import {
+  decodeExcelRequestBody,
+  parseIssuanceListingBuffer,
+  parseOccupancyCertificateBuffer,
+  processResidentialGrowthIfComplete,
+} from './residentialGrowth';
 import { aggregateDailySummaries } from './aggregator';
 import {
   PerformanceDataSummary,
@@ -19,6 +25,7 @@ function getBucket() { return admin.storage().bucket(); }
 
 // API key stored as a Firebase secret — prevents unauthorized access
 const INGEST_API_KEY = defineSecret('INGEST_API_KEY');
+const MAPBOX_TOKEN = defineSecret('MAPBOX_TOKEN');
 
 // Team ID for Barrie Transit — passed as query param or defaults to this
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
@@ -819,6 +826,133 @@ export const ingestPerformanceData = onRequest(
       });
     }
   }
+);
+
+/**
+ * ingestResidentialGrowthReport
+ *
+ * POST endpoint for monthly Residential Growth Excel reports.
+ * Mirrors the STREETS ingest pattern: Power Automate sends one attachment at a time.
+ *
+ * Query params:
+ *   teamId=...
+ *   period=YYYY-MM
+ *   reportType=issued|occupied
+ *
+ * Body:
+ *   raw .xlsx bytes, or JSON { fileBase64/contentBytes, fileName }
+ */
+export const ingestResidentialGrowthReport = onRequest(
+  {
+    secrets: [INGEST_API_KEY, MAPBOX_TOKEN],
+    memory: '1GiB',
+    timeoutSeconds: 300,
+    maxInstances: 1,
+    region: 'us-central1',
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      return;
+    }
+
+    const apiKey = req.headers['x-api-key'] as string | undefined;
+    if (!apiKey || apiKey !== INGEST_API_KEY.value()) {
+      res.status(401).json({ error: 'Invalid or missing API key' });
+      return;
+    }
+
+    const teamId = (req.query.teamId as string) || DEFAULT_TEAM_ID;
+    const period = req.query.period as string | undefined;
+    const reportType = req.query.reportType as string | undefined;
+    if (!period || !/^\d{4}-\d{2}$/.test(period)) {
+      res.status(400).json({ error: 'Pass period=YYYY-MM.' });
+      return;
+    }
+    if (reportType !== 'issued' && reportType !== 'occupied') {
+      res.status(400).json({ error: 'Pass reportType=issued or reportType=occupied.' });
+      return;
+    }
+
+    try {
+      const { buffer, fileName } = decodeExcelRequestBody(req.body);
+      if (buffer.length < 1000) {
+        res.status(400).json({ error: 'No Excel data received or file is too small.' });
+        return;
+      }
+
+      const parsePreview = reportType === 'issued'
+        ? parseIssuanceListingBuffer(buffer)
+        : parseOccupancyCertificateBuffer(buffer);
+      if (parsePreview.records.length === 0) {
+        res.status(400).json({ error: 'No usable residential growth records found.', warnings: parsePreview.warnings });
+        return;
+      }
+
+      const rawStoragePath = `teams/${teamId}/residentialGrowth/pending/${period}/${reportType}-${Date.now()}.xlsx`;
+      await getBucket().file(rawStoragePath).save(buffer, {
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+      const pendingRef = getDb().doc(`teams/${teamId}/residentialGrowth/pending-${period}`);
+      await pendingRef.set({
+        period,
+        [`${reportType}RawStoragePath`]: rawStoragePath,
+        [`${reportType}FileName`]: fileName || `${reportType}-${period}.xlsx`,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      const pendingSnap = await pendingRef.get();
+      const pending = pendingSnap.data() as {
+        period: string;
+        issuedRawStoragePath?: string;
+        occupiedRawStoragePath?: string;
+        issuedFileName?: string;
+        occupiedFileName?: string;
+      };
+
+      const result = await processResidentialGrowthIfComplete({
+        db: getDb(),
+        bucket: getBucket(),
+        teamId,
+        period,
+        pending,
+        mapboxToken: MAPBOX_TOKEN.value(),
+      });
+
+      if (!result.completed) {
+        res.status(200).json({
+          success: true,
+          status: 'pending',
+          teamId,
+          period,
+          received: reportType,
+          waitingFor: reportType === 'issued' ? 'occupied' : 'issued',
+          parsedRecords: parsePreview.records.length,
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        status: 'complete',
+        teamId,
+        period,
+        importId: result.importId,
+        issuedCount: result.issuedCount,
+        occupiedCount: result.occupiedCount,
+        storagePath: result.storagePath,
+        pdfStoragePath: result.pdfStoragePath,
+        pdfDownloadUrl: result.signedPdfUrl,
+      });
+    } catch (err) {
+      console.error('Residential Growth ingest failed:', err);
+      res.status(500).json({
+        error: 'Residential Growth ingest failed',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
 );
 
 /**

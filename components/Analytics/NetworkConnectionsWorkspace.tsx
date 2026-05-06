@@ -1586,7 +1586,8 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                     <button
                                         type="button"
                                         onClick={() => setTabletDetailOpen(false)}
-                                        className="rounded-2xl border border-gray-200 bg-gray-50 p-2 text-gray-500 transition-colors hover:bg-white hover:text-gray-700"
+                                        className="p-2 text-gray-500 transition-colors hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                        aria-label="Close network detail drawer"
                                     >
                                         <X size={16} />
                                     </button>

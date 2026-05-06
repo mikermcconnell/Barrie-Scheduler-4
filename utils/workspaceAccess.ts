@@ -14,11 +14,10 @@ export type WorkspaceAccessFeatureKey =
     | 'analyticsCorridorHeadway'
     | 'analyticsStudentPass'
     | 'analyticsFleetPlan'
+    | 'analyticsResidentialGrowth'
     | 'analyticsNetworkConnections'
-    | 'analyticsRoutePlanner'
     | 'analyticsRoutePlanner2'
     | 'analyticsShuttlePlanner'
-    | 'analyticsRoute8Sandbox'
     | 'operationsLoadProfiles'
     | 'operationsOperatorDwell';
 
@@ -60,11 +59,10 @@ export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsCorridorHeadway',
     'analyticsStudentPass',
     'analyticsFleetPlan',
+    'analyticsResidentialGrowth',
     'analyticsNetworkConnections',
-    'analyticsRoutePlanner',
     'analyticsRoutePlanner2',
     'analyticsShuttlePlanner',
-    'analyticsRoute8Sandbox',
     'operationsLoadProfiles',
     'operationsOperatorDwell',
 ];
@@ -80,6 +78,7 @@ const PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     'analyticsTransitApp',
     'analyticsStudentPass',
     'analyticsFleetPlan',
+    'analyticsResidentialGrowth',
 ];
 
 const EXTERNAL_PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [

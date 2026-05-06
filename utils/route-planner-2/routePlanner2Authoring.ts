@@ -232,6 +232,50 @@ export function addRoutePlanner2Stop(
     }, now);
 }
 
+export function addRoutePlanner2Stops(
+    project: RoutePlanner2Project,
+    scenarioId: string,
+    options: {
+        stops: Array<{
+            id?: string;
+            name?: string;
+            lat: number;
+            lng: number;
+            notes?: string;
+            source?: RoutePlanner2Stop['source'];
+            stopCode?: string;
+        }>;
+        now?: string;
+    },
+): RoutePlanner2Project {
+    const validStops = options.stops.filter(isValidCoordinate);
+    if (validStops.length === 0) return project;
+
+    const now = options.now ?? new Date().toISOString();
+
+    return updateScenario(project, scenarioId, (scenario) => {
+        const existingStops = sortRoutePlanner2Stops(scenario.stops);
+        const importedStops = validStops.map((stop, index): RoutePlanner2Stop => ({
+            id: stop.id ?? createId('stop'),
+            name: stop.name ?? `Stop ${existingStops.length + index + 1}`,
+            lat: stop.lat,
+            lng: stop.lng,
+            sequence: existingStops.length + index + 1,
+            role: 'regular',
+            source: stop.source ?? 'custom',
+            stopCode: stop.stopCode,
+            notes: stop.notes,
+        }));
+        const updatedScenario: RoutePlanner2Scenario = {
+            ...scenario,
+            stops: resequenceStops([...existingStops, ...importedStops]),
+            feasibility: undefined,
+        };
+
+        return cleanRuntimeForCurrentSegments(updatedScenario);
+    }, now);
+}
+
 export function insertRoutePlanner2StopBetween(
     project: RoutePlanner2Project,
     scenarioId: string,
@@ -588,11 +632,16 @@ function segmentRuntimeChanged(
         || current.source !== next.source
         || current.sampleSize !== next.sampleSize
         || current.scheduledRuntimeMinutes !== next.scheduledRuntimeMinutes
+        || current.scheduledCoverageRatio !== next.scheduledCoverageRatio
+        || current.scheduledCoverageDistanceKm !== next.scheduledCoverageDistanceKm
+        || current.estimatedUncoveredDistanceKm !== next.estimatedUncoveredDistanceKm
         || current.observedRuntimeMinutes !== next.observedRuntimeMinutes
         || current.matchQuality !== next.matchQuality
         || current.matchedFromStopId !== next.matchedFromStopId
         || current.matchedToStopId !== next.matchedToStopId
         || !arraysMatch(current.matchedRoutes, next.matchedRoutes)
+        || current.evidenceMethod !== next.evidenceMethod
+        || !arraysMatch(current.matchedGtfsPathStopIds, next.matchedGtfsPathStopIds)
         || current.evidenceDayType !== next.evidenceDayType
         || current.evidencePeriod !== next.evidencePeriod
         || current.confidence !== next.confidence
@@ -607,6 +656,7 @@ const RUNTIME_SOURCE_PRIORITY: Record<RoutePlanner2SegmentRuntime['source'], num
     fallback: 1,
     mapbox: 2,
     'scheduled-proxy': 3,
+    'partial-scheduled-proxy': 3,
     'observed-scheduled-blend': 4,
     'observed-proxy': 5,
     manual: 6,

@@ -25,11 +25,10 @@ export const FEATURE_DEFINITIONS = {
     analyticsCorridorHeadway: { defaultEnabled: true, hideInDemoMode: true },
     analyticsStudentPass: { defaultEnabled: true, hideInDemoMode: false },
     analyticsFleetPlan: { defaultEnabled: true, hideInDemoMode: true },
+    analyticsResidentialGrowth: { defaultEnabled: true, hideInDemoMode: true },
     analyticsNetworkConnections: { defaultEnabled: true, hideInDemoMode: true },
-    analyticsRoutePlanner: { defaultEnabled: true, hideInDemoMode: true },
     analyticsRoutePlanner2: { defaultEnabled: true, hideInDemoMode: true },
     analyticsShuttlePlanner: { defaultEnabled: true, hideInDemoMode: true },
-    analyticsRoute8Sandbox: { defaultEnabled: true, hideInDemoMode: true },
 
     operationsPerformanceDashboard: { defaultEnabled: true, hideInDemoMode: false },
     operationsPerfReports: { defaultEnabled: true, hideInDemoMode: false },

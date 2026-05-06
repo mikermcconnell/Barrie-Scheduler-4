@@ -6,13 +6,16 @@ export type RoutePlanner2RuntimeSource =
     | 'observed-proxy'
     | 'observed-scheduled-blend'
     | 'scheduled-proxy'
+    | 'partial-scheduled-proxy'
     | 'manual'
     | 'mapbox'
     | 'fallback'
     | 'missing';
+export type RoutePlanner2RuntimeEvidenceMethod = 'adjacent-stop-pair' | 'corridor-path' | 'shape-overlap';
 export type RoutePlanner2Confidence = 'high' | 'medium' | 'low' | 'not-ready';
 export type RoutePlanner2SegmentConfidence = 'high' | 'medium' | 'low' | 'missing';
 export type RoutePlanner2WarningSeverity = 'info' | 'warning' | 'blocking';
+export type RoutePlanner2RuntimeRouteFilterMode = 'all-matching' | 'selected';
 
 export type RoutePlanner2ScenarioSource =
     | { type: 'blank' }
@@ -50,12 +53,18 @@ export interface RoutePlanner2Scenario {
     stops: RoutePlanner2Stop[];
     turnaroundStopId?: string;
     service: RoutePlanner2ServiceAssumptions;
+    runtimeRouteFilter?: RoutePlanner2RuntimeRouteFilter;
     runtimeEstimates?: RoutePlanner2SegmentRuntime[];
     runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
     notes: string;
     feasibility?: RoutePlanner2FeasibilitySummary;
     createdAt: string;
     updatedAt: string;
+}
+
+export interface RoutePlanner2RuntimeRouteFilter {
+    mode: RoutePlanner2RuntimeRouteFilterMode;
+    routeShortNames: string[];
 }
 
 export interface RoutePlanner2RoutePoint {
@@ -113,11 +122,17 @@ export interface RoutePlanner2SegmentRuntime {
     source: RoutePlanner2RuntimeSource;
     sampleSize?: number;
     scheduledRuntimeMinutes?: number;
+    scheduledCoverageRatio?: number;
+    scheduledCoverageDistanceKm?: number;
+    estimatedUncoveredDistanceKm?: number;
     observedRuntimeMinutes?: number;
     matchQuality?: 'exact-code' | 'name' | 'nearby' | 'unmatched';
     matchedFromStopId?: string;
     matchedToStopId?: string;
     matchedRoutes?: string[];
+    runtimeRouteBreakdown?: RoutePlanner2SegmentRuntimeRouteBreakdown[];
+    evidenceMethod?: RoutePlanner2RuntimeEvidenceMethod;
+    matchedGtfsPathStopIds?: string[];
     evidenceDayType?: 'weekday' | 'saturday' | 'sunday';
     evidencePeriod?: 'am-peak' | 'midday' | 'pm-peak' | 'evening' | 'full-day';
     confidence: RoutePlanner2SegmentConfidence;
@@ -126,6 +141,11 @@ export interface RoutePlanner2SegmentRuntime {
     pathFingerprint?: string;
     updatedAt?: string;
     fallbackReason?: string;
+}
+
+export interface RoutePlanner2SegmentRuntimeRouteBreakdown {
+    routeShortName: string;
+    scheduledRuntimeMinutes: number;
 }
 
 export interface RoutePlanner2SegmentRuntimeOverride {

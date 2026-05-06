@@ -30,6 +30,8 @@ Use this priority order:
 
 Manual overrides stay first because Route Planner 2 is a planning workspace. Automatic evidence can suggest better estimates, but it must not silently override planner-entered segment assumptions.
 Mapbox should fill only gaps where scheduled GTFS evidence is not available for the current route/time selection.
+When a drawn segment extends beyond a matched GTFS corridor, use the scheduled GTFS runtime for the covered portion and estimate the uncovered portion from the drawn-route estimate or fallback distance. Label this as partial GTFS coverage rather than presenting the whole segment as fully scheduled evidence.
+When custom stops are not exactly GTFS stops but the drawn line follows a GTFS route shape, interpolate the matched shape overlap and use the proportional scheduled GTFS runtime for the covered portion before falling back to Mapbox.
 
 ## Segment-Level Disclosure
 
