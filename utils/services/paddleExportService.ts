@@ -1,10 +1,10 @@
 import ExcelJS from 'exceljs';
 import {
-    BREAK_THRESHOLD_HOURS,
+    MAX_HOURS_WITHOUT_BREAK,
     slotDurationToHours,
     slotToMinutes,
 } from '../demandConstants';
-import { Shift, Zone } from '../demandTypes';
+import { Shift, Zone, isSchedulableShift } from '../demandTypes';
 
 type PaddleActivityRow = {
     activity: string;
@@ -264,7 +264,7 @@ const buildPaddleNotes = (
 
     if (shift.breakDurationSlots > 0) {
         notes.unshift('Meal break shown inside the paid piece.');
-    } else if (shiftDurationHours > BREAK_THRESHOLD_HOURS) {
+    } else if (!shift.isStraightShift && shiftDurationHours > MAX_HOURS_WITHOUT_BREAK) {
         notes.unshift(`${config.assignedBreakMinutes} minute break will be assigned within the shift.`);
     }
 
@@ -349,7 +349,7 @@ const buildPaddleModels = (
     shifts: Shift[],
     config: PaddleExportConfig,
 ): PaddleSheetModel[] => {
-    const ordered = sortShifts(shifts);
+    const ordered = sortShifts(shifts.filter(isSchedulableShift));
     const timelines = ordered.map(shift => buildPaddleTimeline(shift, config));
     const blockSeries = assignBlockSeries(ordered, timelines, config);
 
@@ -358,7 +358,7 @@ const buildPaddleModels = (
         const meta = blockSeries[index];
         const busLabel = shift.driverName?.trim() || `Bus ${index + 1}`;
         const notes = buildPaddleNotes(shift, meta, config);
-        const breakPenalty = shift.breakDurationSlots === 0 && slotDurationToHours(shift.endSlot - shift.startSlot) > BREAK_THRESHOLD_HOURS
+        const breakPenalty = !shift.isStraightShift && shift.breakDurationSlots === 0 && slotDurationToHours(shift.endSlot - shift.startSlot) > MAX_HOURS_WITHOUT_BREAK
             ? formatDuration(config.breakPenaltyMinutes)
             : '';
 

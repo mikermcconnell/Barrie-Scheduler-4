@@ -80,6 +80,12 @@ export function normalizeOnDemandShifts(
     handoffToShiftId: shift.handoffToShiftId && validIds.has(shift.handoffToShiftId)
       ? shift.handoffToShiftId
       : undefined,
+    handoffFromLocation: shift.handoffFromShiftId && validIds.has(shift.handoffFromShiftId)
+      ? shift.handoffFromLocation
+      : undefined,
+    handoffToLocation: shift.handoffToShiftId && validIds.has(shift.handoffToShiftId)
+      ? shift.handoffToLocation
+      : undefined,
   }));
 }
 
@@ -99,6 +105,8 @@ export function removeShiftFromDay(shifts: Shift[], shiftId: string, dayType: On
         ...shift,
         handoffFromShiftId: shift.handoffFromShiftId === shiftId ? undefined : shift.handoffFromShiftId,
         handoffToShiftId: shift.handoffToShiftId === shiftId ? undefined : shift.handoffToShiftId,
+        handoffFromLocation: shift.handoffFromShiftId === shiftId ? undefined : shift.handoffFromLocation,
+        handoffToLocation: shift.handoffToShiftId === shiftId ? undefined : shift.handoffToLocation,
       };
     });
 }
@@ -142,32 +150,42 @@ export function syncShiftHandoffInDay(
           ...normalizedUpdatedShift,
           handoffFromShiftId,
           handoffToShiftId,
+          handoffFromLocation: handoffFromShiftId ? normalizedUpdatedShift.handoffFromLocation : undefined,
+          handoffToLocation: handoffToShiftId ? normalizedUpdatedShift.handoffToLocation : undefined,
         }
       : normalizeShiftForDay(shift, dayType);
 
     let nextShift: Shift = { ...normalizedShift };
 
     if (nextShift.id !== handoffFromShiftId && nextShift.handoffToShiftId === normalizedUpdatedShift.id) {
-      nextShift = { ...nextShift, handoffToShiftId: undefined };
+      nextShift = { ...nextShift, handoffToShiftId: undefined, handoffToLocation: undefined };
     }
 
     if (nextShift.id !== handoffToShiftId && nextShift.handoffFromShiftId === normalizedUpdatedShift.id) {
-      nextShift = { ...nextShift, handoffFromShiftId: undefined };
+      nextShift = { ...nextShift, handoffFromShiftId: undefined, handoffFromLocation: undefined };
     }
 
     if (handoffFromShiftId) {
       if (nextShift.id === handoffFromShiftId) {
-        nextShift = { ...nextShift, handoffToShiftId: normalizedUpdatedShift.id };
+        nextShift = {
+          ...nextShift,
+          handoffToShiftId: normalizedUpdatedShift.id,
+          handoffToLocation: normalizedUpdatedShift.handoffFromLocation,
+        };
       } else if (nextShift.id !== normalizedUpdatedShift.id && nextShift.handoffFromShiftId === handoffFromShiftId) {
-        nextShift = { ...nextShift, handoffFromShiftId: undefined };
+        nextShift = { ...nextShift, handoffFromShiftId: undefined, handoffFromLocation: undefined };
       }
     }
 
     if (handoffToShiftId) {
       if (nextShift.id === handoffToShiftId) {
-        nextShift = { ...nextShift, handoffFromShiftId: normalizedUpdatedShift.id };
+        nextShift = {
+          ...nextShift,
+          handoffFromShiftId: normalizedUpdatedShift.id,
+          handoffFromLocation: normalizedUpdatedShift.handoffToLocation,
+        };
       } else if (nextShift.id !== normalizedUpdatedShift.id && nextShift.handoffToShiftId === handoffToShiftId) {
-        nextShift = { ...nextShift, handoffToShiftId: undefined };
+        nextShift = { ...nextShift, handoffToShiftId: undefined, handoffToLocation: undefined };
       }
     }
 

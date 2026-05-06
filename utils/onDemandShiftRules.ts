@@ -1,11 +1,12 @@
 import {
   BREAK_DURATION_SLOTS,
-  BREAK_THRESHOLD_HOURS,
+  MAX_HOURS_WITHOUT_BREAK,
   MAX_SHIFT_HOURS,
   MIN_SHIFT_HOURS,
   SHIFT_DURATION_SLOTS,
   TIME_SLOTS_PER_DAY,
   hoursToSlots,
+  minutesToSlotsCeil,
   slotDurationToHours,
   slotToMinutes,
 } from './demandConstants';
@@ -14,13 +15,15 @@ import { Zone } from './demandTypes';
 
 export const MIN_SHIFT_SLOTS = hoursToSlots(MIN_SHIFT_HOURS);
 export const MAX_SHIFT_SLOTS = hoursToSlots(MAX_SHIFT_HOURS);
+export const MIN_LUNCH_BREAK_SLOTS = minutesToSlotsCeil(15);
 
 export type OnDemandShiftRuleViolationKind =
   | 'shift_out_of_bounds'
   | 'duration_too_short'
   | 'duration_too_long'
   | 'break_too_short'
-  | 'break_window';
+  | 'break_out_of_bounds'
+  | 'max_driving_without_lunch';
 
 export interface OnDemandShiftRuleViolation {
   shiftId: string;
@@ -61,10 +64,14 @@ export function normalizeShiftZone(value: unknown): Zone {
 export function normalizeRequiredBreakStartSlot(
   startSlot: number,
   value: unknown,
+  durationSlots = DEFAULT_DURATION_SLOTS,
+  breakDurationSlots = BREAK_DURATION_SLOTS,
 ): number {
-  const numericValue = roundFiniteNumber(value, startSlot + hoursToSlots(5));
-  const minBreakSlot = startSlot + hoursToSlots(4);
-  const maxBreakSlot = startSlot + hoursToSlots(6);
+  const maxDrivingSlots = hoursToSlots(MAX_HOURS_WITHOUT_BREAK);
+  const endSlot = startSlot + durationSlots;
+  const numericValue = roundFiniteNumber(value, startSlot + Math.min(maxDrivingSlots, Math.floor(durationSlots / 2)));
+  const minBreakSlot = Math.max(startSlot, endSlot - breakDurationSlots - maxDrivingSlots);
+  const maxBreakSlot = Math.min(endSlot - breakDurationSlots, startSlot + maxDrivingSlots);
   return Math.min(Math.max(numericValue, minBreakSlot), maxBreakSlot);
 }
 
@@ -83,9 +90,9 @@ export function sanitizeOptimizerShift(
 ): SanitizedOnDemandShift {
   const durationSlots = normalizeShiftDurationSlots(shift.durationSlots);
   const startSlot = normalizeShiftStartSlot(shift.startSlot, durationSlots);
-  const requiresBreak = slotDurationToHours(durationSlots) > BREAK_THRESHOLD_HOURS;
+  const requiresBreak = slotDurationToHours(durationSlots) > MAX_HOURS_WITHOUT_BREAK;
   const breakStartSlot = requiresBreak
-    ? normalizeRequiredBreakStartSlot(startSlot, shift.breakStartSlot)
+    ? normalizeRequiredBreakStartSlot(startSlot, shift.breakStartSlot, durationSlots, requiredBreakDurationSlots)
     : 0;
   const breakDurationSlots = requiresBreak ? requiredBreakDurationSlots : 0;
 
@@ -108,6 +115,10 @@ export function validateOnDemandShiftRules(
   shifts.forEach((shift, index) => {
     const shiftId = shift.id || `shift-${index + 1}`;
     const driverName = shift.driverName || `Driver ${index + 1}`;
+    if (shift.isPlaceholder) {
+      return;
+    }
+
     const durationSlots = shift.endSlot - shift.startSlot;
     const durationHours = slotDurationToHours(durationSlots);
 
@@ -142,31 +153,43 @@ export function validateOnDemandShiftRules(
       });
     }
 
-    if (durationHours > BREAK_THRESHOLD_HOURS) {
-      if (shift.breakDurationSlots < requiredBreakDurationSlots) {
+    if (!shift.isStraightShift && durationHours > MAX_HOURS_WITHOUT_BREAK) {
+      if (shift.breakDurationSlots < MIN_LUNCH_BREAK_SLOTS) {
         violations.push({
           shiftId,
           driverName,
           kind: 'break_too_short',
-          message: `${driverName} needs a ${slotToMinutes(requiredBreakDurationSlots)}-minute break.`,
+          message: `${driverName} needs a lunch break of at least ${slotToMinutes(MIN_LUNCH_BREAK_SLOTS)} minutes.`,
         });
       }
 
-      const minBreakSlot = shift.startSlot + hoursToSlots(4);
-      const maxBreakSlot = shift.startSlot + hoursToSlots(6);
       const breakEndSlot = shift.breakStartSlot + shift.breakDurationSlots;
 
       if (
-        shift.breakStartSlot < minBreakSlot
-        || shift.breakStartSlot > maxBreakSlot
-        || shift.breakStartSlot < shift.startSlot
+        shift.breakStartSlot < shift.startSlot
         || breakEndSlot > shift.endSlot
       ) {
         violations.push({
           shiftId,
           driverName,
-          kind: 'break_window',
-          message: `${driverName} has a break outside the 4th-6th hour window.`,
+          kind: 'break_out_of_bounds',
+          message: `${driverName} has a break outside the shift.`,
+        });
+      }
+
+      const maxDrivingSlots = hoursToSlots(MAX_HOURS_WITHOUT_BREAK);
+      const preLunchDrivingSlots = shift.breakStartSlot - shift.startSlot;
+      const postLunchDrivingSlots = shift.endSlot - breakEndSlot;
+
+      if (
+        preLunchDrivingSlots > maxDrivingSlots
+        || postLunchDrivingSlots > maxDrivingSlots
+      ) {
+        violations.push({
+          shiftId,
+          driverName,
+          kind: 'max_driving_without_lunch',
+          message: `${driverName} has more than ${MAX_HOURS_WITHOUT_BREAK} consecutive driving hours without lunch.`,
         });
       }
     }

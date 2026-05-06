@@ -27,7 +27,7 @@ import {
 } from '../../utils/services/dataService';
 import { generateRideCoCSV, downloadCSV } from '../../utils/services/exportService';
 import { exportTODPaddlesExcel, exportTODPaddlesPDF } from '../../utils/services/paddleExportService';
-import { Shift, Requirement, Zone, ZoneFilterType } from '../../utils/demandTypes';
+import { Shift, Requirement, Zone, ZoneFilterType, isSchedulableShift } from '../../utils/demandTypes';
 import {
     createScopedShiftId,
     filterShiftsByDay,
@@ -70,10 +70,8 @@ import {
     Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X, Undo2, TriangleAlert
 } from 'lucide-react';
 import {
-    BREAK_THRESHOLD_HOURS,
-    SHIFT_DURATION_SLOTS,
+    MAX_HOURS_WITHOUT_BREAK,
     SLOT_MINUTES,
-    hoursToSlots,
     slotDurationToHours,
     slotToMinutes,
 } from '../../utils/demandConstants';
@@ -212,7 +210,7 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayTy
         `- Treat ${settings.maxFleetVehicles} active vehicles as the fleet cap.`,
         `- ${shiftCountRule}`,
         `- Target at least ${settings.targetCoveragePercent}% effective coverage.`,
-        `- For shifts over ${BREAK_THRESHOLD_HOURS} hours, require a ${settings.breakDurationMinutes}-minute break.`,
+        `- For non-straight shifts, require lunch before any driver exceeds ${MAX_HOURS_WITHOUT_BREAK} consecutive driving hours. Use the configured ${settings.breakDurationMinutes}-minute break duration unless a shift has its own edited break duration.`,
         `- North changeoff travel applies only at a true mid-service handoff where one North or South revenue shift ends and another begins. Morning pull-outs and final pull-ins do not lose revenue time.`,
         `- When that handoff is a North piece, lose ${settings.northChangeoffMinutes} minutes leaving the zone and ${settings.northChangeoffMinutes} minutes returning from the garage.`,
         `- When that handoff is a South piece, lose ${settings.southChangeoffMinutes} minutes leaving the zone and ${settings.southChangeoffMinutes} minutes returning from the garage.`,
@@ -289,6 +287,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const [activeTab, setActiveTab] = useState<'overview' | 'editor' | 'rules'>('overview');
     const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
+    const [newlyAddedShiftId, setNewlyAddedShiftId] = useState<string | null>(null);
 
     // Shared Zone Filter State (Lifted Up)
     const [zoneFilter, setZoneFilter] = useState<ZoneFilterType>('All');
@@ -374,13 +373,21 @@ export const OnDemandWorkspace: React.FC = () => {
 
     // Derived State
     // Now guaranteed to have valid inputs on first render
+    const scheduledShifts = useMemo(
+        () => shifts.filter(isSchedulableShift),
+        [shifts]
+    );
+    const scheduledAllShifts = useMemo(
+        () => allShifts.filter(isSchedulableShift),
+        [allShifts]
+    );
     const timeSlots = useMemo(
-        () => calculateSchedule(shifts, requirements, optimizationSettings),
-        [optimizationSettings, requirements, shifts]
+        () => calculateSchedule(scheduledShifts, requirements, optimizationSettings),
+        [optimizationSettings, requirements, scheduledShifts]
     );
     const metrics = useMemo(
-        () => calculateMetrics(timeSlots, shifts, { coveragePrecision: 1, netDifferenceMode: 'raw' }),
-        [shifts, timeSlots]
+        () => calculateMetrics(timeSlots, scheduledShifts, { coveragePrecision: 1, netDifferenceMode: 'raw' }),
+        [scheduledShifts, timeSlots]
     );
     const requiredBreakDurationSlots = useMemo(
         () => breakDurationMinutesToSlots(optimizationSettings.breakDurationMinutes),
@@ -388,13 +395,13 @@ export const OnDemandWorkspace: React.FC = () => {
     );
     const scheduleValidation = useMemo(
         () => validateOnDemandSchedule(
-            shifts,
+            scheduledShifts,
             requirements,
             optimizationSettings.maxFleetVehicles,
             requiredBreakDurationSlots,
             optimizationSettings,
         ),
-        [optimizationSettings, requiredBreakDurationSlots, requirements, shifts]
+        [optimizationSettings, requiredBreakDurationSlots, requirements, scheduledShifts]
     );
     const validationSummary = useMemo(
         () => summarizeOnDemandValidation(scheduleValidation),
@@ -405,14 +412,14 @@ export const OnDemandWorkspace: React.FC = () => {
         [timeSlots]
     );
     const explicitHandoffPairCount = useMemo(
-        () => countExplicitShiftHandoffPairs(shifts),
-        [shifts]
+        () => countExplicitShiftHandoffPairs(scheduledShifts),
+        [scheduledShifts]
     );
     const activeMaxShiftCount = useMemo(
         () => getShiftCountCapForDay(optimizationSettings.shiftCountCaps, selectedDayType),
         [optimizationSettings.shiftCountCaps, selectedDayType]
     );
-    const shiftCountWithinHardCap = shifts.length <= activeMaxShiftCount;
+    const shiftCountWithinHardCap = scheduledShifts.length <= activeMaxShiftCount;
     const fleetWithinLimit = maxConcurrentVehicles <= optimizationSettings.maxFleetVehicles;
     const isWorkspaceBusy = isAnimating || isProcessingFiles;
     const usingStarterSampleData = !currentDraftId
@@ -620,14 +627,14 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const warnValidationIssues = (actionLabel: string) => {
-        if (shifts.length === 0 || validationSummary.isValid) return false;
+        if (scheduledShifts.length === 0 || validationSummary.isValid) return false;
         toast.warning(`${actionLabel} has validation issues`, validationSummary.message);
         setActiveTab('overview');
         return true;
     };
 
     const blockInvalidOperationalOutput = (actionLabel: string) => {
-        if (shifts.length === 0) {
+        if (scheduledAllShifts.length === 0) {
             toast.info(`${actionLabel} unavailable`, 'Load or create shifts before exporting operational outputs.');
             return true;
         }
@@ -638,7 +645,7 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const blockCoverageGapTolerantExport = (actionLabel: string, unavailableMessage: string) => {
-        if (shifts.length === 0) {
+        if (scheduledAllShifts.length === 0) {
             toast.info(`${actionLabel} unavailable`, unavailableMessage);
             return true;
         }
@@ -815,7 +822,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
         const requestDayType = selectedDayType;
         const requestRequirements = requirements;
-        const requestShifts = shifts;
+        const requestShifts = scheduledShifts;
         const runId = optimizationRunIdRef.current + 1;
         const controller = new AbortController();
         optimizationRunIdRef.current = runId;
@@ -913,6 +920,9 @@ export const OnDemandWorkspace: React.FC = () => {
         captureUndoSnapshot('shift edit');
         setShifts(prev => syncShiftHandoffInDay(prev, updatedShift, selectedDayType));
         setAllShifts(prev => syncShiftHandoffInDay(prev, updatedShift, selectedDayType));
+        if (updatedShift.id === newlyAddedShiftId && !updatedShift.isPlaceholder) {
+            setNewlyAddedShiftId(null);
+        }
     };
 
     const handleDayTypeChange = (dayType: string) => {
@@ -964,22 +974,22 @@ export const OnDemandWorkspace: React.FC = () => {
 
         const newName = `${zoneName} ${maxNum + 1}`;
 
-        // Default shift: 8am - 4pm
-        // Default shift: 8am - 4pm
         const newShift: Shift = {
             id: createScopedShiftId(selectedDayType),
             driverName: newName,
             zone: startZone,
-            startSlot: hoursToSlots(8), // 08:00
-            endSlot: hoursToSlots(8) + SHIFT_DURATION_SLOTS,
-            breakStartSlot: hoursToSlots(8) + hoursToSlots(4), // Break after 4 hours
-            breakDurationSlots: requiredBreakDurationSlots,
+            startSlot: 0,
+            endSlot: 0,
+            breakStartSlot: 0,
+            breakDurationSlots: 0,
+            isPlaceholder: true,
             dayType: selectedDayType
         };
         captureUndoSnapshot('shift addition');
         setShifts(prev => [...prev, newShift]);
         setAllShifts(prev => [...prev, newShift]);
-        // Switch to editor to see the new shift
+        setNewlyAddedShiftId(newShift.id);
+        setEditingShiftId(newShift.id);
         setActiveTab('editor');
     };
 
@@ -1312,7 +1322,7 @@ export const OnDemandWorkspace: React.FC = () => {
             }
             const scheduleData = {
                 name: draftName,
-                description: `${allShifts.length} shifts, Active Day: ${selectedDayType}`,
+                description: `${scheduledAllShifts.length} scheduled shifts, Active Day: ${selectedDayType}`,
                 status: 'draft' as const,
                 shiftData: allShifts, // Save ALL shifts from all days
                 masterScheduleData: requirements, // Save current view
@@ -1372,7 +1382,7 @@ export const OnDemandWorkspace: React.FC = () => {
             {
                 key: 'breakDurationMinutes',
                 label: 'Break Duration',
-                helper: 'Required long-shift break length used by the optimizer and manual edits.',
+                helper: 'Default lunch length used by the optimizer and new manual breaks.',
                 accent: 'bg-amber-500 text-white',
                 suffix: 'mins',
             },
@@ -1518,11 +1528,11 @@ export const OnDemandWorkspace: React.FC = () => {
                                 onClick={() => {
                                     if (blockCoverageGapTolerantExport('RideCo export', 'Load or create shifts before exporting RideCo format.')) return;
                                     // Export all shifts, not just the currently filtered day
-                                    const csv = generateRideCoCSV(allShifts);
+                                    const csv = generateRideCoCSV(scheduledAllShifts);
                                     downloadCSV(csv, `RideCo_Shifts_All_${new Date().toISOString().split('T')[0]}.csv`);
                                 }}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-md transition-all"
-                                title={`Export all ${allShifts.length} shifts as RideCo Template`}
+                                title={`Export all ${scheduledAllShifts.length} scheduled shifts as RideCo Template`}
                             >
                                 <CloudDownload size={14} className="rotate-180" />
                                 Export RideCo Format
@@ -1531,7 +1541,7 @@ export const OnDemandWorkspace: React.FC = () => {
                             <button
                                 onClick={async () => {
                                     if (blockCoverageGapTolerantExport('Paddles PDF export', 'Load or create shifts before exporting paddles.')) return;
-                                    await exportTODPaddlesPDF(allShifts, {
+                                    await exportTODPaddlesPDF(scheduledAllShifts, {
                                         assignedBreakMinutes: optimizationSettings.breakDurationMinutes,
                                         deadheadMinutesByZone: {
                                             [Zone.NORTH]: optimizationSettings.northChangeoffMinutes,
@@ -1540,12 +1550,12 @@ export const OnDemandWorkspace: React.FC = () => {
                                         },
                                     });
                                 }}
-                                disabled={allShifts.length === 0}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${allShifts.length === 0
+                                disabled={scheduledAllShifts.length === 0}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${scheduledAllShifts.length === 0
                                     ? 'text-gray-300 cursor-not-allowed'
                                     : 'text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm'
                                     }`}
-                                title={`Export ${allShifts.length} paddles as PDF`}
+                                title={`Export ${scheduledAllShifts.length} scheduled paddles as PDF`}
                             >
                                 <CloudDownload size={14} />
                                 Paddles PDF
@@ -1554,7 +1564,7 @@ export const OnDemandWorkspace: React.FC = () => {
                             <button
                                 onClick={async () => {
                                     if (blockCoverageGapTolerantExport('Paddles Excel export', 'Load or create shifts before exporting paddles.')) return;
-                                    await exportTODPaddlesExcel(allShifts, {
+                                    await exportTODPaddlesExcel(scheduledAllShifts, {
                                         assignedBreakMinutes: optimizationSettings.breakDurationMinutes,
                                         deadheadMinutesByZone: {
                                             [Zone.NORTH]: optimizationSettings.northChangeoffMinutes,
@@ -1563,12 +1573,12 @@ export const OnDemandWorkspace: React.FC = () => {
                                         },
                                     });
                                 }}
-                                disabled={allShifts.length === 0}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${allShifts.length === 0
+                                disabled={scheduledAllShifts.length === 0}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${scheduledAllShifts.length === 0
                                     ? 'text-gray-300 cursor-not-allowed'
                                     : 'text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm'
                                     }`}
-                                title={`Export ${allShifts.length} paddles as Excel`}
+                                title={`Export ${scheduledAllShifts.length} scheduled paddles as Excel`}
                             >
                                 <CloudDownload size={14} />
                                 Paddles Excel
@@ -1667,12 +1677,12 @@ export const OnDemandWorkspace: React.FC = () => {
                             {/* Refine Button - Primary Action */}
                             <button
                                 onClick={handleRefineClick}
-                                disabled={isWorkspaceBusy || shifts.length === 0}
+                                disabled={isWorkspaceBusy || scheduledShifts.length === 0}
                                 className={`
                                 flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-white shadow-md hover:shadow-lg active:scale-95 whitespace-nowrap
                                 ${isAnimating && optimizationMode === 'refine'
                                         ? 'bg-indigo-400 cursor-wait'
-                                        : isWorkspaceBusy || shifts.length === 0
+                                        : isWorkspaceBusy || scheduledShifts.length === 0
                                             ? 'bg-gray-300 cursor-not-allowed shadow-none'
                                             : 'bg-indigo-600 hover:bg-indigo-700'
                                     }
@@ -1729,7 +1739,7 @@ export const OnDemandWorkspace: React.FC = () => {
                             </div>
                         )}
 
-                        {shifts.length > 0 && (
+                        {scheduledShifts.length > 0 && (
                             <div className={`max-w-xl text-xs font-bold px-3 py-2 rounded-xl border ${explicitHandoffPairCount > 0
                                 ? 'text-blue-800 bg-blue-50 border-blue-200'
                                 : 'text-gray-500 bg-gray-50 border-gray-200'
@@ -1740,7 +1750,7 @@ export const OnDemandWorkspace: React.FC = () => {
                             </div>
                         )}
 
-                        {shifts.length > 0 && (
+                        {scheduledShifts.length > 0 && (
                             <div className={`max-w-md text-xs font-bold px-3 py-2 rounded-xl border ${validationSummary.isValid
                                 ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
                                 : 'text-amber-800 bg-amber-50 border-amber-200'
@@ -1923,19 +1933,19 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <div className="flex justify-between items-center p-3 bg-blue-50 rounded-xl border-2 border-blue-100">
                                         <span className="font-bold text-gray-600">North Zone</span>
                                         <span className="font-extrabold text-brand-blue">
-                                            {shifts.filter(s => s.zone === Zone.NORTH).length} Drivers
+                                            {scheduledShifts.filter(s => s.zone === Zone.NORTH).length} Drivers
                                         </span>
                                     </div>
                                     <div className="flex justify-between items-center p-3 bg-green-50 rounded-xl border-2 border-green-100">
                                         <span className="font-bold text-gray-600">South Zone</span>
                                         <span className="font-extrabold text-brand-green">
-                                            {shifts.filter(s => s.zone === Zone.SOUTH).length} Drivers
+                                            {scheduledShifts.filter(s => s.zone === Zone.SOUTH).length} Drivers
                                         </span>
                                     </div>
                                     <div className="flex justify-between items-center p-3 bg-purple-50 rounded-xl border-2 border-purple-100">
                                         <span className="font-bold text-gray-600">Floaters</span>
                                         <span className="font-extrabold text-purple-600">
-                                            {shifts.filter(s => s.zone === Zone.FLOATER).length} Drivers
+                                            {scheduledShifts.filter(s => s.zone === Zone.FLOATER).length} Drivers
                                         </span>
                                     </div>
 
@@ -1943,9 +1953,17 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <div className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border-2 border-gray-200 mt-2">
                                         <span className="font-bold text-gray-600">Total Shift Hours</span>
                                         <span className="font-extrabold text-gray-800">
-                                            {Math.round(shifts.reduce((sum, s) => sum + slotDurationToHours(s.endSlot - s.startSlot), 0))}h
+                                            {Math.round(scheduledShifts.reduce((sum, s) => sum + slotDurationToHours(s.endSlot - s.startSlot), 0))}h
                                         </span>
                                     </div>
+                                    {shifts.length > scheduledShifts.length && (
+                                        <div className="flex justify-between items-center p-3 bg-amber-50 rounded-xl border-2 border-amber-100">
+                                            <span className="font-bold text-gray-600">New placeholders</span>
+                                            <span className="font-extrabold text-amber-700">
+                                                {shifts.length - scheduledShifts.length}
+                                            </span>
+                                        </div>
+                                    )}
 
                                     {/* Coverage Status */}
                                     <div className={`flex justify-between items-center p-3 rounded-xl border-2 mt-2 ${metrics.coveragePercent >= 100 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
@@ -1963,23 +1981,23 @@ export const OnDemandWorkspace: React.FC = () => {
                                 </div>
 
                                 {/* Status Message */}
-                                <div className={`mt-4 p-3 rounded-xl border-2 ${!validationSummary.isValid && shifts.length > 0
+                                <div className={`mt-4 p-3 rounded-xl border-2 ${!validationSummary.isValid && scheduledShifts.length > 0
                                     ? 'bg-amber-50 border-amber-200'
                                     : isOptimized
                                         ? 'bg-purple-50 border-purple-100'
                                         : 'bg-gray-50 border-gray-200'
                                     }`}>
-                                    <p className={`text-sm font-bold ${!validationSummary.isValid && shifts.length > 0
+                                    <p className={`text-sm font-bold ${!validationSummary.isValid && scheduledShifts.length > 0
                                         ? 'text-amber-700'
                                         : isOptimized
                                             ? 'text-purple-600'
                                             : 'text-gray-500'
                                         }`}>
-                                        {!validationSummary.isValid && shifts.length > 0
+                                        {!validationSummary.isValid && scheduledShifts.length > 0
                                             ? validationSummary.message
                                             : isOptimized
                                                 ? '✨ AI Optimized'
-                                                : shifts.length === 0
+                                                : scheduledShifts.length === 0
                                                     ? 'No shifts loaded'
                                                     : 'Ready for optimization'}
                                     </p>
@@ -2006,6 +2024,7 @@ export const OnDemandWorkspace: React.FC = () => {
                         onZoneFilterChange={setZoneFilter}
                         metrics={metrics}
                         changeoffSettings={optimizationSettings}
+                        highlightShiftId={newlyAddedShiftId}
                     />
                 </div>
             )}
@@ -2213,8 +2232,8 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <div className="space-y-3 text-sm font-semibold text-gray-500">
                                     <p className="p-3 rounded-xl bg-blue-50 border-2 border-blue-100 text-blue-900/80">Coverage target, fleet cap, and shift count cap stay explicit because those are the clearest operating limits for staff to reason about.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a hard shift cap when the number of pieces is fixed. Switch it to guide when you want the optimizer to prefer fewer shifts without blocking extra relief work that meaningfully improves the day.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break duration sets the required long-shift break length, and the same value is used when you add or edit a shift manually.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South changeoff travel only applies during a true mid-service handoff where one revenue piece ends and another begins. Morning pull-outs can happen before revenue time and final pull-ins happen after revenue time, so they do not create orange changeoff gaps.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break duration sets the default lunch length, but individual shifts can be edited when a different break length is needed.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Changeoff travel only applies during a true mid-service handoff where one revenue piece ends and another begins. On-site changeoffs do not create orange changeoff gaps.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Changeoff minutes are enforced on the {SLOT_MINUTES}-minute planning grid. Any partial slot rounds up to the next planning slot.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Minor gap tolerance decides whether the optimizer can accept a very small shortfall in exchange for a meaningfully better full-day schedule.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break protection controls how hard the optimizer should push for clean break relief and overlap coverage.</p>
@@ -2229,15 +2248,15 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <div className="space-y-3">
                                     <div className="flex justify-between items-center p-3 bg-blue-50 rounded-xl border-2 border-blue-100">
                                         <span className="font-bold text-gray-600">North Shifts</span>
-                                        <span className="font-extrabold text-brand-blue">{shifts.filter(s => s.zone === Zone.NORTH).length}</span>
+                                        <span className="font-extrabold text-brand-blue">{scheduledShifts.filter(s => s.zone === Zone.NORTH).length}</span>
                                     </div>
                                     <div className="flex justify-between items-center p-3 bg-green-50 rounded-xl border-2 border-green-100">
                                         <span className="font-bold text-gray-600">South Shifts</span>
-                                        <span className="font-extrabold text-brand-green">{shifts.filter(s => s.zone === Zone.SOUTH).length}</span>
+                                        <span className="font-extrabold text-brand-green">{scheduledShifts.filter(s => s.zone === Zone.SOUTH).length}</span>
                                     </div>
                                     <div className="flex justify-between items-center p-3 bg-purple-50 rounded-xl border-2 border-purple-100">
                                         <span className="font-bold text-gray-600">Floater Shifts</span>
-                                        <span className="font-extrabold text-purple-600">{shifts.filter(s => s.zone === Zone.FLOATER).length}</span>
+                                        <span className="font-extrabold text-purple-600">{scheduledShifts.filter(s => s.zone === Zone.FLOATER).length}</span>
                                     </div>
                                     <div className={`flex justify-between items-center p-3 rounded-xl border-2 ${optimizationSettings.shiftCountCapMode === 'hard'
                                             ? shiftCountWithinHardCap
@@ -2252,7 +2271,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                                     : 'text-amber-600'
                                                 : 'text-brand-blue'
                                             }`}>
-                                            {shifts.length} / {activeMaxShiftCount} {optimizationSettings.shiftCountCapMode} ({selectedDayType})
+                                            {scheduledShifts.length} / {activeMaxShiftCount} {optimizationSettings.shiftCountCapMode} ({selectedDayType})
                                         </span>
                                     </div>
                                     <div className={`flex justify-between items-center p-3 rounded-xl border-2 ${fleetWithinLimit ? 'bg-gray-50 border-gray-200' : 'bg-amber-50 border-amber-200'}`}>
@@ -2275,9 +2294,9 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <h3 className="text-xl font-extrabold text-gray-700 mb-4">Hard Guardrails</h3>
                                 <div className="space-y-3 text-sm font-semibold text-gray-500">
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shift span stays between 5 and 11 hours of drive time.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shifts over {BREAK_THRESHOLD_HOURS} hours still require a {optimizationSettings.breakDurationMinutes}-minute break.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Breaks still need to fall between hour 4 and hour 6 of the shift.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North changeoffs remove {optimizationSettings.northChangeoffMinutes} minutes each way between consecutive North shifts. South changeoffs remove {optimizationSettings.southChangeoffMinutes} minutes each way between consecutive South shifts.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Non-straight shifts cannot exceed {MAX_HOURS_WITHOUT_BREAK} consecutive driving hours without lunch.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">The old 4th-to-6th-hour break window is no longer enforced.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Off-site North changeoffs remove {optimizationSettings.northChangeoffMinutes} minutes each way. Off-site South changeoffs remove {optimizationSettings.southChangeoffMinutes} minutes each way. On-site locations remove that penalty.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South stay zone-bound. Floaters remain the relief layer for coverage and breaks.</p>
                                 </div>
                             </div>
@@ -2303,7 +2322,6 @@ export const OnDemandWorkspace: React.FC = () => {
                     allShifts={shifts}
                     requirements={requirements}
                     changeoffSettings={optimizationSettings}
-                    requiredBreakDurationMinutes={optimizationSettings.breakDurationMinutes}
                     requiredBreakDurationSlots={requiredBreakDurationSlots}
                     onSave={(updated) => {
                         handleShiftUpdate(updated);

@@ -69,4 +69,3 @@ export const MAX_HOURS_WITHOUT_BREAK = 5;
 // New Union Rules
 export const MIN_SHIFT_HOURS = 5;
 export const MAX_SHIFT_HOURS = 11;
-export const BREAK_THRESHOLD_HOURS = 7.5; // Shifts > 7.5h need a break

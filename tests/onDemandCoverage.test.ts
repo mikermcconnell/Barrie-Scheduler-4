@@ -280,6 +280,26 @@ describe('on-demand coverage', () => {
     expect(slots[firstEnd - 1].northChangeoffs).toBe(0);
   });
 
+  it('ignores placeholder shifts in coverage and validation', () => {
+    const placeholder = {
+      ...makeShift('new-driver', Zone.NORTH, 0, 0, slotAt(8), slotAt(16)),
+      isPlaceholder: true,
+    };
+
+    const slots = calculateSchedule([placeholder], makeRequirements({
+      north: 1,
+      south: 0,
+      floater: 0,
+      total: 1,
+    }));
+    const validation = validateOnDemandSchedule([placeholder], makeRequirements());
+
+    expect(slots[slotAt(10)].northCoverage).toBe(0);
+    expect(slots[slotAt(10)].totalActiveCoverage).toBe(0);
+    expect(validation.shiftRuleViolations).toEqual([]);
+    expect(validation.handoffViolations).toEqual([]);
+  });
+
   it('flags a break as removing a bus from service when it is not covered', () => {
     const shifts = [
       makeShift('bus-1', Zone.FLOATER),

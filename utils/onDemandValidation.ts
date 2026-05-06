@@ -1,5 +1,5 @@
 import { calculateSchedule } from './dataGenerator';
-import type { OnDemandChangeoffSettings, Requirement, Shift } from './demandTypes';
+import { isSchedulableShift, type OnDemandChangeoffSettings, type Requirement, type Shift } from './demandTypes';
 import {
   validateShiftHandoffs,
   type ShiftHandoffViolation,
@@ -36,15 +36,16 @@ export function validateOnDemandSchedule(
   requiredBreakDurationSlots?: number,
   changeoffSettings?: Partial<OnDemandChangeoffSettings>,
 ): OnDemandScheduleValidation {
-  const slots = calculateSchedule(shifts, requirements, changeoffSettings);
+  const scheduledShifts = shifts.filter(isSchedulableShift);
+  const slots = calculateSchedule(scheduledShifts, requirements, changeoffSettings);
   const coverageViolations: OnDemandValidationIssue[] = [];
   const fleetViolations: OnDemandValidationIssue[] = [];
   const breakCoverageViolations: OnDemandValidationIssue[] = [];
   const shiftRuleViolations = validateOnDemandShiftRules(
-    shifts,
+    scheduledShifts,
     requiredBreakDurationSlots,
   );
-  const handoffViolations = validateShiftHandoffs(shifts);
+  const handoffViolations = validateShiftHandoffs(scheduledShifts);
   let maxActiveVehicles = 0;
   let maxOverlappingShifts = 0;
 

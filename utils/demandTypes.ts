@@ -51,6 +51,21 @@ export interface OnDemandChangeoffSettings {
   southChangeoffMinutes: number;
 }
 
+export type OnDemandChangeoffLocation =
+  | 'downtown'
+  | 'park_place'
+  | 'barrie_south_go'
+  | 'garage';
+
+export const DEFAULT_CHANGEOFF_LOCATION: OnDemandChangeoffLocation = 'garage';
+
+export const ON_DEMAND_CHANGEOFF_LOCATION_LABELS: Record<OnDemandChangeoffLocation, string> = {
+  downtown: 'Downtown Terminal',
+  park_place: 'Park Place',
+  barrie_south_go: 'Barrie South GO',
+  garage: 'Garage / off-site',
+};
+
 export enum Zone {
   NORTH = 'North',
   SOUTH = 'South',
@@ -67,10 +82,17 @@ export interface Shift {
   endSlot: number;
   breakStartSlot: number;
   breakDurationSlots: number;
+  isPlaceholder?: boolean;
+  isStraightShift?: boolean;
   handoffFromShiftId?: string;
   handoffToShiftId?: string;
+  handoffFromLocation?: OnDemandChangeoffLocation;
+  handoffToLocation?: OnDemandChangeoffLocation;
   dayType?: 'Weekday' | 'Saturday' | 'Sunday';
 }
+
+export const isSchedulableShift = (shift: Shift): boolean =>
+  !shift.isPlaceholder && shift.endSlot > shift.startSlot;
 
 export interface Requirement {
   slotIndex: number;

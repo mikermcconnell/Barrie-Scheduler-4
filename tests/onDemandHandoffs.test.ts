@@ -142,6 +142,43 @@ describe('on-demand handoffs', () => {
     });
   });
 
+  it('does not shrink service windows for on-site handoff locations', () => {
+    const serviceWindows = buildShiftServiceWindowMap([
+      makeShift('north-1', Zone.NORTH, 32, 40, {
+        handoffToLocation: 'downtown',
+      }),
+      makeShift('south-1', Zone.SOUTH, 40, 48, {
+        handoffFromLocation: 'park_place',
+        handoffToLocation: 'barrie_south_go',
+      }),
+      makeShift('north-2', Zone.NORTH, 48, 56, {
+        handoffFromLocation: 'downtown',
+      }),
+    ], {
+      northChangeoffMinutes: 15,
+      southChangeoffMinutes: 8,
+    });
+
+    expect(serviceWindows.get('north-1')).toEqual({
+      serviceStartSlot: 32,
+      serviceEndSlot: 40,
+      startChangeoffSlots: 0,
+      endChangeoffSlots: 0,
+    });
+    expect(serviceWindows.get('south-1')).toEqual({
+      serviceStartSlot: 40,
+      serviceEndSlot: 48,
+      startChangeoffSlots: 0,
+      endChangeoffSlots: 0,
+    });
+    expect(serviceWindows.get('north-2')).toEqual({
+      serviceStartSlot: 48,
+      serviceEndSlot: 56,
+      startChangeoffSlots: 0,
+      endChangeoffSlots: 0,
+    });
+  });
+
   it('does not shrink the first or last service piece of the day', () => {
     const serviceWindows = buildShiftServiceWindowMap([
       makeShift('north-1', Zone.NORTH, 32, 60),

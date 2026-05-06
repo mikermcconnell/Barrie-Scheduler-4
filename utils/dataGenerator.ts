@@ -5,6 +5,7 @@ import {
   Requirement,
   Zone,
   type OnDemandChangeoffSettings,
+  isSchedulableShift,
 } from './demandTypes';
 import {
   BREAK_DURATION_SLOTS,
@@ -213,7 +214,7 @@ export const calculateSchedule = (
     let southCount = 0;
     let floaterCount = 0;
 
-    shifts.forEach(shift => {
+    shifts.filter(isSchedulableShift).forEach(shift => {
       if (i >= shift.startSlot && i < shift.endSlot) {
         const serviceWindow = serviceWindowMap.get(shift.id);
         const isInChangeoff = serviceWindow !== undefined && (
@@ -371,7 +372,9 @@ export const calculateMetrics = (
   // If shifts are provided, calculate exact payable time (end - start)
   let payableHours = totalEffectiveCov;
   if (shifts) {
-    payableHours = shifts.reduce((sum, s) => sum + slotDurationToHours(s.endSlot - s.startSlot), 0);
+    payableHours = shifts
+      .filter(isSchedulableShift)
+      .reduce((sum, s) => sum + slotDurationToHours(s.endSlot - s.startSlot), 0);
   }
 
   return {

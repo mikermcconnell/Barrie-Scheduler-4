@@ -1,7 +1,7 @@
 import { Requirement, Shift, Zone } from "../demandTypes";
 import {
   SHIFT_DURATION_SLOTS,
-  BREAK_THRESHOLD_HOURS,
+  MAX_HOURS_WITHOUT_BREAK,
   TIME_SLOTS_PER_DAY,
   hoursToSlots,
   slotDurationToHours,
@@ -358,13 +358,13 @@ function localOptimizationFallback(
     const zones: Zone[] = [Zone.NORTH, Zone.SOUTH, Zone.FLOATER];
     const zone = zones[shiftCount % 3];
 
-    // Calculate break (6 hours into shift, if shift is long enough)
+    // Calculate lunch before the driver exceeds 5 consecutive driving hours.
     const hours = slotDurationToHours(duration);
     let breakStart = 0;
     let breakDuration = 0;
 
-    if (hours > BREAK_THRESHOLD_HOURS) {
-      breakStart = startSlot + hoursToSlots(6); // Break at hour 6
+    if (hours > MAX_HOURS_WITHOUT_BREAK) {
+      breakStart = startSlot + hoursToSlots(MAX_HOURS_WITHOUT_BREAK);
       breakDuration = configuredBreakDurationSlots;
     }
 

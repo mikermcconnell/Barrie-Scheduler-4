@@ -1,16 +1,30 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType, type OnDemandChangeoffSettings } from '../../utils/demandTypes';
+import {
+    DEFAULT_CHANGEOFF_LOCATION,
+    ON_DEMAND_CHANGEOFF_LOCATION_LABELS,
+    Shift,
+    Requirement,
+    TimeSlot,
+    Zone,
+    ZoneFilterType,
+    type OnDemandChangeoffLocation,
+    type OnDemandChangeoffSettings,
+    isSchedulableShift,
+} from '../../utils/demandTypes';
 import { GapChart } from '../GapChart';
 import { calculateSchedule, formatSlotToTime } from '../../utils/dataGenerator';
 import { validateShiftHandoffs } from '../../utils/onDemandHandoffs';
 import { getShiftDayType, syncShiftHandoffInDay } from '../../utils/onDemandShiftUtils';
+import { validateOnDemandShiftRules } from '../../utils/onDemandShiftRules';
 import {
     MIN_SHIFT_HOURS,
     MAX_SHIFT_HOURS,
-    BREAK_THRESHOLD_HOURS,
+    MAX_HOURS_WITHOUT_BREAK,
     TIME_SLOTS_PER_DAY,
     hoursToSlots,
     slotDurationToHours,
+    slotToMinutes,
+    minutesToSlot,
 } from '../../utils/demandConstants';
 import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
 
@@ -19,7 +33,6 @@ interface Props {
     allShifts: Shift[];
     requirements: Requirement[];
     changeoffSettings?: Partial<OnDemandChangeoffSettings>;
-    requiredBreakDurationMinutes: number;
     requiredBreakDurationSlots: number;
     onSave: (updatedShift: Shift) => void;
     onCancel: () => void;
@@ -30,7 +43,6 @@ export const ShiftEditorModal: React.FC<Props> = ({
     allShifts,
     requirements,
     changeoffSettings,
-    requiredBreakDurationMinutes,
     requiredBreakDurationSlots,
     onSave,
     onCancel,
@@ -40,6 +52,8 @@ export const ShiftEditorModal: React.FC<Props> = ({
     const trackRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState<'shift' | 'break' | 'start' | 'end' | 'breakStart' | 'breakEnd' | null>(null);
     const [dragOffset, setDragOffset] = useState(0);
+    const isPlaceholder = currentShift.isPlaceholder === true;
+    const changeoffLocations = Object.keys(ON_DEMAND_CHANGEOFF_LOCATION_LABELS) as OnDemandChangeoffLocation[];
 
     // Initialize local chart filter based on the shift's zone
     // This satisfies the user request: "if it's a north zone shift, have the north gap analysis chart"
@@ -60,11 +74,11 @@ export const ShiftEditorModal: React.FC<Props> = ({
         else if (currentShift.zone === Zone.FLOATER) setLocalZoneFilter('Floater');
     }, [currentShift.zone]);
 
-    const canUseShiftHandoffs = currentShift.zone === Zone.NORTH || currentShift.zone === Zone.SOUTH;
+    const canUseShiftHandoffs = !isPlaceholder;
     const handoffOptions = useMemo(() => (
         allShifts
             .filter(candidate => candidate.id !== currentShift.id)
-            .filter(candidate => candidate.zone === Zone.NORTH || candidate.zone === Zone.SOUTH)
+            .filter(isSchedulableShift)
             .sort((a, b) => {
                 if (a.startSlot !== b.startSlot) {
                     return a.startSlot - b.startSlot;
@@ -74,14 +88,77 @@ export const ShiftEditorModal: React.FC<Props> = ({
             })
     ), [allShifts, currentShift.id]);
 
+    const formatSlotForInput = (slot: number): string => {
+        if (!Number.isFinite(slot)) return '';
+        const minutes = slotToMinutes(slot);
+        const hours = Math.floor(minutes / 60) % 24;
+        const mins = Math.round(minutes % 60);
+        return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+    };
+
+    const parseTimeInputToSlot = (value: string): number | null => {
+        const match = value.match(/^(\d{1,2}):(\d{2})$/);
+        if (!match) return null;
+
+        const hours = Number(match[1]);
+        const minutes = Number(match[2]);
+        if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours > 23 || minutes > 59) {
+            return null;
+        }
+
+        return minutesToSlot((hours * 60) + minutes);
+    };
+
+    const setShiftBoundaryFromInput = (field: 'startSlot' | 'endSlot', value: string) => {
+        const slot = parseTimeInputToSlot(value);
+        if (slot === null) return;
+
+        setCurrentShift(prev => ({
+            ...prev,
+            [field]: slot,
+        }));
+    };
+
+    const getShiftTimeInputValue = (field: 'startSlot' | 'endSlot'): string => {
+        if (!currentShift.isPlaceholder) {
+            return formatSlotForInput(currentShift[field]);
+        }
+
+        if (currentShift.startSlot === currentShift.endSlot) {
+            return '';
+        }
+
+        if (field === 'endSlot' && currentShift.endSlot <= currentShift.startSlot) {
+            return '';
+        }
+
+        return formatSlotForInput(currentShift[field]);
+    };
+
+    const saveCurrentShift = () => {
+        onSave({
+            ...currentShift,
+            isPlaceholder: false,
+            handoffFromLocation: currentShift.handoffFromShiftId
+                ? (currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION)
+                : undefined,
+            handoffToLocation: currentShift.handoffToShiftId
+                ? (currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION)
+                : undefined,
+        });
+    };
+
 
     // Calculate chart data with ghost line
     const chartData = useMemo(() => {
         const originalSlots = calculateSchedule(allShifts, requirements, changeoffSettings);
+        const previewShift = currentShift.isPlaceholder && currentShift.endSlot > currentShift.startSlot
+            ? { ...currentShift, isPlaceholder: false }
+            : currentShift;
         const tempShifts = syncShiftHandoffInDay(
             allShifts,
-            currentShift,
-            getShiftDayType(currentShift),
+            previewShift,
+            getShiftDayType(previewShift),
         );
         const newSlots = calculateSchedule(tempShifts, requirements, changeoffSettings);
 
@@ -97,8 +174,13 @@ export const ShiftEditorModal: React.FC<Props> = ({
         const durationSlots = currentShift.endSlot - currentShift.startSlot;
         const durationHours = slotDurationToHours(durationSlots);
 
+        if (isPlaceholder && durationSlots <= 0) {
+            setValidationMsg('New driver is a placeholder. Set a valid shift time to activate it.');
+            return;
+        }
+
         if (!canUseShiftHandoffs && (currentShift.handoffFromShiftId || currentShift.handoffToShiftId)) {
-            setValidationMsg('Floater shifts cannot use shift handoffs.');
+            setValidationMsg('Placeholder shifts cannot use shift handoffs.');
             return;
         }
 
@@ -111,22 +193,13 @@ export const ShiftEditorModal: React.FC<Props> = ({
             return;
         }
 
-        if (durationHours > BREAK_THRESHOLD_HOURS) {
-            if (currentShift.breakDurationSlots < requiredBreakDurationSlots) {
-                setValidationMsg(`Shift > ${BREAK_THRESHOLD_HOURS}h requires a ${requiredBreakDurationMinutes}-minute break`);
-                return;
-            }
-            const shiftStart = currentShift.startSlot;
-            const breakStart = currentShift.breakStartSlot;
-            const fourthHour = shiftStart + hoursToSlots(4);
-            const sixthHour = shiftStart + hoursToSlots(6);
-
-            if (breakStart < fourthHour || breakStart > sixthHour) {
-                const fourthHourTime = formatSlotToTime(fourthHour);
-                const sixthHourTime = formatSlotToTime(sixthHour);
-                setValidationMsg(`Break must be between 4th and 6th hour (${fourthHourTime} - ${sixthHourTime})`);
-                return;
-            }
+        const validationShift = isPlaceholder
+            ? { ...currentShift, isPlaceholder: false }
+            : currentShift;
+        const shiftRuleIssue = validateOnDemandShiftRules([validationShift], requiredBreakDurationSlots)[0];
+        if (shiftRuleIssue) {
+            setValidationMsg(shiftRuleIssue.message);
+            return;
         }
 
         const shiftsWithDraftEdit = syncShiftHandoffInDay(
@@ -142,7 +215,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
         }
 
         setValidationMsg(null);
-    }, [allShifts, canUseShiftHandoffs, currentShift, requiredBreakDurationMinutes, requiredBreakDurationSlots, shift.id]);
+    }, [allShifts, canUseShiftHandoffs, currentShift, isPlaceholder, requiredBreakDurationSlots, shift.id]);
 
     // Mouse/Touch Handling for Dragging
     const handleMouseDown = (e: React.MouseEvent, type: 'shift' | 'break' | 'start' | 'end' | 'breakStart' | 'breakEnd') => {
@@ -233,12 +306,18 @@ export const ShiftEditorModal: React.FC<Props> = ({
     };
 
     const adjustTime = (field: 'startSlot' | 'endSlot' | 'breakStartSlot' | 'breakDurationSlots', delta: number) => {
-        const updated = { ...currentShift, [field]: currentShift[field] + delta };
+        const nextValue = currentShift[field] + delta;
+        const updated = {
+            ...currentShift,
+            [field]: field === 'breakDurationSlots'
+                ? nextValue
+                : Math.max(0, Math.min(TIME_SLOTS_PER_DAY, nextValue)),
+        };
 
         // Basic integrity checks
         if (updated.startSlot >= updated.endSlot) return;
         if (field === 'breakStartSlot' || field === 'breakDurationSlots') {
-            if (updated.breakDurationSlots < 0) return;
+            if (updated.breakDurationSlots < 1) return;
             if (updated.breakStartSlot < updated.startSlot) return;
             if (updated.breakStartSlot + updated.breakDurationSlots > updated.endSlot) return;
         }
@@ -254,7 +333,12 @@ export const ShiftEditorModal: React.FC<Props> = ({
         } else {
             // Add break using the configured duration at the 5th hour.
             updated.breakDurationSlots = requiredBreakDurationSlots;
-            updated.breakStartSlot = updated.startSlot + hoursToSlots(5);
+            const latestCompliantStart = updated.startSlot + hoursToSlots(MAX_HOURS_WITHOUT_BREAK);
+            const earliestCompliantStart = updated.endSlot - requiredBreakDurationSlots - hoursToSlots(MAX_HOURS_WITHOUT_BREAK);
+            updated.breakStartSlot = Math.max(updated.startSlot, Math.min(
+                latestCompliantStart,
+                Math.max(earliestCompliantStart, updated.startSlot),
+            ));
         }
         setCurrentShift(updated);
     };
@@ -286,6 +370,20 @@ export const ShiftEditorModal: React.FC<Props> = ({
                             <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-gray-100 text-gray-600">
                                 {slotDurationToHours(currentShift.endSlot - currentShift.startSlot).toFixed(2)} Hrs
                             </span>
+                            {currentShift.isPlaceholder && (
+                                <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-700">
+                                    New driver
+                                </span>
+                            )}
+                            <label className="flex items-center gap-2 rounded-full bg-gray-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-gray-600">
+                                <input
+                                    type="checkbox"
+                                    checked={currentShift.isStraightShift === true}
+                                    onChange={(e) => setCurrentShift({ ...currentShift, isStraightShift: e.target.checked })}
+                                    className="h-4 w-4 accent-brand-blue"
+                                />
+                                Straight / no lunch
+                            </label>
                         </div>
                         <div className="flex items-center gap-2 h-6">
                             {validationMsg ? (
@@ -308,6 +406,9 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                     onChange={(e) => setCurrentShift({
                                         ...currentShift,
                                         handoffFromShiftId: e.target.value || undefined,
+                                        handoffFromLocation: e.target.value
+                                            ? (currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION)
+                                            : undefined,
                                     })}
                                     disabled={!canUseShiftHandoffs}
                                     className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
@@ -321,6 +422,21 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                             </option>
                                         ))}
                                 </select>
+                                <select
+                                    value={currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION}
+                                    onChange={(e) => setCurrentShift({
+                                        ...currentShift,
+                                        handoffFromLocation: e.target.value as OnDemandChangeoffLocation,
+                                    })}
+                                    disabled={!canUseShiftHandoffs || !currentShift.handoffFromShiftId}
+                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                                >
+                                    {changeoffLocations.map(location => (
+                                        <option key={location} value={location}>
+                                            Changeoff at {ON_DEMAND_CHANGEOFF_LOCATION_LABELS[location]}
+                                        </option>
+                                    ))}
+                                </select>
                             </label>
 
                             <label className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
@@ -330,6 +446,9 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                     onChange={(e) => setCurrentShift({
                                         ...currentShift,
                                         handoffToShiftId: e.target.value || undefined,
+                                        handoffToLocation: e.target.value
+                                            ? (currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION)
+                                            : undefined,
                                     })}
                                     disabled={!canUseShiftHandoffs}
                                     className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
@@ -343,12 +462,27 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                             </option>
                                         ))}
                                 </select>
+                                <select
+                                    value={currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION}
+                                    onChange={(e) => setCurrentShift({
+                                        ...currentShift,
+                                        handoffToLocation: e.target.value as OnDemandChangeoffLocation,
+                                    })}
+                                    disabled={!canUseShiftHandoffs || !currentShift.handoffToShiftId}
+                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                                >
+                                    {changeoffLocations.map(location => (
+                                        <option key={location} value={location}>
+                                            Changeoff at {ON_DEMAND_CHANGEOFF_LOCATION_LABELS[location]}
+                                        </option>
+                                    ))}
+                                </select>
                             </label>
                         </div>
                         <div className="mt-3 text-xs font-semibold text-gray-500">
                             {canUseShiftHandoffs
-                                ? 'Only reciprocal handoffs between consecutive North/South service pieces are valid. Invalid handoffs are blocked before save.'
-                                : 'Shift handoffs are only available for North and South service pieces.'}
+                                ? `Reciprocal handoffs between consecutive service pieces are valid. On-site locations remove the changeoff travel penalty. Lunch is required before any non-straight shift exceeds ${MAX_HOURS_WITHOUT_BREAK} consecutive driving hours.`
+                                : 'Set a valid shift time before adding handoffs.'}
                         </div>
                     </div>
                     <button
@@ -475,13 +609,25 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                     <div className="h-8 w-px bg-gray-200"></div>
                                     <div className="flex items-center gap-3">
                                         <button onClick={() => adjustTime('startSlot', -1)} className="p-1 hover:bg-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"><ChevronLeft size={18} strokeWidth={3} /></button>
-                                        <span className="font-mono text-xl font-bold text-gray-700">{formatSlotToTime(currentShift.startSlot)}</span>
+                                        <input
+                                            type="time"
+                                            value={getShiftTimeInputValue('startSlot')}
+                                            onChange={(e) => setShiftBoundaryFromInput('startSlot', e.target.value)}
+                                            className="w-28 rounded-lg border border-gray-200 bg-white px-2 py-1 font-mono text-xl font-bold text-gray-700 focus:border-brand-blue focus:outline-none"
+                                            aria-label="Shift start time"
+                                        />
                                         <button onClick={() => adjustTime('startSlot', 1)} className="p-1 hover:bg-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"><ChevronRight size={18} strokeWidth={3} /></button>
                                     </div>
                                     <span className="text-gray-300 font-bold">-</span>
                                     <div className="flex items-center gap-3">
                                         <button onClick={() => adjustTime('endSlot', -1)} className="p-1 hover:bg-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"><ChevronLeft size={18} strokeWidth={3} /></button>
-                                        <span className="font-mono text-xl font-bold text-gray-700">{formatSlotToTime(currentShift.endSlot)}</span>
+                                        <input
+                                            type="time"
+                                            value={getShiftTimeInputValue('endSlot')}
+                                            onChange={(e) => setShiftBoundaryFromInput('endSlot', e.target.value)}
+                                            className="w-28 rounded-lg border border-gray-200 bg-white px-2 py-1 font-mono text-xl font-bold text-gray-700 focus:border-brand-blue focus:outline-none"
+                                            aria-label="Shift end time"
+                                        />
                                         <button onClick={() => adjustTime('endSlot', 1)} className="p-1 hover:bg-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"><ChevronRight size={18} strokeWidth={3} /></button>
                                     </div>
                                 </div>
@@ -498,6 +644,12 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                             <button onClick={() => adjustTime('breakStartSlot', -1)} className="p-1 hover:bg-orange-100 rounded-md text-orange-300 hover:text-orange-500 transition-colors"><ChevronLeft size={18} strokeWidth={3} /></button>
                                             <span className="font-mono text-xl font-bold text-gray-700">{formatSlotToTime(currentShift.breakStartSlot)}</span>
                                             <button onClick={() => adjustTime('breakStartSlot', 1)} className="p-1 hover:bg-orange-100 rounded-md text-orange-300 hover:text-orange-500 transition-colors"><ChevronRight size={18} strokeWidth={3} /></button>
+                                        </div>
+                                        <div className="h-8 w-px bg-orange-200/50"></div>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={() => adjustTime('breakDurationSlots', -1)} className="p-1 hover:bg-orange-100 rounded-md text-orange-300 hover:text-orange-500 transition-colors"><ChevronLeft size={18} strokeWidth={3} /></button>
+                                            <span className="font-mono text-xl font-bold text-gray-700">{slotToMinutes(currentShift.breakDurationSlots)}m</span>
+                                            <button onClick={() => adjustTime('breakDurationSlots', 1)} className="p-1 hover:bg-orange-100 rounded-md text-orange-300 hover:text-orange-500 transition-colors"><ChevronRight size={18} strokeWidth={3} /></button>
                                         </div>
 
                                         <button
@@ -527,7 +679,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                     Discard
                                 </button>
                                 <button
-                                    onClick={() => onSave(currentShift)}
+                                    onClick={saveCurrentShift}
                                     disabled={validationMsg !== null}
                                     className="px-10 py-4 rounded-xl font-bold text-white bg-brand-blue hover:bg-blue-600 shadow-lg shadow-blue-200/50 flex items-center gap-3 transition-all transform hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:hover:bg-brand-blue disabled:hover:translate-y-0"
                                 >

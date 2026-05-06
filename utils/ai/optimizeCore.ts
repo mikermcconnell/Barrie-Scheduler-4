@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import {
-  BREAK_THRESHOLD_HOURS,
+  MAX_HOURS_WITHOUT_BREAK,
   MAX_SHIFT_HOURS,
   MIN_SHIFT_HOURS,
   SLOT_MINUTES,
@@ -222,10 +222,10 @@ export function buildOptimizeCommonRules(
     UNION RULES:
     - Shift length rules apply to actual drive time between drive start and drive end.
     - Shift Length: ${MIN_SHIFT_HOURS}-${MAX_SHIFT_HOURS} hours (${hoursToSlots(MIN_SHIFT_HOURS)}-${hoursToSlots(MAX_SHIFT_HOURS)} slots) of actual drive time.
-    - Breaks: ${configuredBreakDurationMinutes}min (${configuredBreakDurationSlots} slots) if actual drive time > ${BREAK_THRESHOLD_HOURS}h.
-    - Breaks must occur between hour 4 and 6 of the shift.
+    - Lunch breaks: non-straight shifts cannot exceed ${MAX_HOURS_WITHOUT_BREAK} consecutive driving hours without lunch.
+    - Use ${configuredBreakDurationMinutes}min (${configuredBreakDurationSlots} slots) as the default lunch length, unless an existing edited shift has a different valid duration.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
-    - CHANGEOFFS ONLY APPLY AT TRUE MID-SERVICE HANDOFFS where one North/South revenue shift ends and another begins.
+    - CHANGEOFFS ONLY APPLY AT TRUE MID-SERVICE HANDOFFS where one revenue shift ends and another begins.
     - MORNING PULL-OUTS AND FINAL PULL-INS DO NOT LOSE REVENUE TIME TO CHANGEOFF TRAVEL.
     - NORTH CHANGEOFF: when a North handoff occurs, remove ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes leaving the zone and ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes returning from the garage.
     - SOUTH CHANGEOFF: when a South handoff occurs, remove ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes leaving the zone and ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes returning from the garage.
@@ -470,7 +470,7 @@ export async function optimizeImplementation({
     ${commonRules}
     
     POLISHING TASKS:
-    1. **Strict Break Windows**: ENSURE every break is between the 4th and 6th hour (Slots: Start+${hoursToSlots(4)} to Start+${hoursToSlots(6)}). MOVE them if they are off by even 1 slot.
+    1. **Lunch Compliance**: ENSURE non-straight shifts never exceed ${MAX_HOURS_WITHOUT_BREAK} consecutive driving hours before or after lunch. The old 4th-to-6th-hour window does not apply.
     2. **Gap Guardrail**: Do not leave any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
     3. **Stagger Changeoffs**: If multiple changeoffs land in the same slot, spread them apart when coverage remains acceptable.
     4. **Trim Surpluses**: If a zone has sustained surplus and coverage remains acceptable, cut a shift earlier or start it later.

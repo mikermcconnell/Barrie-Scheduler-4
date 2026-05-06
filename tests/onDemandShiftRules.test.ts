@@ -32,7 +32,7 @@ describe('on-demand shift rules', () => {
 
     expect(shift.startSlot).toBe(2);
     expect(shift.endSlot).toBe(2 + MAX_SHIFT_SLOTS);
-    expect(shift.breakStartSlot).toBe(2 + hoursToSlots(6));
+    expect(shift.breakStartSlot).toBe(2 + hoursToSlots(5));
     expect(shift.breakDurationSlots).toBe(9);
     expect(shift.zone).toBe(Zone.NORTH);
   });
@@ -47,7 +47,7 @@ describe('on-demand shift rules', () => {
 
     expect(shift.startSlot).toBe(TIME_SLOTS_PER_DAY - MAX_SHIFT_SLOTS);
     expect(shift.endSlot).toBe(TIME_SLOTS_PER_DAY);
-    expect(shift.breakStartSlot).toBe(TIME_SLOTS_PER_DAY - MAX_SHIFT_SLOTS + hoursToSlots(6));
+    expect(shift.breakStartSlot).toBe(TIME_SLOTS_PER_DAY - MAX_SHIFT_SLOTS + hoursToSlots(5));
     expect(shift.zone).toBe(Zone.FLOATER);
   });
 
@@ -55,7 +55,7 @@ describe('on-demand shift rules', () => {
     const violations = validateOnDemandShiftRules([
       makeShift({
         endSlot: hoursToSlots(8),
-        breakStartSlot: 10,
+        breakStartSlot: 0,
         breakDurationSlots: 1,
       }),
     ], 9);
@@ -67,8 +67,44 @@ describe('on-demand shift rules', () => {
     );
     expect(violations).toContainEqual(
       expect.objectContaining({
-        kind: 'break_window',
+        kind: 'max_driving_without_lunch',
       }),
     );
+  });
+
+  it('allows lunch outside the old 4th-to-6th-hour window when driving blocks stay within five hours', () => {
+    const violations = validateOnDemandShiftRules([
+      makeShift({
+        endSlot: hoursToSlots(8),
+        breakStartSlot: hoursToSlots(3),
+        breakDurationSlots: 6,
+      }),
+    ], 9);
+
+    expect(violations).toEqual([]);
+  });
+
+  it('exempts straight shifts from the lunch rule', () => {
+    const violations = validateOnDemandShiftRules([
+      makeShift({
+        endSlot: hoursToSlots(9),
+        breakDurationSlots: 0,
+        isStraightShift: true,
+      }),
+    ], 9);
+
+    expect(violations).toEqual([]);
+  });
+
+  it('ignores placeholder shifts', () => {
+    const violations = validateOnDemandShiftRules([
+      makeShift({
+        startSlot: 0,
+        endSlot: 0,
+        isPlaceholder: true,
+      }),
+    ], 9);
+
+    expect(violations).toEqual([]);
   });
 });

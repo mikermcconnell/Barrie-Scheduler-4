@@ -1,13 +1,14 @@
-import { Shift } from '../demandTypes';
+import { Shift, isSchedulableShift } from '../demandTypes';
 import { formatSlotToTime } from '../dataGenerator';
 import { slotToMinutes } from '../demandConstants';
 
 export const generateRideCoCSV = (shifts: Shift[]): string => {
-    if (!shifts || shifts.length === 0) return '';
+    const scheduledShifts = (shifts || []).filter(isSchedulableShift);
+    if (scheduledShifts.length === 0) return '';
 
     // Determine the number of columns required (Shift 1 to Shift N)
     // We'll assume the first two columns (0 and 1) are labels/empty as per the parser logic (startColIndex = 2)
-    const numShifts = shifts.length;
+    const numShifts = scheduledShifts.length;
     const numRows = 20; // Up to Row 19 (Break Duration)
     const numCols = 2 + numShifts;
 
@@ -25,7 +26,7 @@ export const generateRideCoCSV = (shifts: Shift[]): string => {
     matrix[18][0] = 'Break End';
     matrix[19][0] = 'Break Duration';
 
-    shifts.forEach((shift, index) => {
+    scheduledShifts.forEach((shift, index) => {
         const colDiff = 2; // Start data at column 2 (C)
         const col = index + colDiff;
 

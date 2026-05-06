@@ -1,7 +1,10 @@
 import {
+  DEFAULT_CHANGEOFF_LOCATION,
   Shift,
   Zone,
   type OnDemandChangeoffSettings,
+  type OnDemandChangeoffLocation,
+  isSchedulableShift,
 } from './demandTypes';
 import { changeoffMinutesToSlots } from './onDemandOptimizationSettings';
 import { getShiftDayType } from './onDemandShiftUtils';
@@ -39,7 +42,26 @@ export interface ShiftHandoffViolation {
 }
 
 const isServiceShift = (shift: Shift | undefined): shift is Shift =>
-  !!shift && (shift.zone === Zone.NORTH || shift.zone === Zone.SOUTH);
+  !!shift && isSchedulableShift(shift);
+
+export const isOnSiteChangeoffLocation = (
+  zone: Zone,
+  location: OnDemandChangeoffLocation | undefined,
+): boolean => {
+  const resolvedLocation = location ?? DEFAULT_CHANGEOFF_LOCATION;
+
+  if (zone === Zone.NORTH) {
+    return resolvedLocation === 'downtown';
+  }
+
+  if (zone === Zone.SOUTH) {
+    return resolvedLocation === 'park_place' || resolvedLocation === 'barrie_south_go';
+  }
+
+  return resolvedLocation === 'downtown'
+    || resolvedLocation === 'park_place'
+    || resolvedLocation === 'barrie_south_go';
+};
 
 const getHandoffGapSlots = (fromShift: Shift, toShift: Shift): number =>
   toShift.startSlot - fromShift.endSlot;
@@ -97,7 +119,7 @@ const pairShiftsAtSlot = (
   const remainingStarts = [...startingShifts].sort(compareShiftsForHandoffPairing);
   const pairs: Array<[Shift, Shift]> = [];
 
-  [Zone.NORTH, Zone.SOUTH].forEach((zone) => {
+  [Zone.NORTH, Zone.SOUTH, Zone.FLOATER].forEach((zone) => {
     const zoneEnds = remainingEnds.filter((shift) => shift.zone === zone);
     const zoneStarts = remainingStarts.filter((shift) => shift.zone === zone);
     const pairCount = Math.min(zoneEnds.length, zoneStarts.length);
@@ -193,7 +215,7 @@ export const validateShiftHandoffs = (shifts: Shift[]): ShiftHandoffViolation[] 
         addViolation(
           shift,
           'handoff_non_service_shift',
-          'Shift handoffs are only valid between North and South service pieces.',
+          'Shift handoffs are only valid between scheduled service pieces.',
           linkedShift,
         );
         return;
@@ -263,9 +285,7 @@ export const validateShiftHandoffs = (shifts: Shift[]): ShiftHandoffViolation[] 
 };
 
 export const buildShiftHandoffMap = (shifts: Shift[]): Map<string, ShiftHandoffLinks> => {
-  const serviceShifts = shifts.filter(
-    (shift) => shift.zone === Zone.NORTH || shift.zone === Zone.SOUTH,
-  );
+  const serviceShifts = shifts.filter(isServiceShift);
   const handoffMap = new Map<string, ShiftHandoffLinks>();
   const serviceShiftById = new Map(serviceShifts.map((shift) => [shift.id, shift]));
   const pairedShiftIds = new Set<string>();
@@ -334,14 +354,31 @@ export const resolveShiftServiceWindow = (
   handoffLinks: ShiftHandoffLinks | undefined,
   changeoffSettings: Partial<OnDemandChangeoffSettings> = {},
 ): ShiftServiceWindow => {
-  const changeoffSlots = shift.zone === Zone.NORTH
-    ? changeoffMinutesToSlots(changeoffSettings.northChangeoffMinutes ?? 0)
-    : shift.zone === Zone.SOUTH
-      ? changeoffMinutesToSlots(changeoffSettings.southChangeoffMinutes ?? 0)
-      : 0;
+  const getChangeoffSlots = (location: OnDemandChangeoffLocation | undefined): number => {
+    if (isOnSiteChangeoffLocation(shift.zone, location)) {
+      return 0;
+    }
 
-  const startChangeoffSlots = (handoffLinks?.inbound.length ?? 0) > 0 ? changeoffSlots : 0;
-  const endChangeoffSlots = (handoffLinks?.outbound.length ?? 0) > 0 ? changeoffSlots : 0;
+    if (shift.zone === Zone.NORTH) {
+      return changeoffMinutesToSlots(changeoffSettings.northChangeoffMinutes ?? 0);
+    }
+
+    if (shift.zone === Zone.SOUTH) {
+      return changeoffMinutesToSlots(changeoffSettings.southChangeoffMinutes ?? 0);
+    }
+
+    return changeoffMinutesToSlots(Math.max(
+      changeoffSettings.northChangeoffMinutes ?? 0,
+      changeoffSettings.southChangeoffMinutes ?? 0,
+    ));
+  };
+
+  const startChangeoffSlots = (handoffLinks?.inbound.length ?? 0) > 0
+    ? getChangeoffSlots(shift.handoffFromLocation)
+    : 0;
+  const endChangeoffSlots = (handoffLinks?.outbound.length ?? 0) > 0
+    ? getChangeoffSlots(shift.handoffToLocation)
+    : 0;
 
   return {
     serviceStartSlot: Math.min(shift.endSlot, shift.startSlot + startChangeoffSlots),

@@ -1,5 +1,13 @@
 import React from 'react';
-import { Shift, Zone, SummaryMetrics, ZoneFilterType, type OnDemandChangeoffSettings } from '../utils/demandTypes';
+import {
+  ON_DEMAND_CHANGEOFF_LOCATION_LABELS,
+  Shift,
+  Zone,
+  SummaryMetrics,
+  ZoneFilterType,
+  type OnDemandChangeoffSettings,
+  isSchedulableShift,
+} from '../utils/demandTypes';
 import { formatSlotToTime } from '../utils/dataGenerator';
 import { Coffee, Trash2, Plus, Clock, ChevronRight, LayoutGrid, List, ArrowRightLeft } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
@@ -16,6 +24,7 @@ interface Props {
   onZoneFilterChange: (filter: ZoneFilterType) => void;
   metrics: SummaryMetrics;
   changeoffSettings?: Partial<OnDemandChangeoffSettings>;
+  highlightShiftId?: string | null;
 }
 
 // Helper to get zone colors
@@ -40,6 +49,7 @@ export const ShiftEditor: React.FC<Props> = ({
   onZoneFilterChange,
   metrics,
   changeoffSettings,
+  highlightShiftId,
 }) => {
   const [viewMode, setViewMode] = React.useState<'grid' | 'list'>('grid');
   const handoffMap = React.useMemo(() => buildShiftHandoffMap(shifts), [shifts]);
@@ -78,13 +88,19 @@ export const ShiftEditor: React.FC<Props> = ({
     const inferredOutboundNames = (handoffLinks?.outbound ?? []).map((candidate) => candidate.driverName).join(', ');
 
     if (handoffFromName) {
-      summaries.push(`From ${handoffFromName} at ${formatSlotToTime(shift.startSlot)}`);
+      const location = shift.handoffFromLocation
+        ? ` @ ${ON_DEMAND_CHANGEOFF_LOCATION_LABELS[shift.handoffFromLocation]}`
+        : '';
+      summaries.push(`From ${handoffFromName} at ${formatSlotToTime(shift.startSlot)}${location}`);
     } else if (inferredInboundNames) {
       summaries.push(`From ${inferredInboundNames} at ${formatSlotToTime(shift.startSlot)}`);
     }
 
     if (handoffToName) {
-      summaries.push(`To ${handoffToName} at ${formatSlotToTime(shift.endSlot)}`);
+      const location = shift.handoffToLocation
+        ? ` @ ${ON_DEMAND_CHANGEOFF_LOCATION_LABELS[shift.handoffToLocation]}`
+        : '';
+      summaries.push(`To ${handoffToName} at ${formatSlotToTime(shift.endSlot)}${location}`);
     } else if (inferredOutboundNames) {
       summaries.push(`To ${inferredOutboundNames} at ${formatSlotToTime(shift.endSlot)}`);
     }
@@ -160,18 +176,22 @@ export const ShiftEditor: React.FC<Props> = ({
           {sortedShifts.map((shift) => {
             const styles = getZoneStyles(shift.zone);
             const hasBreak = shift.breakDurationSlots > 0;
+            const scheduled = isSchedulableShift(shift);
+            const isHighlighted = shift.id === highlightShiftId || shift.isPlaceholder === true;
             const handoffLinks = handoffMap.get(shift.id);
             const serviceWindow = serviceWindowMap.get(shift.id);
-            const displayStartSlot = serviceWindow?.serviceStartSlot ?? shift.startSlot;
-            const displayEndSlot = serviceWindow?.serviceEndSlot ?? shift.endSlot;
-            const drivingHours = slotDurationToHours(displayEndSlot - displayStartSlot).toFixed(1);
+            const onRoadStartSlot = serviceWindow?.serviceStartSlot ?? shift.startSlot;
+            const onRoadEndSlot = serviceWindow?.serviceEndSlot ?? shift.endSlot;
+            const shiftHours = scheduled ? slotDurationToHours(shift.endSlot - shift.startSlot).toFixed(1) : null;
+            const onRoadHours = scheduled ? slotDurationToHours(onRoadEndSlot - onRoadStartSlot).toFixed(1) : null;
+            const showOnRoadLine = scheduled && (onRoadStartSlot !== shift.startSlot || onRoadEndSlot !== shift.endSlot);
             const handoffSummaries = getShiftHandoffSummaries(shift, handoffLinks);
 
             return (
               <div
                 key={shift.id}
                 onClick={() => onEditShift?.(shift.id)}
-                className={`group relative bg-white rounded-2xl border-2 ${styles.border} p-4 hover:shadow-lg hover:-translate-y-1 transition-all cursor-pointer overflow-hidden`}
+                className={`group relative bg-white rounded-2xl border-2 ${isHighlighted ? 'border-amber-300 ring-4 ring-amber-100' : styles.border} p-4 hover:shadow-lg hover:-translate-y-1 transition-all cursor-pointer overflow-hidden`}
               >
                 {/* Zone Background Accent */}
                 <div className={`absolute top-0 left-0 w-full h-1 ${styles.bg}`} />
@@ -203,20 +223,38 @@ export const ShiftEditor: React.FC<Props> = ({
                       <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-lg ${styles.light} ${styles.text}`}>
                         {shift.zone}
                       </span>
+                      {shift.isPlaceholder && (
+                        <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-lg bg-amber-100 text-amber-700">
+                          New driver
+                        </span>
+                      )}
                     </div>
 
                     {/* Time & Duration */}
-                    <div className="flex items-center gap-2 text-sm text-gray-500 font-bold">
-                      <Clock size={14} />
-                      <span>{formatSlotToTime(displayStartSlot)} - {formatSlotToTime(displayEndSlot)}</span>
-                      <span className="bg-gray-100 px-2 py-0.5 rounded-lg text-xs">{drivingHours}h</span>
-                    </div>
+                    {scheduled ? (
+                      <>
+                        <div className="flex items-center gap-2 text-sm text-gray-500 font-bold">
+                          <Clock size={14} />
+                          <span>Shift {formatSlotToTime(shift.startSlot)} - {formatSlotToTime(shift.endSlot)}</span>
+                          <span className="bg-gray-100 px-2 py-0.5 rounded-lg text-xs">{shiftHours}h</span>
+                        </div>
+                        {showOnRoadLine && (
+                          <div className="mt-1 text-xs font-bold text-gray-400">
+                            On road {formatSlotToTime(onRoadStartSlot)} - {formatSlotToTime(onRoadEndSlot)} ({onRoadHours}h)
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+                        New driver — set shift time
+                      </div>
+                    )}
 
                     {/* Break Indicator */}
-                    {hasBreak && (
+                    {scheduled && hasBreak && (
                       <div className="flex items-center gap-1.5 mt-2 text-orange-500 text-xs font-bold">
                         <Coffee size={12} />
-                        <span>Break at {formatSlotToTime(shift.breakStartSlot)}</span>
+                        <span>Break at {formatSlotToTime(shift.breakStartSlot)} ({Math.round(slotDurationToHours(shift.breakDurationSlots) * 60)}m)</span>
                       </div>
                     )}
 
@@ -258,16 +296,19 @@ export const ShiftEditor: React.FC<Props> = ({
               {sortedShifts.map((shift) => {
                 const styles = getZoneStyles(shift.zone);
                 const hasBreak = shift.breakDurationSlots > 0;
+                const scheduled = isSchedulableShift(shift);
                 const handoffLinks = handoffMap.get(shift.id);
                 const serviceWindow = serviceWindowMap.get(shift.id);
-                const displayStartSlot = serviceWindow?.serviceStartSlot ?? shift.startSlot;
-                const displayEndSlot = serviceWindow?.serviceEndSlot ?? shift.endSlot;
-                const drivingHours = slotDurationToHours(displayEndSlot - displayStartSlot).toFixed(1);
+                const onRoadStartSlot = serviceWindow?.serviceStartSlot ?? shift.startSlot;
+                const onRoadEndSlot = serviceWindow?.serviceEndSlot ?? shift.endSlot;
+                const shiftHours = scheduled ? slotDurationToHours(shift.endSlot - shift.startSlot).toFixed(1) : null;
+                const onRoadHours = scheduled ? slotDurationToHours(onRoadEndSlot - onRoadStartSlot).toFixed(1) : null;
+                const showOnRoadLine = scheduled && (onRoadStartSlot !== shift.startSlot || onRoadEndSlot !== shift.endSlot);
                 const handoffSummaries = getShiftHandoffSummaries(shift, handoffLinks);
                 const handoffText = handoffSummaries.join(' | ');
 
                 return (
-                  <tr key={shift.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => onEditShift?.(shift.id)}>
+                  <tr key={shift.id} className={`${shift.id === highlightShiftId || shift.isPlaceholder ? 'bg-amber-50/70' : 'hover:bg-gray-50'} transition-colors cursor-pointer`} onClick={() => onEditShift?.(shift.id)}>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className={`flex-shrink-0 h-8 w-8 rounded-full ${styles.bg} flex items-center justify-center text-white font-bold text-xs`}>
@@ -275,6 +316,9 @@ export const ShiftEditor: React.FC<Props> = ({
                         </div>
                         <div className="ml-4">
                           <div className="text-sm font-bold text-gray-900">{shift.driverName}</div>
+                          {shift.isPlaceholder && (
+                            <div className="text-xs font-bold text-amber-700">New driver — set shift time</div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -284,18 +328,29 @@ export const ShiftEditor: React.FC<Props> = ({
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 font-medium">
-                        {formatSlotToTime(displayStartSlot)} - {formatSlotToTime(displayEndSlot)}
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {drivingHours} driving hours
-                      </div>
+                      {scheduled ? (
+                        <>
+                          <div className="text-sm text-gray-900 font-medium">
+                            Shift {formatSlotToTime(shift.startSlot)} - {formatSlotToTime(shift.endSlot)}
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            {shiftHours} shift hours
+                          </div>
+                          {showOnRoadLine && (
+                            <div className="text-xs font-semibold text-gray-400">
+                              On road {formatSlotToTime(onRoadStartSlot)} - {formatSlotToTime(onRoadEndSlot)} ({onRoadHours}h)
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-xs font-bold text-amber-700">No shift time set</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {hasBreak ? (
+                      {scheduled && hasBreak ? (
                         <div className="flex items-center text-sm text-orange-500 font-medium">
                           <Coffee size={14} className="mr-1.5" />
-                          {formatSlotToTime(shift.breakStartSlot)}
+                          {formatSlotToTime(shift.breakStartSlot)} ({Math.round(slotDurationToHours(shift.breakDurationSlots) * 60)}m)
                         </div>
                       ) : (
                         <span className="text-gray-400 text-xs">-</span>
