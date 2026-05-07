@@ -13,7 +13,7 @@ import {
 } from '../../utils/demandTypes';
 import { GapChart } from '../GapChart';
 import { calculateSchedule, formatSlotToTime } from '../../utils/dataGenerator';
-import { validateShiftHandoffs } from '../../utils/onDemandHandoffs';
+import { buildShiftHandoffMap, validateShiftHandoffs } from '../../utils/onDemandHandoffs';
 import { getShiftDayType, syncShiftHandoffInDay } from '../../utils/onDemandShiftUtils';
 import { validateOnDemandShiftRules } from '../../utils/onDemandShiftRules';
 import {
@@ -85,6 +85,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
         allShifts
             .filter(candidate => candidate.id !== currentShift.id)
             .filter(isSchedulableShift)
+            .filter(candidate => candidate.zone !== Zone.FLOATER)
             .sort((a, b) => {
                 if (a.startSlot !== b.startSlot) {
                     return a.startSlot - b.startSlot;
@@ -93,6 +94,22 @@ export const ShiftEditorModal: React.FC<Props> = ({
                 return a.driverName.localeCompare(b.driverName, undefined, { numeric: true, sensitivity: 'base' });
             })
     ), [allShifts, currentShift.id]);
+    const detectedHandoffLinks = useMemo(() => {
+        const shiftsWithDraftEdit = syncShiftHandoffInDay(
+            allShifts,
+            currentShift,
+            getShiftDayType(currentShift),
+        );
+        return buildShiftHandoffMap(shiftsWithDraftEdit).get(currentShift.id);
+    }, [allShifts, currentShift]);
+    const detectedHandoffFromShiftId = detectedHandoffLinks?.inbound.length === 1
+        ? detectedHandoffLinks.inbound[0]?.id
+        : undefined;
+    const detectedHandoffToShiftId = detectedHandoffLinks?.outbound.length === 1
+        ? detectedHandoffLinks.outbound[0]?.id
+        : undefined;
+    const effectiveHandoffFromShiftId = currentShift.handoffFromShiftId ?? detectedHandoffFromShiftId;
+    const effectiveHandoffToShiftId = currentShift.handoffToShiftId ?? detectedHandoffToShiftId;
 
     const formatSlotForInput = (slot: number): string => {
         if (!Number.isFinite(slot)) return '';
@@ -254,10 +271,12 @@ export const ShiftEditorModal: React.FC<Props> = ({
         onSave({
             ...currentShift,
             isPlaceholder: false,
-            handoffFromLocation: currentShift.handoffFromShiftId
+            handoffFromShiftId: effectiveHandoffFromShiftId,
+            handoffToShiftId: effectiveHandoffToShiftId,
+            handoffFromLocation: effectiveHandoffFromShiftId
                 ? (currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION)
                 : undefined,
-            handoffToLocation: currentShift.handoffToShiftId
+            handoffToLocation: effectiveHandoffToShiftId
                 ? (currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION)
                 : undefined,
         });
@@ -686,7 +705,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                 <label className="block">
                                     <div className={fieldLabelClass}>Handoff from</div>
                                     <select
-                                        value={currentShift.handoffFromShiftId ?? ''}
+                                        value={effectiveHandoffFromShiftId ?? ''}
                                         onChange={(e) => setCurrentShift({
                                             ...currentShift,
                                             handoffFromShiftId: e.target.value || undefined,
@@ -699,7 +718,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                     >
                                         <option value="">None</option>
                                         {handoffOptions
-                                            .filter(candidate => candidate.id !== currentShift.handoffToShiftId)
+                                            .filter(candidate => candidate.id !== effectiveHandoffToShiftId)
                                             .map(candidate => (
                                                 <option key={candidate.id} value={candidate.id}>
                                                     {candidate.driverName} ({formatSlotToTime(candidate.startSlot)} - {formatSlotToTime(candidate.endSlot)})
@@ -710,9 +729,10 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                         value={currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION}
                                         onChange={(e) => setCurrentShift({
                                             ...currentShift,
+                                            handoffFromShiftId: effectiveHandoffFromShiftId,
                                             handoffFromLocation: e.target.value as OnDemandChangeoffLocation,
                                         })}
-                                        disabled={!canUseShiftHandoffs || !currentShift.handoffFromShiftId}
+                                        disabled={!canUseShiftHandoffs || !effectiveHandoffFromShiftId}
                                         className={selectClass}
                                     >
                                         {changeoffLocations.map(location => (
@@ -726,7 +746,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                 <label className="block">
                                     <div className={fieldLabelClass}>Handoff to</div>
                                     <select
-                                        value={currentShift.handoffToShiftId ?? ''}
+                                        value={effectiveHandoffToShiftId ?? ''}
                                         onChange={(e) => setCurrentShift({
                                             ...currentShift,
                                             handoffToShiftId: e.target.value || undefined,
@@ -739,7 +759,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                     >
                                         <option value="">None</option>
                                         {handoffOptions
-                                            .filter(candidate => candidate.id !== currentShift.handoffFromShiftId)
+                                            .filter(candidate => candidate.id !== effectiveHandoffFromShiftId)
                                             .map(candidate => (
                                                 <option key={candidate.id} value={candidate.id}>
                                                     {candidate.driverName} ({formatSlotToTime(candidate.startSlot)} - {formatSlotToTime(candidate.endSlot)})
@@ -750,9 +770,10 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                         value={currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION}
                                         onChange={(e) => setCurrentShift({
                                             ...currentShift,
+                                            handoffToShiftId: effectiveHandoffToShiftId,
                                             handoffToLocation: e.target.value as OnDemandChangeoffLocation,
                                         })}
-                                        disabled={!canUseShiftHandoffs || !currentShift.handoffToShiftId}
+                                        disabled={!canUseShiftHandoffs || !effectiveHandoffToShiftId}
                                         className={selectClass}
                                     >
                                         {changeoffLocations.map(location => (

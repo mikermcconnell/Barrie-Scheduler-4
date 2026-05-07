@@ -42,7 +42,7 @@ export interface ShiftHandoffViolation {
 }
 
 const isServiceShift = (shift: Shift | undefined): shift is Shift =>
-  !!shift && isSchedulableShift(shift);
+  !!shift && isSchedulableShift(shift) && shift.zone !== Zone.FLOATER;
 
 export const isOnSiteChangeoffLocation = (
   zone: Zone,
