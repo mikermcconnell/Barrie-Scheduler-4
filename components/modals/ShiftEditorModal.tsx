@@ -26,7 +26,7 @@ import {
     slotToMinutes,
     minutesToSlot,
 } from '../../utils/demandConstants';
-import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, ChevronLeft, ChevronRight, GripVertical, Plus } from 'lucide-react';
 
 interface Props {
     shift: Shift;
@@ -53,6 +53,11 @@ export const ShiftEditorModal: React.FC<Props> = ({
     const [isDragging, setIsDragging] = useState<'shift' | 'break' | 'start' | 'end' | 'breakStart' | 'breakEnd' | null>(null);
     const [dragOffset, setDragOffset] = useState(0);
     const [editingShiftBoundary, setEditingShiftBoundary] = useState<'startSlot' | 'endSlot' | null>(null);
+    const [focusedShiftTimeField, setFocusedShiftTimeField] = useState<'startSlot' | 'endSlot' | null>(null);
+    const [shiftTimeDrafts, setShiftTimeDrafts] = useState<Record<'startSlot' | 'endSlot', string>>({
+        startSlot: '',
+        endSlot: '',
+    });
     const isPlaceholder = currentShift.isPlaceholder === true;
     const changeoffLocations = Object.keys(ON_DEMAND_CHANGEOFF_LOCATION_LABELS) as OnDemandChangeoffLocation[];
 
@@ -98,30 +103,83 @@ export const ShiftEditorModal: React.FC<Props> = ({
     };
 
     const parseTimeInputToSlot = (value: string): number | null => {
-        const match = value.match(/^(\d{1,2}):(\d{2})$/);
-        if (!match) return null;
+        const normalized = value.trim().toLowerCase().replace(/\s+/g, '');
+        if (!normalized) return null;
 
-        const hours = Number(match[1]);
-        const minutes = Number(match[2]);
-        if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours > 23 || minutes > 59) {
+        const meridiemMatch = normalized.match(/(am|pm)$/);
+        const meridiem = meridiemMatch?.[1] as 'am' | 'pm' | undefined;
+        const timeText = meridiem ? normalized.slice(0, -meridiem.length) : normalized;
+        let hours: number;
+        let minutes = 0;
+
+        if (timeText.includes(':')) {
+            const match = timeText.match(/^(\d{1,2}):(\d{1,2})$/);
+            if (!match) return null;
+            hours = Number(match[1]);
+            minutes = Number(match[2]);
+        } else if (/^\d{1,2}$/.test(timeText)) {
+            hours = Number(timeText);
+        } else if (/^\d{3,4}$/.test(timeText)) {
+            hours = Number(timeText.slice(0, -2));
+            minutes = Number(timeText.slice(-2));
+        } else {
             return null;
         }
 
+        if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes > 59) return null;
+
+        if (meridiem) {
+            if (hours < 1 || hours > 12) return null;
+            if (meridiem === 'am') {
+                hours = hours === 12 ? 0 : hours;
+            } else {
+                hours = hours === 12 ? 12 : hours + 12;
+            }
+        }
+
+        if (hours < 0 || hours > 23) return null;
         return minutesToSlot((hours * 60) + minutes);
     };
 
-    const setShiftBoundaryFromInput = (field: 'startSlot' | 'endSlot', value: string) => {
+    const setShiftBoundaryFromInput = (field: 'startSlot' | 'endSlot', value: string): boolean => {
         const slot = parseTimeInputToSlot(value);
-        if (slot === null) return;
+        if (slot === null) return false;
 
         setCurrentShift(prev => ({
             ...prev,
             [field]: slot,
         }));
+        setShiftTimeDrafts(prev => ({
+            ...prev,
+            [field]: formatSlotForInput(slot),
+        }));
+        return true;
     };
 
-    const handleInlineTimeKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-        if (event.key === 'Enter' || event.key === 'Escape') {
+    const resetShiftTimeDraft = (field: 'startSlot' | 'endSlot') => {
+        setShiftTimeDrafts(prev => ({
+            ...prev,
+            [field]: getShiftTimeInputValue(field),
+        }));
+    };
+
+    const commitShiftTimeDraft = (field: 'startSlot' | 'endSlot') => {
+        const committed = setShiftBoundaryFromInput(field, shiftTimeDrafts[field]);
+        if (!committed) {
+            resetShiftTimeDraft(field);
+        }
+        setFocusedShiftTimeField(null);
+        setEditingShiftBoundary(null);
+    };
+
+    const handleShiftTimeKeyDown = (field: 'startSlot' | 'endSlot', event: React.KeyboardEvent<HTMLInputElement>) => {
+        if (event.key === 'Enter') {
+            commitShiftTimeDraft(field);
+            event.currentTarget.blur();
+        } else if (event.key === 'Escape') {
+            resetShiftTimeDraft(field);
+            setFocusedShiftTimeField(null);
+            setEditingShiftBoundary(null);
             event.currentTarget.blur();
         }
     };
@@ -142,6 +200,13 @@ export const ShiftEditorModal: React.FC<Props> = ({
         return formatSlotForInput(currentShift[field]);
     };
 
+    useEffect(() => {
+        setShiftTimeDrafts(prev => ({
+            startSlot: focusedShiftTimeField === 'startSlot' ? prev.startSlot : getShiftTimeInputValue('startSlot'),
+            endSlot: focusedShiftTimeField === 'endSlot' ? prev.endSlot : getShiftTimeInputValue('endSlot'),
+        }));
+    }, [currentShift.startSlot, currentShift.endSlot, currentShift.isPlaceholder, focusedShiftTimeField]);
+
     const renderShiftBoundaryControl = (field: 'startSlot' | 'endSlot') => {
         const alignmentClass = field === 'startSlot' ? 'left-4' : 'right-4';
         const label = field === 'startSlot' ? 'Shift start time' : 'Shift end time';
@@ -149,14 +214,17 @@ export const ShiftEditorModal: React.FC<Props> = ({
         if (editingShiftBoundary === field) {
             return (
                 <input
-                    type="time"
+                    type="text"
+                    inputMode="numeric"
                     autoFocus
-                    value={getShiftTimeInputValue(field)}
-                    onChange={(e) => setShiftBoundaryFromInput(field, e.target.value)}
-                    onBlur={() => setEditingShiftBoundary(null)}
-                    onKeyDown={handleInlineTimeKeyDown}
+                    value={shiftTimeDrafts[field]}
+                    onChange={(e) => setShiftTimeDrafts(prev => ({ ...prev, [field]: e.target.value }))}
+                    onFocus={() => setFocusedShiftTimeField(field)}
+                    onBlur={() => commitShiftTimeDraft(field)}
+                    onKeyDown={(e) => handleShiftTimeKeyDown(field, e)}
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
+                    placeholder="08:30"
                     className={`absolute ${alignmentClass} top-1/2 z-40 w-[72px] -translate-y-1/2 rounded-md border border-white/70 bg-white px-1 py-0.5 font-mono text-[11px] font-bold text-gray-900 shadow-sm outline-none focus:border-white focus:ring-2 focus:ring-white/60`}
                     aria-label={label}
                 />
@@ -169,6 +237,8 @@ export const ShiftEditorModal: React.FC<Props> = ({
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                     e.stopPropagation();
+                    setShiftTimeDrafts(prev => ({ ...prev, [field]: formatSlotForInput(currentShift[field]) }));
+                    setFocusedShiftTimeField(field);
                     setEditingShiftBoundary(field);
                 }}
                 className={`absolute ${alignmentClass} top-1/2 z-40 -translate-y-1/2 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold text-white/95 hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/70`}
@@ -388,163 +458,84 @@ export const ShiftEditorModal: React.FC<Props> = ({
         setCurrentShift(updated);
     };
 
+    const shiftDurationHours = slotDurationToHours(currentShift.endSlot - currentShift.startSlot);
+    const hasBreak = currentShift.breakDurationSlots > 0;
+    const breakEndSlot = currentShift.breakStartSlot + currentShift.breakDurationSlots;
+    const zoneBadgeClass = currentShift.zone === Zone.NORTH
+        ? 'bg-blue-50 text-blue-700 border-blue-200'
+        : currentShift.zone === Zone.SOUTH
+            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+            : 'bg-purple-50 text-purple-700 border-purple-200';
+    const timeStepButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-700';
+    const orangeStepButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-lg border border-orange-200 bg-white text-orange-500 transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-600';
+    const selectClass = 'mt-2 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800 shadow-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400';
+    const fieldLabelClass = 'text-[11px] font-bold uppercase tracking-wider text-gray-500';
+
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 p-4 backdrop-blur-sm animate-in fade-in duration-200"
             onMouseUp={handleMouseUp}
             onMouseMove={handleMouseMove}
         >
-            <div className="bg-white w-full max-w-6xl h-[94vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-gray-100">
-
-                {/* Header */}
-                <div className="flex justify-between items-center px-8 py-6 border-b border-gray-100 bg-white">
-                    <div>
-                        <div className="flex items-center gap-3 mb-1">
+            <div className="flex h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-2xl">
+                <div className="border-b border-gray-200 bg-white px-6 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                            <div className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-400">Shift editor</div>
                             <input
                                 type="text"
                                 value={currentShift.driverName}
                                 onChange={(e) => setCurrentShift({ ...currentShift, driverName: e.target.value })}
-                                className="text-3xl font-extrabold text-gray-800 bg-transparent border-b-2 border-transparent hover:border-gray-200 focus:border-brand-blue focus:outline-none transition-all w-full max-w-md"
+                                className="w-full max-w-xl rounded-xl border border-transparent bg-transparent px-0 py-1 text-2xl font-extrabold text-gray-900 transition-all hover:border-gray-200 hover:bg-gray-50 hover:px-3 focus:border-brand-blue focus:bg-white focus:px-3 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                aria-label="Driver name"
                             />
-                            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${currentShift.zone === 'North' ? 'bg-blue-100 text-blue-700' :
-                                currentShift.zone === 'South' ? 'bg-green-100 text-green-700' :
-                                    'bg-purple-100 text-purple-700'
-                                }`}>
-                                {currentShift.zone} Zone
-                            </span>
-                            <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-gray-100 text-gray-600">
-                                {slotDurationToHours(currentShift.endSlot - currentShift.startSlot).toFixed(2)} Hrs
-                            </span>
-                            {currentShift.isPlaceholder && (
-                                <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-700">
-                                    New driver
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <span className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wider ${zoneBadgeClass}`}>
+                                    {currentShift.zone} Zone
                                 </span>
-                            )}
-                            <label className="flex items-center gap-2 rounded-full bg-gray-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-gray-600">
-                                <input
-                                    type="checkbox"
-                                    checked={currentShift.isStraightShift === true}
-                                    onChange={(e) => setCurrentShift({ ...currentShift, isStraightShift: e.target.checked })}
-                                    className="h-4 w-4 accent-brand-blue"
-                                />
-                                Straight / no lunch
-                            </label>
+                                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-gray-600">
+                                    {shiftDurationHours.toFixed(2)} hrs
+                                </span>
+                                {hasBreak && (
+                                    <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-orange-700">
+                                        Lunch {formatSlotToTime(currentShift.breakStartSlot)}-{formatSlotToTime(breakEndSlot)} for {slotToMinutes(currentShift.breakDurationSlots)}m
+                                    </span>
+                                )}
+                                {currentShift.isPlaceholder && (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-700">
+                                        New driver
+                                    </span>
+                                )}
+                            </div>
                         </div>
-                        <div className="flex items-center gap-2 h-6">
-                            {validationMsg ? (
-                                <div className="flex items-center gap-2 text-red-500 bg-red-50 px-3 py-1 rounded-lg animate-in fade-in slide-in-from-left-2">
-                                    <AlertTriangle size={14} strokeWidth={3} />
-                                    <span className="text-sm font-bold">{validationMsg}</span>
-                                </div>
-                            ) : (
-                                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-3 py-1 rounded-lg animate-in fade-in slide-in-from-left-2">
-                                    <CheckCircle2 size={14} strokeWidth={3} />
-                                    <span className="text-sm font-bold">Schedule Compliant</span>
-                                </div>
-                            )}
-                        </div>
-                        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <label className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
-                                <div className="text-[11px] font-extrabold uppercase tracking-wider text-gray-500">Handoff From</div>
-                                <select
-                                    value={currentShift.handoffFromShiftId ?? ''}
-                                    onChange={(e) => setCurrentShift({
-                                        ...currentShift,
-                                        handoffFromShiftId: e.target.value || undefined,
-                                        handoffFromLocation: e.target.value
-                                            ? (currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION)
-                                            : undefined,
-                                    })}
-                                    disabled={!canUseShiftHandoffs}
-                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
-                                >
-                                    <option value="">None</option>
-                                    {handoffOptions
-                                        .filter(candidate => candidate.id !== currentShift.handoffToShiftId)
-                                        .map(candidate => (
-                                            <option key={candidate.id} value={candidate.id}>
-                                                {candidate.driverName} ({formatSlotToTime(candidate.startSlot)} - {formatSlotToTime(candidate.endSlot)})
-                                            </option>
-                                        ))}
-                                </select>
-                                <select
-                                    value={currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION}
-                                    onChange={(e) => setCurrentShift({
-                                        ...currentShift,
-                                        handoffFromLocation: e.target.value as OnDemandChangeoffLocation,
-                                    })}
-                                    disabled={!canUseShiftHandoffs || !currentShift.handoffFromShiftId}
-                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
-                                >
-                                    {changeoffLocations.map(location => (
-                                        <option key={location} value={location}>
-                                            Changeoff at {ON_DEMAND_CHANGEOFF_LOCATION_LABELS[location]}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
 
-                            <label className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
-                                <div className="text-[11px] font-extrabold uppercase tracking-wider text-gray-500">Handoff To</div>
-                                <select
-                                    value={currentShift.handoffToShiftId ?? ''}
-                                    onChange={(e) => setCurrentShift({
-                                        ...currentShift,
-                                        handoffToShiftId: e.target.value || undefined,
-                                        handoffToLocation: e.target.value
-                                            ? (currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION)
-                                            : undefined,
-                                    })}
-                                    disabled={!canUseShiftHandoffs}
-                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
-                                >
-                                    <option value="">None</option>
-                                    {handoffOptions
-                                        .filter(candidate => candidate.id !== currentShift.handoffFromShiftId)
-                                        .map(candidate => (
-                                            <option key={candidate.id} value={candidate.id}>
-                                                {candidate.driverName} ({formatSlotToTime(candidate.startSlot)} - {formatSlotToTime(candidate.endSlot)})
-                                            </option>
-                                        ))}
-                                </select>
-                                <select
-                                    value={currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION}
-                                    onChange={(e) => setCurrentShift({
-                                        ...currentShift,
-                                        handoffToLocation: e.target.value as OnDemandChangeoffLocation,
-                                    })}
-                                    disabled={!canUseShiftHandoffs || !currentShift.handoffToShiftId}
-                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
-                                >
-                                    {changeoffLocations.map(location => (
-                                        <option key={location} value={location}>
-                                            Changeoff at {ON_DEMAND_CHANGEOFF_LOCATION_LABELS[location]}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                        </div>
-                        <div className="mt-3 text-xs font-semibold text-gray-500">
-                            {canUseShiftHandoffs
-                                ? `Reciprocal handoffs between consecutive service pieces are valid. On-site locations remove the changeoff travel penalty. Lunch is required before any non-straight shift exceeds ${MAX_HOURS_WITHOUT_BREAK} consecutive driving hours.`
-                                : 'Set a valid shift time before adding handoffs.'}
+                        <div className="flex shrink-0 items-start gap-3">
+                            <div className={`flex max-w-md items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold ${validationMsg ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                                {validationMsg ? <AlertTriangle size={16} strokeWidth={3} /> : <CheckCircle2 size={16} strokeWidth={3} />}
+                                <span>{validationMsg ?? 'Schedule compliant'}</span>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={onCancel}
+                                className="rounded-xl border border-gray-200 bg-white p-2 text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700"
+                                aria-label="Close shift editor"
+                            >
+                                <X size={22} />
+                            </button>
                         </div>
                     </div>
-                    <button
-                        onClick={onCancel}
-                        className="p-2 hover:bg-gray-100 rounded-full transition-all text-gray-400 hover:text-gray-600"
-                    >
-                        <X size={32} />
-                    </button>
                 </div>
 
-                {/* Main Content */}
-                <div className="flex-1 flex flex-col bg-gray-50/50 overflow-hidden">
-
-                    {/* Chart Section */}
-                    {/* Updated to use local zone filter from shift */}
-                    <div className="flex-1 p-4 min-h-0">
-                        <div className="h-full">
+                <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 xl:grid-cols-[minmax(0,1fr)_360px] xl:overflow-hidden">
+                    <div className="min-h-[360px] rounded-2xl border border-gray-200 bg-white p-4 shadow-sm xl:min-h-0">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                            <div>
+                                <h3 className="text-sm font-extrabold text-gray-900">Gap impact preview</h3>
+                                <p className="text-xs font-semibold text-gray-500">Compare coverage while you adjust this shift.</p>
+                            </div>
+                            <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-600">{localZoneFilter} view</span>
+                        </div>
+                        <div className="h-[calc(100%-3.5rem)] min-h-0">
                             <GapChart
                                 data={chartData}
                                 zoneFilter={localZoneFilter}
@@ -554,180 +545,323 @@ export const ShiftEditorModal: React.FC<Props> = ({
                         </div>
                     </div>
 
-                    {/* Controls Section (Fixed at Bottom) */}
-                    <div className="bg-white border-t border-gray-200 p-6 shadow-[0_-4px_20px_rgba(0,0,0,0.02)] z-10">
-
-                        {/* Timeline Visualizer - Aligned with Chart */}
-                        {/* Chart has: margin={{ top: 20, right: 30, left: 0, bottom: 20 }} and padding inside container */}
-                        {/* Y-axis takes ~30-40px, plus container padding. Right side has 30px margin */}
-                        <div className="mb-10" style={{ marginLeft: 38, marginRight: 30 }}>
-                            <div
-                                ref={trackRef}
-                                className="relative h-14 bg-gray-100 rounded-xl border border-gray-200 select-none cursor-pointer"
-                            >
-                                {/* Grid Lines - Fixed Alignment */}
-                                <div className="absolute inset-0 pointer-events-none">
-                                    {Array.from({ length: 25 }).map((_, i) => (
-                                        <div
-                                            key={i}
-                                            className="absolute top-0 bottom-0 border-l border-gray-200 flex flex-col justify-end pb-1"
-                                            style={{ left: `${(i / 24) * 100}%` }}
-                                        >
-                                            <span className="text-[10px] font-bold text-gray-300 pl-1">{i}</span>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {/* Shift Bar */}
-                                <div
-                                    className="absolute top-2 bottom-2 bg-brand-blue rounded-lg shadow-sm cursor-grab active:cursor-grabbing group hover:brightness-110 transition-all"
-                                    style={{
-                                        left: `${(currentShift.startSlot / TIME_SLOTS_PER_DAY) * 100}%`,
-                                        width: `${((currentShift.endSlot - currentShift.startSlot) / TIME_SLOTS_PER_DAY) * 100}%`
-                                    }}
-                                    onMouseDown={(e) => handleMouseDown(e, 'shift')}
-                                >
-                                    {/* Grip Handle (Center) */}
-                                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                        <GripHorizontal className="text-white/50" size={20} />
-                                    </div>
-
-                                    {/* Time Labels on Bar */}
-                                    {renderShiftBoundaryControl('startSlot')}
-                                    {renderShiftBoundaryControl('endSlot')}
-
-                                    {/* Resize Handle (Start) */}
-                                    <div
-                                        className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize flex items-center justify-center hover:bg-white/20 rounded-l-lg transition-colors z-20"
-                                        onMouseDown={(e) => handleMouseDown(e, 'start')}
-                                        title="Drag to resize start"
-                                    >
-                                        <GripVertical size={12} className="text-white/50" />
-                                    </div>
-
-                                    {/* Resize Handle (End) */}
-                                    <div
-                                        className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize flex items-center justify-center hover:bg-white/20 rounded-r-lg transition-colors z-20"
-                                        onMouseDown={(e) => handleMouseDown(e, 'end')}
-                                        title="Drag to resize end"
-                                    >
-                                        <GripVertical size={12} className="text-white/50" />
-                                    </div>
-                                </div>
-
-                                {/* Break Bar */}
-                                {currentShift.breakDurationSlots > 0 && (
-                                    <div
-                                        className="absolute top-2 bottom-2 bg-orange-400 rounded-md shadow-sm cursor-grab active:cursor-grabbing hover:bg-orange-300 transition-colors border-2 border-white/20 z-30 group/break"
-                                        style={{
-                                            left: `${(currentShift.breakStartSlot / TIME_SLOTS_PER_DAY) * 100}%`,
-                                            width: `${(currentShift.breakDurationSlots / TIME_SLOTS_PER_DAY) * 100}%`
-                                        }}
-                                        onMouseDown={(e) => handleMouseDown(e, 'break')}
-                                        title="Drag to move break"
-                                    >
-                                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                            <Coffee size={12} className="text-white/80" />
-                                        </div>
-
-                                    </div>
-                                )}
+                    <aside className="flex min-h-0 flex-col gap-4 pr-1 xl:overflow-y-auto">
+                        <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                            <div className="mb-4 flex items-center gap-2">
+                                <Clock size={18} className="text-gray-400" />
+                                <h3 className="text-sm font-extrabold text-gray-900">Shift time</h3>
                             </div>
-                        </div>
-
-                        {/* Control Grid */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
-
-                            {/* Time Controls */}
-                            <div className="flex items-center gap-8 justify-center lg:justify-start">
-
-                                {/* Shift Time */}
-                                <div className="flex items-center gap-4 bg-gray-50 px-6 py-3 rounded-2xl border border-gray-100">
-                                    <div className="flex items-center gap-2 text-gray-400">
-                                        <Clock size={18} />
-                                        <span className="text-xs font-bold uppercase tracking-wider">Shift</span>
-                                    </div>
-                                    <div className="h-8 w-px bg-gray-200"></div>
-                                    <div className="flex items-center gap-3">
-                                        <button onClick={() => adjustTime('startSlot', -1)} className="p-1 hover:bg-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"><ChevronLeft size={18} strokeWidth={3} /></button>
+                            <div className="space-y-3">
+                                <label className="block">
+                                    <div className={fieldLabelClass}>Start</div>
+                                    <div className="mt-2 flex items-center gap-2">
+                                        <button type="button" onClick={() => adjustTime('startSlot', -1)} className={timeStepButtonClass} aria-label="Move shift start earlier">
+                                            <ChevronLeft size={16} strokeWidth={3} />
+                                        </button>
                                         <input
-                                            type="time"
-                                            value={getShiftTimeInputValue('startSlot')}
-                                            onChange={(e) => setShiftBoundaryFromInput('startSlot', e.target.value)}
-                                            className="w-28 rounded-lg border border-gray-200 bg-white px-2 py-1 font-mono text-xl font-bold text-gray-700 focus:border-brand-blue focus:outline-none"
+                                            type="text"
+                                            inputMode="numeric"
+                                            value={shiftTimeDrafts.startSlot}
+                                            onChange={(e) => setShiftTimeDrafts(prev => ({ ...prev, startSlot: e.target.value }))}
+                                            onFocus={() => setFocusedShiftTimeField('startSlot')}
+                                            onBlur={() => commitShiftTimeDraft('startSlot')}
+                                            onKeyDown={(e) => handleShiftTimeKeyDown('startSlot', e)}
+                                            placeholder="08:30"
+                                            className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-base font-bold text-gray-900 shadow-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
                                             aria-label="Shift start time"
                                         />
-                                        <button onClick={() => adjustTime('startSlot', 1)} className="p-1 hover:bg-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"><ChevronRight size={18} strokeWidth={3} /></button>
-                                    </div>
-                                    <span className="text-gray-300 font-bold">-</span>
-                                    <div className="flex items-center gap-3">
-                                        <button onClick={() => adjustTime('endSlot', -1)} className="p-1 hover:bg-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"><ChevronLeft size={18} strokeWidth={3} /></button>
-                                        <input
-                                            type="time"
-                                            value={getShiftTimeInputValue('endSlot')}
-                                            onChange={(e) => setShiftBoundaryFromInput('endSlot', e.target.value)}
-                                            className="w-28 rounded-lg border border-gray-200 bg-white px-2 py-1 font-mono text-xl font-bold text-gray-700 focus:border-brand-blue focus:outline-none"
-                                            aria-label="Shift end time"
-                                        />
-                                        <button onClick={() => adjustTime('endSlot', 1)} className="p-1 hover:bg-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"><ChevronRight size={18} strokeWidth={3} /></button>
-                                    </div>
-                                </div>
-
-                                {/* Break Time */}
-                                {currentShift.breakDurationSlots > 0 ? (
-                                    <div className="flex items-center gap-4 bg-orange-50/50 px-6 py-3 rounded-2xl border border-orange-100/50 relative group">
-                                        <div className="flex items-center gap-2 text-orange-400">
-                                            <Coffee size={18} />
-                                            <span className="text-xs font-bold uppercase tracking-wider">Break</span>
-                                        </div>
-                                        <div className="h-8 w-px bg-orange-200/50"></div>
-                                        <div className="flex items-center gap-3">
-                                            <button onClick={() => adjustTime('breakStartSlot', -1)} className="p-1 hover:bg-orange-100 rounded-md text-orange-300 hover:text-orange-500 transition-colors"><ChevronLeft size={18} strokeWidth={3} /></button>
-                                            <span className="font-mono text-xl font-bold text-gray-700">{formatSlotToTime(currentShift.breakStartSlot)}</span>
-                                            <button onClick={() => adjustTime('breakStartSlot', 1)} className="p-1 hover:bg-orange-100 rounded-md text-orange-300 hover:text-orange-500 transition-colors"><ChevronRight size={18} strokeWidth={3} /></button>
-                                        </div>
-                                        <div className="h-8 w-px bg-orange-200/50"></div>
-                                        <div className="flex items-center gap-3">
-                                            <button onClick={() => adjustTime('breakDurationSlots', -1)} className="p-1 hover:bg-orange-100 rounded-md text-orange-300 hover:text-orange-500 transition-colors"><ChevronLeft size={18} strokeWidth={3} /></button>
-                                            <span className="font-mono text-xl font-bold text-gray-700">{slotToMinutes(currentShift.breakDurationSlots)}m</span>
-                                            <button onClick={() => adjustTime('breakDurationSlots', 1)} className="p-1 hover:bg-orange-100 rounded-md text-orange-300 hover:text-orange-500 transition-colors"><ChevronRight size={18} strokeWidth={3} /></button>
-                                        </div>
-
-                                        <button
-                                            onClick={toggleBreak}
-                                            className="absolute -top-2 -right-2 bg-white text-red-400 border border-red-100 p-1 rounded-full shadow-sm hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all"
-                                            title="Remove Break"
-                                        >
-                                            <X size={12} strokeWidth={3} />
+                                        <button type="button" onClick={() => adjustTime('startSlot', 1)} className={timeStepButtonClass} aria-label="Move shift start later">
+                                            <ChevronRight size={16} strokeWidth={3} />
                                         </button>
                                     </div>
-                                ) : (
-                                    <button
-                                        onClick={toggleBreak}
-                                        className="flex items-center gap-2 px-6 py-3 rounded-2xl border-2 border-dashed border-gray-300 text-gray-400 font-bold hover:border-orange-300 hover:text-orange-500 hover:bg-orange-50 transition-all"
-                                    >
-                                        <Plus size={18} strokeWidth={3} /> Add Break
-                                    </button>
-                                )}
+                                </label>
+
+                                <label className="block">
+                                    <div className={fieldLabelClass}>End</div>
+                                    <div className="mt-2 flex items-center gap-2">
+                                        <button type="button" onClick={() => adjustTime('endSlot', -1)} className={timeStepButtonClass} aria-label="Move shift end earlier">
+                                            <ChevronLeft size={16} strokeWidth={3} />
+                                        </button>
+                                        <input
+                                            type="text"
+                                            inputMode="numeric"
+                                            value={shiftTimeDrafts.endSlot}
+                                            onChange={(e) => setShiftTimeDrafts(prev => ({ ...prev, endSlot: e.target.value }))}
+                                            onFocus={() => setFocusedShiftTimeField('endSlot')}
+                                            onBlur={() => commitShiftTimeDraft('endSlot')}
+                                            onKeyDown={(e) => handleShiftTimeKeyDown('endSlot', e)}
+                                            placeholder="16:30"
+                                            className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-base font-bold text-gray-900 shadow-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            aria-label="Shift end time"
+                                        />
+                                        <button type="button" onClick={() => adjustTime('endSlot', 1)} className={timeStepButtonClass} aria-label="Move shift end later">
+                                            <ChevronRight size={16} strokeWidth={3} />
+                                        </button>
+                                    </div>
+                                </label>
+                            </div>
+                        </section>
+
+                        <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                            <div className="mb-4 flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-2">
+                                    <Coffee size={18} className="text-orange-500" />
+                                    <div>
+                                        <h3 className="text-sm font-extrabold text-gray-900">Lunch break</h3>
+                                        <p className="text-xs font-semibold text-gray-500">Edit start and duration per shift.</p>
+                                    </div>
+                                </div>
+                                <label className="flex shrink-0 items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-xs font-bold text-gray-600">
+                                    <input
+                                        type="checkbox"
+                                        checked={currentShift.isStraightShift === true}
+                                        onChange={(e) => setCurrentShift({ ...currentShift, isStraightShift: e.target.checked })}
+                                        className="h-4 w-4 accent-brand-blue"
+                                    />
+                                    Straight
+                                </label>
                             </div>
 
-                            {/* Actions */}
-                            <div className="flex justify-end gap-4">
+                            {hasBreak ? (
+                                <div className="space-y-4">
+                                    <div className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-bold text-orange-800">
+                                        {formatSlotToTime(currentShift.breakStartSlot)} - {formatSlotToTime(breakEndSlot)} for {slotToMinutes(currentShift.breakDurationSlots)} minutes
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <div className={fieldLabelClass}>Break start</div>
+                                            <div className="mt-2 flex items-center gap-2">
+                                                <button type="button" onClick={() => adjustTime('breakStartSlot', -1)} className={orangeStepButtonClass} aria-label="Move break earlier">
+                                                    <ChevronLeft size={16} strokeWidth={3} />
+                                                </button>
+                                                <span className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-center font-mono text-sm font-bold text-gray-800">
+                                                    {formatSlotToTime(currentShift.breakStartSlot)}
+                                                </span>
+                                                <button type="button" onClick={() => adjustTime('breakStartSlot', 1)} className={orangeStepButtonClass} aria-label="Move break later">
+                                                    <ChevronRight size={16} strokeWidth={3} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className={fieldLabelClass}>Duration</div>
+                                            <div className="mt-2 flex items-center gap-2">
+                                                <button type="button" onClick={() => adjustTime('breakDurationSlots', -1)} className={orangeStepButtonClass} aria-label="Shorten break">
+                                                    <ChevronLeft size={16} strokeWidth={3} />
+                                                </button>
+                                                <span className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-center font-mono text-sm font-bold text-gray-800">
+                                                    {slotToMinutes(currentShift.breakDurationSlots)}m
+                                                </span>
+                                                <button type="button" onClick={() => adjustTime('breakDurationSlots', 1)} className={orangeStepButtonClass} aria-label="Lengthen break">
+                                                    <ChevronRight size={16} strokeWidth={3} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={toggleBreak}
+                                        className="w-full rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-bold text-red-600 transition-colors hover:bg-red-50"
+                                    >
+                                        Remove lunch
+                                    </button>
+                                </div>
+                            ) : (
                                 <button
-                                    onClick={onCancel}
-                                    className="px-8 py-4 rounded-xl font-bold text-gray-500 hover:bg-gray-100 transition-colors"
+                                    type="button"
+                                    onClick={toggleBreak}
+                                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-orange-200 bg-orange-50/60 px-4 py-3 text-sm font-bold text-orange-700 transition-colors hover:bg-orange-50"
                                 >
-                                    Discard
+                                    <Plus size={18} strokeWidth={3} /> Add lunch break
                                 </button>
-                                <button
-                                    onClick={saveCurrentShift}
-                                    disabled={validationMsg !== null}
-                                    className="px-10 py-4 rounded-xl font-bold text-white bg-brand-blue hover:bg-blue-600 shadow-lg shadow-blue-200/50 flex items-center gap-3 transition-all transform hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:hover:bg-brand-blue disabled:hover:translate-y-0"
-                                >
-                                    <Save size={20} /> Save Changes
-                                </button>
+                            )}
+
+                            <p className="mt-3 text-xs font-semibold leading-5 text-gray-500">
+                                Non-straight shifts need lunch before any driver exceeds {MAX_HOURS_WITHOUT_BREAK} consecutive driving hours.
+                            </p>
+                        </section>
+
+                        <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                            <h3 className="mb-3 text-sm font-extrabold text-gray-900">Shift handoff</h3>
+                            <div className="space-y-3">
+                                <label className="block">
+                                    <div className={fieldLabelClass}>Handoff from</div>
+                                    <select
+                                        value={currentShift.handoffFromShiftId ?? ''}
+                                        onChange={(e) => setCurrentShift({
+                                            ...currentShift,
+                                            handoffFromShiftId: e.target.value || undefined,
+                                            handoffFromLocation: e.target.value
+                                                ? (currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION)
+                                                : undefined,
+                                        })}
+                                        disabled={!canUseShiftHandoffs}
+                                        className={selectClass}
+                                    >
+                                        <option value="">None</option>
+                                        {handoffOptions
+                                            .filter(candidate => candidate.id !== currentShift.handoffToShiftId)
+                                            .map(candidate => (
+                                                <option key={candidate.id} value={candidate.id}>
+                                                    {candidate.driverName} ({formatSlotToTime(candidate.startSlot)} - {formatSlotToTime(candidate.endSlot)})
+                                                </option>
+                                            ))}
+                                    </select>
+                                    <select
+                                        value={currentShift.handoffFromLocation ?? DEFAULT_CHANGEOFF_LOCATION}
+                                        onChange={(e) => setCurrentShift({
+                                            ...currentShift,
+                                            handoffFromLocation: e.target.value as OnDemandChangeoffLocation,
+                                        })}
+                                        disabled={!canUseShiftHandoffs || !currentShift.handoffFromShiftId}
+                                        className={selectClass}
+                                    >
+                                        {changeoffLocations.map(location => (
+                                            <option key={location} value={location}>
+                                                Changeoff at {ON_DEMAND_CHANGEOFF_LOCATION_LABELS[location]}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+
+                                <label className="block">
+                                    <div className={fieldLabelClass}>Handoff to</div>
+                                    <select
+                                        value={currentShift.handoffToShiftId ?? ''}
+                                        onChange={(e) => setCurrentShift({
+                                            ...currentShift,
+                                            handoffToShiftId: e.target.value || undefined,
+                                            handoffToLocation: e.target.value
+                                                ? (currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION)
+                                                : undefined,
+                                        })}
+                                        disabled={!canUseShiftHandoffs}
+                                        className={selectClass}
+                                    >
+                                        <option value="">None</option>
+                                        {handoffOptions
+                                            .filter(candidate => candidate.id !== currentShift.handoffFromShiftId)
+                                            .map(candidate => (
+                                                <option key={candidate.id} value={candidate.id}>
+                                                    {candidate.driverName} ({formatSlotToTime(candidate.startSlot)} - {formatSlotToTime(candidate.endSlot)})
+                                                </option>
+                                            ))}
+                                    </select>
+                                    <select
+                                        value={currentShift.handoffToLocation ?? DEFAULT_CHANGEOFF_LOCATION}
+                                        onChange={(e) => setCurrentShift({
+                                            ...currentShift,
+                                            handoffToLocation: e.target.value as OnDemandChangeoffLocation,
+                                        })}
+                                        disabled={!canUseShiftHandoffs || !currentShift.handoffToShiftId}
+                                        className={selectClass}
+                                    >
+                                        {changeoffLocations.map(location => (
+                                            <option key={location} value={location}>
+                                                Changeoff at {ON_DEMAND_CHANGEOFF_LOCATION_LABELS[location]}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
                             </div>
+                        </section>
+                    </aside>
+                </div>
+
+                <div className="border-t border-gray-200 bg-white px-6 py-4 shadow-[0_-8px_30px_rgba(15,23,42,0.05)]">
+                    <div className="mb-3 flex items-center justify-between">
+                        <div>
+                            <h3 className="text-sm font-extrabold text-gray-900">Timeline</h3>
+                            <p className="text-xs font-semibold text-gray-500">Drag the blue bar to move the shift. Drag the orange block to move lunch.</p>
                         </div>
+                        <div className="hidden items-center gap-4 text-xs font-bold text-gray-500 sm:flex">
+                            <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-brand-blue" /> Shift</span>
+                            <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-orange-400" /> Lunch</span>
+                        </div>
+                    </div>
+
+                    <div className="mb-4" style={{ marginLeft: 38, marginRight: 30 }}>
+                        <div
+                            ref={trackRef}
+                            className="relative h-16 cursor-pointer select-none rounded-xl border border-gray-200 bg-gray-100"
+                        >
+                            <div className="absolute inset-0 pointer-events-none">
+                                {Array.from({ length: 25 }).map((_, i) => (
+                                    <div
+                                        key={i}
+                                        className="absolute top-0 bottom-0 flex flex-col justify-end border-l border-gray-200 pb-1"
+                                        style={{ left: `${(i / 24) * 100}%` }}
+                                    >
+                                        <span className="pl-1 text-[10px] font-bold text-gray-300">{i}</span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div
+                                className="absolute top-3 bottom-3 cursor-grab rounded-lg bg-brand-blue shadow-sm transition-all hover:brightness-110 active:cursor-grabbing group"
+                                style={{
+                                    left: `${(currentShift.startSlot / TIME_SLOTS_PER_DAY) * 100}%`,
+                                    width: `${((currentShift.endSlot - currentShift.startSlot) / TIME_SLOTS_PER_DAY) * 100}%`
+                                }}
+                                onMouseDown={(e) => handleMouseDown(e, 'shift')}
+                            >
+                                <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 pointer-events-none">
+                                    <GripHorizontal className="text-white/60" size={20} />
+                                </div>
+
+                                {renderShiftBoundaryControl('startSlot')}
+                                {renderShiftBoundaryControl('endSlot')}
+
+                                <div
+                                    className="absolute left-0 top-0 bottom-0 z-20 flex w-4 cursor-ew-resize items-center justify-center rounded-l-lg transition-colors hover:bg-white/20"
+                                    onMouseDown={(e) => handleMouseDown(e, 'start')}
+                                    title="Drag to resize start"
+                                >
+                                    <GripVertical size={12} className="text-white/60" />
+                                </div>
+
+                                <div
+                                    className="absolute right-0 top-0 bottom-0 z-20 flex w-4 cursor-ew-resize items-center justify-center rounded-r-lg transition-colors hover:bg-white/20"
+                                    onMouseDown={(e) => handleMouseDown(e, 'end')}
+                                    title="Drag to resize end"
+                                >
+                                    <GripVertical size={12} className="text-white/60" />
+                                </div>
+                            </div>
+
+                            {hasBreak && (
+                                <div
+                                    className="absolute top-3 bottom-3 z-30 cursor-grab rounded-md border-2 border-white/40 bg-orange-400 shadow-sm transition-colors hover:bg-orange-300 active:cursor-grabbing"
+                                    style={{
+                                        left: `${(currentShift.breakStartSlot / TIME_SLOTS_PER_DAY) * 100}%`,
+                                        width: `${(currentShift.breakDurationSlots / TIME_SLOTS_PER_DAY) * 100}%`
+                                    }}
+                                    onMouseDown={(e) => handleMouseDown(e, 'break')}
+                                    title="Drag to move lunch"
+                                >
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <Coffee size={12} className="text-white/90" />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3">
+                        <button
+                            type="button"
+                            onClick={onCancel}
+                            className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition-colors hover:bg-gray-50"
+                        >
+                            Discard
+                        </button>
+                        <button
+                            type="button"
+                            onClick={saveCurrentShift}
+                            disabled={validationMsg !== null}
+                            className="flex items-center gap-2 rounded-xl bg-brand-blue px-6 py-3 text-sm font-bold text-white shadow-sm shadow-blue-200 transition-all hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:hover:bg-brand-blue"
+                        >
+                            <Save size={18} /> Save changes
+                        </button>
                     </div>
                 </div>
             </div>
