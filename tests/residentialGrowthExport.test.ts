@@ -127,7 +127,7 @@ describe('residential growth export map utilities', () => {
         expect(summaries.map((summary) => summary.layer)).toEqual(['issued', 'occupied']);
         expect(summaries[0]).toEqual(expect.objectContaining({
             title: 'Issued Permits',
-            metricLabel: 'mapped permits',
+            metricLabel: 'mapped units',
             records: expect.arrayContaining([expect.objectContaining({ id: 'permit' })]),
         }));
         expect(summaries[1]).toEqual(expect.objectContaining({

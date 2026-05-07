@@ -1948,11 +1948,7 @@ export const ResidentialGrowthWorkspace: React.FC<ResidentialGrowthWorkspaceProp
 
                 const pageUnits = totalUnits(mappedPageRecords);
 
-                const metricValue = summary.layer === 'issued'
-
-                    ? mappedPageRecords.length.toLocaleString()
-
-                    : pageUnits.toLocaleString();
+                const metricValue = pageUnits.toLocaleString();
 
                 const groups = sortGroupsByUnits(groupRecordsByCoordinate(mappedPageRecords)).slice(0, 3);
 

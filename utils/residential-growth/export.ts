@@ -215,7 +215,7 @@ export function getResidentialGrowthExportLayerSummaries(
         {
             layer: 'issued',
             title: 'Issued Permits',
-            metricLabel: 'mapped permits',
+            metricLabel: 'mapped units',
             records: range.issued,
         },
         {
