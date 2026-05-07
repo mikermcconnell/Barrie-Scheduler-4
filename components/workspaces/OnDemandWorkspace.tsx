@@ -65,9 +65,16 @@ import {
     resolveOnDemandScheduleState,
     summarizeOnDemandValidation,
 } from '../../utils/onDemandWorkspaceState';
+import { buildOnDemandWorkspaceSignature } from '../../utils/onDemandWorkspaceChangeTracking';
+import {
+    pushOnDemandWorkspaceHistory,
+    redoOnDemandWorkspaceHistory,
+    undoOnDemandWorkspaceHistory,
+    type OnDemandWorkspaceHistory,
+} from '../../utils/onDemandWorkspaceHistory';
 import {
     Wand2, Users, BarChart3, Sparkles, Loader2,
-    Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X, Undo2, TriangleAlert
+    Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X, Undo2, Redo2, TriangleAlert
 } from 'lucide-react';
 import {
     MAX_HOURS_WITHOUT_BREAK,
@@ -240,6 +247,7 @@ interface WorkspaceUndoSnapshot {
     originalDraftName: string | null;
     currentDraftId: string | null;
     loadedCloudFiles: { master: SavedFile | null, rideco: SavedFile | null };
+    optimizationSettings: OptimizationSettings;
 }
 
 const cloneRequirements = (source: Requirement[]): Requirement[] =>
@@ -257,6 +265,11 @@ const cloneSchedules = (
         Object.entries(source).map(([key, requirements]) => [key, cloneRequirements(requirements)])
     ) as Record<string, Requirement[]>;
 };
+
+const cloneOptimizationSettings = (source: OptimizationSettings): OptimizationSettings => ({
+    ...source,
+    shiftCountCaps: { ...source.shiftCountCaps },
+});
 
 const getCloudFileLoadMessage = (error: unknown): string => {
     if (error instanceof Error) {
@@ -303,6 +316,7 @@ export const OnDemandWorkspace: React.FC = () => {
     const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [saveSuccess, setSaveSuccess] = useState(false);
+    const [lastSavedWorkspaceSignature, setLastSavedWorkspaceSignature] = useState<string | null>(null);
     const [isLoadingFromCloud, setIsLoadingFromCloud] = useState(false);
     const handleScheduleSelectRef = React.useRef<(schedule: SavedSchedule) => void>(() => {});
     const handleCloudFileSelectRef = React.useRef<(file: SavedFile) => Promise<void>>(async () => {});
@@ -337,7 +351,12 @@ export const OnDemandWorkspace: React.FC = () => {
     const optimizationInFlightRef = useRef(false);
     const [optimizationSettings, setOptimizationSettings] = useState<OptimizationSettings>(() => readOptimizationSettings());
     const [optimizationDurationHistory, setOptimizationDurationHistory] = useState<OptimizationDurationHistory>(() => readOptimizationDurationHistory());
-    const [undoSnapshot, setUndoSnapshot] = useState<WorkspaceUndoSnapshot | null>(null);
+    const [workspaceHistory, setWorkspaceHistory] = useState<OnDemandWorkspaceHistory<WorkspaceUndoSnapshot>>({
+        undoStack: [],
+        redoStack: [],
+    });
+    const nextUndoEntry = workspaceHistory.undoStack.at(-1) ?? null;
+    const nextRedoEntry = workspaceHistory.redoStack.at(-1) ?? null;
     const hasShownMedianOverrunNoticeRef = useRef(false);
 
     useEffect(() => {
@@ -429,6 +448,20 @@ export const OnDemandWorkspace: React.FC = () => {
         && !cachedFiles.rideco
         && !uploadedFiles.master
         && !uploadedFiles.rideco;
+    const currentWorkspaceSignature = useMemo(
+        () => buildOnDemandWorkspaceSignature({
+            draftName,
+            selectedDayType,
+            requirements,
+            allShifts,
+            schedules,
+            optimizationSettings,
+        }),
+        [allShifts, draftName, optimizationSettings, requirements, schedules, selectedDayType],
+    );
+    const hasUnsavedChanges = lastSavedWorkspaceSignature
+        ? currentWorkspaceSignature !== lastSavedWorkspaceSignature
+        : !usingStarterSampleData;
     const showStarterSampleBanner = hasResolvedInitialDataSource && usingStarterSampleData && !dismissedSampleBanner;
     const settingsInstruction = useMemo(
         () => buildOptimizerSettingsInstruction(optimizationSettings, selectedDayType),
@@ -553,26 +586,22 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     };
 
-    const captureUndoSnapshot = (label: string) => {
-        setUndoSnapshot({
-            label,
-            selectedDayType,
-            requirements: cloneRequirements(requirements),
-            allShifts: cloneShifts(allShifts),
-            schedules: cloneSchedules(schedules),
-            isOptimized,
-            zoneFilter,
-            draftName,
-            originalDraftName,
-            currentDraftId,
-            loadedCloudFiles,
-        });
-    };
+    const createWorkspaceSnapshot = (label: string): WorkspaceUndoSnapshot => ({
+        label,
+        selectedDayType,
+        requirements: cloneRequirements(requirements),
+        allShifts: cloneShifts(allShifts),
+        schedules: cloneSchedules(schedules),
+        isOptimized,
+        zoneFilter,
+        draftName,
+        originalDraftName,
+        currentDraftId,
+        loadedCloudFiles,
+        optimizationSettings: cloneOptimizationSettings(optimizationSettings),
+    });
 
-    const handleUndoLastChange = () => {
-        if (!undoSnapshot || isWorkspaceBusy) return;
-
-        const snapshot = undoSnapshot;
+    const restoreWorkspaceSnapshot = (snapshot: WorkspaceUndoSnapshot) => {
         const restoredShifts = cloneShifts(snapshot.allShifts);
 
         setSchedules(cloneSchedules(snapshot.schedules));
@@ -585,11 +614,54 @@ export const OnDemandWorkspace: React.FC = () => {
         setDraftName(snapshot.draftName);
         setOriginalDraftName(snapshot.originalDraftName);
         setCurrentDraftId(snapshot.currentDraftId);
-        setLoadedCloudFiles(snapshot.loadedCloudFiles);
+        setLoadedCloudFiles({ ...snapshot.loadedCloudFiles });
+        setOptimizationSettings(cloneOptimizationSettings(snapshot.optimizationSettings));
         setReviewModalData(null);
         setEditingShiftId(null);
-        setUndoSnapshot(null);
-        toast.success('Change undone', `Restored the workspace before ${snapshot.label.toLowerCase()}.`);
+        setNewlyAddedShiftId(null);
+    };
+
+    const captureUndoSnapshot = (label: string) => {
+        setWorkspaceHistory(prev => pushOnDemandWorkspaceHistory(prev, {
+            label,
+            snapshot: createWorkspaceSnapshot(label),
+        }));
+    };
+
+    const handleUndoLastChange = () => {
+        if (!nextUndoEntry || isWorkspaceBusy) return;
+
+        const result = undoOnDemandWorkspaceHistory(
+            workspaceHistory,
+            {
+                label: nextUndoEntry.label,
+                snapshot: createWorkspaceSnapshot(nextUndoEntry.label),
+            },
+        );
+
+        if (!result.restored) return;
+
+        setWorkspaceHistory(result.history);
+        restoreWorkspaceSnapshot(result.restored.snapshot);
+        toast.success('Change undone', `Restored the workspace before ${result.restored.label.toLowerCase()}.`);
+    };
+
+    const handleRedoLastChange = () => {
+        if (!nextRedoEntry || isWorkspaceBusy) return;
+
+        const result = redoOnDemandWorkspaceHistory(
+            workspaceHistory,
+            {
+                label: nextRedoEntry.label,
+                snapshot: createWorkspaceSnapshot(nextRedoEntry.label),
+            },
+        );
+
+        if (!result.restored) return;
+
+        setWorkspaceHistory(result.history);
+        restoreWorkspaceSnapshot(result.restored.snapshot);
+        toast.success('Change redone', `Reapplied ${result.restored.label.toLowerCase()}.`);
     };
 
     const buildOptimizationMessage = (result: OptimizationResult, actionLabel: string): string => {
@@ -629,17 +701,6 @@ export const OnDemandWorkspace: React.FC = () => {
     const warnValidationIssues = (actionLabel: string) => {
         if (scheduledShifts.length === 0 || validationSummary.isValid) return false;
         toast.warning(`${actionLabel} has validation issues`, validationSummary.message);
-        setActiveTab('overview');
-        return true;
-    };
-
-    const blockInvalidOperationalOutput = (actionLabel: string) => {
-        if (scheduledAllShifts.length === 0) {
-            toast.info(`${actionLabel} unavailable`, 'Load or create shifts before exporting operational outputs.');
-            return true;
-        }
-        if (validationSummary.isValid) return false;
-        toast.warning(`${actionLabel} blocked`, validationSummary.message);
         setActiveTab('overview');
         return true;
     };
@@ -1284,24 +1345,33 @@ export const OnDemandWorkspace: React.FC = () => {
     const handleScheduleSelect = (schedule: SavedSchedule) => {
         captureUndoSnapshot('schedule load');
         const resolvedScheduleState = resolveOnDemandScheduleState(schedule, selectedDayType);
+        const loadedOptimizationSettings = resolvedScheduleState.optimizationSettings
+            ? normalizeOnDemandOptimizationSettings(
+                resolvedScheduleState.optimizationSettings,
+                DEFAULT_OPTIMIZATION_SETTINGS,
+                OPTIMIZATION_SETTINGS_LIMITS,
+            )
+            : optimizationSettings;
         setAllShifts(resolvedScheduleState.allShifts);
         setShifts(resolvedScheduleState.shifts);
         setSchedules(resolvedScheduleState.schedules);
         setSelectedDayType(resolvedScheduleState.selectedDayType);
         setRequirements(resolvedScheduleState.requirements);
         if (resolvedScheduleState.optimizationSettings) {
-            setOptimizationSettings(
-                normalizeOnDemandOptimizationSettings(
-                    resolvedScheduleState.optimizationSettings,
-                    DEFAULT_OPTIMIZATION_SETTINGS,
-                    OPTIMIZATION_SETTINGS_LIMITS,
-                ),
-            );
+            setOptimizationSettings(loadedOptimizationSettings);
         }
 
         setDraftName(schedule.name);
         setOriginalDraftName(schedule.name);
         setCurrentDraftId(schedule.id);
+        setLastSavedWorkspaceSignature(buildOnDemandWorkspaceSignature({
+            draftName: schedule.name,
+            selectedDayType: resolvedScheduleState.selectedDayType,
+            requirements: resolvedScheduleState.requirements,
+            allShifts: resolvedScheduleState.allShifts,
+            schedules: resolvedScheduleState.schedules,
+            optimizationSettings: loadedOptimizationSettings,
+        }));
         setShowFileManager(false);
     };
     handleScheduleSelectRef.current = handleScheduleSelect;
@@ -1343,6 +1413,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 setOriginalDraftName(draftName); // Sync baseline to the new name
             }
 
+            setLastSavedWorkspaceSignature(currentWorkspaceSignature);
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
         } catch (err) {
@@ -1500,6 +1571,25 @@ export const OnDemandWorkspace: React.FC = () => {
                                 </span>
                             )
                         )}
+                        {!usingStarterSampleData && (
+                            <span
+                                className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-lg border ${hasUnsavedChanges
+                                    ? 'text-amber-700 bg-amber-50 border-amber-200'
+                                    : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                    }`}
+                                title={hasUnsavedChanges ? 'Current workspace has changes that are not saved to the draft.' : 'Current workspace matches the last saved draft.'}
+                            >
+                                {hasUnsavedChanges ? (
+                                    <>
+                                        <TriangleAlert size={12} /> Unsaved changes
+                                    </>
+                                ) : (
+                                    <>
+                                        <Check size={12} /> Saved
+                                    </>
+                                )}
+                            </span>
+                        )}
                     </div>
 
                     <p className="text-gray-500 font-bold mt-1">Manage Master Schedules vs. MVT Driver Shifts</p>
@@ -1615,7 +1705,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 ) : (
                                     <Save size={14} />
                                 )}
-                                {isSaving ? 'Saving...' : saveSuccess ? 'Saved' : 'Save Draft'}
+                                {isSaving ? 'Saving...' : saveSuccess ? 'Saved' : hasUnsavedChanges ? 'Save Changes' : 'Save Draft'}
                             </button>
                         </div>
                     )}
@@ -1659,19 +1749,36 @@ export const OnDemandWorkspace: React.FC = () => {
 
                             <button
                                 onClick={handleUndoLastChange}
-                                disabled={isWorkspaceBusy || !undoSnapshot}
+                                disabled={isWorkspaceBusy || !nextUndoEntry}
                                 className={`
                                 flex items-center gap-2 px-5 py-2 rounded-xl font-bold shadow-sm border active:scale-95 whitespace-nowrap
-                                ${isWorkspaceBusy || !undoSnapshot
+                                ${isWorkspaceBusy || !nextUndoEntry
                                         ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
                                         : 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600 hover:border-amber-700 shadow-md'
                                     }
                                 transition-all duration-200
                             `}
-                                title={undoSnapshot ? `Undo ${undoSnapshot.label}` : 'Undo last change'}
+                                title={nextUndoEntry ? `Undo ${nextUndoEntry.label}` : 'Undo last change'}
                             >
                                 <Undo2 size={18} />
-                                <span>{undoSnapshot ? `Undo ${undoSnapshot.label}` : 'Undo Last Change'}</span>
+                                <span>{nextUndoEntry ? `Undo ${nextUndoEntry.label}` : 'Undo Last Change'}</span>
+                            </button>
+
+                            <button
+                                onClick={handleRedoLastChange}
+                                disabled={isWorkspaceBusy || !nextRedoEntry}
+                                className={`
+                                flex items-center gap-2 px-5 py-2 rounded-xl font-bold shadow-sm border active:scale-95 whitespace-nowrap
+                                ${isWorkspaceBusy || !nextRedoEntry
+                                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                        : 'bg-sky-500 text-white border-sky-600 hover:bg-sky-600 hover:border-sky-700 shadow-md'
+                                    }
+                                transition-all duration-200
+                            `}
+                                title={nextRedoEntry ? `Redo ${nextRedoEntry.label}` : 'Redo last undone change'}
+                            >
+                                <Redo2 size={18} />
+                                <span>{nextRedoEntry ? `Redo ${nextRedoEntry.label}` : 'Redo'}</span>
                             </button>
 
                             {/* Refine Button - Primary Action */}
@@ -1733,9 +1840,11 @@ export const OnDemandWorkspace: React.FC = () => {
                             </button>
                         </div>
 
-                        {undoSnapshot && !isWorkspaceBusy && (
+                        {(nextUndoEntry || nextRedoEntry) && !isWorkspaceBusy && (
                             <div className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
-                                Ready to undo: {undoSnapshot.label}
+                                {nextUndoEntry && `Ready to undo: ${nextUndoEntry.label}`}
+                                {nextUndoEntry && nextRedoEntry && ' · '}
+                                {nextRedoEntry && `Ready to redo: ${nextRedoEntry.label}`}
                             </div>
                         )}
 

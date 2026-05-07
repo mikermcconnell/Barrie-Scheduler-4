@@ -1,10 +1,14 @@
 import React, { useState, useMemo } from 'react';
-import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType, type OnDemandChangeoffSettings } from '../../utils/demandTypes';
+import { Shift, Requirement, ZoneFilterType, type OnDemandChangeoffSettings } from '../../utils/demandTypes';
 import { GapChart } from '../GapChart';
 import { calculateSchedule, formatSlotToTime, calculateMetrics } from '../../utils/dataGenerator';
-import { Check, X, ArrowRight, AlertTriangle, Sparkles, CheckSquare, Square, Eye, EyeOff, BarChart } from 'lucide-react';
+import { Check, X, ArrowRight, Sparkles, CheckSquare, Square, BarChart } from 'lucide-react';
 import { SummaryCards } from '../SummaryCards';
 import { slotToMinutes } from '../../utils/demandConstants';
+import {
+    areOnDemandShiftsEquivalent,
+    summarizeOnDemandShiftDiff,
+} from '../../utils/onDemandWorkspaceChangeTracking';
 
 interface Props {
     currentShifts: Shift[];
@@ -63,13 +67,7 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                 });
             } else {
                 // Check for modifications
-                const isDiff =
-                    curr.startSlot !== opt.startSlot ||
-                    curr.endSlot !== opt.endSlot ||
-                    curr.breakStartSlot !== opt.breakStartSlot ||
-                    curr.zone !== opt.zone ||
-                    curr.handoffFromShiftId !== opt.handoffFromShiftId ||
-                    curr.handoffToShiftId !== opt.handoffToShiftId;
+                const isDiff = !areOnDemandShiftsEquivalent(curr, opt);
 
                 if (isDiff) {
                     let specificReason = 'Efficiency Update';
@@ -136,6 +134,11 @@ export const OptimizationReviewModal: React.FC<Props> = ({
 
         return changesList;
     }, [currentShifts, optimizedShifts]);
+
+    const changeSummary = useMemo(
+        () => summarizeOnDemandShiftDiff(currentShifts, optimizedShifts),
+        [currentShifts, optimizedShifts],
+    );
 
     // Initialize all selected by default
     React.useEffect(() => {
@@ -210,7 +213,23 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                         <h2 className="text-2xl font-extrabold text-gray-800 flex items-center gap-2">
                             <Sparkles className="text-purple-600" /> Refined Schedule Review
                         </h2>
-                        <p className="text-gray-500 font-bold text-sm">Gemini AI proposed {changes.length} optimizations.</p>
+                        <p className="text-gray-500 font-bold text-sm">
+                            Review what changed before applying the refinement.
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            <span className="rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-extrabold text-green-700">
+                                {changeSummary.added} added
+                            </span>
+                            <span className="rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-extrabold text-purple-700">
+                                {changeSummary.modified} changed
+                            </span>
+                            <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-extrabold text-red-700">
+                                {changeSummary.removed} removed
+                            </span>
+                            <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-extrabold text-gray-600">
+                                {changeSummary.unchanged} unchanged
+                            </span>
+                        </div>
                         {handoffMessage && (
                             <p className="mt-2 inline-flex max-w-3xl rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
                                 {handoffMessage}
