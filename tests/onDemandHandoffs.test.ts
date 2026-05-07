@@ -179,6 +179,28 @@ describe('on-demand handoffs', () => {
     });
   });
 
+  it('treats Welham as an off-site handoff location', () => {
+    const serviceWindows = buildShiftServiceWindowMap([
+      makeShift('north-1', Zone.NORTH, 32, 40, {
+        handoffToLocation: 'welham',
+      }),
+      makeShift('north-2', Zone.NORTH, 40, 56, {
+        handoffFromLocation: 'welham',
+      }),
+    ], {
+      northChangeoffMinutes: 15,
+    });
+
+    expect(serviceWindows.get('north-1')).toMatchObject({
+      serviceEndSlot: 37,
+      endChangeoffSlots: 3,
+    });
+    expect(serviceWindows.get('north-2')).toMatchObject({
+      serviceStartSlot: 43,
+      startChangeoffSlots: 3,
+    });
+  });
+
   it('does not shrink the first or last service piece of the day', () => {
     const serviceWindows = buildShiftServiceWindowMap([
       makeShift('north-1', Zone.NORTH, 32, 60),

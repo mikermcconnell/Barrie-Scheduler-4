@@ -55,6 +55,7 @@ export type OnDemandChangeoffLocation =
   | 'downtown'
   | 'park_place'
   | 'barrie_south_go'
+  | 'welham'
   | 'garage';
 
 export const DEFAULT_CHANGEOFF_LOCATION: OnDemandChangeoffLocation = 'garage';
@@ -63,6 +64,7 @@ export const ON_DEMAND_CHANGEOFF_LOCATION_LABELS: Record<OnDemandChangeoffLocati
   downtown: 'Downtown Terminal',
   park_place: 'Park Place',
   barrie_south_go: 'Barrie South GO',
+  welham: 'Welham',
   garage: 'Garage / off-site',
 };
 
