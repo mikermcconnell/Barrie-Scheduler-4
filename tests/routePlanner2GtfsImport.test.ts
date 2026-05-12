@@ -76,7 +76,8 @@ describe('routePlanner2GtfsImport', () => {
     expect(scenario.runtimeEstimates?.map((estimate) => estimate.runtimeMinutes)).toEqual([5, 7]);
     expect(scenario.runtimeEstimates?.every((estimate) => estimate.source === 'scheduled-proxy' && estimate.confidence === 'high')).toBe(true);
     expect(scenario.runtimeEstimates?.every((estimate) => estimate.matchedRoutes?.includes('8A'))).toBe(true);
-    expect(deriveRoutePlanner2Feasibility(scenario).confidence).toBe('high');
+    expect(scenario.runtimeSourceMode).toBe('mapbox');
+    expect(deriveRoutePlanner2Feasibility({ ...scenario, runtimeSourceMode: 'gtfs' }).confidence).toBe('high');
   });
 
   it('keeps adjacent same-minute GTFS stop times as scheduled evidence with a one-minute minimum', () => {

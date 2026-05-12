@@ -6,23 +6,25 @@
 - The current internal type name is `RoutePlanner2Scenario`, but the user-facing product language is “route.”
 - A route contains route concept inputs and derived feasibility outputs.
 - Derived outputs should be recalculable from inputs.
-- Use stable IDs even in local-only v1.
-- Keep shapes compatible with future team-scoped Firebase storage.
+- Use stable IDs so projects and scenarios can be saved independently.
+- Keep Firestore documents small enough for current route concepts; move large artifacts to Storage later if needed.
 
 ## Core Types
 
 ```typescript
 type RoutePlanner2ScenarioStatus = 'draft' | 'review';
 type RoutePlanner2RouteShape = 'one-way' | 'closed-loop' | 'out-and-back';
-type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal';
+type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal' | 'turnaround';
 type RoutePlanner2RuntimeSource =
   | 'observed-proxy'
   | 'observed-scheduled-blend'
   | 'scheduled-proxy'
+  | 'partial-scheduled-proxy'
   | 'manual'
   | 'mapbox'
   | 'fallback'
   | 'missing';
+type RoutePlanner2RuntimeSourceMode = 'gtfs' | 'mapbox';
 ```
 
 ## Project
@@ -70,6 +72,7 @@ interface RoutePlanner2Scenario {
   stops: RoutePlanner2Stop[];
   turnaroundStopId?: string;
   service: RoutePlanner2ServiceAssumptions;
+  runtimeSourceMode?: RoutePlanner2RuntimeSourceMode;
   runtimeEstimates?: RoutePlanner2SegmentRuntime[];
   runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
   notes: string;
@@ -98,9 +101,9 @@ interface RoutePlanner2RoutePoint {
 Route shape meaning:
 - `one-way`: stop sequence is used as drawn.
 - `closed-loop`: stop sequence is used as drawn, then the last stop connects back to Stop 1.
-- `out-and-back`: stop sequence runs from Stop 1 to the turnaround stop, then returns in reverse order to Stop 1.
+- `out-and-back`: stop sequence runs from Stop 1 to the explicit bus turnaround stop, then returns in reverse order to Stop 1.
 
-`turnaroundStopId` is used only for out-and-back routes. If absent, the final stop is treated as the turnaround.
+`turnaroundStopId` is used only for out-and-back routes. It must point to a stop marked with role `turnaround`; the planner should not rely on an implied U-turn or 3-point turn. If absent, the route is not bus-safe for cycle-time comparison.
 
 When `afterStopId` and `beforeStopId` are present, the route point is a route-line waypoint between two adjacent stops. `segmentSequence` orders multiple waypoints within that stop-to-stop segment. V1 creates waypoints by clicking the route line, then dragging the `+` handle to bend the path.
 
@@ -190,6 +193,8 @@ Runtime source values:
 - `fallback`: distance/default-speed estimate when stronger evidence is unavailable.
 - `missing`: no usable runtime estimate yet.
 
+`runtimeSourceMode` defaults to `mapbox` for new route concepts. In `mapbox` mode, GTFS evidence is ignored and segment runtime uses Mapbox estimates when available, then fallback assumptions. In `gtfs` mode, scheduled GTFS evidence is allowed to outrank Mapbox. Manual overrides remain planner-controlled and still outrank automatic sources.
+
 Runtime evidence fields disclose how automatic estimates were produced:
 - `scheduledRuntimeMinutes`: scheduled stop-to-stop runtime used as evidence.
 - `observedRuntimeMinutes`: observed stop-to-stop runtime used as evidence.
@@ -222,14 +227,16 @@ interface RoutePlanner2Warning {
 }
 ```
 
-## Future Firebase Shape
+## Firebase Shape
 
-V1 does not implement Firebase persistence, but future storage should likely be team-scoped:
+Route Planner 2 projects are saved in team-scoped Firestore documents:
 
 ```text
 teams/{teamId}/routePlanner2Projects/{projectId}
 teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}
 ```
+
+The project document stores metadata such as name, selected route, preferred route, scenario order, scenario count, timestamps, and updatedBy. Each scenario document stores the editable route concept inputs and cached runtime/feasibility outputs.
 
 Large geometry or derived analysis artifacts may move to Firebase Storage later if needed.
 

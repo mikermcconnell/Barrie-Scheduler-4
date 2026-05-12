@@ -2,6 +2,7 @@ import type {
     RoutePlanner2Project,
     RoutePlanner2RouteShape,
     RoutePlanner2RoutePoint,
+    RoutePlanner2RuntimeSourceMode,
     RoutePlanner2Scenario,
     RoutePlanner2SegmentRuntime,
     RoutePlanner2Stop,
@@ -9,6 +10,13 @@ import type {
     RoutePlanner2Warning,
 } from './routePlanner2Types';
 import { buildRoutePlanner2StopSegmentPairs, getRoutePlanner2SegmentId, getRoutePlanner2TurnaroundStop, sortRoutePlanner2Stops } from './routePlanner2Segments';
+
+const GTFS_RUNTIME_EVIDENCE_SOURCES = new Set<RoutePlanner2SegmentRuntime['source']>([
+    'observed-proxy',
+    'observed-scheduled-blend',
+    'partial-scheduled-proxy',
+    'scheduled-proxy',
+]);
 
 function createId(prefix: string): string {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -378,6 +386,31 @@ export function renameRoutePlanner2Stop(
     }, now);
 }
 
+export function updateRoutePlanner2RuntimeSourceMode(
+    project: RoutePlanner2Project,
+    scenarioId: string,
+    runtimeSourceMode: RoutePlanner2RuntimeSourceMode,
+    now = new Date().toISOString(),
+): RoutePlanner2Project {
+    return updateScenario(project, scenarioId, (scenario) => {
+        const currentMode = scenario.runtimeSourceMode ?? 'gtfs';
+        const currentEstimates = scenario.runtimeEstimates ?? [];
+        const nextRuntimeEstimates = runtimeSourceMode === 'mapbox'
+            ? currentEstimates.filter((estimate) => !GTFS_RUNTIME_EVIDENCE_SOURCES.has(estimate.source))
+            : currentEstimates;
+        const runtimeEstimatesChanged = nextRuntimeEstimates.length !== currentEstimates.length;
+
+        if (currentMode === runtimeSourceMode && !runtimeEstimatesChanged) return scenario;
+
+        return {
+            ...scenario,
+            runtimeSourceMode,
+            runtimeEstimates: nextRuntimeEstimates.length > 0 ? nextRuntimeEstimates : undefined,
+            feasibility: undefined,
+        };
+    }, now);
+}
+
 export function updateRoutePlanner2StopCoordinate(
     project: RoutePlanner2Project,
     scenarioId: string,
@@ -554,10 +587,22 @@ export function updateRoutePlanner2StopRole(
 ): RoutePlanner2Project {
     return updateScenario(project, scenarioId, (scenario) => {
         if (!scenario.stops.some((stop) => stop.id === stopId)) return scenario;
+        const nextRouteShape = role === 'turnaround' ? 'out-and-back' : scenario.routeShape;
+        const nextTurnaroundStopId = role === 'turnaround'
+            ? stopId
+            : scenario.turnaroundStopId === stopId
+                ? undefined
+                : scenario.turnaroundStopId;
 
         return {
             ...scenario,
-            stops: scenario.stops.map((stop) => stop.id === stopId ? { ...stop, role } : stop),
+            routeShape: nextRouteShape,
+            turnaroundStopId: nextTurnaroundStopId,
+            stops: scenario.stops.map((stop) => {
+                if (stop.id === stopId) return { ...stop, role };
+                if (role === 'turnaround' && stop.role === 'turnaround') return { ...stop, role: 'regular' };
+                return stop;
+            }),
             feasibility: undefined,
         };
     }, now);
@@ -573,28 +618,31 @@ export function updateRoutePlanner2RouteShape(
 
     return updateScenario(project, scenarioId, (scenario) => {
         const stops = [...scenario.stops].sort((a, b) => a.sequence - b.sequence);
-        const firstStop = stops[0];
-        const lastStop = stops[stops.length - 1];
-        const requestedTurnaround = stops.find((stop) => stop.id === options.turnaroundStopId);
-        const currentTurnaround = stops.find((stop) => stop.id === scenario.turnaroundStopId);
+        const requestedTurnaround = options.turnaroundStopId
+            ? stops.find((stop) => stop.id === options.turnaroundStopId)
+            : undefined;
+        const currentTurnaround = scenario.turnaroundStopId
+            ? stops.find((stop) => stop.id === scenario.turnaroundStopId)
+            : undefined;
         const turnaroundStop = routeShape === 'out-and-back'
-            ? requestedTurnaround ?? currentTurnaround ?? lastStop
+            ? requestedTurnaround ?? currentTurnaround
             : undefined;
 
         const shapedStops = stops.map((stop, index) => {
             if (routeShape === 'closed-loop') {
                 if (index === 0) return { ...stop, role: 'start-terminal' as const };
-                return stop.role === 'end-terminal' ? { ...stop, role: 'regular' as const } : stop;
+                return stop.role === 'end-terminal' || stop.role === 'turnaround' ? { ...stop, role: 'regular' as const } : stop;
             }
 
             if (routeShape === 'out-and-back') {
                 if (index === 0) return { ...stop, role: 'start-terminal' as const };
-                if (turnaroundStop && stop.id === turnaroundStop.id) return { ...stop, role: 'end-terminal' as const };
-                return stop.role === 'end-terminal' ? { ...stop, role: 'regular' as const } : stop;
+                if (turnaroundStop && stop.id === turnaroundStop.id) return { ...stop, role: 'turnaround' as const };
+                return stop.role === 'end-terminal' || stop.role === 'turnaround' ? { ...stop, role: 'regular' as const } : stop;
             }
 
             if (index === 0 && stop.role !== 'start-terminal') return { ...stop, role: 'start-terminal' as const };
             if (index === stops.length - 1 && stop.role !== 'end-terminal') return { ...stop, role: 'end-terminal' as const };
+            if (stop.role === 'turnaround') return { ...stop, role: 'regular' as const };
             return stop;
         });
 
@@ -820,7 +868,7 @@ export function deleteRoutePlanner2Stop(
             && updatedScenario.stops.some((stop) => stop.id === updatedScenario.turnaroundStopId);
         const normalizedScenario = updatedScenario.routeShape !== 'out-and-back' || validTurnaround
             ? updatedScenario
-            : { ...updatedScenario, turnaroundStopId: updatedScenario.stops[updatedScenario.stops.length - 1]?.id };
+            : { ...updatedScenario, turnaroundStopId: undefined };
 
         return {
             ...normalizedScenario,
@@ -921,6 +969,7 @@ export function reassignRoutePlanner2StopRange(
 export function validateRoutePlanner2Terminals(scenario: RoutePlanner2Scenario): RoutePlanner2Warning[] {
     const startTerminals = scenario.stops.filter((stop) => stop.role === 'start-terminal');
     const endTerminals = scenario.stops.filter((stop) => stop.role === 'end-terminal');
+    const turnaroundStops = scenario.stops.filter((stop) => stop.role === 'turnaround');
     const sortedStops = [...scenario.stops].sort((a, b) => a.sequence - b.sequence);
     const turnaroundStop = getRoutePlanner2TurnaroundStop(scenario);
     const warnings: RoutePlanner2Warning[] = [];
@@ -957,8 +1006,15 @@ export function validateRoutePlanner2Terminals(scenario: RoutePlanner2Scenario):
             warnings.push({
                 id: 'missing-turnaround-stop',
                 severity: 'blocking',
-                message: 'Choose a turnaround stop before estimating the out-and-back cycle.',
-                action: 'Pick the far end stop as the turnaround point.',
+                message: 'Choose a bus-safe turnaround before estimating the out-and-back cycle.',
+                action: 'Select the far end stop and mark it as Bus turnaround.',
+            });
+        } else if (turnaroundStop.role !== 'turnaround') {
+            warnings.push({
+                id: 'turnaround-not-bus-safe',
+                severity: 'blocking',
+                message: 'The out-and-back route needs an explicit bus turnaround, not an implied U-turn.',
+                action: 'Mark the turnaround stop as Bus turnaround, or draw a closed loop instead.',
             });
         }
     } else if (endTerminals.length === 0) {
@@ -985,6 +1041,15 @@ export function validateRoutePlanner2Terminals(scenario: RoutePlanner2Scenario):
             severity: 'warning',
             message: 'More than one end terminal is marked.',
             action: 'Keep one end terminal for this one-way concept.',
+        });
+    }
+
+    if (turnaroundStops.length > 1) {
+        warnings.push({
+            id: 'multiple-turnaround-stops',
+            severity: 'warning',
+            message: 'More than one bus turnaround is marked.',
+            action: 'Keep one bus turnaround for this out-and-back route.',
         });
     }
 

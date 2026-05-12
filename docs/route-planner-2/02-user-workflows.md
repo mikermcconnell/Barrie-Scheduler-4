@@ -67,7 +67,7 @@ The planner should be able to:
 - add stops
 - reorder stops
 - remove stops
-- mark stop roles: regular stop, timed stop, start terminal, end terminal
+- mark stop roles: regular stop, timed stop, start terminal, end terminal, bus turnaround
 - choose a route shape: one-way, closed loop, or out-and-back
 - see warnings when terminal roles are missing or invalid
 

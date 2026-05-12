@@ -60,8 +60,8 @@ export function buildRoutePlanner2PathFingerprint(coordinates: [number, number][
 
 export function getRoutePlanner2TurnaroundStop(scenario: RoutePlanner2Scenario): RoutePlanner2Stop | null {
     const stops = sortRoutePlanner2Stops(scenario.stops);
-    if (stops.length < 2) return null;
-    return stops.find((stop) => stop.id === scenario.turnaroundStopId) ?? stops[stops.length - 1] ?? null;
+    if (stops.length < 2 || !scenario.turnaroundStopId) return null;
+    return stops.find((stop) => stop.id === scenario.turnaroundStopId) ?? null;
 }
 
 export function buildRoutePlanner2StopVisitSequence(scenario: RoutePlanner2Scenario): RoutePlanner2Stop[] {
@@ -75,6 +75,7 @@ export function buildRoutePlanner2StopVisitSequence(scenario: RoutePlanner2Scena
 
     if (scenario.routeShape === 'out-and-back') {
         const turnaroundStop = getRoutePlanner2TurnaroundStop(scenario);
+        if (!turnaroundStop) return stops;
         const turnaroundIndex = turnaroundStop
             ? stops.findIndex((stop) => stop.id === turnaroundStop.id)
             : stops.length - 1;

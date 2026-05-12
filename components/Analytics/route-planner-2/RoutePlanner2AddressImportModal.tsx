@@ -3,7 +3,9 @@ import { AlertCircle, FileSpreadsheet, MapPin, Upload, X } from 'lucide-react';
 
 import {
     geocodeRoutePlanner2ParsedAddresses,
+    orderRoutePlanner2StopsGeographically,
     parseRoutePlanner2AddressWorkbook,
+    parseRoutePlanner2AddressText,
     type RoutePlanner2GeocodedAddressStop,
     type RoutePlanner2UnresolvedAddress,
 } from '../../../utils/route-planner-2/routePlanner2AddressImport';
@@ -31,6 +33,11 @@ export function RoutePlanner2AddressImportModal({
     const [preview, setPreview] = useState<ImportPreview | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [processing, setProcessing] = useState(false);
+    const [reviewInputs, setReviewInputs] = useState<Record<string, string>>({});
+    const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({});
+    const [reviewingId, setReviewingId] = useState<string | null>(null);
+    const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
+    const [geocodeProgress, setGeocodeProgress] = useState<{ completed: number; total: number } | null>(null);
 
     if (!open) return null;
 
@@ -38,6 +45,10 @@ export function RoutePlanner2AddressImportModal({
         setProcessing(true);
         setError(null);
         setPreview(null);
+        setReviewInputs({});
+        setReviewErrors({});
+        setEditingReviewId(null);
+        setGeocodeProgress(null);
 
         try {
             if (!file.name.match(/\.(xlsx|xls|csv)$/i)) {
@@ -50,7 +61,12 @@ export function RoutePlanner2AddressImportModal({
                 throw new Error('No address rows were found. Check that the file includes street address, city, province, and postal code lines.');
             }
 
-            const geocoded = await geocodeRoutePlanner2ParsedAddresses(parsed.addresses);
+            const geocoded = await geocodeRoutePlanner2ParsedAddresses(parsed.addresses, {
+                onProgress: ({ completed, total }) => setGeocodeProgress({ completed, total }),
+            });
+            setReviewInputs(Object.fromEntries(
+                geocoded.unresolved.map((item) => [item.candidate.id, item.candidate.address]),
+            ));
             setPreview({
                 fileName: file.name,
                 parsedCount: parsed.addresses.length,
@@ -79,9 +95,68 @@ export function RoutePlanner2AddressImportModal({
         setError(null);
     }
 
+    async function resolveReviewedAddress(item: RoutePlanner2UnresolvedAddress) {
+        if (!preview || reviewingId) return;
+
+        const input = reviewInputs[item.candidate.id]?.trim() || item.candidate.address;
+        const parsed = parseRoutePlanner2AddressText(input, {
+            id: item.candidate.id,
+            sourceRow: item.candidate.sourceRows[0] ?? 1,
+            sourceCell: 'manual-review',
+        });
+
+        if (!parsed) {
+            setReviewErrors((current) => ({
+                ...current,
+                [item.candidate.id]: 'Enter a full address with street, city, province, and postal code.',
+            }));
+            return;
+        }
+
+        setReviewingId(item.candidate.id);
+        setReviewErrors((current) => {
+            const next = { ...current };
+            delete next[item.candidate.id];
+            return next;
+        });
+
+        try {
+            const geocoded = await geocodeRoutePlanner2ParsedAddresses([{
+                ...parsed,
+                sourceRows: item.candidate.sourceRows,
+                occurrenceCount: item.candidate.occurrenceCount,
+            }]);
+            const fixedStop = geocoded.mappedStops[0];
+
+            if (!fixedStop) {
+                setReviewErrors((current) => ({
+                    ...current,
+                    [item.candidate.id]: geocoded.unresolved[0]?.reason ?? 'Mapbox still could not find a confident match.',
+                }));
+                return;
+            }
+
+            setPreview((current) => current
+                ? {
+                    ...current,
+                    mappedStops: orderRoutePlanner2StopsGeographically([...current.mappedStops, fixedStop]),
+                    unresolved: current.unresolved.filter((unresolved) => unresolved.candidate.id !== item.candidate.id),
+                }
+                : current);
+            setEditingReviewId(null);
+        } catch (error) {
+            setReviewErrors((current) => ({
+                ...current,
+                [item.candidate.id]: error instanceof Error ? error.message : 'Address could not be checked.',
+            }));
+        } finally {
+            setReviewingId(null);
+        }
+    }
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6" role="dialog" aria-modal="true" aria-labelledby="rp2-address-import-title">
-            <section className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <section className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
                 <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
                     <div>
                         <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-cyan-700">
@@ -110,7 +185,11 @@ export function RoutePlanner2AddressImportModal({
                             <Upload size={22} />
                         </div>
                         <div className="mt-3 text-base font-black text-slate-900">
-                            {processing ? 'Parsing and geocoding addresses…' : 'Choose address file'}
+                            {processing
+                                ? geocodeProgress
+                                    ? `Geocoding ${geocodeProgress.completed} of ${geocodeProgress.total} addresses…`
+                                    : 'Parsing addresses…'
+                                : 'Choose address file'}
                         </div>
                         <div className="mt-1 text-sm font-semibold text-slate-500">Supports .xlsx, .xls, and .csv</div>
                     </label>
@@ -170,14 +249,77 @@ export function RoutePlanner2AddressImportModal({
                             {preview.unresolved.length > 0 && (
                                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
                                     <h3 className="text-sm font-black text-amber-900">Needs manual review</h3>
-                                    <p className="mt-1 text-xs font-semibold text-amber-800">These addresses were not added because Mapbox did not return a confident match.</p>
-                                    <div className="mt-3 max-h-44 space-y-2 overflow-y-auto pr-1">
-                                        {preview.unresolved.map((item) => (
-                                            <div key={item.candidate.id} className="rounded-xl bg-white px-3 py-2 text-xs text-amber-900">
-                                                <div className="font-black">{item.candidate.address}</div>
-                                                <div className="font-semibold">{item.reason}</div>
-                                            </div>
-                                        ))}
+                                    <p className="mt-1 text-xs font-semibold text-amber-800">
+                                        Edit an address, then try again. Use the base building address for units or ranges, for example “37 Johnson St, Barrie, ON L4M 5C3”.
+                                    </p>
+                                    <div className="mt-3 max-h-72 space-y-3 overflow-y-auto pr-1">
+                                        {preview.unresolved.map((item) => {
+                                            const isEditing = editingReviewId === item.candidate.id;
+                                            const isChecking = reviewingId === item.candidate.id;
+
+                                            return (
+                                                <div key={item.candidate.id} className="rounded-xl bg-white p-3 text-xs text-amber-900">
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="min-w-0">
+                                                            <div className="break-words font-black">{item.candidate.address}</div>
+                                                            <div className="mt-0.5 font-semibold">{item.reason}</div>
+                                                        </div>
+                                                        {!isEditing && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setEditingReviewId(item.candidate.id)}
+                                                                disabled={reviewingId !== null || processing}
+                                                                className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                            >
+                                                                Fix
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    {isEditing && (
+                                                        <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50/60 p-3">
+                                                            <label className="block">
+                                                                <span className="text-[11px] font-black uppercase tracking-wide text-slate-500">Corrected address</span>
+                                                                <textarea
+                                                                    rows={2}
+                                                                    value={reviewInputs[item.candidate.id] ?? item.candidate.address}
+                                                                    onChange={(event) => setReviewInputs((current) => ({
+                                                                        ...current,
+                                                                        [item.candidate.id]: event.target.value,
+                                                                    }))}
+                                                                    className="mt-1 block w-full resize-y rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold leading-5 text-slate-900 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
+                                                                    aria-label={`Correct address for ${item.candidate.address}`}
+                                                                />
+                                                            </label>
+                                                            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setEditingReviewId(null)}
+                                                                    disabled={isChecking}
+                                                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                >
+                                                                    Cancel
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void resolveReviewedAddress(item)}
+                                                                    disabled={reviewingId !== null || processing}
+                                                                    className="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                                                >
+                                                                    {isChecking ? 'Checking…' : 'Try fix'}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {reviewErrors[item.candidate.id] && (
+                                                        <div className="mt-2 rounded-lg bg-amber-100 px-3 py-2 font-semibold text-amber-950">
+                                                            {reviewErrors[item.candidate.id]}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
@@ -187,7 +329,7 @@ export function RoutePlanner2AddressImportModal({
 
                 <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-6 py-4">
                     <div className="text-sm font-semibold text-slate-500">
-                        {preview ? `${preview.mappedStops.length} stop${preview.mappedStops.length === 1 ? '' : 's'} ready · unresolved addresses are skipped` : 'Upload a file to preview stops before adding them.'}
+                        {preview ? `${preview.mappedStops.length} stop${preview.mappedStops.length === 1 ? '' : 's'} ready${preview.unresolved.length > 0 ? ` · ${preview.unresolved.length} still need review` : ''}` : 'Upload a file to preview stops before adding them.'}
                     </div>
                     <div className="flex gap-2">
                         <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700">Cancel</button>

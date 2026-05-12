@@ -124,6 +124,16 @@ service cloud.firestore {
           allow read, write: if isTeamMember(teamId);
         }
       }
+
+      // Route Planner 2 saved route concepts
+      match /routePlanner2Projects/{projectId} {
+        allow read, write: if isTeamMember(teamId);
+
+        // Editable scenarios saved under each route planner project
+        match /scenarios/{scenarioId} {
+          allow read, write: if isTeamMember(teamId);
+        }
+      }
     }
 
     // Invite lookup documents support the authenticated join flow.

@@ -21,7 +21,7 @@ These docs are the default contract for Route Planner 2 coding. If implementatio
 
 ## V1 Scope Summary
 
-Route Planner 2 v1 is a local-first operational feasibility workspace for blank route concepts.
+Route Planner 2 v1 is a team-saveable operational feasibility workspace for blank route concepts.
 
 In scope:
 - project with routes
@@ -33,9 +33,9 @@ In scope:
 - on-screen planning summary
 - importing one or more full GTFS bus routes as editable local route concept templates
 - importing Excel/CSV address lists as custom stops, with duplicate addresses merged and unresolved geocodes held for review
+- team-scoped save/load of route planner projects
 
 Out of scope for v1:
-- Firebase persistence
 - coverage analysis
 - downstream schedule handoff
 - editing, publishing, or exporting GTFS feeds; imported GTFS routes are editable planning copies only

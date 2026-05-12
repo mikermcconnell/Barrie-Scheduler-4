@@ -5,6 +5,7 @@ import {
   geocodeRoutePlanner2ParsedAddresses,
   orderRoutePlanner2StopsGeographically,
   parseRoutePlanner2AddressWorkbook,
+  parseRoutePlanner2AddressText,
 } from '../utils/route-planner-2/routePlanner2AddressImport';
 
 function workbookBuffer(rows: unknown[][]): ArrayBuffer {
@@ -34,6 +35,32 @@ describe('routePlanner2AddressImport', () => {
       occurrenceCount: 2,
     });
     expect(result.addresses[1]?.address).toBe('100 Mapleview Drive East, Barrie, ON L4N 9H5');
+  });
+
+  it('trims trailing roster and fee text from extracted street lines', () => {
+    const result = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['309-339 Essa Rd BARRIE $0.00 $0.00\nBarrie, ON L4N 7K1'],
+    ]));
+
+    expect(result.addresses).toHaveLength(1);
+    expect(result.addresses[0]).toMatchObject({
+      streetLine: '309-339 Essa Rd',
+      address: '309-339 Essa Rd, Barrie, ON L4N 7K1',
+    });
+  });
+
+  it('parses manually corrected one-line addresses for review fixes', () => {
+    const parsed = parseRoutePlanner2AddressText('37 Johnson St, Barrie, ON L4M 5C3', {
+      id: 'review-1',
+      sourceRow: 12,
+    });
+
+    expect(parsed).toMatchObject({
+      id: 'review-1',
+      streetLine: '37 Johnson St',
+      address: '37 Johnson St, Barrie, ON L4M 5C3',
+      sourceRows: [12],
+    });
   });
 
   it('orders mapped stops geographically with a deterministic nearest-neighbour path', () => {
@@ -83,6 +110,73 @@ describe('routePlanner2AddressImport', () => {
     expect(result.unresolved[0]?.reason).toContain('not confident');
   });
 
+  it('geocodes imports with bounded parallel progress', async () => {
+    const parsed = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['10 Alpha Street\nBarrie, ON L4M 1A1'],
+      ['20 Beta Street\nBarrie, ON L4M 2B2'],
+      ['30 Gamma Street\nBarrie, ON L4M 3C3'],
+      ['40 Delta Street\nBarrie, ON L4M 4D4'],
+    ]));
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const progress: number[] = [];
+
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      activeRequests -= 1;
+
+      const url = String(input);
+      const query = decodeURIComponent(url.match(/places\/(.+?)\.json/)?.[1] ?? '');
+      const street = query.split(',')[0] ?? query;
+
+      return {
+        ok: true,
+        json: async () => ({
+          features: [{ id: street, text: street, place_name: `${street}, Barrie, Ontario, Canada`, center: [-79.70, 44.40] }],
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const result = await geocodeRoutePlanner2ParsedAddresses(parsed.addresses, {
+      token: 'token-123',
+      fetcher,
+      concurrency: 2,
+      onProgress: ({ completed }) => progress.push(completed),
+    });
+
+    expect(result.mappedStops).toHaveLength(4);
+    expect(maxActiveRequests).toBe(2);
+    expect(progress).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('reuses cached Mapbox queries during one import', async () => {
+    const parsed = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['10 Cache Street\nBarrie, ON L4M 1A1'],
+    ]));
+    const candidate = parsed.addresses[0]!;
+
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        features: [{ id: 'cache', text: '10 Cache Street', place_name: '10 Cache Street, Barrie, Ontario, Canada', center: [-79.70, 44.40] }],
+      }),
+    })) as unknown as typeof fetch;
+
+    const result = await geocodeRoutePlanner2ParsedAddresses([
+      candidate,
+      { ...candidate, id: 'address-copy' },
+    ], {
+      token: 'token-123',
+      fetcher,
+      concurrency: 2,
+    });
+
+    expect(result.mappedStops).toHaveLength(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('geocodes unit-street imports against the base civic address before manual review', async () => {
     const parsed = parseRoutePlanner2AddressWorkbook(workbookBuffer([
       ['Camper Name\n4-3 Gunn Street\nBarrie, ON L4M 2H2'],
@@ -120,5 +214,73 @@ describe('routePlanner2AddressImport', () => {
     });
     expect(result.mappedStops[0]?.notes).toContain('geocoded as base address "3 Gunn Street"');
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('geocodes high-rise unit-street imports against the base civic address', async () => {
+    const parsed = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['1012-37 Johnson St\nBarrie, ON L4M 5C3'],
+    ]));
+
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const query = decodeURIComponent(url.match(/places\/(.+?)\.json/)?.[1] ?? '');
+
+      return {
+        ok: true,
+        json: async () => ({
+          features: query.includes('37 Johnson St')
+            ? [{ id: 'johnson', text: '37 Johnson Street', place_name: '37 Johnson Street, Barrie, Ontario, Canada', center: [-79.66, 44.41] }]
+            : [],
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const result = await geocodeRoutePlanner2ParsedAddresses(parsed.addresses, {
+      token: 'token-123',
+      fetcher,
+    });
+
+    expect(result.unresolved).toHaveLength(0);
+    expect(result.mappedStops[0]).toMatchObject({
+      name: '1012-37 Johnson St',
+      address: '1012-37 Johnson St, Barrie, ON L4M 5C3',
+      lat: 44.41,
+      lng: -79.66,
+    });
+    expect(result.mappedStops[0]?.notes).toContain('geocoded as base address "37 Johnson St"');
+  });
+
+  it('geocodes range-style addresses using civic endpoints', async () => {
+    const parsed = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['309-339 Essa Rd BARRIE $0.00 $0.00\nBarrie, ON L4N 7K1'],
+    ]));
+
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const query = decodeURIComponent(url.match(/places\/(.+?)\.json/)?.[1] ?? '');
+
+      return {
+        ok: true,
+        json: async () => ({
+          features: query.includes('339 Essa Rd')
+            ? [{ id: 'essa', text: '339 Essa Road', place_name: '339 Essa Road, Barrie, Ontario, Canada', center: [-79.71, 44.36] }]
+            : [],
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const result = await geocodeRoutePlanner2ParsedAddresses(parsed.addresses, {
+      token: 'token-123',
+      fetcher,
+    });
+
+    expect(result.unresolved).toHaveLength(0);
+    expect(result.mappedStops[0]).toMatchObject({
+      name: '309-339 Essa Rd',
+      address: '309-339 Essa Rd, Barrie, ON L4N 7K1',
+      lat: 44.36,
+      lng: -79.71,
+    });
+    expect(result.mappedStops[0]?.notes).toContain('Range-style address "309-339 Essa Rd"');
   });
 });

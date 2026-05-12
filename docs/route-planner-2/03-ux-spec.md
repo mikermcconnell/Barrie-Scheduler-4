@@ -90,7 +90,15 @@ V1 interactions:
 - delete route-line waypoint handles directly from the map
 - show direction arrows on route lines; out-and-back shared segments should show arrows in both directions
 
-When a route has more than 10 stops, the map stop tray should collapse to a compact summary with stop count, start/end, selected stop, and a **Show all stops** action. The full list may expand into a scrollable tray or live in the details panel; it should not cover the map by default.
+The map stop tray should stay compact for every route size: stop count, start/end, selected stop, and a **Review stops** action. The full stop order belongs in the review rail as a scrollable panel, not as an expandable map overlay. This prevents imported routes with many stops from covering route controls or metrics.
+
+Map overlay ownership:
+- top-left: draw guidance and address search
+- top-right: view/source controls and focus toggles
+- bottom-left: compact stop summary only
+- bottom-right: route metric strip
+
+New map UI should use those zones instead of adding free-floating overlays.
 
 Route type controls:
 - Show **Closed loop** once there are at least 3 stops. It adds the final segment from the last stop back to Stop 1.

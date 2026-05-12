@@ -12,7 +12,7 @@ describe('RoutePlanner2MapCanvas direction arrows', () => {
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.7, now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Stop 2', lat: 44.39, lng: -79.68, now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-3', name: 'Stop 3', lat: 44.4, lng: -79.66, now });
-    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { now });
+    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { turnaroundStopId: 'stop-3', now });
 
     const geoJson = buildRoutePlanner2DirectionArrowGeoJson(project.scenarios[0]!, []);
     const lanes = geoJson.features.map((feature) => feature.properties.lane);

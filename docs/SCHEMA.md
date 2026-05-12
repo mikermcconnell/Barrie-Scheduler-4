@@ -29,6 +29,8 @@ firebase/
 │   │   └── imports/{importId}            # OD import history
 │   ├── residentialGrowth/{docId}         # Monthly issued/occupied residential growth datasets
 │   │   └── imports/{importId}            # Residential Growth import history
+│   ├── routePlanner2Projects/{projectId} # Route Planner 2 saved planning projects
+│   │   └── scenarios/{scenarioId}        # Saved editable route concepts
 │   └── fleetPlan/default                 # Shared fleet-planning workbook metadata + active storage pointer
 │       └── versions/{versionId}          # Fleet Plan version history
 │
@@ -39,6 +41,7 @@ firebase/
 
 `teams/{teamId}/connectionLibrary/default` and `teams/{teamId}/routeConnectionConfigs/{routeIdentity}` are used by the application and documented here because code reads and writes those paths directly.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
+`teams/{teamId}/routePlanner2Projects/{projectId}` stores Route Planner 2 project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection.
 `teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
 
 ### Cloud Storage Paths
@@ -202,6 +205,26 @@ interface PublicTimetableConfigDocument {
 ```
 
 Public timetable settings are readable by team members and should only be written by team owners/admins.
+
+### RoutePlanner2Project (`teams/{teamId}/routePlanner2Projects/{projectId}`)
+
+```typescript
+interface RoutePlanner2ProjectMetadata {
+  id: string;
+  name: string;
+  status: 'local-draft' | 'local-saved' | 'archived';
+  selectedScenarioId: string;
+  preferredScenarioId?: string;
+  scenarioOrder: string[];
+  scenarioCount: number;
+  createdAt: string;              // ISO string
+  updatedAt: string;              // ISO string, used for list ordering
+  updatedBy: string;
+  savedAt: Timestamp;
+}
+```
+
+Each editable route concept is stored at `teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}` using the `RoutePlanner2Scenario` shape from `utils/route-planner-2/routePlanner2Types.ts`. Team members can read and write these saved route plans.
 
 ### FleetPlanMetadata (`teams/{teamId}/fleetPlan/default`)
 

@@ -3,6 +3,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
+const projectPersistenceMocks = vi.hoisted(() => ({
+  listRoutePlanner2SavedProjects: vi.fn(async () => []),
+  loadRoutePlanner2Project: vi.fn(async () => null),
+  saveRoutePlanner2Project: vi.fn(async (_teamId: string, _userId: string, project: unknown) => ({
+    ...(project as Record<string, unknown>),
+    status: 'local-saved',
+    updatedAt: '2026-05-12T12:00:00.000Z',
+  })),
+}));
+
 vi.mock('../utils/route-planner-2/routePlanner2GtfsClient', () => ({
   loadRoutePlanner2GtfsImportPatterns: vi.fn(async () => [
     {
@@ -70,6 +80,8 @@ vi.mock('../utils/gtfs/corridorSpeed', async (importOriginal) => {
   };
 });
 
+vi.mock('../utils/route-planner-2/routePlanner2ProjectPersistence', () => projectPersistenceMocks);
+
 import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Workspace';
 import { buildCorridorSpeedIndex, buildCorridorSpeedMapIndex } from '../utils/gtfs/corridorSpeed';
 
@@ -110,6 +122,10 @@ describe('RoutePlanner2Workspace local workspace', () => {
   let root: Root | null = null;
 
   afterEach(() => {
+    projectPersistenceMocks.listRoutePlanner2SavedProjects.mockClear();
+    projectPersistenceMocks.loadRoutePlanner2Project.mockClear();
+    projectPersistenceMocks.saveRoutePlanner2Project.mockClear();
+
     if (root) {
       flushSync(() => {
         root?.unmount();
@@ -154,6 +170,27 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).not.toContain('Shuttle Template');
     expect(view.textContent).not.toContain('Project foundation');
     expect(view.textContent).not.toContain('Firebase persistence');
+  });
+
+  it('saves the current route plan to the team workspace', async () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Save'));
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(projectPersistenceMocks.saveRoutePlanner2Project).toHaveBeenCalledWith(
+      'team-1',
+      'user-1',
+      expect.objectContaining({
+        name: expect.any(String),
+        scenarios: expect.any(Array),
+      }),
+    );
+    expect(view.textContent).toContain('Saved to the team workspace.');
   });
 
   it('opens the address import preview flow', () => {
@@ -209,6 +246,12 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Route 400 - To Barrie South GO');
     expect(view.textContent).toContain('Barrie South GO');
     expect(view.textContent).toContain('Imported from GTFS as an editable planning copy');
+    expect(view.textContent).toContain('Mapbox only');
+
+    flushSync(() => {
+      click(findButton(view, 'GTFS route run time'));
+    });
+
     expect(view.textContent).toContain('Scheduled runtime / high');
     expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Scheduled GTFS · Route 400');
     expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Weekday · Full Day');
@@ -229,6 +272,9 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
     flushSync(() => {
       click(findButton(view, 'Import as editable route'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'GTFS route run time'));
     });
 
     const overrideInput = Array.from(view.querySelectorAll('input[aria-label^="Override runtime"]'))[0] as HTMLInputElement | undefined;
@@ -254,6 +300,9 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
     flushSync(() => {
       click(findButton(view, 'Import as editable route'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'GTFS route run time'));
     });
 
     const runtimePeriodSelect = Array.from(view.querySelectorAll('select')).find((select) =>
@@ -448,7 +497,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
       expect(rightRail?.getAttribute('data-state')).toBe('open');
       expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-      expect(view.querySelector('[data-testid="rp2-runtime-source-details"]')?.textContent).toContain('Scheduled GTFS is used when the segment matches');
+      expect(view.querySelector('[data-testid="rp2-runtime-source-details"]')?.textContent).toContain('Mapbox only');
     } finally {
       if (originalScrollIntoView) {
         HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
@@ -489,7 +538,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(stopNameInput?.value).toBe('Stop 1');
   });
 
-  it('collapses the map stop tray after more than 10 stops', () => {
+  it('keeps the map stop tray compact and uses the review rail for the full stop list', () => {
     const view = renderWorkspace();
 
     for (let index = 0; index < 11; index += 1) {
@@ -501,15 +550,16 @@ describe('RoutePlanner2Workspace local workspace', () => {
     const tray = view.querySelector('[data-testid="rp2-map-stop-tray"]');
     expect(tray?.getAttribute('data-collapsed')).toBe('true');
     expect(tray?.textContent).toContain('11 stops');
-    expect(tray?.textContent).toContain('Show all stops');
+    expect(tray?.textContent).toContain('Review stops');
     expect(tray?.textContent).not.toContain('10. Stop 10');
 
     flushSync(() => {
-      click(findButton(view, 'Show all stops'));
+      click(findButton(view, 'Review stops'));
     });
 
-    expect(tray?.getAttribute('data-collapsed')).toBe('false');
-    expect(tray?.textContent).toContain('10. Stop 10');
+    expect(tray?.getAttribute('data-collapsed')).toBe('true');
+    expect(view.querySelector('[data-testid="rp2-right-rail"]')?.getAttribute('data-state')).toBe('open');
+    expect(view.querySelector('[data-testid="rp2-stop-order-panel"]')?.textContent).toContain('10Stop 10');
   });
 
   it('moves a stop range into another route concept from the details panel', async () => {
@@ -558,7 +608,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(routeCards.some((button) => button.textContent?.includes('Option 2') && button.textContent?.includes('2 stops'))).toBe(true);
   });
 
-  it('deletes a stop from the map stop order list', () => {
+  it('deletes a stop from the review rail stop order list', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
@@ -608,13 +658,11 @@ describe('RoutePlanner2Workspace local workspace', () => {
     flushSync(() => {
       setInputValue(updatedRoleSelect!, 'end-terminal');
     });
-
-    expect(view.textContent).toContain('Scheduled GTFS corridor estimate');
+    expect(view.textContent).toContain('Fallback estimate');
     expect(view.textContent).toContain('Segment runtimes');
     expect(view.textContent).toContain('Dwell / stop sec');
     expect(view.textContent).toContain('Terminal layover stays separate');
     expect(view.textContent).toContain('Override min');
-    expect(view.textContent).toContain('Route 8A');
   });
 
   it('lets planners choose closed-loop and out-and-back route shapes from the map guide', () => {
@@ -644,6 +692,13 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
     flushSync(() => {
       click(findButton(view, 'Out and back'));
+    });
+
+    expect(view.textContent).toContain('Out and back needs a bus turnaround');
+    expect(view.textContent).toContain('Out and back: 1 → 2 → 3');
+
+    flushSync(() => {
+      click(findButton(view, 'Mark selected stop as bus turnaround'));
     });
 
     expect(view.textContent).toContain('Out and back to Stop 3');

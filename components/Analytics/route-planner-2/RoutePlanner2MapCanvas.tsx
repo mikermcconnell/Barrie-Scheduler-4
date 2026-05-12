@@ -4,7 +4,11 @@ import { Layer, Marker, Source } from 'react-map-gl/mapbox';
 import type { LayerProps, MapMouseEvent, MarkerDragEvent } from 'react-map-gl/mapbox';
 
 import { MapBase } from '../../shared';
-import { snapRoutePlanner2ScenarioToRoad } from '../../../utils/route-planner-2/routePlanner2RoadSnap';
+import {
+    buildRoutePlanner2FallbackRoadSnapResult,
+    snapRoutePlanner2ScenarioToRoad,
+    type RoutePlanner2RoadSnapProgress,
+} from '../../../utils/route-planner-2/routePlanner2RoadSnap';
 import {
     searchRoutePlanner2Addresses,
     type RoutePlanner2AddressSuggestion,
@@ -53,6 +57,7 @@ interface RoutePlanner2MapCanvasProps {
     onSetTurnaroundStop: (stopId: string) => void;
     onAddNextStop?: () => void;
     onEnterDrawFocus?: () => void;
+    onOpenStopList?: () => void;
     focusMode?: boolean;
     metricItems?: Array<{ label: string; value: string; detail?: string; description?: string; onClick?: () => void }>;
     overlayInsets?: {
@@ -183,9 +188,11 @@ function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean): strin
         ? 'bg-emerald-600'
         : stop.role === 'end-terminal'
             ? 'bg-rose-600'
-            : stop.role === 'timed'
-                ? 'bg-indigo-600'
-                : 'bg-cyan-600';
+            : stop.role === 'turnaround'
+                ? 'bg-amber-600'
+                : stop.role === 'timed'
+                    ? 'bg-indigo-600'
+                    : 'bg-cyan-600';
     return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'}`;
 }
 
@@ -448,6 +455,37 @@ function getScenarioWaypoints(scenario: RoutePlanner2Scenario): [number, number]
     return routePointWaypoints;
 }
 
+function coordinatesEqual(first: [number, number], second: [number, number]): boolean {
+    return Math.abs(first[0] - second[0]) < 0.000001 && Math.abs(first[1] - second[1]) < 0.000001;
+}
+
+function stitchSegmentGeometryCoordinates(segmentGeometries: RoutePlanner2SegmentGeometry[]): [number, number][] {
+    const stitched: [number, number][] = [];
+
+    segmentGeometries.forEach((geometry, index) => {
+        if (geometry.coordinates.length === 0) return;
+        if (index === 0) {
+            stitched.push(...geometry.coordinates);
+            return;
+        }
+
+        const [first, ...rest] = geometry.coordinates;
+        if (!stitched.length || !coordinatesEqual(stitched[stitched.length - 1]!, first)) {
+            stitched.push(first);
+        }
+        stitched.push(...rest);
+    });
+
+    return stitched;
+}
+
+function getScenarioRoadBuildKey(scenario: RoutePlanner2Scenario | null | undefined): string {
+    if (!scenario) return 'none';
+    return buildRoutePlanner2StopSegmentPaths(scenario)
+        .map((segment) => `${segment.id}:${segment.pathFingerprint}`)
+        .join('||');
+}
+
 function getDrawingGuide(scenario: RoutePlanner2Scenario | null | undefined): { title: string; body?: string; actionLabel: string } {
     const stopCount = scenario?.stops.length ?? 0;
     const hasStartTerminal = scenario?.stops.some((stop) => stop.role === 'start-terminal') ?? false;
@@ -478,10 +516,12 @@ function getDrawingGuide(scenario: RoutePlanner2Scenario | null | undefined): { 
 
     if (scenario?.routeShape === 'out-and-back') {
         const turnaroundStop = scenario.stops.find((stop) => stop.id === scenario.turnaroundStopId)
-            ?? sortStops(scenario.stops)[stopCount - 1];
+            ?? null;
         return {
-            title: `Out and back to ${turnaroundStop?.name ?? `Stop ${stopCount}`}`,
-            body: 'The return trip is added automatically in reverse order. Select a stop and set it as the turnaround if needed.',
+            title: turnaroundStop ? `Out and back to ${turnaroundStop.name}` : 'Out and back needs a bus turnaround',
+            body: turnaroundStop
+                ? 'The return trip is added only from the marked bus turnaround. Use a real loop, terminal, or safe turning location — not a U-turn or 3-point turn.'
+                : 'Select the far end stop and mark it as the bus turnaround before using this route for feasibility.',
             actionLabel: `Add Stop ${stopCount + 1}`,
         };
     }
@@ -608,6 +648,7 @@ export function RoutePlanner2MapCanvas({
     onSetTurnaroundStop,
     onAddNextStop,
     onEnterDrawFocus,
+    onOpenStopList,
     focusMode = false,
     metricItems = [],
     overlayInsets = { left: '8rem', right: '8rem' },
@@ -615,8 +656,8 @@ export function RoutePlanner2MapCanvas({
     const [mapLoaded, setMapLoaded] = useState(false);
     const [snappedCoordinates, setSnappedCoordinates] = useState<[number, number][]>([]);
     const [snappedSegmentGeometries, setSnappedSegmentGeometries] = useState<RoutePlanner2SegmentGeometry[]>([]);
+    const [roadBuildProgress, setRoadBuildProgress] = useState<RoutePlanner2RoadSnapProgress | null>(null);
     const [pendingLineAction, setPendingLineAction] = useState<PendingLineAction | null>(null);
-    const [showLargeStopTray, setShowLargeStopTray] = useState(false);
     const [activeDragPreview, setActiveDragPreview] = useState<ActiveDragPreview | null>(null);
     const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
     const [addressQuery, setAddressQuery] = useState('');
@@ -627,6 +668,7 @@ export function RoutePlanner2MapCanvas({
     const suppressMapClickUntilRef = useRef(0);
 
     const waypoints = useMemo(() => scenario ? getScenarioWaypoints(scenario) : [], [scenario]);
+    const roadBuildKey = useMemo(() => getScenarioRoadBuildKey(scenario), [scenario]);
     const lineAnchorHandles = useMemo(() => scenario ? getRouteLineAnchorHandles(scenario) : [], [scenario]);
     const lineGeoJson = useMemo(() => buildLineGeoJson(snappedCoordinates.length ? snappedCoordinates : waypoints), [snappedCoordinates, waypoints]);
     const directionArrowGeoJson = useMemo(
@@ -681,8 +723,6 @@ export function RoutePlanner2MapCanvas({
     const drawingGuide = getDrawingGuide(scenario);
     const sortedStops = useMemo(() => scenario ? sortStops(scenario.stops) : [], [scenario]);
     const stopVisitSequence = useMemo(() => scenario ? buildRoutePlanner2StopVisitSequence(scenario) : [], [scenario]);
-    const isLargeStopList = sortedStops.length > 10;
-    const visibleStopTrayStops = isLargeStopList && !showLargeStopTray ? [] : sortedStops;
     const selectedStop = sortedStops.find((stop) => stop.id === selectedStopId) ?? null;
     const firstStop = sortedStops[0] ?? null;
     const lastStop = sortedStops[sortedStops.length - 1] ?? null;
@@ -691,9 +731,7 @@ export function RoutePlanner2MapCanvas({
         : scenario?.routeShape === 'out-and-back'
         ? 'Out and back'
         : 'One-way';
-
     useEffect(() => {
-        setShowLargeStopTray(false);
         setAddressQuery('');
         setAddressSuggestions([]);
         setSelectedAddress(null);
@@ -748,33 +786,58 @@ export function RoutePlanner2MapCanvas({
     }, [activeDragPreview, scenario]);
 
     useEffect(() => {
-        let cancelled = false;
+        const controller = new AbortController();
 
         if (!scenario) {
             setSnappedCoordinates([]);
             setSnappedSegmentGeometries([]);
-            return () => {
-                cancelled = true;
-            };
+            setRoadBuildProgress(null);
+            return () => controller.abort();
         }
 
         if (activeDragPreview) {
-            return () => {
-                cancelled = true;
-            };
+            setRoadBuildProgress(null);
+            return () => controller.abort();
         }
 
-        snapRoutePlanner2ScenarioToRoad(scenario).then((result) => {
-            if (cancelled) return;
+        const fallbackResult = buildRoutePlanner2FallbackRoadSnapResult(scenario);
+        setSnappedCoordinates(fallbackResult.coordinates);
+        setSnappedSegmentGeometries(fallbackResult.segmentGeometries);
+        setRoadBuildProgress(fallbackResult.segmentGeometries.length > 0
+            ? { totalSegments: fallbackResult.segmentGeometries.length, completedSegments: 0 }
+            : null);
+
+        snapRoutePlanner2ScenarioToRoad(scenario, {
+            concurrency: 3,
+            signal: controller.signal,
+            onProgress: (progress) => {
+                if (controller.signal.aborted) return;
+                setRoadBuildProgress(progress);
+                if (!progress.segmentGeometry) return;
+                setSnappedSegmentGeometries((current) => {
+                    const nextGeometries = current.map((geometry) =>
+                        geometry.id === progress.segmentGeometry?.id ? progress.segmentGeometry : geometry,
+                    );
+                    setSnappedCoordinates(stitchSegmentGeometryCoordinates(nextGeometries));
+                    return nextGeometries;
+                });
+            },
+        }).then((result) => {
+            if (controller.signal.aborted) return;
             setSnappedCoordinates(result.coordinates);
             setSnappedSegmentGeometries(result.segmentGeometries);
+            setRoadBuildProgress(result.segmentGeometries.length > 0
+                ? { totalSegments: result.segmentGeometries.length, completedSegments: result.segmentGeometries.length }
+                : null);
             onSegmentRuntimeEstimates(result.segmentEstimates);
+        }).catch((error) => {
+            if (controller.signal.aborted) return;
+            console.error('Route Planner 2 road snap failed', error);
+            setRoadBuildProgress(null);
         });
 
-        return () => {
-            cancelled = true;
-        };
-    }, [scenario, onSegmentRuntimeEstimates, activeDragPreview]);
+        return () => controller.abort();
+    }, [roadBuildKey, onSegmentRuntimeEstimates, activeDragPreview]);
 
     function handleMapClick(event: MapMouseEvent) {
         if (Date.now() < suppressMapClickUntilRef.current) return;
@@ -1069,6 +1132,30 @@ export function RoutePlanner2MapCanvas({
                     </div>
                 )}
 
+                {roadBuildProgress && roadBuildProgress.totalSegments > 0 && roadBuildProgress.completedSegments < roadBuildProgress.totalSegments && (
+                    <div
+                        className="absolute top-24 w-72 rounded-2xl border border-cyan-100 bg-white/95 p-3 shadow-lg"
+                        style={{ right: 'var(--rp2-overlay-right)' }}
+                        data-testid="rp2-road-build-progress"
+                    >
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <div className="text-xs font-black uppercase tracking-wide text-cyan-700">Building route</div>
+                                <div className="mt-1 text-sm font-bold text-slate-700">
+                                    Calculating road path {roadBuildProgress.completedSegments} of {roadBuildProgress.totalSegments}
+                                </div>
+                            </div>
+                            <Loader2 size={18} className="shrink-0 animate-spin text-cyan-600" />
+                        </div>
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                                className="h-full rounded-full bg-cyan-500 transition-all"
+                                style={{ width: `${Math.round((roadBuildProgress.completedSegments / roadBuildProgress.totalSegments) * 100)}%` }}
+                            />
+                        </div>
+                    </div>
+                )}
+
                 <div
                     className="absolute top-6 max-w-sm rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg"
                     style={{ left: 'var(--rp2-overlay-left)' }}
@@ -1182,7 +1269,7 @@ export function RoutePlanner2MapCanvas({
                                     onClick={() => onSetTurnaroundStop(selectedStopId)}
                                     className="mt-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-700 hover:bg-slate-50"
                                 >
-                                    Use selected stop as turnaround
+                                                    Mark selected stop as bus turnaround
                                 </button>
                             )}
                         </div>
@@ -1248,50 +1335,34 @@ export function RoutePlanner2MapCanvas({
                 {scenario && sortedStops.length > 0 && (
                     <div
                         data-testid="rp2-map-stop-tray"
-                        data-collapsed={isLargeStopList && !showLargeStopTray ? 'true' : 'false'}
-                        className={`absolute bottom-14 max-w-[min(44rem,calc(100%-2rem))] rounded-3xl border border-slate-200 bg-white/95 p-2 shadow-lg ${isLargeStopList && showLargeStopTray ? 'max-h-72 overflow-y-auto' : ''}`}
+                        data-collapsed="true"
+                        className="absolute bottom-4 z-20 w-[min(16.5rem,calc(100%-2rem))] rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-lg"
                         style={{ left: 'var(--rp2-overlay-left)' }}
                     >
-                        <div className="flex flex-wrap items-center gap-2">
-                            <span className="px-2 text-xs font-black uppercase tracking-wide text-slate-500">
-                                {sortedStops.length} {sortedStops.length === 1 ? 'stop' : 'stops'}
-                            </span>
-                            {isLargeStopList && !showLargeStopTray && (
-                                <>
-                                    {firstStop && <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">Start: {firstStop.name}</span>}
-                                    {lastStop && <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">End: {lastStop.name}</span>}
-                                    {selectedStop && <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-bold text-cyan-800">Selected: {selectedStop.sequence}. {selectedStop.name}</span>}
-                                </>
-                            )}
-                            {visibleStopTrayStops.map((stop) => (
-                                <div key={stop.id} className="flex items-center gap-1">
-                                    <button
-                                        type="button"
-                                        onClick={() => onSelectStop(stop.id)}
-                                        className={`rounded-full border px-3 py-2 text-xs font-bold ${selectedStopId === stop.id ? 'border-cyan-300 bg-cyan-50 text-cyan-900' : 'border-slate-200 bg-white text-slate-700'}`}
-                                    >
-                                        {stop.sequence}. {stop.name}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => onDeleteStop(stop.id)}
-                                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-red-200 bg-white text-red-600 hover:bg-red-50"
-                                        aria-label={`Delete ${stop.name}`}
-                                        title={`Delete ${stop.name}`}
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                                        {sortedStops.length} {sortedStops.length === 1 ? 'stop' : 'stops'}
+                                    </div>
+                                    {selectedStop && (
+                                        <div className="mt-1 truncate text-sm font-black text-slate-900">
+                                            Selected: {selectedStop.sequence}. {selectedStop.name}
+                                        </div>
+                                    )}
                                 </div>
-                            ))}
-                            {isLargeStopList && (
                                 <button
                                     type="button"
-                                    onClick={() => setShowLargeStopTray((current) => !current)}
-                                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                    onClick={onOpenStopList}
+                                    className="shrink-0 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black text-cyan-800 hover:bg-cyan-100"
                                 >
-                                    {showLargeStopTray ? 'Hide stops' : 'Show all stops'}
+                                    Review stops
                                 </button>
-                            )}
+                            </div>
+                            <div className="grid gap-1 text-xs font-semibold text-slate-600">
+                                {firstStop && <div className="truncate">Start: {firstStop.name}</div>}
+                                {lastStop && lastStop.id !== firstStop?.id && <div className="truncate">End: {lastStop.name}</div>}
+                            </div>
                         </div>
                     </div>
                 )}

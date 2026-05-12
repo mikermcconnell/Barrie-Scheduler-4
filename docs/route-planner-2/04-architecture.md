@@ -19,8 +19,7 @@ Expected future folders:
 
 - keep UI composition separate from domain calculations
 - keep map authoring separate from feasibility logic
-- keep local persistence replaceable
-- keep data shapes Firebase-ready
+- keep persistence isolated behind Route Planner 2 services
 - make runtime assumptions explainable
 
 ## Suggested Module Slices
@@ -47,7 +46,7 @@ Responsibilities:
 - rename project/route
 - select active route
 - mark preferred route
-- coordinate local persistence when added
+- coordinate team-scoped persistence through the Route Planner 2 persistence service
 
 ### Map Authoring State
 
@@ -62,6 +61,7 @@ Responsibilities:
 - Mapbox display and click-to-author interactions
 - road-snapped display geometry using Mapbox Directions when a token is available, with straight-line fallback
 - copy/move contiguous stop ranges between route concepts for service redesign work
+- bus-safe out-and-back routes: no implicit U-turn or 3-point turn; a planner must mark a bus turnaround stop before the return path is treated as valid
 
 ### Feasibility Engine
 
@@ -124,11 +124,16 @@ Project state
 
 ## Persistence Strategy
 
-V1: local state only.
+Current: team-scoped Firestore save/load.
 
-Future: team-scoped Firebase persistence.
+Projects are saved under:
 
-The code should avoid coupling UI components directly to Firebase so the local-to-cloud transition is straightforward.
+```text
+teams/{teamId}/routePlanner2Projects/{projectId}
+teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}
+```
+
+`utils/route-planner-2/routePlanner2ProjectPersistence.ts` owns Firebase access. The workspace calls that service instead of importing Firestore directly. Large geometry or analysis artifacts can move to Firebase Storage later if the Firestore document sizes become a concern.
 
 ## Integration Rules
 

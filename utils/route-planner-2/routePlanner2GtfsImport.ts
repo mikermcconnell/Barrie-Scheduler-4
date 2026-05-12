@@ -483,6 +483,7 @@ export function createRoutePlanner2ScenarioFromGtfsPattern(
         alignment,
         stops,
         service: { ...DEFAULT_SERVICE },
+        runtimeSourceMode: 'mapbox',
         runtimeEstimates,
         notes: 'Imported from GTFS as an editable planning copy. Changes here do not modify the GTFS feed.',
         createdAt: now,

@@ -86,4 +86,55 @@ describe('Route Planner 2 road snap', () => {
     });
     expect(result.segmentEstimates[0]?.pathFingerprint).toContain('-79.7,44.38|-79.69,44.385|-79.68,44.39');
   });
+
+  it('limits scenario road snapping concurrency and reports progress', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-04-29T12:00:00.000Z' });
+    for (let index = 0; index < 6; index += 1) {
+      project = addRoutePlanner2Stop(project, 'scenario-1', {
+        id: `stop-${index + 1}`,
+        name: `Stop ${index + 1}`,
+        lat: 44.38 + index * 0.002,
+        lng: -79.7 + index * 0.002,
+      });
+    }
+
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const progress = vi.fn();
+    const fetchImpl = vi.fn(async () => {
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      activeRequests -= 1;
+      return {
+        ok: true,
+        json: async () => ({
+          code: 'Ok',
+          routes: [{
+            duration: 120,
+            distance: 900,
+            geometry: {
+              type: 'LineString',
+              coordinates: [[-79.7, 44.38], [-79.69, 44.39]],
+            },
+          }],
+        }),
+      } as Response;
+    });
+
+    const result = await snapRoutePlanner2ScenarioToRoad(project.scenarios[0]!, {
+      token: 'test-token-concurrency',
+      fetchImpl,
+      concurrency: 2,
+      onProgress: progress,
+    });
+
+    expect(result.segmentEstimates).toHaveLength(5);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(maxActiveRequests).toBeLessThanOrEqual(2);
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({
+      totalSegments: 5,
+      completedSegments: 5,
+    }));
+  });
 });

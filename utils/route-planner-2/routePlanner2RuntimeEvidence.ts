@@ -902,6 +902,8 @@ export function deriveRoutePlanner2EvidenceRuntimeEstimates(
   period: TimePeriod,
   options: RoutePlanner2RuntimeEvidenceOptions = {},
 ): RoutePlanner2SegmentRuntime[] {
+  if (scenario.runtimeSourceMode === 'mapbox') return [];
+
   const gtfsStops = options.gtfsStops ?? getAllStopsWithCoords();
   const segmentPaths = buildRoutePlanner2StopSegmentPaths(scenario);
   const stopVisits = buildRoutePlanner2StopVisitSequence(scenario);

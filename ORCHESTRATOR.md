@@ -70,7 +70,7 @@ The repo also contains planning-data tools, mostly under `components/Analytics/`
 - Transit App analytics
 - OD analysis
 - Legacy Route Planner workspace has been removed; `docs/route-planner-legacy/` is historical background only, and remaining `utils/route-planner/` code is legacy support used by Shuttle Planner.
-- Route Planner 2, a fresh restart shell in `components/Analytics/RoutePlanner2Workspace.tsx` with current source-of-truth docs in `docs/route-planner-2/`; v1 is local-first, blank-concept operational feasibility and intentionally excludes Firebase persistence, coverage analysis, and downstream schedule handoff
+- Route Planner 2, a fresh restart shell in `components/Analytics/RoutePlanner2Workspace.tsx` with current source-of-truth docs in `docs/route-planner-2/`; v1 is a team-saveable blank-concept operational feasibility workspace and intentionally excludes coverage analysis and downstream schedule handoff
 - Shuttle Planner
 - Network Connections
 - student-pass planning
@@ -120,6 +120,8 @@ High-value reminders:
 - AI suggests; planners decide.
 - New Schedule Step 2 is an internal workflow, not a hard human decision gate. Step 3 and Step 4 should still trust the approved runtime contract, but the UX may auto-approve on continue instead of forcing a separate approval decision.
 - In New Schedule Step 2, loop-route planning chains must stay keyed as `Loop` in `canonicalDirectionStops`; do not coerce loop master/fallback stops into `North` or `South`, or full-pattern runtime matching for routes such as 10/11 can return no data.
+- STREETS runtime imports keep normal and detour observed patterns separate. Step 2 should prefer normal-pattern evidence, fall back to detour-pattern runtimes only when normal evidence is unavailable, and warn planners before approval; do not let detour-only trips replace the normal/master stop-order chain.
+- New Schedule performance mode should prefer route-scoped performance files for Step 2 loading. The All routes option remains available for comparison, but default/loading behavior should avoid fetching the full performance JSON when route-scoped files exist.
 - New Schedule Step 4 exposes Compare to Master as a local planner review panel, not a header toggle. It loads the published master on demand, shows warning-only summary counts, and can show/hide editor deltas without blocking publish.
 - Brand-new added trips should not inherit delta-source fallback from template trips; compare-to-master deltas should only render when a real original/reference match exists.
 
@@ -157,6 +159,12 @@ These are worth remembering, but should still be verified before relying on them
 - Route Planner 2 supports local stop-range reassignment between route concepts through `reassignRoutePlanner2StopRange`; copied/moved stops get new local IDs, insertion position is planner-controlled, and stale runtime evidence/line anchors are cleaned when stop order changes.
 - Route Planner 2 runtime estimates use priority-protected segment evidence: planner manual overrides outrank observed evidence, blended observed+scheduled evidence, scheduled proxies, Mapbox estimates, and distance fallback. Evidence derivation lives in `utils/route-planner-2/routePlanner2RuntimeEvidence.ts` and depends on local scenario stops plus performance/schedule indexes, not legacy Route Planner modules. For Route Planner 2 GTFS segment runtimes, use the stop-to-stop `buildCorridorSpeedIndex` index; the map/corridor chunk index is for corridor visualization and will not reliably match adjacent stop pairs. Same-minute adjacent GTFS stop times are valid scheduled evidence and are clamped to a 1-minute minimum rather than being treated as missing. When period-specific evidence is missing, preserve existing imported scheduled GTFS runtimes instead of clearing them to Mapbox/fallback.
 - Route Planner 2 custom concepts can use scheduled GTFS corridor runtime evidence when the custom stops match GTFS stops but are not adjacent in GTFS. The resolver finds route-specific GTFS paths between the matched stops, aggregates scheduled runtime over the full path, and supports runtime-panel filtering between all matching routes and selected routes. Corridor estimates are labeled as scheduled GTFS corridor estimates with matched route names.
+- Route Planner 2 routes now carry a planner-controlled runtime source mode: `gtfs` allows scheduled GTFS runtime evidence to outrank Mapbox, while `mapbox` ignores GTFS runtime evidence and uses Mapbox/drawn-route estimates, then fallback assumptions. Manual overrides still outrank automatic sources.
+- New Route Planner 2 scenarios default to `runtimeSourceMode: 'mapbox'`; planners can opt into GTFS route runtime from the Advanced source panel.
+- Route Planner 2 map overlays are zone-owned. Keep the full stop order in the review rail; the map should show only a compact stop summary with a `Review stops` action so bulk address imports do not cover controls or metrics.
+- Route Planner 2 road snapping/runtime estimation is a staged background build: imported or bulk-added stops render immediately with fallback geometry, then Mapbox segment snapping runs through a bounded queue with progress instead of firing all segment requests at once. Keep this non-blocking behavior for address-import route creation.
+- Route Planner 2 saved projects use team-scoped Firestore through `utils/route-planner-2/routePlanner2ProjectPersistence.ts`: project metadata lives at `teams/{teamId}/routePlanner2Projects/{projectId}`, with editable route concepts under `scenarios/{scenarioId}`. The workspace should not import Firestore directly.
+- Route Planner 2 out-and-back routes are bus-safe only when a planner marks an explicit `turnaround` stop. Do not treat the last stop as an implied U-turn/3-point turn; without `turnaroundStopId` the route remains blocking/not-ready for cycle-time comparison.
 
 ## 8) Guidance for future subagents
 

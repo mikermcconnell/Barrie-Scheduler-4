@@ -6,6 +6,7 @@ import {
   deleteRoutePlanner2LineWaypoint,
   insertRoutePlanner2StopBetween,
   setRoutePlanner2SegmentRuntimeOverride,
+  updateRoutePlanner2RuntimeSourceMode,
   updateRoutePlanner2SegmentRuntimeEstimates,
   updateRoutePlanner2RouteShape,
   updateRoutePlanner2StopRole,
@@ -20,6 +21,7 @@ describe('Route Planner 2 feasibility', () => {
 
   function validTwoStopProject() {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = updateRoutePlanner2RuntimeSourceMode(project, 'scenario-1', 'gtfs', now);
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Start', lat: 44.38, lng: -79.7, now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'End', lat: 44.4, lng: -79.65, now });
     project = updateRoutePlanner2StopRole(project, 'scenario-1', 'stop-1', 'start-terminal', now);
@@ -158,6 +160,7 @@ describe('Route Planner 2 feasibility', () => {
 
     expect(scenario.routeShape).toBe('out-and-back');
     expect(scenario.turnaroundStopId).toBe('stop-3');
+    expect(scenario.stops.find((stop) => stop.id === 'stop-3')?.role).toBe('turnaround');
     expect(result.segmentSummaries.map((segment) => `${segment.fromStopId}->${segment.toStopId}`)).toEqual([
       'stop-1->stop-2',
       'stop-2->stop-3',
@@ -170,6 +173,27 @@ describe('Route Planner 2 feasibility', () => {
     expect(result.warnings.map((warning) => warning.id)).not.toContain('missing-end-terminal');
     expect(result.recoveryTimeMinutes).toBeGreaterThan(3);
     expect(result.warnings.map((warning) => warning.id)).not.toContain('near-bus-threshold');
+  });
+
+  it('blocks out-and-back feasibility until a bus-safe turnaround is marked', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.7, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Stop 2', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-3', name: 'Stop 3', lat: 44.4, lng: -79.66, now });
+    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { now });
+
+    const scenario = project.scenarios[0]!;
+    const result = deriveRoutePlanner2Feasibility(scenario);
+
+    expect(scenario.routeShape).toBe('out-and-back');
+    expect(scenario.turnaroundStopId).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.id)).toContain('missing-turnaround-stop');
+    expect(result.cycleTimeMinutes).toBeNull();
+    expect(result.busesRequired).toBeNull();
+    expect(result.segmentSummaries.map((segment) => `${segment.fromStopId}->${segment.toStopId}`)).toEqual([
+      'stop-1->stop-2',
+      'stop-2->stop-3',
+    ]);
   });
 
   it('uses current Mapbox segment estimates before fallback assumptions', () => {
@@ -221,6 +245,85 @@ describe('Route Planner 2 feasibility', () => {
       confidence: 'medium',
     });
     expect(result.warnings.map((warning) => warning.id)).not.toContain('fallback-runtime');
+  });
+
+  it('uses Mapbox estimates instead of scheduled evidence when Mapbox-only runtime is selected', () => {
+    const project = validTwoStopProject();
+    const segmentPath = buildRoutePlanner2StopSegmentPaths(project.scenarios[0]!)[0]!;
+    const scenario = {
+      ...project.scenarios[0]!,
+      runtimeSourceMode: 'mapbox' as const,
+      runtimeEstimates: [
+        {
+          id: segmentPath.id,
+          fromStopId: segmentPath.fromStopId,
+          toStopId: segmentPath.toStopId,
+          runtimeMinutes: 14,
+          source: 'scheduled-proxy' as const,
+          confidence: 'high' as const,
+          scheduledRuntimeMinutes: 14,
+          updatedAt: now,
+        },
+        {
+          id: segmentPath.id,
+          fromStopId: segmentPath.fromStopId,
+          toStopId: segmentPath.toStopId,
+          runtimeMinutes: 7,
+          source: 'mapbox' as const,
+          confidence: 'medium' as const,
+          pathFingerprint: segmentPath.pathFingerprint,
+          updatedAt: now,
+        },
+      ],
+    };
+
+    const result = deriveRoutePlanner2Feasibility(scenario);
+
+    expect(result.segmentRuntimeMinutes).toBe(7);
+    expect(result.segmentSummaries[0]).toMatchObject({
+      runtimeMinutes: 7,
+      source: 'mapbox',
+      confidence: 'medium',
+    });
+  });
+
+  it('clears GTFS runtime evidence when switching a route to Mapbox-only runtime', () => {
+    let project = validTwoStopProject();
+    const segmentPath = buildRoutePlanner2StopSegmentPaths(project.scenarios[0]!)[0]!;
+
+    project = {
+      ...project,
+      scenarios: [{
+        ...project.scenarios[0]!,
+        runtimeEstimates: [
+          {
+            id: segmentPath.id,
+            fromStopId: segmentPath.fromStopId,
+            toStopId: segmentPath.toStopId,
+            runtimeMinutes: 14,
+            source: 'scheduled-proxy',
+            confidence: 'high',
+            scheduledRuntimeMinutes: 14,
+            updatedAt: now,
+          },
+          {
+            id: segmentPath.id,
+            fromStopId: segmentPath.fromStopId,
+            toStopId: segmentPath.toStopId,
+            runtimeMinutes: 7,
+            source: 'mapbox',
+            confidence: 'medium',
+            pathFingerprint: segmentPath.pathFingerprint,
+            updatedAt: now,
+          },
+        ],
+      }],
+    };
+
+    project = updateRoutePlanner2RuntimeSourceMode(project, 'scenario-1', 'mapbox', now);
+
+    expect(project.scenarios[0]?.runtimeSourceMode).toBe('mapbox');
+    expect(project.scenarios[0]?.runtimeEstimates?.map((estimate) => estimate.source)).toEqual(['mapbox']);
   });
 
   it('counts observed scheduled blend evidence in segment runtime totals', () => {

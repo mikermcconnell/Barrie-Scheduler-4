@@ -12,6 +12,12 @@ import type {
 
 const FALLBACK_SPEED_KMH = 22;
 const MIN_TERMINAL_LAYOVER_MINUTES = 3;
+const GTFS_RUNTIME_EVIDENCE_SOURCES = new Set<RoutePlanner2SegmentRuntime['source']>([
+    'observed-proxy',
+    'observed-scheduled-blend',
+    'partial-scheduled-proxy',
+    'scheduled-proxy',
+]);
 
 function markChanged(project: RoutePlanner2Project, now: string): RoutePlanner2Project {
     return {
@@ -114,7 +120,11 @@ function getCurrentSegmentEstimate(
     const estimate = scenario.runtimeEstimates?.find((item) =>
         item.fromStopId === fromStopId
         && item.toStopId === toStopId
-        && estimateMatchesCurrentPath(item, pathFingerprint),
+        && estimateMatchesCurrentPath(item, pathFingerprint)
+        && (
+            (scenario.runtimeSourceMode ?? 'gtfs') !== 'mapbox'
+            || !GTFS_RUNTIME_EVIDENCE_SOURCES.has(item.source)
+        ),
     );
     if (!estimate || !isPositiveNumber(estimate.runtimeMinutes ?? undefined)) return null;
     return estimate;
@@ -200,7 +210,11 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
 
     const segmentRuntimeMinutes = segmentSummaries.reduce((sum, segment) => sum + (segment.runtimeMinutes ?? 0), 0);
     const stopVisits = buildRoutePlanner2StopVisitSequence(scenario);
-    const intermediateStopCount = stopVisits.filter((stop) => stop.role !== 'start-terminal' && stop.role !== 'end-terminal').length;
+    const intermediateStopCount = stopVisits.filter((stop) =>
+        stop.role !== 'start-terminal'
+        && stop.role !== 'end-terminal'
+        && stop.role !== 'turnaround',
+    ).length;
     const dwellTimeMinutes = Math.round((intermediateStopCount * intermediateStopDwellSeconds) / 60);
     const oneWayRuntimeMinutes = segmentRuntimeMinutes + dwellTimeMinutes;
     const fallbackSegments = segmentSummaries.filter((segment) => segment.source === 'fallback');

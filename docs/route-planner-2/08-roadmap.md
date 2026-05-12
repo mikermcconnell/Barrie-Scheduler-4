@@ -19,17 +19,29 @@ Outcome:
 Acceptance:
 - project and route state use the data model in `05-data-model.md`
 - preferred route is stored once at project level
-- UI does not imply Firebase persistence exists
 - no imports from legacy Route Planner controllers, services, or utilities
+
+## Milestone 1B: Team Save/Load
+
+Outcome:
+- team-scoped project save/load
+- saved route concept scenarios under each project
+- header controls for save and loading existing plans
+
+Acceptance:
+- Route Planner 2 Firebase access stays isolated in `routePlanner2ProjectPersistence.ts`
+- saves use `teams/{teamId}/routePlanner2Projects/{projectId}` and `scenarios/{scenarioId}`
+- UI clearly distinguishes local drafts from saved team plans
 
 ## Milestone 2: Stop-Aware Map Authoring
 
 Outcome:
 - edit alignment
 - add, remove, and order stops
-- mark start/end terminals and timed stops
+- mark start/end terminals, timed stops, and bus turnaround stops
 - selected stop details
 - validation for missing/invalid terminal setup
+- validation that out-and-back routes do not imply a U-turn or 3-point turn
 
 ## Milestone 3: Feasibility Engine
 
@@ -49,14 +61,10 @@ Outcome:
 - on-screen planning summary
 - clear not-ready and warning states
 
-## Future Milestone: Firebase Persistence
-
-Not v1.
+## Future Milestone: Save Conflict Handling
 
 Future outcome:
-- team-scoped project save/load
-- route persistence
-- version or updated-at conflict handling if needed
+- version or updated-at conflict handling if multiple planners edit the same route plan concurrently
 
 ## Future Milestone: Observed Runtime Integration
 

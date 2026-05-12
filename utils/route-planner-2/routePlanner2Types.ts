@@ -1,7 +1,7 @@
 export type RoutePlanner2ProjectStatus = 'local-draft' | 'local-saved' | 'archived';
 export type RoutePlanner2ScenarioStatus = 'draft' | 'review';
 export type RoutePlanner2RouteShape = 'one-way' | 'closed-loop' | 'out-and-back';
-export type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal';
+export type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal' | 'turnaround';
 export type RoutePlanner2RuntimeSource =
     | 'observed-proxy'
     | 'observed-scheduled-blend'
@@ -16,6 +16,7 @@ export type RoutePlanner2Confidence = 'high' | 'medium' | 'low' | 'not-ready';
 export type RoutePlanner2SegmentConfidence = 'high' | 'medium' | 'low' | 'missing';
 export type RoutePlanner2WarningSeverity = 'info' | 'warning' | 'blocking';
 export type RoutePlanner2RuntimeRouteFilterMode = 'all-matching' | 'selected';
+export type RoutePlanner2RuntimeSourceMode = 'gtfs' | 'mapbox';
 
 export type RoutePlanner2ScenarioSource =
     | { type: 'blank' }
@@ -53,6 +54,7 @@ export interface RoutePlanner2Scenario {
     stops: RoutePlanner2Stop[];
     turnaroundStopId?: string;
     service: RoutePlanner2ServiceAssumptions;
+    runtimeSourceMode?: RoutePlanner2RuntimeSourceMode;
     runtimeRouteFilter?: RoutePlanner2RuntimeRouteFilter;
     runtimeEstimates?: RoutePlanner2SegmentRuntime[];
     runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;

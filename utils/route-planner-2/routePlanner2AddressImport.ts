@@ -54,6 +54,17 @@ export interface RoutePlanner2AddressGeocodeResult {
     unresolved: RoutePlanner2UnresolvedAddress[];
 }
 
+export interface RoutePlanner2AddressGeocodeProgress {
+    completed: number;
+    total: number;
+    currentAddress?: string;
+}
+
+export interface RoutePlanner2AddressGeocodeOptions extends RoutePlanner2AddressSearchOptions {
+    concurrency?: number;
+    onProgress?: (progress: RoutePlanner2AddressGeocodeProgress) => void;
+}
+
 interface ExtractedAddress {
     streetLine: string;
     city: string;
@@ -64,6 +75,11 @@ interface ExtractedAddress {
 interface UnitStreetParts {
     unit: string;
     baseStreetLine: string;
+}
+
+interface CivicRangeParts {
+    startStreetLine: string;
+    endStreetLine: string;
 }
 
 interface AddressGeocodeVariant {
@@ -95,9 +111,9 @@ function isStreetLine(line: string): boolean {
 
 function extractStreetLine(line: string): string | null {
     const trimmed = line.trim();
-    if (isStreetLine(trimmed)) return trimmed;
     const fragment = trimmed.match(STREET_ADDRESS_FRAGMENT)?.[1]?.trim();
-    return fragment && isStreetLine(fragment) ? fragment : null;
+    if (fragment && isStreetLine(fragment)) return fragment;
+    return isStreetLine(trimmed) ? trimmed : null;
 }
 
 function normalizePostalCode(value: string): string {
@@ -140,13 +156,32 @@ function getUnitStreetParts(streetLine: string): UnitStreetParts | null {
     const civicNumber = Number.parseInt(baseStreetLine, 10);
     if (!Number.isFinite(unitNumber) || !Number.isFinite(civicNumber)) return null;
 
-    // Treat small leading numbers as unit/suite prefixes, but avoid converting
-    // likely civic ranges such as "447-449 Yonge Street" into "449 Yonge Street".
-    if (unitNumber <= 99 && civicNumber <= 9999) {
+    // Treat small leading numbers, and larger high-rise style values like
+    // "1012-37 Johnson St", as unit/suite prefixes. Avoid normal civic ranges
+    // such as "309-339 Essa Rd", where both numbers are similar street numbers.
+    if ((unitNumber <= 99 || unitNumber > civicNumber) && civicNumber <= 9999) {
         return { unit, baseStreetLine };
     }
 
     return null;
+}
+
+function getCivicRangeParts(streetLine: string): CivicRangeParts | null {
+    if (getUnitStreetParts(streetLine)) return null;
+
+    const match = streetLine.trim().match(/^\s*(\d+[A-Z]?)\s*[-/]\s*(\d+[A-Z]?)(\s+.+)$/i);
+    if (!match) return null;
+
+    const startNumber = match[1]?.trim();
+    const endNumber = match[2]?.trim();
+    const streetName = match[3]?.replace(/\s+/g, ' ').trim();
+    if (!startNumber || !endNumber || !streetName) return null;
+
+    const startStreetLine = `${startNumber} ${streetName}`;
+    const endStreetLine = `${endNumber} ${streetName}`;
+    if (!isStreetLine(startStreetLine) || !isStreetLine(endStreetLine)) return null;
+
+    return { startStreetLine, endStreetLine };
 }
 
 function formatAddress(streetLine: string, city: string, province: string, postalCode?: string): string {
@@ -159,6 +194,7 @@ function formatAddress(streetLine: string, city: string, province: string, posta
 
 function buildAddressGeocodeVariants(candidate: RoutePlanner2ParsedAddress): AddressGeocodeVariant[] {
     const unitParts = getUnitStreetParts(candidate.streetLine);
+    const rangeParts = unitParts ? null : getCivicRangeParts(candidate.streetLine);
     const variants: AddressGeocodeVariant[] = [];
     const pushVariant = (query: string, streetLineForMatch: string, note?: string) => {
         if (variants.some((variant) => variant.query.toUpperCase() === query.toUpperCase())) return;
@@ -179,9 +215,15 @@ function buildAddressGeocodeVariants(candidate: RoutePlanner2ParsedAddress): Add
         );
     }
 
+    if (rangeParts) {
+        const note = `Range-style address "${candidate.streetLine}" was geocoded using a civic endpoint.`;
+        pushVariant(formatAddress(rangeParts.endStreetLine, candidate.city, candidate.province, candidate.postalCode), rangeParts.endStreetLine, note);
+        pushVariant(formatAddress(rangeParts.startStreetLine, candidate.city, candidate.province, candidate.postalCode), rangeParts.startStreetLine, note);
+    }
+
     pushVariant(candidate.address, unitParts?.baseStreetLine ?? candidate.streetLine);
 
-    const streetLineForMatch = unitParts?.baseStreetLine ?? candidate.streetLine;
+    const streetLineForMatch = unitParts?.baseStreetLine ?? rangeParts?.endStreetLine ?? candidate.streetLine;
     pushVariant(formatAddress(streetLineForMatch, candidate.city, candidate.province), streetLineForMatch);
     pushVariant(`${streetLineForMatch}, ${candidate.city}, ${candidate.postalCode}`, streetLineForMatch);
 
@@ -190,12 +232,23 @@ function buildAddressGeocodeVariants(candidate: RoutePlanner2ParsedAddress): Add
 
 function extractAddressFromText(text: string): ExtractedAddress | null {
     const lines = normalizeLines(text);
-    if (lines.length < 2) return null;
+    if (lines.length < 1) return null;
 
     for (let postalIndex = 0; postalIndex < lines.length; postalIndex += 1) {
         const postalLine = lines[postalIndex];
         const cityMatch = postalLine.match(CITY_PROVINCE_POSTAL);
         if (!cityMatch) continue;
+
+        const sameLinePrefix = postalLine.slice(0, cityMatch.index ?? 0);
+        const sameLineStreet = extractStreetLine(sameLinePrefix);
+        if (sameLineStreet) {
+            return {
+                streetLine: sameLineStreet,
+                city: cityMatch[1].trim(),
+                province: cityMatch[2].toUpperCase() === 'ONTARIO' ? 'ON' : cityMatch[2].toUpperCase(),
+                postalCode: normalizePostalCode(`${cityMatch[3]} ${cityMatch[4]}`),
+            };
+        }
 
         for (let streetIndex = postalIndex - 1; streetIndex >= 0; streetIndex -= 1) {
             const streetLine = extractStreetLine(lines[streetIndex]);
@@ -211,6 +264,30 @@ function extractAddressFromText(text: string): ExtractedAddress | null {
     }
 
     return null;
+}
+
+export function parseRoutePlanner2AddressText(
+    text: string,
+    options: { id?: string; sourceRow?: number; sourceCell?: string } = {},
+): RoutePlanner2ParsedAddress | null {
+    const extracted = extractAddressFromText(text);
+    if (!extracted) return null;
+
+    const normalizedKey = normalizeAddressKey(extracted.streetLine, extracted.city, extracted.province, extracted.postalCode);
+    const address = `${extracted.streetLine}, ${extracted.city}, ${extracted.province} ${extracted.postalCode}`;
+
+    return {
+        id: options.id ?? 'address-manual-review',
+        address,
+        streetLine: extracted.streetLine,
+        city: extracted.city,
+        province: extracted.province,
+        postalCode: extracted.postalCode,
+        normalizedKey,
+        sourceRows: [options.sourceRow ?? 1],
+        sourceCells: [options.sourceCell ?? 'manual-review'],
+        occurrenceCount: 1,
+    };
 }
 
 function makeCellRef(rowIndex: number, columnIndex: number): string {
@@ -438,12 +515,33 @@ export function orderRoutePlanner2StopsGeographically<T extends { lat: number; l
 
 export async function geocodeRoutePlanner2ParsedAddresses(
     candidates: RoutePlanner2ParsedAddress[],
-    options: RoutePlanner2AddressSearchOptions = {},
+    options: RoutePlanner2AddressGeocodeOptions = {},
 ): Promise<RoutePlanner2AddressGeocodeResult> {
-    const mappedStops: RoutePlanner2GeocodedAddressStop[] = [];
-    const unresolved: RoutePlanner2UnresolvedAddress[] = [];
+    const total = candidates.length;
+    const { concurrency = 4, onProgress, ...searchOptions } = options;
+    const safeConcurrency = Math.max(1, Math.min(Math.floor(concurrency), 6, total || 1));
+    const suggestionCache = new Map<string, Promise<RoutePlanner2AddressSuggestion[]>>();
+    const results: Array<{
+        mappedStop?: RoutePlanner2GeocodedAddressStop;
+        unresolved?: RoutePlanner2UnresolvedAddress;
+    }> = new Array(total);
+    let nextIndex = 0;
+    let completed = 0;
 
-    for (const candidate of candidates) {
+    function searchVariant(variant: AddressGeocodeVariant): Promise<RoutePlanner2AddressSuggestion[]> {
+        const cacheKey = `${variant.query.trim().toUpperCase()}|5`;
+        const cached = suggestionCache.get(cacheKey);
+        if (cached) return cached;
+
+        const promise = searchRoutePlanner2Addresses(variant.query, { ...searchOptions, limit: 5 });
+        suggestionCache.set(cacheKey, promise);
+        return promise;
+    }
+
+    async function geocodeCandidate(candidate: RoutePlanner2ParsedAddress): Promise<{
+        mappedStop?: RoutePlanner2GeocodedAddressStop;
+        unresolved?: RoutePlanner2UnresolvedAddress;
+    }> {
         try {
             const variants = buildAddressGeocodeVariants(candidate);
             let selectedSuggestion: RoutePlanner2AddressSuggestion | null = null;
@@ -451,7 +549,7 @@ export async function geocodeRoutePlanner2ParsedAddresses(
             let sawMapboxSuggestion = false;
 
             for (const variant of variants) {
-                const suggestions = await searchRoutePlanner2Addresses(variant.query, { ...options, limit: 5 });
+                const suggestions = await searchVariant(variant);
                 if (suggestions.length > 0) sawMapboxSuggestion = true;
 
                 const bestSuggestion = selectBestConfidentSuggestion(candidate, suggestions, variant.streetLineForMatch);
@@ -463,38 +561,68 @@ export async function geocodeRoutePlanner2ParsedAddresses(
             }
 
             if (!selectedSuggestion || !selectedVariant) {
-                unresolved.push({
-                    candidate,
-                    reason: sawMapboxSuggestion
-                        ? 'Mapbox match was not confident enough.'
-                        : 'No Mapbox match found.',
-                });
-                continue;
+                return {
+                    unresolved: {
+                        candidate,
+                        reason: sawMapboxSuggestion
+                            ? 'Mapbox match was not confident enough.'
+                            : 'No Mapbox match found.',
+                    },
+                };
             }
 
-            mappedStops.push({
-                id: candidate.id,
-                name: candidate.streetLine,
-                address: candidate.address,
-                lat: selectedSuggestion.lat,
-                lng: selectedSuggestion.lng,
-                occurrenceCount: candidate.occurrenceCount,
-                sourceRows: candidate.sourceRows,
-                notes: [
-                    `Imported from address file: ${candidate.address}.`,
-                    selectedVariant.note,
-                    candidate.occurrenceCount > 1 ? `${candidate.occurrenceCount} source rows were merged into this stop.` : null,
-                    `Source rows: ${candidate.sourceRows.join(', ')}.`,
-                    `Mapbox match: ${selectedSuggestion.label}.`,
-                ].filter(Boolean).join(' '),
-            });
+            return {
+                mappedStop: {
+                    id: candidate.id,
+                    name: candidate.streetLine,
+                    address: candidate.address,
+                    lat: selectedSuggestion.lat,
+                    lng: selectedSuggestion.lng,
+                    occurrenceCount: candidate.occurrenceCount,
+                    sourceRows: candidate.sourceRows,
+                    notes: [
+                        `Imported from address file: ${candidate.address}.`,
+                        selectedVariant.note,
+                        candidate.occurrenceCount > 1 ? `${candidate.occurrenceCount} source rows were merged into this stop.` : null,
+                        `Source rows: ${candidate.sourceRows.join(', ')}.`,
+                        `Mapbox match: ${selectedSuggestion.label}.`,
+                    ].filter(Boolean).join(' '),
+                },
+            };
         } catch (error) {
-            unresolved.push({
-                candidate,
-                reason: error instanceof Error ? error.message : 'Address could not be geocoded.',
-            });
+            return {
+                unresolved: {
+                    candidate,
+                    reason: error instanceof Error ? error.message : 'Address could not be geocoded.',
+                },
+            };
         }
     }
+
+    onProgress?.({ completed: 0, total });
+
+    async function worker(): Promise<void> {
+        while (nextIndex < total) {
+            const index = nextIndex;
+            nextIndex += 1;
+
+            const candidate = candidates[index];
+            if (!candidate) continue;
+
+            results[index] = await geocodeCandidate(candidate);
+            completed += 1;
+            onProgress?.({ completed, total, currentAddress: candidate.address });
+        }
+    }
+
+    await Promise.all(Array.from({ length: safeConcurrency }, () => worker()));
+
+    const mappedStops = results
+        .map((result) => result?.mappedStop)
+        .filter((stop): stop is RoutePlanner2GeocodedAddressStop => Boolean(stop));
+    const unresolved = results
+        .map((result) => result?.unresolved)
+        .filter((item): item is RoutePlanner2UnresolvedAddress => Boolean(item));
 
     return {
         mappedStops: orderRoutePlanner2StopsGeographically(mappedStops),

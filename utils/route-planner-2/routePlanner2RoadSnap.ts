@@ -20,6 +20,13 @@ export interface RoutePlanner2ScenarioRoadSnapResult extends RoutePlanner2RoadSn
     }>;
 }
 
+export interface RoutePlanner2RoadSnapProgress {
+    totalSegments: number;
+    completedSegments: number;
+    segmentEstimate?: RoutePlanner2SegmentRuntime;
+    segmentGeometry?: RoutePlanner2ScenarioRoadSnapResult['segmentGeometries'][number];
+}
+
 interface MapboxDirectionsRoute {
     geometry?: {
         coordinates?: [number, number][];
@@ -37,6 +44,9 @@ interface MapboxDirectionsResponse {
 interface SnapOptions {
     token?: string | null;
     fetchImpl?: typeof fetch;
+    concurrency?: number;
+    signal?: AbortSignal;
+    onProgress?: (progress: RoutePlanner2RoadSnapProgress) => void;
 }
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -120,7 +130,10 @@ async function fetchRoadSegment(
     to: [number, number],
     token: string | null,
     fetchImpl: typeof fetch,
+    signal?: AbortSignal,
 ): Promise<RoutePlanner2RoadSnapResult> {
+    if (signal?.aborted) throw new DOMException('Route snap cancelled.', 'AbortError');
+
     if (coordinatesEqual(from, to)) {
         return { coordinates: [from], source: 'fallback', distanceMeters: 0 };
     }
@@ -133,7 +146,7 @@ async function fetchRoadSegment(
 
     try {
         const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full&steps=false&access_token=${token}`;
-        const response = await fetchImpl(url);
+        const response = signal ? await fetchImpl(url, { signal }) : await fetchImpl(url);
         if (!response.ok) throw new Error(`Mapbox returned ${response.status}`);
 
         const data = await response.json() as MapboxDirectionsResponse;
@@ -151,8 +164,32 @@ async function fetchRoadSegment(
         setCachedSegment(cacheKey, result);
         return result;
     } catch {
+        if (signal?.aborted) throw new DOMException('Route snap cancelled.', 'AbortError');
         return { coordinates: [from, to], source: 'fallback', distanceMeters: distanceMetersBetween(from, to) };
     }
+}
+
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<R>,
+    signal?: AbortSignal,
+): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+
+    async function runWorker() {
+        while (nextIndex < items.length) {
+            if (signal?.aborted) throw new DOMException('Route snap cancelled.', 'AbortError');
+            const index = nextIndex;
+            nextIndex += 1;
+            results[index] = await worker(items[index]!, index);
+        }
+    }
+
+    const workerCount = Math.max(1, Math.min(Math.floor(concurrency), items.length));
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+    return results;
 }
 
 export async function snapRoutePlanner2WaypointsToRoad(
@@ -166,7 +203,7 @@ export async function snapRoutePlanner2WaypointsToRoad(
         : getMapboxToken();
     const fetchImpl = options.fetchImpl ?? fetch;
     const segmentResults = await Promise.all(
-        waypoints.slice(1).map((to, index) => fetchRoadSegment(waypoints[index], to, token, fetchImpl)),
+        waypoints.slice(1).map((to, index) => fetchRoadSegment(waypoints[index], to, token, fetchImpl, options.signal)),
     );
     const durationSeconds = segmentResults.every((result) => typeof result.durationSeconds === 'number')
         ? segmentResults.reduce((sum, result) => sum + (result.durationSeconds ?? 0), 0)
@@ -194,44 +231,95 @@ function fallbackRuntimeFromDistance(distanceMeters: number | undefined): number
     return Math.max(2, Math.ceil(driveMinutes + 1));
 }
 
+function buildSegmentRuntimeEstimate(
+    segment: ReturnType<typeof buildRoutePlanner2StopSegmentPaths>[number],
+    result: RoutePlanner2RoadSnapResult | undefined,
+    now: string,
+): RoutePlanner2SegmentRuntime {
+    const mapboxRuntime = roundSegmentRuntime(result?.durationSeconds);
+    const fallbackRuntime = fallbackRuntimeFromDistance(result?.distanceMeters);
+    const source = result?.source === 'mapbox' && mapboxRuntime != null ? 'mapbox' : 'fallback';
+
+    return {
+        id: segment.id,
+        fromStopId: segment.fromStopId,
+        toStopId: segment.toStopId,
+        runtimeMinutes: source === 'mapbox' ? mapboxRuntime : fallbackRuntime,
+        source,
+        confidence: source === 'mapbox' ? 'medium' : 'low',
+        distanceKm: typeof result?.distanceMeters === 'number'
+            ? Number((result.distanceMeters / 1000).toFixed(2))
+            : undefined,
+        durationSeconds: result?.durationSeconds,
+        pathFingerprint: segment.pathFingerprint,
+        updatedAt: now,
+        fallbackReason: source === 'fallback'
+            ? 'Mapbox travel time was unavailable; using distance and default speed.'
+            : undefined,
+    };
+}
+
+export function buildRoutePlanner2FallbackRoadSnapResult(scenario: RoutePlanner2Scenario): RoutePlanner2ScenarioRoadSnapResult {
+    const segments = buildRoutePlanner2StopSegmentPaths(scenario);
+    const segmentGeometries = segments.map((segment) => ({
+        id: segment.id,
+        fromStopId: segment.fromStopId,
+        toStopId: segment.toStopId,
+        coordinates: segment.coordinates,
+    }));
+    const coordinates = segments.length > 0
+        ? stitchSegmentCoordinates(segmentGeometries.map((segment) => segment.coordinates))
+        : [...scenario.alignment]
+            .sort((a, b) => a.sequence - b.sequence)
+            .map((point): [number, number] => [point.lng, point.lat]);
+
+    return {
+        coordinates,
+        source: 'fallback',
+        distanceMeters: distanceMetersForPath(coordinates),
+        segmentEstimates: [],
+        segmentGeometries,
+    };
+}
+
 export async function snapRoutePlanner2ScenarioToRoad(
     scenario: RoutePlanner2Scenario,
     options: SnapOptions = {},
 ): Promise<RoutePlanner2ScenarioRoadSnapResult> {
     const segments = buildRoutePlanner2StopSegmentPaths(scenario);
     if (segments.length === 0) {
-        const coordinates = [...scenario.alignment]
-            .sort((a, b) => a.sequence - b.sequence)
-            .map((point): [number, number] => [point.lng, point.lat]);
-        return { coordinates, source: 'fallback', segmentEstimates: [], segmentGeometries: [] };
+        return buildRoutePlanner2FallbackRoadSnapResult(scenario);
     }
 
-    const results = await Promise.all(segments.map((segment) => snapRoutePlanner2WaypointsToRoad(segment.coordinates, options)));
     const now = new Date().toISOString();
-    const segmentEstimates = segments.map((segment, index): RoutePlanner2SegmentRuntime => {
-        const result = results[index];
-        const mapboxRuntime = roundSegmentRuntime(result?.durationSeconds);
-        const fallbackRuntime = fallbackRuntimeFromDistance(result?.distanceMeters);
-        const source = result?.source === 'mapbox' && mapboxRuntime != null ? 'mapbox' : 'fallback';
-
-        return {
-            id: segment.id,
-            fromStopId: segment.fromStopId,
-            toStopId: segment.toStopId,
-            runtimeMinutes: source === 'mapbox' ? mapboxRuntime : fallbackRuntime,
-            source,
-            confidence: source === 'mapbox' ? 'medium' : 'low',
-            distanceKm: typeof result?.distanceMeters === 'number'
-                ? Number((result.distanceMeters / 1000).toFixed(2))
-                : undefined,
-            durationSeconds: result?.durationSeconds,
-            pathFingerprint: segment.pathFingerprint,
-            updatedAt: now,
-            fallbackReason: source === 'fallback'
-                ? 'Mapbox travel time was unavailable; using distance and default speed.'
-                : undefined,
-        };
-    });
+    const concurrency = options.concurrency ?? 3;
+    let completedSegments = 0;
+    const segmentResults = await mapWithConcurrency(
+        segments,
+        concurrency,
+        async (segment) => {
+            const result = await snapRoutePlanner2WaypointsToRoad(segment.coordinates, options);
+            const segmentEstimate = buildSegmentRuntimeEstimate(segment, result, now);
+            const segmentGeometry = {
+                id: segment.id,
+                fromStopId: segment.fromStopId,
+                toStopId: segment.toStopId,
+                coordinates: result.coordinates,
+            };
+            completedSegments += 1;
+            options.onProgress?.({
+                totalSegments: segments.length,
+                completedSegments,
+                segmentEstimate,
+                segmentGeometry,
+            });
+            return { result, segmentEstimate, segmentGeometry };
+        },
+        options.signal,
+    );
+    const results = segmentResults.map((item) => item.result);
+    const segmentEstimates = segmentResults.map((item) => item.segmentEstimate);
+    const segmentGeometries = segmentResults.map((item) => item.segmentGeometry);
 
     return {
         coordinates: stitchSegmentCoordinates(results.map((result) => result.coordinates)),
@@ -241,11 +329,6 @@ export async function snapRoutePlanner2ScenarioToRoad(
             : undefined,
         distanceMeters: distanceMetersForPath(stitchSegmentCoordinates(results.map((result) => result.coordinates))),
         segmentEstimates,
-        segmentGeometries: segments.map((segment, index) => ({
-            id: segment.id,
-            fromStopId: segment.fromStopId,
-            toStopId: segment.toStopId,
-            coordinates: results[index]?.coordinates ?? segment.coordinates,
-        })),
+        segmentGeometries,
     };
 }

@@ -31,6 +31,7 @@ export function createRoutePlanner2Scenario(options: {
         alignment: [],
         stops: [],
         service: { ...DEFAULT_SERVICE },
+        runtimeSourceMode: 'mapbox',
         notes: 'Blank route concept. Add stops in travel order before running feasibility checks.',
         createdAt: now,
         updatedAt: now,

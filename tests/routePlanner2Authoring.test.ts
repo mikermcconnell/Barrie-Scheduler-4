@@ -276,6 +276,28 @@ describe('Route Planner 2 authoring', () => {
     expect(validateRoutePlanner2Terminals(scenario)).toEqual([]);
   });
 
+  it('treats bus turnaround as the explicit reversal point for out-and-back routes', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'A', lat: 44.38, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'B', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-3', name: 'C', lat: 44.4, lng: -79.67, now });
+
+    project = updateRoutePlanner2StopRole(project, 'scenario-1', 'stop-3', 'turnaround', now);
+    const scenario = project.scenarios[0]!;
+
+    expect(scenario.routeShape).toBe('out-and-back');
+    expect(scenario.turnaroundStopId).toBe('stop-3');
+    expect(scenario.stops.map((stop) => `${stop.sequence}:${stop.name}:${stop.role}`)).toEqual([
+      '1:A:regular',
+      '2:B:regular',
+      '3:C:turnaround',
+    ]);
+    expect(validateRoutePlanner2Terminals(scenario).map((warning) => warning.id)).toContain('missing-start-terminal');
+
+    project = updateRoutePlanner2StopRole(project, 'scenario-1', 'stop-1', 'start-terminal', now);
+    expect(validateRoutePlanner2Terminals(project.scenarios[0]!).map((warning) => warning.id)).not.toContain('missing-turnaround-stop');
+  });
+
   it('sets and clears manual segment runtime overrides', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
 
