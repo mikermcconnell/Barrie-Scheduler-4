@@ -68,7 +68,7 @@ export interface UseStep2RuntimeReviewInput {
     matrixAnalysis?: TripBucketAnalysis[];
     matrixSegmentsMap?: Record<string, SegmentRawData[]>;
     canonicalSegmentColumns?: OrderedSegmentColumn[];
-    canonicalDirectionStops?: Partial<Record<'North' | 'South', string[]>>;
+    canonicalDirectionStops?: Partial<Record<'North' | 'South' | 'Loop', string[]>>;
     healthReport?: Step2DataHealthReport | null;
     approvedRuntimeModel?: ApprovedRuntimeModel | null;
     approvalState?: Step2ApprovalState;

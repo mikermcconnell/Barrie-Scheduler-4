@@ -1564,6 +1564,67 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(matchedSegments.size).toBe(9);
     });
 
+    it('uses the Loop canonical direction for one-sided Route 10 master stop chains', () => {
+        const canonicalDirectionStops = getUsableCanonicalDirectionStops('10', {
+            North: ['Downtown', 'Georgian College', 'RVH', 'Downtown'],
+            South: [],
+        });
+
+        expect(canonicalDirectionStops).toEqual({
+            Loop: ['Downtown', 'Georgian College', 'RVH', 'Downtown'],
+        });
+
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-01-06',
+                dayType: 'weekday',
+                routeNames: { '10': 'Route Ten' },
+                tripEntries: [
+                    {
+                        tripId: 'loop-1',
+                        tripName: '10 06:00',
+                        routeId: '10',
+                        direction: 'CW',
+                        terminalDepartureTime: '06:00',
+                        segments: [
+                            { fromStopId: 'Downtown', toStopId: 'Georgian College', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 8, timeBucket: '06:00' },
+                            { fromStopId: 'Georgian College', toStopId: 'RVH', fromRouteStopIndex: 2, toRouteStopIndex: 3, runtimeMinutes: 7, timeBucket: '06:00' },
+                            { fromStopId: 'RVH', toStopId: 'Downtown', fromRouteStopIndex: 3, toRouteStopIndex: 4, runtimeMinutes: 9, timeBucket: '06:00' },
+                        ],
+                    },
+                ],
+            }),
+        ];
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '10',
+            dayType: 'weekday',
+            canonicalDirectionStops: canonicalDirectionStops!,
+            patternAnchorStops: canonicalDirectionStops!,
+            fullPatternOnly: true,
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0].detectedDirection).toBe('Loop');
+        expect(result[0].segments.map(segment => segment.segmentName)).toEqual([
+            'Downtown to Georgian College',
+            'Georgian College to RVH',
+            'RVH to Downtown',
+        ]);
+
+        const canonicalColumns = buildCanonicalSegmentColumnsFromMasterStops(
+            '10',
+            canonicalDirectionStops!.Loop,
+            []
+        );
+        expect(canonicalColumns.map(column => column.direction)).toEqual(['Loop', 'Loop', 'Loop']);
+        expect(canonicalColumns.map(column => column.groupLabel)).toEqual(['10', '10', '10']);
+
+        const analysis = calculateTotalTripTimes(result);
+        expect(analysis[0].observedSegmentCount).toBe(3);
+        expect(analysis[0].expectedSegmentCount).toBe(3);
+    });
+
     it('uses canonical stop names for stop-level runtimes before Step 2 coverage matching', () => {
         const summaries: DailySummary[] = [
             makeSummary({

@@ -336,9 +336,21 @@ describe('newSchedule wizard state helpers', () => {
                 South: [],
             })
         ).toEqual({
-            North: ['Downtown', 'Georgian College', 'Downtown'],
-            South: [],
+            Loop: ['Downtown', 'Georgian College', 'Downtown'],
         });
+    });
+
+    it('builds loop canonical columns from one-sided master stops', () => {
+        expect(
+            buildCanonicalSegmentColumnsFromMasterStops(
+                '10',
+                ['Downtown', 'Georgian College', 'Downtown'],
+                []
+            )
+        ).toEqual([
+            { segmentName: 'Downtown to Georgian College', direction: 'Loop', groupLabel: '10' },
+            { segmentName: 'Georgian College to Downtown', direction: 'Loop', groupLabel: '10' },
+        ]);
     });
 
     it('matches observed runtime labels onto canonical segment names', () => {

@@ -43,6 +43,7 @@ const normalizeCanonicalDirectionStops = (
 
     const normalizedNorth = stops.North?.map(normalizeText).filter(Boolean) ?? [];
     const normalizedSouth = stops.South?.map(normalizeText).filter(Boolean) ?? [];
+    const normalizedLoop = stops.Loop?.map(normalizeText).filter(Boolean) ?? [];
 
     const result: Partial<Record<Step2Direction, string[]>> = {};
     if (normalizedNorth.length > 0) {
@@ -50,6 +51,9 @@ const normalizeCanonicalDirectionStops = (
     }
     if (normalizedSouth.length > 0) {
         result.South = normalizedSouth;
+    }
+    if (normalizedLoop.length > 0) {
+        result.Loop = normalizedLoop;
     }
 
     return Object.keys(result).length > 0 ? result : undefined;

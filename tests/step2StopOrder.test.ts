@@ -39,10 +39,24 @@ describe('step2StopOrder', () => {
                     changeSeverity: 'none',
                     warnings: [],
                 },
+                Loop: {
+                    source: 'observed-dominant-pattern',
+                    confidence: 'high',
+                    stopIds: ['1', '2', '1'],
+                    stopNames: ['Downtown', 'Georgian College', 'Downtown'],
+                    tripCountUsed: 3,
+                    dayCountUsed: 2,
+                    middayTripCount: 1,
+                    alternatePatternCount: 0,
+                    changedFromPrevious: false,
+                    changeSeverity: 'none',
+                    warnings: [],
+                },
             },
         } as any)).toEqual({
             North: [' Park Place ', 'Downtown Hub'],
             South: ['Downtown Hub', 'Park Place'],
+            Loop: ['Downtown', 'Georgian College', 'Downtown'],
         });
     });
 
@@ -79,6 +93,35 @@ describe('step2StopOrder', () => {
         expect(health?.directionStats.North).toEqual({
             tripCountUsed: 4,
             dayCountUsed: 2,
+            middayTripCount: 2,
+        });
+    });
+
+    it('includes loop direction stats in stop-order health', () => {
+        const health = buildStep2StopOrderHealth({
+            decision: 'accept',
+            confidence: 'high',
+            warnings: [],
+            resolvedDirections: {
+                Loop: {
+                    source: 'observed-midday-pattern',
+                    confidence: 'high',
+                    stopIds: ['1', '2', '1'],
+                    stopNames: ['Downtown', 'Georgian College', 'Downtown'],
+                    tripCountUsed: 6,
+                    dayCountUsed: 3,
+                    middayTripCount: 2,
+                    alternatePatternCount: 0,
+                    changedFromPrevious: false,
+                    changeSeverity: 'none',
+                    warnings: [],
+                },
+            },
+        } as any, 'runtime-derived');
+
+        expect(health?.directionStats.Loop).toEqual({
+            tripCountUsed: 6,
+            dayCountUsed: 3,
             middayTripCount: 2,
         });
     });

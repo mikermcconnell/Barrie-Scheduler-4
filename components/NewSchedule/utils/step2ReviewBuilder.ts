@@ -57,6 +57,7 @@ const normalizeDirectionStops = (
 
     const normalizedNorth = stops.North?.map(normalizeText).filter(Boolean) ?? [];
     const normalizedSouth = stops.South?.map(normalizeText).filter(Boolean) ?? [];
+    const normalizedLoop = stops.Loop?.map(normalizeText).filter(Boolean) ?? [];
 
     const result: Step2ReviewResult['planning']['canonicalDirectionStops'] = {};
     if (normalizedNorth.length > 0) {
@@ -64,6 +65,9 @@ const normalizeDirectionStops = (
     }
     if (normalizedSouth.length > 0) {
         result.South = normalizedSouth;
+    }
+    if (normalizedLoop.length > 0) {
+        result.Loop = normalizedLoop;
     }
 
     return Object.keys(result).length > 0 ? result : undefined;
@@ -74,6 +78,7 @@ const hasUsableCanonicalDirectionStops = (
 ): boolean => !!stops && (
     (stops.North?.length ?? 0) > 0
     || (stops.South?.length ?? 0) > 0
+    || (stops.Loop?.length ?? 0) > 0
 );
 
 const buildTroubleshootingPayload = (

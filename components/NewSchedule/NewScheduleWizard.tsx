@@ -1327,8 +1327,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     const selectedCanonicalColumns = selectedCanonicalStops
                         ? buildCanonicalSegmentColumnsFromMasterStops(
                             selectedRouteNumber,
-                            selectedCanonicalStops.North,
-                            selectedCanonicalStops.South
+                            selectedCanonicalStops.North ?? selectedCanonicalStops.Loop ?? [],
+                            selectedCanonicalStops.South ?? []
                         )
                         : [];
                     const selectedCanonicalRouteSource: Step2CanonicalRouteSource | undefined = resolvedCanonicalStops

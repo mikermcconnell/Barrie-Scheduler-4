@@ -82,4 +82,43 @@ describe('routePlanner2AddressImport', () => {
     expect(result.unresolved[0]?.candidate.streetLine).toBe('30 Weak Street');
     expect(result.unresolved[0]?.reason).toContain('not confident');
   });
+
+  it('geocodes unit-street imports against the base civic address before manual review', async () => {
+    const parsed = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['Camper Name\n4-3 Gunn Street\nBarrie, ON L4M 2H2'],
+    ]));
+
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const query = decodeURIComponent(url.match(/places\/(.+?)\.json/)?.[1] ?? '');
+
+      return {
+        ok: true,
+        json: async () => ({
+          features: query.includes('3 Gunn Street')
+            ? [
+              { id: 'wrong', text: '4 Other Street', place_name: '4 Other Street, Barrie, Ontario, Canada', center: [-79.68, 44.39] },
+              { id: 'gunn', text: '3 Gunn Street', place_name: '3 Gunn Street, Barrie, Ontario, Canada', center: [-79.70, 44.40] },
+            ]
+            : [],
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const result = await geocodeRoutePlanner2ParsedAddresses(parsed.addresses, {
+      token: 'token-123',
+      fetcher,
+    });
+
+    expect(result.unresolved).toHaveLength(0);
+    expect(result.mappedStops).toHaveLength(1);
+    expect(result.mappedStops[0]).toMatchObject({
+      name: '4-3 Gunn Street',
+      address: '4-3 Gunn Street, Barrie, ON L4M 2H2',
+      lat: 44.40,
+      lng: -79.70,
+    });
+    expect(result.mappedStops[0]?.notes).toContain('geocoded as base address "3 Gunn Street"');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });

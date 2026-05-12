@@ -119,6 +119,7 @@ High-value reminders:
 - Segment rounding, gap-based block assignment, trip pairing, cycle-time semantics, and post-midnight ordering are locked behavior.
 - AI suggests; planners decide.
 - New Schedule Step 2 is an internal workflow, not a hard human decision gate. Step 3 and Step 4 should still trust the approved runtime contract, but the UX may auto-approve on continue instead of forcing a separate approval decision.
+- In New Schedule Step 2, loop-route planning chains must stay keyed as `Loop` in `canonicalDirectionStops`; do not coerce loop master/fallback stops into `North` or `South`, or full-pattern runtime matching for routes such as 10/11 can return no data.
 - New Schedule Step 4 exposes Compare to Master as a local planner review panel, not a header toggle. It loads the published master on demand, shows warning-only summary counts, and can show/hide editor deltas without blocking publish.
 - Brand-new added trips should not inherit delta-source fallback from template trips; compare-to-master deltas should only render when a real original/reference match exists.
 

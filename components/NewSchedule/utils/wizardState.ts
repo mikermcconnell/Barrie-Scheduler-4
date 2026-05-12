@@ -60,18 +60,31 @@ export const getUsableCanonicalDirectionStops = (
 ): Record<string, string[]> | undefined => {
     if (!directionStops) return undefined;
 
-    const normalized = {
+    const normalized: Record<'North' | 'South' | 'Loop', string[]> = {
         North: directionStops.North || [],
         South: directionStops.South || [],
+        Loop: directionStops.Loop || [],
     };
-
-    if (normalized.North.length === 0 && normalized.South.length === 0) {
-        return undefined;
-    }
 
     const parsedRoute = routeNumber?.trim() ? parseRouteInfo(routeNumber.trim()) : null;
     const routeConfig = parsedRoute ? getRouteConfig(parsedRoute.baseRoute) : null;
     const isBidirectionalRoute = !!routeConfig && routeConfig.segments.length === 2;
+    const isLoopRoute = !!routeConfig && routeConfig.segments.length === 1;
+
+    if (isLoopRoute) {
+        const loopStops = normalized.Loop.length > 0
+            ? normalized.Loop
+            : normalized.North.length > 0
+                ? normalized.North
+                : normalized.South;
+
+        return loopStops.length > 0 ? { Loop: loopStops } : undefined;
+    }
+
+    if (normalized.North.length === 0 && normalized.South.length === 0) {
+        return normalized.Loop.length > 0 ? { Loop: normalized.Loop } : undefined;
+    }
+
     const populatedDirections = [normalized.North, normalized.South].filter(stops => stops.length > 0).length;
 
     if (isBidirectionalRoute && populatedDirections < 2) {
@@ -94,7 +107,11 @@ export const getUsableCanonicalDirectionStops = (
         }
     }
 
-    return normalized;
+    const result: Record<string, string[]> = {};
+    if (normalized.North.length > 0) result.North = normalized.North;
+    if (normalized.South.length > 0) result.South = normalized.South;
+    if (normalized.Loop.length > 0) result.Loop = normalized.Loop;
+    return Object.keys(result).length > 0 ? result : undefined;
 };
 
 export const buildSegmentsMapFromParsedData = (
@@ -286,13 +303,19 @@ export const buildRuntimeDerivedCanonicalDirectionStops = (
     routeNumber: string | undefined,
     segmentsMap: Record<string, SegmentRawData[]>
 ): Record<string, string[]> | undefined => {
-    const directionStops: Record<'North' | 'South', string[]> = {
+    const parsedRoute = routeNumber?.trim() ? parseRouteInfo(routeNumber.trim()) : null;
+    const routeConfig = parsedRoute ? getRouteConfig(parsedRoute.baseRoute) : null;
+    const isLoopRoute = !!routeConfig && routeConfig.segments.length === 1;
+    const directionStops: Record<'North' | 'South' | 'Loop', string[]> = {
         North: [],
         South: [],
+        Loop: [],
     };
 
     getOrderedDirections(segmentsMap).forEach((rawDirection) => {
-        const canonicalDirection = toCanonicalRuntimeDirection(rawDirection);
+        const canonicalDirection = isLoopRoute || rawDirection === 'Loop'
+            ? 'Loop'
+            : toCanonicalRuntimeDirection(rawDirection);
         const stops = directionStops[canonicalDirection];
 
         segmentsMap[rawDirection].forEach((segment) => {
@@ -420,7 +443,7 @@ const findCanonicalStopPair = (
 
 export const orderSegmentColumnsByCanonicalStops = (
     segmentColumns: OrderedSegmentColumn[],
-    canonicalDirectionStops?: Partial<Record<'North' | 'South', string[]>>,
+    canonicalDirectionStops?: Partial<Record<'North' | 'South' | 'Loop', string[]>>,
     preferredColumns?: OrderedSegmentColumn[],
     options?: {
         excludeUnmatched?: boolean;
@@ -432,6 +455,7 @@ export const orderSegmentColumnsByCanonicalStops = (
         || (
             (!canonicalDirectionStops.North || canonicalDirectionStops.North.length === 0)
             && (!canonicalDirectionStops.South || canonicalDirectionStops.South.length === 0)
+            && (!canonicalDirectionStops.Loop || canonicalDirectionStops.Loop.length === 0)
         )
     ) {
         return segmentColumns;
@@ -470,9 +494,12 @@ export const orderSegmentColumnsByCanonicalStops = (
             const southMatch = canonicalDirectionStops.South
                 ? findCanonicalStopPair(canonicalDirectionStops.South, fromStopKey, toStopKey)
                 : null;
+            const loopMatch = canonicalDirectionStops.Loop
+                ? findCanonicalStopPair(canonicalDirectionStops.Loop, fromStopKey, toStopKey)
+                : null;
 
-            const canonicalDirection = northMatch ? 'North' : southMatch ? 'South' : undefined;
-            const canonicalMatch = northMatch || southMatch;
+            const canonicalDirection = northMatch ? 'North' : southMatch ? 'South' : loopMatch ? 'Loop' : undefined;
+            const canonicalMatch = northMatch || southMatch || loopMatch;
             const groupRank = getGroupRank(column.groupLabel, canonicalDirection || column.direction);
 
             return {
@@ -510,7 +537,10 @@ export const buildCanonicalSegmentColumnsFromMasterStops = (
     northStops: string[],
     southStops: string[]
 ): OrderedSegmentColumn[] => {
-    const buildColumnsForDirection = (direction: 'North' | 'South', stops: string[]): OrderedSegmentColumn[] => {
+    const parsedRoute = parseRouteInfo(routeNumber);
+    const routeConfig = getRouteConfig(parsedRoute.baseRoute);
+    const isLoopRoute = !!routeConfig && routeConfig.segments.length === 1;
+    const buildColumnsForDirection = (direction: 'North' | 'South' | 'Loop', stops: string[]): OrderedSegmentColumn[] => {
         const groupLabel = getDirectionGroupLabel(routeNumber, direction);
         const columns: OrderedSegmentColumn[] = [];
         for (let index = 0; index < stops.length - 1; index += 1) {
@@ -522,6 +552,11 @@ export const buildCanonicalSegmentColumnsFromMasterStops = (
         }
         return columns;
     };
+
+    if (isLoopRoute) {
+        const loopStops = northStops.length > 0 ? northStops : southStops;
+        return buildColumnsForDirection('Loop', loopStops);
+    }
 
     return [
         ...buildColumnsForDirection('North', northStops),

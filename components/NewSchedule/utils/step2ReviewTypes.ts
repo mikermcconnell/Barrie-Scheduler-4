@@ -13,7 +13,7 @@ export type Step2ImportMode = 'csv' | 'performance';
 export type Step2ReviewLifecycle = 'idle' | 'building' | 'reviewable' | 'stale' | 'error';
 export type Step2ReadinessStatus = 'blocked' | 'warning' | 'ready';
 export type Step2ApprovalState = 'unapproved' | 'approved' | 'stale';
-export type Step2Direction = 'North' | 'South';
+export type Step2Direction = 'North' | 'South' | 'Loop';
 
 export interface Step2DateRange {
     start: string;

@@ -61,6 +61,17 @@ interface ExtractedAddress {
     postalCode: string;
 }
 
+interface UnitStreetParts {
+    unit: string;
+    baseStreetLine: string;
+}
+
+interface AddressGeocodeVariant {
+    query: string;
+    streetLineForMatch: string;
+    note?: string;
+}
+
 function toCellText(value: unknown): string {
     if (value == null) return '';
     return String(value).replace(/\r/g, '\n').replace(/[ \t]+/g, ' ').trim();
@@ -110,6 +121,71 @@ function normalizeAddressKey(streetLine: string, city: string, province: string,
         .replace(/\bPARKWAY\b/g, 'PKWY')
         .replace(/[^A-Z0-9]+/g, ' ')
         .trim();
+}
+
+function getUnitStreetParts(streetLine: string): UnitStreetParts | null {
+    const trimmed = streetLine.trim();
+    const explicitUnitMatch = trimmed.match(/^\s*(?:unit|apt|apartment|suite|ste|#)\s*([A-Z]?\d+[A-Z]?)\s*[-/]\s*(\d+[A-Z]?\s+.+)$/i);
+    const compactUnitMatch = trimmed.match(/^\s*([A-Z]?\d+[A-Z]?)\s*[-/]\s*(\d+[A-Z]?\s+.+)$/i);
+    const match = explicitUnitMatch ?? compactUnitMatch;
+    if (!match) return null;
+
+    const unit = match[1]?.trim();
+    const baseStreetLine = match[2]?.replace(/\s+/g, ' ').trim();
+    if (!unit || !baseStreetLine || !isStreetLine(baseStreetLine)) return null;
+
+    if (explicitUnitMatch) return { unit, baseStreetLine };
+
+    const unitNumber = Number.parseInt(unit.replace(/^\D+/, ''), 10);
+    const civicNumber = Number.parseInt(baseStreetLine, 10);
+    if (!Number.isFinite(unitNumber) || !Number.isFinite(civicNumber)) return null;
+
+    // Treat small leading numbers as unit/suite prefixes, but avoid converting
+    // likely civic ranges such as "447-449 Yonge Street" into "449 Yonge Street".
+    if (unitNumber <= 99 && civicNumber <= 9999) {
+        return { unit, baseStreetLine };
+    }
+
+    return null;
+}
+
+function formatAddress(streetLine: string, city: string, province: string, postalCode?: string): string {
+    return [
+        streetLine,
+        city,
+        postalCode ? `${province} ${postalCode}` : province,
+    ].filter(Boolean).join(', ');
+}
+
+function buildAddressGeocodeVariants(candidate: RoutePlanner2ParsedAddress): AddressGeocodeVariant[] {
+    const unitParts = getUnitStreetParts(candidate.streetLine);
+    const variants: AddressGeocodeVariant[] = [];
+    const pushVariant = (query: string, streetLineForMatch: string, note?: string) => {
+        if (variants.some((variant) => variant.query.toUpperCase() === query.toUpperCase())) return;
+        variants.push({ query, streetLineForMatch, note });
+    };
+
+    if (unitParts) {
+        const baseAddress = formatAddress(unitParts.baseStreetLine, candidate.city, candidate.province, candidate.postalCode);
+        pushVariant(
+            baseAddress,
+            unitParts.baseStreetLine,
+            `Unit-style address "${candidate.streetLine}" was geocoded as base address "${unitParts.baseStreetLine}".`,
+        );
+        pushVariant(
+            `Unit ${unitParts.unit}, ${baseAddress}`,
+            unitParts.baseStreetLine,
+            `Unit-style address "${candidate.streetLine}" was geocoded as base address "${unitParts.baseStreetLine}".`,
+        );
+    }
+
+    pushVariant(candidate.address, unitParts?.baseStreetLine ?? candidate.streetLine);
+
+    const streetLineForMatch = unitParts?.baseStreetLine ?? candidate.streetLine;
+    pushVariant(formatAddress(streetLineForMatch, candidate.city, candidate.province), streetLineForMatch);
+    pushVariant(`${streetLineForMatch}, ${candidate.city}, ${candidate.postalCode}`, streetLineForMatch);
+
+    return variants;
 }
 
 function extractAddressFromText(text: string): ExtractedAddress | null {
@@ -258,14 +334,72 @@ function isWithinBarrieArea(suggestion: RoutePlanner2AddressSuggestion): boolean
     return suggestion.lat >= 44.25 && suggestion.lat <= 44.55 && suggestion.lng >= -79.9 && suggestion.lng <= -79.45;
 }
 
-function isConfidentAddressMatch(candidate: RoutePlanner2ParsedAddress, suggestion: RoutePlanner2AddressSuggestion): boolean {
+function containsToken(text: string, token: string): boolean {
+    const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^a-z0-9])${escapedToken}([^a-z0-9]|$)`, 'i').test(text);
+}
+
+function isConfidentAddressMatch(
+    candidate: RoutePlanner2ParsedAddress,
+    suggestion: RoutePlanner2AddressSuggestion,
+    streetLineForMatch = candidate.streetLine,
+): boolean {
     if (!isWithinBarrieArea(suggestion)) return false;
     const label = `${suggestion.name} ${suggestion.label}`.toLowerCase();
-    const { civicNumber, streetToken } = getStreetMatchParts(candidate.streetLine);
+    const { civicNumber, streetToken } = getStreetMatchParts(streetLineForMatch);
 
-    if (civicNumber && !label.includes(civicNumber)) return false;
-    if (streetToken && !label.includes(streetToken)) return false;
+    if (civicNumber && !containsToken(label, civicNumber)) return false;
+    if (streetToken && !containsToken(label, streetToken)) return false;
     return true;
+}
+
+function scoreAddressSuggestion(
+    candidate: RoutePlanner2ParsedAddress,
+    suggestion: RoutePlanner2AddressSuggestion,
+    streetLineForMatch: string,
+): number {
+    if (!isWithinBarrieArea(suggestion)) return Number.NEGATIVE_INFINITY;
+
+    const label = `${suggestion.name} ${suggestion.label}`.toLowerCase();
+    const { civicNumber, streetToken } = getStreetMatchParts(streetLineForMatch);
+    let score = 0;
+
+    if (civicNumber) {
+        if (!containsToken(label, civicNumber)) return Number.NEGATIVE_INFINITY;
+        score += 5;
+    }
+
+    if (streetToken) {
+        if (!containsToken(label, streetToken)) return Number.NEGATIVE_INFINITY;
+        score += 5;
+    }
+
+    if (containsToken(label, candidate.city.toLowerCase())) score += 2;
+    if (containsToken(label, candidate.province.toLowerCase()) || containsToken(label, 'ontario')) score += 1;
+    if (candidate.postalCode && label.includes(candidate.postalCode.toLowerCase())) score += 1;
+
+    return score;
+}
+
+function selectBestConfidentSuggestion(
+    candidate: RoutePlanner2ParsedAddress,
+    suggestions: RoutePlanner2AddressSuggestion[],
+    streetLineForMatch: string,
+): RoutePlanner2AddressSuggestion | null {
+    let bestSuggestion: RoutePlanner2AddressSuggestion | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    suggestions.forEach((suggestion) => {
+        const score = scoreAddressSuggestion(candidate, suggestion, streetLineForMatch);
+        if (score > bestScore) {
+            bestSuggestion = suggestion;
+            bestScore = score;
+        }
+    });
+
+    return bestSuggestion && isConfidentAddressMatch(candidate, bestSuggestion, streetLineForMatch)
+        ? bestSuggestion
+        : null;
 }
 
 function distanceSquared(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -311,16 +445,30 @@ export async function geocodeRoutePlanner2ParsedAddresses(
 
     for (const candidate of candidates) {
         try {
-            const suggestions = await searchRoutePlanner2Addresses(candidate.address, { ...options, limit: 1 });
-            const bestSuggestion = suggestions[0];
+            const variants = buildAddressGeocodeVariants(candidate);
+            let selectedSuggestion: RoutePlanner2AddressSuggestion | null = null;
+            let selectedVariant: AddressGeocodeVariant | null = null;
+            let sawMapboxSuggestion = false;
 
-            if (!bestSuggestion) {
-                unresolved.push({ candidate, reason: 'No Mapbox match found.' });
-                continue;
+            for (const variant of variants) {
+                const suggestions = await searchRoutePlanner2Addresses(variant.query, { ...options, limit: 5 });
+                if (suggestions.length > 0) sawMapboxSuggestion = true;
+
+                const bestSuggestion = selectBestConfidentSuggestion(candidate, suggestions, variant.streetLineForMatch);
+                if (bestSuggestion) {
+                    selectedSuggestion = bestSuggestion;
+                    selectedVariant = variant;
+                    break;
+                }
             }
 
-            if (!isConfidentAddressMatch(candidate, bestSuggestion)) {
-                unresolved.push({ candidate, reason: 'Mapbox match was not confident enough.' });
+            if (!selectedSuggestion || !selectedVariant) {
+                unresolved.push({
+                    candidate,
+                    reason: sawMapboxSuggestion
+                        ? 'Mapbox match was not confident enough.'
+                        : 'No Mapbox match found.',
+                });
                 continue;
             }
 
@@ -328,15 +476,16 @@ export async function geocodeRoutePlanner2ParsedAddresses(
                 id: candidate.id,
                 name: candidate.streetLine,
                 address: candidate.address,
-                lat: bestSuggestion.lat,
-                lng: bestSuggestion.lng,
+                lat: selectedSuggestion.lat,
+                lng: selectedSuggestion.lng,
                 occurrenceCount: candidate.occurrenceCount,
                 sourceRows: candidate.sourceRows,
                 notes: [
                     `Imported from address file: ${candidate.address}.`,
+                    selectedVariant.note,
                     candidate.occurrenceCount > 1 ? `${candidate.occurrenceCount} source rows were merged into this stop.` : null,
                     `Source rows: ${candidate.sourceRows.join(', ')}.`,
-                    `Mapbox match: ${bestSuggestion.label}.`,
+                    `Mapbox match: ${selectedSuggestion.label}.`,
                 ].filter(Boolean).join(' '),
             });
         } catch (error) {

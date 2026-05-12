@@ -19,23 +19,27 @@ export interface Step2StopOrderHealth {
     usedForPlanning: boolean;
     summary: string;
     warnings: string[];
-    directionStats: Partial<Record<'North' | 'South', Step2StopOrderDirectionStats>>;
+    directionStats: Partial<Record<'North' | 'South' | 'Loop', Step2StopOrderDirectionStats>>;
 }
 
 export const extractStopOrderDirectionStops = (
     resolution: StopOrderResolutionResult | null | undefined
-): Partial<Record<'North' | 'South', string[]>> | undefined => {
+): Partial<Record<'North' | 'South' | 'Loop', string[]>> | undefined => {
     if (!resolution) return undefined;
 
-    const result: Partial<Record<'North' | 'South', string[]>> = {};
+    const result: Partial<Record<'North' | 'South' | 'Loop', string[]>> = {};
     const northStops = resolution.resolvedDirections.North?.stopNames?.filter(Boolean) ?? [];
     const southStops = resolution.resolvedDirections.South?.stopNames?.filter(Boolean) ?? [];
+    const loopStops = resolution.resolvedDirections.Loop?.stopNames?.filter(Boolean) ?? [];
 
     if (northStops.length > 0) {
         result.North = northStops;
     }
     if (southStops.length > 0) {
         result.South = southStops;
+    }
+    if (loopStops.length > 0) {
+        result.Loop = loopStops;
     }
 
     return Object.keys(result).length > 0 ? result : undefined;
@@ -62,6 +66,13 @@ export const buildStep2StopOrderHealth = (
             tripCountUsed: resolution.resolvedDirections.South.tripCountUsed,
             dayCountUsed: resolution.resolvedDirections.South.dayCountUsed,
             middayTripCount: resolution.resolvedDirections.South.middayTripCount,
+        };
+    }
+    if (resolution.resolvedDirections.Loop) {
+        directionStats.Loop = {
+            tripCountUsed: resolution.resolvedDirections.Loop.tripCountUsed,
+            dayCountUsed: resolution.resolvedDirections.Loop.dayCountUsed,
+            middayTripCount: resolution.resolvedDirections.Loop.middayTripCount,
         };
     }
 

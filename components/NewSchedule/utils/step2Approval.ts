@@ -36,6 +36,7 @@ const hasUsableCanonicalDirectionStops = (
 ): boolean => !!stops && (
     (stops.North?.length ?? 0) > 0
     || (stops.South?.length ?? 0) > 0
+    || (stops.Loop?.length ?? 0) > 0
 );
 
 export const canCreateStep2Approval = (input: Step2ApprovalCreationInput): boolean => {

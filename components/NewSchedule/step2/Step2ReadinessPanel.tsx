@@ -219,6 +219,11 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                                         South: {healthReport.stopOrder.directionStats.South.tripCountUsed} trips, {healthReport.stopOrder.directionStats.South.dayCountUsed} day{healthReport.stopOrder.directionStats.South.dayCountUsed === 1 ? '' : 's'}
                                     </span>
                                 )}
+                                {healthReport.stopOrder.directionStats.Loop && (
+                                    <span>
+                                        Loop: {healthReport.stopOrder.directionStats.Loop.tripCountUsed} trips, {healthReport.stopOrder.directionStats.Loop.dayCountUsed} day{healthReport.stopOrder.directionStats.Loop.dayCountUsed === 1 ? '' : 's'}
+                                    </span>
+                                )}
                             </div>
                         </div>
                     )}

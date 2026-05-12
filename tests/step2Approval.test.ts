@@ -123,6 +123,25 @@ describe('step2Approval', () => {
         expect(contract?.acknowledgedWarnings).toEqual(['Legacy runtime logic detected']);
     });
 
+    it('allows approval when a loop route only has Loop canonical stops', () => {
+        expect(canCreateStep2Approval({
+            reviewResult: {
+                ...baseReviewResult,
+                routeIdentity: '10-Weekday',
+                routeNumber: '10',
+                planning: {
+                    ...baseReviewResult.planning,
+                    canonicalDirectionStops: {
+                        Loop: ['Downtown', 'Georgian College', 'Downtown'],
+                    },
+                    directions: ['Loop'],
+                },
+            },
+            sourceSnapshot,
+            approvedAt: '2026-03-27T12:30:00.000Z',
+        })).toBe(true);
+    });
+
     it('creates a normalized approved contract when the review is eligible', () => {
         const contract = createStep2ApprovedRuntimeContract({
             reviewResult: baseReviewResult,

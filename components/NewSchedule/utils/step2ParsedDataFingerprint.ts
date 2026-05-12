@@ -60,6 +60,22 @@ const normalizeSegmentColumns = (segmentColumns?: OrderedSegmentColumn[] | null)
     }))
 );
 
+const normalizeCanonicalDirectionStops = (
+    stops?: Step2ParsedDataFingerprintScope['canonicalDirectionStops']
+) => {
+    if (!stops) return null;
+
+    const result: Partial<Record<'North' | 'South' | 'Loop', string[]>> = {
+        North: stops.North?.map(normalizeText).filter(Boolean) || [],
+        South: stops.South?.map(normalizeText).filter(Boolean) || [],
+    };
+    const loopStops = stops.Loop?.map(normalizeText).filter(Boolean) || [];
+    if (loopStops.length > 0) {
+        result.Loop = loopStops;
+    }
+    return result;
+};
+
 export interface Step2ParsedDataFingerprintScope {
     analysis?: TripBucketAnalysis[];
     bands?: TimeBand[];
@@ -67,7 +83,7 @@ export interface Step2ParsedDataFingerprintScope {
     matrixAnalysis?: TripBucketAnalysis[];
     matrixSegmentsMap?: Record<string, SegmentRawData[]>;
     troubleshootingPatternWarning?: string | null;
-    canonicalDirectionStops?: Partial<Record<'North' | 'South', string[]>> | null;
+    canonicalDirectionStops?: Partial<Record<'North' | 'South' | 'Loop', string[]>> | null;
     canonicalSegmentColumns?: OrderedSegmentColumn[] | null;
 }
 
@@ -96,12 +112,7 @@ export const buildStep2ParsedDataFingerprint = (
         matrixAnalysis: scope?.matrixAnalysis?.map(normalizeAnalysisBucket) || [],
         matrixSegmentsMap: normalizeSegmentMap(scope?.matrixSegmentsMap),
         troubleshootingPatternWarning: scope?.troubleshootingPatternWarning?.trim() || null,
-        canonicalDirectionStops: scope?.canonicalDirectionStops
-            ? {
-                North: scope.canonicalDirectionStops.North?.map(normalizeText).filter(Boolean) || [],
-                South: scope.canonicalDirectionStops.South?.map(normalizeText).filter(Boolean) || [],
-            }
-            : null,
+        canonicalDirectionStops: normalizeCanonicalDirectionStops(scope?.canonicalDirectionStops),
         canonicalSegmentColumns: normalizeSegmentColumns(scope?.canonicalSegmentColumns),
     };
 
