@@ -18,6 +18,7 @@ import type {
   RuntimeData,
   SegmentRawData,
   RouteDirection,
+  RuntimePatternKind,
   SegmentTimeBucket,
   BucketContribution,
 } from '../components/NewSchedule/utils/csvParser';
@@ -109,6 +110,78 @@ function routeMatchesSelection(entryRouteId: string, selectedRouteId: string): b
     isDirectionVariant(selectedNormalized) && selectedNormalized !== selectedCanonicalRouteId;
   if (selectedIsExplicitDirectionVariant) return false;
   return getCanonicalRouteId(entryNormalized) === selectedCanonicalRouteId;
+}
+
+function getRuntimeEntryPatternKind(entry: { patternKind?: RuntimePatternKind }): RuntimePatternKind {
+  return entry.patternKind === 'detour' ? 'detour' : 'normal';
+}
+
+function countRuntimeObservations(
+  entries: Array<{ observations?: unknown[] }>
+): number {
+  return entries.reduce((sum, entry) => sum + (entry.observations?.length ?? 0), 0);
+}
+
+function filterDailySummariesByRuntimePatternKind(
+  dailySummaries: DailySummary[],
+  patternKind: RuntimePatternKind,
+): DailySummary[] {
+  return dailySummaries.map((day) => {
+    const segmentEntries = patternKind === 'normal'
+      ? (day.segmentRuntimes?.entries ?? [])
+      : [];
+    const stopEntries = (day.stopSegmentRuntimes?.entries ?? [])
+      .filter(entry => getRuntimeEntryPatternKind(entry) === patternKind);
+    const tripEntries = (day.tripStopSegmentRuntimes?.entries ?? [])
+      .filter(entry => getRuntimeEntryPatternKind(entry) === patternKind);
+
+    return {
+      ...day,
+      segmentRuntimes: day.segmentRuntimes
+        ? {
+          ...day.segmentRuntimes,
+          entries: segmentEntries,
+          totalObservations: countRuntimeObservations(segmentEntries),
+          tripsWithData: patternKind === 'normal' ? day.segmentRuntimes.tripsWithData : 0,
+        }
+        : day.segmentRuntimes,
+      stopSegmentRuntimes: day.stopSegmentRuntimes
+        ? {
+          ...day.stopSegmentRuntimes,
+          entries: stopEntries,
+          totalObservations: countRuntimeObservations(stopEntries),
+          tripsWithData: stopEntries.length > 0 ? day.stopSegmentRuntimes.tripsWithData : 0,
+        }
+        : day.stopSegmentRuntimes,
+      tripStopSegmentRuntimes: day.tripStopSegmentRuntimes
+        ? {
+          ...day.tripStopSegmentRuntimes,
+          entries: tripEntries,
+          totalObservations: tripEntries.reduce((sum, entry) => sum + entry.segments.length, 0),
+          tripsWithData: tripEntries.length,
+        }
+        : day.tripStopSegmentRuntimes,
+      runtimePatterns: day.runtimePatterns?.filter(pattern => pattern.patternKind === patternKind),
+    };
+  });
+}
+
+function applyRuntimePatternMetadata(
+  results: RuntimeData[],
+  patternKind: RuntimePatternKind,
+  strategy: RuntimePatternStrategy,
+): RuntimeData[] {
+  const runtimePatternSummary = patternKind === 'detour'
+    ? 'Detour-pattern observed runtimes'
+    : 'Normal-pattern observed runtimes';
+
+  return results.map(result => ({
+    ...result,
+    runtimePatternKind: patternKind,
+    runtimePatternSummary: strategy === 'detour-fallback' && patternKind === 'detour'
+      ? `${runtimePatternSummary} used because normal-pattern evidence was unavailable`
+      : runtimePatternSummary,
+  }));
 }
 
 function parseBucketStartMinutes(bucket: string): number {
@@ -225,6 +298,7 @@ interface PreferredTripPattern {
 type StopNameLookupByDirection = Map<RouteDirection, Map<string, string>>;
 
 type PerformanceBucketMode = 'cycleStart' | 'tripStart';
+export type RuntimePatternStrategy = 'normal-only' | 'detour-fallback' | 'detour-only' | 'all-patterns';
 
 interface CycleBucketCandidate {
   bucket: string;
@@ -1310,6 +1384,7 @@ export interface PerformanceRuntimeOptions {
   canonicalDirectionStops?: Partial<Record<RouteDirection, string[]>>;
   patternAnchorStops?: Partial<Record<RouteDirection, string[]>>;
   fullPatternOnly?: boolean;
+  runtimePatternStrategy?: RuntimePatternStrategy;
 }
 
 export interface Step2CleanHistoryWindow {
@@ -1328,6 +1403,10 @@ export interface PerformanceRuntimeDiagnostics {
   coarseEntryCount: number;
   stopEntryCount: number;
   tripEntryCount: number;
+  normalStopEntryCount?: number;
+  normalTripEntryCount?: number;
+  detourStopEntryCount?: number;
+  detourTripEntryCount?: number;
   matchedRouteIds: string[];
   directions: string[];
   importedAt?: string;
@@ -1446,6 +1525,10 @@ export function inspectPerformanceRuntimeAvailability(
   let coarseEntryCount = 0;
   let stopEntryCount = 0;
   let tripEntryCount = 0;
+  let normalStopEntryCount = 0;
+  let normalTripEntryCount = 0;
+  let detourStopEntryCount = 0;
+  let detourTripEntryCount = 0;
 
   for (const day of filtered) {
     let dayMatched = false;
@@ -1461,6 +1544,11 @@ export function inspectPerformanceRuntimeAvailability(
     for (const entry of day.stopSegmentRuntimes?.entries ?? []) {
       if (!routeMatchesSelection(entry.routeId, routeId)) continue;
       stopEntryCount += 1;
+      if (getRuntimeEntryPatternKind(entry) === 'detour') {
+        detourStopEntryCount += 1;
+      } else {
+        normalStopEntryCount += 1;
+      }
       matchedRouteIds.add(normalizeRouteId(entry.routeId));
       directions.add(mapDirection(entry.direction, entry.routeId));
       dayMatched = true;
@@ -1469,6 +1557,11 @@ export function inspectPerformanceRuntimeAvailability(
     for (const entry of day.tripStopSegmentRuntimes?.entries ?? []) {
       if (!routeMatchesSelection(entry.routeId, routeId)) continue;
       tripEntryCount += 1;
+      if (getRuntimeEntryPatternKind(entry) === 'detour') {
+        detourTripEntryCount += 1;
+      } else {
+        normalTripEntryCount += 1;
+      }
       matchedRouteIds.add(normalizeRouteId(entry.routeId));
       directions.add(mapDirection(entry.direction, entry.routeId, entry.tripName));
       dayMatched = true;
@@ -1485,6 +1578,10 @@ export function inspectPerformanceRuntimeAvailability(
     coarseEntryCount,
     stopEntryCount,
     tripEntryCount,
+    normalStopEntryCount,
+    normalTripEntryCount,
+    detourStopEntryCount,
+    detourTripEntryCount,
     matchedRouteIds: Array.from(matchedRouteIds).sort(),
     directions: Array.from(directions).sort(),
     importedAt: metadata?.importedAt,
@@ -1509,7 +1606,46 @@ export function computeRuntimesFromPerformance(
     canonicalDirectionStops,
     patternAnchorStops,
     fullPatternOnly = false,
+    runtimePatternStrategy = 'normal-only',
   } = options;
+
+  if (runtimePatternStrategy === 'normal-only' || runtimePatternStrategy === 'detour-only') {
+    const patternKind: RuntimePatternKind = runtimePatternStrategy === 'detour-only' ? 'detour' : 'normal';
+    return applyRuntimePatternMetadata(
+      computeRuntimesFromPerformance(
+        filterDailySummariesByRuntimePatternKind(dailySummaries, patternKind),
+        {
+          ...options,
+          runtimePatternStrategy: 'all-patterns',
+        }
+      ),
+      patternKind,
+      runtimePatternStrategy
+    );
+  }
+
+  if (runtimePatternStrategy === 'detour-fallback') {
+    const normalResults = computeRuntimesFromPerformance(
+      filterDailySummariesByRuntimePatternKind(dailySummaries, 'normal'),
+      {
+        ...options,
+        runtimePatternStrategy: 'all-patterns',
+      }
+    );
+    if (normalResults.length > 0) {
+      return applyRuntimePatternMetadata(normalResults, 'normal', runtimePatternStrategy);
+    }
+
+    const detourResults = computeRuntimesFromPerformance(
+      filterDailySummariesByRuntimePatternKind(dailySummaries, 'detour'),
+      {
+        ...options,
+        runtimePatternStrategy: 'all-patterns',
+      }
+    );
+    return applyRuntimePatternMetadata(detourResults, 'detour', runtimePatternStrategy);
+  }
+
   const canonicalRouteId = getCanonicalRouteId(routeId);
 
   // 1. Filter summaries by dayType and optional date range

@@ -212,6 +212,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [importMode, setImportMode] = useState<ImportMode>(DEFAULT_IMPORT_MODE);
     const [performanceConfig, setPerformanceConfig] = useState<PerformanceConfig>({ routeId: '', dateRange: null });
     const [performanceLoadRouteId, setPerformanceLoadRouteId] = useState<string>('all');
+    const [performanceLoadRouteManuallySelected, setPerformanceLoadRouteManuallySelected] = useState(false);
     const [autofillFromMaster, setAutofillFromMaster] = useState(true);
     const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
     const [isAutoProjectName, setIsAutoProjectName] = useState(true);
@@ -226,11 +227,55 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         if (!paths) return [];
         return Object.keys(paths).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
     }, [performanceMetadataQuery.data?.routeStoragePaths]);
+    const defaultPerformanceLoadRouteId = useMemo(() => {
+        if (performanceLoadRouteIds.length === 0) return 'all';
+        const configuredRouteId = performanceConfig.routeId.trim();
+        if (configuredRouteId && performanceLoadRouteIds.includes(configuredRouteId)) {
+            return configuredRouteId;
+        }
+        if (performanceLoadRouteId !== 'all' && performanceLoadRouteIds.includes(performanceLoadRouteId)) {
+            return performanceLoadRouteId;
+        }
+        return performanceLoadRouteIds[0];
+    }, [performanceConfig.routeId, performanceLoadRouteId, performanceLoadRouteIds]);
+    const effectivePerformanceLoadRouteId = (
+        performanceLoadRouteId === 'all' && !performanceLoadRouteManuallySelected
+            ? defaultPerformanceLoadRouteId
+            : performanceLoadRouteId
+    );
+    useEffect(() => {
+        if (importMode !== 'performance' || performanceLoadRouteIds.length === 0) return;
+        if (performanceLoadRouteManuallySelected && performanceLoadRouteId === 'all') return;
+
+        const configuredRouteId = performanceConfig.routeId.trim();
+        if (configuredRouteId && performanceLoadRouteIds.includes(configuredRouteId)) {
+            setPerformanceLoadRouteId(current => (
+                current === configuredRouteId ? current : configuredRouteId
+            ));
+            return;
+        }
+
+        const firstRouteId = defaultPerformanceLoadRouteId;
+        setPerformanceLoadRouteId(current => {
+            if (current !== 'all' && performanceLoadRouteIds.includes(current)) return current;
+            return firstRouteId;
+        });
+        setPerformanceConfig(current => (
+            current.routeId ? current : { ...current, routeId: firstRouteId }
+        ));
+    }, [
+        defaultPerformanceLoadRouteId,
+        importMode,
+        performanceConfig.routeId,
+        performanceLoadRouteId,
+        performanceLoadRouteIds,
+        performanceLoadRouteManuallySelected,
+    ]);
     const perfQuery = usePerformanceDataQuery(
         team?.id,
         importMode === 'performance' && !performanceMetadataQuery.isLoading,
         performanceMetadataQuery.data,
-        performanceLoadRouteId
+        effectivePerformanceLoadRouteId
     );
     const perfData = perfQuery.data;
     const cleanStep2PerfData = useMemo(
@@ -264,6 +309,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     }, [dayType, perfData?.dailySummaries, perfData?.metadata, performanceConfig.dateRange, performanceConfig.routeId]);
 
     const handlePerformanceLoadRouteChange = useCallback((routeId: string) => {
+        setPerformanceLoadRouteManuallySelected(true);
         setPerformanceLoadRouteId(routeId);
         if (routeId !== 'all') {
             setPerformanceConfig(prev => ({
@@ -1365,6 +1411,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         canonicalDirectionStops: selectedCanonicalStops,
                         patternAnchorStops: resolvedCanonicalStops ?? masterCanonicalStops,
                         fullPatternOnly: true,
+                        runtimePatternStrategy: 'detour-fallback',
                     });
                     // Keep the schedule-driving analysis tied to the canonical route chain,
                     // but let the Step 2 matrix show the finer stop-to-stop legs when available.
@@ -1375,6 +1422,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             dateRange: performanceConfig.dateRange || undefined,
                             patternAnchorStops: resolvedCanonicalStops ?? masterCanonicalStops,
                             fullPatternOnly: true,
+                            runtimePatternStrategy: 'detour-fallback',
                         })
                         : results;
 
@@ -1645,6 +1693,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         projectIdRef.current = undefined;
         setImportMode(DEFAULT_IMPORT_MODE);
         setPerformanceLoadRouteId('all');
+        setPerformanceLoadRouteManuallySelected(false);
         setPerformanceConfig(createDefaultPerformanceConfig());
         setAutofillFromMaster(true);
         setApprovedRuntimeContract(null);

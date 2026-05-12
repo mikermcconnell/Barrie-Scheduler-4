@@ -537,6 +537,7 @@ export function resolveStopOrderFromPerformance(
 
     (day.tripStopSegmentRuntimes?.entries || []).forEach((trip) => {
       if (!routeMatchesSelection(trip.routeId, normalizedRouteId)) return;
+      if (trip.patternKind === 'detour') return;
       const candidate = buildTripCandidate(trip, day.date, stopNameLookup);
       if (!candidate) return;
       candidates.push(candidate);

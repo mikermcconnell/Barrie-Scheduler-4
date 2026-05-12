@@ -320,6 +320,18 @@ describe('newSchedule wizard state helpers', () => {
         });
     });
 
+    it('does not bridge standalone A/B route variants such as 8A into the return direction', () => {
+        expect(
+            getUsableCanonicalDirectionStops('8A', {
+                North: ['Barrie South GO Station', 'Burton Avenue'],
+                South: ['Georgian College', 'Barrie South GO Station'],
+            })
+        ).toEqual({
+            North: ['Barrie South GO Station', 'Burton Avenue'],
+            South: ['Georgian College', 'Barrie South GO Station'],
+        });
+    });
+
     it('drops unusable one-sided master stop chains for bidirectional routes', () => {
         expect(
             getUsableCanonicalDirectionStops('7', {

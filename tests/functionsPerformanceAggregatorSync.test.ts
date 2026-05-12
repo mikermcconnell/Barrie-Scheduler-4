@@ -161,6 +161,8 @@ describe('functions performance aggregation stays aligned with app runtime logic
         tripName: '2A - 07:00',
         routeId: '2A',
         direction: 'N',
+        patternId: expect.any(String),
+        patternKind: 'normal',
         terminalDepartureTime: '07:00',
         segments: [
           {
@@ -243,6 +245,8 @@ describe('functions performance aggregation stays aligned with app runtime logic
         tripName: '7A - 07:00',
         routeId: '7',
         direction: 'N',
+        patternId: expect.any(String),
+        patternKind: 'normal',
         terminalDepartureTime: '07:00',
         segments: [
           {
@@ -387,5 +391,55 @@ describe('functions performance aggregation stays aligned with app runtime logic
     expect(backend[0].byOperatorDwell?.incidents).toHaveLength(0);
     expect(backend[0].byOperatorDwell?.totalIncidents).toBe(0);
     expect(backend[0].byOperatorDwell?.totalStopVisits).toBe(1);
+  });
+
+  it('keeps detour runtime pattern evidence aligned between frontend and backend aggregators', () => {
+    const records = [
+      makeRecord({
+        tripId: 'detour-runtime',
+        routeId: '12A',
+        direction: 'N',
+        routeStopIndex: 0,
+        stopId: 'mall',
+        stopName: 'Georgian Mall',
+        stopTime: '07:00',
+        observedDepartureTime: '07:01:00',
+        isDetour: true,
+      }),
+      makeRecord({
+        tripId: 'detour-runtime',
+        routeId: '12A',
+        direction: 'N',
+        routeStopIndex: 1,
+        stopId: 'temp',
+        stopName: 'Temporary Stop',
+        arrivalTime: '07:08',
+        observedArrivalTime: '07:09:00',
+        stopTime: '07:08',
+        observedDepartureTime: '07:10:00',
+        isDetour: true,
+      }),
+      makeRecord({
+        tripId: 'detour-runtime',
+        routeId: '12A',
+        direction: 'N',
+        routeStopIndex: 2,
+        stopId: 'downtown',
+        stopName: 'Downtown',
+        arrivalTime: '07:20',
+        observedArrivalTime: '07:21:00',
+        stopTime: '07:20',
+        isDetour: true,
+      }),
+    ];
+
+    const frontend = aggregateFrontend(records);
+    const backend = aggregateBackend(records as any);
+
+    expect(backend[0].runtimePatterns).toEqual(frontend[0].runtimePatterns);
+    expect(backend[0].stopSegmentRuntimes).toEqual(frontend[0].stopSegmentRuntimes);
+    expect(backend[0].tripStopSegmentRuntimes).toEqual(frontend[0].tripStopSegmentRuntimes);
+    expect(frontend[0].runtimePatterns?.[0].patternKind).toBe('detour');
+    expect(frontend[0].tripStopSegmentRuntimes?.entries[0].patternKind).toBe('detour');
   });
 });

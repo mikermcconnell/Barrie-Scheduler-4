@@ -7,6 +7,10 @@ import type {
     DayType,
 } from '../utils/performanceDataTypes';
 import {
+    PERFORMANCE_RUNTIME_LOGIC_VERSION,
+    PERFORMANCE_SCHEMA_VERSION,
+} from '../utils/performanceDataTypes';
+import {
     computeRuntimesFromPerformance,
     getAvailableRuntimeRoutes,
     getStep2CleanHistoryWindow,
@@ -58,7 +62,7 @@ function makeSummary(params: {
             totalObservations: tripEntries.reduce((sum, entry) => sum + entry.segments.length, 0),
             tripsWithData: tripEntries.length,
         },
-        schemaVersion: params.schemaVersion ?? 8,
+        schemaVersion: params.schemaVersion ?? PERFORMANCE_SCHEMA_VERSION,
     } as DailySummary;
 }
 
@@ -1625,6 +1629,107 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(analysis[0].expectedSegmentCount).toBe(3);
     });
 
+    it('keeps detour pattern runtimes separate and only uses them as fallback', () => {
+        const detourSummary = makeSummary({
+            date: '2026-01-06',
+            dayType: 'weekday',
+            routeNames: { '12A': 'Georgian Mall' },
+            tripEntries: [
+                {
+                    tripId: 'detour-1',
+                    tripName: '12A 06:00',
+                    routeId: '12A',
+                    direction: 'N',
+                    patternKind: 'detour',
+                    terminalDepartureTime: '06:00',
+                    segments: [
+                        { fromStopId: 'Georgian Mall', toStopId: 'Downtown', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 12, timeBucket: '06:00' },
+                        { fromStopId: 'Downtown', toStopId: 'Barrie South GO', fromRouteStopIndex: 2, toRouteStopIndex: 3, runtimeMinutes: 18, timeBucket: '06:00' },
+                    ],
+                },
+            ],
+        });
+
+        const normalOnly = computeRuntimesFromPerformance([detourSummary], {
+            routeId: '12',
+            dayType: 'weekday',
+            canonicalDirectionStops: {
+                North: ['Georgian Mall', 'Downtown', 'Barrie South GO'],
+            },
+            fullPatternOnly: true,
+        });
+        expect(normalOnly).toEqual([]);
+
+        const detourFallback = computeRuntimesFromPerformance([detourSummary], {
+            routeId: '12',
+            dayType: 'weekday',
+            canonicalDirectionStops: {
+                North: ['Georgian Mall', 'Downtown', 'Barrie South GO'],
+            },
+            fullPatternOnly: true,
+            runtimePatternStrategy: 'detour-fallback',
+        });
+
+        expect(detourFallback).toHaveLength(1);
+        expect(detourFallback[0].runtimePatternKind).toBe('detour');
+        expect(detourFallback[0].runtimePatternSummary).toContain('normal-pattern evidence was unavailable');
+        expect(detourFallback[0].segments.map(segment => segment.segmentName)).toEqual([
+            'Georgian Mall to Downtown',
+            'Downtown to Barrie South GO',
+        ]);
+    });
+
+    it('prefers normal pattern runtimes when normal and detour evidence both exist', () => {
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-01-06',
+                dayType: 'weekday',
+                routeNames: { '12A': 'Georgian Mall' },
+                tripEntries: [
+                    {
+                        tripId: 'normal-1',
+                        tripName: '12A 06:00',
+                        routeId: '12A',
+                        direction: 'N',
+                        patternKind: 'normal',
+                        terminalDepartureTime: '06:00',
+                        segments: [
+                            { fromStopId: 'Georgian Mall', toStopId: 'Downtown', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 10, timeBucket: '06:00' },
+                            { fromStopId: 'Downtown', toStopId: 'Barrie South GO', fromRouteStopIndex: 2, toRouteStopIndex: 3, runtimeMinutes: 20, timeBucket: '06:00' },
+                        ],
+                    },
+                    {
+                        tripId: 'detour-1',
+                        tripName: '12A 06:30',
+                        routeId: '12A',
+                        direction: 'N',
+                        patternKind: 'detour',
+                        terminalDepartureTime: '06:30',
+                        segments: [
+                            { fromStopId: 'Georgian Mall', toStopId: 'Downtown', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 50, timeBucket: '06:30' },
+                            { fromStopId: 'Downtown', toStopId: 'Barrie South GO', fromRouteStopIndex: 2, toRouteStopIndex: 3, runtimeMinutes: 60, timeBucket: '06:30' },
+                        ],
+                    },
+                ],
+            }),
+        ];
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '12',
+            dayType: 'weekday',
+            canonicalDirectionStops: {
+                North: ['Georgian Mall', 'Downtown', 'Barrie South GO'],
+            },
+            fullPatternOnly: true,
+            runtimePatternStrategy: 'detour-fallback',
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0].runtimePatternKind).toBe('normal');
+        expect(result[0].allTimeBuckets).toEqual(['06:00']);
+        expect(result[0].segments[0].timeBuckets['06:00'].p50).toBe(10);
+    });
+
     it('uses canonical stop names for stop-level runtimes before Step 2 coverage matching', () => {
         const summaries: DailySummary[] = [
             makeSummary({
@@ -2617,19 +2722,19 @@ describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () 
             makeSummary({
                 date: '2026-03-22',
                 dayType: 'weekday',
-                schemaVersion: 8,
+                schemaVersion: PERFORMANCE_SCHEMA_VERSION,
                 routeNames: { '2A': 'Route 2A' },
             }),
             makeSummary({
                 date: '2026-03-23',
                 dayType: 'weekday',
-                schemaVersion: 8,
+                schemaVersion: PERFORMANCE_SCHEMA_VERSION,
                 routeNames: { '2A': 'Route 2A' },
             }),
         ];
 
         const cleanWindow = getStep2CleanHistoryWindow(summaries, {
-            runtimeLogicVersion: 3,
+            runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
         });
 
         expect(cleanWindow.cleanHistoryStartDate).toBe('2026-03-22');
@@ -2682,7 +2787,7 @@ describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () 
             dateRange: { start: '2026-01-01', end: '2026-01-09' },
             metadata: {
                 importedAt: '2026-03-24T12:00:00.000Z',
-                runtimeLogicVersion: 3,
+                runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
             },
         });
 
@@ -2694,7 +2799,7 @@ describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () 
         expect(diagnostics.matchedRouteIds).toEqual(['12A', '12B']);
         expect(diagnostics.directions).toEqual(['North', 'South']);
         expect(diagnostics.importedAt).toBe('2026-03-24T12:00:00.000Z');
-        expect(diagnostics.runtimeLogicVersion).toBe(3);
+        expect(diagnostics.runtimeLogicVersion).toBe(PERFORMANCE_RUNTIME_LOGIC_VERSION);
         expect(diagnostics.usesLegacyRuntimeLogic).toBe(false);
         expect(diagnostics.isCurrentRuntimeLogic).toBe(true);
         expect(diagnostics.excludedLegacyDayCount).toBe(0);
@@ -2761,7 +2866,7 @@ describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () 
             makeSummary({
                 date: '2026-03-22',
                 dayType: 'weekday',
-                schemaVersion: 8,
+                schemaVersion: PERFORMANCE_SCHEMA_VERSION,
                 routeNames: { '2A': 'Route 2A' },
                 stopEntries: [{
                     routeId: '2A',
@@ -2783,7 +2888,7 @@ describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () 
             dayType: 'weekday',
             metadata: {
                 importedAt: '2026-03-30T12:00:00.000Z',
-                runtimeLogicVersion: 3,
+                runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
             },
         });
 

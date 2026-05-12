@@ -118,32 +118,12 @@ const getBucketConfidenceClasses = (confidence?: {
     return 'border-gray-200 bg-white text-gray-800';
 };
 
-const buildBucketSegmentValue = (
-    bucket: TripBucketAnalysis,
-    segmentName: string,
-    lookup: ReturnType<typeof buildNormalizedSegmentNameLookup>,
-    viewMetric: 'p50' | 'p80'
-) => {
-    let weightedSum = 0;
-    let totalWeight = 0;
-    let matchedDetails = 0;
-
-    bucket.details?.forEach((detail) => {
-        const canonicalSegmentName = resolveCanonicalSegmentName(detail.segmentName, lookup);
-        if (canonicalSegmentName !== segmentName) return;
-
-        const weight = detail.n && detail.n > 0 ? detail.n : 1;
-        const value = viewMetric === 'p50' ? detail.p50 : detail.p80;
-        weightedSum += value * weight;
-        totalWeight += weight;
-        matchedDetails += 1;
-    });
-
-    return {
-        value: totalWeight > 0 ? weightedSum / totalWeight : null,
-        matchedDetails,
-        totalWeight,
-    };
+type BucketSegmentCell = {
+    segmentName: string;
+    value: number | null;
+    weightedSum: number;
+    matchedDetails: number;
+    totalWeight: number;
 };
 
 const getBucketColumnTone = (
@@ -166,7 +146,10 @@ const SegmentBreakdownMatrix: React.FC<{
     viewMetric: 'p50' | 'p80';
     segmentColumns: OrderedSegmentColumn[];
 }> = ({ analysis, bands, viewMetric, segmentColumns }) => {
-    const segmentNames = segmentColumns.map(column => column.segmentName);
+    const segmentNames = useMemo(
+        () => segmentColumns.map(column => column.segmentName),
+        [segmentColumns]
+    );
     const segmentGroups = useMemo(() => {
         const groups: Array<{ label: string; count: number }> = [];
         segmentColumns.forEach((column) => {
@@ -381,11 +364,26 @@ const StopToStopMatrix: React.FC<{
     description,
     badges = ['Full route only', 'Partial / short turns removed'],
 }) => {
-    const segmentNames = segmentColumns.map(column => column.segmentName);
+    const segmentNames = useMemo(
+        () => segmentColumns.map(column => column.segmentName),
+        [segmentColumns]
+    );
     const segmentLookup = useMemo(
         () => buildNormalizedSegmentNameLookup(segmentNames),
         [segmentNames]
     );
+    const segmentIndexesByName = useMemo(() => {
+        const indexes = new Map<string, number[]>();
+        segmentColumns.forEach((column, index) => {
+            const existing = indexes.get(column.segmentName);
+            if (existing) {
+                existing.push(index);
+            } else {
+                indexes.set(column.segmentName, [index]);
+            }
+        });
+        return indexes;
+    }, [segmentColumns]);
     const bandLookup = useMemo(() => new Map(bands.map(band => [band.id, band])), [bands]);
     const bucketTotals = useMemo(() => analysis.map((bucket) => ({
         bucket,
@@ -396,12 +394,30 @@ const StopToStopMatrix: React.FC<{
     const bucketRows = useMemo(() => {
         return analysis.map((bucket) => {
             const confidence = bucketConfidence[bucket.timeBucket];
-            const cells = segmentColumns.map((column) => {
-                const cell = buildBucketSegmentValue(bucket, column.segmentName, segmentLookup, viewMetric);
-                return {
-                    segmentName: column.segmentName,
-                    ...cell,
-                };
+            const cells = segmentColumns.map<BucketSegmentCell>((column) => ({
+                segmentName: column.segmentName,
+                value: null,
+                weightedSum: 0,
+                matchedDetails: 0,
+                totalWeight: 0,
+            }));
+
+            bucket.details?.forEach((detail) => {
+                const canonicalSegmentName = resolveCanonicalSegmentName(detail.segmentName, segmentLookup);
+                if (!canonicalSegmentName) return;
+
+                const matchingIndexes = segmentIndexesByName.get(canonicalSegmentName);
+                if (!matchingIndexes) return;
+
+                const weight = detail.n && detail.n > 0 ? detail.n : 1;
+                const value = viewMetric === 'p50' ? detail.p50 : detail.p80;
+                matchingIndexes.forEach((index) => {
+                    const cell = cells[index];
+                    cell.weightedSum += value * weight;
+                    cell.totalWeight += weight;
+                    cell.matchedDetails += 1;
+                    cell.value = cell.weightedSum / cell.totalWeight;
+                });
             });
 
             return {
@@ -410,7 +426,7 @@ const StopToStopMatrix: React.FC<{
                 cells,
             };
         });
-    }, [analysis, bucketConfidence, segmentColumns, segmentLookup, viewMetric]);
+    }, [analysis, bucketConfidence, segmentColumns, segmentIndexesByName, segmentLookup, viewMetric]);
     const segmentRows = useMemo(() => (
         segmentColumns.map((column, rowIndex) => {
             const sectionKey = getMatrixSectionKey(column);

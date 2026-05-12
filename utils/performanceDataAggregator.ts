@@ -10,6 +10,7 @@ import {
   DailySegmentRuntimes, DailySegmentRuntimeEntry, SegmentRuntimeObservation,
   DailyStopSegmentRuntimes, DailyStopSegmentRuntimeEntry,
   DailyTripStopSegmentRuntimes, DailyTripStopSegmentRuntimeEntry, TripStopSegmentObservation,
+  DailyRuntimePattern, RuntimePatternKind,
   RouteStopDeviationProfile, RouteStopDeviationEntry,
   RouteHourMetrics,
 } from './performanceDataTypes';
@@ -1037,6 +1038,104 @@ function computeObservedSegmentRuntimeSeconds(
   return runtimeSec > 0 ? runtimeSec : null;
 }
 
+interface RuntimeTripPatternInfo {
+  patternId: string;
+  patternKind: RuntimePatternKind;
+  routeId: string;
+  direction: string;
+  stopIds: string[];
+  stopNames: string[];
+  routeStopIndexes: number[];
+}
+
+function hashRuntimePattern(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function getRuntimeEligibleTripRecords(records: STREETSRecord[]): STREETSRecord[] {
+  return [...records]
+    .filter(r => !r.inBetween && !r.isTripper)
+    .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+}
+
+function buildRuntimeTripPatternInfo(sorted: STREETSRecord[]): RuntimeTripPatternInfo | null {
+  if (sorted.length < 2) return null;
+
+  const firstRecord = sorted[0];
+  const stopIds: string[] = [];
+  const stopNames: string[] = [];
+  const routeStopIndexes: number[] = [];
+  const seenAdjacent = new Set<string>();
+
+  sorted.forEach((record) => {
+    if (!record.stopId) return;
+    const key = `${record.stopId}|${record.routeStopIndex}`;
+    if (seenAdjacent.has(key)) return;
+    seenAdjacent.add(key);
+    stopIds.push(record.stopId);
+    stopNames.push(record.stopName);
+    routeStopIndexes.push(record.routeStopIndex);
+  });
+
+  if (stopIds.length < 2) return null;
+
+  const patternKind: RuntimePatternKind = sorted.some(record => record.isDetour) ? 'detour' : 'normal';
+  const signature = [
+    firstRecord.routeId,
+    firstRecord.direction,
+    patternKind,
+    ...stopIds.map((stopId, index) => `${routeStopIndexes[index]}:${stopId}`),
+  ].join('|');
+
+  return {
+    patternId: `${patternKind}-${hashRuntimePattern(signature)}`,
+    patternKind,
+    routeId: firstRecord.routeId,
+    direction: firstRecord.direction,
+    stopIds,
+    stopNames,
+    routeStopIndexes,
+  };
+}
+
+function buildRuntimePatterns(records: STREETSRecord[]): DailyRuntimePattern[] {
+  const byTrip = groupBy(records, r => r.tripId);
+  const patterns = new Map<string, DailyRuntimePattern>();
+
+  for (const tripRecs of byTrip.values()) {
+    const pattern = buildRuntimeTripPatternInfo(getRuntimeEligibleTripRecords(tripRecs));
+    if (!pattern) continue;
+
+    const existing = patterns.get(pattern.patternId);
+    if (existing) {
+      existing.tripCount += 1;
+    } else {
+      patterns.set(pattern.patternId, {
+        patternId: pattern.patternId,
+        patternKind: pattern.patternKind,
+        routeId: pattern.routeId,
+        direction: pattern.direction,
+        tripCount: 1,
+        stopIds: pattern.stopIds,
+        stopNames: pattern.stopNames,
+        routeStopIndexes: pattern.routeStopIndexes,
+      });
+    }
+  }
+
+  return Array.from(patterns.values()).sort((a, b) => (
+    a.routeId.localeCompare(b.routeId, undefined, { numeric: true })
+    || a.direction.localeCompare(b.direction)
+    || a.patternKind.localeCompare(b.patternKind)
+    || b.tripCount - a.tripCount
+    || a.patternId.localeCompare(b.patternId)
+  ));
+}
+
 function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
   const byTrip = groupBy(records, r => r.tripId);
   const tripsWithData = new Set<string>();
@@ -1111,6 +1210,8 @@ function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRun
   const segMap = new Map<string, {
     routeId: string;
     direction: string;
+    patternId?: string;
+    patternKind?: RuntimePatternKind;
     fromStopId: string;
     toStopId: string;
     fromStopName: string;
@@ -1121,11 +1222,10 @@ function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRun
   }>();
 
   for (const [tripId, tripRecs] of byTrip) {
-    const sorted = [...tripRecs]
-      .filter(r => !r.inBetween && !r.isTripper && !r.isDetour)
-      .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+    const sorted = getRuntimeEligibleTripRecords(tripRecs);
+    const pattern = buildRuntimeTripPatternInfo(sorted);
 
-    if (sorted.length < 2) continue;
+    if (!pattern || sorted.length < 2) continue;
 
     let tripHasData = false;
 
@@ -1148,7 +1248,7 @@ function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRun
       const bucketM = bucketMin % 60;
       const timeBucket = `${String(bucketH).padStart(2, '0')}:${String(bucketM).padStart(2, '0')}`;
 
-      const key = `${from.routeId}||${from.direction}||${from.stopId}||${to.stopId}`;
+      const key = `${from.routeId}||${from.direction}||${pattern.patternId}||${from.stopId}||${to.stopId}`;
       const existing = segMap.get(key);
       const obs: SegmentRuntimeObservation = { runtimeMinutes, timeBucket };
 
@@ -1158,6 +1258,8 @@ function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRun
         segMap.set(key, {
           routeId: from.routeId,
           direction: from.direction,
+          patternId: pattern.patternId,
+          patternKind: pattern.patternKind,
           fromStopId: from.stopId,
           toStopId: to.stopId,
           fromStopName: from.stopName,
@@ -1181,6 +1283,8 @@ function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRun
     entries.push({
       routeId: entry.routeId,
       direction: entry.direction,
+      patternId: entry.patternId,
+      patternKind: entry.patternKind,
       fromStopId: entry.fromStopId,
       toStopId: entry.toStopId,
       fromStopName: entry.fromStopName,
@@ -1206,11 +1310,10 @@ function buildTripStopSegmentRuntimes(records: STREETSRecord[]): DailyTripStopSe
   let totalObservations = 0;
 
   for (const [tripId, tripRecs] of byTrip) {
-    const sorted = [...tripRecs]
-      .filter(r => !r.inBetween && !r.isTripper && !r.isDetour)
-      .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+    const sorted = getRuntimeEligibleTripRecords(tripRecs);
+    const pattern = buildRuntimeTripPatternInfo(sorted);
 
-    if (sorted.length < 2) continue;
+    if (!pattern || sorted.length < 2) continue;
 
     const firstRecord = sorted[0];
     const segments: TripStopSegmentObservation[] = [];
@@ -1251,6 +1354,8 @@ function buildTripStopSegmentRuntimes(records: STREETSRecord[]): DailyTripStopSe
       tripName: firstRecord.tripName,
       routeId: firstRecord.routeId,
       direction: firstRecord.direction,
+      patternId: pattern.patternId,
+      patternKind: pattern.patternKind,
       terminalDepartureTime: firstRecord.terminalDepartureTime,
       segments,
     });
@@ -1364,6 +1469,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     segmentRuntimes: buildSegmentRuntimes(records),
     stopSegmentRuntimes: buildStopSegmentRuntimes(records),
     tripStopSegmentRuntimes: buildTripStopSegmentRuntimes(records),
+    runtimePatterns: buildRuntimePatterns(records),
     routeStopDeviations: buildRouteStopDeviations(records),
     byRouteHour: buildRouteHourMetrics(records),
     dataQuality: buildDataQuality(records, sanitization),

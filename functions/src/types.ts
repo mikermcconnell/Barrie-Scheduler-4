@@ -305,6 +305,19 @@ export interface SegmentRuntimeObservation {
   timeBucket: string;
 }
 
+export type RuntimePatternKind = 'normal' | 'detour';
+
+export interface DailyRuntimePattern {
+  patternId: string;
+  patternKind: RuntimePatternKind;
+  routeId: string;
+  direction: string;
+  tripCount: number;
+  stopIds: string[];
+  stopNames: string[];
+  routeStopIndexes: number[];
+}
+
 export interface DailySegmentRuntimeEntry {
   routeId: string;
   direction: string;
@@ -321,6 +334,8 @@ export interface DailySegmentRuntimes {
 export interface DailyStopSegmentRuntimeEntry {
   routeId: string;
   direction: string;
+  patternId?: string;
+  patternKind?: RuntimePatternKind;
   fromStopId: string;
   toStopId: string;
   fromStopName: string;
@@ -351,6 +366,8 @@ export interface DailyTripStopSegmentRuntimeEntry {
   tripName: string;
   routeId: string;
   direction: string;
+  patternId?: string;
+  patternKind?: RuntimePatternKind;
   terminalDepartureTime: string;
   segments: TripStopSegmentObservation[];
 }
@@ -502,14 +519,15 @@ export interface DailySummary {
   segmentRuntimes?: DailySegmentRuntimes;
   stopSegmentRuntimes?: DailyStopSegmentRuntimes;
   tripStopSegmentRuntimes?: DailyTripStopSegmentRuntimes;
+  runtimePatterns?: DailyRuntimePattern[];
   routeStopDeviations?: RouteStopDeviationProfile[];
   byRouteHour?: RouteHourMetrics[];
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 8;
-export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 3;
+export const PERFORMANCE_SCHEMA_VERSION = 9;
+export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 4;
 
 export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];

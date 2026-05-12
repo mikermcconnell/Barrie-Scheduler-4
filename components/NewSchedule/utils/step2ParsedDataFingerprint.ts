@@ -35,6 +35,8 @@ const normalizeAnalysisBucket = (bucket: TripBucketAnalysis) => ({
     isOutlier: bucket.isOutlier,
     ignored: bucket.ignored,
     sampleCountMode: bucket.sampleCountMode || null,
+    runtimePatternKind: bucket.runtimePatternKind || null,
+    runtimePatternSummary: bucket.runtimePatternSummary || null,
     details: bucket.details?.map(detail => ({
         segmentName: normalizeText(detail.segmentName),
         p50: detail.p50,
@@ -98,6 +100,8 @@ export const buildStep2ParsedDataFingerprint = (
             detectedDirection: normalizeText(runtime.detectedDirection || ''),
             troubleshootingPatternStatus: runtime.troubleshootingPatternStatus || null,
             sampleCountMode: runtime.sampleCountMode || null,
+            runtimePatternKind: runtime.runtimePatternKind || null,
+            runtimePatternSummary: runtime.runtimePatternSummary || null,
             allTimeBuckets: runtime.allTimeBuckets?.map(normalizeText) || [],
             segments: (runtime.segments || []).map(segment => ({
                 segmentName: normalizeText(segment.segmentName),

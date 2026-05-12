@@ -463,6 +463,71 @@ describe('aggregateDailySummaries', () => {
         ]);
     });
 
+    it('stores detour runtime evidence as a separate observed pattern', () => {
+        const records = [
+            makeRecord({
+                tripId: 'detour-runtime',
+                tripName: '12A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '12A',
+                direction: 'N',
+                routeStopIndex: 0,
+                stopId: 'mall',
+                stopName: 'Georgian Mall',
+                stopTime: '07:00',
+                observedDepartureTime: '07:01:00',
+                isDetour: true,
+            }),
+            makeRecord({
+                tripId: 'detour-runtime',
+                tripName: '12A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '12A',
+                direction: 'N',
+                routeStopIndex: 1,
+                stopId: 'temp',
+                stopName: 'Temporary Stop',
+                arrivalTime: '07:08',
+                observedArrivalTime: '07:09:00',
+                stopTime: '07:08',
+                observedDepartureTime: '07:10:00',
+                timePoint: false,
+                isDetour: true,
+            }),
+            makeRecord({
+                tripId: 'detour-runtime',
+                tripName: '12A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '12A',
+                direction: 'N',
+                routeStopIndex: 2,
+                stopId: 'downtown',
+                stopName: 'Downtown',
+                arrivalTime: '07:20',
+                observedArrivalTime: '07:21:00',
+                stopTime: '07:20',
+                isDetour: true,
+            }),
+        ];
+
+        const summary = aggregateDailySummaries(records)[0];
+        expect(summary.segmentRuntimes?.entries).toEqual([]);
+        expect(summary.runtimePatterns).toHaveLength(1);
+        expect(summary.runtimePatterns?.[0]).toMatchObject({
+            patternKind: 'detour',
+            routeId: '12A',
+            direction: 'N',
+            tripCount: 1,
+            stopIds: ['mall', 'temp', 'downtown'],
+        });
+        expect(summary.stopSegmentRuntimes?.entries.every(entry => entry.patternKind === 'detour')).toBe(true);
+        expect(summary.tripStopSegmentRuntimes?.entries[0]).toMatchObject({
+            routeId: '12A',
+            direction: 'N',
+            patternKind: 'detour',
+        });
+    });
+
     it('includes intermediate stop dwell in chained stop-to-stop runtime while still excluding terminal layover', () => {
         const records = [
             makeRecord({
@@ -600,6 +665,8 @@ describe('aggregateDailySummaries', () => {
             {
                 routeId: '7',
                 direction: 'N',
+                patternId: expect.any(String),
+                patternKind: 'normal',
                 fromStopId: 'park',
                 toStopId: 'dt',
                 fromStopName: 'Park Place',
@@ -612,6 +679,8 @@ describe('aggregateDailySummaries', () => {
             {
                 routeId: '7',
                 direction: 'N',
+                patternId: expect.any(String),
+                patternKind: 'normal',
                 fromStopId: 'dt',
                 toStopId: 'rose',
                 fromStopName: 'Downtown Hub',

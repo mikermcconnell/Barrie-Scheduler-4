@@ -617,4 +617,40 @@ describe('stopOrderResolver.resolveStopOrderFromPerformance', () => {
     expect(result.resolvedDirections.North?.tripCountUsed).toBe(8);
     expect(result.resolvedDirections.South?.tripCountUsed).toBe(8);
   });
+
+  it('does not promote detour-only trips into the normal Step 2 stop order', () => {
+    const northDetour = {
+      ...buildFullNorthTrip('detour'),
+      patternKind: 'detour' as const,
+    };
+    const southDetour = {
+      ...buildFullSouthTrip('detour'),
+      patternKind: 'detour' as const,
+    };
+
+    const result = resolveStopOrderFromPerformance([
+      makeSummary({
+        date: '2026-03-30',
+        dayType: 'weekday',
+        routeNames: { '12A': 'Georgian Mall', '12B': 'Barrie South GO' },
+        stopEntries: [
+          ...buildNorthStopEntries().map(entry => ({ ...entry, patternKind: 'detour' as const })),
+          ...buildSouthStopEntries().map(entry => ({ ...entry, patternKind: 'detour' as const })),
+        ],
+        tripEntries: [northDetour, southDetour],
+      }),
+    ], {
+      routeId: '12',
+      dayType: 'weekday',
+      patternAnchorStops: {
+        North: ['Georgian Mall', 'Barrie South GO Station'],
+        South: ['Barrie South GO Station', 'Georgian Mall'],
+      },
+    });
+
+    expect(result.decision).toBe('blocked');
+    expect(result.resolvedDirections).toEqual({});
+    expect(result.warnings).toContain('Missing resolved stop order for North.');
+    expect(result.warnings).toContain('Missing resolved stop order for South.');
+  });
 });

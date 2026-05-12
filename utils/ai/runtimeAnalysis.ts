@@ -1,5 +1,5 @@
 
-import { RuntimeData, SegmentRawData, BucketContribution } from '../../components/NewSchedule/utils/csvParser';
+import { RuntimeData, SegmentRawData, BucketContribution, RuntimePatternKind } from '../../components/NewSchedule/utils/csvParser';
 import {
     buildNormalizedSegmentNameLookup,
     resolveCanonicalSegmentName,
@@ -27,6 +27,8 @@ export interface TripBucketAnalysis {
     expectedSegmentCount?: number;
     observedSegmentCount?: number;
     sampleCountMode?: SampleCountMode;
+    runtimePatternKind?: RuntimePatternKind;
+    runtimePatternSummary?: string;
     contributingDays?: BucketContribution[];
     missingSegmentNames?: string[];
     coverageCause?: BucketCoverageCause;
@@ -479,6 +481,16 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
         if (!mode) return fileData.sampleCountMode;
         return mode === fileData.sampleCountMode ? mode : undefined;
     }, undefined);
+    const runtimePatternKind = data.reduce<RuntimePatternKind | undefined>((kind, fileData) => {
+        if (!fileData.runtimePatternKind) return kind;
+        if (!kind) return fileData.runtimePatternKind;
+        return kind === fileData.runtimePatternKind ? kind : undefined;
+    }, undefined);
+    const runtimePatternSummaries = Array.from(new Set(
+        data
+            .map(fileData => fileData.runtimePatternSummary?.trim())
+            .filter((summary): summary is string => !!summary)
+    ));
 
     const expectedSegmentCount = data.reduce((sum, fileData) => sum + fileData.segments.length, 0);
 
@@ -539,6 +551,8 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
             expectedSegmentCount,
             observedSegmentCount: details.length,
             sampleCountMode,
+            runtimePatternKind,
+            runtimePatternSummary: runtimePatternSummaries.length > 0 ? runtimePatternSummaries.join(' + ') : undefined,
             contributingDays: completeObservedCycleDays
                 .sort((a, b) => b.date.localeCompare(a.date))
                 .slice(0, 10)

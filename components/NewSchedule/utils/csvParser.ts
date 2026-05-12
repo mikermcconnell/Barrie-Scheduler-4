@@ -9,6 +9,7 @@ export interface SegmentRawData {
 }
 
 export type RouteDirection = 'North' | 'South' | 'A' | 'B' | 'Loop';
+export type RuntimePatternKind = 'normal' | 'detour';
 
 export interface BucketContribution {
     date: string;
@@ -29,6 +30,8 @@ export interface RuntimeData {
     detectedDirection?: RouteDirection;
     sampleCountMode?: 'observations' | 'days';
     troubleshootingPatternStatus?: 'anchored' | 'fallback';
+    runtimePatternKind?: RuntimePatternKind;
+    runtimePatternSummary?: string;
 }
 
 export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {

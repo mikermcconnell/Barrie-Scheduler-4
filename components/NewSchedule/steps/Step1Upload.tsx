@@ -88,7 +88,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
     performanceDataLoading,
     performanceMetadataLoading,
     performanceLoadRouteId = 'all',
-    performanceLoadRouteIds,
+    performanceLoadRouteIds = [],
     onPerformanceLoadRouteChange,
     performanceDateRange,
     performanceDiagnostics,
@@ -272,8 +272,8 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                         Performance data to load
                                     </label>
                                     <p className="mt-1 text-xs text-teal-700">
-                                        {performanceLoadRouteIds && performanceLoadRouteIds.length > 0
-                                            ? 'Choose one route to load faster, or keep all routes available.'
+                                        {performanceLoadRouteIds.length > 0
+                                            ? 'Route-scoped loading is faster. Use All routes only when comparing routes.'
                                             : 'All routes will load because route-scoped performance files are not available yet.'}
                                     </p>
                                 </div>
@@ -281,7 +281,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                     id="performance-load-route"
                                     value={performanceLoadRouteId}
                                     onChange={(e) => onPerformanceLoadRouteChange?.(e.target.value)}
-                                    disabled={!performanceLoadRouteIds || performanceLoadRouteIds.length === 0}
+                                    disabled={performanceLoadRouteIds.length === 0}
                                     className="w-full rounded-xl border-2 border-teal-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-800 focus:border-teal-500 focus:outline-none focus:ring-0 md:w-56"
                                 >
                                     <option value="all">All routes</option>
@@ -340,10 +340,18 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                             <button
                                                 key={route.routeId}
                                                 type="button"
-                                                onClick={() => onPerformanceConfigChange?.({
-                                                    routeId: route.routeId,
-                                                    dateRange: performanceConfig?.dateRange ?? null,
-                                                })}
+                                                onClick={() => {
+                                                    onPerformanceConfigChange?.({
+                                                        routeId: route.routeId,
+                                                        dateRange: performanceConfig?.dateRange ?? null,
+                                                    });
+                                                    if (
+                                                        performanceLoadRouteIds.includes(route.routeId)
+                                                        && performanceLoadRouteId !== route.routeId
+                                                    ) {
+                                                        onPerformanceLoadRouteChange?.(route.routeId);
+                                                    }
+                                                }}
                                                 className={`rounded-2xl border-2 p-4 text-left transition-all duration-200 ${
                                                     isSelected
                                                         ? 'border-teal-500 bg-teal-50 shadow-md shadow-teal-100'

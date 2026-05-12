@@ -70,6 +70,9 @@ export const getUsableCanonicalDirectionStops = (
     const routeConfig = parsedRoute ? getRouteConfig(parsedRoute.baseRoute) : null;
     const isBidirectionalRoute = !!routeConfig && routeConfig.segments.length === 2;
     const isLoopRoute = !!routeConfig && routeConfig.segments.length === 1;
+    const isStandaloneAlphaVariant = !!parsedRoute
+        && /^[0-9]+[A-Z]$/i.test(parsedRoute.baseRoute)
+        && !parsedRoute.suffixIsDirection;
 
     if (isLoopRoute) {
         const loopStops = normalized.Loop.length > 0
@@ -93,6 +96,7 @@ export const getUsableCanonicalDirectionStops = (
 
     if (
         isBidirectionalRoute
+        && !isStandaloneAlphaVariant
         && normalized.North.length > 0
         && normalized.South.length > 0
     ) {
@@ -715,9 +719,14 @@ export const buildStep2DataHealthReport = (params: {
     const routeConfig = routeNumber ? getRouteConfig(parseRouteInfo(routeNumber).baseRoute) : null;
     const expectedDirections = routeConfig?.segments.length ?? Math.max(performanceDiagnostics?.directions.length || 0, 1);
     const matchedDirections = performanceDiagnostics?.directions || Object.keys(segmentsMap);
+    const normalFineEntryCount = (performanceDiagnostics?.normalStopEntryCount ?? 0)
+        + (performanceDiagnostics?.normalTripEntryCount ?? 0);
+    const detourFineEntryCount = (performanceDiagnostics?.detourStopEntryCount ?? 0)
+        + (performanceDiagnostics?.detourTripEntryCount ?? 0);
+    const relyingOnDetourRuntime = normalFineEntryCount === 0 && detourFineEntryCount > 0;
     const runtimeSources: string[] = [];
-    if ((performanceDiagnostics?.stopEntryCount || 0) > 0) runtimeSources.push('stop-level');
-    if ((performanceDiagnostics?.tripEntryCount || 0) > 0) runtimeSources.push('trip-leg');
+    if ((performanceDiagnostics?.stopEntryCount || 0) > 0) runtimeSources.push(relyingOnDetourRuntime ? 'detour stop-level fallback' : 'stop-level');
+    if ((performanceDiagnostics?.tripEntryCount || 0) > 0) runtimeSources.push(relyingOnDetourRuntime ? 'detour trip-leg fallback' : 'trip-leg');
     if ((performanceDiagnostics?.coarseEntryCount || 0) > 0) runtimeSources.push('coarse fallback');
     const runtimeSourceSummary = runtimeSources.length > 0
         ? runtimeSources.join(' + ')
@@ -747,6 +756,9 @@ export const buildStep2DataHealthReport = (params: {
 
     if (performanceDiagnostics?.usesLegacyRuntimeLogic) {
         warnings.push('This performance import was built with older runtime logic. Re-importing is recommended.');
+    }
+    if (relyingOnDetourRuntime) {
+        warnings.push('Normal-pattern runtime evidence was unavailable, so Step 2 is using detour-pattern observed runtimes. Review before approving for a normal schedule.');
     }
     if (missingSegments.length > 0) {
         warnings.push(`${missingSegments.length} segment${missingSegments.length === 1 ? '' : 's'} never matched the current route chain.`);
