@@ -113,6 +113,21 @@ async function searchRoutePlanner2AddressesViaServer(
         payload = null;
     }
 
+    if (!payload || !Array.isArray(payload.suggestions)) {
+        const error = response.ok
+            ? 'Server geocode returned an invalid response.'
+            : `Server geocode returned ${response.status}`;
+        options.onDiagnostic?.({
+            query,
+            source: 'server',
+            status: response.status,
+            tokenPresent: false,
+            resultCount: 0,
+            error,
+        });
+        throw new Error(error);
+    }
+
     const suggestions = payload?.suggestions ?? [];
     options.onDiagnostic?.(payload?.diagnostic ?? {
         query,

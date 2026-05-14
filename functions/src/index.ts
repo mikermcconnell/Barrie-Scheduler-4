@@ -31,6 +31,36 @@ const MAPBOX_TOKEN = defineSecret('MAPBOX_TOKEN');
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
 const MAX_RETENTION_DAYS = 380;
 const DEFAULT_REBUILD_WINDOW_DAYS = 30;
+const ROUTE_PLANNER_GEOCODE_RATE_LIMIT_PER_HOUR = 300;
+const ROUTE_PLANNER_GEOCODE_MIN_QUERY_LENGTH = 3;
+const ROUTE_PLANNER_GEOCODE_MAX_QUERY_LENGTH = 180;
+const BARRIE_PROXIMITY = { lng: -79.69, lat: 44.38 };
+
+interface RoutePlanner2AddressSuggestion {
+  id: string;
+  name: string;
+  label: string;
+  lat: number;
+  lng: number;
+}
+
+interface MapboxFeature {
+  id?: string;
+  text?: string;
+  place_name?: string;
+  center?: [number, number];
+}
+
+interface MapboxGeocodingResponse {
+  features?: MapboxFeature[];
+}
+
+type RoutePlannerGeocodeRateLimitState = {
+  count: number;
+  windowStartedAt: number;
+};
+
+const routePlannerGeocodeRateLimitState = new Map<string, RoutePlannerGeocodeRateLimitState>();
 
 interface PerformanceImportRunRecord {
   importedAt?: admin.firestore.Timestamp | null;
@@ -77,6 +107,93 @@ function addDays(date: Date, days: number): Date {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
+}
+
+function getRequestIp(req: { headers: Record<string, string | string[] | undefined>; ip?: string; socket?: { remoteAddress?: string } }): string {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
+    return forwardedFor.split(',')[0]?.trim() || 'unknown-ip';
+  }
+  return req.ip || req.socket?.remoteAddress || 'unknown-ip';
+}
+
+function checkRoutePlannerGeocodeRateLimit(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+
+  if (routePlannerGeocodeRateLimitState.size > 2000) {
+    for (const [stateKey, state] of routePlannerGeocodeRateLimitState.entries()) {
+      if (now - state.windowStartedAt >= windowMs) {
+        routePlannerGeocodeRateLimitState.delete(stateKey);
+      }
+    }
+  }
+
+  const state = routePlannerGeocodeRateLimitState.get(key);
+  if (!state || now - state.windowStartedAt >= windowMs) {
+    routePlannerGeocodeRateLimitState.set(key, { count: 1, windowStartedAt: now });
+    return true;
+  }
+
+  if (state.count >= limit) return false;
+  state.count += 1;
+  return true;
+}
+
+function readJsonBody(body: unknown): Record<string, unknown> | null {
+  if (typeof body === 'string') {
+    try {
+      const parsed = JSON.parse(body);
+      return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+  return body && typeof body === 'object' ? body as Record<string, unknown> : null;
+}
+
+function parseRoutePlannerGeocodePayload(body: unknown): { query: string; limit: number } | null {
+  const parsed = readJsonBody(body);
+  const query = typeof parsed?.query === 'string' ? parsed.query.trim() : '';
+  const rawLimit = typeof parsed?.limit === 'number' ? parsed.limit : 5;
+  const limit = Math.max(1, Math.min(Math.floor(rawLimit), 10));
+
+  if (
+    query.length < ROUTE_PLANNER_GEOCODE_MIN_QUERY_LENGTH ||
+    query.length > ROUTE_PLANNER_GEOCODE_MAX_QUERY_LENGTH
+  ) {
+    return null;
+  }
+
+  return { query, limit };
+}
+
+function buildRoutePlannerMapboxGeocodeUrl(query: string, token: string, limit: number): string {
+  const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`);
+  url.searchParams.set('autocomplete', 'true');
+  url.searchParams.set('country', 'ca');
+  url.searchParams.set('proximity', `${BARRIE_PROXIMITY.lng},${BARRIE_PROXIMITY.lat}`);
+  url.searchParams.set('types', 'address,poi,place,locality,neighborhood');
+  url.searchParams.set('limit', String(limit));
+  url.searchParams.set('access_token', token);
+  return url.toString();
+}
+
+function normalizeRoutePlannerMapboxFeature(feature: MapboxFeature, index: number): RoutePlanner2AddressSuggestion | null {
+  const [lng, lat] = feature.center ?? [];
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const normalizedLat = lat as number;
+  const normalizedLng = lng as number;
+
+  const label = (feature.place_name ?? feature.text ?? '').trim();
+  if (!label) return null;
+
+  return {
+    id: feature.id ?? `address-${index}`,
+    name: (feature.text ?? label.split(',')[0] ?? label).trim(),
+    label,
+    lat: normalizedLat,
+    lng: normalizedLng,
+  };
 }
 
 export function resolveRebuildWindow(
@@ -646,6 +763,115 @@ async function savePerformanceSummary(params: {
 
   return storagePath;
 }
+
+/**
+ * routePlannerGeocode
+ *
+ * Same-origin proxy for Route Planner address searches.
+ * Keeps the Mapbox token server-side in production.
+ */
+export const routePlannerGeocode = onRequest(
+  {
+    secrets: [MAPBOX_TOKEN],
+    timeoutSeconds: 30,
+    memory: '256MiB',
+    region: 'us-central1',
+  },
+  async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).send('');
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      return;
+    }
+
+    const payload = parseRoutePlannerGeocodePayload(req.body);
+    if (!payload) {
+      res.status(400).json({ error: 'Missing or invalid address query.' });
+      return;
+    }
+
+    const requestIp = getRequestIp(req);
+    const allowed = checkRoutePlannerGeocodeRateLimit(
+      `route-planner-geocode:${requestIp}`,
+      ROUTE_PLANNER_GEOCODE_RATE_LIMIT_PER_HOUR,
+      60 * 60 * 1000,
+    );
+    if (!allowed) {
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      return;
+    }
+
+    const token = MAPBOX_TOKEN.value();
+    if (!token) {
+      res.status(500).json({
+        error: 'Server geocode is not configured.',
+        diagnostic: {
+          query: payload.query,
+          source: 'server',
+          status: null,
+          tokenPresent: false,
+          resultCount: 0,
+          error: 'Mapbox token is not configured.',
+        },
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(buildRoutePlannerMapboxGeocodeUrl(payload.query, token, payload.limit));
+      const status = response.status;
+      const data = await response.json() as MapboxGeocodingResponse;
+      const suggestions = (data.features ?? [])
+        .map(normalizeRoutePlannerMapboxFeature)
+        .filter((suggestion): suggestion is RoutePlanner2AddressSuggestion => suggestion !== null);
+
+      if (!response.ok) {
+        res.status(status).json({
+          error: `Mapbox address search returned ${status}`,
+          diagnostic: {
+            query: payload.query,
+            source: 'server',
+            status,
+            tokenPresent: true,
+            resultCount: 0,
+            error: `Mapbox address search returned ${status}`,
+          },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        suggestions,
+        diagnostic: {
+          query: payload.query,
+          source: 'server',
+          status,
+          tokenPresent: true,
+          resultCount: suggestions.length,
+          topResultLabel: suggestions[0]?.label,
+        },
+      });
+    } catch {
+      res.status(502).json({
+        error: 'Mapbox address search failed.',
+        diagnostic: {
+          query: payload.query,
+          source: 'server',
+          status: null,
+          tokenPresent: true,
+          resultCount: 0,
+          error: 'Mapbox address search failed.',
+        },
+      });
+    }
+  },
+);
 
 /**
  * ingestPerformanceData

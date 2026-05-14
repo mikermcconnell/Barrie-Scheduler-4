@@ -37,6 +37,13 @@
     ],
     "rewrites": [
       {
+        "source": "/api/route-planner-geocode",
+        "function": {
+          "functionId": "routePlannerGeocode",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

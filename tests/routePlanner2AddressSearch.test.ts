@@ -129,6 +129,48 @@ describe('routePlanner2AddressSearch', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('falls back when production hosting rewrites the server endpoint to non-JSON HTML', async () => {
+    const diagnostics: unknown[] = [];
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new SyntaxError('Unexpected token <');
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          features: [
+            {
+              id: 'address.3',
+              text: '37 Johnson Street',
+              place_name: '37 Johnson Street, Barrie, Ontario, Canada',
+              center: [-79.66, 44.41],
+            },
+          ],
+        }),
+      }) as unknown as typeof fetch;
+
+    const results = await searchRoutePlanner2Addresses('37 Johnson St', {
+      token: 'token-123',
+      fetcher,
+      preferServerProxy: true,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    });
+
+    expect(results[0]?.label).toContain('37 Johnson Street');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      source: 'server',
+      status: 200,
+      error: 'Server geocode returned an invalid response.',
+    }));
+  });
+
   it('does not search until the query is specific enough', async () => {
     const fetcher = vi.fn();
 
