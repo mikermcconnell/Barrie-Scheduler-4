@@ -11,6 +11,7 @@ import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hook
 import {
     computeRuntimesFromPerformance,
     getAvailableRuntimeRoutes,
+    getStep2CleanHistoryWindow,
     getStep2CleanPerformanceSummary,
     inspectPerformanceRuntimeAvailability,
 } from '../../utils/performanceRuntimeComputer';
@@ -282,6 +283,18 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         () => getStep2CleanPerformanceSummary(perfData),
         [perfData]
     );
+    const performanceHistoryStatus = useMemo(() => {
+        if (!perfData) return null;
+        const cleanWindow = getStep2CleanHistoryWindow(perfData.dailySummaries || [], perfData.metadata);
+        return {
+            totalDays: perfData.dailySummaries?.length ?? 0,
+            cleanDays: cleanWindow.dailySummaries.length,
+            runtimeLogicVersion: perfData.metadata?.runtimeLogicVersion,
+            cleanHistoryStartDate: cleanWindow.cleanHistoryStartDate,
+            excludedLegacyDayCount: cleanWindow.excludedLegacyDayCount,
+            usesCleanHistoryCutoff: cleanWindow.usesCleanHistoryCutoff,
+        };
+    }, [perfData]);
 
     const availableRoutes = useMemo(() => {
         if (!cleanStep2PerfData?.dailySummaries) return [];
@@ -1898,6 +1911,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 onPerformanceLoadRouteChange={handlePerformanceLoadRouteChange}
                                 performanceDateRange={performanceDateRange}
                                 performanceDiagnostics={performanceDiagnostics}
+                                performanceHistoryStatus={performanceHistoryStatus}
                             />
                         )}
                         {step === 2 && (

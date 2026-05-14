@@ -6,6 +6,7 @@ import { GTFSImport } from '../../GTFSImport';
 import type { GTFSImportResult } from '../../../utils/gtfs/gtfsTypes';
 import type { AvailableRuntimeRoute } from '../../../utils/performanceRuntimeComputer';
 import type { PerformanceRuntimeDiagnostics } from '../../../utils/performanceRuntimeComputer';
+import { PERFORMANCE_RUNTIME_LOGIC_VERSION } from '../../../utils/performanceDataTypes';
 
 export type ImportMode = 'csv' | 'gtfs' | 'performance';
 
@@ -33,6 +34,14 @@ interface Step1Props {
     onPerformanceLoadRouteChange?: (routeId: string) => void;
     performanceDateRange?: { start: string; end: string };
     performanceDiagnostics?: PerformanceRuntimeDiagnostics | null;
+    performanceHistoryStatus?: {
+        totalDays: number;
+        cleanDays: number;
+        runtimeLogicVersion?: number;
+        cleanHistoryStartDate?: string;
+        excludedLegacyDayCount: number;
+        usesCleanHistoryCutoff: boolean;
+    } | null;
 }
 
 type DurationPreset = 'day' | 'week' | 'month' | 'three-months';
@@ -92,6 +101,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
     onPerformanceLoadRouteChange,
     performanceDateRange,
     performanceDiagnostics,
+    performanceHistoryStatus,
 }) => {
     const onDrop = useCallback((acceptedFiles: File[]) => {
         // Limit to 2 files max (North/South or Single Loop)
@@ -318,10 +328,21 @@ export const Step1Upload: React.FC<Step1Props> = ({
                     ) : !availableRoutes || availableRoutes.length === 0 ? (
                         <div className="text-center p-8 bg-amber-50 rounded-xl border border-amber-200">
                             <AlertTriangle className="mx-auto text-amber-400 mb-3" size={40} />
-                            <p className="text-amber-800 font-medium">No segment runtime data available</p>
-                            <p className="text-amber-600 text-sm mt-1">
-                                Step 2 now uses clean post-fix STREETS history only. Import or re-import current-format daily data from the Performance Dashboard to start the clean history window.
+                            <p className="text-amber-800 font-medium">
+                                {performanceHistoryStatus?.totalDays
+                                    ? 'Performance history needs rebuild'
+                                    : 'No segment runtime data available'}
                             </p>
+                            <p className="text-amber-600 text-sm mt-1">
+                                {performanceHistoryStatus?.totalDays
+                                    ? `${performanceHistoryStatus.totalDays} stored day${performanceHistoryStatus.totalDays === 1 ? '' : 's'} found, but Step 2 is excluding them because the saved runtime logic is v${performanceHistoryStatus.runtimeLogicVersion ?? 'unknown'} and schedule building now requires v${PERFORMANCE_RUNTIME_LOGIC_VERSION}. Rebuild archived STREETS imports or re-import the files; do not delete history.`
+                                    : 'Import current-format daily data from the Performance Dashboard to start the Step 2 history window.'}
+                            </p>
+                            {!!performanceHistoryStatus?.cleanHistoryStartDate && (
+                                <p className="text-amber-600 text-xs mt-2">
+                                    Clean history starts {performanceHistoryStatus.cleanHistoryStartDate}; {performanceHistoryStatus.excludedLegacyDayCount} older day{performanceHistoryStatus.excludedLegacyDayCount === 1 ? '' : 's'} ignored.
+                                </p>
+                            )}
                         </div>
                     ) : (
                         <>

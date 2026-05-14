@@ -17,6 +17,7 @@ import {
   PERFORMANCE_RUNTIME_LOGIC_VERSION,
   PERFORMANCE_SCHEMA_VERSION,
 } from './types';
+import { filterPerformanceSummaryByRoute, getAvailablePerformanceRoutes } from './performanceRouteFilter';
 
 admin.initializeApp();
 
@@ -725,10 +726,22 @@ async function savePerformanceSummary(params: {
   const jsonStr = JSON.stringify(params.summary);
   const overviewJsonStr = JSON.stringify(buildPerformanceOverviewSummary(params.summary));
   const reportJsonStr = JSON.stringify(buildPerformanceReportSummary(params.summary));
+  const routeStoragePaths: Record<string, string> = {};
 
   await getBucket().file(storagePath).save(jsonStr, { contentType: 'application/json' });
   await getBucket().file(overviewStoragePath).save(overviewJsonStr, { contentType: 'application/json' });
   await getBucket().file(reportStoragePath).save(reportJsonStr, { contentType: 'application/json' });
+  await Promise.all(getAvailablePerformanceRoutes(params.summary).map(async route => {
+    const routePath = buildPerformanceDataStoragePath(
+      params.teamId,
+      timestamp,
+      `${params.suffix ?? ''}-route-${encodeURIComponent(route.routeId)}`,
+    );
+    const routeSummary = filterPerformanceSummaryByRoute(params.summary, route.routeId);
+    if (!routeSummary) return;
+    await getBucket().file(routePath).save(JSON.stringify(routeSummary), { contentType: 'application/json' });
+    routeStoragePaths[route.routeId] = routePath;
+  }));
 
   await getPerformanceMetadataRef(params.teamId).set({
     importedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -741,6 +754,7 @@ async function savePerformanceSummary(params: {
     totalRecords: params.summary.metadata.totalRecords,
     runtimeLogicVersion: params.summary.metadata.runtimeLogicVersion,
     cleanHistoryStartDate: params.summary.metadata.cleanHistoryStartDate ?? null,
+    routeStoragePaths,
   });
 
   if (params.deleteOld && params.oldStoragePath && params.oldStoragePath !== storagePath) {
@@ -1205,7 +1219,10 @@ export const ingestResidentialGrowthReport = onRequest(
 export const rebuildPerformanceHistory = onRequest(
   {
     secrets: [INGEST_API_KEY],
-    memory: '1GiB',
+    // Rebuilds replay archived CSVs and rewrites the full summary/overview/report payloads.
+    // This needs the same headroom as daily ingest once history reaches many days.
+    memory: '8GiB',
+    cpu: 2,
     timeoutSeconds: 540,
     maxInstances: 1,
     region: 'us-central1',

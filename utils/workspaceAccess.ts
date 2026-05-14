@@ -79,6 +79,7 @@ const PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     'analyticsStudentPass',
     'analyticsFleetPlan',
     'analyticsResidentialGrowth',
+    'analyticsRoutePlanner2',
 ];
 
 const EXTERNAL_PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [

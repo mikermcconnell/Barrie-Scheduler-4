@@ -298,6 +298,7 @@ export interface RouteHourMetrics {
   avgLoad: number;
   boardings: number;
   alightings?: number;
+  otp?: OTPBreakdown;
 }
 
 export interface SegmentRuntimeObservation {
@@ -390,6 +391,13 @@ export interface StopMetrics {
   avgLoad: number;
   routeCount: number;
   routes: string[];
+  routeBreakdown?: {
+    routeId: string;
+    boardings?: number;
+    alightings?: number;
+    hourlyBoardings?: number[];
+    hourlyAlightings?: number[];
+  }[];
   hourlyBoardings?: number[];
   hourlyAlightings?: number[];
 }
@@ -546,4 +554,5 @@ export interface PerformanceMetadata {
   storagePath?: string;
   overviewStoragePath?: string;
   reportStoragePath?: string;
+  routeStoragePaths?: Record<string, string>;
 }
