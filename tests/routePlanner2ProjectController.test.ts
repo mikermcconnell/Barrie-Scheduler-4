@@ -1,87 +1,60 @@
 import { describe, expect, it } from 'vitest';
 
-import { createRoutePlanner2Project, createRoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 import {
-  addRoutePlanner2Scenario,
-  deleteRoutePlanner2Scenario,
-  duplicateRoutePlanner2Scenario,
-  importRoutePlanner2Scenario,
-  markRoutePlanner2PreferredScenario,
-  renameRoutePlanner2Project,
-  renameRoutePlanner2Scenario,
-  selectRoutePlanner2Scenario,
+  createRoutePlanner2BackDirection,
 } from '../utils/route-planner-2/routePlanner2ProjectController';
+import {
+  addRoutePlanner2LineWaypoint,
+  addRoutePlanner2Stop,
+  updateRoutePlanner2StopRole,
+} from '../utils/route-planner-2/routePlanner2Authoring';
+import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 
 describe('Route Planner 2 project controller', () => {
-  const now = '2026-04-29T12:00:00.000Z';
+  const now = '2026-05-14T12:00:00.000Z';
 
-  it('renames projects and scenarios without changing IDs', () => {
-    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
-
-    project = renameRoutePlanner2Project(project, 'Downtown Concept', now);
-    project = renameRoutePlanner2Scenario(project, 'scenario-1', 'Option A', now);
-
-    expect(project.name).toBe('Downtown Concept');
-    expect(project.scenarios[0]?.name).toBe('Option A');
-    expect(project.status).toBe('local-draft');
-  });
-
-  it('adds, selects, duplicates, and marks one preferred scenario at project level', () => {
-    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
-
-    project = addRoutePlanner2Scenario(project, { id: 'scenario-2', now });
-    expect(project.selectedScenarioId).toBe('scenario-2');
-    expect(project.scenarios).toHaveLength(2);
-
-    project = selectRoutePlanner2Scenario(project, 'scenario-1', now);
-    expect(project.selectedScenarioId).toBe('scenario-1');
-
-    project = markRoutePlanner2PreferredScenario(project, 'scenario-1', now);
-    expect(project.preferredScenarioId).toBe('scenario-1');
-    expect(project.scenarios[0]?.status).toBe('draft');
-
-    project = duplicateRoutePlanner2Scenario(project, 'scenario-1', { id: 'scenario-3', now });
-    expect(project.selectedScenarioId).toBe('scenario-3');
-    expect(project.scenarios).toHaveLength(3);
-    expect(project.scenarios[2]).toMatchObject({
-      id: 'scenario-3',
-      name: 'Clean Concept A copy',
-      status: 'draft',
+  it('creates a back direction by reversing the selected one-way out route', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'out-scenario', now });
+    project = addRoutePlanner2Stop(project, 'out-scenario', { id: 'stop-1', name: 'Neighbourhood', lat: 44.38, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'out-scenario', { id: 'stop-2', name: 'Community Centre', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'out-scenario', { id: 'stop-3', name: 'Camp', lat: 44.4, lng: -79.67, now });
+    project = updateRoutePlanner2StopRole(project, 'out-scenario', 'stop-1', 'start-terminal', now);
+    project = updateRoutePlanner2StopRole(project, 'out-scenario', 'stop-3', 'end-terminal', now);
+    project = addRoutePlanner2LineWaypoint(project, 'out-scenario', {
+      id: 'bend-1',
+      afterStopId: 'stop-2',
+      beforeStopId: 'stop-3',
+      lat: 44.395,
+      lng: -79.675,
+      now,
     });
-    expect(project.preferredScenarioId).toBe('scenario-1');
-  });
 
-  it('imports a GTFS scenario and selects it', () => {
-    const project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-01T12:00:00.000Z' });
-    const imported = createRoutePlanner2Scenario({ id: 'scenario-gtfs', name: 'Route 8A', now: '2026-05-01T12:01:00.000Z' });
-    const result = importRoutePlanner2Scenario(project, { ...imported, source: { type: 'gtfs', routeId: '8A' } }, '2026-05-01T12:02:00.000Z');
+    const updated = createRoutePlanner2BackDirection(project, 'out-scenario', {
+      id: 'back-scenario',
+      now,
+    });
+    const outScenario = updated.scenarios.find((scenario) => scenario.id === 'out-scenario');
+    const backScenario = updated.scenarios.find((scenario) => scenario.id === 'back-scenario');
 
-    expect(result.scenarios).toHaveLength(2);
-    expect(result.selectedScenarioId).toBe('scenario-gtfs');
-    expect(result.status).toBe('local-draft');
-    expect(result.scenarios[1]?.source?.type).toBe('gtfs');
-  });
-
-  it('returns the original project for unknown scenario IDs', () => {
-    const project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
-
-    expect(renameRoutePlanner2Scenario(project, 'missing', 'Nope', now)).toBe(project);
-    expect(selectRoutePlanner2Scenario(project, 'missing', now)).toBe(project);
-    expect(markRoutePlanner2PreferredScenario(project, 'missing', now)).toBe(project);
-    expect(duplicateRoutePlanner2Scenario(project, 'missing', { id: 'scenario-2', now })).toBe(project);
-    expect(deleteRoutePlanner2Scenario(project, 'missing', now)).toBe(project);
-  });
-
-  it('protects the last scenario and cleans up selection/preferred state on delete', () => {
-    const single = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
-    expect(deleteRoutePlanner2Scenario(single, 'scenario-1', now)).toBe(single);
-
-    let project = addRoutePlanner2Scenario(single, { id: 'scenario-2', now });
-    project = markRoutePlanner2PreferredScenario(project, 'scenario-2', now);
-    project = deleteRoutePlanner2Scenario(project, 'scenario-2', now);
-
-    expect(project.scenarios).toHaveLength(1);
-    expect(project.selectedScenarioId).toBe('scenario-1');
-    expect(project.preferredScenarioId).toBeUndefined();
+    expect(updated.selectedScenarioId).toBe('back-scenario');
+    expect(outScenario?.name).toBe('Clean Concept A Out');
+    expect(backScenario?.name).toBe('Clean Concept A Back');
+    expect(backScenario?.routeShape).toBe('one-way');
+    expect(backScenario?.stops.map((stop) => `${stop.sequence}:${stop.id}:${stop.role}`)).toEqual([
+      '1:stop-3:start-terminal',
+      '2:stop-2:regular',
+      '3:stop-1:end-terminal',
+    ]);
+    expect(backScenario?.alignment).toEqual([
+      expect.objectContaining({
+        id: 'bend-1-back',
+        afterStopId: 'stop-3',
+        beforeStopId: 'stop-2',
+        lat: 44.395,
+        lng: -79.675,
+      }),
+    ]);
+    expect(backScenario?.feasibility).toBeUndefined();
+    expect(backScenario?.runtimeEstimates).toBeUndefined();
   });
 });

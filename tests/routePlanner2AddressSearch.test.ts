@@ -47,6 +47,88 @@ describe('routePlanner2AddressSearch', () => {
     ]);
   });
 
+  it('can use the server geocode endpoint and reports diagnostics', async () => {
+    const diagnostics: unknown[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('/api/route-planner-geocode');
+      expect(init?.method).toBe('POST');
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          suggestions: [
+            {
+              id: 'address.1',
+              name: '37 Johnson Street',
+              label: '37 Johnson Street, Barrie, Ontario, Canada',
+              lat: 44.41,
+              lng: -79.66,
+            },
+          ],
+          diagnostic: {
+            query: '37 Johnson St',
+            source: 'server',
+            status: 200,
+            tokenPresent: true,
+            resultCount: 1,
+            topResultLabel: '37 Johnson Street, Barrie, Ontario, Canada',
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const results = await searchRoutePlanner2Addresses('37 Johnson St', {
+      fetcher,
+      preferServerProxy: true,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.label).toContain('37 Johnson Street');
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        source: 'server',
+        status: 200,
+        tokenPresent: true,
+        resultCount: 1,
+      }),
+    ]);
+  });
+
+  it('falls back to direct Mapbox search when the server endpoint is unavailable', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({ error: 'Not found' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          features: [
+            {
+              id: 'address.2',
+              text: '339 Essa Road',
+              place_name: '339 Essa Road, Barrie, Ontario, Canada',
+              center: [-79.71, 44.36],
+            },
+          ],
+        }),
+      }) as unknown as typeof fetch;
+
+    const results = await searchRoutePlanner2Addresses('339 Essa Rd', {
+      token: 'token-123',
+      fetcher,
+      preferServerProxy: true,
+    });
+
+    expect(results[0]?.label).toContain('339 Essa Road');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('does not search until the query is specific enough', async () => {
     const fetcher = vi.fn();
 

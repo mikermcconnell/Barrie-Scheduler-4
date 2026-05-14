@@ -41,17 +41,6 @@ export function getRoutePlanner2LineWaypointsForSegment(
         .sort((a, b) => (a.segmentSequence ?? a.sequence) - (b.segmentSequence ?? b.sequence));
 }
 
-function getMirroredLineWaypointsForSegment(
-    alignment: RoutePlanner2RoutePoint[],
-    fromStopId: string,
-    toStopId: string,
-): RoutePlanner2RoutePoint[] {
-    const directWaypoints = getRoutePlanner2LineWaypointsForSegment(alignment, fromStopId, toStopId);
-    if (directWaypoints.length > 0) return directWaypoints;
-
-    return getRoutePlanner2LineWaypointsForSegment(alignment, toStopId, fromStopId).reverse();
-}
-
 export function buildRoutePlanner2PathFingerprint(coordinates: [number, number][]): string {
     return coordinates
         .map(([lng, lat]) => `${roundCoord(lng)},${roundCoord(lat)}`)
@@ -100,7 +89,7 @@ export function buildRoutePlanner2StopSegmentPairs(scenario: RoutePlanner2Scenar
 
 export function buildRoutePlanner2StopSegmentPaths(scenario: RoutePlanner2Scenario): RoutePlanner2StopSegmentPath[] {
     return buildRoutePlanner2StopSegmentPairs(scenario).map(({ fromStop, toStop }): RoutePlanner2StopSegmentPath => {
-        const anchors = getMirroredLineWaypointsForSegment(scenario.alignment, fromStop.id, toStop.id);
+        const anchors = getRoutePlanner2LineWaypointsForSegment(scenario.alignment, fromStop.id, toStop.id);
         const coordinates: [number, number][] = [
             [fromStop.lng, fromStop.lat],
             ...anchors.map((anchor): [number, number] => [anchor.lng, anchor.lat]),

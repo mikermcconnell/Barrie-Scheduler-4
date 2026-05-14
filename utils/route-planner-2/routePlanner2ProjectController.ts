@@ -1,5 +1,5 @@
 import { createRoutePlanner2Scenario } from './routePlanner2ProjectFactory';
-import type { RoutePlanner2Project, RoutePlanner2Scenario } from './routePlanner2Types';
+import type { RoutePlanner2Project, RoutePlanner2RoutePoint, RoutePlanner2Scenario, RoutePlanner2Stop } from './routePlanner2Types';
 
 function markChanged(project: RoutePlanner2Project, now: string): RoutePlanner2Project {
     return {
@@ -11,6 +11,60 @@ function markChanged(project: RoutePlanner2Project, now: string): RoutePlanner2P
 
 function scenarioExists(project: RoutePlanner2Project, scenarioId: string): boolean {
     return project.scenarios.some((scenario) => scenario.id === scenarioId);
+}
+
+function createScenarioId(): string {
+    return `scenario-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function baseDirectionName(name: string): string {
+    return name.replace(/\s+(Out|Back)$/i, '').trim() || name;
+}
+
+function reverseStopRole(role: RoutePlanner2Stop['role']): RoutePlanner2Stop['role'] {
+    if (role === 'start-terminal') return 'end-terminal';
+    if (role === 'end-terminal' || role === 'turnaround') return 'start-terminal';
+    return role;
+}
+
+function reverseStops(stops: RoutePlanner2Stop[]): RoutePlanner2Stop[] {
+    return [...stops]
+        .sort((a, b) => a.sequence - b.sequence)
+        .reverse()
+        .map((stop, index) => ({
+            ...stop,
+            sequence: index + 1,
+            role: reverseStopRole(stop.role),
+        }));
+}
+
+function reverseAlignment(alignment: RoutePlanner2RoutePoint[]): RoutePlanner2RoutePoint[] {
+    const segmentGroups = new Map<string, RoutePlanner2RoutePoint[]>();
+    const unsegmentedPoints: RoutePlanner2RoutePoint[] = [];
+
+    alignment.forEach((point) => {
+        if (!point.afterStopId || !point.beforeStopId) {
+            unsegmentedPoints.push(point);
+            return;
+        }
+        const key = `${point.afterStopId}::${point.beforeStopId}`;
+        segmentGroups.set(key, [...(segmentGroups.get(key) ?? []), point]);
+    });
+
+    const reversedSegmentPoints = Array.from(segmentGroups.values()).flatMap((points) =>
+        [...points]
+            .sort((a, b) => (b.segmentSequence ?? b.sequence) - (a.segmentSequence ?? a.sequence))
+            .map((point, index) => ({
+                ...point,
+                id: `${point.id}-back`,
+                afterStopId: point.beforeStopId,
+                beforeStopId: point.afterStopId,
+                segmentSequence: index + 1,
+            })),
+    );
+
+    return [...unsegmentedPoints, ...reversedSegmentPoints]
+        .map((point, index) => ({ ...point, sequence: index + 1 }));
 }
 
 export function renameRoutePlanner2Project(
@@ -93,6 +147,49 @@ export function duplicateRoutePlanner2Scenario(
         ...project,
         selectedScenarioId: copy.id,
         scenarios: [...project.scenarios, copy],
+    }, now);
+}
+
+export function createRoutePlanner2BackDirection(
+    project: RoutePlanner2Project,
+    scenarioId: string,
+    options: { id?: string; now?: string } = {},
+): RoutePlanner2Project {
+    const source = project.scenarios.find((scenario) => scenario.id === scenarioId);
+    if (!source || source.stops.length < 2) return project;
+
+    const now = options.now ?? new Date().toISOString();
+    const baseName = baseDirectionName(source.name);
+    const outName = `${baseName} Out`;
+    const backName = `${baseName} Back`;
+    const backScenario: RoutePlanner2Scenario = {
+        ...source,
+        id: options.id ?? createScenarioId(),
+        name: backName,
+        status: 'draft',
+        routeShape: 'one-way',
+        stops: reverseStops(source.stops),
+        alignment: reverseAlignment(source.alignment),
+        turnaroundStopId: undefined,
+        runtimeEstimates: undefined,
+        runtimeOverrides: undefined,
+        feasibility: undefined,
+        notes: source.notes ? `${source.notes}\n\nBack direction generated from ${outName}.` : `Back direction generated from ${outName}.`,
+        createdAt: now,
+        updatedAt: now,
+    };
+
+    return markChanged({
+        ...project,
+        selectedScenarioId: backScenario.id,
+        scenarios: [
+            ...project.scenarios.map((scenario) =>
+                scenario.id === source.id
+                    ? { ...scenario, name: outName, routeShape: 'one-way' as const, updatedAt: now }
+                    : scenario,
+            ),
+            backScenario,
+        ],
     }, now);
 }
 

@@ -175,7 +175,7 @@ describe('Route Planner 2 feasibility', () => {
     expect(result.warnings.map((warning) => warning.id)).not.toContain('near-bus-threshold');
   });
 
-  it('blocks out-and-back feasibility until a bus-safe turnaround is marked', () => {
+  it('automatically uses the far end stop as the out-and-back turnaround', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.7, now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Stop 2', lat: 44.39, lng: -79.68, now });
@@ -186,13 +186,16 @@ describe('Route Planner 2 feasibility', () => {
     const result = deriveRoutePlanner2Feasibility(scenario);
 
     expect(scenario.routeShape).toBe('out-and-back');
-    expect(scenario.turnaroundStopId).toBeUndefined();
-    expect(result.warnings.map((warning) => warning.id)).toContain('missing-turnaround-stop');
-    expect(result.cycleTimeMinutes).toBeNull();
-    expect(result.busesRequired).toBeNull();
+    expect(scenario.turnaroundStopId).toBe('stop-3');
+    expect(scenario.stops.find((stop) => stop.id === 'stop-3')?.role).toBe('turnaround');
+    expect(result.warnings.map((warning) => warning.id)).not.toContain('missing-turnaround-stop');
+    expect(result.cycleTimeMinutes).not.toBeNull();
+    expect(result.busesRequired).not.toBeNull();
     expect(result.segmentSummaries.map((segment) => `${segment.fromStopId}->${segment.toStopId}`)).toEqual([
       'stop-1->stop-2',
       'stop-2->stop-3',
+      'stop-3->stop-2',
+      'stop-2->stop-1',
     ]);
   });
 

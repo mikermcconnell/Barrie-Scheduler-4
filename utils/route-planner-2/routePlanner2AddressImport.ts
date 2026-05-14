@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import {
     searchRoutePlanner2Addresses,
     type RoutePlanner2AddressSearchOptions,
+    type RoutePlanner2AddressSearchDiagnostic,
     type RoutePlanner2AddressSuggestion,
 } from './routePlanner2AddressSearch';
 
@@ -47,6 +48,8 @@ export interface RoutePlanner2GeocodedAddressStop {
 export interface RoutePlanner2UnresolvedAddress {
     candidate: RoutePlanner2ParsedAddress;
     reason: string;
+    diagnostics?: RoutePlanner2AddressSearchDiagnostic[];
+    attempts?: RoutePlanner2AddressGeocodeAttempt[];
 }
 
 export interface RoutePlanner2AddressGeocodeResult {
@@ -86,6 +89,14 @@ interface AddressGeocodeVariant {
     query: string;
     streetLineForMatch: string;
     note?: string;
+}
+
+export interface RoutePlanner2AddressGeocodeAttempt {
+    query: string;
+    matchAgainst: string;
+    resultCount: number;
+    topResultLabel?: string;
+    rejectedReason: string;
 }
 
 function toCellText(value: unknown): string {
@@ -430,6 +441,28 @@ function isConfidentAddressMatch(
     return true;
 }
 
+function getSuggestionRejectionReason(
+    candidate: RoutePlanner2ParsedAddress,
+    suggestion: RoutePlanner2AddressSuggestion | undefined,
+    streetLineForMatch: string,
+): string {
+    if (!suggestion) return 'No Mapbox results for this query.';
+    if (!isWithinBarrieArea(suggestion)) return 'Top Mapbox result is outside the Barrie area.';
+
+    const label = `${suggestion.name} ${suggestion.label}`.toLowerCase();
+    const { civicNumber, streetToken } = getStreetMatchParts(streetLineForMatch);
+    if (civicNumber && !containsToken(label, civicNumber)) {
+        return `Top Mapbox result did not include civic number ${civicNumber}.`;
+    }
+    if (streetToken && !containsToken(label, streetToken)) {
+        return `Top Mapbox result did not include street token "${streetToken}".`;
+    }
+    if (!containsToken(label, candidate.city.toLowerCase())) {
+        return `Top Mapbox result did not clearly include ${candidate.city}.`;
+    }
+    return 'Top Mapbox result did not pass confidence checks.';
+}
+
 function scoreAddressSuggestion(
     candidate: RoutePlanner2ParsedAddress,
     suggestion: RoutePlanner2AddressSuggestion,
@@ -528,12 +561,22 @@ export async function geocodeRoutePlanner2ParsedAddresses(
     let nextIndex = 0;
     let completed = 0;
 
-    function searchVariant(variant: AddressGeocodeVariant): Promise<RoutePlanner2AddressSuggestion[]> {
+    function cachedSearchVariant(
+        variant: AddressGeocodeVariant,
+        diagnostics: RoutePlanner2AddressSearchDiagnostic[],
+    ): Promise<RoutePlanner2AddressSuggestion[]> {
         const cacheKey = `${variant.query.trim().toUpperCase()}|5`;
         const cached = suggestionCache.get(cacheKey);
         if (cached) return cached;
 
-        const promise = searchRoutePlanner2Addresses(variant.query, { ...searchOptions, limit: 5 });
+        const promise = searchRoutePlanner2Addresses(variant.query, {
+            ...searchOptions,
+            limit: 5,
+            onDiagnostic: (diagnostic) => {
+                diagnostics.push(diagnostic);
+                searchOptions.onDiagnostic?.(diagnostic);
+            },
+        });
         suggestionCache.set(cacheKey, promise);
         return promise;
     }
@@ -547,9 +590,11 @@ export async function geocodeRoutePlanner2ParsedAddresses(
             let selectedSuggestion: RoutePlanner2AddressSuggestion | null = null;
             let selectedVariant: AddressGeocodeVariant | null = null;
             let sawMapboxSuggestion = false;
+            const diagnostics: RoutePlanner2AddressSearchDiagnostic[] = [];
+            const attempts: RoutePlanner2AddressGeocodeAttempt[] = [];
 
             for (const variant of variants) {
-                const suggestions = await searchVariant(variant);
+                const suggestions = await cachedSearchVariant(variant, diagnostics);
                 if (suggestions.length > 0) sawMapboxSuggestion = true;
 
                 const bestSuggestion = selectBestConfidentSuggestion(candidate, suggestions, variant.streetLineForMatch);
@@ -558,6 +603,14 @@ export async function geocodeRoutePlanner2ParsedAddresses(
                     selectedVariant = variant;
                     break;
                 }
+
+                attempts.push({
+                    query: variant.query,
+                    matchAgainst: variant.streetLineForMatch,
+                    resultCount: suggestions.length,
+                    topResultLabel: suggestions[0]?.label,
+                    rejectedReason: getSuggestionRejectionReason(candidate, suggestions[0], variant.streetLineForMatch),
+                });
             }
 
             if (!selectedSuggestion || !selectedVariant) {
@@ -567,6 +620,8 @@ export async function geocodeRoutePlanner2ParsedAddresses(
                         reason: sawMapboxSuggestion
                             ? 'Mapbox match was not confident enough.'
                             : 'No Mapbox match found.',
+                        diagnostics,
+                        attempts,
                     },
                 };
             }
@@ -594,6 +649,8 @@ export async function geocodeRoutePlanner2ParsedAddresses(
                 unresolved: {
                     candidate,
                     reason: error instanceof Error ? error.message : 'Address could not be geocoded.',
+                    diagnostics: [],
+                    attempts: [],
                 },
             };
         }

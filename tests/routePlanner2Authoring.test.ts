@@ -6,17 +6,21 @@ import {
   addRoutePlanner2Stop,
   addRoutePlanner2Stops,
   clearRoutePlanner2SegmentRuntimeOverride,
+  clearRoutePlanner2Stops,
   deleteRoutePlanner2Stop,
   moveRoutePlanner2Stop,
+  moveRoutePlanner2LineWaypointInOrder,
   reassignRoutePlanner2StopRange,
   renameRoutePlanner2Stop,
   setRoutePlanner2SegmentRuntimeOverride,
   updateRoutePlanner2SegmentRuntimeEstimates,
   updateRoutePlanner2LineWaypointCoordinate,
+  updateRoutePlanner2RouteShape,
   updateRoutePlanner2StopCoordinate,
   updateRoutePlanner2StopRole,
   validateRoutePlanner2Terminals,
 } from '../utils/route-planner-2/routePlanner2Authoring';
+import { buildRoutePlanner2StopSegmentPaths, buildRoutePlanner2StopVisitSequence } from '../utils/route-planner-2/routePlanner2Segments';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 import type { RoutePlanner2SegmentRuntime } from '../utils/route-planner-2/routePlanner2Types';
 
@@ -256,6 +260,68 @@ describe('Route Planner 2 authoring', () => {
     });
   });
 
+  it('moves route line bends through the stop order', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'First', lat: 44.38, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Second', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-3', name: 'Third', lat: 44.4, lng: -79.67, now });
+    project = addRoutePlanner2LineWaypoint(project, 'scenario-1', {
+      id: 'bend-1',
+      afterStopId: 'stop-1',
+      beforeStopId: 'stop-2',
+      lat: 44.385,
+      lng: -79.685,
+      now,
+    });
+
+    project = moveRoutePlanner2LineWaypointInOrder(project, 'scenario-1', 'bend-1', 'down', now);
+
+    expect(project.scenarios[0]?.alignment.find((point) => point.id === 'bend-1')).toMatchObject({
+      afterStopId: 'stop-2',
+      beforeStopId: 'stop-3',
+      segmentSequence: 1,
+    });
+  });
+
+  it('keeps route line waypoints direction-specific unless the reverse segment has its own anchor', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Terminal', lat: 44.38, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Turnaround', lat: 44.39, lng: -79.68, now });
+    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { turnaroundStopId: 'stop-2', now });
+
+    project = addRoutePlanner2LineWaypoint(project, 'scenario-1', {
+      id: 'outbound-bend',
+      afterStopId: 'stop-1',
+      beforeStopId: 'stop-2',
+      lat: 44.385,
+      lng: -79.7,
+      now,
+    });
+
+    let paths = buildRoutePlanner2StopSegmentPaths(project.scenarios[0]!);
+    const outboundPath = paths.find((path) => path.fromStopId === 'stop-1' && path.toStopId === 'stop-2')!;
+    const returnPath = paths.find((path) => path.fromStopId === 'stop-2' && path.toStopId === 'stop-1')!;
+
+    expect(outboundPath.coordinates).toContainEqual([-79.7, 44.385]);
+    expect(returnPath.coordinates).toEqual([
+      [-79.68, 44.39],
+      [-79.69, 44.38],
+    ]);
+
+    project = addRoutePlanner2LineWaypoint(project, 'scenario-1', {
+      id: 'return-bend',
+      afterStopId: 'stop-2',
+      beforeStopId: 'stop-1',
+      lat: 44.386,
+      lng: -79.701,
+      now,
+    });
+
+    paths = buildRoutePlanner2StopSegmentPaths(project.scenarios[0]!);
+    expect(paths.find((path) => path.fromStopId === 'stop-2' && path.toStopId === 'stop-1')?.coordinates)
+      .toContainEqual([-79.701, 44.386]);
+  });
+
   it('generates terminal warnings until the concept has valid terminal roles', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     let scenario = project.scenarios[0]!;
@@ -296,6 +362,58 @@ describe('Route Planner 2 authoring', () => {
 
     project = updateRoutePlanner2StopRole(project, 'scenario-1', 'stop-1', 'start-terminal', now);
     expect(validateRoutePlanner2Terminals(project.scenarios[0]!).map((warning) => warning.id)).not.toContain('missing-turnaround-stop');
+  });
+
+  it('keeps newly appended stops visible after choosing out-and-back', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'A', lat: 44.38, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'B', lat: 44.39, lng: -79.68, now });
+    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { now });
+
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-3', name: 'C', lat: 44.4, lng: -79.67, now });
+    const scenario = project.scenarios[0]!;
+
+    expect(scenario.turnaroundStopId).toBe('stop-3');
+    expect(scenario.stops.map((stop) => `${stop.id}:${stop.role}`)).toEqual([
+      'stop-1:start-terminal',
+      'stop-2:regular',
+      'stop-3:turnaround',
+    ]);
+    expect(buildRoutePlanner2StopVisitSequence(scenario).map((stop) => stop.id)).toEqual([
+      'stop-1',
+      'stop-2',
+      'stop-3',
+      'stop-2',
+      'stop-1',
+    ]);
+  });
+
+  it('clears all stops, bends, runtime data, and turnaround state from a scenario', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'A', lat: 44.38, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'B', lat: 44.39, lng: -79.68, now });
+    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { now });
+    project = addRoutePlanner2LineWaypoint(project, 'scenario-1', {
+      id: 'bend-1',
+      afterStopId: 'stop-1',
+      beforeStopId: 'stop-2',
+      lat: 44.385,
+      lng: -79.685,
+      now,
+    });
+    project = setRoutePlanner2SegmentRuntimeOverride(project, 'scenario-1', 'segment-stop-1-stop-2', 8, now);
+
+    project = clearRoutePlanner2Stops(project, 'scenario-1', now);
+
+    expect(project.scenarios[0]).toMatchObject({
+      stops: [],
+      alignment: [],
+      routeShape: 'one-way',
+      turnaroundStopId: undefined,
+      runtimeEstimates: undefined,
+      runtimeOverrides: undefined,
+      feasibility: undefined,
+    });
   });
 
   it('sets and clears manual segment runtime overrides', () => {

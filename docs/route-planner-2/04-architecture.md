@@ -57,11 +57,12 @@ Responsibilities:
 - stop placement
 - stop ordering
 - selected map object
+- map-based segment runtime override popovers for planner-entered travel times
 - terminal and timed-stop roles
 - Mapbox display and click-to-author interactions
 - road-snapped display geometry using Mapbox Directions when a token is available, with straight-line fallback
 - copy/move contiguous stop ranges between route concepts for service redesign work
-- bus-safe out-and-back routes: no implicit U-turn or 3-point turn; a planner must mark a bus turnaround stop before the return path is treated as valid
+- bus-safe out-and-back routes: choosing Out and back automatically marks the far end stop as the bus turnaround before the return path is treated as valid
 
 ### Feasibility Engine
 
@@ -99,6 +100,22 @@ Rules:
 - do not modify GTFS feeds
 - do not import old Route Planner controllers or services
 
+### Address Import Adapter
+
+Owns Excel/CSV address extraction, duplicate merging, geocoding, manual-review diagnostics, and conversion into custom Route Planner 2 stops.
+
+Responsibilities:
+- parse messy workbook cells into unique civic addresses
+- normalize unit-style and range-style addresses into Mapbox-friendly query variants
+- geocode address variants with bounded concurrency
+- prefer the server-backed `/api/route-planner-geocode` endpoint in production, with client-side Mapbox fallback where the endpoint is unavailable
+- keep unresolved addresses in manual review with diagnostics that explain query, source, status, result count, top result, and confidence rejection reason
+
+Rules:
+- never expose Mapbox token values in the UI, logs, or diagnostics
+- unresolved addresses must not be silently added to the route
+- manual review remains planner-controlled; the app may suggest a corrected address but should not override it silently
+
 ### Runtime Evidence Adapter
 
 Future-ready adapter for observed proxy data.
@@ -133,7 +150,7 @@ teams/{teamId}/routePlanner2Projects/{projectId}
 teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}
 ```
 
-`utils/route-planner-2/routePlanner2ProjectPersistence.ts` owns Firebase access. The workspace calls that service instead of importing Firestore directly. Large geometry or analysis artifacts can move to Firebase Storage later if the Firestore document sizes become a concern.
+`utils/route-planner-2/routePlanner2ProjectPersistence.ts` owns Firebase access. The workspace calls that service instead of importing Firestore directly. Firestore rules allow team members and workspace permission managers to read/write saved route plans. Large geometry or analysis artifacts can move to Firebase Storage later if the Firestore document sizes become a concern.
 
 ## Integration Rules
 

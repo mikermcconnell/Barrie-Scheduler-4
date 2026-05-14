@@ -108,6 +108,12 @@ describe('routePlanner2AddressImport', () => {
     expect(result.unresolved).toHaveLength(1);
     expect(result.unresolved[0]?.candidate.streetLine).toBe('30 Weak Street');
     expect(result.unresolved[0]?.reason).toContain('not confident');
+    expect(result.unresolved[0]?.attempts?.[0]).toEqual(expect.objectContaining({
+      query: expect.stringContaining('30 Weak Street'),
+      resultCount: 1,
+      topResultLabel: expect.stringContaining('999 Other Road'),
+      rejectedReason: expect.stringContaining('civic number 30'),
+    }));
   });
 
   it('geocodes imports with bounded parallel progress', async () => {

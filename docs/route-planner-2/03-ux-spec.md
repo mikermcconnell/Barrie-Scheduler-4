@@ -27,29 +27,49 @@ Recommended v1 layout:
 └──────────────┴───────────────────────────────┴───────────────┘
 ```
 
-The implemented direction is map-first: the map owns the full workspace and
-the left route rail and right route-detail rail sit as collapsible overlays.
-Entering draw focus mode collapses both rails and keeps only compact route
-metrics visible on the map.
+The implemented direction is full-screen map-first: the map owns the full
+workspace and app controls sit as map-integrated side panels instead of taking
+vertical page space. Project identity sits in a small floating chip, primary
+actions live in a collapsible left action sidebar, and the route-detail rail is
+a collapsible right-side review panel with save available at the top. Entering draw
+focus mode hides the command overlays and keeps only compact route metrics
+visible on the map.
 
 Default map authoring should show one active instruction at a time. Keep debug
 details such as snap source, future persistence notes, and comparison outputs
 out of the primary map view unless the planner opens Details or Comparison.
-Route concepts should live in the header bar as compact selectable cards, not
-as a persistent map overlay rail. This keeps the map as the primary surface.
+Route concepts should live inside the collapsible left sidebar. In the
+collapsed state, keep quick access to expand route concepts and add a route; in
+the expanded state, show compact vertical route concept cards. This keeps the
+map as the primary surface without leaving route switching hidden.
 
-## Header
+## Project Chip and Action Sidebar
 
-Header should show:
+The floating project chip should show:
 - back action
 - editable project name
 - module label: Route Planner 2
 - local/draft status
+
+The left action sidebar should be collapsible:
+- collapsed: icons only, with accessible labels
+- expanded: route concepts, icons plus labels, and saved-plan selector
+- route concepts: add route and select route concept from compact vertical cards
+- actions: undo, redo, source overlay, save, load, duplicate, import GTFS, import addresses, operator PDF, camp focus, review route
 - operator turn-by-turn PDF export
 - Camp Focus action for the seasonal camp shuttle concept review
 - disabled or future-labelled save/export if not implemented
+- a compact route review toggle
 
 Avoid implying Firebase persistence exists in v1.
+
+GTFS and address import workflows should open as map-integrated side drawers
+instead of page-centred modals so the planner keeps geographic context while
+importing.
+
+Draw-route guidance, address search, add-stop action, and route type controls
+belong in the right-side review panel, not as a large floating card on top of
+the map.
 
 ## Camp Shuttle Focus
 
@@ -78,32 +98,35 @@ Left rail owns planning object navigation:
 Map canvas should support stop-aware authoring without separate GIS-style modes.
 
 V1 interactions:
-- click the map to add stops in travel order
+- move the mouse over the map and press `1` to add a stop at the pointer location
 - search for a Canadian address near Barrie, pick an autocomplete suggestion, and add it as the next stop
 - import an Excel/CSV address list, preview mapped/unresolved addresses, merge duplicate addresses, and add mapped stops in geographic order
 - drag numbered stop markers to move stops
 - delete stops from the stop order list
 - choose route type: one-way, closed loop, or out-and-back
-- click the route line to create one or more route-line waypoints
-- click the route line and choose **Add stop here** to insert an intermediate stop between existing stops
+- for one-way shuttle patterns, use **Create back direction** to generate a separate editable **Back** route concept from the selected **Out** route
+- click the route line to select a segment and open the segment popover without changing the route
+- press `2` to add a bend at the pointer location on the nearest route segment, or use **Add bend here** in the segment popover
+- use **Add stop here** in the segment popover when explicitly inserting a stop into a selected segment
+- click the route line and edit the selected segment runtime in a small map popover; saved values become planner manual overrides
 - drag route-line `+` waypoint handles to bend the travel path, Google Maps-style
 - delete route-line waypoint handles directly from the map
 - show direction arrows on route lines; out-and-back shared segments should show arrows in both directions
+- undo and redo planner edits from the sidebar or keyboard shortcuts (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Y`, `Ctrl/Cmd+Shift+Z`)
 
-The map stop tray should stay compact for every route size: stop count, start/end, selected stop, and a **Review stops** action. The full stop order belongs in the review rail as a scrollable panel, not as an expandable map overlay. This prevents imported routes with many stops from covering route controls or metrics.
+The full stop order belongs in the review rail as a scrollable panel, not as an expandable map overlay or duplicate map tray. This prevents imported routes with many stops from covering route controls or metrics.
 
 Map overlay ownership:
 - top-left: draw guidance and address search
-- top-right: view/source controls and focus toggles
-- bottom-left: compact stop summary only
+- top-right: focus toggles and transient progress only
+- bottom-left: keep clear unless a future non-duplicative map control is needed
 - bottom-right: route metric strip
 
 New map UI should use those zones instead of adding free-floating overlays.
 
 Route type controls:
 - Show **Closed loop** once there are at least 3 stops. It adds the final segment from the last stop back to Stop 1.
-- Show **Out and back** once there are at least 2 stops. It returns from the turnaround stop to Stop 1 in reverse stop order.
-- For out-and-back routes, allow the selected stop to become the turnaround point.
+- Show **Out and back** once there are at least 2 stops. It automatically marks the far end stop as the turnaround, then returns to Stop 1 in reverse stop order.
 
 Required visible states:
 - selected stop
@@ -117,6 +140,10 @@ For network redesign work, the right rail should include a compact **Reassign st
 ## Right Rail
 
 Right rail turns the selected route into planning meaning.
+
+The right rail should mirror the left sidebar's reduce/expand behavior:
+- collapsed: narrow icon rail with accessible labels for review, save, and draw
+- expanded: full route review, save action, route authoring controls, and details
 
 Recommended sections:
 1. Route details

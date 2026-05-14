@@ -127,11 +127,11 @@ service cloud.firestore {
 
       // Route Planner 2 saved route concepts
       match /routePlanner2Projects/{projectId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read, write: if isTeamMember(teamId) || isWorkspacePermissionManager();
 
         // Editable scenarios saved under each route planner project
         match /scenarios/{scenarioId} {
-          allow read, write: if isTeamMember(teamId);
+          allow read, write: if isTeamMember(teamId) || isWorkspacePermissionManager();
         }
       }
     }

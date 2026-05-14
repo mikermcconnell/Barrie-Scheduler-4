@@ -30,6 +30,19 @@ A planner can start from an existing GTFS route instead of a blank concept.
 
 Imported GTFS routes are local planning copies. Editing them does not change the GTFS feed or create a fixed-route schedule draft.
 
+## Imported Address List Workflow
+
+A planner can import Excel/CSV address lists as custom stops.
+
+1. Upload the address file.
+2. The importer extracts street, city, province, and postal code rows, merges duplicate addresses, and geocodes each unique address.
+3. Mapped addresses are previewed in geographic order before being added to the route.
+4. Addresses that cannot be matched confidently stay in **Needs manual review**.
+5. Each review item shows safe diagnostics: query used, geocoder source, response status, result count, top Mapbox label, and why the top result was rejected.
+6. The planner edits the address and retries the match before adding it.
+
+Diagnostics must never expose Mapbox token values.
+
 ## Project and Route Workflow
 
 A project is the planning container. A route is one route option inside that project.
@@ -76,7 +89,7 @@ The route line is useful, but stops and terminals are what make the concept oper
 Route shape workflow:
 - One-way keeps the stop order as drawn.
 - Closed loop adds the final segment from the last stop back to Stop 1. The planner should not redraw Stop 1.
-- Out-and-back adds the return trip automatically in reverse order from the turnaround stop back to Stop 1. The planner chooses the turnaround stop rather than redrawing the return.
+- Out-and-back automatically marks the far end stop as the turnaround and adds the return trip in reverse order back to Stop 1.
 
 ## Service Assumption Workflow
 

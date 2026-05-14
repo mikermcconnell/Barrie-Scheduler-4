@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Loader2, MapPin, Plus, Search, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { Layer, Marker, Source } from 'react-map-gl/mapbox';
 import type { LayerProps, MapMouseEvent, MarkerDragEvent } from 'react-map-gl/mapbox';
 
@@ -10,15 +10,11 @@ import {
     type RoutePlanner2RoadSnapProgress,
 } from '../../../utils/route-planner-2/routePlanner2RoadSnap';
 import {
-    searchRoutePlanner2Addresses,
-    type RoutePlanner2AddressSuggestion,
-} from '../../../utils/route-planner-2/routePlanner2AddressSearch';
-import {
     buildRoutePlanner2StopSegmentPairs,
     buildRoutePlanner2StopSegmentPaths,
-    buildRoutePlanner2StopVisitSequence,
+    getRoutePlanner2SegmentId,
 } from '../../../utils/route-planner-2/routePlanner2Segments';
-import type { RoutePlanner2RoutePoint, RoutePlanner2RouteShape, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime, RoutePlanner2Stop } from '../../../utils/route-planner-2/routePlanner2Types';
+import type { RoutePlanner2RoutePoint, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime, RoutePlanner2Stop } from '../../../utils/route-planner-2/routePlanner2Types';
 
 const ROUTE_LINE_LAYER_ID = 'route-planner-2-line';
 const ROUTE_LINE_HIT_LAYER_ID = 'route-planner-2-line-hit';
@@ -28,10 +24,15 @@ const ROUTE_DIRECTION_ARROW_OUTBOUND_LAYER_ID = 'route-planner-2-direction-arrow
 const ROUTE_DIRECTION_ARROW_RETURN_LAYER_ID = 'route-planner-2-direction-arrows-return';
 const ROUTE_RUNTIME_SOURCE_SOURCE_ID = 'route-planner-2-runtime-source-overlay';
 const ROUTE_RUNTIME_SOURCE_LAYER_ID = 'route-planner-2-runtime-source-line';
+const ROUTE_HIGHLIGHTED_SEGMENT_SOURCE_ID = 'route-planner-2-highlighted-segment';
+const ROUTE_HIGHLIGHTED_SEGMENT_LAYER_ID = 'route-planner-2-highlighted-segment-line';
 
 interface RoutePlanner2MapCanvasProps {
     scenario: RoutePlanner2Scenario | null | undefined;
     selectedStopId: string | null;
+    highlightedStopId?: string | null;
+    highlightedWaypointId?: string | null;
+    highlightedSegmentId?: string | null;
     onSelectStop: (stopId: string) => void;
     onAddStop: (coordinate: { lat: number; lng: number; name?: string }) => void;
     onDeleteStop: (stopId: string) => void;
@@ -41,6 +42,7 @@ interface RoutePlanner2MapCanvasProps {
         toStopId: string;
         insertAfterWaypointId?: string;
         insertBeforeWaypointId?: string;
+        applyToOppositeDirection?: boolean;
         coordinate: { lat: number; lng: number };
     }) => void;
     onInsertStopOnLine: (placement: {
@@ -53,16 +55,15 @@ interface RoutePlanner2MapCanvasProps {
     onMoveLineWaypoint: (waypointId: string, coordinate: { lat: number; lng: number }) => void;
     onDeleteLineWaypoint: (waypointId: string) => void;
     onSegmentRuntimeEstimates: (estimates: RoutePlanner2SegmentRuntime[]) => void;
-    onRouteShapeChange: (routeShape: RoutePlanner2RouteShape, turnaroundStopId?: string) => void;
-    onSetTurnaroundStop: (stopId: string) => void;
-    onAddNextStop?: () => void;
-    onEnterDrawFocus?: () => void;
-    onOpenStopList?: () => void;
-    focusMode?: boolean;
+    onSetSegmentRuntimeOverride?: (segmentId: string, runtimeMinutes: number) => void;
+    onClearSegmentRuntimeOverride?: (segmentId: string) => void;
     metricItems?: Array<{ label: string; value: string; detail?: string; description?: string; onClick?: () => void }>;
+    segmentRuntimes?: RoutePlanner2SegmentRuntime[];
+    showRuntimeSourceOverlay?: boolean;
     overlayInsets?: {
         left: string;
         right: string;
+        top?: string;
     };
 }
 
@@ -76,6 +77,7 @@ interface RoutePlanner2SegmentGeometry {
 interface PendingLineAction {
     fromStopId: string;
     toStopId: string;
+    segmentId: string;
     insertAfterWaypointId?: string;
     insertBeforeWaypointId?: string;
     coordinate: { lat: number; lng: number };
@@ -125,6 +127,20 @@ const runtimeSourceLineLayer: LayerProps = {
         'line-color': ['get', 'color'],
         'line-width': 8,
         'line-opacity': 0.9,
+    },
+    layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+    },
+};
+
+const highlightedSegmentLineLayer: LayerProps = {
+    id: ROUTE_HIGHLIGHTED_SEGMENT_LAYER_ID,
+    type: 'line',
+    paint: {
+        'line-color': '#0891b2',
+        'line-width': 10,
+        'line-opacity': 0.88,
     },
     layout: {
         'line-cap': 'round',
@@ -183,7 +199,7 @@ const routeDirectionArrowReturnLayer: LayerProps = {
     },
 };
 
-function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean): string {
+function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean, isHighlighted: boolean): string {
     const roleClass = stop.role === 'start-terminal'
         ? 'bg-emerald-600'
         : stop.role === 'end-terminal'
@@ -193,7 +209,7 @@ function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean): strin
                 : stop.role === 'timed'
                     ? 'bg-indigo-600'
                     : 'bg-cyan-600';
-    return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'}`;
+    return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''}`;
 }
 
 type RuntimeSourceOverlayItem = {
@@ -216,17 +232,6 @@ const runtimeSourceColors: Record<RoutePlanner2SegmentRuntime['source'], string>
     missing: '#64748b',
 };
 
-const runtimeSourceDotClasses: Record<RoutePlanner2SegmentRuntime['source'], string> = {
-    'scheduled-proxy': 'bg-emerald-600',
-    'partial-scheduled-proxy': 'bg-lime-600',
-    'observed-proxy': 'bg-blue-600',
-    'observed-scheduled-blend': 'bg-teal-700',
-    mapbox: 'bg-cyan-600',
-    manual: 'bg-indigo-600',
-    fallback: 'bg-amber-600',
-    missing: 'bg-slate-500',
-};
-
 function getRuntimeSourceOverlayLabel(source: RoutePlanner2SegmentRuntime['source'], evidenceMethod?: RoutePlanner2SegmentRuntime['evidenceMethod']): string {
     if (source === 'scheduled-proxy') return evidenceMethod === 'shape-overlap' ? 'GTFS shape match' : 'Scheduled GTFS';
     if (source === 'partial-scheduled-proxy') return 'Partial GTFS + estimate';
@@ -244,6 +249,10 @@ function getRuntimeSourceOverlayRuntime(
 ): RoutePlanner2SegmentRuntime | undefined {
     return estimates.find((estimate) => estimate.id === geometry.id)
         ?? estimates.find((estimate) => estimate.fromStopId === geometry.fromStopId && estimate.toStopId === geometry.toStopId);
+}
+
+function formatRuntimeMinutes(value: number | null | undefined): string {
+    return value != null && Number.isFinite(value) ? `${value} min` : 'Not estimated';
 }
 
 function getCoordinateDistance(first: [number, number], second: [number, number]): number {
@@ -329,8 +338,35 @@ function buildRuntimeSourceGeoJson(segments: Array<RuntimeSourceOverlayItem & { 
     };
 }
 
+function buildHighlightedSegmentGeoJson(segment: RoutePlanner2SegmentGeometry | null) {
+    return {
+        type: 'FeatureCollection' as const,
+        features: segment && segment.coordinates.length >= 2
+            ? [{
+                type: 'Feature' as const,
+                properties: { id: segment.id },
+                geometry: {
+                    type: 'LineString' as const,
+                    coordinates: segment.coordinates,
+                },
+            }]
+            : [],
+    };
+}
+
 function getDirectionPairKey(fromStopId: string, toStopId: string): string {
     return [fromStopId, toStopId].sort().join('::');
+}
+
+function shouldReverseTwoWayArrowGeometry(
+    segment: RoutePlanner2SegmentGeometry,
+    fromSequence: number,
+    toSequence: number,
+): boolean {
+    if (fromSequence !== toSequence) return fromSequence > toSequence;
+
+    // Fall back to stable IDs when imported data does not have distinct sequences.
+    return segment.fromStopId > segment.toStopId;
 }
 
 export function buildRoutePlanner2DirectionArrowGeoJson(
@@ -359,22 +395,31 @@ export function buildRoutePlanner2DirectionArrowGeoJson(
                 const fromStop = scenario?.stops.find((stop) => stop.id === segment.fromStopId);
                 const toStop = scenario?.stops.find((stop) => stop.id === segment.toStopId);
                 const isTwoWay = (pairCounts[getDirectionPairKey(segment.fromStopId, segment.toStopId)] ?? 0) > 1;
+                const fromSequence = fromStop?.sequence ?? 0;
+                const toSequence = toStop?.sequence ?? 0;
                 const lane = !isTwoWay
                     ? 'center'
-                    : (fromStop?.sequence ?? 0) <= (toStop?.sequence ?? 0)
+                    : fromSequence <= toSequence
                         ? 'outbound'
                         : 'return';
+                const shouldReverseGeometry = isTwoWay
+                    ? shouldReverseTwoWayArrowGeometry(segment, fromSequence, toSequence)
+                    : false;
+                const coordinates = shouldReverseGeometry
+                    ? [...segment.coordinates].reverse()
+                    : segment.coordinates;
+                const label = isTwoWay && shouldReverseGeometry ? '←' : '➜';
 
                 return {
                     type: 'Feature' as const,
                     properties: {
                         id: segment.id,
                         lane,
-                        label: '➜',
+                        label,
                     },
                     geometry: {
                         type: 'LineString' as const,
-                        coordinates: segment.coordinates,
+                        coordinates,
                     },
                 };
             }),
@@ -410,10 +455,7 @@ function getRoutePathPointsForStopSegment(
     fromStop: RoutePlanner2Stop,
     toStop: RoutePlanner2Stop,
 ): RoutePathPoint[] {
-    const directAnchors = getLineAnchorForSegment(scenario.alignment, fromStop.id, toStop.id);
-    const lineAnchors = directAnchors.length > 0
-        ? directAnchors
-        : getLineAnchorForSegment(scenario.alignment, toStop.id, fromStop.id).reverse();
+    const lineAnchors = getLineAnchorForSegment(scenario.alignment, fromStop.id, toStop.id);
 
     return [
         { type: 'stop', id: fromStop.id, lat: fromStop.lat, lng: fromStop.lng },
@@ -435,10 +477,7 @@ function getScenarioWaypoints(scenario: RoutePlanner2Scenario): [number, number]
 
         segmentPairs.forEach(({ fromStop, toStop }, index) => {
             if (index === 0) waypoints.push([fromStop.lng, fromStop.lat]);
-            const directAnchors = getLineAnchorForSegment(scenario.alignment, fromStop.id, toStop.id);
-            const anchors = directAnchors.length > 0
-                ? directAnchors
-                : getLineAnchorForSegment(scenario.alignment, toStop.id, fromStop.id).reverse();
+            const anchors = getLineAnchorForSegment(scenario.alignment, fromStop.id, toStop.id);
             anchors.forEach((anchor) => {
                 waypoints.push([anchor.lng, anchor.lat]);
             });
@@ -484,61 +523,6 @@ function getScenarioRoadBuildKey(scenario: RoutePlanner2Scenario | null | undefi
     return buildRoutePlanner2StopSegmentPaths(scenario)
         .map((segment) => `${segment.id}:${segment.pathFingerprint}`)
         .join('||');
-}
-
-function getDrawingGuide(scenario: RoutePlanner2Scenario | null | undefined): { title: string; body?: string; actionLabel: string } {
-    const stopCount = scenario?.stops.length ?? 0;
-    const hasStartTerminal = scenario?.stops.some((stop) => stop.role === 'start-terminal') ?? false;
-    const hasEndTerminal = scenario?.stops.some((stop) => stop.role === 'end-terminal') ?? false;
-
-    if (stopCount === 0) {
-        return {
-            title: 'Click the map to place Stop 1',
-            actionLabel: 'Add Stop 1',
-        };
-    }
-
-    if (stopCount === 1) {
-        return {
-            title: 'Add the next stop',
-            body: 'Mark terminals after adding at least two stops.',
-            actionLabel: 'Add next stop',
-        };
-    }
-
-    if (scenario?.routeShape === 'closed-loop') {
-        return {
-            title: 'Closed loop route',
-            body: `The route returns from Stop ${stopCount} to Stop 1. Click the line, then drag the + handle to shape it.`,
-            actionLabel: `Add Stop ${stopCount + 1}`,
-        };
-    }
-
-    if (scenario?.routeShape === 'out-and-back') {
-        const turnaroundStop = scenario.stops.find((stop) => stop.id === scenario.turnaroundStopId)
-            ?? null;
-        return {
-            title: turnaroundStop ? `Out and back to ${turnaroundStop.name}` : 'Out and back needs a bus turnaround',
-            body: turnaroundStop
-                ? 'The return trip is added only from the marked bus turnaround. Use a real loop, terminal, or safe turning location — not a U-turn or 3-point turn.'
-                : 'Select the far end stop and mark it as the bus turnaround before using this route for feasibility.',
-            actionLabel: `Add Stop ${stopCount + 1}`,
-        };
-    }
-
-    if (!hasStartTerminal || !hasEndTerminal) {
-        return {
-            title: 'Mark start and end terminals',
-            body: 'Click the line between stops, then drag the + handle to shape the route.',
-            actionLabel: `Add Stop ${stopCount + 1}`,
-        };
-    }
-
-    return {
-        title: 'Review feasibility',
-        body: 'Click the line between stops, then drag the + handle to shape the route.',
-        actionLabel: `Add Stop ${stopCount + 1}`,
-    };
 }
 
 function getDragCoordinate(event: MarkerDragEvent): { lat: number; lng: number } {
@@ -593,12 +577,14 @@ function getClosestRouteSegment(
 ): {
     fromStopId: string;
     toStopId: string;
+    segmentId: string;
     insertAfterWaypointId?: string;
     insertBeforeWaypointId?: string;
 } | null {
     let closestSegment: {
         fromStopId: string;
         toStopId: string;
+        segmentId: string;
         insertAfterWaypointId?: string;
         insertBeforeWaypointId?: string;
     } | null = null;
@@ -617,6 +603,7 @@ function getClosestRouteSegment(
                 closestSegment = {
                     fromStopId: fromStop.id,
                     toStopId: toStop.id,
+                    segmentId: getRoutePlanner2SegmentId(fromStop.id, toStop.id),
                     insertAfterWaypointId: start.type === 'waypoint' ? start.id : undefined,
                     insertBeforeWaypointId: end.type === 'waypoint' ? end.id : undefined,
                 };
@@ -635,6 +622,9 @@ function clickedRouteLine(event: MapMouseEvent): boolean {
 export function RoutePlanner2MapCanvas({
     scenario,
     selectedStopId,
+    highlightedStopId,
+    highlightedWaypointId,
+    highlightedSegmentId,
     onSelectStop,
     onAddStop,
     onDeleteStop,
@@ -644,13 +634,11 @@ export function RoutePlanner2MapCanvas({
     onMoveLineWaypoint,
     onDeleteLineWaypoint,
     onSegmentRuntimeEstimates,
-    onRouteShapeChange,
-    onSetTurnaroundStop,
-    onAddNextStop,
-    onEnterDrawFocus,
-    onOpenStopList,
-    focusMode = false,
+    onSetSegmentRuntimeOverride,
+    onClearSegmentRuntimeOverride,
     metricItems = [],
+    segmentRuntimes = [],
+    showRuntimeSourceOverlay = false,
     overlayInsets = { left: '8rem', right: '8rem' },
 }: RoutePlanner2MapCanvasProps) {
     const [mapLoaded, setMapLoaded] = useState(false);
@@ -658,13 +646,10 @@ export function RoutePlanner2MapCanvas({
     const [snappedSegmentGeometries, setSnappedSegmentGeometries] = useState<RoutePlanner2SegmentGeometry[]>([]);
     const [roadBuildProgress, setRoadBuildProgress] = useState<RoutePlanner2RoadSnapProgress | null>(null);
     const [pendingLineAction, setPendingLineAction] = useState<PendingLineAction | null>(null);
+    const [applyAnchorToReturn, setApplyAnchorToReturn] = useState(false);
+    const [runtimeOverrideValue, setRuntimeOverrideValue] = useState('');
     const [activeDragPreview, setActiveDragPreview] = useState<ActiveDragPreview | null>(null);
-    const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
-    const [addressQuery, setAddressQuery] = useState('');
-    const [addressSuggestions, setAddressSuggestions] = useState<RoutePlanner2AddressSuggestion[]>([]);
-    const [selectedAddress, setSelectedAddress] = useState<RoutePlanner2AddressSuggestion | null>(null);
-    const [addressSearchLoading, setAddressSearchLoading] = useState(false);
-    const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
+    const [mouseMapCoordinate, setMouseMapCoordinate] = useState<{ lat: number; lng: number } | null>(null);
     const suppressMapClickUntilRef = useRef(0);
 
     const waypoints = useMemo(() => scenario ? getScenarioWaypoints(scenario) : [], [scenario]);
@@ -675,17 +660,19 @@ export function RoutePlanner2MapCanvas({
         () => buildRoutePlanner2DirectionArrowGeoJson(scenario, snappedSegmentGeometries),
         [scenario, snappedSegmentGeometries],
     );
+    const activeSegmentRuntimes = useMemo(() => {
+        if (segmentRuntimes.length > 0) return segmentRuntimes;
+        if (scenario?.feasibility?.segmentSummaries?.length) return scenario.feasibility.segmentSummaries;
+        return scenario?.runtimeEstimates ?? [];
+    }, [scenario?.feasibility?.segmentSummaries, scenario?.runtimeEstimates, segmentRuntimes]);
     const runtimeSourceOverlaySegments = useMemo(() => {
         if (!scenario) return [];
 
         const fallbackGeometries = buildRoutePlanner2StopSegmentPaths(scenario);
         const geometries = snappedSegmentGeometries.length > 0 ? snappedSegmentGeometries : fallbackGeometries;
-        const estimates = scenario.feasibility?.segmentSummaries?.length
-            ? scenario.feasibility.segmentSummaries
-            : scenario.runtimeEstimates ?? [];
 
         return geometries.map((geometry) => {
-            const runtime = getRuntimeSourceOverlayRuntime(estimates, geometry);
+            const runtime = getRuntimeSourceOverlayRuntime(activeSegmentRuntimes, geometry);
             const source = runtime?.source ?? 'missing';
             const fromStop = scenario.stops.find((stop) => stop.id === geometry.fromStopId);
             const toStop = scenario.stops.find((stop) => stop.id === geometry.toStopId);
@@ -700,81 +687,61 @@ export function RoutePlanner2MapCanvas({
                 coordinates: geometry.coordinates,
             };
         });
-    }, [scenario, snappedSegmentGeometries]);
+    }, [activeSegmentRuntimes, scenario, snappedSegmentGeometries]);
     const runtimeSourceGeoJson = useMemo(
         () => buildRuntimeSourceGeoJson(runtimeSourceOverlaySegments),
         [runtimeSourceOverlaySegments],
     );
-    const runtimeSourceLegendItems = useMemo(() => {
-        const summary = new Map<RoutePlanner2SegmentRuntime['source'], { source: RoutePlanner2SegmentRuntime['source']; label: string; count: number }>();
-        runtimeSourceOverlaySegments.forEach((segment) => {
-            const existing = summary.get(segment.source);
-            if (existing) {
-                existing.count += 1;
-                return;
-            }
-            summary.set(segment.source, { source: segment.source, label: segment.label, count: 1 });
-        });
-        return Array.from(summary.values());
-    }, [runtimeSourceOverlaySegments]);
+    const highlightedSegmentGeoJson = useMemo(() => {
+        if (!scenario || !highlightedSegmentId) return buildHighlightedSegmentGeoJson(null);
+        const fallbackGeometries = buildRoutePlanner2StopSegmentPaths(scenario).map((segment) => ({
+            id: segment.id,
+            fromStopId: segment.fromStopId,
+            toStopId: segment.toStopId,
+            coordinates: segment.coordinates,
+        }));
+        const geometries = snappedSegmentGeometries.length > 0 ? snappedSegmentGeometries : fallbackGeometries;
+        const highlightedSegment = geometries.find((geometry) => geometry.id === highlightedSegmentId) ?? null;
+        return buildHighlightedSegmentGeoJson(highlightedSegment);
+    }, [highlightedSegmentId, scenario, snappedSegmentGeometries]);
     const hasRouteLine = lineGeoJson.features.length > 0;
     const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
     const hasDirectionArrows = directionArrowGeoJson.features.length > 0;
-    const drawingGuide = getDrawingGuide(scenario);
-    const sortedStops = useMemo(() => scenario ? sortStops(scenario.stops) : [], [scenario]);
-    const stopVisitSequence = useMemo(() => scenario ? buildRoutePlanner2StopVisitSequence(scenario) : [], [scenario]);
-    const selectedStop = sortedStops.find((stop) => stop.id === selectedStopId) ?? null;
-    const firstStop = sortedStops[0] ?? null;
-    const lastStop = sortedStops[sortedStops.length - 1] ?? null;
-    const routeShapeLabel = scenario?.routeShape === 'closed-loop'
-        ? 'Closed loop'
-        : scenario?.routeShape === 'out-and-back'
-        ? 'Out and back'
-        : 'One-way';
-    useEffect(() => {
-        setAddressQuery('');
-        setAddressSuggestions([]);
-        setSelectedAddress(null);
-        setAddressSearchError(null);
-    }, [scenario?.id]);
+    const hasHighlightedSegment = highlightedSegmentGeoJson.features.length > 0;
+    const pendingRuntime = useMemo(() => {
+        if (!pendingLineAction) return null;
+        return activeSegmentRuntimes.find((segment) => segment.id === pendingLineAction.segmentId)
+            ?? activeSegmentRuntimes.find((segment) =>
+                segment.fromStopId === pendingLineAction.fromStopId
+                && segment.toStopId === pendingLineAction.toStopId,
+            )
+            ?? null;
+    }, [activeSegmentRuntimes, pendingLineAction]);
+    const pendingFromStop = useMemo(
+        () => scenario?.stops.find((stop) => stop.id === pendingLineAction?.fromStopId) ?? null,
+        [pendingLineAction?.fromStopId, scenario?.stops],
+    );
+    const pendingToStop = useMemo(
+        () => scenario?.stops.find((stop) => stop.id === pendingLineAction?.toStopId) ?? null,
+        [pendingLineAction?.toStopId, scenario?.stops],
+    );
+    const pendingHasReturnSegment = useMemo(() => {
+        if (!scenario || !pendingLineAction) return false;
+        return buildRoutePlanner2StopSegmentPairs(scenario).some(({ fromStop, toStop }) =>
+            fromStop.id === pendingLineAction.toStopId && toStop.id === pendingLineAction.fromStopId,
+        );
+    }, [pendingLineAction, scenario]);
 
     useEffect(() => {
-        const trimmedQuery = addressQuery.trim();
-        if (trimmedQuery.length < 3) {
-            setAddressSuggestions([]);
-            setAddressSearchLoading(false);
-            setAddressSearchError(null);
+        if (!pendingLineAction) {
+            setRuntimeOverrideValue('');
+            setApplyAnchorToReturn(false);
             return;
         }
-
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => {
-            setAddressSearchLoading(true);
-            setAddressSearchError(null);
-            searchRoutePlanner2Addresses(trimmedQuery, { signal: controller.signal })
-                .then((suggestions) => {
-                    setAddressSuggestions(suggestions);
-                    if (suggestions.length === 0) {
-                        setAddressSearchError('No matching addresses found.');
-                    }
-                })
-                .catch((error) => {
-                    if (controller.signal.aborted) return;
-                    console.error('Route Planner 2 address search failed', error);
-                    setAddressSuggestions([]);
-                    setAddressSearchError('Address search is unavailable.');
-                })
-                .finally(() => {
-                    if (!controller.signal.aborted) setAddressSearchLoading(false);
-                });
-        }, 250);
-
-        return () => {
-            window.clearTimeout(timeoutId);
-            controller.abort();
-        };
-    }, [addressQuery]);
-
+        setRuntimeOverrideValue(
+            pendingRuntime?.runtimeMinutes != null ? String(pendingRuntime.runtimeMinutes) : '',
+        );
+    }, [pendingLineAction?.segmentId, pendingRuntime?.runtimeMinutes]);
     useEffect(() => {
         if (!activeDragPreview?.committed || !scenario) return;
         const committedCoordinate = activeDragPreview.type === 'stop'
@@ -784,6 +751,45 @@ export function RoutePlanner2MapCanvas({
             setActiveDragPreview(null);
         }
     }, [activeDragPreview, scenario]);
+    useEffect(() => {
+        function handleKeyDown(event: KeyboardEvent) {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            const target = event.target;
+            if (target instanceof HTMLElement) {
+                const tagName = target.tagName.toLowerCase();
+                if (target.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select') return;
+            }
+
+            if (event.key === '1') {
+                if (!mouseMapCoordinate) return;
+                event.preventDefault();
+                onAddStop(mouseMapCoordinate);
+                setApplyAnchorToReturn(false);
+                setPendingLineAction(null);
+                return;
+            }
+
+            if (event.key === '2') {
+                if (!scenario || !mouseMapCoordinate || scenario.stops.length < 2) return;
+                const segment = getClosestRouteSegment(scenario, mouseMapCoordinate);
+                if (!segment) return;
+                event.preventDefault();
+                const shortcutMatchesPendingSegment = pendingLineAction
+                    && pendingLineAction.fromStopId === segment.fromStopId
+                    && pendingLineAction.toStopId === segment.toStopId;
+                onAddLineWaypoint({
+                    ...segment,
+                    coordinate: mouseMapCoordinate,
+                    applyToOppositeDirection: Boolean(shortcutMatchesPendingSegment && applyAnchorToReturn && pendingHasReturnSegment),
+                });
+                setApplyAnchorToReturn(false);
+                setPendingLineAction(null);
+            }
+        }
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [applyAnchorToReturn, mouseMapCoordinate, onAddLineWaypoint, onAddStop, pendingHasReturnSegment, pendingLineAction, scenario]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -847,9 +853,11 @@ export function RoutePlanner2MapCanvas({
         if (clickedRouteLine(event) && scenario.stops.length >= 2) {
             const segment = getClosestRouteSegment(scenario, coordinate);
             if (segment) {
+                setApplyAnchorToReturn(false);
                 setPendingLineAction({
                     fromStopId: segment.fromStopId,
                     toStopId: segment.toStopId,
+                    segmentId: segment.segmentId,
                     insertAfterWaypointId: segment.insertAfterWaypointId,
                     insertBeforeWaypointId: segment.insertBeforeWaypointId,
                     coordinate,
@@ -858,45 +866,50 @@ export function RoutePlanner2MapCanvas({
             }
         }
 
+        if (pendingLineAction) {
+            closePendingLineAction();
+            return;
+        }
+
         setPendingLineAction(null);
-        onAddStop(coordinate);
+        setApplyAnchorToReturn(false);
     }
 
-    function addAnchorFromPendingAction() {
-        if (!pendingLineAction) return;
-        onAddLineWaypoint(pendingLineAction);
-        setPendingLineAction(null);
+    function handleMapMouseMove(event: MapMouseEvent) {
+        setMouseMapCoordinate({ lat: event.lngLat.lat, lng: event.lngLat.lng });
     }
 
     function insertStopFromPendingAction() {
         if (!pendingLineAction) return;
         onInsertStopOnLine(pendingLineAction);
+        closePendingLineAction();
+    }
+
+    function saveRuntimeOverrideFromPendingAction() {
+        if (!pendingLineAction || !onSetSegmentRuntimeOverride) return;
+        const runtimeMinutes = Number(runtimeOverrideValue);
+        if (!Number.isFinite(runtimeMinutes) || runtimeMinutes <= 0) return;
+        onSetSegmentRuntimeOverride(pendingLineAction.segmentId, runtimeMinutes);
+    }
+
+    function clearRuntimeOverrideFromPendingAction() {
+        if (!pendingLineAction || !onClearSegmentRuntimeOverride) return;
+        onClearSegmentRuntimeOverride(pendingLineAction.segmentId);
+    }
+
+    function closePendingLineAction() {
+        suppressMapClickUntilRef.current = Date.now() + 500;
+        setApplyAnchorToReturn(false);
         setPendingLineAction(null);
     }
 
-    function selectAddressSuggestion(suggestion: RoutePlanner2AddressSuggestion) {
-        setSelectedAddress(suggestion);
-        setAddressQuery(suggestion.label);
-        setAddressSuggestions((current) => {
-            const exists = current.some((item) => item.id === suggestion.id);
-            return exists ? current : [suggestion, ...current];
+    function addAnchorFromPendingAction() {
+        if (!pendingLineAction) return;
+        onAddLineWaypoint({
+            ...pendingLineAction,
+            applyToOppositeDirection: applyAnchorToReturn && pendingHasReturnSegment,
         });
-        setAddressSearchError(null);
-    }
-
-    function addSelectedAddressStop() {
-        const suggestion = selectedAddress ?? addressSuggestions[0];
-        if (!suggestion) return;
-
-        onAddStop({
-            lat: suggestion.lat,
-            lng: suggestion.lng,
-            name: suggestion.name,
-        });
-        setAddressQuery('');
-        setAddressSuggestions([]);
-        setSelectedAddress(null);
-        setAddressSearchError(null);
+        closePendingLineAction();
     }
 
     function getPreviewCoordinate(type: ActiveDragPreview['type'], id: string, fallback: { lat: number; lng: number }) {
@@ -907,6 +920,7 @@ export function RoutePlanner2MapCanvas({
 
     function startMarkerDrag(type: ActiveDragPreview['type'], id: string, coordinate: { lat: number; lng: number }) {
         suppressMapClickUntilRef.current = Date.now() + 500;
+        setApplyAnchorToReturn(false);
         setPendingLineAction(null);
         setActiveDragPreview({ type, id, coordinate });
     }
@@ -932,6 +946,7 @@ export function RoutePlanner2MapCanvas({
     const overlayStyle = {
         '--rp2-overlay-left': overlayInsets.left,
         '--rp2-overlay-right': overlayInsets.right,
+        '--rp2-overlay-top': overlayInsets.top ?? '1.5rem',
     } as CSSProperties;
 
     return (
@@ -951,6 +966,7 @@ export function RoutePlanner2MapCanvas({
                     showScale
                     onLoad={() => setMapLoaded(true)}
                     interactiveLayerIds={[ROUTE_LINE_HIT_LAYER_ID]}
+                    onMouseMove={handleMapMouseMove}
                     onClick={handleMapClick}
                 >
                     {mapLoaded && hasRouteLine && (
@@ -962,6 +978,11 @@ export function RoutePlanner2MapCanvas({
                     {mapLoaded && showRuntimeSourceOverlay && hasRuntimeSourceOverlay && (
                         <Source id={ROUTE_RUNTIME_SOURCE_SOURCE_ID} type="geojson" data={runtimeSourceGeoJson}>
                             <Layer {...runtimeSourceLineLayer} />
+                        </Source>
+                    )}
+                    {mapLoaded && hasHighlightedSegment && (
+                        <Source id={ROUTE_HIGHLIGHTED_SEGMENT_SOURCE_ID} type="geojson" data={highlightedSegmentGeoJson}>
+                            <Layer {...highlightedSegmentLineLayer} />
                         </Source>
                     )}
                     {mapLoaded && hasDirectionArrows && (
@@ -990,6 +1011,7 @@ export function RoutePlanner2MapCanvas({
                     {mapLoaded && lineAnchorHandles.map((handle) => {
                         const coordinate = getPreviewCoordinate('waypoint', handle.id, handle);
                         const isDragging = activeDragPreview?.type === 'waypoint' && activeDragPreview.id === handle.id;
+                        const isHighlighted = highlightedWaypointId === handle.id;
                         return (
                         <Marker
                             key={handle.id}
@@ -1005,7 +1027,8 @@ export function RoutePlanner2MapCanvas({
                                 <button
                                     type="button"
                                     onClick={(event) => event.stopPropagation()}
-                                    className={`flex h-7 w-7 cursor-grab items-center justify-center rounded-full border-2 border-cyan-700 bg-white text-xs font-black text-cyan-700 shadow-lg ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''}`}
+                                    data-highlighted={isHighlighted ? 'true' : undefined}
+                                    className={`flex h-7 w-7 cursor-grab items-center justify-center rounded-full border-2 border-cyan-700 bg-white text-xs font-black text-cyan-700 shadow-lg ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''}`}
                                     aria-label="Drag route line anchor"
                                     title="Drag to bend this route segment"
                                 >
@@ -1034,29 +1057,97 @@ export function RoutePlanner2MapCanvas({
                             anchor="bottom"
                         >
                             <div
-                                className="w-52 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
+                                data-testid="rp2-segment-runtime-popover"
+                                className="w-72 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl"
+                                onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => event.stopPropagation()}
                             >
-                                <div className="px-1 text-[10px] font-black uppercase tracking-wide text-slate-500">Route line</div>
-                                <div className="mt-2 grid gap-2">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Segment runtime</div>
+                                        <div className="mt-1 text-sm font-black text-slate-900">
+                                            {pendingFromStop?.sequence ?? '?'} {pendingFromStop?.name ?? 'From stop'} → {pendingToStop?.sequence ?? '?'} {pendingToStop?.name ?? 'To stop'}
+                                        </div>
+                                    </div>
+                                    <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">
+                                        {getRuntimeSourceOverlayLabel(pendingRuntime?.source ?? 'missing', pendingRuntime?.evidenceMethod)}
+                                    </span>
+                                </div>
+                                <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-2">
+                                    <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-500">
+                                        <span>Current travel time</span>
+                                        <span className="font-black text-slate-900">{formatRuntimeMinutes(pendingRuntime?.runtimeMinutes)}</span>
+                                    </div>
+                                    <label className="mt-2 block text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                        Manual override minutes
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            step="1"
+                                            value={runtimeOverrideValue}
+                                            onChange={(event) => setRuntimeOverrideValue(event.target.value)}
+                                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-900"
+                                            aria-label="Manual segment travel time in minutes"
+                                        />
+                                    </label>
+                                    <div className="mt-2 flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={saveRuntimeOverrideFromPendingAction}
+                                            disabled={!onSetSegmentRuntimeOverride || !Number.isFinite(Number(runtimeOverrideValue)) || Number(runtimeOverrideValue) <= 0}
+                                            className="flex-1 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            Save override
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={clearRuntimeOverrideFromPendingAction}
+                                            disabled={!onClearSegmentRuntimeOverride || pendingRuntime?.source !== 'manual'}
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                            Reset
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="mt-3 border-t border-slate-100 pt-3">
+                                    <label className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs ${pendingHasReturnSegment ? 'border-slate-200 bg-white text-slate-700' : 'border-slate-100 bg-slate-50 text-slate-400'}`}>
+                                        <input
+                                            type="checkbox"
+                                            checked={applyAnchorToReturn && pendingHasReturnSegment}
+                                            disabled={!pendingHasReturnSegment}
+                                            onChange={(event) => setApplyAnchorToReturn(event.target.checked)}
+                                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                                            aria-label="Apply bend anchor to return direction too"
+                                        />
+                                        <span>
+                                            <span className="block font-black">Apply to return direction too</span>
+                                            <span className="mt-0.5 block text-[10px] font-semibold leading-snug text-slate-500">
+                                                {pendingHasReturnSegment
+                                                    ? 'Leave off when the detour only affects this direction.'
+                                                    : 'No matching return segment on this route.'}
+                                            </span>
+                                        </span>
+                                    </label>
+                                </div>
+                                <div className="mt-2 grid grid-cols-2 gap-2">
                                     <button
                                         type="button"
                                         onClick={insertStopFromPendingAction}
-                                        className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-black text-white hover:bg-cyan-700"
+                                        className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black text-cyan-800 hover:bg-cyan-100"
                                     >
-                                        Add stop here
+                                        Add stop here · 1
                                     </button>
                                     <button
                                         type="button"
                                         onClick={addAnchorFromPendingAction}
                                         className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
                                     >
-                                        Add bend anchor
+                                        Add bend here · 2
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => setPendingLineAction(null)}
-                                        className="rounded-xl px-3 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50"
+                                        onClick={closePendingLineAction}
+                                        className="col-span-2 rounded-xl px-3 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50"
                                     >
                                         Cancel
                                     </button>
@@ -1067,6 +1158,7 @@ export function RoutePlanner2MapCanvas({
                     {mapLoaded && scenario?.stops.map((stop) => {
                         const coordinate = getPreviewCoordinate('stop', stop.id, stop);
                         const isDragging = activeDragPreview?.type === 'stop' && activeDragPreview.id === stop.id;
+                        const isHighlighted = highlightedStopId === stop.id;
                         return (
                         <Marker
                             key={stop.id}
@@ -1087,7 +1179,8 @@ export function RoutePlanner2MapCanvas({
                                     event.stopPropagation();
                                     onSelectStop(stop.id);
                                 }}
-                                className={`${getStopMarkerClass(stop, selectedStopId === stop.id)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''}`}
+                                data-highlighted={isHighlighted ? 'true' : undefined}
+                                className={`${getStopMarkerClass(stop, selectedStopId === stop.id, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''}`}
                                 aria-label={`Select ${stop.name}`}
                             >
                                 {stop.sequence}
@@ -1097,45 +1190,10 @@ export function RoutePlanner2MapCanvas({
                     })}
                 </MapBase>
 
-                {scenario && (
-                    <div
-                        className="absolute top-6 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg"
-                        style={{ right: 'var(--rp2-overlay-right)' }}
-                    >
-                        <div className="mb-1 px-1 text-[10px] font-black uppercase tracking-wide text-slate-500">View</div>
-                        <button
-                            type="button"
-                            onClick={() => setShowRuntimeSourceOverlay((current) => !current)}
-                            disabled={runtimeSourceOverlaySegments.length === 0}
-                            data-testid="rp2-runtime-source-overlay-toggle"
-                            aria-pressed={showRuntimeSourceOverlay}
-                            className={`rounded-xl border px-3 py-2 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${showRuntimeSourceOverlay ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
-                        >
-                            {showRuntimeSourceOverlay ? 'Hide source overlay' : 'Show source overlay'}
-                        </button>
-                        {showRuntimeSourceOverlay && runtimeSourceLegendItems.length > 0 && (
-                            <div data-testid="rp2-runtime-source-overlay-legend" className="mt-3 border-t border-slate-100 pt-2">
-                                <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Runtime sources</div>
-                                <div className="mt-2 space-y-1">
-                                    {runtimeSourceLegendItems.map((item) => (
-                                        <div key={item.source} className="flex items-center justify-between gap-3 text-xs font-bold text-slate-700">
-                                            <span className="inline-flex items-center gap-2">
-                                                <span className={`h-2.5 w-2.5 rounded-full ${runtimeSourceDotClasses[item.source]}`} />
-                                                {item.label}
-                                            </span>
-                                            <span className="text-slate-500">{item.count}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-
                 {roadBuildProgress && roadBuildProgress.totalSegments > 0 && roadBuildProgress.completedSegments < roadBuildProgress.totalSegments && (
                     <div
-                        className="absolute top-24 w-72 rounded-2xl border border-cyan-100 bg-white/95 p-3 shadow-lg"
-                        style={{ right: 'var(--rp2-overlay-right)' }}
+                    className="absolute w-72 rounded-2xl border border-cyan-100 bg-white/95 p-3 shadow-lg"
+                    style={{ top: 'calc(var(--rp2-overlay-top) + 4.5rem)', right: 'var(--rp2-overlay-right)' }}
                         data-testid="rp2-road-build-progress"
                     >
                         <div className="flex items-center justify-between gap-3">
@@ -1156,131 +1214,6 @@ export function RoutePlanner2MapCanvas({
                     </div>
                 )}
 
-                <div
-                    className="absolute top-6 max-w-sm rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg"
-                    style={{ left: 'var(--rp2-overlay-left)' }}
-                >
-                    <div className="flex items-center justify-between gap-3">
-                        <div>
-                            <div className="text-xs font-black uppercase tracking-wide text-cyan-700">Draw route</div>
-                            <div className="mt-1 text-base font-black leading-5 text-slate-900">{drawingGuide.title}</div>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={onEnterDrawFocus}
-                            className="shrink-0 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black text-cyan-700 hover:bg-cyan-100"
-                        >
-                            Draw route
-                        </button>
-                    </div>
-                    {drawingGuide.body && (
-                        <p className="mt-2 text-sm leading-5 text-slate-600">{drawingGuide.body}</p>
-                    )}
-                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-2">
-                        <label className="text-[10px] font-black uppercase tracking-wide text-slate-500" htmlFor="rp2-address-search">
-                            Add stop by address
-                        </label>
-                        <div className="mt-2 flex gap-2">
-                            <div className="relative min-w-0 flex-1">
-                                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    id="rp2-address-search"
-                                    type="text"
-                                    value={addressQuery}
-                                    onChange={(event) => {
-                                        setSelectedAddress(null);
-                                        setAddressQuery(event.target.value);
-                                    }}
-                                    placeholder="Start typing an address"
-                                    className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm font-semibold text-slate-900 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-                                    autoComplete="off"
-                                />
-                                {addressSearchLoading && (
-                                    <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-cyan-600" />
-                                )}
-                            </div>
-                            <button
-                                type="button"
-                                onClick={addSelectedAddressStop}
-                                disabled={addressSuggestions.length === 0}
-                                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-600 text-white shadow-sm transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                                aria-label="Add selected address as stop"
-                                title="Add selected address as stop"
-                            >
-                                <Plus size={18} />
-                            </button>
-                        </div>
-                        {addressSuggestions.length > 0 && (
-                            <div className="mt-2 max-h-44 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-                                {addressSuggestions.map((suggestion) => (
-                                    <button
-                                        key={suggestion.id}
-                                        type="button"
-                                        onClick={() => selectAddressSuggestion(suggestion)}
-                                        className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-cyan-50 ${selectedAddress?.id === suggestion.id ? 'bg-cyan-50 text-cyan-900' : 'text-slate-700'}`}
-                                    >
-                                        <MapPin size={14} className="mt-0.5 shrink-0 text-cyan-600" />
-                                        <span className="min-w-0">
-                                            <span className="block font-black">{suggestion.name}</span>
-                                            <span className="block truncate text-xs font-semibold text-slate-500">{suggestion.label}</span>
-                                        </span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                        {addressSearchError && (
-                            <p className="mt-2 text-xs font-semibold text-amber-700">{addressSearchError}</p>
-                        )}
-                    </div>
-                    {scenario && scenario.stops.length >= 2 && (
-                        <div className="mt-3 rounded-2xl bg-slate-50 p-2">
-                            <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-slate-500">Route type</div>
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => onRouteShapeChange('one-way')}
-                                    className={`rounded-full border px-3 py-1.5 text-xs font-black ${scenario.routeShape === 'one-way' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
-                                >
-                                    One-way
-                                </button>
-                                {scenario.stops.length >= 3 && (
-                                    <button
-                                        type="button"
-                                        onClick={() => onRouteShapeChange('closed-loop')}
-                                        className={`rounded-full border px-3 py-1.5 text-xs font-black ${scenario.routeShape === 'closed-loop' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
-                                    >
-                                        Closed loop
-                                    </button>
-                                )}
-                                <button
-                                    type="button"
-                                    onClick={() => onRouteShapeChange('out-and-back')}
-                                    className={`rounded-full border px-3 py-1.5 text-xs font-black ${scenario.routeShape === 'out-and-back' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
-                                >
-                                    Out and back
-                                </button>
-                            </div>
-                            <div className="mt-2 text-xs font-semibold text-slate-600">
-                                {routeShapeLabel}: {stopVisitSequence.map((stop) => stop.sequence).join(' → ')}
-                            </div>
-                            {scenario.routeShape === 'out-and-back' && selectedStopId && selectedStopId !== sortedStops[0]?.id && (
-                                <button
-                                    type="button"
-                                    onClick={() => onSetTurnaroundStop(selectedStopId)}
-                                    className="mt-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-700 hover:bg-slate-50"
-                                >
-                                                    Mark selected stop as bus turnaround
-                                </button>
-                            )}
-                        </div>
-                    )}
-                    <div className="mt-3">
-                        <button type="button" onClick={onAddNextStop} className="rounded-xl bg-cyan-600 px-3 py-2 text-sm font-bold text-white hover:bg-cyan-700">
-                            {drawingGuide.actionLabel}
-                        </button>
-                    </div>
-                    {focusMode && <div className="mt-2 text-xs font-bold text-cyan-700">Focus mode</div>}
-                </div>
 
                 {metricItems.length > 0 && (
                     <div
@@ -1332,40 +1265,6 @@ export function RoutePlanner2MapCanvas({
                     </div>
                 )}
 
-                {scenario && sortedStops.length > 0 && (
-                    <div
-                        data-testid="rp2-map-stop-tray"
-                        data-collapsed="true"
-                        className="absolute bottom-4 z-20 w-[min(16.5rem,calc(100%-2rem))] rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-lg"
-                        style={{ left: 'var(--rp2-overlay-left)' }}
-                    >
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between gap-3">
-                                <div className="min-w-0">
-                                    <div className="text-xs font-black uppercase tracking-wide text-slate-500">
-                                        {sortedStops.length} {sortedStops.length === 1 ? 'stop' : 'stops'}
-                                    </div>
-                                    {selectedStop && (
-                                        <div className="mt-1 truncate text-sm font-black text-slate-900">
-                                            Selected: {selectedStop.sequence}. {selectedStop.name}
-                                        </div>
-                                    )}
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={onOpenStopList}
-                                    className="shrink-0 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black text-cyan-800 hover:bg-cyan-100"
-                                >
-                                    Review stops
-                                </button>
-                            </div>
-                            <div className="grid gap-1 text-xs font-semibold text-slate-600">
-                                {firstStop && <div className="truncate">Start: {firstStop.name}</div>}
-                                {lastStop && lastStop.id !== firstStop?.id && <div className="truncate">End: {lastStop.name}</div>}
-                            </div>
-                        </div>
-                    </div>
-                )}
             </div>
         </section>
     );

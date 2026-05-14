@@ -34,4 +34,10 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).toMatch(/match \/fleetPlan\/\{docId\} \{[\s\S]*allow read: if isTeamMember\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\);[\s\S]*match \/versions\/\{versionId\} \{[\s\S]*allow read: if isTeamMember\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\);/);
     expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/fleetPlan\/\{allPaths=\*\*\} \{[\s\S]*allow read: if isTeamMember\(teamId\);[\s\S]*allow write: if isTeamManager\(teamId\);/);
   });
+
+  it('allows workspace permission managers to use Route Planner 2 saved route concepts', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/match \/routePlanner2Projects\/\{projectId\} \{[\s\S]*allow read, write: if isTeamMember\(teamId\) \|\| isWorkspacePermissionManager\(\);[\s\S]*match \/scenarios\/\{scenarioId\} \{[\s\S]*allow read, write: if isTeamMember\(teamId\) \|\| isWorkspacePermissionManager\(\);/);
+  });
 });

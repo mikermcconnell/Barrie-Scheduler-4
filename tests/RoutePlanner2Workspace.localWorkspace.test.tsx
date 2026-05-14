@@ -84,6 +84,8 @@ vi.mock('../utils/route-planner-2/routePlanner2ProjectPersistence', () => projec
 
 import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Workspace';
 import { buildCorridorSpeedIndex, buildCorridorSpeedMapIndex } from '../utils/gtfs/corridorSpeed';
+import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop } from '../utils/route-planner-2/routePlanner2Authoring';
+import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 
 function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const prototype = input instanceof HTMLTextAreaElement
@@ -163,7 +165,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Local draft');
     expect(view.textContent).toContain('Operator PDF');
     expect(view.textContent).toContain('Import addresses');
-    expect(view.textContent).toContain('Click the map to place Stop 1');
+    expect(view.textContent).toContain('Move the mouse over the map and press 1 to place Stop 1');
     expect(view.textContent).toContain('Route concepts');
     expect(view.textContent).toContain('Clean Concept A');
     expect(notes?.value).toContain('Blank route concept');
@@ -193,6 +195,151 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Saved to the team workspace.');
   });
 
+  it('shows a specific message when route plan save is denied', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    projectPersistenceMocks.saveRoutePlanner2Project.mockRejectedValueOnce({ code: 'permission-denied' });
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Save'));
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(view.textContent).toContain('Save failed: your account does not have access to save route plans for this workspace.');
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('opens a saved route plan picker when Load is clicked', async () => {
+    projectPersistenceMocks.listRoutePlanner2SavedProjects.mockResolvedValueOnce([
+      {
+        id: 'saved-project-1',
+        name: 'Downtown shuttle',
+        status: 'local-saved',
+        selectedScenarioId: 'scenario-1',
+        scenarioOrder: ['scenario-1'],
+        scenarioCount: 1,
+        createdAt: '2026-05-01T12:00:00.000Z',
+        updatedAt: '2026-05-12T12:00:00.000Z',
+        updatedBy: 'user-1',
+      },
+      {
+        id: 'saved-project-2',
+        name: 'North network options',
+        status: 'local-saved',
+        selectedScenarioId: 'scenario-2',
+        scenarioOrder: ['scenario-2', 'scenario-3'],
+        scenarioCount: 2,
+        createdAt: '2026-05-02T12:00:00.000Z',
+        updatedAt: '2026-05-13T12:00:00.000Z',
+        updatedBy: 'user-1',
+      },
+    ]);
+    const view = renderWorkspace();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Load'));
+    });
+
+    expect(view.textContent).toContain('Load route plan');
+    expect(view.textContent).toContain('Downtown shuttle');
+    expect(view.textContent).toContain('North network options');
+    expect(view.querySelector('[aria-label="Saved route plans"]')).toBeNull();
+  });
+
+  it('loads a saved route plan from the picker', async () => {
+    projectPersistenceMocks.listRoutePlanner2SavedProjects.mockResolvedValueOnce([
+      {
+        id: 'saved-project-1',
+        name: 'Downtown shuttle',
+        status: 'local-saved',
+        selectedScenarioId: 'scenario-1',
+        scenarioOrder: ['scenario-1'],
+        scenarioCount: 1,
+        createdAt: '2026-05-01T12:00:00.000Z',
+        updatedAt: '2026-05-12T12:00:00.000Z',
+        updatedBy: 'user-1',
+      },
+    ]);
+    projectPersistenceMocks.loadRoutePlanner2Project.mockResolvedValueOnce({
+      ...createRoutePlanner2Project({ id: 'saved-project-1', scenarioId: 'scenario-1', now: '2026-05-12T12:00:00.000Z' }),
+      name: 'Downtown shuttle',
+      status: 'local-saved',
+    });
+    const view = renderWorkspace();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Load'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Downtown shuttle'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(projectPersistenceMocks.loadRoutePlanner2Project).toHaveBeenCalledWith('team-1', 'saved-project-1');
+    expect(view.textContent).toContain('Loaded saved route plan.');
+    expect(view.textContent).not.toContain('Load route plan');
+  });
+
+  it('shows route bend anchors in the right-side stop order', async () => {
+    let savedProject = createRoutePlanner2Project({ id: 'saved-project-1', scenarioId: 'scenario-1', now: '2026-05-12T12:00:00.000Z' });
+    savedProject = addRoutePlanner2Stop(savedProject, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    savedProject = addRoutePlanner2Stop(savedProject, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    savedProject = addRoutePlanner2LineWaypoint(savedProject, 'scenario-1', {
+      id: 'bend-1',
+      afterStopId: 'stop-1',
+      beforeStopId: 'stop-2',
+      lat: 44.385,
+      lng: -79.685,
+    });
+    projectPersistenceMocks.listRoutePlanner2SavedProjects.mockResolvedValueOnce([
+      {
+        id: 'saved-project-1',
+        name: 'Downtown shuttle',
+        status: 'local-saved',
+        selectedScenarioId: 'scenario-1',
+        scenarioOrder: ['scenario-1'],
+        scenarioCount: 1,
+        createdAt: '2026-05-01T12:00:00.000Z',
+        updatedAt: '2026-05-12T12:00:00.000Z',
+        updatedBy: 'user-1',
+      },
+    ]);
+    projectPersistenceMocks.loadRoutePlanner2Project.mockResolvedValueOnce({
+      ...savedProject,
+      name: 'Downtown shuttle',
+      status: 'local-saved',
+    });
+    const view = renderWorkspace();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Load'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Downtown shuttle'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const stopOrder = view.querySelector('[data-testid="rp2-stop-order-panel"]');
+    expect(stopOrder?.textContent).toContain('Downtown Terminal');
+    expect(stopOrder?.textContent).toContain('Bend 1');
+    expect(stopOrder?.textContent).toContain('Between Downtown Terminal and Georgian Mall');
+    expect(stopOrder?.textContent).toContain('Georgian Mall');
+    expect(stopOrder?.querySelector('[data-testid="rp2-stop-order-item-bend-1"]')?.getAttribute('draggable')).toBe('true');
+    expect(stopOrder?.textContent).toContain('Move up');
+    expect(stopOrder?.textContent).toContain('Move down');
+  });
+
   it('opens the address import preview flow', () => {
     const view = renderWorkspace();
 
@@ -205,19 +352,12 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Supports .xlsx, .xls, and .csv');
   });
 
-  it('opens a Camp Shuttle Focus view for the selected route concept', () => {
+  it('does not show the old Camp Focus view', () => {
     const view = renderWorkspace();
 
-    flushSync(() => {
-      click(findButton(view, 'Camp Focus'));
-    });
-
-    expect(view.querySelector('[data-testid="rp2-map-first-shell"]')?.getAttribute('data-focus-mode')).toBe('camp-shuttle');
-    expect(view.querySelector('[data-testid="rp2-right-rail"]')?.getAttribute('data-state')).toBe('closed');
-    expect(view.querySelector('[data-testid="rp2-camp-shuttle-focus"]')?.textContent).toContain('Summer camp shuttle');
-    expect(view.querySelector('[data-testid="rp2-camp-shuttle-focus"]')?.textContent).toContain('Summer service');
-    expect(view.querySelector('[data-testid="rp2-camp-shuttle-focus"]')?.textContent).toContain('Stops');
-    expect(view.textContent).toContain('Exit camp focus');
+    expect(findButton(view, 'Camp Focus')).toBeNull();
+    expect(view.querySelector('[data-testid="rp2-map-first-shell"]')?.getAttribute('data-focus-mode')).toBe('standard');
+    expect(view.querySelector('[data-testid="rp2-camp-shuttle-focus"]')).toBeNull();
   });
 
 
@@ -436,27 +576,38 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).not.toContain('drag the + handle');
   });
 
-  it('renders Route Planner as a map-first workspace with route concepts in the header', () => {
+  it('renders Route Planner as a map-first workspace with a collapsible action sidebar', () => {
     const view = renderWorkspace();
     const workspaceShell = view.querySelector('[data-testid="rp2-map-first-shell"]');
     const rightRail = view.querySelector('[data-testid="rp2-right-rail"]');
     const mapCanvas = view.querySelector('[data-testid="rp2-map-canvas"]') as HTMLElement | null;
+    const actionSidebar = view.querySelector('[data-testid="rp2-action-sidebar"]');
 
     expect(workspaceShell?.getAttribute('data-layout')).toBe('map-first');
     expect(view.textContent).toContain('Route concepts');
     expect(view.querySelector('[data-testid="rp2-left-rail"]')).toBeNull();
-    expect(rightRail?.getAttribute('data-state')).toBe('closed');
-    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('2rem');
-    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('8rem');
+    expect(actionSidebar?.getAttribute('data-state')).toBe('collapsed');
+    expect(rightRail?.getAttribute('data-state')).toBe('open');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('6rem');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('26.5rem');
+    expect(view.textContent).toContain('Draw route');
 
     flushSync(() => {
-      click(findButton(view, 'Review route'));
+      click(findButton(view, 'Actions'));
     });
 
-    expect(rightRail?.getAttribute('data-state')).toBe('open');
-    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('2rem');
-    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('26.5rem');
-    expect(view.textContent).toContain('Hide review');
+    expect(actionSidebar?.getAttribute('data-state')).toBe('expanded');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('20rem');
+
+    flushSync(() => {
+      click(view.querySelector('[aria-label="Close review route panel"]'));
+    });
+
+    expect(rightRail?.getAttribute('data-state')).toBe('closed');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('20rem');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('6rem');
+    expect(view.querySelector('[aria-label="Expand review route panel"]')).not.toBeNull();
+    expect(view.textContent).toContain('Review route');
   });
 
   it('keeps the map-first workspace contained so the map can fill the available height', () => {
@@ -486,6 +637,10 @@ describe('RoutePlanner2Workspace local workspace', () => {
     try {
       const rightRail = view.querySelector('[data-testid="rp2-right-rail"]');
       const runtimeMetric = view.querySelector('[data-testid="rp2-map-metric-runtime"]') as HTMLButtonElement | null;
+
+      flushSync(() => {
+        click(view.querySelector('[aria-label="Close review route panel"]'));
+      });
 
       expect(rightRail?.getAttribute('data-state')).toBe('closed');
       expect(runtimeMetric?.textContent).toContain('Data source:');
@@ -538,7 +693,42 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(stopNameInput?.value).toBe('Stop 1');
   });
 
-  it('keeps the map stop tray compact and uses the review rail for the full stop list', () => {
+  it('supports undo and redo for route planner edits', () => {
+    const view = renderWorkspace();
+
+    expect((findButton(view, 'Undo') as HTMLButtonElement | null)?.disabled).toBe(true);
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+
+    expect(view.textContent).toContain('1 stop');
+    expect((findButton(view, 'Undo') as HTMLButtonElement | null)?.disabled).toBe(false);
+
+    flushSync(() => {
+      click(findButton(view, 'Undo'));
+    });
+
+    expect(view.textContent).not.toContain('1 stop');
+    expect((findButton(view, 'Redo') as HTMLButtonElement | null)?.disabled).toBe(false);
+
+    flushSync(() => {
+      click(findButton(view, 'Redo'));
+    });
+
+    expect(view.textContent).toContain('1 stop');
+  });
+
+  it('does not pin a floating notification when saved plan listing fails', async () => {
+    projectPersistenceMocks.listRoutePlanner2SavedProjects.mockRejectedValueOnce(new Error('offline'));
+    const view = renderWorkspace();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(view.textContent).not.toContain('Saved route plans could not be loaded.');
+  });
+
+  it('keeps the full stop list in the review rail without a duplicate map stop tray', () => {
     const view = renderWorkspace();
 
     for (let index = 0; index < 11; index += 1) {
@@ -547,19 +737,37 @@ describe('RoutePlanner2Workspace local workspace', () => {
       });
     }
 
-    const tray = view.querySelector('[data-testid="rp2-map-stop-tray"]');
-    expect(tray?.getAttribute('data-collapsed')).toBe('true');
-    expect(tray?.textContent).toContain('11 stops');
-    expect(tray?.textContent).toContain('Review stops');
-    expect(tray?.textContent).not.toContain('10. Stop 10');
+    expect(view.querySelector('[data-testid="rp2-map-stop-tray"]')).toBeNull();
+    expect(view.textContent).not.toContain('Review stops');
 
     flushSync(() => {
-      click(findButton(view, 'Review stops'));
+      click(findButton(view, 'Review route'));
     });
 
-    expect(tray?.getAttribute('data-collapsed')).toBe('true');
     expect(view.querySelector('[data-testid="rp2-right-rail"]')?.getAttribute('data-state')).toBe('open');
     expect(view.querySelector('[data-testid="rp2-stop-order-panel"]')?.textContent).toContain('10Stop 10');
+  });
+
+  it('puts the runtime source overlay control in the action sidebar', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+      addMapStop(view);
+    });
+
+    expect(view.textContent).not.toContain('ViewShow source overlay');
+
+    const sourceOverlayButton = view.querySelector('[data-testid="rp2-runtime-source-overlay-toggle"]') as HTMLButtonElement | null;
+    expect(sourceOverlayButton).not.toBeNull();
+    expect(sourceOverlayButton?.textContent).toContain('Show source overlay');
+
+    flushSync(() => {
+      click(sourceOverlayButton);
+    });
+
+    expect(sourceOverlayButton?.getAttribute('aria-pressed')).toBe('true');
+    expect(sourceOverlayButton?.textContent).toContain('Hide source overlay');
   });
 
   it('moves a stop range into another route concept from the details panel', async () => {
@@ -625,18 +833,41 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
 
     expect(view.textContent).not.toContain('1 stop');
-    expect(view.textContent).toContain('Click the map to place Stop 1');
+    expect(view.textContent).toContain('Move the mouse over the map and press 1 to place Stop 1');
+  });
+
+  it('clears all stops and bends from the stop order list', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+
+    expect(view.textContent).toContain('2 stops');
+    expect(view.textContent).toContain('Clear all');
+
+    flushSync(() => {
+      click(findButton(view, 'Clear all'));
+    });
+
+    expect(view.textContent).not.toContain('2 stops');
+    expect(view.textContent).not.toContain('Stop 2');
+    expect(view.textContent).toContain('Move the mouse over the map and press 1 to place Stop 1');
   });
 
   it('marks start and end terminals through stop role editing', () => {
     const view = renderWorkspace();
 
-    expect(view.textContent).toContain('Add stops before checking route feasibility.');
+    expect(view.textContent).toContain('Move the mouse over the map and press 1 to place Stop 1');
+    expect(view.textContent).not.toContain('Route status');
 
     flushSync(() => {
       addMapStop(view);
     });
-    expect(view.textContent).toContain('Add a start terminal before estimating cycle time.');
+    expect(view.textContent).toContain('Stop role');
 
     const roleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
     expect(roleSelect).not.toBeNull();
@@ -651,8 +882,8 @@ describe('RoutePlanner2Workspace local workspace', () => {
       click(findButton(view, 'Stop 2'));
     });
 
-    expect(view.textContent).toContain('Click the line between stops');
-    expect(view.textContent).toContain('drag the + handle');
+    expect(view.textContent).toContain('Press 1 to add stops at the mouse pointer');
+    expect(view.textContent).toContain('Press 2 near a route segment to add a bend');
 
     const updatedRoleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
     flushSync(() => {
@@ -694,15 +925,33 @@ describe('RoutePlanner2Workspace local workspace', () => {
       click(findButton(view, 'Out and back'));
     });
 
-    expect(view.textContent).toContain('Out and back needs a bus turnaround');
-    expect(view.textContent).toContain('Out and back: 1 → 2 → 3');
-
-    flushSync(() => {
-      click(findButton(view, 'Mark selected stop as bus turnaround'));
-    });
-
     expect(view.textContent).toContain('Out and back to Stop 3');
     expect(view.textContent).toContain('Out and back: 1 → 2 → 3 → 2 → 1');
+    expect(view.textContent).not.toContain('Mark selected stop as bus turnaround');
+  });
+
+  it('creates an editable back direction from a one-way out route', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+
+    expect(view.textContent).toContain('Create back direction');
+
+    flushSync(() => {
+      click(findButton(view, 'Create back direction'));
+    });
+
+    expect(view.textContent).toContain('Clean Concept A Out');
+    expect(view.textContent).toContain('Clean Concept A Back');
+    expect(view.querySelector('[data-testid="rp2-stop-order-panel"]')?.textContent).toContain('1Stop 3');
   });
 
   it('updates feasibility outputs when service assumptions change', () => {
@@ -734,6 +983,8 @@ describe('RoutePlanner2Workspace local workspace', () => {
       setInputValue(frequencyInput!, '0');
     });
 
-    expect(view.textContent).toContain('Target frequency must be greater than zero.');
+    expect(view.textContent).not.toContain('Needs attention');
+    expect(view.textContent).not.toContain('Ready for runtime review');
+    expect(view.textContent).toContain('Segment runtimes');
   });
 });

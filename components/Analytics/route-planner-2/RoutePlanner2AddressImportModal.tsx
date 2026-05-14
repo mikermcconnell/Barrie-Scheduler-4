@@ -12,6 +12,7 @@ import {
 
 interface RoutePlanner2AddressImportModalProps {
     open: boolean;
+    presentation?: 'modal' | 'map-drawer';
     onClose: () => void;
     onImport: (stops: RoutePlanner2GeocodedAddressStop[]) => void;
 }
@@ -27,6 +28,7 @@ interface ImportPreview {
 
 export function RoutePlanner2AddressImportModal({
     open,
+    presentation = 'modal',
     onClose,
     onImport,
 }: RoutePlanner2AddressImportModalProps) {
@@ -154,9 +156,17 @@ export function RoutePlanner2AddressImportModal({
         }
     }
 
+    const isMapDrawer = presentation === 'map-drawer';
+    const shellClassName = isMapDrawer
+        ? 'fixed inset-y-3 right-3 z-50 flex w-[min(92vw,30rem)] items-stretch'
+        : 'fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6';
+    const panelClassName = isMapDrawer
+        ? 'flex h-full w-full flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl'
+        : 'flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl';
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6" role="dialog" aria-modal="true" aria-labelledby="rp2-address-import-title">
-            <section className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+        <div className={shellClassName} role="dialog" aria-modal={!isMapDrawer} aria-labelledby="rp2-address-import-title">
+            <section className={panelClassName}>
                 <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
                     <div>
                         <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-cyan-700">
@@ -263,6 +273,33 @@ export function RoutePlanner2AddressImportModal({
                                                         <div className="min-w-0">
                                                             <div className="break-words font-black">{item.candidate.address}</div>
                                                             <div className="mt-0.5 font-semibold">{item.reason}</div>
+                                                            {(item.diagnostics?.length || item.attempts?.length) ? (
+                                                                <details className="mt-2 rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2">
+                                                                    <summary className="cursor-pointer text-[11px] font-black uppercase tracking-wide text-amber-900">
+                                                                        Why was this reviewed?
+                                                                    </summary>
+                                                                    <div className="mt-2 space-y-2 text-[11px] font-semibold text-amber-950">
+                                                                        {item.diagnostics?.slice(0, 3).map((diagnostic, index) => (
+                                                                            <div key={`${diagnostic.query}-${diagnostic.source}-${index}`} className="rounded-md bg-white/70 px-2 py-1">
+                                                                                <div>
+                                                                                    Geocoder: {diagnostic.source} · Status: {diagnostic.status ?? 'n/a'} · Token: {diagnostic.tokenPresent ? 'present' : 'missing'}
+                                                                                </div>
+                                                                                <div className="break-words">Query: {diagnostic.query}</div>
+                                                                                <div>Results: {diagnostic.resultCount}{diagnostic.topResultLabel ? ` · Top: ${diagnostic.topResultLabel}` : ''}</div>
+                                                                                {diagnostic.error && <div>Error: {diagnostic.error}</div>}
+                                                                            </div>
+                                                                        ))}
+                                                                        {item.attempts?.slice(0, 4).map((attempt, index) => (
+                                                                            <div key={`${attempt.query}-${index}`} className="rounded-md bg-white/70 px-2 py-1">
+                                                                                <div className="break-words">Tried: {attempt.query}</div>
+                                                                                <div>Matched against: {attempt.matchAgainst}</div>
+                                                                                <div>Results: {attempt.resultCount}{attempt.topResultLabel ? ` · Top: ${attempt.topResultLabel}` : ''}</div>
+                                                                                <div>Reason: {attempt.rejectedReason}</div>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </details>
+                                                            ) : null}
                                                         </div>
                                                         {!isEditing && (
                                                             <button

@@ -1,14 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Copy, Download, FileSpreadsheet, Plus, Route, Save, Star, Trash2 } from 'lucide-react';
-
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { ArrowLeft, ClipboardList, Copy, Database, Eye, FileDown, FileSpreadsheet, FolderOpen, Layers3, Loader2, MapPin, MapPinned, PanelRightOpen, PencilRuler, Plus, Redo2, Save, Search, Star, Trash2, Undo2 } from 'lucide-react';
 import {
     addRoutePlanner2LineWaypoint,
     addRoutePlanner2Stop,
     addRoutePlanner2Stops,
+    clearRoutePlanner2Stops,
     clearRoutePlanner2SegmentRuntimeOverride,
     deleteRoutePlanner2LineWaypoint,
     deleteRoutePlanner2Stop,
     insertRoutePlanner2StopBetween,
+    moveRoutePlanner2LineWaypointInOrder,
     moveRoutePlanner2Stop,
     reassignRoutePlanner2StopRange,
     renameRoutePlanner2Stop,
@@ -23,6 +24,7 @@ import {
 import { updateRoutePlanner2Service } from '../../utils/route-planner-2/routePlanner2Feasibility';
 import {
     addRoutePlanner2Scenario,
+    createRoutePlanner2BackDirection,
     deleteRoutePlanner2Scenario,
     duplicateRoutePlanner2Scenario,
     importRoutePlanner2Scenario,
@@ -58,10 +60,21 @@ import {
     RoutePlanner2AddressImportModal,
 } from './route-planner-2/RoutePlanner2AddressImportModal';
 import type { RoutePlanner2GeocodedAddressStop } from '../../utils/route-planner-2/routePlanner2AddressImport';
+import {
+    searchRoutePlanner2Addresses,
+    type RoutePlanner2AddressSuggestion,
+} from '../../utils/route-planner-2/routePlanner2AddressSearch';
+import {
+    buildRoutePlanner2StopSegmentPairs,
+    buildRoutePlanner2StopVisitSequence,
+    getRoutePlanner2LineWaypointsForSegment,
+} from '../../utils/route-planner-2/routePlanner2Segments';
 import type {
     RoutePlanner2Project,
     RoutePlanner2RouteShape,
+    RoutePlanner2RoutePoint,
     RoutePlanner2RuntimeRouteFilterMode,
+    RoutePlanner2Scenario,
     RoutePlanner2RuntimeSourceMode,
     RoutePlanner2SegmentRuntime,
     RoutePlanner2ServiceAssumptions,
@@ -87,13 +100,79 @@ function formatRecovery(minutes: number | null | undefined, percent: number | nu
     return percent != null ? `${minutes} min (${percent}%)` : `${minutes} min`;
 }
 
-function formatCampServiceSpan(service: RoutePlanner2ServiceAssumptions | null | undefined): string {
-    if (!service?.firstTripTime || !service?.lastTripTime) return 'Set service span';
-    return `${service.firstTripTime}-${service.lastTripTime}`;
+function getRoutePlanner2SaveErrorMessage(error: unknown): string {
+    const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code)
+        : '';
+    const message = error instanceof Error ? error.message : '';
+
+    if (code.includes('permission-denied')) {
+        return 'Save failed: your account does not have access to save route plans for this workspace.';
+    }
+
+    if (code.includes('unavailable')) {
+        return 'Save failed: Firebase is temporarily unavailable. Please try again.';
+    }
+
+    if (code.includes('resource-exhausted') || /too large|maximum size|1\s*MiB/i.test(message)) {
+        return 'Save failed: this route plan is too large to save. Try removing unused route concepts.';
+    }
+
+    return 'Save failed. Please try again.';
 }
 
-function formatCampFrequency(service: RoutePlanner2ServiceAssumptions | null | undefined): string {
-    return service?.frequencyMinutes ? `Every ${service.frequencyMinutes} min` : 'Set frequency';
+function getDrawingGuide(scenario: RoutePlanner2Scenario | null | undefined): { title: string; body?: string; actionLabel: string } {
+    const stopCount = scenario?.stops.length ?? 0;
+    const hasStartTerminal = scenario?.stops.some((stop) => stop.role === 'start-terminal') ?? false;
+    const hasEndTerminal = scenario?.stops.some((stop) => stop.role === 'end-terminal') ?? false;
+
+    if (stopCount === 0) {
+        return {
+            title: 'Move the mouse over the map and press 1 to place Stop 1',
+            actionLabel: 'Add Stop 1',
+        };
+    }
+
+    if (stopCount === 1) {
+        return {
+            title: 'Add the next stop',
+            body: 'Mark terminals after adding at least two stops.',
+            actionLabel: 'Add next stop',
+        };
+    }
+
+    if (scenario?.routeShape === 'closed-loop') {
+        return {
+            title: 'Closed loop route',
+            body: `The route returns from Stop ${stopCount} to Stop 1. Press 2 near the route to add a bend, then drag the + handle to shape it.`,
+            actionLabel: `Add Stop ${stopCount + 1}`,
+        };
+    }
+
+    if (scenario?.routeShape === 'out-and-back') {
+        const turnaroundStop = scenario.stops.find((stop) => stop.id === scenario.turnaroundStopId) ?? null;
+        return {
+            title: turnaroundStop ? `Out and back to ${turnaroundStop.name}` : 'Out and back route',
+            body: turnaroundStop
+                ? 'The return trip is added only from the marked bus turnaround. Use a real loop, terminal, or safe turning location.'
+                : 'The far end stop is used as the turnaround when you choose Out and back.',
+            actionLabel: `Add Stop ${stopCount + 1}`,
+        };
+    }
+
+    if (!hasStartTerminal || !hasEndTerminal) {
+        return {
+            title: 'Mark start and end terminals',
+            body: 'Press 1 to add stops at the mouse pointer. Press 2 near a route segment to add a bend.',
+            actionLabel: `Add Stop ${stopCount + 1}`,
+        };
+    }
+
+    return {
+        title: 'Review feasibility',
+        body: 'Press 1 to add stops at the mouse pointer. Press 2 near a route segment to add a bend.',
+        actionLabel: `Add Stop ${stopCount + 1}`,
+    };
 }
 
 function stopRoleLabel(role: RoutePlanner2StopRole): string {
@@ -161,12 +240,10 @@ function getRuntimeSourceDetail(
 ): string {
     const segments = feasibility?.segmentSummaries ?? [];
     if (segments.length === 0) return 'Source not ready';
-
     const sources = [...new Set(segments.map((segment) => segment.source))];
     const sourceLabel = sources.length === 1 ? conciseRuntimeSourceLabel(sources[0]!) : 'Mixed sources';
     const matchedRoutes = segments.flatMap((segment) => segment.matchedRoutes ?? []);
     const routeLabel = formatRouteSource(matchedRoutes);
-
     return routeLabel ? `${sourceLabel} · ${routeLabel}` : sourceLabel;
 }
 
@@ -191,7 +268,6 @@ function getSegmentSourceBadgeText(segment: RoutePlanner2SegmentRuntime, dayType
     const timeLabel = segment.evidenceDayType && segment.evidencePeriod
         ? getRuntimePeriodDetail(segment.evidenceDayType, segment.evidencePeriod)
         : getRuntimePeriodDetail(dayType, period);
-
     if (segment.source === 'scheduled-proxy') {
         return [
             segment.evidenceMethod === 'shape-overlap'
@@ -233,7 +309,6 @@ function getRuntimeSourceSummaryItems(
     period: TimePeriod,
 ): Array<{ key: string; label: string; count: number; source: RoutePlanner2SegmentRuntime['source'] }> {
     const summary = new Map<string, { label: string; count: number; source: RoutePlanner2SegmentRuntime['source'] }>();
-
     segments.forEach((segment) => {
         const label = getSegmentSourceBadgeText(segment, dayType, period);
         const existing = summary.get(label);
@@ -243,7 +318,6 @@ function getRuntimeSourceSummaryItems(
         }
         summary.set(label, { label, count: 1, source: segment.source });
     });
-
     return Array.from(summary.entries()).map(([key, value]) => ({ key, ...value }));
 }
 
@@ -281,7 +355,6 @@ function shouldLogRoutePlanner2RuntimeDiagnostics(): boolean {
 
 function logRoutePlanner2RuntimeDiagnostics(diagnostic: RoutePlanner2RuntimeEvidenceDiagnostic): void {
     if (!shouldLogRoutePlanner2RuntimeDiagnostics()) return;
-
     const missedSegments = diagnostic.segments.filter((segment) => segment.reason !== 'matched');
     console.groupCollapsed(
         `[RoutePlanner2 runtime diagnostics] ${diagnostic.scenarioName} · ${diagnostic.dayType}/${diagnostic.period} · ${diagnostic.estimateCount}/${diagnostic.segmentCount} scheduled estimates`,
@@ -336,7 +409,6 @@ function updateScenarioNotes(
         changed = true;
         return { ...scenario, notes, updatedAt: now };
     });
-
     return changed ? {
         ...project,
         status: project.status === 'archived' ? 'archived' : 'local-draft',
@@ -369,7 +441,6 @@ function updateScenarioRuntimeRouteFilter(
             updatedAt: now,
         };
     });
-
     return changed ? {
         ...project,
         status: project.status === 'archived' ? 'archived' : 'local-draft',
@@ -378,13 +449,141 @@ function updateScenarioRuntimeRouteFilter(
     } : project;
 }
 
+const ROUTE_PLANNER_UNDO_HISTORY_LIMIT = 75;
+
+interface RoutePlanner2ProjectHistory {
+    past: RoutePlanner2Project[];
+    present: RoutePlanner2Project;
+    future: RoutePlanner2Project[];
+}
+
+type RoutePlanner2ProjectHistoryAction =
+    | { type: 'set'; update: React.SetStateAction<RoutePlanner2Project>; trackHistory: boolean }
+    | { type: 'reset'; project: RoutePlanner2Project }
+    | { type: 'undo' }
+    | { type: 'redo' };
+
+function resolveProjectUpdate(
+    update: React.SetStateAction<RoutePlanner2Project>,
+    current: RoutePlanner2Project,
+): RoutePlanner2Project {
+    return typeof update === 'function'
+        ? (update as (currentProject: RoutePlanner2Project) => RoutePlanner2Project)(current)
+        : update;
+}
+
+function routePlanner2ProjectHistoryReducer(
+    state: RoutePlanner2ProjectHistory,
+    action: RoutePlanner2ProjectHistoryAction,
+): RoutePlanner2ProjectHistory {
+    if (action.type === 'reset') {
+        return { past: [], present: action.project, future: [] };
+    }
+
+    if (action.type === 'undo') {
+        const previousProject = state.past.at(-1);
+        if (!previousProject) return state;
+        return {
+            past: state.past.slice(0, -1),
+            present: previousProject,
+            future: [state.present, ...state.future],
+        };
+    }
+
+    if (action.type === 'redo') {
+        const nextProject = state.future[0];
+        if (!nextProject) return state;
+        return {
+            past: [...state.past, state.present].slice(-ROUTE_PLANNER_UNDO_HISTORY_LIMIT),
+            present: nextProject,
+            future: state.future.slice(1),
+        };
+    }
+
+    const nextProject = resolveProjectUpdate(action.update, state.present);
+    if (nextProject === state.present) return state;
+
+    if (!action.trackHistory) {
+        return { ...state, present: nextProject };
+    }
+
+    return {
+        past: [...state.past, state.present].slice(-ROUTE_PLANNER_UNDO_HISTORY_LIMIT),
+        present: nextProject,
+        future: [],
+    };
+}
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return target.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select';
+}
+
+type RoutePlanner2StopOrderItem =
+    | { type: 'stop'; key: string; stop: RoutePlanner2Scenario['stops'][number] }
+    | { type: 'bend'; key: string; bend: RoutePlanner2RoutePoint; fromStopName: string; toStopName: string; bendNumber: number };
+
+function buildStopOrderItems(scenario: RoutePlanner2Scenario | null | undefined): RoutePlanner2StopOrderItem[] {
+    if (!scenario) return [];
+    const visits = buildRoutePlanner2StopVisitSequence(scenario);
+    if (visits.length === 0) return [];
+
+    const items: RoutePlanner2StopOrderItem[] = [{
+        type: 'stop',
+        key: `stop-${visits[0]!.id}-0`,
+        stop: visits[0]!,
+    }];
+    let bendNumber = 1;
+
+    buildRoutePlanner2StopSegmentPairs(scenario).forEach(({ fromStop, toStop }, pairIndex) => {
+        const bends = getRoutePlanner2LineWaypointsForSegment(scenario.alignment, fromStop.id, toStop.id);
+        bends.forEach((bend) => {
+            items.push({
+                type: 'bend',
+                key: `bend-${bend.id}-${pairIndex}`,
+                bend,
+                fromStopName: fromStop.name,
+                toStopName: toStop.name,
+                bendNumber,
+            });
+            bendNumber += 1;
+        });
+        items.push({
+            type: 'stop',
+            key: `stop-${toStop.id}-${pairIndex + 1}`,
+            stop: toStop,
+        });
+    });
+
+    return items;
+}
+
 export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ onBack, userId, teamId }) => {
-    const [project, setProject] = useState<RoutePlanner2Project>(() => createRoutePlanner2Project());
+    const [projectHistory, dispatchProjectHistory] = useReducer(
+        routePlanner2ProjectHistoryReducer,
+        undefined,
+        (): RoutePlanner2ProjectHistory => ({ past: [], present: createRoutePlanner2Project(), future: [] }),
+    );
+    const project = projectHistory.present;
+    const canUndoProject = projectHistory.past.length > 0;
+    const canRedoProject = projectHistory.future.length > 0;
+    const setProject = useCallback((
+        update: React.SetStateAction<RoutePlanner2Project>,
+        options: { trackHistory?: boolean } = {},
+    ) => {
+        dispatchProjectHistory({ type: 'set', update, trackHistory: options.trackHistory ?? true });
+    }, []);
+    const resetProjectHistory = useCallback((projectToLoad: RoutePlanner2Project) => {
+        dispatchProjectHistory({ type: 'reset', project: projectToLoad });
+    }, []);
+    const undoProjectChange = useCallback(() => dispatchProjectHistory({ type: 'undo' }), []);
+    const redoProjectChange = useCallback(() => dispatchProjectHistory({ type: 'redo' }), []);
     const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
-    const [isRightRailOpen, setIsRightRailOpen] = useState(false);
+    const [isRightRailOpen, setIsRightRailOpen] = useState(true);
+    const [isActionSidebarOpen, setIsActionSidebarOpen] = useState(false);
     const runtimeSourceDetailsRef = useRef<HTMLDivElement | null>(null);
     const [isDrawFocusMode, setIsDrawFocusMode] = useState(false);
-    const [isCampShuttleFocusMode, setIsCampShuttleFocusMode] = useState(false);
     const [isExportingOperatorPdf, setIsExportingOperatorPdf] = useState(false);
     const [isGtfsImportOpen, setIsGtfsImportOpen] = useState(false);
     const [isAddressImportOpen, setIsAddressImportOpen] = useState(false);
@@ -401,10 +600,19 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [savedProjects, setSavedProjects] = useState<RoutePlanner2SavedProjectSummary[]>([]);
     const [selectedSavedProjectId, setSelectedSavedProjectId] = useState('');
     const [isLoadingSavedProjects, setIsLoadingSavedProjects] = useState(false);
+    const [savedProjectsLoadFailed, setSavedProjectsLoadFailed] = useState(false);
+    const [isLoadPickerOpen, setIsLoadPickerOpen] = useState(false);
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
-
+    const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
+    const [hoveredMapItem, setHoveredMapItem] = useState<{ type: 'stop' | 'waypoint' | 'segment'; id: string } | null>(null);
+    const [draggedStopOrderKey, setDraggedStopOrderKey] = useState<string | null>(null);
+    const [addressQuery, setAddressQuery] = useState('');
+    const [addressSuggestions, setAddressSuggestions] = useState<RoutePlanner2AddressSuggestion[]>([]);
+    const [selectedAddress, setSelectedAddress] = useState<RoutePlanner2AddressSuggestion | null>(null);
+    const [addressSearchLoading, setAddressSearchLoading] = useState(false);
+    const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
     const projectSummary = useMemo(() => summarizeRoutePlanner2Project(project), [project]);
     const selectedScenario = useMemo(
         () => project.scenarios.find((scenario) => scenario.id === project.selectedScenarioId) ?? project.scenarios[0],
@@ -438,6 +646,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => selectedScenario ? [...selectedScenario.stops].sort((a, b) => a.sequence - b.sequence) : [],
         [selectedScenario],
     );
+    const stopOrderItems = useMemo(() => buildStopOrderItems(selectedScenario), [selectedScenario]);
     const selectedScenarioFirstStopSequence = selectedScenarioStops[0]?.sequence ?? 1;
     const transferTargetScenario = useMemo(
         () => project.scenarios.find((scenario) => scenario.id === transferTargetScenarioId) ?? null,
@@ -458,35 +667,78 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => buildCorridorSpeedIndex(dataQuery.data?.dailySummaries ?? []),
         [dataQuery.data],
     );
+    useEffect(() => {
+        setAddressQuery('');
+        setAddressSuggestions([]);
+        setSelectedAddress(null);
+        setAddressSearchError(null);
+    }, [selectedScenario?.id]);
+    useEffect(() => {
+        const trimmedQuery = addressQuery.trim();
+        if (trimmedQuery.length < 3) {
+            setAddressSuggestions([]);
+            setAddressSearchLoading(false);
+            setAddressSearchError(null);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => {
+            setAddressSearchLoading(true);
+            setAddressSearchError(null);
+            searchRoutePlanner2Addresses(trimmedQuery, { signal: controller.signal })
+                .then((suggestions) => {
+                    setAddressSuggestions(suggestions);
+                    if (suggestions.length === 0) {
+                        setAddressSearchError('No matching addresses found.');
+                    }
+                })
+                .catch((error) => {
+                    if (controller.signal.aborted) return;
+                    console.error('Route Planner 2 address search failed', error);
+                    setAddressSuggestions([]);
+                    setAddressSearchError('Address search is unavailable.');
+                })
+                .finally(() => {
+                    if (!controller.signal.aborted) setAddressSearchLoading(false);
+                });
+        }, 250);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+            controller.abort();
+        };
+    }, [addressQuery]);
     const refreshSavedProjects = useCallback(async () => {
         if (!teamId || !userId) {
             setSavedProjects([]);
             setSelectedSavedProjectId('');
+            setSavedProjectsLoadFailed(false);
             return;
         }
-
         setIsLoadingSavedProjects(true);
+        setSavedProjectsLoadFailed(false);
         try {
             const projects = await listRoutePlanner2SavedProjects(teamId);
             setSavedProjects(projects);
             setLoadState('idle');
+            setSavedProjectsLoadFailed(false);
             setSelectedSavedProjectId((current) => {
                 if (current && projects.some((savedProject) => savedProject.id === current)) return current;
                 return projects[0]?.id ?? '';
             });
         } catch (error) {
             console.error('Failed to load Route Planner projects', error);
-            setLoadState('error');
-            setSaveMessage('Saved route plans could not be loaded.');
+            setSavedProjects([]);
+            setSelectedSavedProjectId('');
+            setSavedProjectsLoadFailed(true);
         } finally {
             setIsLoadingSavedProjects(false);
         }
     }, [teamId, userId]);
-
     useEffect(() => {
         void refreshSavedProjects();
     }, [refreshSavedProjects]);
-
     useEffect(() => {
         if (!selectedScenario) {
             setSelectedStopId(null);
@@ -495,7 +747,27 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (selectedStopId && selectedScenario.stops.some((stop) => stop.id === selectedStopId)) return;
         setSelectedStopId(selectedScenario.stops[0]?.id ?? null);
     }, [selectedScenario, selectedStopId]);
+    useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            const hasShortcutModifier = event.ctrlKey || event.metaKey;
+            if (!hasShortcutModifier || isEditableEventTarget(event.target)) return;
 
+            const key = event.key.toLowerCase();
+            if (key === 'z' && !event.shiftKey) {
+                event.preventDefault();
+                if (canUndoProject) undoProjectChange();
+                return;
+            }
+
+            if (key === 'y' || (key === 'z' && event.shiftKey)) {
+                event.preventDefault();
+                if (canRedoProject) redoProjectChange();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [canRedoProject, canUndoProject, redoProjectChange, undoProjectChange]);
     useEffect(() => {
         if (!selectedScenario?.id || runtimeMatchedRoutes.length === 0) return;
         setRuntimeAvailableRoutesByScenario((current) => {
@@ -507,13 +779,11 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             return unchanged ? current : { ...current, [selectedScenario.id]: nextRoutes };
         });
     }, [runtimeMatchedRoutes, selectedScenario?.id]);
-
     useEffect(() => {
         const selectedSequence = selectedStop?.sequence ?? selectedScenarioFirstStopSequence;
         setTransferFromSequence(selectedSequence);
         setTransferToSequence(selectedSequence);
     }, [selectedScenario?.id, selectedStop?.id, selectedStop?.sequence, selectedScenarioFirstStopSequence]);
-
     useEffect(() => {
         const validTarget = transferTargetOptions.some((scenario) => scenario.id === transferTargetScenarioId);
         if (!validTarget) {
@@ -521,7 +791,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             setTransferInsertAfterStopId('__end');
         }
     }, [transferTargetOptions, transferTargetScenarioId]);
-
     useEffect(() => {
         if (!selectedScenario || runtimeSourceMode === 'mapbox') return;
         const estimates = deriveRoutePlanner2EvidenceRuntimeEstimates(
@@ -539,7 +808,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenario.id, estimates, undefined, {
             replaceForSegmentIds: evidenceSegmentIds,
             replaceSources: ['scheduled-proxy', 'partial-scheduled-proxy', 'observed-scheduled-blend', 'observed-proxy'],
-        }));
+        }), { trackHistory: false });
     }, [
         runtimeDayType,
         runtimePeriod,
@@ -554,7 +823,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         selectedScenario?.runtimeEstimates,
         speedIndex,
     ]);
-
     function getNextAuthoringCoordinate() {
         const pointCount = selectedScenario?.alignment.length ?? 0;
         const stopCount = selectedScenario?.stops.length ?? 0;
@@ -564,19 +832,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             lng: Number((-79.701 + (index * 0.007)).toFixed(6)),
         };
     }
-
     async function saveCurrentProject() {
         if (!teamId || !userId) {
             setSaveState('error');
             setSaveMessage('Sign in with a team workspace to save this route plan.');
             return;
         }
-
         setSaveState('saving');
         setSaveMessage(null);
         try {
             const savedProject = await saveRoutePlanner2Project(teamId, userId, project);
-            setProject(savedProject);
+            setProject(savedProject, { trackHistory: false });
             setSelectedSavedProjectId(savedProject.id);
             setSaveState('saved');
             setSaveMessage('Saved to the team workspace.');
@@ -584,13 +850,11 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         } catch (error) {
             console.error('Failed to save Route Planner project', error);
             setSaveState('error');
-            setSaveMessage('Save failed. Please try again.');
+            setSaveMessage(getRoutePlanner2SaveErrorMessage(error));
         }
     }
-
     async function loadSavedProject(projectId: string) {
         if (!teamId || !projectId) return;
-
         setLoadState('loading');
         setSaveMessage(null);
         try {
@@ -601,12 +865,12 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                 await refreshSavedProjects();
                 return;
             }
-
             const loadedScenario = loadedProject.scenarios.find((scenario) => scenario.id === loadedProject.selectedScenarioId)
                 ?? loadedProject.scenarios[0];
-            setProject(loadedProject);
+            resetProjectHistory(loadedProject);
             setSelectedStopId(loadedScenario?.stops[0]?.id ?? null);
             setSelectedSavedProjectId(loadedProject.id);
+            setIsLoadPickerOpen(false);
             setLoadState('idle');
             setSaveState('saved');
             setSaveMessage('Loaded saved route plan.');
@@ -616,7 +880,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             setSaveMessage('Load failed. Please try again.');
         }
     }
-
     function addStop(coordinate: { lat: number; lng: number; name?: string } = getNextAuthoringCoordinate()) {
         if (!selectedScenario) return;
         const stopNumber = selectedScenario.stops.length + 1;
@@ -628,27 +891,45 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         }));
         setSelectedStopId(stopId);
     }
+    function selectAddressSuggestion(suggestion: RoutePlanner2AddressSuggestion) {
+        setSelectedAddress(suggestion);
+        setAddressQuery(suggestion.label);
+        setAddressSuggestions((current) => {
+            const exists = current.some((item) => item.id === suggestion.id);
+            return exists ? current : [suggestion, ...current];
+        });
+        setAddressSearchError(null);
+    }
+    function addSelectedAddressStop() {
+        const suggestion = selectedAddress ?? addressSuggestions[0];
+        if (!suggestion) return;
 
+        addStop({
+            lat: suggestion.lat,
+            lng: suggestion.lng,
+            name: suggestion.name,
+        });
+        setAddressQuery('');
+        setAddressSuggestions([]);
+        setSelectedAddress(null);
+        setAddressSearchError(null);
+    }
     function updateService(patch: Partial<RoutePlanner2ServiceAssumptions>) {
         if (!selectedScenario) return;
         setProject((current) => updateRoutePlanner2Service(current, selectedScenario.id, patch));
     }
-
     function updateRuntimeDayType(next: DayType) {
         setRuntimeDayType(next);
         updateService({ dayType: next });
     }
-
     function updateRuntimePeriod(next: TimePeriod) {
         setRuntimePeriod(next);
         updateService({ planningPeriod: next === 'full-day' ? 'all-day' : next });
     }
-
     function updateRuntimeSourceMode(mode: RoutePlanner2RuntimeSourceMode) {
         if (!selectedScenario) return;
         setProject((current) => updateRoutePlanner2RuntimeSourceMode(current, selectedScenario.id, mode));
     }
-
     function updateRuntimeRouteFilterMode(mode: RoutePlanner2RuntimeRouteFilterMode) {
         if (!selectedScenario) return;
         const nextRoutes = mode === 'selected'
@@ -656,7 +937,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             : [];
         setProject((current) => updateScenarioRuntimeRouteFilter(current, selectedScenario.id, mode, nextRoutes));
     }
-
     function toggleRuntimeSelectedRoute(route: string) {
         if (!selectedScenario) return;
         const currentRoutes = runtimeSelectedRoutes.length > 0 ? runtimeSelectedRoutes : runtimeRouteOptions;
@@ -666,73 +946,117 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (nextRoutes.length === 0) return;
         setProject((current) => updateScenarioRuntimeRouteFilter(current, selectedScenario.id, 'selected', nextRoutes));
     }
-
     function updateNumericServiceField(
         key: 'frequencyMinutes' | 'startTerminalLayoverMinutes' | 'endTerminalLayoverMinutes' | 'intermediateStopDwellSeconds',
         value: string,
     ) {
         updateService({ [key]: Number(value) } as Partial<RoutePlanner2ServiceAssumptions>);
     }
-
     function updateSelectedStopRole(role: RoutePlanner2StopRole) {
         if (!selectedScenario || !selectedStop) return;
         setProject((current) => updateRoutePlanner2StopRole(current, selectedScenario.id, selectedStop.id, role));
     }
-
     function renameSelectedStop(name: string) {
         if (!selectedScenario || !selectedStop) return;
         setProject((current) => renameRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id, name));
     }
-
     function updateRouteShape(routeShape: RoutePlanner2RouteShape, turnaroundStopId?: string) {
         if (!selectedScenario) return;
         setProject((current) => updateRoutePlanner2RouteShape(current, selectedScenario.id, routeShape, { turnaroundStopId }));
     }
-
-    function setTurnaroundStop(stopId: string) {
-        updateRouteShape('out-and-back', stopId);
-        setSelectedStopId(stopId);
+    function createBackDirection() {
+        if (!selectedScenario || selectedScenarioStops.length < 2) return;
+        const backStartStopId = selectedScenarioStops[selectedScenarioStops.length - 1]?.id ?? null;
+        setProject((current) => createRoutePlanner2BackDirection(current, selectedScenario.id));
+        setSelectedStopId(backStartStopId);
+        setIsRightRailOpen(true);
     }
-
     function deleteStop(stopId: string) {
         if (!selectedScenario) return;
         const remainingStops = selectedScenario.stops.filter((stop) => stop.id !== stopId);
-
         setProject((current) => deleteRoutePlanner2Stop(current, selectedScenario.id, stopId));
-
         if (selectedStopId === stopId) {
             setSelectedStopId(remainingStops[0]?.id ?? null);
         }
     }
+    function clearStopOrder() {
+        if (!selectedScenario) return;
+        setProject((current) => clearRoutePlanner2Stops(current, selectedScenario.id));
+        setSelectedStopId(null);
+        setHoveredMapItem(null);
+        setDraggedStopOrderKey(null);
+    }
+    function moveStopOrderItem(item: RoutePlanner2StopOrderItem, direction: 'up' | 'down') {
+        if (!selectedScenario) return;
+        setProject((current) => item.type === 'stop'
+            ? moveRoutePlanner2Stop(current, selectedScenario.id, item.stop.id, direction)
+            : moveRoutePlanner2LineWaypointInOrder(current, selectedScenario.id, item.bend.id, direction));
+    }
+    function moveDraggedStopOrderItem(targetKey: string) {
+        if (!selectedScenario || !draggedStopOrderKey || draggedStopOrderKey === targetKey) {
+            setDraggedStopOrderKey(null);
+            return;
+        }
 
+        const sourceIndex = stopOrderItems.findIndex((item) => item.key === draggedStopOrderKey);
+        const targetIndex = stopOrderItems.findIndex((item) => item.key === targetKey);
+        if (sourceIndex < 0 || targetIndex < 0) {
+            setDraggedStopOrderKey(null);
+            return;
+        }
+
+        const sourceItem = stopOrderItems[sourceIndex]!;
+        const direction = sourceIndex < targetIndex ? 'down' : 'up';
+        const steps = Math.abs(targetIndex - sourceIndex);
+        setProject((current) => {
+            let next = current;
+            for (let step = 0; step < steps; step += 1) {
+                next = sourceItem.type === 'stop'
+                    ? moveRoutePlanner2Stop(next, selectedScenario.id, sourceItem.stop.id, direction)
+                    : moveRoutePlanner2LineWaypointInOrder(next, selectedScenario.id, sourceItem.bend.id, direction);
+            }
+            return next;
+        });
+        setDraggedStopOrderKey(null);
+    }
     function deleteSelectedStop() {
         if (!selectedStop) return;
         deleteStop(selectedStop.id);
     }
-
     function moveStop(stopId: string, coordinate: { lat: number; lng: number }) {
         if (!selectedScenario) return;
         setProject((current) => updateRoutePlanner2StopCoordinate(current, selectedScenario.id, stopId, coordinate));
         setSelectedStopId(stopId);
     }
-
     function addLineWaypoint(placement: {
         fromStopId: string;
         toStopId: string;
         insertAfterWaypointId?: string;
         insertBeforeWaypointId?: string;
+        applyToOppositeDirection?: boolean;
         coordinate: { lat: number; lng: number };
     }) {
         if (!selectedScenario) return;
-        setProject((current) => addRoutePlanner2LineWaypoint(current, selectedScenario.id, {
-            afterStopId: placement.fromStopId,
-            beforeStopId: placement.toStopId,
-            insertAfterWaypointId: placement.insertAfterWaypointId,
-            insertBeforeWaypointId: placement.insertBeforeWaypointId,
-            ...placement.coordinate,
-        }));
-    }
+        setProject((current) => {
+            let nextProject = addRoutePlanner2LineWaypoint(current, selectedScenario.id, {
+                afterStopId: placement.fromStopId,
+                beforeStopId: placement.toStopId,
+                insertAfterWaypointId: placement.insertAfterWaypointId,
+                insertBeforeWaypointId: placement.insertBeforeWaypointId,
+                ...placement.coordinate,
+            });
 
+            if (placement.applyToOppositeDirection) {
+                nextProject = addRoutePlanner2LineWaypoint(nextProject, selectedScenario.id, {
+                    afterStopId: placement.toStopId,
+                    beforeStopId: placement.fromStopId,
+                    ...placement.coordinate,
+                });
+            }
+
+            return nextProject;
+        });
+    }
     function insertStopOnLine(placement: {
         fromStopId: string;
         toStopId: string;
@@ -754,12 +1078,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         }));
         setSelectedStopId(stopId);
     }
-
     function moveLineWaypoint(waypointId: string, coordinate: { lat: number; lng: number }) {
         if (!selectedScenario) return;
         setProject((current) => updateRoutePlanner2LineWaypointCoordinate(current, selectedScenario.id, waypointId, coordinate));
     }
-
     function applyStopTransfer(mode: 'copy' | 'move') {
         if (!selectedScenario || !transferTargetScenarioId) return;
         const targetStops = transferTargetStops;
@@ -768,7 +1090,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             : transferInsertAfterStopId === '__end'
                 ? targetStops[targetStops.length - 1]?.id ?? null
                 : transferInsertAfterStopId;
-
         setProject((current) => {
             const updated = reassignRoutePlanner2StopRange(current, {
                 sourceScenarioId: selectedScenario.id,
@@ -783,12 +1104,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setSelectedStopId(null);
         setIsRightRailOpen(true);
     }
-
     function deleteLineWaypoint(waypointId: string) {
         if (!selectedScenario) return;
         setProject((current) => deleteRoutePlanner2LineWaypoint(current, selectedScenario.id, waypointId));
     }
-
     function updateSegmentRuntimeOverride(segmentId: string, value: string) {
         if (!selectedScenario) return;
         const trimmedValue = value.trim();
@@ -799,19 +1118,15 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         const runtimeMinutes = Number(trimmedValue);
         setProject((current) => setRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, segmentId, runtimeMinutes));
     }
-
     function clearSegmentRuntimeOverride(segmentId: string) {
         if (!selectedScenario) return;
         setProject((current) => clearRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, segmentId));
     }
-
     const selectedScenarioId = selectedScenario?.id;
     const updateSegmentRuntimeEstimates = useCallback((estimates: RoutePlanner2SegmentRuntime[]) => {
         if (!selectedScenarioId || estimates.length === 0) return;
-        setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenarioId, estimates));
-    }, [selectedScenarioId]);
-
-
+        setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenarioId, estimates), { trackHistory: false });
+    }, [selectedScenarioId, setProject]);
     async function loadGtfsPatterns() {
         setGtfsLoading(true);
         setGtfsError(null);
@@ -824,12 +1139,15 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             setGtfsLoading(false);
         }
     }
-
     function openGtfsImport() {
+        setIsAddressImportOpen(false);
         setIsGtfsImportOpen(true);
         if (gtfsPatterns.length === 0 && !gtfsLoading) void loadGtfsPatterns();
     }
-
+    function openLoadPicker() {
+        setIsLoadPickerOpen(true);
+        if (savedProjectsLoadFailed && !isLoadingSavedProjects) void refreshSavedProjects();
+    }
     function importGtfsPatterns(patterns: RoutePlanner2GtfsImportPattern[]) {
         if (patterns.length === 0) return;
         const scenarios = patterns.map((pattern) => createRoutePlanner2ScenarioFromGtfsPattern(pattern));
@@ -844,10 +1162,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setSelectedStopId(selectedImport?.stops[0]?.id ?? null);
         setIsRightRailOpen(true);
         setIsDrawFocusMode(false);
-        setIsCampShuttleFocusMode(false);
         setIsGtfsImportOpen(false);
     }
-
     function importAddressStops(stops: RoutePlanner2GeocodedAddressStop[]) {
         if (!selectedScenario || stops.length === 0) return;
         const batchId = Date.now();
@@ -858,54 +1174,36 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             lng: stop.lng,
             notes: stop.notes,
         }));
-
         setProject((current) => addRoutePlanner2Stops(current, selectedScenario.id, { stops: importedStops }));
         setSelectedStopId(importedStops[0]?.id ?? null);
         setIsRightRailOpen(true);
         setIsDrawFocusMode(false);
-        setIsCampShuttleFocusMode(false);
         setIsAddressImportOpen(false);
     }
-
     function enterDrawFocusMode() {
         setIsDrawFocusMode(true);
-        setIsCampShuttleFocusMode(false);
         setIsRightRailOpen(false);
     }
-
     function exitDrawFocusMode() {
         setIsDrawFocusMode(false);
         setIsRightRailOpen(true);
     }
-
-    function enterCampShuttleFocusMode() {
-        setIsCampShuttleFocusMode(true);
-        setIsDrawFocusMode(false);
-        setIsRightRailOpen(false);
-    }
-
-    function exitCampShuttleFocusMode() {
-        setIsCampShuttleFocusMode(false);
-    }
-
     function toggleRightRail() {
         setIsDrawFocusMode(false);
-        setIsCampShuttleFocusMode(false);
         setIsRightRailOpen((current) => !current);
     }
-
     function openRuntimeSourceDetails() {
         setIsDrawFocusMode(false);
-        setIsCampShuttleFocusMode(false);
         setIsRightRailOpen(true);
-        const scrollToRuntimeDetails = () => runtimeSourceDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const scrollToRuntimeDetails = () => {
+            window.setTimeout(() => runtimeSourceDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+        };
         if (typeof window.requestAnimationFrame === 'function') {
             window.requestAnimationFrame(scrollToRuntimeDetails);
         } else {
             window.setTimeout(scrollToRuntimeDetails, 0);
         }
     }
-
     async function exportOperatorDirections() {
         if (!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf) return;
         setIsExportingOperatorPdf(true);
@@ -918,7 +1216,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             setIsExportingOperatorPdf(false);
         }
     }
-
     const mapMetricItems = [
         {
             label: 'Runtime',
@@ -943,165 +1240,43 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         runtimeDayType,
         runtimePeriod,
     );
-
-    const visibleRightRailOpen = isRightRailOpen && !isCampShuttleFocusMode;
+    const showRightRail = !isDrawFocusMode;
+    const visibleRightRailOpen = isRightRailOpen && showRightRail;
     const rightRailState = visibleRightRailOpen ? 'open' : 'closed';
-    const focusMode = isCampShuttleFocusMode ? 'camp-shuttle' : isDrawFocusMode ? 'draw' : 'standard';
-    const campStops = selectedScenario?.stops.slice().sort((a, b) => a.sequence - b.sequence) ?? [];
+    const focusMode = isDrawFocusMode ? 'draw' : 'standard';
+    const showActionSidebar = !isDrawFocusMode;
+    const actionSidebarExpanded = showActionSidebar && isActionSidebarOpen;
+    const importDrawerOpen = isGtfsImportOpen || isAddressImportOpen;
     const mapOverlayInsets = {
-        left: '2rem',
-        right: isCampShuttleFocusMode ? '27.5rem' : visibleRightRailOpen ? '26.5rem' : '8rem',
+        left: showActionSidebar ? actionSidebarExpanded ? '20rem' : '6rem' : '2rem',
+        right: importDrawerOpen ? '31.5rem' : showRightRail ? visibleRightRailOpen ? '26.5rem' : '6rem' : '8rem',
+        top: isDrawFocusMode ? '1.5rem' : '6rem',
     };
     const canUseTeamSave = Boolean(teamId && userId);
-    const saveButtonLabel = saveState === 'saving'
-        ? 'Saving...'
-        : project.status === 'local-saved'
-            ? 'Save changes'
-            : 'Save';
     const saveStatusLabel = project.status === 'local-saved' ? 'Saved to team' : 'Local draft';
     const visibleSaveMessage = project.status === 'local-draft' && saveState === 'saved' ? null : saveMessage;
-
+    const canShowRuntimeSourceOverlay = Boolean(selectedScenario && selectedScenario.stops.length >= 2);
+    const drawingGuide = getDrawingGuide(selectedScenario);
+    const stopVisitSequence = selectedScenario ? buildRoutePlanner2StopVisitSequence(selectedScenario) : [];
+    const routeShapeLabel = selectedScenario?.routeShape === 'closed-loop'
+        ? 'Closed loop'
+        : selectedScenario?.routeShape === 'out-and-back'
+            ? 'Out and back'
+            : 'One-way';
     return (
         <div className="h-full overflow-hidden bg-slate-100">
-            <div className="flex h-full flex-col">
-                <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-2 shadow-sm sm:px-5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-2">
-                            <button type="button" onClick={onBack} aria-label="Back to Planning Data" className="rounded-xl border border-slate-200 p-1.5">
-                                <ArrowLeft size={18} />
-                            </button>
-                            <div className="min-w-0">
-                                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-cyan-700">
-                                    <Route size={18} />
-                                    Route Planner
-                                </div>
-                                <input
-                                    value={project.name}
-                                    onChange={(event) => setProject((current) => renameRoutePlanner2Project(current, event.target.value))}
-                                    aria-label="Project name"
-                                    className="mt-0.5 w-full max-w-xl rounded-xl border border-transparent bg-transparent text-xl font-black text-slate-900"
-                                />
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700">Fresh workspace</span>
-                            <span className={`rounded-full px-3 py-1 text-xs font-bold ${project.status === 'local-saved' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                                {saveStatusLabel}
-                            </span>
-                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Team: {teamId ?? 'not set'}</span>
-                            <button
-                                type="button"
-                                onClick={() => void saveCurrentProject()}
-                                disabled={!canUseTeamSave || saveState === 'saving'}
-                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800 disabled:opacity-50"
-                                title={canUseTeamSave ? 'Save this route plan to the team workspace' : 'Sign in with a team workspace to save'}
-                            >
-                                <Save size={14} />{saveButtonLabel}
-                            </button>
-                            <select
-                                aria-label="Saved route plans"
-                                value={selectedSavedProjectId}
-                                onChange={(event) => setSelectedSavedProjectId(event.target.value)}
-                                disabled={!canUseTeamSave || isLoadingSavedProjects || savedProjects.length === 0}
-                                className="h-7 max-w-[15rem] rounded-xl border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
-                            >
-                                <option value="">{isLoadingSavedProjects ? 'Loading saved plans...' : 'No saved plans yet'}</option>
-                                {savedProjects.map((savedProject) => (
-                                    <option key={savedProject.id} value={savedProject.id}>
-                                        {formatSavedProjectLabel(savedProject)}
-                                    </option>
-                                ))}
-                            </select>
-                            <button
-                                type="button"
-                                onClick={() => void loadSavedProject(selectedSavedProjectId)}
-                                disabled={!canUseTeamSave || !selectedSavedProjectId || loadState === 'loading'}
-                                className="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs font-bold disabled:opacity-50"
-                            >
-                                {loadState === 'loading' ? 'Loading...' : 'Load'}
-                            </button>
-                            <button type="button" onClick={() => selectedScenario && setProject((current) => duplicateRoutePlanner2Scenario(current, selectedScenario.id))} className="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs font-bold"><Copy size={14} />Duplicate</button>
-                            <button
-                                type="button"
-                                onClick={openGtfsImport}
-                                className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-800"
-                            >
-                                <Route size={14} />Import GTFS
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setIsAddressImportOpen(true)}
-                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800"
-                            >
-                                <FileSpreadsheet size={14} />Import addresses
-                            </button>
-                            <button
-                                type="button"
-                                onClick={exportOperatorDirections}
-                                disabled={!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf}
-                                className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-800 disabled:opacity-50"
-                            >
-                                <Download size={14} />{isExportingOperatorPdf ? 'Preparing PDF' : 'Operator PDF'}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={isCampShuttleFocusMode ? exitCampShuttleFocusMode : enterCampShuttleFocusMode}
-                                className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs font-bold ${isCampShuttleFocusMode ? 'border-amber-300 bg-amber-100 text-amber-900' : 'border-amber-200 bg-amber-50 text-amber-800'}`}
-                            >
-                                <Route size={14} />Camp Focus
-                            </button>
-                            <button type="button" disabled className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-2.5 py-1 text-xs font-bold text-white opacity-60"><Download size={14} />Export later</button>
-                        </div>
-                    </div>
-                    {visibleSaveMessage && (
-                        <div className={`mt-2 rounded-xl border px-3 py-1.5 text-xs font-semibold ${saveState === 'error' || loadState === 'error'
-                            ? 'border-rose-200 bg-rose-50 text-rose-700'
-                            : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                        }`}>
-                            {visibleSaveMessage}
-                        </div>
-                    )}
-                    <div className="mt-2 flex items-center gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 px-2 py-1">
-                        <div className="shrink-0 text-xs font-black uppercase tracking-wide text-slate-500">Route concepts</div>
-                        <button type="button" onClick={() => setProject((current) => addRoutePlanner2Scenario(current))} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-700">
-                            <Plus size={12} /> Add route
-                        </button>
-                        <div className="flex min-w-0 gap-2">
-                            {project.scenarios.map((scenario) => {
-                                const summary = projectSummary.scenarioSummaries.find((item) => item.scenarioId === scenario.id);
-                                const isSelected = selectedScenario?.id === scenario.id;
-                                return (
-                                    <button
-                                        key={scenario.id}
-                                        type="button"
-                                        onClick={() => setProject((current) => selectRoutePlanner2Scenario(current, scenario.id))}
-                                        className={`min-w-[170px] rounded-xl border px-2.5 py-1 text-left ${isSelected ? 'border-cyan-300 bg-white shadow-sm' : 'border-slate-200 bg-white/70 hover:bg-white'}`}
-                                    >
-                                        <div className="flex items-center justify-between gap-2">
-                                            <span className="truncate text-sm font-black text-slate-900">{scenario.name}</span>
-                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{scenario.status}</span>
-                                        </div>
-                                        <div className="mt-1 flex items-center gap-3 text-xs text-slate-500">
-                                            <span>{scenario.stops.length} stops</span>
-                                            <span>{summary?.oneWayRuntimeLabel ?? 'Not ready'}</span>
-                                            <span>{scenario.routeShape === 'closed-loop' ? 'Closed loop' : scenario.routeShape === 'out-and-back' ? 'Out and back' : summary?.readinessLabel ?? 'Not ready'}</span>
-                                        </div>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </header>
-
-                <main
-                    data-testid="rp2-map-first-shell"
-                    data-layout="map-first"
-                    data-focus-mode={focusMode}
-                    className="relative min-h-0 flex-1 overflow-hidden bg-slate-100 p-1.5 sm:p-2"
-                >
+            <main
+                data-testid="rp2-map-first-shell"
+                data-layout="map-first"
+                data-focus-mode={focusMode}
+                className="relative h-full min-h-0 overflow-hidden bg-slate-100 p-0"
+            >
                     <RoutePlanner2MapCanvas
                         scenario={selectedScenario}
                         selectedStopId={selectedStopId}
+                        highlightedStopId={hoveredMapItem?.type === 'stop' ? hoveredMapItem.id : null}
+                        highlightedWaypointId={hoveredMapItem?.type === 'waypoint' ? hoveredMapItem.id : null}
+                        highlightedSegmentId={hoveredMapItem?.type === 'segment' ? hoveredMapItem.id : null}
                         onSelectStop={setSelectedStopId}
                         onAddStop={addStop}
                         onDeleteStop={deleteStop}
@@ -1111,28 +1286,211 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         onMoveLineWaypoint={moveLineWaypoint}
                         onDeleteLineWaypoint={deleteLineWaypoint}
                         onSegmentRuntimeEstimates={updateSegmentRuntimeEstimates}
-                        onRouteShapeChange={updateRouteShape}
-                        onSetTurnaroundStop={setTurnaroundStop}
-                        onAddNextStop={() => addStop()}
-                        onEnterDrawFocus={enterDrawFocusMode}
-                        onOpenStopList={() => setIsRightRailOpen(true)}
-                        focusMode={isDrawFocusMode}
+                        onSetSegmentRuntimeOverride={(segmentId, runtimeMinutes) => updateSegmentRuntimeOverride(segmentId, String(runtimeMinutes))}
+                        onClearSegmentRuntimeOverride={clearSegmentRuntimeOverride}
                         metricItems={mapMetricItems}
+                        segmentRuntimes={selectedFeasibility?.segmentSummaries ?? []}
+                        showRuntimeSourceOverlay={showRuntimeSourceOverlay}
                         overlayInsets={mapOverlayInsets}
                     />
-
+                    {showActionSidebar && (
+                        <>
+                            <div className="pointer-events-none absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-start gap-3">
+                                <div
+                                    data-testid="rp2-project-chip"
+                                    className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-3xl border border-slate-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur"
+                                >
+                                    <button type="button" onClick={onBack} aria-label="Back to Planning Data" className="rounded-xl border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-50">
+                                        <ArrowLeft size={18} />
+                                    </button>
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-cyan-700">
+                                            <MapPinned size={16} />
+                                            Route Planner
+                                        </div>
+                                        <input
+                                            value={project.name}
+                                            onChange={(event) => setProject((current) => renameRoutePlanner2Project(current, event.target.value))}
+                                            aria-label="Project name"
+                                            className="mt-0.5 w-64 max-w-[46vw] rounded-xl border border-transparent bg-transparent text-lg font-black text-slate-900 focus:border-cyan-200 focus:bg-white focus:px-2"
+                                        />
+                                    </div>
+                                    <span className={`hidden rounded-full px-3 py-1 text-xs font-bold sm:inline-flex ${project.status === 'local-saved' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                                        {saveStatusLabel}
+                                    </span>
+                                </div>
+                                {visibleSaveMessage && (
+                                    <div className={`pointer-events-auto mt-1 rounded-2xl border px-3 py-1.5 text-xs font-semibold shadow-lg ${saveState === 'error' || loadState === 'error'
+                                        ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                        : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    }`}>
+                                        {visibleSaveMessage}
+                                    </div>
+                                )}
+                            </div>
+                            <aside
+                                data-testid="rp2-action-sidebar"
+                                data-state={actionSidebarExpanded ? 'expanded' : 'collapsed'}
+                                className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 p-2 shadow-xl backdrop-blur transition-all duration-200 ${actionSidebarExpanded ? 'w-72' : 'w-14'}`}
+                                aria-label="Route Planner actions"
+                            >
+                                <button
+                                    type="button"
+                                    onClick={() => setIsActionSidebarOpen((current) => !current)}
+                                    className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-2 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                    aria-expanded={actionSidebarExpanded}
+                                    title={actionSidebarExpanded ? 'Collapse actions' : 'Expand actions'}
+                                >
+                                    <span aria-hidden="true">{actionSidebarExpanded ? '‹' : '›'}</span>
+                                    <span className={actionSidebarExpanded ? undefined : 'sr-only'}>Actions</span>
+                                </button>
+                                {actionSidebarExpanded ? (
+                                    <section className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="text-xs font-black uppercase tracking-wide text-slate-500">Route concepts</div>
+                                            <button type="button" onClick={() => setProject((current) => addRoutePlanner2Scenario(current))} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-cyan-50 px-2 py-1 text-xs font-bold text-cyan-700">
+                                                <Plus size={12} /> Add
+                                            </button>
+                                        </div>
+                                        <div className="mt-2 max-h-44 space-y-1.5 overflow-y-auto pr-1">
+                                            {project.scenarios.map((scenario) => {
+                                                const summary = projectSummary.scenarioSummaries.find((item) => item.scenarioId === scenario.id);
+                                                const isSelected = selectedScenario?.id === scenario.id;
+                                                return (
+                                                    <button
+                                                        key={scenario.id}
+                                                        type="button"
+                                                        onClick={() => setProject((current) => selectRoutePlanner2Scenario(current, scenario.id))}
+                                                        className={`w-full rounded-xl border px-2.5 py-2 text-left ${isSelected ? 'border-cyan-300 bg-white shadow-sm' : 'border-slate-200 bg-white/80 hover:bg-white'}`}
+                                                    >
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <span className="truncate text-sm font-black text-slate-900">{scenario.name}</span>
+                                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{scenario.status}</span>
+                                                        </div>
+                                                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                                                            <span>{scenario.stops.length} stops</span>
+                                                            <span>{summary?.oneWayRuntimeLabel ?? 'Not ready'}</span>
+                                                            <span>{scenario.routeShape === 'closed-loop' ? 'Closed loop' : scenario.routeShape === 'out-and-back' ? 'Out and back' : summary?.readinessLabel ?? 'Not ready'}</span>
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </section>
+                                ) : (
+                                    <div className="mt-2 space-y-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsActionSidebarOpen(true)}
+                                            className="inline-flex w-full items-center justify-center rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800"
+                                            title="Route concepts"
+                                        >
+                                            <Layers3 size={16} /><span className="sr-only">Route concepts</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setProject((current) => addRoutePlanner2Scenario(current));
+                                                setIsActionSidebarOpen(true);
+                                            }}
+                                            className="inline-flex w-full items-center justify-center rounded-2xl border border-cyan-200 bg-white px-2.5 py-2 text-xs font-bold text-cyan-800"
+                                            title="Add route"
+                                        >
+                                            <Plus size={16} /><span className="sr-only">Add route</span>
+                                        </button>
+                                    </div>
+                                )}
+                                <div className="mt-2 flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
+                                    <button
+                                        type="button"
+                                        onClick={undoProjectChange}
+                                        disabled={!canUndoProject}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title="Undo last route planner change"
+                                    >
+                                        <Undo2 size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Undo</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={redoProjectChange}
+                                        disabled={!canRedoProject}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title="Redo last undone route planner change"
+                                    >
+                                        <Redo2 size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Redo</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowRuntimeSourceOverlay((current) => !current)}
+                                        disabled={!canShowRuntimeSourceOverlay}
+                                        data-testid="rp2-runtime-source-overlay-toggle"
+                                        aria-pressed={showRuntimeSourceOverlay}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${showRuntimeSourceOverlay ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-700'}`}
+                                        title={showRuntimeSourceOverlay ? 'Hide source overlay' : 'Show source overlay'}
+                                    >
+                                        <Eye size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{showRuntimeSourceOverlay ? 'Hide source overlay' : 'Show source overlay'}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={openLoadPicker}
+                                        disabled={!canUseTeamSave || loadState === 'loading'}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:opacity-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title={canUseTeamSave ? 'Load saved plan' : 'Sign in with a team workspace to load'}
+                                    >
+                                        <FolderOpen size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{loadState === 'loading' ? 'Loading...' : 'Load'}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => selectedScenario && setProject((current) => duplicateRoutePlanner2Scenario(current, selectedScenario.id))}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title="Duplicate route"
+                                    >
+                                        <Copy size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Duplicate</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={openGtfsImport}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title="Import GTFS"
+                                    >
+                                        <Database size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Import GTFS</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setIsGtfsImportOpen(false);
+                                            setIsAddressImportOpen(true);
+                                        }}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-bold text-emerald-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title="Import addresses"
+                                    >
+                                        <FileSpreadsheet size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Import addresses</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={exportOperatorDirections}
+                                        disabled={!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800 disabled:opacity-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title="Operator PDF"
+                                    >
+                                        <FileDown size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{isExportingOperatorPdf ? 'Preparing PDF' : 'Operator PDF'}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={toggleRightRail}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title={visibleRightRailOpen ? 'Hide review' : 'Review route'}
+                                    >
+                                        <PanelRightOpen size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{visibleRightRailOpen ? 'Hide review' : 'Review route'}</span>
+                                    </button>
+                                </div>
+                                {actionSidebarExpanded && <div className="mt-2 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">Team: {teamId ?? 'not set'}</div>}
+                            </aside>
+                        </>
+                    )}
                     <div className="pointer-events-none absolute inset-x-4 top-4 z-30 flex items-start justify-between gap-3">
                         <div />
                         <div className="flex gap-2">
-                            {isCampShuttleFocusMode && (
-                                <button
-                                    type="button"
-                                    onClick={exitCampShuttleFocusMode}
-                                    className="pointer-events-auto rounded-full border border-amber-200 bg-white/95 px-3 py-2 text-xs font-black text-amber-800 shadow-lg hover:bg-amber-50"
-                                >
-                                    Exit camp focus
-                                </button>
-                            )}
                             {isDrawFocusMode && (
                                 <button
                                     type="button"
@@ -1142,97 +1500,178 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     Exit focus
                                 </button>
                             )}
-                            {!isCampShuttleFocusMode && (
-                                <button
-                                    type="button"
-                                    onClick={toggleRightRail}
-                                    className="pointer-events-auto rounded-full border border-slate-200 bg-white/95 px-3 py-2 text-xs font-black text-slate-700 shadow-lg hover:bg-slate-50"
-                                >
-                                    {visibleRightRailOpen ? 'Hide review' : 'Review route'}
-                                </button>
-                            )}
                         </div>
                     </div>
-
-                    {isCampShuttleFocusMode && selectedScenario && (
-                        <aside
-                            data-testid="rp2-camp-shuttle-focus"
-                            className="absolute bottom-4 right-4 top-16 z-20 w-[410px] overflow-y-auto rounded-3xl border border-amber-200 bg-white p-4 shadow-xl"
-                        >
-                            <div className="flex items-start justify-between gap-3">
-                                <div>
-                                    <div className="text-xs font-black uppercase tracking-[0.18em] text-amber-700">Summer camp shuttle</div>
-                                    <h2 className="mt-1 text-lg font-black text-slate-950">{selectedScenario.name}</h2>
-                                </div>
-                                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-800">Summer service</span>
-                            </div>
-                            <p className="mt-3 text-sm leading-6 text-slate-600">
-                                Focused Route Planner view for reviewing the camp shuttle pattern, stop order, service span, headway, and vehicle need.
-                            </p>
-
-                            <div className="mt-4 grid grid-cols-2 gap-2">
-                                {[
-                                    { label: 'Stops', value: String(campStops.length) },
-                                    { label: 'Span', value: formatCampServiceSpan(selectedScenario.service) },
-                                    { label: 'Headway', value: formatCampFrequency(selectedScenario.service) },
-                                    { label: 'Buses', value: formatBuses(selectedFeasibility?.busesRequired) },
-                                    { label: 'Runtime', value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes) },
-                                    { label: 'Cycle', value: formatRuntime(selectedFeasibility?.cycleTimeMinutes) },
-                                ].map((item) => (
-                                    <div key={item.label} className="rounded-2xl border border-amber-100 bg-amber-50/70 p-3">
-                                        <div className="text-[11px] font-black uppercase tracking-wide text-amber-700">{item.label}</div>
-                                        <div className="mt-1 text-sm font-black text-slate-950">{item.value}</div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                                <h3 className="text-sm font-black text-slate-900">Camp stop order</h3>
-                                {campStops.length > 0 ? (
-                                    <ol className="mt-3 space-y-2">
-                                        {campStops.map((stop) => (
-                                            <li key={stop.id} className="flex gap-3 rounded-xl bg-white p-2 text-sm shadow-sm">
-                                                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-black text-amber-800">{stop.sequence}</span>
-                                                <div className="min-w-0">
-                                                    <div className="truncate font-black text-slate-900">{stop.name}</div>
-                                                    <div className="text-xs font-semibold text-slate-500">{stopRoleLabel(stop.role)}{stop.stopCode ? ` · Stop ${stop.stopCode}` : ''}</div>
-                                                </div>
-                                            </li>
-                                        ))}
-                                    </ol>
-                                ) : (
-                                    <p className="mt-2 text-sm leading-6 text-slate-500">Add the camp pickup, dropoff, and terminal stops to build the shuttle pattern.</p>
-                                )}
-                            </div>
-
-                            <div className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50 p-3">
-                                <h3 className="text-sm font-black text-cyan-950">Operational snapshot</h3>
-                                <p className="mt-2 text-sm leading-6 text-cyan-900">
-                                    Uses the selected Route Planner concept. Edit stops and service assumptions in the route review panel when you leave camp focus.
-                                </p>
-                            </div>
-                        </aside>
-                    )}
-
                     <aside
                         data-testid="rp2-right-rail"
                         data-state={rightRailState}
-                        aria-hidden={!visibleRightRailOpen}
-                        className={`absolute bottom-4 right-4 top-16 z-20 w-[390px] space-y-4 overflow-y-auto transition-all duration-200 ${visibleRightRailOpen ? 'translate-x-0 opacity-100' : 'pointer-events-none translate-x-[calc(100%+2rem)] opacity-0'}`}
+                        aria-hidden={!showRightRail}
+                        className={`absolute bottom-4 right-3 top-24 z-20 flex flex-col overflow-y-auto rounded-3xl border border-slate-200 bg-white/95 p-2 shadow-xl backdrop-blur transition-all duration-200 ${visibleRightRailOpen ? 'w-[410px] space-y-4' : 'w-14 gap-2'} ${showRightRail ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-[calc(100%+2rem)] opacity-0'}`}
                     >
+                        {visibleRightRailOpen ? (
+                            <>
+                        <section className="sticky top-0 z-10 rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">Route Planner</div>
+                                    <h2 className="mt-0.5 text-base font-black text-slate-950">Review route</h2>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => void saveCurrentProject()}
+                                        disabled={!canUseTeamSave || saveState === 'saving'}
+                                        className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                        title={canUseTeamSave ? 'Save this route plan' : 'Sign in with a team workspace to save'}
+                                    >
+                                        <Save size={14} /> {saveState === 'saving' ? 'Saving...' : 'Save'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsRightRailOpen(false)}
+                                        className="inline-flex size-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                        aria-label="Close review route panel"
+                                        title="Collapse review route panel"
+                                    >
+                                        <span aria-hidden="true">›</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="rounded-3xl border border-cyan-100 bg-white p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="text-xs font-black uppercase tracking-wide text-cyan-700">Draw route</div>
+                                    <div className="mt-1 text-base font-black leading-5 text-slate-900">{drawingGuide.title}</div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={enterDrawFocusMode}
+                                    className="shrink-0 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black text-cyan-700 hover:bg-cyan-100"
+                                >
+                                    Draw route
+                                </button>
+                            </div>
+                            {drawingGuide.body && (
+                                <p className="mt-2 text-sm leading-5 text-slate-600">{drawingGuide.body}</p>
+                            )}
+                            <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                                <label className="text-[10px] font-black uppercase tracking-wide text-slate-500" htmlFor="rp2-address-search">
+                                    Add stop by address
+                                </label>
+                                <div className="mt-2 flex gap-2">
+                                    <div className="relative min-w-0 flex-1">
+                                        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input
+                                            id="rp2-address-search"
+                                            type="text"
+                                            value={addressQuery}
+                                            onChange={(event) => {
+                                                setSelectedAddress(null);
+                                                setAddressQuery(event.target.value);
+                                            }}
+                                            placeholder="Start typing an address"
+                                            className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm font-semibold text-slate-900 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                                            autoComplete="off"
+                                        />
+                                        {addressSearchLoading && (
+                                            <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-cyan-600" />
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={addSelectedAddressStop}
+                                        disabled={addressSuggestions.length === 0}
+                                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-600 text-white shadow-sm transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                        aria-label="Add selected address as stop"
+                                        title="Add selected address as stop"
+                                    >
+                                        <Plus size={18} />
+                                    </button>
+                                </div>
+                                {addressSuggestions.length > 0 && (
+                                    <div className="mt-2 max-h-44 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                                        {addressSuggestions.map((suggestion) => (
+                                            <button
+                                                key={suggestion.id}
+                                                type="button"
+                                                onClick={() => selectAddressSuggestion(suggestion)}
+                                                className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-cyan-50 ${selectedAddress?.id === suggestion.id ? 'bg-cyan-50 text-cyan-900' : 'text-slate-700'}`}
+                                            >
+                                                <MapPin size={14} className="mt-0.5 shrink-0 text-cyan-600" />
+                                                <span className="min-w-0">
+                                                    <span className="block font-black">{suggestion.name}</span>
+                                                    <span className="block truncate text-xs font-semibold text-slate-500">{suggestion.label}</span>
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                {addressSearchError && (
+                                    <p className="mt-2 text-xs font-semibold text-amber-700">{addressSearchError}</p>
+                                )}
+                            </div>
+                            {selectedScenario && selectedScenario.stops.length >= 2 && (
+                                <div className="mt-3 rounded-2xl bg-slate-50 p-2">
+                                    <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-slate-500">Route type</div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => updateRouteShape('one-way')}
+                                            className={`rounded-full border px-3 py-1.5 text-xs font-black ${selectedScenario.routeShape === 'one-way' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
+                                        >
+                                            One-way
+                                        </button>
+                                        {selectedScenario.stops.length >= 3 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => updateRouteShape('closed-loop')}
+                                                className={`rounded-full border px-3 py-1.5 text-xs font-black ${selectedScenario.routeShape === 'closed-loop' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
+                                            >
+                                                Closed loop
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => updateRouteShape('out-and-back')}
+                                            className={`rounded-full border px-3 py-1.5 text-xs font-black ${selectedScenario.routeShape === 'out-and-back' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
+                                        >
+                                            Out and back
+                                        </button>
+                                    </div>
+                                    <div className="mt-2 text-xs font-semibold text-slate-600">
+                                        {routeShapeLabel}: {stopVisitSequence.map((stop) => stop.sequence).join(' → ')}
+                                    </div>
+                                    {selectedScenario.routeShape === 'one-way' && selectedScenarioStops.length >= 2 && (
+                                        <button
+                                            type="button"
+                                            onClick={createBackDirection}
+                                            className="mt-3 w-full rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs font-black text-cyan-800 hover:bg-cyan-50"
+                                        >
+                                            Create back direction
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                            <div className="mt-3">
+                                <button type="button" onClick={() => addStop()} className="rounded-xl bg-cyan-600 px-3 py-2 text-sm font-bold text-white hover:bg-cyan-700">
+                                    {drawingGuide.actionLabel}
+                                </button>
+                            </div>
+                        </section>
+
                         <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                             <div className="flex items-center justify-between gap-3">
-                                <h2 className="text-sm font-black text-slate-900">Review route</h2>
+                                <h2 className="text-sm font-black text-slate-900">Route details</h2>
                                 {selectedScenarioSummary?.isPreferred && <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">Preferred</span>}
                             </div>
-
                             {selectedScenario && selectedScenarioSummary ? (
                                 <div className="mt-4 space-y-4">
                                     <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-scenario-name">
                                         Route name
                                         <input id="rp2-scenario-name" value={selectedScenario.name} onChange={(event) => setProject((current) => renameRoutePlanner2Scenario(current, selectedScenario.id, event.target.value))} className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-900" />
                                     </label>
-
                                     <div className="divide-y divide-slate-100 rounded-2xl bg-slate-50 px-3 text-sm">
                                         <div className="flex items-center justify-between gap-3 py-2">
                                             <span className="font-bold text-slate-500">Runtime</span>
@@ -1247,63 +1686,104 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <span className="text-right font-black text-slate-900">{formatRuntime(selectedFeasibility?.cycleTimeMinutes)}</span>
                                         </div>
                                     </div>
-
-                                    <div className={`rounded-2xl border p-3 ${readinessClass(selectedScenarioSummary.readiness)}`}>
-                                        <div className="flex items-center justify-between gap-2">
-                                            <h3 className="text-sm font-black">Route status</h3>
-                                            <span className="rounded-full bg-white/80 px-2 py-1 text-xs font-black uppercase">{selectedScenarioSummary.readinessLabel}</span>
-                                        </div>
-                                        <p className="mt-2 text-sm leading-5">{selectedScenarioSummary.summaryText}</p>
-                                        <p className="mt-1 text-xs font-bold">Next: {selectedScenarioSummary.nextAction}</p>
-                                    </div>
-
                                     <div className="rounded-2xl border border-slate-200 bg-white p-3" data-testid="rp2-stop-order-panel">
                                         <div className="flex items-center justify-between gap-3">
                                             <div>
                                                 <h3 className="text-sm font-black text-slate-900">Stop order</h3>
                                                 <p className="mt-1 text-xs font-semibold text-slate-500">Review, select, reorder, or remove stops here instead of on the map.</p>
                                             </div>
-                                            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">
-                                                {selectedScenarioStops.length}
-                                            </span>
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                {stopOrderItems.length > 0 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={clearStopOrder}
+                                                        className="rounded-full border border-red-200 bg-white px-2 py-1 text-xs font-black text-red-700 hover:bg-red-50"
+                                                    >
+                                                        Clear all
+                                                    </button>
+                                                )}
+                                                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">
+                                                    {stopOrderItems.length}
+                                                </span>
+                                            </div>
                                         </div>
-                                        {selectedScenarioStops.length > 0 ? (
+                                        {stopOrderItems.length > 0 ? (
                                             <ol className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-                                                {selectedScenarioStops.map((stop) => (
+                                                {stopOrderItems.map((item) => item.type === 'stop' ? (
                                                     <li
-                                                        key={stop.id}
-                                                        className={`rounded-2xl border p-2 ${selectedStopId === stop.id ? 'border-cyan-200 bg-cyan-50' : 'border-slate-200 bg-slate-50'}`}
+                                                        key={item.key}
+                                                        data-testid={`rp2-stop-order-item-${item.stop.id}`}
+                                                        draggable
+                                                        onDragStart={() => setDraggedStopOrderKey(item.key)}
+                                                        onDragOver={(event) => event.preventDefault()}
+                                                        onDrop={() => moveDraggedStopOrderItem(item.key)}
+                                                        onDragEnd={() => setDraggedStopOrderKey(null)}
+                                                        onMouseEnter={() => setHoveredMapItem({ type: 'stop', id: item.stop.id })}
+                                                        onMouseLeave={() => setHoveredMapItem(null)}
+                                                        className={`cursor-grab rounded-2xl border p-2 active:cursor-grabbing ${selectedStopId === item.stop.id ? 'border-cyan-200 bg-cyan-50' : 'border-slate-200 bg-slate-50'}`}
                                                     >
                                                         <div className="flex items-start gap-2">
                                                             <button
                                                                 type="button"
-                                                                onClick={() => setSelectedStopId(stop.id)}
+                                                                onClick={() => setSelectedStopId(item.stop.id)}
                                                                 className="min-w-0 flex-1 text-left"
                                                             >
                                                                 <span className="flex items-center gap-2">
-                                                                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-slate-700">{stop.sequence}</span>
-                                                                    <span className="min-w-0 truncate text-sm font-black text-slate-900">{stop.name}</span>
+                                                                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-slate-700">{item.stop.sequence}</span>
+                                                                    <span className="min-w-0 truncate text-sm font-black text-slate-900">{item.stop.name}</span>
                                                                 </span>
                                                                 <span className="mt-1 block truncate pl-8 text-xs font-semibold text-slate-500">
-                                                                    {stopRoleLabel(stop.role)}{stop.stopCode ? ` · Stop ${stop.stopCode}` : ''}
+                                                                    {stopRoleLabel(item.stop.role)}{item.stop.stopCode ? ` · Stop ${item.stop.stopCode}` : ''}
                                                                 </span>
                                                             </button>
                                                             <button
                                                                 type="button"
-                                                                onClick={() => deleteStop(stop.id)}
+                                                                onClick={() => deleteStop(item.stop.id)}
                                                                 className="flex size-8 shrink-0 items-center justify-center rounded-full border border-red-200 bg-white text-red-600 hover:bg-red-50"
-                                                                aria-label={`Delete ${stop.name}`}
-                                                                title={`Delete ${stop.name}`}
+                                                                aria-label={`Delete ${item.stop.name}`}
+                                                                title={`Delete ${item.stop.name}`}
                                                             >
                                                                 <Trash2 size={14} />
                                                             </button>
                                                         </div>
-                                                        {selectedStopId === stop.id && (
-                                                            <div className="mt-2 grid grid-cols-2 gap-2">
-                                                                <button type="button" onClick={() => setProject((current) => moveRoutePlanner2Stop(current, selectedScenario.id, stop.id, 'up'))} className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-700">Move up</button>
-                                                                <button type="button" onClick={() => setProject((current) => moveRoutePlanner2Stop(current, selectedScenario.id, stop.id, 'down'))} className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-700">Move down</button>
+                                                        <div className="mt-2 grid grid-cols-2 gap-2">
+                                                            <button type="button" onClick={() => moveStopOrderItem(item, 'up')} className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-700">Move up</button>
+                                                            <button type="button" onClick={() => moveStopOrderItem(item, 'down')} className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-700">Move down</button>
+                                                        </div>
+                                                    </li>
+                                                ) : (
+                                                    <li
+                                                        key={item.key}
+                                                        data-testid={`rp2-stop-order-item-${item.bend.id}`}
+                                                        draggable
+                                                        onDragStart={() => setDraggedStopOrderKey(item.key)}
+                                                        onDragOver={(event) => event.preventDefault()}
+                                                        onDrop={() => moveDraggedStopOrderItem(item.key)}
+                                                        onDragEnd={() => setDraggedStopOrderKey(null)}
+                                                        onMouseEnter={() => setHoveredMapItem({ type: 'waypoint', id: item.bend.id })}
+                                                        onMouseLeave={() => setHoveredMapItem(null)}
+                                                        className="cursor-grab rounded-2xl border border-cyan-100 bg-cyan-50/60 p-2 active:cursor-grabbing"
+                                                    >
+                                                        <div className="flex items-start gap-2">
+                                                            <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-cyan-700">+</div>
+                                                            <div className="min-w-0 flex-1">
+                                                                <div className="truncate text-sm font-black text-slate-900">Bend {item.bendNumber}</div>
+                                                                <div className="mt-1 truncate text-xs font-semibold text-slate-500">Between {item.fromStopName} and {item.toStopName}</div>
                                                             </div>
-                                                        )}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => deleteLineWaypoint(item.bend.id)}
+                                                                className="flex size-8 shrink-0 items-center justify-center rounded-full border border-red-200 bg-white text-red-600 hover:bg-red-50"
+                                                                aria-label={`Delete Bend ${item.bendNumber}`}
+                                                                title={`Delete Bend ${item.bendNumber}`}
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        </div>
+                                                        <div className="mt-2 grid grid-cols-2 gap-2">
+                                                            <button type="button" onClick={() => moveStopOrderItem(item, 'up')} className="rounded-xl border border-cyan-100 bg-white px-2 py-1.5 text-xs font-bold text-cyan-700">Move up</button>
+                                                            <button type="button" onClick={() => moveStopOrderItem(item, 'down')} className="rounded-xl border border-cyan-100 bg-white px-2 py-1.5 text-xs font-bold text-cyan-700">Move down</button>
+                                                        </div>
                                                     </li>
                                                 ))}
                                             </ol>
@@ -1311,7 +1791,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <p className="mt-3 text-sm leading-6 text-slate-500">Add stops from the map or address importer to build the order list.</p>
                                         )}
                                     </div>
-
                                     <details className="rounded-2xl border border-slate-200 bg-white p-3">
                                         <summary className="cursor-pointer text-sm font-black text-slate-900">Edit route inputs</summary>
                                         <div className="mt-3 space-y-4">
@@ -1331,12 +1810,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                     Dwell is added for intermediate stops only. Terminal layover stays separate.
                                                 </p>
                                             </div>
-
                                             <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-notes">
                                         Planner notes
                                         <textarea id="rp2-notes" value={selectedScenario.notes} onChange={(event) => setProject((current) => updateScenarioNotes(current, selectedScenario.id, event.target.value))} rows={5} className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm text-slate-700" />
                                             </label>
-
                                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                                         <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-black text-slate-900">Selected stop</h3><span className="rounded-full bg-white px-2 py-1 text-xs font-bold text-slate-500">{selectedScenario.stops.length} stops</span></div>
                                         {selectedStop ? (
@@ -1351,7 +1828,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             </div>
                                         ) : <p className="text-sm leading-6 text-slate-500">Add a stop from the map canvas, then mark terminal roles here.</p>}
                                             </div>
-
                                             <div className="rounded-2xl border border-slate-200 bg-white p-3">
                                         <div className="flex items-start justify-between gap-3">
                                             <div>
@@ -1403,7 +1879,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             </div>
                                         </div>
                                     </details>
-
                                     <div ref={runtimeSourceDetailsRef} data-testid="rp2-runtime-source-details" className="scroll-mt-24">
                                         <details className="rounded-2xl border border-slate-200 bg-white p-3">
                                             <summary className="cursor-pointer text-sm font-black text-slate-900">Advanced GTFS/source details</summary>
@@ -1504,21 +1979,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         )}
                                         </details>
                                     </div>
-
-                                    <div className={`rounded-2xl border p-3 ${(selectedFeasibility?.warnings.length ?? 0) > 0 ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                                        <h3 className={`text-sm font-black ${(selectedFeasibility?.warnings.length ?? 0) > 0 ? 'text-amber-900' : 'text-emerald-900'}`}>{(selectedFeasibility?.warnings.length ?? 0) > 0 ? 'Needs attention' : 'Ready for runtime review'}</h3>
-                                        {(selectedFeasibility?.warnings.length ?? 0) > 0 ? (
-                                            <ul className="mt-2 space-y-2">
-                                                {selectedFeasibility?.warnings.map((warning) => (
-                                                    <li key={warning.id} className="text-sm leading-5 text-amber-800">
-                                                        {warning.message}
-                                                        {warning.action && <span className="block text-xs font-semibold text-amber-700">{warning.action}</span>}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        ) : <p className="mt-2 text-sm text-emerald-800">Route has enough inputs for a segment travel-time estimate.</p>}
-                                    </div>
-
                                     {selectedFeasibility && selectedFeasibility.segmentSummaries.length > 0 && (
                                         <div className="rounded-2xl border border-slate-200 bg-white p-3">
                                             <h3 className="text-sm font-black text-slate-900">Segment runtimes</h3>
@@ -1534,7 +1994,13 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                         selectedScenario.runtimeRouteFilter?.mode === 'selected',
                                                     );
                                                     return (
-                                                        <div key={segment.id} className="rounded-xl bg-slate-50 p-2 text-xs text-slate-600">
+                                                        <div
+                                                            key={segment.id}
+                                                            data-testid={`rp2-segment-runtime-card-${segment.id}`}
+                                                            onMouseEnter={() => setHoveredMapItem({ type: 'segment', id: segment.id })}
+                                                            onMouseLeave={() => setHoveredMapItem(null)}
+                                                            className="rounded-xl border border-transparent bg-slate-50 p-2 text-xs text-slate-600 transition hover:border-cyan-200 hover:bg-cyan-50/60"
+                                                        >
                                                             <div className="flex flex-wrap items-center justify-between gap-2">
                                                                 <div className="font-bold text-slate-800">{fromStop?.name ?? 'Unknown'} to {toStop?.name ?? 'Unknown'}: {formatRuntime(segment.runtimeMinutes)}</div>
                                                                 <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${getRuntimeSourceBadgeClass(segment.source)}`}>
@@ -1625,7 +2091,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             </div>
                                         </div>
                                     )}
-
                                     <div className="grid grid-cols-2 gap-2">
                                         <button type="button" onClick={() => setProject((current) => markRoutePlanner2PreferredScenario(current, selectedScenario.id))} className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700"><Star size={16} />Mark preferred</button>
                                         <button type="button" onClick={() => setProject((current) => deleteRoutePlanner2Scenario(current, selectedScenario.id))} disabled={project.scenarios.length <= 1} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-50"><Trash2 size={16} />Delete</button>
@@ -1633,7 +2098,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                 </div>
                             ) : <p className="mt-3 text-sm text-slate-500">Select a route to edit details.</p>}
                         </section>
-
                         <details className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                             <summary className="cursor-pointer text-sm font-black text-slate-900">Route comparison</summary>
                             <div className={`mt-3 rounded-2xl border p-3 ${readinessClass(projectSummary.preferredScenarioSummary?.readiness ?? 'not-ready')}`}>
@@ -1669,11 +2133,119 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                 </table>
                             </div>
                         </details>
+                            </>
+                        ) : (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsRightRailOpen(true)}
+                                    className="flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-2 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                    aria-expanded={false}
+                                    aria-label="Expand review route panel"
+                                    title="Expand review route panel"
+                                >
+                                    <span aria-hidden="true">‹</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsRightRailOpen(true)}
+                                    className="inline-flex w-full items-center justify-center rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800"
+                                    title="Review route"
+                                >
+                                    <ClipboardList size={16} /><span className="sr-only">Review route</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => void saveCurrentProject()}
+                                    disabled={!canUseTeamSave || saveState === 'saving'}
+                                    className="inline-flex w-full items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-bold text-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                    title={canUseTeamSave ? 'Save this route plan' : 'Sign in with a team workspace to save'}
+                                >
+                                    <Save size={16} /><span className="sr-only">Save</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={enterDrawFocusMode}
+                                    className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700"
+                                    title="Draw route"
+                                >
+                                    <PencilRuler size={16} /><span className="sr-only">Draw route</span>
+                                </button>
+                            </>
+                        )}
                     </aside>
                 </main>
-            </div>
+            {isLoadPickerOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+                    <section
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="rp2-load-picker-title"
+                        className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl"
+                    >
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">Route Planner 2</div>
+                                <h2 id="rp2-load-picker-title" className="mt-1 text-lg font-black text-slate-950">Load route plan</h2>
+                                <p className="mt-1 text-sm font-semibold text-slate-500">Choose a saved route plan from this team workspace.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsLoadPickerOpen(false)}
+                                className="inline-flex size-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                aria-label="Close load route plan picker"
+                                title="Close"
+                            >
+                                ×
+                            </button>
+                        </div>
+                        <div className="mt-4">
+                            {isLoadingSavedProjects ? (
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600">Loading saved route plans...</div>
+                            ) : savedProjectsLoadFailed ? (
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                                    <div className="text-sm font-black text-amber-900">Saved route plans unavailable</div>
+                                    <p className="mt-1 text-sm font-semibold text-amber-800">Try refreshing the list.</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => void refreshSavedProjects()}
+                                        className="mt-3 rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-black text-amber-800 hover:bg-amber-100"
+                                    >
+                                        Refresh
+                                    </button>
+                                </div>
+                            ) : savedProjects.length === 0 ? (
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">No saved route plans yet.</div>
+                            ) : (
+                                <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
+                                    {savedProjects.map((savedProject) => (
+                                        <button
+                                            key={savedProject.id}
+                                            type="button"
+                                            onClick={() => void loadSavedProject(savedProject.id)}
+                                            disabled={loadState === 'loading'}
+                                            className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-cyan-200 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="truncate text-sm font-black text-slate-950">{savedProject.name}</div>
+                                                    <div className="mt-1 text-xs font-semibold text-slate-500">{formatSavedProjectLabel(savedProject)}</div>
+                                                </div>
+                                                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">
+                                                    {savedProject.scenarioCount === 1 ? '1 route' : `${savedProject.scenarioCount} routes`}
+                                                </span>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                </div>
+            )}
             <RoutePlanner2GtfsImportModal
                 open={isGtfsImportOpen}
+                presentation="map-drawer"
                 patterns={gtfsPatterns}
                 loading={gtfsLoading}
                 error={gtfsError}
@@ -1683,6 +2255,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             />
             <RoutePlanner2AddressImportModal
                 open={isAddressImportOpen}
+                presentation="map-drawer"
                 onClose={() => setIsAddressImportOpen(false)}
                 onImport={importAddressStops}
             />

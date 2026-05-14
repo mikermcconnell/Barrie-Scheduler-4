@@ -5,6 +5,7 @@ import type { RoutePlanner2GtfsImportPattern } from '../../../utils/route-planne
 
 interface RoutePlanner2GtfsImportModalProps {
     open: boolean;
+    presentation?: 'modal' | 'map-drawer';
     patterns: RoutePlanner2GtfsImportPattern[];
     loading: boolean;
     error: string | null;
@@ -20,6 +21,7 @@ function getPatternSubtitle(pattern: RoutePlanner2GtfsImportPattern): string {
 
 export function RoutePlanner2GtfsImportModal({
     open,
+    presentation = 'modal',
     patterns,
     loading,
     error,
@@ -59,9 +61,17 @@ export function RoutePlanner2GtfsImportModal({
 
     if (!open) return null;
 
+    const isMapDrawer = presentation === 'map-drawer';
+    const shellClassName = isMapDrawer
+        ? 'fixed inset-y-3 right-3 z-50 flex w-[min(92vw,30rem)] items-stretch'
+        : 'fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6';
+    const panelClassName = isMapDrawer
+        ? 'flex h-full w-full flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl'
+        : 'flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl';
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6" role="dialog" aria-modal="true" aria-labelledby="rp2-gtfs-import-title">
-            <section className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+        <div className={shellClassName} role="dialog" aria-modal={!isMapDrawer} aria-labelledby="rp2-gtfs-import-title">
+            <section className={panelClassName}>
                 <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
                     <div>
                         <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-cyan-700">

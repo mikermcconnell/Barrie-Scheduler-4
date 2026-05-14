@@ -1,0 +1,539 @@
+import React, { useEffect } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createRoot, type Root } from 'react-dom/client';
+import { flushSync } from 'react-dom';
+
+vi.mock('react-map-gl/mapbox', () => ({
+  Source: ({ children, id, data }: { children?: React.ReactNode; id?: string; data?: { features?: unknown[] } }) => (
+    <div data-testid={id ? `mock-source-${id}` : undefined} data-feature-count={data?.features?.length ?? ''}>
+      {children}
+    </div>
+  ),
+  Layer: (): null => null,
+  Marker: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('../components/shared', () => ({
+  MapBase: ({ children, onLoad, onClick, onMouseMove }: {
+    children?: React.ReactNode;
+    onLoad?: () => void;
+    onMouseMove?: (event: {
+      lngLat: { lat: number; lng: number };
+      features: Array<{ layer: { id: string } }>;
+    }) => void;
+    onClick?: (event: {
+      lngLat: { lat: number; lng: number };
+      features: Array<{ layer: { id: string } }>;
+    }) => void;
+  }) => {
+    useEffect(() => {
+      onLoad?.();
+    }, [onLoad]);
+
+    return (
+      <div>
+        <button
+          type="button"
+          data-testid="mock-route-line-click"
+          onClick={() => onClick?.({
+            lngLat: { lat: 44.385, lng: -79.685 },
+            features: [{ layer: { id: 'route-planner-2-line-hit' } }],
+          })}
+        >
+          map route line
+        </button>
+        <button
+          type="button"
+          data-testid="mock-blank-map-click"
+          onClick={() => onClick?.({
+            lngLat: { lat: 44.395, lng: -79.675 },
+            features: [],
+          })}
+        >
+          blank map
+        </button>
+        <button
+          type="button"
+          data-testid="mock-map-move"
+          onClick={() => onMouseMove?.({
+            lngLat: { lat: 44.386, lng: -79.686 },
+            features: [],
+          })}
+        >
+          move pointer
+        </button>
+        {children}
+      </div>
+    );
+  },
+}));
+
+vi.mock('../utils/route-planner-2/routePlanner2RoadSnap', () => ({
+  buildRoutePlanner2FallbackRoadSnapResult: (scenario: {
+    stops: Array<{ id: string; lat: number; lng: number }>;
+  }) => ({
+    coordinates: scenario.stops.map((stop) => [stop.lng, stop.lat]),
+    segmentGeometries: scenario.stops.slice(0, -1).map((stop, index) => {
+      const nextStop = scenario.stops[index + 1]!;
+      return {
+        id: `segment-${stop.id}-${nextStop.id}`,
+        fromStopId: stop.id,
+        toStopId: nextStop.id,
+        coordinates: [[stop.lng, stop.lat], [nextStop.lng, nextStop.lat]],
+      };
+    }),
+    segmentEstimates: [] as unknown[],
+  }),
+  snapRoutePlanner2ScenarioToRoad: vi.fn(async (scenario: {
+    stops: Array<{ id: string; lat: number; lng: number }>;
+  }) => ({
+    coordinates: scenario.stops.map((stop) => [stop.lng, stop.lat]),
+    segmentGeometries: scenario.stops.slice(0, -1).map((stop, index) => {
+      const nextStop = scenario.stops[index + 1]!;
+      return {
+        id: `segment-${stop.id}-${nextStop.id}`,
+        fromStopId: stop.id,
+        toStopId: nextStop.id,
+        coordinates: [[stop.lng, stop.lat], [nextStop.lng, nextStop.lat]],
+      };
+    }),
+    segmentEstimates: [],
+  })),
+}));
+
+vi.mock('../utils/route-planner-2/routePlanner2AddressSearch', () => ({
+  searchRoutePlanner2Addresses: vi.fn(async () => []),
+}));
+
+import { RoutePlanner2MapCanvas } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
+import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop, updateRoutePlanner2RouteShape } from '../utils/route-planner-2/routePlanner2Authoring';
+import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
+
+function click(element: Element | null | undefined) {
+  element?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+describe('RoutePlanner2MapCanvas runtime popover', () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      flushSync(() => root?.unmount());
+    }
+    container?.remove();
+    root = null;
+    container = null;
+  });
+
+  it('lets planners save a manual runtime override from a clicked map segment', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    const scenario = project.scenarios[0]!;
+    const onSetSegmentRuntimeOverride = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={scenario}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+          onSetSegmentRuntimeOverride={onSetSegmentRuntimeOverride}
+          segmentRuntimes={[{
+            id: 'segment-stop-1-stop-2',
+            fromStopId: 'stop-1',
+            toStopId: 'stop-2',
+            runtimeMinutes: 8,
+            source: 'mapbox',
+            confidence: 'medium',
+          }]}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-route-line-click"]'));
+    });
+
+    expect(container.textContent).toContain('Segment runtime');
+    expect(container.textContent).toContain('Downtown Terminal');
+    expect(container.textContent).toContain('Current travel time');
+    expect(container.textContent).toContain('8 min');
+
+    const input = container.querySelector('input[aria-label="Manual segment travel time in minutes"]') as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+
+    flushSync(() => {
+      setInputValue(input!, '11');
+      click(Array.from(container!.querySelectorAll('button')).find((button) => button.textContent?.includes('Save override')));
+    });
+
+    expect(onSetSegmentRuntimeOverride).toHaveBeenCalledWith('segment-stop-1-stop-2', 11);
+  });
+
+  it('defaults bend anchors to the clicked direction only', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { turnaroundStopId: 'stop-2' });
+    const onAddLineWaypoint = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={onAddLineWaypoint}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-route-line-click"]'));
+    });
+
+    expect(container.textContent).toContain('Apply to return direction too');
+
+    flushSync(() => {
+      click(Array.from(container!.querySelectorAll('button')).find((button) => button.textContent?.includes('Add bend here')));
+    });
+
+    expect(onAddLineWaypoint).toHaveBeenCalledWith(expect.objectContaining({
+      fromStopId: 'stop-1',
+      toStopId: 'stop-2',
+      applyToOppositeDirection: false,
+    }));
+  });
+
+  it('uses 1 to add a stop at the current mouse position without a map click', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    const onAddStop = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={onAddStop}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-map-move"]'));
+    });
+
+    flushSync(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+    });
+
+    expect(onAddStop).toHaveBeenCalledWith(expect.objectContaining({
+      lat: 44.386,
+      lng: -79.686,
+    }));
+  });
+
+  it('uses 2 to add a bend at the current mouse position on the nearest segment', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    const onAddLineWaypoint = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={onAddLineWaypoint}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-map-move"]'));
+    });
+
+    flushSync(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+    });
+
+    expect(onAddLineWaypoint).toHaveBeenCalledWith(expect.objectContaining({
+      fromStopId: 'stop-1',
+      toStopId: 'stop-2',
+      coordinate: { lat: 44.386, lng: -79.686 },
+    }));
+  });
+
+  it('can apply a bend anchor to the return direction when selected', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { turnaroundStopId: 'stop-2' });
+    const onAddLineWaypoint = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={onAddLineWaypoint}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-route-line-click"]'));
+    });
+
+    flushSync(() => {
+      click(container?.querySelector('input[aria-label="Apply bend anchor to return direction too"]'));
+    });
+
+    flushSync(() => {
+      click(Array.from(container!.querySelectorAll('button')).find((button) => button.textContent?.includes('Add bend here')));
+    });
+
+    expect(onAddLineWaypoint).toHaveBeenCalledWith(expect.objectContaining({
+      fromStopId: 'stop-1',
+      toStopId: 'stop-2',
+      applyToOppositeDirection: true,
+    }));
+  });
+
+  it('uses a blank map click to close the segment popover without adding a stop', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    const onAddStop = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={onAddStop}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-route-line-click"]'));
+    });
+
+    expect(container.querySelector('[data-testid="rp2-segment-runtime-popover"]')).not.toBeNull();
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-blank-map-click"]'));
+    });
+
+    expect(container.querySelector('[data-testid="rp2-segment-runtime-popover"]')).toBeNull();
+    expect(onAddStop).not.toHaveBeenCalled();
+  });
+
+  it('highlights hovered stop and bend markers from the review rail', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    project = addRoutePlanner2LineWaypoint(project, 'scenario-1', {
+      id: 'bend-1',
+      afterStopId: 'stop-1',
+      beforeStopId: 'stop-2',
+      lat: 44.385,
+      lng: -79.685,
+    });
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          highlightedStopId="stop-1"
+          highlightedWaypointId="bend-1"
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(container.querySelector('button[aria-label="Select Downtown Terminal"]')?.getAttribute('data-highlighted')).toBe('true');
+    expect(container.querySelector('button[aria-label="Drag route line anchor"]')?.getAttribute('data-highlighted')).toBe('true');
+  });
+
+  it('highlights a segment when requested by the runtime card hover state', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          highlightedSegmentId="segment-stop-1-stop-2"
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const highlightedSource = container.querySelector('[data-testid="mock-source-route-planner-2-highlighted-segment"]');
+    expect(highlightedSource?.getAttribute('data-feature-count')).toBe('1');
+  });
+
+  it('does not add a stop from a blank map click when no popover is open', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    const onAddStop = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={onAddStop}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-blank-map-click"]'));
+    });
+
+    expect(onAddStop).not.toHaveBeenCalled();
+  });
+});

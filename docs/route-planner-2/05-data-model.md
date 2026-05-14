@@ -101,9 +101,9 @@ interface RoutePlanner2RoutePoint {
 Route shape meaning:
 - `one-way`: stop sequence is used as drawn.
 - `closed-loop`: stop sequence is used as drawn, then the last stop connects back to Stop 1.
-- `out-and-back`: stop sequence runs from Stop 1 to the explicit bus turnaround stop, then returns in reverse order to Stop 1.
+- `out-and-back`: stop sequence runs from Stop 1 to the bus turnaround stop, then returns in reverse order to Stop 1. Choosing Out and back automatically marks the far end stop as the turnaround.
 
-`turnaroundStopId` is used only for out-and-back routes. It must point to a stop marked with role `turnaround`; the planner should not rely on an implied U-turn or 3-point turn. If absent, the route is not bus-safe for cycle-time comparison.
+`turnaroundStopId` is used only for out-and-back routes. It must point to a stop marked with role `turnaround`; the route type control sets this automatically to the far end stop unless a specific turnaround is supplied.
 
 When `afterStopId` and `beforeStopId` are present, the route point is a route-line waypoint between two adjacent stops. `segmentSequence` orders multiple waypoints within that stop-to-stop segment. V1 creates waypoints by clicking the route line, then dragging the `+` handle to bend the path.
 

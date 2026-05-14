@@ -9,7 +9,7 @@ import type {
     RoutePlanner2StopRole,
     RoutePlanner2Warning,
 } from './routePlanner2Types';
-import { buildRoutePlanner2StopSegmentPairs, getRoutePlanner2SegmentId, getRoutePlanner2TurnaroundStop, sortRoutePlanner2Stops } from './routePlanner2Segments';
+import { buildRoutePlanner2StopSegmentPairs, buildRoutePlanner2StopVisitSequence, getRoutePlanner2SegmentId, getRoutePlanner2TurnaroundStop, sortRoutePlanner2Stops } from './routePlanner2Segments';
 
 const GTFS_RUNTIME_EVIDENCE_SOURCES = new Set<RoutePlanner2SegmentRuntime['source']>([
     'observed-proxy',
@@ -125,6 +125,45 @@ function validateLineWaypointSegment(
     );
 }
 
+type RoutePlanner2LineOrderItem =
+    | { type: 'stop'; stopId: string }
+    | { type: 'bend'; waypoint: RoutePlanner2RoutePoint; afterStopId: string; beforeStopId: string };
+
+function buildLineWaypointOrderItems(scenario: RoutePlanner2Scenario): RoutePlanner2LineOrderItem[] {
+    const visits = buildRoutePlanner2StopVisitSequence(scenario);
+    if (visits.length === 0) return [];
+
+    const items: RoutePlanner2LineOrderItem[] = [{ type: 'stop', stopId: visits[0]!.id }];
+    for (let index = 0; index < visits.length - 1; index += 1) {
+        const fromStop = visits[index]!;
+        const toStop = visits[index + 1]!;
+        sortSegmentWaypoints(scenario.alignment.filter((point) =>
+            point.afterStopId === fromStop.id && point.beforeStopId === toStop.id,
+        )).forEach((waypoint) => {
+            items.push({ type: 'bend', waypoint, afterStopId: fromStop.id, beforeStopId: toStop.id });
+        });
+        items.push({ type: 'stop', stopId: toStop.id });
+    }
+
+    return items;
+}
+
+function findStopBefore(items: RoutePlanner2LineOrderItem[], index: number): string | null {
+    for (let itemIndex = index; itemIndex >= 0; itemIndex -= 1) {
+        const item = items[itemIndex];
+        if (item?.type === 'stop') return item.stopId;
+    }
+    return null;
+}
+
+function findStopAfter(items: RoutePlanner2LineOrderItem[], index: number): string | null {
+    for (let itemIndex = index; itemIndex < items.length; itemIndex += 1) {
+        const item = items[itemIndex];
+        if (item?.type === 'stop') return item.stopId;
+    }
+    return null;
+}
+
 function updateScenario(
     project: RoutePlanner2Project,
     scenarioId: string,
@@ -231,6 +270,23 @@ export function addRoutePlanner2Stop(
             stopCode: options.stopCode,
             notes: options.notes,
         };
+
+        if (scenario.routeShape === 'out-and-back' && scenario.stops.length >= 1) {
+            const stops = [
+                ...scenario.stops.map((existingStop) =>
+                    existingStop.role === 'turnaround' ? { ...existingStop, role: 'regular' as const } : existingStop,
+                ),
+                { ...stop, role: 'turnaround' as const },
+            ];
+
+            return {
+                ...scenario,
+                stops,
+                turnaroundStopId: stop.id,
+                alignment: resequenceScenarioAlignment({ ...scenario, stops, turnaroundStopId: stop.id }, scenario.alignment),
+                feasibility: undefined,
+            };
+        }
 
         return {
             ...scenario,
@@ -624,8 +680,9 @@ export function updateRoutePlanner2RouteShape(
         const currentTurnaround = scenario.turnaroundStopId
             ? stops.find((stop) => stop.id === scenario.turnaroundStopId)
             : undefined;
+        const farEndTurnaround = stops.length > 1 ? stops[stops.length - 1] : undefined;
         const turnaroundStop = routeShape === 'out-and-back'
-            ? requestedTurnaround ?? currentTurnaround
+            ? requestedTurnaround ?? currentTurnaround ?? farEndTurnaround
             : undefined;
 
         const shapedStops = stops.map((stop, index) => {
@@ -852,6 +909,91 @@ export function moveRoutePlanner2Stop(
     }, now);
 }
 
+export function moveRoutePlanner2LineWaypointInOrder(
+    project: RoutePlanner2Project,
+    scenarioId: string,
+    waypointId: string,
+    direction: 'up' | 'down',
+    now = new Date().toISOString(),
+): RoutePlanner2Project {
+    return updateScenario(project, scenarioId, (scenario) => {
+        const waypoint = scenario.alignment.find((point) =>
+            point.id === waypointId && point.afterStopId && point.beforeStopId,
+        );
+        if (!waypoint?.afterStopId || !waypoint.beforeStopId) return scenario;
+
+        const items = buildLineWaypointOrderItems(scenario);
+        const currentIndex = items.findIndex((item) => item.type === 'bend' && item.waypoint.id === waypointId);
+        if (currentIndex < 0) return scenario;
+
+        const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+        const targetItem = items[targetIndex];
+        if (!targetItem) return scenario;
+
+        let targetAfterStopId = waypoint.afterStopId;
+        let targetBeforeStopId = waypoint.beforeStopId;
+        let insertIndex = 0;
+
+        if (targetItem.type === 'bend') {
+            targetAfterStopId = targetItem.afterStopId;
+            targetBeforeStopId = targetItem.beforeStopId;
+            const targetSegmentWaypoints = sortSegmentWaypoints(scenario.alignment.filter((point) =>
+                point.id !== waypointId
+                && point.afterStopId === targetAfterStopId
+                && point.beforeStopId === targetBeforeStopId,
+            ));
+            const neighborIndex = targetSegmentWaypoints.findIndex((point) => point.id === targetItem.waypoint.id);
+            insertIndex = direction === 'up' ? Math.max(0, neighborIndex) : neighborIndex + 1;
+        } else if (direction === 'up') {
+            const previousStopId = findStopBefore(items, targetIndex - 1);
+            if (!previousStopId) return scenario;
+            targetAfterStopId = previousStopId;
+            targetBeforeStopId = targetItem.stopId;
+            insertIndex = Number.POSITIVE_INFINITY;
+        } else {
+            const nextStopId = findStopAfter(items, targetIndex + 1);
+            if (!nextStopId) return scenario;
+            targetAfterStopId = targetItem.stopId;
+            targetBeforeStopId = nextStopId;
+            insertIndex = 0;
+        }
+
+        if (!validateLineWaypointSegment(scenario, targetAfterStopId, targetBeforeStopId)) return scenario;
+
+        const targetSegmentKey = getSegmentKey(targetAfterStopId, targetBeforeStopId);
+        const alignmentWithoutMovedWaypoint = scenario.alignment.filter((point) => point.id !== waypointId);
+        const targetSegmentWaypoints = sortSegmentWaypoints(alignmentWithoutMovedWaypoint.filter((point) =>
+            getPointSegmentKey(point) === targetSegmentKey,
+        ));
+        const otherWaypoints = alignmentWithoutMovedWaypoint.filter((point) =>
+            getPointSegmentKey(point) !== targetSegmentKey,
+        );
+        const boundedInsertIndex = Number.isFinite(insertIndex)
+            ? Math.max(0, Math.min(insertIndex, targetSegmentWaypoints.length))
+            : targetSegmentWaypoints.length;
+        const movedWaypoint = {
+            ...waypoint,
+            afterStopId: targetAfterStopId,
+            beforeStopId: targetBeforeStopId,
+        };
+        const updatedSegmentWaypoints = [
+            ...targetSegmentWaypoints.slice(0, boundedInsertIndex),
+            movedWaypoint,
+            ...targetSegmentWaypoints.slice(boundedInsertIndex),
+        ];
+        const alignment = [
+            ...otherWaypoints,
+            ...normalizeSegmentWaypoints(updatedSegmentWaypoints, targetAfterStopId, targetBeforeStopId),
+        ];
+
+        return {
+            ...scenario,
+            alignment: resequenceScenarioAlignment(scenario, alignment),
+            feasibility: undefined,
+        };
+    }, now);
+}
+
 export function deleteRoutePlanner2Stop(
     project: RoutePlanner2Project,
     scenarioId: string,
@@ -875,6 +1017,37 @@ export function deleteRoutePlanner2Stop(
             alignment: resequenceScenarioAlignment(normalizedScenario, scenario.alignment.filter((point) =>
                 point.afterStopId !== stopId && point.beforeStopId !== stopId,
             )),
+            feasibility: undefined,
+        };
+    }, now);
+}
+
+export function clearRoutePlanner2Stops(
+    project: RoutePlanner2Project,
+    scenarioId: string,
+    now = new Date().toISOString(),
+): RoutePlanner2Project {
+    return updateScenario(project, scenarioId, (scenario) => {
+        if (
+            scenario.stops.length === 0
+            && scenario.alignment.length === 0
+            && scenario.routeShape === 'one-way'
+            && !scenario.turnaroundStopId
+            && !scenario.runtimeEstimates
+            && !scenario.runtimeOverrides
+            && !scenario.feasibility
+        ) {
+            return scenario;
+        }
+
+        return {
+            ...scenario,
+            routeShape: 'one-way',
+            stops: [],
+            alignment: [],
+            turnaroundStopId: undefined,
+            runtimeEstimates: undefined,
+            runtimeOverrides: undefined,
             feasibility: undefined,
         };
     }, now);
@@ -1007,14 +1180,14 @@ export function validateRoutePlanner2Terminals(scenario: RoutePlanner2Scenario):
                 id: 'missing-turnaround-stop',
                 severity: 'blocking',
                 message: 'Choose a bus-safe turnaround before estimating the out-and-back cycle.',
-                action: 'Select the far end stop and mark it as Bus turnaround.',
+                action: 'Choose Out and back again to use the far end stop, or add a stop that can safely turn a bus.',
             });
         } else if (turnaroundStop.role !== 'turnaround') {
             warnings.push({
                 id: 'turnaround-not-bus-safe',
                 severity: 'blocking',
                 message: 'The out-and-back route needs an explicit bus turnaround, not an implied U-turn.',
-                action: 'Mark the turnaround stop as Bus turnaround, or draw a closed loop instead.',
+                action: 'Choose Out and back to mark the far end automatically, or draw a closed loop instead.',
             });
         }
     } else if (endTerminals.length === 0) {
