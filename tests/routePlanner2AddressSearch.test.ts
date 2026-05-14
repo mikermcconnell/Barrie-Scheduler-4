@@ -16,6 +16,14 @@ describe('routePlanner2AddressSearch', () => {
     expect(url).toContain('access_token=token-123');
   });
 
+  it('trims accidental whitespace from Mapbox tokens before building URLs', () => {
+    const url = buildRoutePlanner2AddressSearchUrl('70 Collier Street', 'token-123\r\n');
+
+    expect(url).toContain('access_token=token-123');
+    expect(url).not.toContain('%0D');
+    expect(url).not.toContain('%0A');
+  });
+
   it('returns address suggestions with coordinates and labels', async () => {
     const fetcher = vi.fn(async () => ({
       ok: true,
@@ -45,6 +53,28 @@ describe('routePlanner2AddressSearch', () => {
         lng: -79.689,
       },
     ]);
+  });
+
+  it('trims accidental whitespace from Mapbox tokens before direct search', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const requestUrl = String(input);
+      expect(requestUrl).toContain('access_token=token-123');
+      expect(requestUrl).not.toContain('%0D');
+      expect(requestUrl).not.toContain('%0A');
+
+      return {
+        ok: true,
+        status: 200,
+        json: async (): Promise<{ features: unknown[] }> => ({ features: [] }),
+      };
+    }) as unknown as typeof fetch;
+
+    await searchRoutePlanner2Addresses('70 Collier', {
+      token: 'token-123\r\n',
+      fetcher,
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('can use the server geocode endpoint and reports diagnostics', async () => {

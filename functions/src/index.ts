@@ -55,6 +55,10 @@ interface MapboxGeocodingResponse {
   features?: MapboxFeature[];
 }
 
+function normalizeMapboxToken(token: string | null | undefined): string {
+  return token?.trim() ?? '';
+}
+
 type RoutePlannerGeocodeRateLimitState = {
   count: number;
   windowStartedAt: number;
@@ -174,7 +178,7 @@ function buildRoutePlannerMapboxGeocodeUrl(query: string, token: string, limit: 
   url.searchParams.set('proximity', `${BARRIE_PROXIMITY.lng},${BARRIE_PROXIMITY.lat}`);
   url.searchParams.set('types', 'address,poi,place,locality,neighborhood');
   url.searchParams.set('limit', String(limit));
-  url.searchParams.set('access_token', token);
+  url.searchParams.set('access_token', normalizeMapboxToken(token));
   return url.toString();
 }
 
@@ -807,7 +811,7 @@ export const routePlannerGeocode = onRequest(
       return;
     }
 
-    const token = MAPBOX_TOKEN.value();
+    const token = normalizeMapboxToken(MAPBOX_TOKEN.value());
     if (!token) {
       res.status(500).json({
         error: 'Server geocode is not configured.',
@@ -1143,7 +1147,7 @@ export const ingestResidentialGrowthReport = onRequest(
         teamId,
         period,
         pending,
-        mapboxToken: MAPBOX_TOKEN.value(),
+        mapboxToken: normalizeMapboxToken(MAPBOX_TOKEN.value()),
       });
 
       if (!result.completed) {

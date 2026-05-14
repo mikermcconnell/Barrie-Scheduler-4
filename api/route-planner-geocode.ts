@@ -24,8 +24,12 @@ interface MapboxGeocodingResponse {
     features?: MapboxFeature[];
 }
 
+function normalizeMapboxToken(token: string | null | undefined): string {
+    return token?.trim() ?? '';
+}
+
 function getMapboxToken(): string {
-    return process.env.MAPBOX_TOKEN || process.env.VITE_MAPBOX_TOKEN || '';
+    return normalizeMapboxToken(process.env.MAPBOX_TOKEN || process.env.VITE_MAPBOX_TOKEN);
 }
 
 function readBody(body: VercelRequest['body']): Record<string, unknown> | null {
@@ -60,7 +64,7 @@ function buildMapboxUrl(query: string, token: string, limit: number): string {
     url.searchParams.set('proximity', `${BARRIE_PROXIMITY.lng},${BARRIE_PROXIMITY.lat}`);
     url.searchParams.set('types', 'address,poi,place,locality,neighborhood');
     url.searchParams.set('limit', String(limit));
-    url.searchParams.set('access_token', token);
+    url.searchParams.set('access_token', normalizeMapboxToken(token));
     return url.toString();
 }
 

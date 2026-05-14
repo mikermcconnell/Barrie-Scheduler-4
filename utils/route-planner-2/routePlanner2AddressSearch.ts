@@ -39,13 +39,18 @@ export interface RoutePlanner2AddressSearchOptions {
     onDiagnostic?: (diagnostic: RoutePlanner2AddressSearchDiagnostic) => void;
 }
 
+function normalizeMapboxToken(token: string | null | undefined): string | null {
+    const normalized = token?.trim() ?? '';
+    return normalized.length > 0 ? normalized : null;
+}
+
 function getMapboxToken(): string | null {
-    return import.meta.env?.VITE_MAPBOX_TOKEN ?? null;
+    return normalizeMapboxToken(import.meta.env?.VITE_MAPBOX_TOKEN);
 }
 
 function shouldPreferServerProxy(options: RoutePlanner2AddressSearchOptions): boolean {
     if (typeof options.preferServerProxy === 'boolean') return options.preferServerProxy;
-    if (options.token) return false;
+    if (normalizeMapboxToken(options.token)) return false;
     return import.meta.env?.PROD === true;
 }
 
@@ -60,7 +65,7 @@ export function buildRoutePlanner2AddressSearchUrl(
     url.searchParams.set('proximity', `${BARRIE_PROXIMITY.lng},${BARRIE_PROXIMITY.lat}`);
     url.searchParams.set('types', 'address,poi,place,locality,neighborhood');
     url.searchParams.set('limit', String(limit));
-    url.searchParams.set('access_token', token);
+    url.searchParams.set('access_token', normalizeMapboxToken(token) ?? '');
     return url.toString();
 }
 
@@ -171,7 +176,7 @@ export async function searchRoutePlanner2Addresses(
         }
     }
 
-    const token = options.token ?? getMapboxToken();
+    const token = normalizeMapboxToken(options.token) ?? getMapboxToken();
     if (!token) {
         options.onDiagnostic?.({
             query: trimmedQuery,
