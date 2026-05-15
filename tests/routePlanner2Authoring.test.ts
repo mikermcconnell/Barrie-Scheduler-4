@@ -71,7 +71,7 @@ describe('Route Planner 2 authoring', () => {
     project = addRoutePlanner2Stops(project, 'scenario-1', {
       now,
       stops: [
-        { id: 'import-1', name: 'North Address', lat: 44.43, lng: -79.76, notes: 'Imported from address file.' },
+        { id: 'import-1', name: 'North Address', lat: 44.43, lng: -79.76, notes: 'Imported from address file.', address: '10 North Street, Barrie, ON L4M 1A1', riderCount: 3, sourceRows: [2, 5, 9] },
         { id: 'import-2', name: 'East Address', lat: 44.42, lng: -79.7, notes: 'Imported from address file.' },
       ],
     });
@@ -81,6 +81,11 @@ describe('Route Planner 2 authoring', () => {
       '2:East Address:regular:custom',
     ]);
     expect(project.scenarios[0]?.stops[0]?.notes).toContain('Imported from address file');
+    expect(project.scenarios[0]?.stops[0]).toMatchObject({
+      address: '10 North Street, Barrie, ON L4M 1A1',
+      riderCount: 3,
+      sourceRows: [2, 5, 9],
+    });
   });
 
   it('renames, marks roles, moves, and deletes stops while preserving order', () => {

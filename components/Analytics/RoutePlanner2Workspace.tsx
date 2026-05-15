@@ -35,6 +35,7 @@ import {
 } from '../../utils/route-planner-2/routePlanner2ProjectController';
 import { createRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2ProjectFactory';
 import { exportRoutePlanner2OperatorDirectionsPdf } from '../../utils/route-planner-2/routePlanner2OperatorExport';
+import { exportRoutePlanner2MapPdf } from '../../utils/route-planner-2/routePlanner2MapExport';
 import { loadRoutePlanner2GtfsImportPatterns } from '../../utils/route-planner-2/routePlanner2GtfsClient';
 import {
     createRoutePlanner2ScenarioFromGtfsPattern,
@@ -585,6 +586,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const runtimeSourceDetailsRef = useRef<HTMLDivElement | null>(null);
     const [isDrawFocusMode, setIsDrawFocusMode] = useState(false);
     const [isExportingOperatorPdf, setIsExportingOperatorPdf] = useState(false);
+    const [isExportingMapPdf, setIsExportingMapPdf] = useState(false);
     const [isGtfsImportOpen, setIsGtfsImportOpen] = useState(false);
     const [isAddressImportOpen, setIsAddressImportOpen] = useState(false);
     const [gtfsPatterns, setGtfsPatterns] = useState<RoutePlanner2GtfsImportPattern[]>([]);
@@ -1170,6 +1172,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         const importedStops = stops.map((stop, index) => ({
             id: `stop-address-${batchId}-${index + 1}`,
             name: stop.name,
+            address: stop.address,
+            riderCount: stop.occurrenceCount,
+            sourceRows: stop.sourceRows,
             lat: stop.lat,
             lng: stop.lng,
             notes: stop.notes,
@@ -1214,6 +1219,18 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             });
         } finally {
             setIsExportingOperatorPdf(false);
+        }
+    }
+    async function exportMapPdf() {
+        if (!selectedScenario || selectedScenario.stops.length < 2 || isExportingMapPdf) return;
+        setIsExportingMapPdf(true);
+        try {
+            await exportRoutePlanner2MapPdf(selectedScenario, {
+                projectName: project.name,
+                routeLabel: selectedScenario.name,
+            });
+        } finally {
+            setIsExportingMapPdf(false);
         }
     }
     const mapMetricItems = [
@@ -1474,6 +1491,15 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         title="Operator PDF"
                                     >
                                         <FileDown size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{isExportingOperatorPdf ? 'Preparing PDF' : 'Operator PDF'}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={exportMapPdf}
+                                        disabled={!selectedScenario || selectedScenario.stops.length < 2 || isExportingMapPdf}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-2.5 py-2 text-xs font-bold text-blue-800 disabled:opacity-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title="Map PDF"
+                                    >
+                                        <MapPinned size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{isExportingMapPdf ? 'Preparing map' : 'Map PDF'}</span>
                                     </button>
                                     <button
                                         type="button"
