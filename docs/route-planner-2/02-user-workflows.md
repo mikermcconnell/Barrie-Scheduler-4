@@ -78,6 +78,7 @@ Preferred route should be project-level state. Do not create competing “prefer
 The planner should be able to:
 - add route points to form an alignment
 - add stops
+- add stops from cached popular Barrie places such as Sadlon Arena, Peggy Hill Team Community Centre, and Barrie Community Sports Complex when Mapbox does not return POI-name suggestions
 - reorder stops
 - remove stops
 - mark stop roles: regular stop, timed stop, start terminal, end terminal, bus turnaround
@@ -101,6 +102,11 @@ The planner enters simple assumptions:
 - day type or planning period if needed
 
 The output updates from these assumptions.
+
+The stop order cards should show the first-trip arrival time at each stop using
+the current segment runtimes and intermediate dwell allowance. Imported address
+stops should also show kids picked up at that stop and the running total through
+the route.
 
 ## Comparison Workflow
 

@@ -55,6 +55,22 @@ describe('routePlanner2AddressSearch', () => {
     ]);
   });
 
+  it('returns cached Barrie place suggestions when Mapbox does not find POI names', async () => {
+    const fetcher = vi.fn();
+
+    const results = await searchRoutePlanner2Addresses('Sadlon Arena', {
+      fetcher,
+      token: null,
+    });
+
+    expect(results[0]).toMatchObject({
+      id: 'popular-place-sadlon-arena',
+      name: 'Sadlon Arena',
+      label: 'Sadlon Arena · 555 Bayview Drive, Barrie',
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('trims accidental whitespace from Mapbox tokens before direct search', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const requestUrl = String(input);

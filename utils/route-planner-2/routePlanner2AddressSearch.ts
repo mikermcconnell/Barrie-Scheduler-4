@@ -1,3 +1,5 @@
+import { searchRoutePlanner2PopularBarriePlaces } from './routePlanner2PopularPlaces';
+
 const BARRIE_PROXIMITY = { lng: -79.69, lat: 44.38 };
 const MIN_ADDRESS_QUERY_LENGTH = 3;
 
@@ -52,6 +54,10 @@ function shouldPreferServerProxy(options: RoutePlanner2AddressSearchOptions): bo
     if (typeof options.preferServerProxy === 'boolean') return options.preferServerProxy;
     if (normalizeMapboxToken(options.token)) return false;
     return import.meta.env?.PROD === true;
+}
+
+function looksLikeCivicAddress(query: string): boolean {
+    return /^\s*\d/.test(query);
 }
 
 export function buildRoutePlanner2AddressSearchUrl(
@@ -157,6 +163,10 @@ export async function searchRoutePlanner2Addresses(
 ): Promise<RoutePlanner2AddressSuggestion[]> {
     const trimmedQuery = query.trim();
     if (trimmedQuery.length < MIN_ADDRESS_QUERY_LENGTH) return [];
+    if (!looksLikeCivicAddress(trimmedQuery)) {
+        const cachedPlaces = searchRoutePlanner2PopularBarriePlaces(trimmedQuery, options.limit ?? 5);
+        if (cachedPlaces.length > 0) return cachedPlaces;
+    }
 
     const fetcher = options.fetcher ?? fetch;
     if (shouldPreferServerProxy(options)) {

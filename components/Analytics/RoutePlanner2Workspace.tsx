@@ -55,6 +55,7 @@ import {
     deriveRoutePlanner2EvidenceRuntimeEstimates,
     type RoutePlanner2RuntimeEvidenceDiagnostic,
 } from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
+import { buildRoutePlanner2StopCardDetails, type RoutePlanner2StopCardDetail } from '../../utils/route-planner-2/routePlanner2StopTimes';
 import { RoutePlanner2MapCanvas } from './route-planner-2/RoutePlanner2MapCanvas';
 import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
 import {
@@ -647,6 +648,14 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const selectedScenarioStops = useMemo(
         () => selectedScenario ? [...selectedScenario.stops].sort((a, b) => a.sequence - b.sequence) : [],
         [selectedScenario],
+    );
+    const stopCardDetailsByStopId = useMemo(
+        () => {
+            if (!selectedScenario) return new Map<string, RoutePlanner2StopCardDetail>();
+            return new Map(buildRoutePlanner2StopCardDetails(selectedScenario, selectedFeasibility)
+                .map((detail) => [detail.stopId, detail]));
+        },
+        [selectedFeasibility, selectedScenario],
     );
     const stopOrderItems = useMemo(() => buildStopOrderItems(selectedScenario), [selectedScenario]);
     const selectedScenarioFirstStopSequence = selectedScenarioStops[0]?.sequence ?? 1;
@@ -1744,10 +1753,13 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                         onDragOver={(event) => event.preventDefault()}
                                                         onDrop={() => moveDraggedStopOrderItem(item.key)}
                                                         onDragEnd={() => setDraggedStopOrderKey(null)}
-                                                        onMouseEnter={() => setHoveredMapItem({ type: 'stop', id: item.stop.id })}
-                                                        onMouseLeave={() => setHoveredMapItem(null)}
-                                                        className={`cursor-grab rounded-2xl border p-2 active:cursor-grabbing ${selectedStopId === item.stop.id ? 'border-cyan-200 bg-cyan-50' : 'border-slate-200 bg-slate-50'}`}
+                                                onMouseEnter={() => setHoveredMapItem({ type: 'stop', id: item.stop.id })}
+                                                onMouseLeave={() => setHoveredMapItem(null)}
+                                                className={`cursor-grab rounded-2xl border p-2 active:cursor-grabbing ${selectedStopId === item.stop.id ? 'border-cyan-200 bg-cyan-50' : 'border-slate-200 bg-slate-50'}`}
                                                     >
+                                                        {(() => {
+                                                            const stopDetail = stopCardDetailsByStopId.get(item.stop.id);
+                                                            return (
                                                         <div className="flex items-start gap-2">
                                                             <button
                                                                 type="button"
@@ -1761,6 +1773,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                                 <span className="mt-1 block truncate pl-8 text-xs font-semibold text-slate-500">
                                                                     {stopRoleLabel(item.stop.role)}{item.stop.stopCode ? ` · Stop ${item.stop.stopCode}` : ''}
                                                                 </span>
+                                                                <span className="mt-2 grid grid-cols-3 gap-1 pl-8">
+                                                                    <span className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
+                                                                        Kids {stopDetail?.kidsAtStop ?? 0}
+                                                                    </span>
+                                                                    <span className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
+                                                                        Running {stopDetail?.runningKidsTotal ?? 0}
+                                                                    </span>
+                                                                    <span className="rounded-xl border border-cyan-100 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-700">
+                                                                        Arrives {stopDetail?.arrivalLabel ?? 'Not set'}
+                                                                    </span>
+                                                                </span>
                                                             </button>
                                                             <button
                                                                 type="button"
@@ -1772,6 +1795,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                                 <Trash2 size={14} />
                                                             </button>
                                                         </div>
+                                                            );
+                                                        })()}
                                                         <div className="mt-2 grid grid-cols-2 gap-2">
                                                             <button type="button" onClick={() => moveStopOrderItem(item, 'up')} className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-700">Move up</button>
                                                             <button type="button" onClick={() => moveStopOrderItem(item, 'down')} className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-700">Move down</button>
