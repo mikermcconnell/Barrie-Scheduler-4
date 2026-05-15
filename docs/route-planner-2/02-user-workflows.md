@@ -145,3 +145,10 @@ include:
 When Mapbox turn-by-turn steps are available, use them. If not, export a clearly
 labelled planning-alignment fallback rather than pretending exact turns are
 known.
+
+## Map PDF Export Workflow
+
+When a route has at least two stops, the planner can export a map-first PDF for
+review. The export should show the route line, numbered stops, start/end
+markers, address callouts with imported kids counts, and route road-name labels
+derived from Mapbox direction steps when available.

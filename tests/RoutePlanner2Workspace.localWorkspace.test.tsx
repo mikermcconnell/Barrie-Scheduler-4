@@ -81,10 +81,14 @@ vi.mock('../utils/gtfs/corridorSpeed', async (importOriginal) => {
 });
 
 vi.mock('../utils/route-planner-2/routePlanner2ProjectPersistence', () => projectPersistenceMocks);
+vi.mock('../utils/route-planner-2/routePlanner2MapExport', () => ({
+  exportRoutePlanner2MapPdf: vi.fn(async () => undefined),
+}));
 
 import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Workspace';
 import { buildCorridorSpeedIndex, buildCorridorSpeedMapIndex } from '../utils/gtfs/corridorSpeed';
 import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop } from '../utils/route-planner-2/routePlanner2Authoring';
+import { exportRoutePlanner2MapPdf } from '../utils/route-planner-2/routePlanner2MapExport';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 
 function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
@@ -164,6 +168,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Route Planner');
     expect(view.textContent).toContain('Local draft');
     expect(view.textContent).toContain('Operator PDF');
+    expect(view.textContent).toContain('Map PDF');
     expect(view.textContent).toContain('Import addresses');
     expect(view.textContent).toContain('Move the mouse over the map and press 1 to place Stop 1');
     expect(view.textContent).toContain('Route concepts');
@@ -172,6 +177,36 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).not.toContain('Shuttle Template');
     expect(view.textContent).not.toContain('Project foundation');
     expect(view.textContent).not.toContain('Firebase persistence');
+  });
+
+  it('keeps Map PDF disabled until the selected route has at least two stops', () => {
+    const view = renderWorkspace();
+    const mapPdfButton = findButton(view, 'Map PDF');
+
+    expect(mapPdfButton?.disabled).toBe(true);
+    expect(exportRoutePlanner2MapPdf).not.toHaveBeenCalled();
+  });
+
+  it('enables Map PDF export once the selected route has at least two stops', async () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+      addMapStop(view);
+    });
+
+    const mapPdfButton = findButton(view, 'Map PDF');
+    expect(mapPdfButton?.disabled).toBe(false);
+
+    flushSync(() => {
+      click(mapPdfButton);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(exportRoutePlanner2MapPdf).toHaveBeenCalledWith(
+      expect.objectContaining({ stops: expect.arrayContaining([expect.objectContaining({ name: 'Stop 1' })]) }),
+      expect.objectContaining({ projectName: expect.any(String), routeLabel: expect.any(String) }),
+    );
   });
 
   it('saves the current route plan to the team workspace', async () => {

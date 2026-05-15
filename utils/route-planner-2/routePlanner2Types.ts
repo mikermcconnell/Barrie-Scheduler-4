@@ -82,6 +82,9 @@ export interface RoutePlanner2RoutePoint {
 export interface RoutePlanner2Stop {
     id: string;
     name: string;
+    address?: string;
+    riderCount?: number;
+    sourceRows?: number[];
     lat: number;
     lng: number;
     sequence: number;

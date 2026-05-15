@@ -247,6 +247,9 @@ export function addRoutePlanner2Stop(
     options: {
         id?: string;
         name?: string;
+        address?: string;
+        riderCount?: number;
+        sourceRows?: number[];
         lat: number;
         lng: number;
         role?: RoutePlanner2StopRole;
@@ -262,6 +265,9 @@ export function addRoutePlanner2Stop(
         const stop: RoutePlanner2Stop = {
             id: options.id ?? createId('stop'),
             name: options.name ?? `Stop ${scenario.stops.length + 1}`,
+            address: options.address,
+            riderCount: options.riderCount,
+            sourceRows: options.sourceRows,
             lat: options.lat,
             lng: options.lng,
             sequence: scenario.stops.length + 1,
@@ -303,6 +309,9 @@ export function addRoutePlanner2Stops(
         stops: Array<{
             id?: string;
             name?: string;
+            address?: string;
+            riderCount?: number;
+            sourceRows?: number[];
             lat: number;
             lng: number;
             notes?: string;
@@ -322,6 +331,9 @@ export function addRoutePlanner2Stops(
         const importedStops = validStops.map((stop, index): RoutePlanner2Stop => ({
             id: stop.id ?? createId('stop'),
             name: stop.name ?? `Stop ${existingStops.length + index + 1}`,
+            address: stop.address,
+            riderCount: stop.riderCount,
+            sourceRows: stop.sourceRows,
             lat: stop.lat,
             lng: stop.lng,
             sequence: existingStops.length + index + 1,

@@ -113,6 +113,9 @@ When `afterStopId` and `beforeStopId` are present, the route point is a route-li
 interface RoutePlanner2Stop {
   id: string;
   name: string;
+  address?: string;
+  riderCount?: number;
+  sourceRows?: number[];
   lat: number;
   lng: number;
   sequence: number;
@@ -122,6 +125,11 @@ interface RoutePlanner2Stop {
   notes?: string;
 }
 ```
+
+Imported address stops may store the normalized address, the number of merged
+source rows as `riderCount`, and the original workbook row numbers as
+`sourceRows`. These fields support map labels and exports; stop order and
+runtime calculations still use the normal stop sequence and coordinates.
 
 ## Service Assumptions
 
