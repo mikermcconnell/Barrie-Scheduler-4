@@ -649,13 +649,21 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => selectedScenario ? [...selectedScenario.stops].sort((a, b) => a.sequence - b.sequence) : [],
         [selectedScenario],
     );
-    const stopCardDetailsByStopId = useMemo(
-        () => {
-            if (!selectedScenario) return new Map<string, RoutePlanner2StopCardDetail>();
-            return new Map(buildRoutePlanner2StopCardDetails(selectedScenario, selectedFeasibility)
-                .map((detail) => [detail.stopId, detail]));
-        },
+    const stopCardDetails = useMemo(
+        () => selectedScenario ? buildRoutePlanner2StopCardDetails(selectedScenario, selectedFeasibility) : [],
         [selectedFeasibility, selectedScenario],
+    );
+    const stopCardDetailsByStopId = useMemo(
+        () => new Map<string, RoutePlanner2StopCardDetail>(stopCardDetails.map((detail) => [detail.stopId, detail])),
+        [stopCardDetails],
+    );
+    const stopMapLabelDetails = useMemo(
+        () => stopCardDetails.map((detail) => ({
+            stopId: detail.stopId,
+            kidsAtStop: detail.kidsAtStop,
+            arrivalLabel: detail.arrivalLabel,
+        })),
+        [stopCardDetails],
     );
     const stopOrderItems = useMemo(() => buildStopOrderItems(selectedScenario), [selectedScenario]);
     const selectedScenarioFirstStopSequence = selectedScenarioStops[0]?.sequence ?? 1;
@@ -1316,6 +1324,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         onClearSegmentRuntimeOverride={clearSegmentRuntimeOverride}
                         metricItems={mapMetricItems}
                         segmentRuntimes={selectedFeasibility?.segmentSummaries ?? []}
+                        stopLabelDetails={stopMapLabelDetails}
                         showRuntimeSourceOverlay={showRuntimeSourceOverlay}
                         overlayInsets={mapOverlayInsets}
                     />

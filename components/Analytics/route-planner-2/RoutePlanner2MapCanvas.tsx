@@ -59,6 +59,7 @@ interface RoutePlanner2MapCanvasProps {
     onClearSegmentRuntimeOverride?: (segmentId: string) => void;
     metricItems?: Array<{ label: string; value: string; detail?: string; description?: string; onClick?: () => void }>;
     segmentRuntimes?: RoutePlanner2SegmentRuntime[];
+    stopLabelDetails?: RoutePlanner2MapStopLabelDetail[];
     showRuntimeSourceOverlay?: boolean;
     overlayInsets?: {
         left: string;
@@ -212,6 +213,12 @@ function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean, isHigh
     return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''}`;
 }
 
+export interface RoutePlanner2MapStopLabelDetail {
+    stopId: string;
+    kidsAtStop: number;
+    arrivalLabel: string;
+}
+
 type RuntimeSourceOverlayItem = {
     id: string;
     source: RoutePlanner2SegmentRuntime['source'];
@@ -336,6 +343,14 @@ function buildRuntimeSourceGeoJson(segments: Array<RuntimeSourceOverlayItem & { 
             },
         })),
     };
+}
+
+export function formatRoutePlanner2MapStopLabel(detail: RoutePlanner2MapStopLabelDetail | undefined): string | null {
+    if (!detail) return null;
+    const kidsLabel = `${detail.kidsAtStop} ${detail.kidsAtStop === 1 ? 'kid' : 'kids'}`;
+    return detail.arrivalLabel === 'Not set'
+        ? kidsLabel
+        : `${detail.arrivalLabel} · ${kidsLabel}`;
 }
 
 function buildHighlightedSegmentGeoJson(segment: RoutePlanner2SegmentGeometry | null) {
@@ -638,6 +653,7 @@ export function RoutePlanner2MapCanvas({
     onClearSegmentRuntimeOverride,
     metricItems = [],
     segmentRuntimes = [],
+    stopLabelDetails = [],
     showRuntimeSourceOverlay = false,
     overlayInsets = { left: '8rem', right: '8rem' },
 }: RoutePlanner2MapCanvasProps) {
@@ -655,6 +671,10 @@ export function RoutePlanner2MapCanvas({
     const waypoints = useMemo(() => scenario ? getScenarioWaypoints(scenario) : [], [scenario]);
     const roadBuildKey = useMemo(() => getScenarioRoadBuildKey(scenario), [scenario]);
     const lineAnchorHandles = useMemo(() => scenario ? getRouteLineAnchorHandles(scenario) : [], [scenario]);
+    const stopLabelDetailsByStopId = useMemo(
+        () => new Map(stopLabelDetails.map((detail) => [detail.stopId, detail])),
+        [stopLabelDetails],
+    );
     const lineGeoJson = useMemo(() => buildLineGeoJson(snappedCoordinates.length ? snappedCoordinates : waypoints), [snappedCoordinates, waypoints]);
     const directionArrowGeoJson = useMemo(
         () => buildRoutePlanner2DirectionArrowGeoJson(scenario, snappedSegmentGeometries),
@@ -1155,6 +1175,28 @@ export function RoutePlanner2MapCanvas({
                             </div>
                         </Marker>
                     )}
+                    {mapLoaded && scenario?.stops.map((stop) => {
+                        const coordinate = getPreviewCoordinate('stop', stop.id, stop);
+                        const label = formatRoutePlanner2MapStopLabel(stopLabelDetailsByStopId.get(stop.id));
+                        if (!label) return null;
+
+                        return (
+                            <Marker
+                                key={`stop-label-${stop.id}`}
+                                longitude={coordinate.lng}
+                                latitude={coordinate.lat}
+                                anchor="bottom"
+                                style={{ pointerEvents: 'none' }}
+                            >
+                                <div
+                                    data-testid={`rp2-map-stop-label-${stop.id}`}
+                                    className="pointer-events-none mb-7 whitespace-nowrap rounded-full border border-slate-200 bg-white/80 px-2 py-0.5 text-[10px] font-bold leading-4 text-slate-600 shadow-sm backdrop-blur-sm"
+                                >
+                                    {label}
+                                </div>
+                            </Marker>
+                        );
+                    })}
                     {mapLoaded && scenario?.stops.map((stop) => {
                         const coordinate = getPreviewCoordinate('stop', stop.id, stop);
                         const isDragging = activeDragPreview?.type === 'stop' && activeDragPreview.id === stop.id;
