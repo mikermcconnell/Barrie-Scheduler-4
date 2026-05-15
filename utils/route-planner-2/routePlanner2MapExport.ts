@@ -1,4 +1,5 @@
 import { buildRoutePlanner2StopSegmentPaths, buildRoutePlanner2StopVisitSequence } from './routePlanner2Segments';
+import { getRoutePlanner2KidsAtStop } from './routePlanner2StopTimes';
 import type { RoutePlanner2Scenario, RoutePlanner2Stop } from './routePlanner2Types';
 
 type JsPdfInstance = {
@@ -107,7 +108,7 @@ function formatKids(count: number | undefined): string | null {
 }
 
 function formatStopCalloutLabel(stop: RoutePlanner2Stop): string {
-    const kids = formatKids(stop.riderCount);
+    const kids = formatKids(getRoutePlanner2KidsAtStop(stop));
     return kids ? `${getPrimaryAddressLine(stop)} - ${kids}` : getPrimaryAddressLine(stop);
 }
 

@@ -661,7 +661,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => stopCardDetails.map((detail) => ({
             stopId: detail.stopId,
             kidsAtStop: detail.kidsAtStop,
-            arrivalLabel: detail.arrivalLabel,
+            travelTimeLabel: detail.travelTimeLabel,
         })),
         [stopCardDetails],
     );
@@ -1790,7 +1790,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                                         Running {stopDetail?.runningKidsTotal ?? 0}
                                                                     </span>
                                                                     <span className="rounded-xl border border-cyan-100 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-700">
-                                                                        Arrives {stopDetail?.arrivalLabel ?? 'Not set'}
+                                                                        Travel {stopDetail?.travelTimeLabel ?? 'Not estimated'}
                                                                     </span>
                                                                 </span>
                                                             </button>

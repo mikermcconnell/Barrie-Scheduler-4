@@ -310,17 +310,21 @@ function pushExtractedAddress(
     extracted: ExtractedAddress,
     sourceRow: number,
     sourceCell: string,
+    countOccurrence = true,
 ): void {
     const normalizedKey = normalizeAddressKey(extracted.streetLine, extracted.city, extracted.province, extracted.postalCode);
     const address = `${extracted.streetLine}, ${extracted.city}, ${extracted.province} ${extracted.postalCode}`;
     const current = byKey.get(normalizedKey);
 
     if (current) {
+        const isNewSourceCell = !current.sourceCells.includes(sourceCell);
+        if (countOccurrence && isNewSourceCell) {
+            current.occurrenceCount += 1;
+        }
         if (!current.sourceRows.includes(sourceRow)) {
             current.sourceRows.push(sourceRow);
-            current.occurrenceCount = current.sourceRows.length;
         }
-        if (!current.sourceCells.includes(sourceCell)) current.sourceCells.push(sourceCell);
+        if (isNewSourceCell) current.sourceCells.push(sourceCell);
         return;
     }
 
@@ -368,7 +372,7 @@ export function parseRoutePlanner2AddressWorkbook(buffer: ArrayBuffer, _fileName
             const rowText = rowTextParts.join('\n');
             const extracted = extractAddressFromText(rowText);
             if (extracted) {
-                pushExtractedAddress(byKey, extracted, rowIndex + 1, `${sheetName}!row-${rowIndex + 1}`);
+                pushExtractedAddress(byKey, extracted, rowIndex + 1, `${sheetName}!row-${rowIndex + 1}`, false);
                 rowHadExtraction = true;
             }
 
@@ -376,7 +380,7 @@ export function parseRoutePlanner2AddressWorkbook(buffer: ArrayBuffer, _fileName
                 const combinedText = [...previousRowTexts, rowText].join('\n');
                 const combinedExtracted = extractAddressFromText(combinedText);
                 if (combinedExtracted) {
-                    pushExtractedAddress(byKey, combinedExtracted, rowIndex + 1, `${sheetName}!rows-${Math.max(1, rowIndex + 1 - previousRowTexts.length)}-${rowIndex + 1}`);
+                    pushExtractedAddress(byKey, combinedExtracted, rowIndex + 1, `${sheetName}!rows-${Math.max(1, rowIndex + 1 - previousRowTexts.length)}-${rowIndex + 1}`, false);
                     rowHadExtraction = true;
                 }
             }
@@ -399,7 +403,7 @@ export function parseRoutePlanner2AddressWorkbook(buffer: ArrayBuffer, _fileName
 
     return {
         addresses,
-        duplicateCount: addresses.reduce((sum, address) => sum + Math.max(0, address.sourceRows.length - 1), 0),
+        duplicateCount: addresses.reduce((sum, address) => sum + Math.max(0, address.occurrenceCount - 1), 0),
         warningCount,
     };
 }

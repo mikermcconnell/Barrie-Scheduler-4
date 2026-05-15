@@ -5,6 +5,8 @@ export interface RoutePlanner2StopCardDetail {
     stopId: string;
     kidsAtStop: number;
     runningKidsTotal: number;
+    travelMinutes: number | null;
+    travelTimeLabel: string;
     arrivalMinutes: number | null;
     arrivalLabel: string;
 }
@@ -30,9 +32,25 @@ function formatClockTime(minutesFromServiceStart: number | null): string {
     return `${hours12}:${String(minutes).padStart(2, '0')} ${suffix}`;
 }
 
-function getKidsAtStop(stop: RoutePlanner2Stop): number {
-    const count = stop.riderCount ?? 0;
-    return Number.isFinite(count) && count > 0 ? Math.round(count) : 0;
+function toPositiveWholeNumber(value: unknown): number | null {
+    const count = typeof value === 'string' ? Number(value) : value;
+    return typeof count === 'number' && Number.isFinite(count) && count > 0 ? Math.round(count) : null;
+}
+
+export function getRoutePlanner2KidsAtStop(stop: RoutePlanner2Stop): number {
+    const riderCount = toPositiveWholeNumber(stop.riderCount);
+    if (riderCount != null) return riderCount;
+
+    const sourceRowCount = Array.isArray(stop.sourceRows)
+        ? toPositiveWholeNumber(stop.sourceRows.length)
+        : null;
+    return sourceRowCount ?? 0;
+}
+
+function formatTravelTime(minutesFromRouteStart: number | null): string {
+    if (minutesFromRouteStart == null) return 'Not estimated';
+    const minutes = Math.max(0, Math.round(minutesFromRouteStart));
+    return `${minutes} min`;
 }
 
 function isIntermediateDwellStop(stop: RoutePlanner2Stop): boolean {
@@ -83,22 +101,55 @@ export function buildRoutePlanner2StopArrivalMinutes(
     return arrivalMinutesByStopId;
 }
 
+export function buildRoutePlanner2StopTravelMinutes(
+    scenario: RoutePlanner2Scenario,
+    feasibility: RoutePlanner2FeasibilitySummary | null | undefined,
+): Record<string, number | null> {
+    const travelMinutesByStopId: Record<string, number | null> = {};
+    const stopVisits = buildRoutePlanner2StopVisitSequence(scenario);
+    const segmentPairs = buildRoutePlanner2StopSegmentPairs(scenario);
+    let currentMinutes = 0;
+
+    if (stopVisits[0]) {
+        travelMinutesByStopId[stopVisits[0].id] = currentMinutes;
+    }
+
+    segmentPairs.forEach(({ fromStop, toStop }) => {
+        currentMinutes += getSegmentRuntime(feasibility, fromStop.id, toStop.id);
+        if (travelMinutesByStopId[toStop.id] == null) {
+            travelMinutesByStopId[toStop.id] = currentMinutes;
+        }
+    });
+
+    scenario.stops.forEach((stop) => {
+        if (!(stop.id in travelMinutesByStopId)) {
+            travelMinutesByStopId[stop.id] = null;
+        }
+    });
+
+    return travelMinutesByStopId;
+}
+
 export function buildRoutePlanner2StopCardDetails(
     scenario: RoutePlanner2Scenario,
     feasibility: RoutePlanner2FeasibilitySummary | null | undefined,
 ): RoutePlanner2StopCardDetail[] {
     const arrivalMinutesByStopId = buildRoutePlanner2StopArrivalMinutes(scenario, feasibility);
+    const travelMinutesByStopId = buildRoutePlanner2StopTravelMinutes(scenario, feasibility);
     let runningKidsTotal = 0;
 
     return sortRoutePlanner2Stops(scenario.stops).map((stop) => {
-        const kidsAtStop = getKidsAtStop(stop);
+        const kidsAtStop = getRoutePlanner2KidsAtStop(stop);
         runningKidsTotal += kidsAtStop;
         const arrivalMinutes = arrivalMinutesByStopId[stop.id] ?? null;
+        const travelMinutes = travelMinutesByStopId[stop.id] ?? null;
 
         return {
             stopId: stop.id,
             kidsAtStop,
             runningKidsTotal,
+            travelMinutes,
+            travelTimeLabel: formatTravelTime(travelMinutes),
             arrivalMinutes,
             arrivalLabel: formatClockTime(arrivalMinutes),
         };

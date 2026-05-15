@@ -49,6 +49,20 @@ describe('routePlanner2AddressImport', () => {
     });
   });
 
+  it('counts every address occurrence even when duplicates are on the same spreadsheet row', () => {
+    const result = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['Kid 1\n3 Gunn Street\nBarrie, ON L4M 2H2', 'Kid 2\n3 Gunn Street\nBarrie, ON L4M 2H2'],
+    ]));
+
+    expect(result.addresses).toHaveLength(1);
+    expect(result.duplicateCount).toBe(1);
+    expect(result.addresses[0]).toMatchObject({
+      streetLine: '3 Gunn Street',
+      occurrenceCount: 2,
+      sourceRows: [1],
+    });
+  });
+
   it('parses manually corrected one-line addresses for review fixes', () => {
     const parsed = parseRoutePlanner2AddressText('37 Johnson St, Barrie, ON L4M 5C3', {
       id: 'review-1',

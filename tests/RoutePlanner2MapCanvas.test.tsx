@@ -3,19 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { formatRoutePlanner2MapStopLabel } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
 
 describe('RoutePlanner2MapCanvas stop labels', () => {
-  it('formats subtle map labels with arrival and kids count', () => {
+  it('formats subtle map labels with travel time and kids count', () => {
     expect(formatRoutePlanner2MapStopLabel({
       stopId: 'stop-1',
       kidsAtStop: 2,
-      arrivalLabel: '8:15 AM',
-    })).toBe('8:15 AM · 2 kids');
+      travelTimeLabel: '6 min',
+    })).toBe('6 min · 2 kids');
   });
 
-  it('falls back to kids count when arrival time is not set', () => {
+  it('falls back to kids count when travel time is not estimated', () => {
     expect(formatRoutePlanner2MapStopLabel({
       stopId: 'stop-1',
       kidsAtStop: 1,
-      arrivalLabel: 'Not set',
+      travelTimeLabel: 'Not estimated',
     })).toBe('1 kid');
   });
 });

@@ -216,7 +216,7 @@ function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean, isHigh
 export interface RoutePlanner2MapStopLabelDetail {
     stopId: string;
     kidsAtStop: number;
-    arrivalLabel: string;
+    travelTimeLabel: string;
 }
 
 type RuntimeSourceOverlayItem = {
@@ -348,9 +348,9 @@ function buildRuntimeSourceGeoJson(segments: Array<RuntimeSourceOverlayItem & { 
 export function formatRoutePlanner2MapStopLabel(detail: RoutePlanner2MapStopLabelDetail | undefined): string | null {
     if (!detail) return null;
     const kidsLabel = `${detail.kidsAtStop} ${detail.kidsAtStop === 1 ? 'kid' : 'kids'}`;
-    return detail.arrivalLabel === 'Not set'
+    return detail.travelTimeLabel === 'Not estimated'
         ? kidsLabel
-        : `${detail.arrivalLabel} · ${kidsLabel}`;
+        : `${detail.travelTimeLabel} · ${kidsLabel}`;
 }
 
 function buildHighlightedSegmentGeoJson(segment: RoutePlanner2SegmentGeometry | null) {

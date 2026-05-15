@@ -728,7 +728,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(stopNameInput?.value).toBe('Stop 1');
   });
 
-  it('shows kids, running total, and arrival time on stop cards', () => {
+  it('shows kids, running total, and travel time on stop cards', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
@@ -739,7 +739,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
     expect(stopCard?.textContent).toContain('Kids 0');
     expect(stopCard?.textContent).toContain('Running 0');
-    expect(stopCard?.textContent).toContain('Arrives 6:00 AM');
+    expect(stopCard?.textContent).toContain('Travel 0 min');
   });
 
   it('supports undo and redo for route planner edits', () => {
