@@ -9,7 +9,7 @@ const getMasterScheduleMock = vi.fn();
 vi.mock('../components/ScheduleEditor', () => ({
     ScheduleEditor: (props: any) => {
         scheduleEditorSpy(props);
-        return <div data-testid="schedule-editor-proxy">schedule editor</div>;
+        return <div data-testid="schedule-editor-proxy">schedule editor{props.reviewToolsSlot}</div>;
     },
 }));
 
@@ -117,6 +117,8 @@ describe('Step4Schedule', () => {
         });
 
         expect(container.textContent).toContain('Compare to master');
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].compactStep4).toBe(true);
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].reviewToolsSlot).toBeTruthy();
         expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toBeUndefined();
 
         const loadButton = Array.from(container.querySelectorAll('button')).find(button => (
@@ -232,6 +234,124 @@ describe('Step4Schedule', () => {
 
         expect(container.textContent).toContain('No published master found');
         expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toBeUndefined();
+    });
+
+    it('lets the planner set a Step 4 target headway from the review tools modal', async () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        const currentTable = makeTable('10 (Weekday) (North)', [
+            makeTrip('draft-a', 'North', 365),
+            makeTrip('draft-b', 'North', 395, { blockId: '10-2' }),
+        ]);
+
+        flushSync(() => {
+            root?.render(
+                <Step4Schedule
+                    initialSchedules={[currentTable]}
+                    originalSchedules={[currentTable]}
+                    editorSessionKey={1}
+                    bands={[]}
+                    analysis={[]}
+                    segmentNames={[]}
+                    onUpdateSchedules={vi.fn()}
+                    projectName="Test Project"
+                    teamId="team-1"
+                    routeIdentity="10-Weekday"
+                    routeLabel="Route 10 · Weekday"
+                    approvedRuntimeContract={null}
+                    approvedRuntimeModel={null}
+                />
+            );
+        });
+
+        expect(container.textContent).toContain('Set target');
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].targetHeadway).toBeUndefined();
+
+        const setTargetButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.trim() === 'Set target'
+        )) as HTMLButtonElement | undefined;
+        expect(setTargetButton).toBeTruthy();
+
+        flushSync(() => {
+            setTargetButton?.click();
+        });
+
+        expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Set target headway');
+
+        const useTargetButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.trim() === 'Use target'
+        )) as HTMLButtonElement | undefined;
+        expect(useTargetButton).toBeTruthy();
+
+        flushSync(() => {
+            useTargetButton?.click();
+        });
+        await flushAsyncUpdates();
+
+        expect(container.querySelector('[role="dialog"]')).toBeNull();
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].targetHeadway).toBe(30);
+        expect(container.textContent).toContain('30 min');
+    });
+
+    it('keeps undo available when edited schedules sync back from the parent', async () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        const originalTable = makeTable('10 (Weekday) (North)', [makeTrip('draft-a', 'North', 365)]);
+        const editedTable = makeTable('10 (Weekday) (North)', [makeTrip('draft-a', 'North', 366)]);
+        const onUpdateSchedules = vi.fn();
+
+        const renderStep = (initialSchedules: MasterRouteTable[]) => {
+            root?.render(
+                <Step4Schedule
+                    initialSchedules={initialSchedules}
+                    originalSchedules={[originalTable]}
+                    editorSessionKey={1}
+                    bands={[]}
+                    analysis={[]}
+                    segmentNames={[]}
+                    onUpdateSchedules={onUpdateSchedules}
+                    projectName="Test Project"
+                    teamId="team-1"
+                    routeIdentity="10-Weekday"
+                    routeLabel="Route 10 · Weekday"
+                    approvedRuntimeContract={null}
+                    approvedRuntimeModel={null}
+                />
+            );
+        };
+
+        flushSync(() => {
+            renderStep([originalTable]);
+        });
+
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].canUndo).toBe(false);
+
+        flushSync(() => {
+            scheduleEditorSpy.mock.calls.at(-1)?.[0].onSchedulesChange([editedTable]);
+        });
+        await flushAsyncUpdates();
+
+        expect(onUpdateSchedules).toHaveBeenLastCalledWith([editedTable]);
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].canUndo).toBe(true);
+
+        flushSync(() => {
+            renderStep([editedTable]);
+        });
+        await flushAsyncUpdates();
+
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].canUndo).toBe(true);
+
+        flushSync(() => {
+            scheduleEditorSpy.mock.calls.at(-1)?.[0].undo();
+        });
+        await flushAsyncUpdates();
+
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].schedules).toEqual([originalTable]);
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].canRedo).toBe(true);
     });
 
     it('prefers the approved runtime contract when handing data to the schedule editor', () => {

@@ -56,6 +56,7 @@ describe('RoundTripTableView accessibility polish', () => {
                   recoveryTime: 0,
                   travelTime: 30,
                   cycleTime: 30,
+                  assignedBand: 'A',
                   stops: { 'North Terminal': '7:00 AM' },
                   arrivalTimes: { 'North Terminal': '7:00 AM' },
                   stopMinutes: { 'North Terminal': 420 }
@@ -136,6 +137,7 @@ describe('RoundTripTableView accessibility polish', () => {
                   recoveryTime: 0,
                   travelTime: 30,
                   cycleTime: 30,
+                  assignedBand: 'A',
                   stops: { 'North Terminal': '7:00 AM' },
                   arrivalTimes: { 'North Terminal': '7:00 AM' },
                   stopMinutes: { 'North Terminal': 420 }
@@ -175,6 +177,90 @@ describe('RoundTripTableView accessibility polish', () => {
       container?.querySelectorAll('button[aria-label="Add trip"]') ?? [],
     );
     expect(addTripButtons.length).toBeGreaterThan(0);
+  });
+
+  it('can hide and show the compact review sidebar tools', () => {
+    flushSync(() => {
+      root?.render(
+        <RoundTripTableView
+          schedules={[
+            {
+              routeName: '10 (Weekday) (North)',
+              stops: ['North Terminal'],
+              stopIds: { 'North Terminal': '1001' },
+              trips: [
+                {
+                  id: 'north-trip',
+                  blockId: '10-1',
+                  direction: 'North',
+                  tripNumber: 1,
+                  rowId: 1,
+                  startTime: 420,
+                  endTime: 450,
+                  recoveryTime: 0,
+                  travelTime: 30,
+                  cycleTime: 30,
+                  assignedBand: 'A',
+                  stops: { 'North Terminal': '7:00 AM' },
+                  arrivalTimes: { 'North Terminal': '7:00 AM' },
+                  stopMinutes: { 'North Terminal': 420 }
+                }
+              ]
+            },
+            {
+              routeName: '10 (Weekday) (South)',
+              stops: ['South Terminal'],
+              stopIds: { 'South Terminal': '2001' },
+              trips: [
+                {
+                  id: 'south-trip',
+                  blockId: '10-1',
+                  direction: 'South',
+                  tripNumber: 2,
+                  rowId: 2,
+                  startTime: 455,
+                  endTime: 485,
+                  recoveryTime: 0,
+                  travelTime: 30,
+                  cycleTime: 30,
+                  stops: { 'South Terminal': '7:35 AM' },
+                  arrivalTimes: { 'South Terminal': '7:35 AM' },
+                  stopMinutes: { 'South Terminal': 455 }
+                }
+              ]
+            }
+          ] as any}
+          onCellEdit={vi.fn()}
+          toolbarMode="sidebar"
+          reviewToolsSlot={<div>Master compare tool</div>}
+        />
+      );
+    });
+
+    expect(container?.textContent).toContain('Master compare tool');
+    expect(container?.querySelector('[aria-label="Time band A"]')?.className).toContain('bg-red-100/75');
+
+    const hideButton = Array.from(container?.querySelectorAll('button') ?? []).find(
+      button => button.textContent?.includes('Hide tools')
+    ) as HTMLButtonElement | undefined;
+    expect(hideButton).toBeTruthy();
+
+    flushSync(() => {
+      hideButton?.click();
+    });
+
+    expect(container?.textContent).not.toContain('Master compare tool');
+    expect(container?.textContent).toContain('Show tools');
+
+    const showButton = Array.from(container?.querySelectorAll('button') ?? []).find(
+      button => button.textContent?.includes('Show tools')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      showButton?.click();
+    });
+
+    expect(container?.textContent).toContain('Master compare tool');
   });
 
   it('does not freeze the first schedule column in the combined view', () => {
@@ -311,6 +397,27 @@ describe('RoundTripTableView accessibility polish', () => {
                     eventType: 'departure'
                   }
                 ]
+              },
+              {
+                id: 'route-12b',
+                name: 'Route 12B Departures',
+                type: 'route',
+                routeIdentity: '12B-Weekday',
+                stopCode: '725',
+                defaultEventType: 'departure',
+                icon: 'bus',
+                direction: 'South',
+                createdAt: '2026-03-30T00:00:00.000Z',
+                updatedAt: '2026-03-30T00:00:00.000Z',
+                times: [
+                  {
+                    id: 'route-12b-1',
+                    time: 368,
+                    enabled: true,
+                    daysActive: ['Weekday'],
+                    eventType: 'departure'
+                  }
+                ]
               }
             ],
             updatedAt: '2026-03-30T00:00:00.000Z',
@@ -329,6 +436,16 @@ describe('RoundTripTableView accessibility polish', () => {
                 stopName: 'Barrie South GO',
                 priority: 1,
                 enabled: true
+              },
+              {
+                id: 'conn-route-12b',
+                targetId: 'route-12b',
+                connectionType: 'feed_arriving',
+                bufferMinutes: 5,
+                stopCode: '725',
+                stopName: 'Barrie South GO',
+                priority: 2,
+                enabled: true
               }
             ]
           }}
@@ -345,9 +462,27 @@ describe('RoundTripTableView accessibility polish', () => {
     const departureCell = departureCells.find((cell) =>
       cell.querySelector('button[aria-label*="Barrie South GO Departures"]')
     );
+    const routeConnection = container?.querySelector('button[aria-label*="Route 12B Departures"]');
 
     expect(arrivalCell).toBeUndefined();
     expect(departureCell).not.toBeUndefined();
+    expect(routeConnection).not.toBeNull();
     expect(departureCell?.querySelector('button[aria-label*="Barrie South GO Arrivals"]')).toBeNull();
+
+    const connectionsToggle = Array.from(container?.querySelectorAll('button') ?? []).find(
+      button => button.getAttribute('aria-label') === 'Hide schedule connections'
+    ) as HTMLButtonElement | undefined;
+    expect(connectionsToggle).toBeTruthy();
+    expect(connectionsToggle?.getAttribute('aria-pressed')).toBe('true');
+
+    flushSync(() => {
+      connectionsToggle?.click();
+    });
+
+    expect(container?.querySelector('button[aria-label*="Barrie South GO Departures"]')).toBeNull();
+    expect(container?.querySelector('button[aria-label*="Route 12B Departures"]')).toBeNull();
+    expect(container?.querySelector('button[aria-label^="1 connection"]')).toBeNull();
+    expect(container?.querySelector('button[aria-label^="2 connections"]')).toBeNull();
+    expect(connectionsToggle?.getAttribute('aria-pressed')).toBe('false');
   });
 });

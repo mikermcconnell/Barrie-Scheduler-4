@@ -193,4 +193,177 @@ describe('copyNearestMasterRecoveryToGenerated', () => {
     expect(copied.stops.Downtown).toBe('7:30 AM');
     expect(copied.endTime).toBe(450);
   });
+
+  it('links the next same-block trip to the copied terminal departure', () => {
+    const generatedSouth = table({
+      routeName: '2B Dunlop (Weekday) (South)',
+      stops: ['Downtown Hub', 'Park Place'],
+      trips: [
+        trip({
+          id: 'generated-south',
+          blockId: '2-1',
+          direction: 'South',
+          startTime: 339,
+          endTime: 371,
+          stops: { 'Downtown Hub': '5:39 AM', 'Park Place': '6:11 AM' },
+          arrivalTimes: { 'Downtown Hub': '5:39 AM', 'Park Place': '6:11 AM' },
+          stopMinutes: { 'Downtown Hub': 339, 'Park Place': 371 },
+          travelTime: 32,
+          cycleTime: 32,
+        }),
+      ],
+    });
+
+    const generatedNorth = table({
+      routeName: '2A Park Place (Weekday) (North)',
+      stops: ['Park Place', 'Mapleview at Park Pl', 'Downtown Hub'],
+      trips: [
+        trip({
+          id: 'generated-north',
+          blockId: '2-1',
+          direction: 'North',
+          tripNumber: 2,
+          startTime: 374,
+          endTime: 404,
+          stops: {
+            'Park Place': '6:14 AM',
+            'Mapleview at Park Pl': '6:16 AM',
+            'Downtown Hub': '6:44 AM',
+          },
+          arrivalTimes: {
+            'Park Place': '6:14 AM',
+            'Mapleview at Park Pl': '6:16 AM',
+            'Downtown Hub': '6:44 AM',
+          },
+          stopMinutes: {
+            'Park Place': 374,
+            'Mapleview at Park Pl': 376,
+            'Downtown Hub': 404,
+          },
+          travelTime: 30,
+          cycleTime: 30,
+        }),
+      ],
+    });
+
+    const masterSouth = table({
+      routeName: '2B Dunlop (Weekday) (South)',
+      stops: ['Downtown Hub', 'Park Place'],
+      trips: [
+        trip({
+          id: 'master-south',
+          blockId: '2-1',
+          direction: 'South',
+          startTime: 339,
+          endTime: 380,
+          recoveryTime: 9,
+          recoveryTimes: { 'Park Place': 9 },
+          stops: { 'Downtown Hub': '5:39 AM', 'Park Place': '6:20 AM' },
+          arrivalTimes: { 'Downtown Hub': '5:39 AM', 'Park Place': '6:11 AM' },
+        }),
+      ],
+    });
+
+    const masterNorth = table({
+      routeName: '2A Park Place (Weekday) (North)',
+      stops: ['Park Place', 'Mapleview at Park Pl', 'Downtown Hub'],
+      trips: [
+        trip({
+          id: 'master-north',
+          blockId: '2-1',
+          direction: 'North',
+          tripNumber: 2,
+          startTime: 380,
+          endTime: 410,
+          stops: {
+            'Park Place': '6:20 AM',
+            'Mapleview at Park Pl': '6:22 AM',
+            'Downtown Hub': '6:50 AM',
+          },
+          arrivalTimes: {
+            'Park Place': '6:20 AM',
+            'Mapleview at Park Pl': '6:22 AM',
+            'Downtown Hub': '6:50 AM',
+          },
+        }),
+      ],
+    });
+
+    const result = copyNearestMasterRecoveryToGenerated(
+      [generatedSouth, generatedNorth],
+      [masterSouth, masterNorth]
+    );
+
+    const copiedSouth = result.tables[0].trips[0];
+    const shiftedNorth = result.tables[1].trips[0];
+
+    expect(copiedSouth.stops['Park Place']).toBe('6:20 AM');
+    expect(shiftedNorth.startTime).toBe(380);
+    expect(shiftedNorth.stops['Park Place']).toBe('6:20 AM');
+    expect(shiftedNorth.stops['Mapleview at Park Pl']).toBe('6:22 AM');
+    expect(shiftedNorth.stops['Downtown Hub']).toBe('6:50 AM');
+  });
+
+  it('does not link adjacent same-block trips when stops differ', () => {
+    const generatedSouth = table({
+      routeName: '2B Dunlop (Weekday) (South)',
+      stops: ['Downtown Hub', 'Park Place'],
+      trips: [
+        trip({
+          id: 'generated-south',
+          blockId: '2-1',
+          direction: 'South',
+          startTime: 339,
+          endTime: 371,
+          stops: { 'Downtown Hub': '5:39 AM', 'Park Place': '6:11 AM' },
+          arrivalTimes: { 'Downtown Hub': '5:39 AM', 'Park Place': '6:11 AM' },
+          stopMinutes: { 'Downtown Hub': 339, 'Park Place': 371 },
+        }),
+      ],
+    });
+
+    const generatedNorth = table({
+      routeName: '2A Park Place (Weekday) (North)',
+      stops: ['Mapleview at Park Pl', 'Downtown Hub'],
+      trips: [
+        trip({
+          id: 'generated-north',
+          blockId: '2-1',
+          direction: 'North',
+          tripNumber: 2,
+          startTime: 374,
+          endTime: 404,
+          stops: { 'Mapleview at Park Pl': '6:14 AM', 'Downtown Hub': '6:44 AM' },
+          arrivalTimes: { 'Mapleview at Park Pl': '6:14 AM', 'Downtown Hub': '6:44 AM' },
+          stopMinutes: { 'Mapleview at Park Pl': 374, 'Downtown Hub': 404 },
+        }),
+      ],
+    });
+
+    const masterSouth = table({
+      routeName: '2B Dunlop (Weekday) (South)',
+      stops: ['Downtown Hub', 'Park Place'],
+      trips: [
+        trip({
+          id: 'master-south',
+          blockId: '2-1',
+          direction: 'South',
+          startTime: 339,
+          endTime: 380,
+          recoveryTime: 9,
+          recoveryTimes: { 'Park Place': 9 },
+          stops: { 'Downtown Hub': '5:39 AM', 'Park Place': '6:20 AM' },
+          arrivalTimes: { 'Downtown Hub': '5:39 AM', 'Park Place': '6:11 AM' },
+        }),
+      ],
+    });
+
+    const result = copyNearestMasterRecoveryToGenerated(
+      [generatedSouth, generatedNorth],
+      [masterSouth]
+    );
+
+    expect(result.tables[1].trips[0].startTime).toBe(374);
+    expect(result.tables[1].trips[0].stops['Mapleview at Park Pl']).toBe('6:14 AM');
+  });
 });

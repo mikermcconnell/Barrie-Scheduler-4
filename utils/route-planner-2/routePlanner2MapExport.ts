@@ -13,9 +13,8 @@ type JsPdfInstance = {
     rect: (x: number, y: number, width: number, height: number, style?: string) => void;
     roundedRect: (x: number, y: number, width: number, height: number, rx: number, ry: number, style?: string) => void;
     line: (x1: number, y1: number, x2: number, y2: number) => void;
-    circle: (x: number, y: number, radius: number, style?: string) => void;
     text: (text: string | string[], x: number, y: number, options?: Record<string, unknown>) => void;
-    splitTextToSize: (text: string, maxWidth: number) => string[];
+    addImage: (imageData: string, format: string, x: number, y: number, width: number, height: number) => void;
     save: (fileName: string) => void;
     internal: {
         pageSize: {
@@ -69,9 +68,22 @@ export interface RoutePlanner2MapExportPlan {
     roadLabels: RoutePlanner2MapExportRoadLabel[];
 }
 
+export interface RoutePlanner2MapExportImage {
+    dataUrl: string;
+    width: number;
+    height: number;
+}
+
+export interface RoutePlanner2MapExportSummaryItem {
+    label: string;
+    value: string;
+}
+
 interface ExportOptions {
     projectName: string;
     routeLabel?: string;
+    mapImage?: RoutePlanner2MapExportImage;
+    summaryItems?: RoutePlanner2MapExportSummaryItem[];
     token?: string | null;
     fetchImpl?: typeof fetch;
     now?: Date;
@@ -96,6 +108,104 @@ function sanitizeFilePart(value: string): string {
         .replace(/^-+|-+$/g, '')
         .slice(0, 80)
         || 'route-map';
+}
+
+function truncateText(value: string, maxLength: number): string {
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function drawMiddleText(
+    doc: JsPdfInstance,
+    text: string,
+    x: number,
+    y: number,
+    options: Record<string, unknown> = {},
+): void {
+    doc.text(text, x, y, { ...options, baseline: 'middle' });
+}
+
+function drawSummaryCard(
+    doc: JsPdfInstance,
+    item: RoutePlanner2MapExportSummaryItem,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+): void {
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.35);
+    doc.roundedRect(x, y, width, height, 1.8, 1.8, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(5.8);
+    doc.setTextColor(100, 116, 139);
+    drawMiddleText(doc, truncateText(item.label.toUpperCase(), 20), x + 3, y + 4.2);
+
+    doc.setFontSize(8.2);
+    doc.setTextColor(15, 23, 42);
+    drawMiddleText(doc, truncateText(item.value || '-', 26), x + 3, y + 9.5);
+}
+
+function drawLegendArrow(doc: JsPdfInstance, x: number, y: number): void {
+    doc.setDrawColor(8, 116, 144);
+    doc.setLineWidth(0.45);
+    doc.line(x, y, x + 4, y);
+    doc.line(x + 4, y, x + 2.75, y - 0.85);
+    doc.line(x + 4, y, x + 2.75, y + 0.85);
+}
+
+function drawLegend(doc: JsPdfInstance, x: number, y: number): void {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.4);
+    doc.setTextColor(71, 85, 105);
+    drawMiddleText(doc, 'Legend', x, y);
+
+    doc.setFillColor(8, 145, 178);
+    doc.rect(x + 16, y - 1.1, 4, 2.2, 'F');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.2);
+    doc.setTextColor(71, 85, 105);
+    drawMiddleText(doc, 'route path', x + 22, y);
+
+    doc.setFillColor(8, 145, 178);
+    doc.roundedRect(x + 54, y - 2, 4, 4, 2, 2, 'F');
+    drawMiddleText(doc, 'numbered stop', x + 60, y);
+
+    drawLegendArrow(doc, x + 98, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.2);
+    doc.setTextColor(71, 85, 105);
+    drawMiddleText(doc, 'travel direction', x + 104, y);
+}
+
+function drawHeader(
+    doc: JsPdfInstance,
+    title: string,
+    generatedAt: string,
+    summaryItems: RoutePlanner2MapExportSummaryItem[],
+    box: { x: number; y: number; width: number; height: number },
+): void {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.setTextColor(15, 23, 42);
+    drawMiddleText(doc, truncateText(title, 96), box.x, box.y + 5.2);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.2);
+    doc.setTextColor(100, 116, 139);
+    drawMiddleText(doc, `Route Planner 2 map export - Generated ${generatedAt}`, box.x, box.y + 10.9);
+
+    if (summaryItems.length > 0) {
+        const gap = 2;
+        const cardWidth = (box.width - (gap * (summaryItems.length - 1))) / summaryItems.length;
+        summaryItems.forEach((item, index) => {
+            drawSummaryCard(doc, item, box.x + (index * (cardWidth + gap)), box.y + 16, cardWidth, 12.5);
+        });
+    }
+
+    drawLegend(doc, box.x, box.y + (summaryItems.length > 0 ? 39.5 : 24));
 }
 
 function getPrimaryAddressLine(stop: RoutePlanner2Stop): string {
@@ -225,150 +335,70 @@ export async function buildRoutePlanner2MapExportPlan(
     };
 }
 
-function getBounds(coordinates: Array<{ lat: number; lng: number }>) {
-    const lats = coordinates.map((coordinate) => coordinate.lat);
-    const lngs = coordinates.map((coordinate) => coordinate.lng);
-    return {
-        minLat: Math.min(...lats),
-        maxLat: Math.max(...lats),
-        minLng: Math.min(...lngs),
-        maxLng: Math.max(...lngs),
-    };
-}
-
-function createProjector(plan: RoutePlanner2MapExportPlan, mapBox: { x: number; y: number; width: number; height: number }) {
-    const allCoordinates = [
-        ...plan.routeCoordinates,
-        ...plan.stopCallouts.map((stop) => ({ lat: stop.lat, lng: stop.lng })),
-    ];
-    const bounds = getBounds(allCoordinates.length ? allCoordinates : [{ lat: 44.38, lng: -79.69 }]);
-    const latSpan = Math.max(0.005, bounds.maxLat - bounds.minLat);
-    const lngSpan = Math.max(0.005, bounds.maxLng - bounds.minLng);
-    const padding = 18;
-
-    return (coordinate: { lat: number; lng: number }) => ({
-        x: mapBox.x + padding + ((coordinate.lng - bounds.minLng) / lngSpan) * (mapBox.width - (padding * 2)),
-        y: mapBox.y + padding + ((bounds.maxLat - coordinate.lat) / latSpan) * (mapBox.height - (padding * 2)),
-    });
-}
-
-function drawRouteLine(doc: JsPdfInstance, points: Array<{ x: number; y: number }>): void {
-    if (points.length < 2) return;
-    doc.setDrawColor(80, 170, 220);
-    doc.setLineWidth(2.2);
-    for (let index = 1; index < points.length; index += 1) {
-        const from = points[index - 1]!;
-        const to = points[index]!;
-        doc.line(from.x, from.y, to.x, to.y);
-    }
-}
-
-function drawStopMarker(doc: JsPdfInstance, callout: RoutePlanner2MapExportStopCallout, point: { x: number; y: number }): void {
-    doc.setFillColor(31, 85, 139);
-    doc.setDrawColor(255, 255, 255);
-    doc.circle(point.x, point.y, callout.badge ? 4.6 : 3.4, 'FD');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(callout.badge ? 6.5 : 7);
-    doc.setTextColor(255, 255, 255);
-    doc.text(callout.badge ?? String(callout.sequence), point.x, point.y + 1.2, { align: 'center' });
-}
-
-function drawCallout(
-    doc: JsPdfInstance,
-    callout: RoutePlanner2MapExportStopCallout,
-    point: { x: number; y: number },
-    mapBox: { x: number; y: number; width: number; height: number },
-    index: number,
-): void {
-    const width = 43;
-    const height = callout.badge ? 11 : 13;
-    const preferRight = point.x < mapBox.x + (mapBox.width / 2);
-    const x = Math.max(mapBox.x + 4, Math.min(mapBox.x + mapBox.width - width - 4, point.x + (preferRight ? 7 : -width - 7)));
-    const yOffset = (index % 3) * 7;
-    const y = Math.max(mapBox.y + 4, Math.min(mapBox.y + mapBox.height - height - 4, point.y - 8 + yOffset));
-
-    doc.setDrawColor(25, 25, 25);
-    doc.setFillColor(248, 248, 248);
-    doc.setLineWidth(0.6);
-    doc.line(point.x, point.y, preferRight ? x : x + width, y + (height / 2));
-    doc.rect(x, y, width, height, 'FD');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(5.8);
-    doc.setTextColor(20, 20, 20);
-    const lines = doc.splitTextToSize(callout.label, width - 4).slice(0, 2);
-    doc.text(lines, x + 2, y + 4.2);
-}
-
-function drawRoadLabel(doc: JsPdfInstance, label: RoutePlanner2MapExportRoadLabel, point: { x: number; y: number }): void {
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.2);
-    doc.setTextColor(20, 20, 20);
-    doc.text(label.name, point.x, point.y, { align: 'center', angle: -18 });
-}
-
 export async function exportRoutePlanner2MapPdf(
     scenario: RoutePlanner2Scenario,
     options: ExportOptions,
 ): Promise<void> {
+    if (!options.mapImage?.dataUrl) {
+        throw new Error('The route map image could not be captured. Please wait for the map to finish loading and try again.');
+    }
+
     const { jsPDF } = await import('jspdf');
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' }) as unknown as JsPdfInstance;
-    const plan = await buildRoutePlanner2MapExportPlan(scenario, options);
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }) as unknown as JsPdfInstance;
+    const routeLabel = options.routeLabel?.trim() || scenario.name;
+    const title = `${options.projectName} - ${routeLabel}`;
+    const generatedAt = formatDate(options.now ?? new Date());
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
-    const titleHeight = 16;
-    const margin = 8;
-    const mapBox = {
+    const margin = 10;
+    const headerHeight = 18;
+    const summaryHeight = options.summaryItems?.length ? 15 : 0;
+    const legendHeight = 8;
+    const footerHeight = 8;
+    const mapY = margin + headerHeight + summaryHeight + legendHeight + 2;
+    const headerBox = {
         x: margin,
-        y: titleHeight + 7,
+        y: 7,
         width: pageWidth - (margin * 2),
-        height: pageHeight - titleHeight - 18,
+        height: mapY - 10,
     };
-    const project = createProjector(plan, mapBox);
+    const imageBox = {
+        x: margin,
+        y: mapY,
+        width: pageWidth - (margin * 2),
+        height: pageHeight - mapY - footerHeight - 3,
+    };
+    const imageAspect = options.mapImage.width > 0 && options.mapImage.height > 0
+        ? options.mapImage.width / options.mapImage.height
+        : 16 / 9;
+    const fittedHeight = Math.min(imageBox.height, imageBox.width / imageAspect);
+    const fittedWidth = Math.min(imageBox.width, fittedHeight * imageAspect);
+    const imageX = imageBox.x + ((imageBox.width - fittedWidth) / 2);
+    const imageY = imageBox.y + ((imageBox.height - fittedHeight) / 2);
 
     doc.setProperties({
-        title: `${plan.title} Map`,
+        title: `${title} Map`,
         subject: 'Route Planner 2 map export',
         author: 'TransitScheduler',
         creator: 'TransitScheduler Route Planner 2',
     });
 
     doc.setFillColor(31, 85, 139);
-    doc.rect(0, 0, pageWidth, titleHeight, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(15);
-    doc.setTextColor(255, 255, 255);
-    doc.text(plan.title, pageWidth / 2, 10.5, { align: 'center' });
+    doc.rect(0, 0, 3.5, pageHeight, 'F');
 
-    doc.setFillColor(222, 224, 222);
-    doc.setDrawColor(25, 25, 25);
-    doc.setLineWidth(1.1);
-    doc.rect(mapBox.x, mapBox.y, mapBox.width, mapBox.height, 'FD');
+    const summaryItems = options.summaryItems?.slice(0, 5) ?? [];
+    drawHeader(doc, title, generatedAt, summaryItems, headerBox);
 
-    doc.setDrawColor(255, 255, 255);
-    doc.setLineWidth(0.45);
-    for (let index = 0; index < 10; index += 1) {
-        const x = mapBox.x + 12 + (index * ((mapBox.width - 24) / 9));
-        doc.line(x, mapBox.y + 12, x + 18, mapBox.y + mapBox.height - 14);
-    }
-    for (let index = 0; index < 8; index += 1) {
-        const y = mapBox.y + 14 + (index * ((mapBox.height - 28) / 7));
-        doc.line(mapBox.x + 10, y, mapBox.x + mapBox.width - 10, y - 12);
-    }
-
-    const routePoints = plan.routeCoordinates.map(project);
-    drawRouteLine(doc, routePoints);
-    plan.roadLabels.forEach((roadLabel) => drawRoadLabel(doc, roadLabel, project(roadLabel.coordinate)));
-
-    plan.stopCallouts.forEach((callout, index) => {
-        const point = project(callout);
-        drawStopMarker(doc, callout, point);
-        drawCallout(doc, callout, point, mapBox, index);
-    });
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.6);
+    doc.roundedRect(imageX, imageY, fittedWidth, fittedHeight, 2.4, 2.4, 'FD');
+    doc.addImage(options.mapImage.dataUrl, 'PNG', imageX, imageY, fittedWidth, fittedHeight);
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(80, 80, 80);
-    doc.text(`Generated ${plan.generatedAt} · Planning map - verify route and stop placement before issuing.`, margin, pageHeight - 5);
+    doc.text('Planning map - verify route and stop placement before issuing.', margin, pageHeight - 4.5);
 
-    doc.save(`${sanitizeFilePart(plan.title)}-map.pdf`);
+    doc.save(`${sanitizeFilePart(title)}-map.pdf`);
 }

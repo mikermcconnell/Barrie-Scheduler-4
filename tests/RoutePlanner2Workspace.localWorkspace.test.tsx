@@ -85,6 +85,14 @@ vi.mock('../utils/route-planner-2/routePlanner2MapExport', () => ({
   exportRoutePlanner2MapPdf: vi.fn(async () => undefined),
 }));
 
+vi.mock('html2canvas', () => ({
+  default: vi.fn(async () => ({
+    width: 1200,
+    height: 800,
+    toDataURL: () => 'data:image/png;base64,mock-route-map',
+  })),
+}));
+
 import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Workspace';
 import { buildCorridorSpeedIndex, buildCorridorSpeedMapIndex } from '../utils/gtfs/corridorSpeed';
 import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop } from '../utils/route-planner-2/routePlanner2Authoring';
@@ -121,6 +129,14 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement | n
 
 function addMapStop(view: HTMLElement) {
   click(findButton(view, 'Add Stop 1') ?? findButton(view, 'Add next stop') ?? findButton(view, 'Add Stop'));
+}
+
+async function waitForExportCall(timeoutMs = 1200) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (vi.mocked(exportRoutePlanner2MapPdf).mock.calls.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 describe('RoutePlanner2Workspace local workspace', () => {
@@ -201,11 +217,19 @@ describe('RoutePlanner2Workspace local workspace', () => {
     flushSync(() => {
       click(mapPdfButton);
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitForExportCall();
 
     expect(exportRoutePlanner2MapPdf).toHaveBeenCalledWith(
       expect.objectContaining({ stops: expect.arrayContaining([expect.objectContaining({ name: 'Stop 1' })]) }),
-      expect.objectContaining({ projectName: expect.any(String), routeLabel: expect.any(String) }),
+      expect.objectContaining({
+        projectName: expect.any(String),
+        routeLabel: expect.any(String),
+        mapImage: expect.objectContaining({
+          dataUrl: 'data:image/png;base64,mock-route-map',
+          width: 1200,
+          height: 800,
+        }),
+      }),
     );
   });
 

@@ -33,4 +33,20 @@ describe('parseRuntimeCSV', () => {
         expect(result.detectedRouteNumber).toBe('8');
         expect(result.detectedDirection).toBe('A');
     });
+
+    it('leaves sample count mode unset because uploaded runtime CSVs do not provide raw sample counts', async () => {
+        const file = {
+            text: async () => [
+                'Title,Stop A to Stop B',
+                'Half-Hour,06:00 - 06:29',
+                '10 Observed Runtime-50%,14',
+                '10 Observed Runtime-80%,17',
+            ].join('\n'),
+        } as File;
+
+        const result = await parseRuntimeCSV(file);
+
+        expect(result.sampleCountMode).toBeUndefined();
+        expect(result.segments[0].timeBuckets['06:00 - 06:29'].n).toBe(1);
+    });
 });

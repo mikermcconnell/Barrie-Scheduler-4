@@ -157,4 +157,37 @@ describe('step2HealthEvaluator', () => {
         expect(blocked.blockers).toContain('No usable planning buckets remain after the current exclusions and banding rules.');
         expect(blocked.blockers).toContain('No usable runtime bands remain for schedule generation.');
     });
+
+    it('does not mark complete CSV-style buckets low confidence when sample counts are unknown', () => {
+        const report = evaluateStep2ReviewHealth({
+            routeNumber: '10',
+            analysis: [{
+                timeBucket: '09:00 - 09:29',
+                totalP50: 55,
+                totalP80: 60,
+                assignedBand: 'C',
+                isOutlier: false,
+                ignored: false,
+                details: [
+                    { segmentName: 'Downtown Hub to Maple at Ross', p50: 10, p80: 12, n: 1 },
+                    { segmentName: 'Maple at Ross to Downtown Hub', p50: 45, p80: 48, n: 1 },
+                ],
+            }],
+            segmentsMap: {
+                Loop: [
+                    { segmentName: 'Downtown Hub to Maple at Ross', timeBuckets: {} },
+                    { segmentName: 'Maple at Ross to Downtown Hub', timeBuckets: {} },
+                ],
+            } as any,
+            canonicalSegmentColumns: [
+                { segmentName: 'Downtown Hub to Maple at Ross', direction: 'Loop', groupLabel: '10' },
+                { segmentName: 'Maple at Ross to Downtown Hub', direction: 'Loop', groupLabel: '10' },
+            ],
+        });
+
+        expect(report.status).toBe('ready');
+        expect(report.sampleCountMode).toBeUndefined();
+        expect(report.lowConfidenceBucketCount).toBe(0);
+        expect(report.warnings).not.toContain('1 bucket has low confidence or incomplete coverage.');
+    });
 });

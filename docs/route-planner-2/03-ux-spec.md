@@ -176,6 +176,19 @@ two stops. The PDF should look professional and field-ready:
 - clear source label: Mapbox turn-by-turn or planning-alignment fallback
 - operator note that the directions must be verified before issuing
 
+## Map PDF Export
+
+The header should include a **Map PDF** export once a route has at least two
+stops. This is a map-first artifact: preserve the map that already looks right in
+the app, then add a concise enterprise header, KPI strip, legend, and verification
+footer.
+
+Visual gotcha: captured map labels and PDF header chrome need different
+treatments. Use inline SVG text with explicit centered baselines for labels that
+are captured inside the map image. Use sharp vector jsPDF text/shapes with
+`baseline: 'middle'` for the PDF header, KPI cards, and legend. Do not rasterize
+the header SVG into a PNG, because that makes the export header look blurry.
+
 ## Warnings
 
 Warnings must be direct and actionable.

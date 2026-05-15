@@ -61,6 +61,10 @@ export const getLowConfidenceThreshold = (mode?: SampleCountMode): number => (
     mode === 'days' ? MIN_RELIABLE_DAYS : MIN_RELIABLE_OBSERVATIONS
 );
 
+export const hasSampleCountConfidence = (mode?: SampleCountMode): boolean => (
+    mode === 'days' || mode === 'observations'
+);
+
 const parseBucketStartMinutes = (bucket: string): number => {
     const start = bucket.split(' - ')[0].trim();
     const match = start.match(/^(\d{1,2}):(\d{2})$/);

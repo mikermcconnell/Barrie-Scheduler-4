@@ -7,6 +7,7 @@ import type { ApprovedRuntimeContract } from './step2ReviewTypes';
 import {
     computeDirectionBandSummary,
     getLowConfidenceThreshold,
+    hasSampleCountConfidence,
     type DirectionBandSummary,
     type SampleCountMode,
     type TimeBand,
@@ -649,6 +650,7 @@ export const buildStep2DataHealthReport = (params: {
     const lookup = buildNormalizedSegmentNameLookup(displaySegmentNames);
     const sampleCountMode = analysis.find(bucket => bucket.sampleCountMode)?.sampleCountMode;
     const confidenceThreshold = getLowConfidenceThreshold(sampleCountMode);
+    const useSampleCountConfidence = hasSampleCountConfidence(sampleCountMode);
     const usableBuckets = analysis.filter(bucket => !bucket.ignored && !!bucket.assignedBand);
     const usableBandCount = new Set(
         usableBuckets
@@ -682,7 +684,7 @@ export const buildStep2DataHealthReport = (params: {
         const missingSegments = Math.max(0, expectedSegmentCount - bucketSegments.size);
         const minSamples = sampleValues.length > 0 ? Math.min(...sampleValues) : 0;
         const isIncomplete = expectedSegmentCount > 0 && missingSegments > 0;
-        const hasLowSamples = minSamples > 0 && minSamples < confidenceThreshold;
+        const hasLowSamples = useSampleCountConfidence && minSamples > 0 && minSamples < confidenceThreshold;
 
         if (!isIncomplete && expectedSegmentCount > 0) {
             completeBucketCount += 1;

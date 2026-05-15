@@ -65,7 +65,7 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                     <div>
                         <h3 className="font-bold text-gray-900">Data Health</h3>
                         <p className="text-xs text-gray-500">
-                            {showDataHealth ? 'Hide route readiness details' : getCollapsedSummary(healthReport)}
+                            {showDataHealth ? 'Hide route readiness details' : 'Show route readiness details'}
                         </p>
                     </div>
                     <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${
@@ -151,7 +151,9 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                             <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Low confidence</div>
                             <div className="mt-1 text-sm font-semibold text-gray-900">{healthReport.lowConfidenceBucketCount}</div>
                             <div className="text-xs text-gray-600">
-                                Threshold {healthReport.confidenceThreshold} {healthReport.sampleCountMode === 'days' ? 'days' : 'samples'}
+                                {healthReport.sampleCountMode
+                                    ? `Threshold ${healthReport.confidenceThreshold} ${healthReport.sampleCountMode === 'days' ? 'days' : 'samples'}`
+                                    : 'Sample counts unavailable'}
                             </div>
                         </div>
                         <div className="rounded-lg bg-white/80 p-3 border border-white/70">

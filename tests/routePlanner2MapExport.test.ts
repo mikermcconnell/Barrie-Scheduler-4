@@ -1,11 +1,58 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const pdfMocks = vi.hoisted(() => {
+  const doc = {
+    setProperties: vi.fn(),
+    setFillColor: vi.fn(),
+    setDrawColor: vi.fn(),
+    setTextColor: vi.fn(),
+    setLineWidth: vi.fn(),
+    setFont: vi.fn(),
+    setFontSize: vi.fn(),
+    rect: vi.fn(),
+    roundedRect: vi.fn(),
+    line: vi.fn(),
+    text: vi.fn(),
+    addImage: vi.fn(),
+    save: vi.fn(),
+    internal: {
+      pageSize: {
+        getWidth: () => 297,
+        getHeight: () => 210,
+      },
+    },
+  };
+
+  return {
+    doc,
+    jsPDF: vi.fn(function JsPDFMock() {
+      return doc;
+    }),
+  };
+});
+
+vi.mock('jspdf', () => ({
+  jsPDF: pdfMocks.jsPDF,
+}));
 
 import { addRoutePlanner2Stop, updateRoutePlanner2StopRole } from '../utils/route-planner-2/routePlanner2Authoring';
-import { buildRoutePlanner2MapExportPlan } from '../utils/route-planner-2/routePlanner2MapExport';
+import {
+  buildRoutePlanner2MapExportPlan,
+  exportRoutePlanner2MapPdf,
+} from '../utils/route-planner-2/routePlanner2MapExport';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 
 describe('Route Planner 2 map export', () => {
   const now = '2026-05-15T12:00:00.000Z';
+
+  afterEach(() => {
+    pdfMocks.jsPDF.mockClear();
+    Object.values(pdfMocks.doc).forEach((value) => {
+      if (typeof value === 'function' && 'mockClear' in value) {
+        value.mockClear();
+      }
+    });
+  });
 
   it('builds a map-first export plan with kids callouts and route road labels', async () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
@@ -67,5 +114,53 @@ describe('Route Planner 2 map export', () => {
     expect(plan.stopCallouts.find((callout) => callout.stopId === 'stop-2')?.badge).toBe('End');
     expect(plan.roadLabels.map((label) => label.name)).toEqual(['Mapleview Drive', 'Yonge Street']);
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('draws the map PDF header as sharp vector PDF text instead of a rasterized SVG image', async () => {
+    const project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+
+    await exportRoutePlanner2MapPdf(project.scenarios[0]!, {
+      projectName: 'Camp Shuttle',
+      routeLabel: 'Clean Concept A',
+      now: new Date('2026-05-15T12:00:00.000Z'),
+      mapImage: {
+        dataUrl: 'data:image/png;base64,mock-route-map',
+        width: 1200,
+        height: 800,
+      },
+      summaryItems: [
+        { label: 'Stops', value: '11' },
+        { label: 'Runtime', value: '64 min' },
+      ],
+    });
+
+    expect(pdfMocks.doc.addImage).toHaveBeenCalledTimes(1);
+    expect(pdfMocks.doc.addImage).toHaveBeenCalledWith(
+      'data:image/png;base64,mock-route-map',
+      'PNG',
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+    );
+
+    expect(pdfMocks.doc.text).toHaveBeenCalledWith(
+      'Camp Shuttle - Clean Concept A',
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ baseline: 'middle' }),
+    );
+    expect(pdfMocks.doc.text).toHaveBeenCalledWith(
+      'STOPS',
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ baseline: 'middle' }),
+    );
+    expect(pdfMocks.doc.text).toHaveBeenCalledWith(
+      '64 min',
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ baseline: 'middle' }),
+    );
   });
 });

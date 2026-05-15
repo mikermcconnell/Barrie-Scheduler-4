@@ -6,6 +6,7 @@ import {
     getBucketDisplayedTotal,
     getBucketCoverageCauseLabel,
     getLowConfidenceThreshold,
+    hasSampleCountConfidence,
     type BucketCoverageCause,
     type DirectionBandSummary,
     type TimeBand,
@@ -125,7 +126,8 @@ const buildConfidenceMap = (
     buckets: TripBucketAnalysis[],
     expectedSegmentNames: string[],
     lookup: ReturnType<typeof buildNormalizedSegmentNameLookup>,
-    confidenceThreshold: number
+    confidenceThreshold: number,
+    useSampleCountConfidence: boolean
 ): Record<string, Step2BucketConfidence> => Object.fromEntries(buckets.map((bucket) => {
     const segmentSamples = new Map<string, number>();
 
@@ -142,7 +144,7 @@ const buildConfidenceMap = (
         ? sampleValues.reduce((sum, value) => sum + value, 0) / sampleValues.length
         : 0;
     const missingSegments = Math.max(0, expectedSegmentNames.length - matchedSegments);
-    const hasLowSamples = minSegmentSamples > 0 && minSegmentSamples < confidenceThreshold;
+    const hasLowSamples = useSampleCountConfidence && minSegmentSamples > 0 && minSegmentSamples < confidenceThreshold;
     const hasMissingSegments = expectedSegmentNames.length > 0 && missingSegments > 0;
 
     return [bucket.timeBucket, {
@@ -273,6 +275,7 @@ export const useStep2RuntimeReview = ({
         [analysis]
     );
     const confidenceThreshold = getLowConfidenceThreshold(sampleCountMode);
+    const useSampleCountConfidence = hasSampleCountConfidence(sampleCountMode);
     const sampleCountUnitLabel = sampleCountMode === 'days' ? 'day' : 'sample';
     const sampleCountPluralLabel = sampleCountMode === 'days' ? 'days' : 'samples';
     const metricLabel = viewMetric === 'p50' ? 'median (P50)' : 'reliable (P80)';
@@ -290,7 +293,7 @@ export const useStep2RuntimeReview = ({
     );
 
     useEffect(() => {
-        if (displayedHealthReport.status === 'blocked' || displayedHealthReport.status === 'warning') {
+        if (displayedHealthReport.status === 'blocked') {
             setShowDataHealth(true);
         }
     }, [displayedHealthReport.status]);
@@ -318,17 +321,22 @@ export const useStep2RuntimeReview = ({
     const chartBasisLabel = sampleCountMode === 'days'
         ? 'For performance data, the chart uses full observed cycle totals for each time bucket.'
         : 'For CSV imports, the chart uses the uploaded bucket percentile totals.';
+    const sampleConfidenceLabel = sampleCountMode === 'days'
+        ? `Performance imports use a ${confidenceThreshold}-day confidence floor.`
+        : useSampleCountConfidence
+            ? `CSV imports use a ${confidenceThreshold}-sample confidence floor.`
+            : 'CSV imports do not include raw sample counts, so Step 2 flags missing coverage rather than thin sample counts.';
     const bandContextLabel = viewMetric === 'p50'
-        ? `${chartBasisLabel} Band colors and ranges reflect the same median bucket totals shown in the chart. Buckets missing one or more segments stay visible, but remain unbanded until coverage is complete. Performance imports use a ${confidenceThreshold}-day confidence floor; CSV imports keep the existing sample-count rule.`
-        : `${chartBasisLabel} Bars switch to reliable (P80) totals, but band colors and ranges stay tied to the median (P50) bucket assignment. Buckets missing one or more segments stay visible, but remain unbanded until coverage is complete. Performance imports use a ${confidenceThreshold}-day confidence floor; CSV imports keep the existing sample-count rule.`;
+        ? `${chartBasisLabel} Band colors and ranges reflect the same median bucket totals shown in the chart. Buckets missing one or more segments stay visible, but remain unbanded until coverage is complete. ${sampleConfidenceLabel}`
+        : `${chartBasisLabel} Bars switch to reliable (P80) totals, but band colors and ranges stay tied to the median (P50) bucket assignment. Buckets missing one or more segments stay visible, but remain unbanded until coverage is complete. ${sampleConfidenceLabel}`;
 
     const bucketConfidence = useMemo(
-        () => buildConfidenceMap(analysis, displaySegmentNames, displaySegmentLookup, confidenceThreshold),
-        [analysis, confidenceThreshold, displaySegmentLookup, displaySegmentNames]
+        () => buildConfidenceMap(analysis, displaySegmentNames, displaySegmentLookup, confidenceThreshold, useSampleCountConfidence),
+        [analysis, confidenceThreshold, displaySegmentLookup, displaySegmentNames, useSampleCountConfidence]
     );
     const matrixBucketConfidence = useMemo(
-        () => buildConfidenceMap(matrixSourceAnalysis, matrixDisplaySegmentNames, matrixDisplaySegmentLookup, confidenceThreshold),
-        [confidenceThreshold, matrixDisplaySegmentLookup, matrixDisplaySegmentNames, matrixSourceAnalysis]
+        () => buildConfidenceMap(matrixSourceAnalysis, matrixDisplaySegmentNames, matrixDisplaySegmentLookup, confidenceThreshold, useSampleCountConfidence),
+        [confidenceThreshold, matrixDisplaySegmentLookup, matrixDisplaySegmentNames, matrixSourceAnalysis, useSampleCountConfidence]
     );
 
     const segmentBreakdownByBand = useMemo(

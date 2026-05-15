@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { Layer, Marker, Source } from 'react-map-gl/mapbox';
-import type { LayerProps, MapMouseEvent, MarkerDragEvent } from 'react-map-gl/mapbox';
+import type { LayerProps, MapMouseEvent, MarkerDragEvent, MapRef } from 'react-map-gl/mapbox';
 
 import { MapBase } from '../../shared';
 import {
@@ -210,13 +210,94 @@ function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean, isHigh
                 : stop.role === 'timed'
                     ? 'bg-indigo-600'
                     : 'bg-cyan-600';
-    return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''}`;
+    return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black leading-none text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''}`;
+}
+
+function getStopMarkerColor(stop: RoutePlanner2Stop): string {
+    if (stop.role === 'start-terminal') return '#059669';
+    if (stop.role === 'end-terminal') return '#e11d48';
+    if (stop.role === 'turnaround') return '#d97706';
+    if (stop.role === 'timed') return '#4f46e5';
+    return '#0891b2';
+}
+
+function getExportLabelWidth(label: string): number {
+    return Math.max(72, Math.min(168, Math.ceil((label.length * 7.2) + 24)));
+}
+
+function RoutePlanner2ExportStopLabel({ label }: { label: string }) {
+    const width = getExportLabelWidth(label);
+    const height = 28;
+
+    return (
+        <svg
+            data-testid="rp2-export-stop-label"
+            width={width}
+            height={height}
+            viewBox={`0 0 ${width} ${height}`}
+            className="pointer-events-none mb-10 overflow-visible drop-shadow-md"
+            aria-hidden="true"
+        >
+            <rect x="1" y="1" width={width - 2} height={height - 2} rx="13" fill="rgba(255,255,255,0.94)" stroke="#cbd5e1" />
+            <text
+                x={width / 2}
+                y={height / 2}
+                textAnchor="middle"
+                dominantBaseline="central"
+                alignmentBaseline="middle"
+                fontFamily="Nunito, Arial, sans-serif"
+                fontSize="13"
+                fontWeight="800"
+                fill="#334155"
+            >
+                {label}
+            </text>
+        </svg>
+    );
+}
+
+function RoutePlanner2ExportStopMarker({ stop }: { stop: RoutePlanner2Stop }) {
+    return (
+        <svg
+            data-testid={`rp2-export-stop-marker-${stop.id}`}
+            width="44"
+            height="44"
+            viewBox="0 0 44 44"
+            className="pointer-events-none overflow-visible drop-shadow-lg"
+            aria-label={`Stop ${stop.sequence}`}
+        >
+            <circle cx="22" cy="22" r="18" fill={getStopMarkerColor(stop)} stroke="#ffffff" strokeWidth="3.5" />
+            <text
+                x="22"
+                y="22"
+                textAnchor="middle"
+                dominantBaseline="central"
+                alignmentBaseline="middle"
+                fontFamily="Nunito, Arial, sans-serif"
+                fontSize="14"
+                fontWeight="900"
+                fill="#ffffff"
+            >
+                {stop.sequence}
+            </text>
+        </svg>
+    );
 }
 
 export interface RoutePlanner2MapStopLabelDetail {
     stopId: string;
     kidsAtStop: number;
     travelTimeLabel: string;
+}
+
+export interface RoutePlanner2MapCapture {
+    dataUrl: string;
+    width: number;
+    height: number;
+}
+
+export interface RoutePlanner2MapCanvasHandle {
+    captureMapImage: () => Promise<RoutePlanner2MapCapture>;
 }
 
 type RuntimeSourceOverlayItem = {
@@ -445,6 +526,74 @@ function sortStops(stops: RoutePlanner2Stop[]): RoutePlanner2Stop[] {
     return [...stops].sort((a, b) => a.sequence - b.sequence);
 }
 
+function waitForNextPaint(): Promise<void> {
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        return new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+    }
+
+    return new Promise((resolve) => {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+        });
+    });
+}
+
+function waitForMapIdle(map: { once: (event: 'idle', callback: () => void) => void; loaded?: () => boolean }, timeoutMs = 750): Promise<void> {
+    if (map.loaded?.()) return Promise.resolve();
+
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timeout);
+            resolve();
+        };
+        const timeout = window.setTimeout(finish, timeoutMs);
+        map.once('idle', finish);
+    });
+}
+
+function getBoundsForCoordinates(coordinates: [number, number][]) {
+    const lngs = coordinates.map((coordinate) => coordinate[0]);
+    const lats = coordinates.map((coordinate) => coordinate[1]);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const lngPadding = Math.max(0.003, (maxLng - minLng) * 0.08);
+    const latPadding = Math.max(0.003, (maxLat - minLat) * 0.08);
+
+    return [
+        [minLng - lngPadding, minLat - latPadding],
+        [maxLng + lngPadding, maxLat + latPadding],
+    ] as [[number, number], [number, number]];
+}
+
+function cropCanvasToAspectRatio(canvas: HTMLCanvasElement, targetAspectRatio: number): HTMLCanvasElement {
+    if (!Number.isFinite(targetAspectRatio) || targetAspectRatio <= 0 || typeof canvas.getContext !== 'function') return canvas;
+    const sourceAspectRatio = canvas.width / canvas.height;
+    if (!Number.isFinite(sourceAspectRatio) || sourceAspectRatio <= 0 || Math.abs(sourceAspectRatio - targetAspectRatio) < 0.02) {
+        return canvas;
+    }
+
+    const cropWidth = sourceAspectRatio > targetAspectRatio
+        ? Math.round(canvas.height * targetAspectRatio)
+        : canvas.width;
+    const cropHeight = sourceAspectRatio < targetAspectRatio
+        ? Math.round(canvas.width / targetAspectRatio)
+        : canvas.height;
+    const sourceX = Math.max(0, Math.round((canvas.width - cropWidth) / 2));
+    const sourceY = Math.max(0, Math.round((canvas.height - cropHeight) / 2));
+    const croppedCanvas = document.createElement('canvas');
+    croppedCanvas.width = cropWidth;
+    croppedCanvas.height = cropHeight;
+    const context = croppedCanvas.getContext('2d');
+    if (!context) return canvas;
+    context.drawImage(canvas, sourceX, sourceY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+    return croppedCanvas;
+}
+
 function getLineAnchorForSegment(
     alignment: RoutePlanner2RoutePoint[],
     fromStopId: string,
@@ -634,7 +783,7 @@ function clickedRouteLine(event: MapMouseEvent): boolean {
     return features.some((feature) => feature.layer?.id === ROUTE_LINE_HIT_LAYER_ID || feature.layer?.id === ROUTE_LINE_LAYER_ID);
 }
 
-export function RoutePlanner2MapCanvas({
+export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, RoutePlanner2MapCanvasProps>(function RoutePlanner2MapCanvas({
     scenario,
     selectedStopId,
     highlightedStopId,
@@ -656,7 +805,7 @@ export function RoutePlanner2MapCanvas({
     stopLabelDetails = [],
     showRuntimeSourceOverlay = false,
     overlayInsets = { left: '8rem', right: '8rem' },
-}: RoutePlanner2MapCanvasProps) {
+}, ref) {
     const [mapLoaded, setMapLoaded] = useState(false);
     const [snappedCoordinates, setSnappedCoordinates] = useState<[number, number][]>([]);
     const [snappedSegmentGeometries, setSnappedSegmentGeometries] = useState<RoutePlanner2SegmentGeometry[]>([]);
@@ -665,7 +814,10 @@ export function RoutePlanner2MapCanvas({
     const [applyAnchorToReturn, setApplyAnchorToReturn] = useState(false);
     const [runtimeOverrideValue, setRuntimeOverrideValue] = useState('');
     const [activeDragPreview, setActiveDragPreview] = useState<ActiveDragPreview | null>(null);
+    const [isExportCaptureMode, setIsExportCaptureMode] = useState(false);
     const [mouseMapCoordinate, setMouseMapCoordinate] = useState<{ lat: number; lng: number } | null>(null);
+    const mapRef = useRef<MapRef | null>(null);
+    const captureContainerRef = useRef<HTMLElement | null>(null);
     const suppressMapClickUntilRef = useRef(0);
 
     const waypoints = useMemo(() => scenario ? getScenarioWaypoints(scenario) : [], [scenario]);
@@ -728,6 +880,97 @@ export function RoutePlanner2MapCanvas({
     const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
     const hasDirectionArrows = directionArrowGeoJson.features.length > 0;
     const hasHighlightedSegment = highlightedSegmentGeoJson.features.length > 0;
+    const activeRouteLineLayer = useMemo<LayerProps>(() => ({
+        ...routeLineLayer,
+        paint: {
+            ...routeLineLayer.paint,
+            'line-width': isExportCaptureMode ? 7 : 5,
+            'line-opacity': isExportCaptureMode ? 0.95 : 0.86,
+        },
+    }), [isExportCaptureMode]);
+    const activeDirectionArrowCenterLayer = useMemo<LayerProps>(() => ({
+        ...routeDirectionArrowCenterLayer,
+        layout: {
+            ...routeDirectionArrowCenterLayer.layout,
+            'text-size': isExportCaptureMode ? 30 : 24,
+            'symbol-spacing': isExportCaptureMode ? 62 : 54,
+        },
+    }), [isExportCaptureMode]);
+    const activeDirectionArrowOutboundLayer = useMemo<LayerProps>(() => ({
+        ...routeDirectionArrowOutboundLayer,
+        layout: {
+            ...routeDirectionArrowOutboundLayer.layout,
+            'text-size': isExportCaptureMode ? 30 : 24,
+            'symbol-spacing': isExportCaptureMode ? 62 : 54,
+        },
+    }), [isExportCaptureMode]);
+    const activeDirectionArrowReturnLayer = useMemo<LayerProps>(() => ({
+        ...routeDirectionArrowReturnLayer,
+        layout: {
+            ...routeDirectionArrowReturnLayer.layout,
+            'text-size': isExportCaptureMode ? 30 : 24,
+            'symbol-spacing': isExportCaptureMode ? 62 : 54,
+        },
+    }), [isExportCaptureMode]);
+
+    const captureMapImage = useCallback(async (): Promise<RoutePlanner2MapCapture> => {
+        if (!captureContainerRef.current) {
+            throw new Error('The route map is not ready to export yet.');
+        }
+
+        const map = mapRef.current?.getMap();
+        const originalView = map
+            ? {
+                center: map.getCenter(),
+                zoom: map.getZoom(),
+                bearing: map.getBearing(),
+                pitch: map.getPitch(),
+            }
+            : null;
+        const exportCoordinates = [
+            ...(snappedCoordinates.length ? snappedCoordinates : waypoints),
+            ...(scenario?.stops.map((stop): [number, number] => [stop.lng, stop.lat]) ?? []),
+        ];
+
+        setIsExportCaptureMode(true);
+
+        try {
+            await waitForNextPaint();
+
+            if (map && exportCoordinates.length > 0) {
+                map.resize();
+                map.fitBounds(getBoundsForCoordinates(exportCoordinates), {
+                    padding: 42,
+                    duration: 0,
+                    animate: false,
+                });
+                await waitForMapIdle(map);
+            }
+
+            await waitForNextPaint();
+            const { default: html2canvas } = await import('html2canvas');
+            const rawCanvas = await html2canvas(captureContainerRef.current, {
+                backgroundColor: '#ffffff',
+                useCORS: true,
+                allowTaint: false,
+                scale: Math.min(window.devicePixelRatio || 1, 2),
+            });
+            const canvas = cropCanvasToAspectRatio(rawCanvas, 1.85);
+
+            return {
+                dataUrl: canvas.toDataURL('image/png'),
+                width: canvas.width,
+                height: canvas.height,
+            };
+        } finally {
+            if (map && originalView) {
+                map.jumpTo(originalView);
+            }
+            setIsExportCaptureMode(false);
+        }
+    }, [scenario?.stops, snappedCoordinates, waypoints]);
+
+    useImperativeHandle(ref, () => ({ captureMapImage }), [captureMapImage]);
     const pendingRuntime = useMemo(() => {
         if (!pendingLineAction) return null;
         return activeSegmentRuntimes.find((segment) => segment.id === pendingLineAction.segmentId)
@@ -972,6 +1215,7 @@ export function RoutePlanner2MapCanvas({
     return (
         <section
             data-testid="rp2-map-canvas"
+            ref={captureContainerRef}
             style={overlayStyle}
             className="h-full min-h-0 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
         >
@@ -982,8 +1226,11 @@ export function RoutePlanner2MapCanvas({
                     zoom={12}
                     className="h-full"
                     mapStyle="mapbox://styles/mapbox/light-v11"
-                    showNavigation
-                    showScale
+                    preserveDrawingBuffer
+                    interactive={!isExportCaptureMode}
+                    showNavigation={!isExportCaptureMode}
+                    showScale={!isExportCaptureMode}
+                    mapRef={mapRef}
                     onLoad={() => setMapLoaded(true)}
                     interactiveLayerIds={[ROUTE_LINE_HIT_LAYER_ID]}
                     onMouseMove={handleMapMouseMove}
@@ -991,7 +1238,7 @@ export function RoutePlanner2MapCanvas({
                 >
                     {mapLoaded && hasRouteLine && (
                         <Source id="route-planner-2-line-source" type="geojson" data={lineGeoJson}>
-                            <Layer {...routeLineLayer} />
+                            <Layer {...activeRouteLineLayer} />
                             <Layer {...routeLineHitLayer} />
                         </Source>
                     )}
@@ -1007,9 +1254,9 @@ export function RoutePlanner2MapCanvas({
                     )}
                     {mapLoaded && hasDirectionArrows && (
                         <Source id={ROUTE_DIRECTION_ARROW_SOURCE_ID} type="geojson" data={directionArrowGeoJson}>
-                            <Layer {...routeDirectionArrowCenterLayer} />
-                            <Layer {...routeDirectionArrowOutboundLayer} />
-                            <Layer {...routeDirectionArrowReturnLayer} />
+                            <Layer {...activeDirectionArrowCenterLayer} />
+                            <Layer {...activeDirectionArrowOutboundLayer} />
+                            <Layer {...activeDirectionArrowReturnLayer} />
                         </Source>
                     )}
                     {mapLoaded && showRuntimeSourceOverlay && runtimeSourceOverlaySegments.map((segment) => (
@@ -1021,14 +1268,14 @@ export function RoutePlanner2MapCanvas({
                             style={{ pointerEvents: 'none' }}
                         >
                             <div
-                                className="pointer-events-none rounded-full border border-white bg-white/95 px-2.5 py-1 text-[11px] font-black text-slate-800 shadow-lg"
+                                className="pointer-events-none inline-flex min-h-6 items-center justify-center rounded-full border border-white bg-white/95 px-2.5 text-center text-[11px] font-black leading-none text-slate-800 shadow-lg"
                                 title={`${segment.segmentName}: ${segment.label}`}
                             >
                                 {segment.segmentName} · {segment.label}
                             </div>
                         </Marker>
                     ))}
-                    {mapLoaded && lineAnchorHandles.map((handle) => {
+                    {!isExportCaptureMode && mapLoaded && lineAnchorHandles.map((handle) => {
                         const coordinate = getPreviewCoordinate('waypoint', handle.id, handle);
                         const isDragging = activeDragPreview?.type === 'waypoint' && activeDragPreview.id === handle.id;
                         const isHighlighted = highlightedWaypointId === handle.id;
@@ -1070,7 +1317,7 @@ export function RoutePlanner2MapCanvas({
                         </Marker>
                         );
                     })}
-                    {mapLoaded && pendingLineAction && (
+                    {!isExportCaptureMode && mapLoaded && pendingLineAction && (
                         <Marker
                             longitude={pendingLineAction.coordinate.lng}
                             latitude={pendingLineAction.coordinate.lat}
@@ -1188,12 +1435,16 @@ export function RoutePlanner2MapCanvas({
                                 anchor="bottom"
                                 style={{ pointerEvents: 'none' }}
                             >
-                                <div
-                                    data-testid={`rp2-map-stop-label-${stop.id}`}
-                                    className="pointer-events-none mb-7 whitespace-nowrap rounded-full border border-slate-200 bg-white/80 px-2 py-0.5 text-[10px] font-bold leading-4 text-slate-600 shadow-sm backdrop-blur-sm"
-                                >
-                                    {label}
-                                </div>
+                                {isExportCaptureMode ? (
+                                    <RoutePlanner2ExportStopLabel label={label} />
+                                ) : (
+                                    <div
+                                        data-testid={`rp2-map-stop-label-${stop.id}`}
+                                        className="pointer-events-none mb-7 inline-flex min-h-5 items-center justify-center whitespace-nowrap rounded-full border border-slate-200 bg-white/90 px-2 text-center text-[10px] font-bold leading-none text-slate-700 shadow-md backdrop-blur-sm"
+                                    >
+                                        {label}
+                                    </div>
+                                )}
                             </Marker>
                         );
                     })}
@@ -1215,24 +1466,28 @@ export function RoutePlanner2MapCanvas({
                             onDrag={(event) => updateMarkerDrag('stop', stop.id, getDragCoordinate(event))}
                             onDragEnd={(event) => finishStopDrag(stop.id, getDragCoordinate(event))}
                         >
-                            <button
-                                type="button"
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    onSelectStop(stop.id);
-                                }}
-                                data-highlighted={isHighlighted ? 'true' : undefined}
-                                className={`${getStopMarkerClass(stop, selectedStopId === stop.id, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''}`}
-                                aria-label={`Select ${stop.name}`}
-                            >
-                                {stop.sequence}
-                            </button>
+                            {isExportCaptureMode ? (
+                                <RoutePlanner2ExportStopMarker stop={stop} />
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        onSelectStop(stop.id);
+                                    }}
+                                    data-highlighted={isHighlighted ? 'true' : undefined}
+                                    className={`${getStopMarkerClass(stop, selectedStopId === stop.id, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''}`}
+                                    aria-label={`Select ${stop.name}`}
+                                >
+                                    {stop.sequence}
+                                </button>
+                            )}
                         </Marker>
                         );
                     })}
                 </MapBase>
 
-                {roadBuildProgress && roadBuildProgress.totalSegments > 0 && roadBuildProgress.completedSegments < roadBuildProgress.totalSegments && (
+                {!isExportCaptureMode && roadBuildProgress && roadBuildProgress.totalSegments > 0 && roadBuildProgress.completedSegments < roadBuildProgress.totalSegments && (
                     <div
                     className="absolute w-72 rounded-2xl border border-cyan-100 bg-white/95 p-3 shadow-lg"
                     style={{ top: 'calc(var(--rp2-overlay-top) + 4.5rem)', right: 'var(--rp2-overlay-right)' }}
@@ -1257,7 +1512,7 @@ export function RoutePlanner2MapCanvas({
                 )}
 
 
-                {metricItems.length > 0 && (
+                {!isExportCaptureMode && metricItems.length > 0 && (
                     <div
                         data-testid="rp2-map-metrics"
                         className="absolute bottom-4 right-4 grid max-w-3xl grid-cols-2 gap-2 rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-xl sm:grid-cols-5"
@@ -1310,4 +1565,4 @@ export function RoutePlanner2MapCanvas({
             </div>
         </section>
     );
-}
+});

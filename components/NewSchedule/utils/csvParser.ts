@@ -208,7 +208,6 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
         allTimeBuckets: allBuckets,
         detectedRouteNumber,
         detectedDirection,
-        sampleCountMode: 'observations',
     };
 };
 

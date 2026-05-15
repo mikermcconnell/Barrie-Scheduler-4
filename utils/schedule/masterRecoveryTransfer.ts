@@ -61,6 +61,19 @@ const getActiveEndStop = (trip: MasterTrip, table: MasterRouteTable): string | n
   return table.stops[table.stops.length - 1] ?? null;
 };
 
+const getActiveStartStop = (trip: MasterTrip, table: MasterRouteTable): string | null => {
+  if (typeof trip.startStopIndex === 'number') {
+    return table.stops[Math.max(0, Math.min(table.stops.length - 1, trip.startStopIndex))] ?? null;
+  }
+
+  for (let index = 0; index < table.stops.length; index += 1) {
+    const stop = table.stops[index];
+    if (stop && (trip.stops?.[stop] || trip.arrivalTimes?.[stop])) return stop;
+  }
+
+  return table.stops[0] ?? null;
+};
+
 const mapRecoveryTimesToGeneratedStops = (
   masterTrip: MasterTrip,
   masterTable: MasterRouteTable,
@@ -153,6 +166,80 @@ const applyRecoveryTimesToTrip = (
   };
 };
 
+const shiftTimeRecord = (
+  record: Record<string, string> | undefined,
+  deltaMinutes: number
+): Record<string, string> | undefined => {
+  if (!record) return record;
+
+  return Object.fromEntries(
+    Object.entries(record).map(([stop, value]) => {
+      const minutes = TimeUtils.toMinutes(value);
+      return [stop, minutes === null ? value : TimeUtils.fromMinutes(minutes + deltaMinutes)];
+    })
+  );
+};
+
+const shiftTripBy = (trip: MasterTrip, deltaMinutes: number): void => {
+  if (deltaMinutes === 0) return;
+
+  trip.startTime += deltaMinutes;
+  trip.endTime += deltaMinutes;
+  trip.stops = shiftTimeRecord(trip.stops, deltaMinutes) ?? trip.stops;
+  trip.arrivalTimes = shiftTimeRecord(trip.arrivalTimes, deltaMinutes);
+
+  if (trip.stopMinutes) {
+    trip.stopMinutes = Object.fromEntries(
+      Object.entries(trip.stopMinutes).map(([stop, minutes]) => [stop, minutes + deltaMinutes])
+    );
+  }
+};
+
+const getStopDepartureMinute = (
+  trip: MasterTrip,
+  stopName: string | null,
+  fallbackMinute: number
+): number => {
+  if (!stopName) return fallbackMinute;
+  const stopMinute = trip.stopMinutes?.[stopName];
+  if (typeof stopMinute === 'number' && Number.isFinite(stopMinute)) return stopMinute;
+
+  const parsed = TimeUtils.toMinutes(trip.stops?.[stopName]);
+  return parsed ?? fallbackMinute;
+};
+
+const enforceSameBlockContinuity = (tables: MasterRouteTable[]): void => {
+  const tripsByBlock = new Map<string, Array<{ table: MasterRouteTable; trip: MasterTrip }>>();
+
+  tables.forEach(table => {
+    table.trips.forEach(trip => {
+      const blockTrips = tripsByBlock.get(trip.blockId) ?? [];
+      blockTrips.push({ table, trip });
+      tripsByBlock.set(trip.blockId, blockTrips);
+    });
+  });
+
+  tripsByBlock.forEach(blockTrips => {
+    const orderedTrips = [...blockTrips].sort((a, b) => (
+      getOperationalSortTime(a.trip.startTime) - getOperationalSortTime(b.trip.startTime)
+    ));
+
+    for (let index = 0; index < orderedTrips.length - 1; index += 1) {
+      const current = orderedTrips[index];
+      const next = orderedTrips[index + 1];
+      const currentEndStop = getActiveEndStop(current.trip, current.table);
+      const nextStartStop = getActiveStartStop(next.trip, next.table);
+
+      if (!currentEndStop || !nextStartStop) continue;
+      if (normalizeStopName(currentEndStop) !== normalizeStopName(nextStartStop)) continue;
+
+      const linkedDeparture = getStopDepartureMinute(current.trip, currentEndStop, current.trip.endTime);
+      const nextStart = getStopDepartureMinute(next.trip, nextStartStop, next.trip.startTime);
+      shiftTripBy(next.trip, linkedDeparture - nextStart);
+    }
+  });
+};
+
 const findNearestMasterTrip = (
   generatedTrip: MasterTrip,
   masterCandidates: Array<{ table: MasterRouteTable; trip: MasterTrip }>
@@ -203,6 +290,10 @@ export const copyNearestMasterRecoveryToGenerated = (
       return applyRecoveryTimesToTrip(trip, table, recoveryTimes);
     })
   }));
+
+  if (appliedCount > 0) {
+    enforceSameBlockContinuity(tables);
+  }
 
   return { tables, appliedCount, skippedCount };
 };

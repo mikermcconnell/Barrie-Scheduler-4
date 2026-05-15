@@ -26,7 +26,7 @@ export const Step2ApprovedRuntimeModelPanel: React.FC<Step2ApprovedRuntimeModelP
                     <div>
                         <h3 className="font-bold text-gray-900">Runtime Contract Preview</h3>
                         <p className="text-xs text-gray-500">
-                            {isExpanded ? 'Hide schedule-build input details' : 'Show runtimes that will be used to build the schedule'}
+                            {isExpanded ? 'Hide generation-ready runtime details' : 'Show generation-ready runtime details'}
                         </p>
                     </div>
                 </div>

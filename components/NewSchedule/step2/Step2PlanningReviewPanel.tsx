@@ -914,7 +914,11 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                 Buckets with thin data or missing segment coverage are dimmed and outlined.
                                 Buckets missing one or more segments remain visible, but do not contribute to band calculations until coverage is complete.
                                 Bands (A-E) are calculated from the <strong>50th Percentile</strong> (median) cycle totals.
-                                Performance-derived runtimes use a {confidenceThreshold}-day confidence floor; CSV imports keep the existing sample-count rule.
+                                {sampleCountMode === 'days'
+                                    ? `Performance-derived runtimes use a ${confidenceThreshold}-day confidence floor.`
+                                    : sampleCountMode
+                                        ? `CSV imports use a ${confidenceThreshold}-sample confidence floor.`
+                                        : 'CSV imports do not include raw sample counts, so low confidence only reflects missing segment coverage.'}
                             </p>
                             <p className="text-sm text-blue-700 mt-2">
                                 {viewMetric === 'p80'

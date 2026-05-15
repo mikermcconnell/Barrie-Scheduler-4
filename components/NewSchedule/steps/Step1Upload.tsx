@@ -283,7 +283,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                     </label>
                                     <p className="mt-1 text-xs text-teal-700">
                                         {performanceLoadRouteIds.length > 0
-                                            ? 'Route-scoped loading is faster. Use All routes only when comparing routes.'
+                                            ? 'Full-route loading is faster. Use All routes only when comparing routes.'
                                             : 'All routes will load because route-scoped performance files are not available yet.'}
                                     </p>
                                 </div>
@@ -296,7 +296,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                 >
                                     <option value="all">All routes</option>
                                     {performanceLoadRouteIds.map(routeId => (
-                                        <option key={routeId} value={routeId}>Route {routeId}</option>
+                                        <option key={routeId} value={routeId}>Full Route {routeId}</option>
                                     ))}
                                 </select>
                             </div>

@@ -78,6 +78,8 @@ interface WorkspaceHeaderProps {
     onOpenTimetable?: () => void;
     // Preview-specific compact mode
     hideRouteIdentity?: boolean;
+    // Compact mode used by Step 4 where secondary tools live in the review sidebar.
+    compactTools?: boolean;
 }
 
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
@@ -113,7 +115,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     onOpenConnections,
     onOpenAiReview,
     onOpenTimetable,
-    hideRouteIdentity = false
+    hideRouteIdentity = false,
+    compactTools = false
 }) => {
     const [isRenamingDraft, setIsRenamingDraft] = React.useState(false);
     const [renameDraftValue, setRenameDraftValue] = React.useState(draftName || '');
@@ -134,11 +137,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     };
 
     return (
-        <div className="bg-white border-b border-gray-200 px-3 md:px-4 py-2.5 sticky top-0 z-60 shadow-sm">
-            <div className="flex flex-col gap-3">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                    <div className="flex min-w-0 items-start gap-3">
-                        {!hideRouteIdentity && (
+        <div className={`bg-white border-b border-gray-200 sticky top-0 z-60 shadow-sm ${compactTools ? 'px-3 py-1' : 'px-3 md:px-4 py-2.5'}`}>
+            <div className={`flex flex-col ${compactTools ? 'gap-1.5' : 'gap-3'}`}>
+                <div className={compactTools ? 'flex flex-wrap items-center justify-between gap-2' : 'flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'}>
+                    <div className={compactTools ? 'flex min-w-0 items-center gap-2' : 'flex min-w-0 items-start gap-3'}>
+                        {!hideRouteIdentity && !compactTools && (
                             <div
                                 className="w-11 h-11 rounded-xl flex flex-col items-center justify-center shadow-sm ring-1 ring-black/5 flex-shrink-0"
                                 style={{
@@ -152,11 +155,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                         )}
 
                         <div className="min-w-0">
-                            <h2 className="text-base md:text-lg font-bold text-gray-900 leading-tight truncate">
-                                {dayLabel} Schedule
+                            <h2 className={`${compactTools ? 'text-sm' : 'text-base md:text-lg'} font-bold text-gray-900 leading-tight truncate`}>
+                                {compactTools ? `Route ${routeGroupName} · ${dayLabel}` : `${dayLabel} Schedule`}
                             </h2>
 
-                            {draftName && (
+                            {draftName && !compactTools && (
                                 <div className="mt-1">
                                     {isRenamingDraft && onRenameDraft ? (
                                         <input
@@ -267,7 +270,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </div>
                         )}
 
-                        {onSaveVersion && (
+                        {!compactTools && onSaveVersion && (
                             <button
                                 onClick={() => onSaveVersion()}
                                 className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
@@ -278,7 +281,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </button>
                         )}
 
-                        {onOpenDrafts && (
+                        {!compactTools && onOpenDrafts && (
                             <button
                                 onClick={onOpenDrafts}
                                 className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
@@ -289,7 +292,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </button>
                         )}
 
-                        {onNewDraft && (
+                        {!compactTools && onNewDraft && (
                             <button
                                 onClick={onNewDraft}
                                 className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
@@ -300,7 +303,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </button>
                         )}
 
-                        {onDuplicateDraft && (
+                        {!compactTools && onDuplicateDraft && (
                             <button
                                 onClick={onDuplicateDraft}
                                 className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
@@ -311,7 +314,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </button>
                         )}
 
-                        {onExport && (
+                        {!compactTools && onExport && (
                             <button
                                 onClick={onExport}
                                 className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
@@ -322,7 +325,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </button>
                         )}
 
-                        {onOpenTimetable && (
+                        {!compactTools && onOpenTimetable && (
                             <button
                                 onClick={onOpenTimetable}
                                 className="px-3 py-2 rounded-lg text-sm font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 flex items-center gap-2 flex-shrink-0"
@@ -343,66 +346,68 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </button>
                         )}
 
+                        {!compactTools && (
                         <div className="hidden 2xl:block">
                             <RouteSummary table={summaryTable} orientation="header" />
                         </div>
+                        )}
                     </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className={`flex flex-wrap items-center ${compactTools ? 'gap-1.5' : 'gap-2'}`}>
                     {/* View Toggles (Segmented Control) */}
-                    <div className="bg-gray-100/80 p-1 rounded-lg flex items-center flex-shrink-0">
+                    <div className={`bg-gray-100/80 ${compactTools ? 'p-0.5' : 'p-1'} rounded-lg flex items-center flex-shrink-0`}>
                         <button
                             onClick={() => onViewChange('editor')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${subView === 'editor'
+                            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} ${subView === 'editor'
                                 ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/5'
                                 : 'text-gray-600 hover:text-gray-800 hover:bg-gray-200/50'
                                 }`}
                         >
-                            <FileText size={14} /> Schedule
+                            <FileText size={compactTools ? 12 : 14} /> Schedule
                         </button>
                         <button
                             onClick={() => onViewChange('timeline')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 ${subView === 'timeline'
+                            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} ${subView === 'timeline'
                                 ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-black/5'
                                 : 'text-gray-600 hover:text-gray-800 hover:bg-gray-200/50'
                                 }`}
                         >
-                            <GanttChart size={14} /> Timeline
+                            <GanttChart size={compactTools ? 12 : 14} /> Timeline
                         </button>
                         <button
                             onClick={() => onViewChange('matrix')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${subView === 'matrix'
+                            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} ${subView === 'matrix'
                                 ? 'bg-white text-blue-700 shadow-sm ring-1 ring-black/5'
                                 : 'text-gray-600 hover:text-gray-800 hover:bg-gray-200/50'
                                 }`}
                         >
-                            <Timer size={14} /> Travel Times
+                            <Timer size={compactTools ? 12 : 14} /> Travel Times
                         </button>
                     </div>
 
                     {onOpenConnections && (
                         <button
                             onClick={onOpenConnections}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold bg-green-100 text-green-800 hover:bg-green-200 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-300 flex-shrink-0"
+                            className={`flex items-center gap-1.5 rounded-lg font-semibold bg-green-100 text-green-800 hover:bg-green-200 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-300 flex-shrink-0 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'}`}
                             title="Configure external connections (GO Train, College)"
                         >
-                            <Link2 size={14} /> Connections
+                            <Link2 size={compactTools ? 12 : 14} /> Connections
                         </button>
                     )}
 
                     {onOpenAiReview && (
                         <button
                             onClick={onOpenAiReview}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold bg-violet-100 text-violet-800 hover:bg-violet-200 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 flex-shrink-0"
+                            className={`flex items-center gap-1.5 rounded-lg font-semibold bg-violet-100 text-violet-800 hover:bg-violet-200 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 flex-shrink-0 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'}`}
                             title="Open AI Review"
                         >
-                            <Sparkles size={14} /> AI Review
+                            <Sparkles size={compactTools ? 12 : 14} /> AI Review
                         </button>
                     )}
 
                     {/* Time Bands - hidden on smaller screens */}
-                    {bands && bands.length > 0 && (
+                    {!compactTools && bands && bands.length > 0 && (
                         <div className="hidden xl:flex items-center gap-3 pl-2">
                             <span className="text-[11px] font-semibold text-gray-600 uppercase tracking-wide">Time Bands</span>
                             {bands.map(band => (

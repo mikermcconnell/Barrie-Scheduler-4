@@ -56,6 +56,7 @@ import {
     buildLocalWizardProgress,
     normalizeRestoredWizardState,
 } from './utils/wizardProjectState';
+import { buildFullPerformanceLoadRouteIds } from './utils/performanceRouteLoadOptions';
 import {
     buildStep2ReviewResult,
     buildStep2SourceSnapshot,
@@ -226,7 +227,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const performanceLoadRouteIds = useMemo(() => {
         const paths = performanceMetadataQuery.data?.routeStoragePaths;
         if (!paths) return [];
-        return Object.keys(paths).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+        return buildFullPerformanceLoadRouteIds(Object.keys(paths));
     }, [performanceMetadataQuery.data?.routeStoragePaths]);
     const defaultPerformanceLoadRouteId = useMemo(() => {
         if (performanceLoadRouteIds.length === 0) return 'all';

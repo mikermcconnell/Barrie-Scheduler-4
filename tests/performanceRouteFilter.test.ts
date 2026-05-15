@@ -89,9 +89,20 @@ function makeSummary(): PerformanceDataSummary {
 describe('performance route filtering', () => {
     it('lists available route choices from performance summaries', () => {
         expect(getAvailablePerformanceRoutes(makeSummary())).toEqual([
+            { routeId: '7', routeName: 'Route 7' },
             { routeId: '7A', routeName: 'Route Seven A' },
             { routeId: '8A', routeName: 'Route Eight A' },
         ]);
+    });
+
+    it('supports canonical merged route scopes for route-scoped files', () => {
+        const scoped = filterPerformanceSummaryByRoute(makeSummary(), '7')!;
+        const day = scoped.dailySummaries[0];
+
+        expect(day.byRoute.map(route => route.routeId)).toEqual(['7A']);
+        expect(day.byTrip.map(trip => trip.routeId)).toEqual(['7A']);
+        expect(day.loadProfiles.map(profile => profile.routeId)).toEqual(['7A']);
+        expect(day.system.totalRidership).toBe(100);
     });
 
     it('keeps only the selected route in route-scoped summaries', () => {

@@ -199,6 +199,9 @@ export interface ScheduleEditorProps {
     // Master comparison baseline (inline delta badges)
     masterBaseline?: MasterRouteTable[] | null;
     compareBaselineLabel?: string;
+    // Step 4 simplified workspace: keep editor chrome light and move secondary tools into a sidebar.
+    compactStep4?: boolean;
+    reviewToolsSlot?: React.ReactNode;
 }
 
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
@@ -241,7 +244,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     isPublishing,
     publishDisabled,
     masterBaseline,
-    compareBaselineLabel
+    compareBaselineLabel,
+    compactStep4 = false,
+    reviewToolsSlot
 }) => {
     const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
     const effectiveHasUnsavedChanges = readOnly
@@ -1645,6 +1650,97 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         });
     };
 
+    const compactEditorTools = compactStep4 ? (
+        <div className="space-y-3">
+            <div>
+                <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">Draft actions</div>
+                <div className="mt-2 grid gap-1.5">
+                    {onSaveVersion && (
+                        <button
+                            type="button"
+                            onClick={() => { void onSaveVersion(); }}
+                            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                            Save now
+                        </button>
+                    )}
+                    {onOpenDrafts && (
+                        <button
+                            type="button"
+                            onClick={onOpenDrafts}
+                            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                            Drafts
+                        </button>
+                    )}
+                    {onNewDraft && (
+                        <button
+                            type="button"
+                            onClick={onNewDraft}
+                            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                            New draft
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={handleExport}
+                        className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                        Export Draft
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleOpenTimetable}
+                        className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-left text-sm font-semibold text-amber-800 hover:bg-amber-100"
+                    >
+                        Timetable
+                    </button>
+                </div>
+            </div>
+
+            <div>
+                <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">Utilities</div>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                    {undo && (
+                        <button
+                            type="button"
+                            onClick={undo}
+                            disabled={!canUndo}
+                            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                            Undo
+                        </button>
+                    )}
+                    {redo && (
+                        <button
+                            type="button"
+                            onClick={redo}
+                            disabled={!canRedo}
+                            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                            Redo
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => setIsFullScreen(!isFullScreen)}
+                        className="col-span-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                        {isFullScreen ? 'Exit fullscreen' : 'Fullscreen'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    ) : null;
+
+    const combinedReviewToolsSlot = compactStep4 ? (
+        <div className="space-y-3">
+            {reviewToolsSlot}
+            {compactEditorTools}
+        </div>
+    ) : reviewToolsSlot;
+
     return (
         <>
             {addTripModalContext && (
@@ -1805,12 +1901,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                             setShowAiReviewPanel(true);
                         } : undefined}
                         onOpenTimetable={handleOpenTimetable}
+                        compactTools={compactStep4}
                     />
                 )}
 
                 <div className="flex-grow flex flex-col lg:flex-row overflow-hidden">
                     {/* Sidebar - hidden in embedded mode or when hideSidebar is true */}
-                    {!isFullScreen && !embedded && !hideSidebar && (
+                    {!isFullScreen && !embedded && !hideSidebar && !(compactStep4 && consolidatedRoutes.length <= 1) && (
                         <div className="w-full lg:w-72 lg:min-w-[280px] lg:max-w-[320px] flex-shrink-0 bg-[#F7F7F7] border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col overflow-hidden z-20">
                             {/* Header */}
                             <div className="p-4 border-b border-gray-200 bg-white flex justify-between items-center">
@@ -1928,6 +2025,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                             allowedModes={['always', 'within-trip', 'none']}
                                         />
                                     ) : undefined}
+                                    toolbarMode={compactStep4 ? 'sidebar' : 'inline'}
+                                    reviewToolsSlot={combinedReviewToolsSlot}
                                 />
                             </>
                         )}

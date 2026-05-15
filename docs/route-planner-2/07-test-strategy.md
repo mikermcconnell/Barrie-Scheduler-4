@@ -82,3 +82,5 @@ Before calling v1 work complete:
 - UI clearly says the import is a local planning copy, not GTFS editing
 - map stop trays for routes above 10 stops stay collapsed by default
 - stop ranges can be copied or moved into another route concept at a chosen insertion position
+- map PDF exports show centered text in stop labels, header KPI cards, and the
+  legend; no label text should sit on the lower edge of its pill/card

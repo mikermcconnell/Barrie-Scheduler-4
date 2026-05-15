@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RoundTripTableView Component
  *
  * Displays schedules in a combined North/South round-trip format.
@@ -92,6 +92,23 @@ interface ColumnInfo {
 
 type DensityMode = 'ultra' | 'compact' | 'comfortable';
 type CompareMode = 'none' | 'generated' | 'master';
+
+type ScheduleBand = 'A' | 'B' | 'C' | 'D' | 'E';
+
+const STEP4_BAND_TONE_CLASSES: Record<ScheduleBand, { cell: string; badge: string }> = {
+    A: { cell: 'bg-red-50/75', badge: 'bg-red-100/75 text-red-800 ring-red-200/75' },
+    B: { cell: 'bg-orange-50/75', badge: 'bg-orange-100/75 text-orange-800 ring-orange-200/75' },
+    C: { cell: 'bg-yellow-50/75', badge: 'bg-yellow-100/75 text-yellow-800 ring-yellow-200/75' },
+    D: { cell: 'bg-lime-50/75', badge: 'bg-lime-100/75 text-lime-800 ring-lime-200/75' },
+    E: { cell: 'bg-green-50/75', badge: 'bg-green-100/75 text-green-800 ring-green-200/75' },
+};
+
+function getStep4BandToneClasses(band: string): { cell: string; badge: string } {
+    return STEP4_BAND_TONE_CLASSES[band as ScheduleBand] ?? {
+        cell: 'bg-gray-50/75',
+        badge: 'bg-gray-100 text-gray-700 ring-gray-200',
+    };
+}
 
 const VIRTUAL_ROW_THRESHOLD = 80;
 const VIRTUAL_ROW_HEIGHT = 34;
@@ -535,11 +552,14 @@ export interface RoundTripTableViewProps {
     readOnly?: boolean;
     connectionLibrary?: ConnectionLibrary | null;
     routeConnectionConfig?: RouteConnectionConfig | null;
+    initialShowConnections?: boolean;
     dayType?: DayType;
     masterBaseline?: MasterRouteTable[] | null;
     compareBaselineLabel?: string;
     highlightedTripId?: string | null;
     toolbarSlot?: React.ReactNode;
+    toolbarMode?: 'inline' | 'sidebar';
+    reviewToolsSlot?: React.ReactNode;
 }
 
 // --- Component ---
@@ -606,11 +626,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     readOnly = false,
     connectionLibrary,
     routeConnectionConfig,
+    initialShowConnections = true,
     dayType = 'Weekday',
     masterBaseline,
     compareBaselineLabel,
     highlightedTripId,
-    toolbarSlot
+    toolbarSlot,
+    toolbarMode = 'inline',
+    reviewToolsSlot
 }) => {
     // Sort state: 'blockFlow' (default), 'blockId', 'endTime', 'startTime' (first departure), or a stop name
     const [sortColumn, setSortColumn] = useState<string>('blockFlow');
@@ -621,6 +644,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [showMetaCols] = useState(true);
     const [showActionsCol, setShowActionsCol] = useState(true);
     const [showRowNumberCol, setShowRowNumberCol] = useState(false);
+    const [showConnections, setShowConnections] = useState(initialShowConnections);
+    const [isReviewSidebarOpen, setIsReviewSidebarOpen] = useState(true);
+    const [isReviewSidebarExpanded, setIsReviewSidebarExpanded] = useState(false);
+    const effectiveConnectionLibrary = showConnections ? connectionLibrary : null;
+    const connectionToggleLabel = showConnections ? 'Connections on' : 'Connections off';
+    const connectionToggleAriaLabel = showConnections ? 'Hide schedule connections' : 'Show schedule connections';
     const [compareMode, setCompareMode] = useState<CompareMode>(() => (
         masterBaseline && masterBaseline.length > 0
             ? 'master'
@@ -1321,58 +1350,226 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 const headwayAnalysis = analyzeHeadways(allTrips);
                 const tripsPerHour = calculateTripsPerHour(allTrips);
                 const maxTripsInHour = Math.max(...Object.values(tripsPerHour), 1);
+                const useSidebarTools = toolbarMode === 'sidebar';
+                const showReviewSidebar = useSidebarTools && isReviewSidebarOpen;
+                const reviewSidebarWidthClass = isReviewSidebarExpanded ? 'w-[26rem]' : 'w-72 2xl:w-80';
 
-                return (
-                    <div key={combined.routeName} className="flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 h-full min-h-0">
+                const sortControl = (
+                    <div className="flex items-center gap-1">
+                        <ArrowUpDown size={12} className="text-gray-600" />
+                        <select
+                            value={sortColumn}
+                            onChange={(e) => setSortColumn(e.target.value)}
+                            className="text-xs md:text-sm bg-transparent border-none text-gray-700 cursor-pointer hover:text-gray-900 pr-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
+                        >
+                            <option value="blockFlow">Sort: Block Flow{keyStopLabel ? ` (${keyStopLabel})` : ''}</option>
+                            <option value="blockId">Sort: Block #</option>
+                            <option value="endTime">Sort: End Arrival</option>
+                            <option value="startTime">Sort: First Departure</option>
+                            <optgroup label="North Stops">
+                                {northDisplayStops.map(stop => (
+                                    <option key={`n-${stop}`} value={`north:${stop}`}>{stop}</option>
+                                ))}
+                            </optgroup>
+                            <optgroup label="South Stops">
+                                {southDisplayStops.map(stop => (
+                                    <option key={`s-${stop}`} value={`south:${stop}`}>{stop}</option>
+                                ))}
+                            </optgroup>
+                        </select>
+                    </div>
+                );
 
-                        {/* Focus Toolbar + Optional Stats */}
-                        <div className="px-3 py-2 border-b border-gray-200 flex-shrink-0 bg-gray-50">
-                            <div className="flex flex-wrap items-center gap-2">
+                const viewTools = (
+                    <div className="space-y-3">
+                        <div>
+                            <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">View options</div>
+                            <div className="mt-2 grid grid-cols-2 gap-1.5">
                                 <button
                                     onClick={() => setFocusMode(v => !v)}
-                                    className={`px-2 py-1 rounded text-xs font-semibold border ${focusMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
-                                    title="Focus mode prioritizes schedule grid space"
+                                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${focusMode ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                                 >
                                     Focus
                                 </button>
                                 <button
                                     onClick={() => setTimepointOnly(v => !v)}
-                                    className={`px-2 py-1 rounded text-xs font-semibold border ${timepointOnly ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${timepointOnly ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                                 >
                                     Timepoints
                                 </button>
                                 {!readOnly && (
                                     <button
                                         onClick={() => setShowActionsCol(v => !v)}
-                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showActionsCol ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                        className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${showActionsCol ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                                     >
                                         Actions
                                     </button>
                                 )}
                                 <button
                                     onClick={() => setShowRowNumberCol(v => !v)}
-                                    className={`px-2 py-1 rounded text-xs font-semibold border ${showRowNumberCol ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${showRowNumberCol ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                                 >
                                     Row #
                                 </button>
-                                <select
-                                    value={density}
-                                    onChange={(e) => setDensity(e.target.value as DensityMode)}
-                                    className="text-xs bg-white border border-gray-300 rounded px-2 py-1 text-gray-700"
-                                    title="Density"
-                                >
-                                    <option value="ultra">Ultra</option>
-                                    <option value="compact">Compact</option>
-                                    <option value="comfortable">Comfortable</option>
-                                </select>
-                                {toolbarSlot}
                                 <button
                                     onClick={() => setShowDirectionLegend(v => !v)}
-                                    className={`px-2 py-1 rounded text-xs font-semibold border ${showDirectionLegend ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${showDirectionLegend ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                                 >
                                     Legend
                                 </button>
-                                {(hasMasterBaseline || hasGeneratedBaseline) && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowConnections(v => !v)}
+                                    aria-pressed={showConnections}
+                                    aria-label={connectionToggleAriaLabel}
+                                    title={connectionToggleAriaLabel}
+                                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${showConnections ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
+                                >
+                                    <span className="inline-flex items-center justify-center gap-1.5">
+                                        <span>Connections</span>
+                                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-extrabold uppercase ${showConnections ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                            {showConnections ? 'On' : 'Off'}
+                                        </span>
+                                    </span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <label className="block">
+                            <span className="text-xs font-extrabold uppercase tracking-wide text-gray-500">Density</span>
+                            <select
+                                value={density}
+                                onChange={(e) => setDensity(e.target.value as DensityMode)}
+                                className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700"
+                            >
+                                <option value="ultra">Ultra</option>
+                                <option value="compact">Compact</option>
+                                <option value="comfortable">Comfortable</option>
+                            </select>
+                        </label>
+
+                        <div>
+                            <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">Sort</div>
+                            <div className="mt-2 rounded-lg border border-gray-200 bg-white px-2 py-1">
+                                {sortControl}
+                            </div>
+                        </div>
+
+                        {toolbarSlot && (
+                            <div>
+                                <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">Edit behavior</div>
+                                <div className="mt-2">{toolbarSlot}</div>
+                            </div>
+                        )}
+
+                        {(hasMasterBaseline || hasGeneratedBaseline) && (
+                            <div>
+                                <label className="block text-xs font-extrabold uppercase tracking-wide text-gray-500">
+                                    Compare against
+                                </label>
+                                <select
+                                    aria-label="Compare against"
+                                    value={compareMode}
+                                    onChange={(e) => setCompareMode(e.target.value as CompareMode)}
+                                    className={`mt-2 w-full rounded-lg border px-3 py-1.5 text-sm font-semibold ${
+                                        isMasterMode
+                                            ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                            : isGeneratedCompareMode
+                                                ? 'border-green-200 bg-green-50 text-green-700'
+                                                : 'border-gray-200 bg-white text-gray-700'
+                                    }`}
+                                >
+                                    <option value="none">None</option>
+                                    {hasGeneratedBaseline && (
+                                        <option value="generated">Generated baseline</option>
+                                    )}
+                                    {hasMasterBaseline && (
+                                        <option value="master">Published master</option>
+                                    )}
+                                </select>
+                                {isMasterMode && masterShiftLabel && (
+                                    <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">
+                                        {masterShiftLabel}
+                                    </div>
+                                )}
+                                {isGeneratedCompareMode && onResetOriginals && (
+                                    <button
+                                        onClick={onResetOriginals}
+                                        className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+                                    >
+                                        Reset to Generated
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                );
+
+                return (
+                    <div key={combined.routeName} className="flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 h-full min-h-0">
+
+                        {/* Focus Toolbar + Optional Stats */}
+                        <div className={`${useSidebarTools ? 'px-2 py-1' : 'px-3 py-2'} border-b border-gray-200 flex-shrink-0 bg-gray-50`}>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {!useSidebarTools && (
+                                    <>
+                                    <button
+                                        onClick={() => setFocusMode(v => !v)}
+                                        className={`px-2 py-1 rounded text-xs font-semibold border ${focusMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                                        title="Focus mode prioritizes schedule grid space"
+                                    >
+                                        Focus
+                                    </button>
+                                    <button
+                                        onClick={() => setTimepointOnly(v => !v)}
+                                        className={`px-2 py-1 rounded text-xs font-semibold border ${timepointOnly ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    >
+                                        Timepoints
+                                    </button>
+                                    {!readOnly && (
+                                    <button
+                                        onClick={() => setShowActionsCol(v => !v)}
+                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showActionsCol ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    >
+                                        Actions
+                                    </button>
+                                    )}
+                                    <button
+                                        onClick={() => setShowRowNumberCol(v => !v)}
+                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showRowNumberCol ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    >
+                                        Row #
+                                    </button>
+                                    <select
+                                        value={density}
+                                        onChange={(e) => setDensity(e.target.value as DensityMode)}
+                                        className="text-xs bg-white border border-gray-300 rounded px-2 py-1 text-gray-700"
+                                        title="Density"
+                                    >
+                                        <option value="ultra">Ultra</option>
+                                        <option value="compact">Compact</option>
+                                        <option value="comfortable">Comfortable</option>
+                                    </select>
+                                    {toolbarSlot}
+                                    <button
+                                        onClick={() => setShowDirectionLegend(v => !v)}
+                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showDirectionLegend ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    >
+                                        Legend
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowConnections(v => !v)}
+                                        aria-pressed={showConnections}
+                                        aria-label={connectionToggleAriaLabel}
+                                        title={connectionToggleAriaLabel}
+                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showConnections ? 'bg-green-50 text-green-700 border-green-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    >
+                                        {connectionToggleLabel}
+                                    </button>
+                                    </>
+                                )}
+                                {!useSidebarTools && (hasMasterBaseline || hasGeneratedBaseline) && (
                                     <>
                                         <label
                                             className="flex items-center gap-1 text-xs font-semibold text-gray-600"
@@ -1422,39 +1619,47 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                 {/* Always-visible summary */}
                                 <div className="flex items-center gap-2 text-xs md:text-sm">
-                                    <span className="text-base font-bold text-gray-900">{(totalCycleSum / 60).toFixed(1)}h cycle</span>
+                                    <span className={`${useSidebarTools ? 'text-sm' : 'text-base'} font-bold text-gray-900`}>{(totalCycleSum / 60).toFixed(1)}h cycle</span>
                                     <span className="text-gray-500">•</span>
                                     <span className="font-semibold text-gray-800">{serviceSpan.start} – {serviceSpan.end}</span>
                                     <span className="text-gray-500">•</span>
                                     <span className="text-gray-700"><span className="font-semibold">{peakVehicles}</span> vehicles</span>
                                     <span className="text-gray-500">•</span>
                                     <span className="text-gray-700"><span className="font-semibold">{totalTrips}</span> trips</span>
-                                    <span className="text-gray-500">•</span>
-                                    {/* Sort dropdown */}
-                                    <div className="flex items-center gap-1">
-                                        <ArrowUpDown size={12} className="text-gray-600" />
-                                        <select
-                                            value={sortColumn}
-                                            onChange={(e) => setSortColumn(e.target.value)}
-                                            className="text-xs md:text-sm bg-transparent border-none text-gray-700 cursor-pointer hover:text-gray-900 pr-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
-                                        >
-                                            <option value="blockFlow">Sort: Block Flow{keyStopLabel ? ` (${keyStopLabel})` : ''}</option>
-                                            <option value="blockId">Sort: Block #</option>
-                                            <option value="endTime">Sort: End Arrival</option>
-                                            <option value="startTime">Sort: First Departure</option>
-                                            <optgroup label="North Stops">
-                                                {northDisplayStops.map(stop => (
-                                                    <option key={`n-${stop}`} value={`north:${stop}`}>{stop}</option>
-                                                ))}
-                                            </optgroup>
-                                            <optgroup label="South Stops">
-                                                {southDisplayStops.map(stop => (
-                                                    <option key={`s-${stop}`} value={`south:${stop}`}>{stop}</option>
-                                                ))}
-                                            </optgroup>
-                                        </select>
-                                    </div>
+                                    {!useSidebarTools && (
+                                        <>
+                                            <span className="text-gray-500">•</span>
+                                            {sortControl}
+                                        </>
+                                    )}
                                 </div>
+
+                                {useSidebarTools && (
+                                    <>
+                                        <div className="flex-1" />
+                                        <div className="flex items-center gap-1">
+                                            {isReviewSidebarOpen && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setIsReviewSidebarExpanded(value => !value)}
+                                                    className="hidden rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 xl:inline-flex"
+                                                    aria-label={isReviewSidebarExpanded ? 'Shrink Review Tools sidebar' : 'Expand Review Tools sidebar'}
+                                                >
+                                                    {isReviewSidebarExpanded ? 'Shrink tools' : 'Expand tools'}
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsReviewSidebarOpen(value => !value)}
+                                                className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                                aria-expanded={isReviewSidebarOpen}
+                                                aria-controls="review-tools-sidebar"
+                                            >
+                                                {isReviewSidebarOpen ? 'Hide tools' : 'Show tools'}
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
 
                                 {/* Expanded stats */}
                                 {!focusMode && (
@@ -1478,6 +1683,18 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                 )}
                             </div>
                         </div>
+
+                        {showReviewSidebar && (
+                            <details className="border-b border-gray-200 bg-white px-3 py-2 xl:hidden">
+                                <summary className="cursor-pointer text-sm font-extrabold text-gray-900">
+                                    Review Tools
+                                </summary>
+                                <div className="mt-3 space-y-5">
+                                    {reviewToolsSlot}
+                                    {viewTools}
+                                </div>
+                            </details>
+                        )}
 
                         {isMasterMode && (
                             <div className="px-3 pt-3">
@@ -1592,11 +1809,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                             );
                         })()}
                         {/* Main Table Area */}
-                        <div
-                            ref={tableScrollRef}
-                            onScroll={(event) => setTableScrollTop(event.currentTarget.scrollTop)}
-                            className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0"
-                        >
+                        <div className={useSidebarTools ? 'flex flex-1 min-h-0 overflow-hidden' : 'flex flex-1 min-h-0'}>
+                            <div
+                                ref={tableScrollRef}
+                                onScroll={(event) => setTableScrollTop(event.currentTarget.scrollTop)}
+                                className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0"
+                            >
 
                             <table
                                 className={`w-full text-left border-collapse ${densityClass.cell}`}
@@ -2111,14 +2329,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             const departure = getDepartureDisplayTime(northTrip, stop, combined.routeName, false);
                                                             const depTimeMinutes = departure ? TimeUtils.toMinutes(departure) : null;
                                                             const stopCode = combined.northStopIds?.[stop] || '';
-                                                            const stopConnections = connectionLibrary && stopCode && (arrivalTimeMinutes !== null || depTimeMinutes !== null)
+                                                            const stopConnections = effectiveConnectionLibrary && stopCode && (arrivalTimeMinutes !== null || depTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
                                                                     stopCode,
                                                                     {
                                                                         arrival: arrivalTimeMinutes,
                                                                         departure: depTimeMinutes
                                                                     },
-                                                                    connectionLibrary,
+                                                                    effectiveConnectionLibrary,
                                                                     dayType,
                                                                     routeConnectionConfig?.connections
                                                                 )
@@ -2131,13 +2349,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     <React.Fragment key={`n-${stop}`}>
                                                         {showArrRCols && (
                                                             <td
-                                                                className={`p-0 relative ${northArrivalConnections.length > 0 ? 'h-14' : 'h-10'} group/arr ${gridNav.isCellActive(rowIdx, arrGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                                className={`p-0 relative ${showConnections && northArrivalConnections.length > 0 ? 'h-14' : 'h-10'} group/arr ${gridNav.isCellActive(rowIdx, arrGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                                 title={arrCellRef}
                                                                 data-grid-row={rowIdx}
                                                                 data-grid-col={arrGridCol}
                                                                 {...getEditableCellProps(arrGridCol, 'North', stop, 'arr', northArrivalAtStop)}
                                                             >
-                                                                <div className={`flex ${northArrivalConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
+                                                                <div className={`flex ${showConnections && northArrivalConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
                                                                     {onTimeAdjust && northTrip && northArrivalAtStop && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(northTrip.id, `${stop}__ARR`, -1)}
@@ -2174,7 +2392,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             readOnly,
                                                                         })}
                                                                     />
-                                                                    {northArrivalConnections.length > 0 && (
+                                                                    {showConnections && northArrivalConnections.length > 0 && (
                                                                         <ConnectionIndicator
                                                                             connections={northArrivalConnections}
                                                                             popoverAlign={getConnectionPopoverAlign(i, northDisplayStops.length)}
@@ -2261,7 +2479,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             const departure = getDepartureDisplayTime(northTrip, stop, combined.routeName, false);
                                                             const depTimeMinutes = departure ? TimeUtils.toMinutes(departure) : null;
                                                             const stopCode = combined.northStopIds?.[stop] || '';
-                                                            const connections = connectionLibrary && stopCode && (arrivalTimeMinutes !== null || depTimeMinutes !== null)
+                                                            const connections = effectiveConnectionLibrary && stopCode && (arrivalTimeMinutes !== null || depTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
                                                                     stopCode,
                                                                     showArrRCols
@@ -2273,7 +2491,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             arrival: null,
                                                                             departure: depTimeMinutes
                                                                         },
-                                                                    connectionLibrary,
+                                                                    effectiveConnectionLibrary,
                                                                     dayType,
                                                                     routeConnectionConfig?.connections
                                                                 )
@@ -2284,13 +2502,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                                             return (
                                                             <td
-                                                                className={`p-0 relative ${departureConnections.length > 0 ? 'h-14' : 'h-10'} group/cell ${i === 0 ? 'bg-white border-l border-dashed border-gray-100' : ''} ${gridNav.isCellActive(rowIdx, depGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                                className={`p-0 relative ${showConnections && departureConnections.length > 0 ? 'h-14' : 'h-10'} group/cell ${i === 0 ? 'bg-white border-l border-dashed border-gray-100' : ''} ${gridNav.isCellActive(rowIdx, depGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                                 title={depCellRef}
                                                                 data-grid-row={rowIdx}
                                                                 data-grid-col={depGridCol}
                                                                 {...getEditableCellProps(depGridCol, 'North', stop, 'dep', canAdjustNorthDep ? getDepartureDisplayTime(northTrip, stop, combined.routeName, false) : '')}
                                                             >
-                                                                <div className={`flex ${departureConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
+                                                                <div className={`flex ${showConnections && departureConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
                                                                     {onTimeAdjust && northTrip && canAdjustNorthDep && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(northTrip.id, stop, -1)}
@@ -2358,7 +2576,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             <ChevronUp size={12} />
                                                                         </button>
                                                                     )}
-                                                                    {departureConnections.length > 0 && (
+                                                                    {showConnections && departureConnections.length > 0 && (
                                                                         <ConnectionIndicator
                                                                             connections={departureConnections}
                                                                             popoverAlign={getConnectionPopoverAlign(i, northDisplayStops.length)}
@@ -2413,14 +2631,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             const southDeparture = getDepartureDisplayTime(southTrip, stop, combined.routeName, i === southDisplayStops.length - 1);
                                                             const southDepTimeMinutes = southDeparture ? TimeUtils.toMinutes(southDeparture) : null;
                                                             const southStopCode = combined.southStopIds?.[stop] || '';
-                                                            const stopConnections = connectionLibrary && southStopCode && (southArrivalTimeMinutes !== null || southDepTimeMinutes !== null)
+                                                            const stopConnections = effectiveConnectionLibrary && southStopCode && (southArrivalTimeMinutes !== null || southDepTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
                                                                     southStopCode,
                                                                     {
                                                                         arrival: southArrivalTimeMinutes,
                                                                         departure: southDepTimeMinutes
                                                                     },
-                                                                    connectionLibrary,
+                                                                    effectiveConnectionLibrary,
                                                                     dayType,
                                                                     routeConnectionConfig?.connections
                                                                 )
@@ -2433,13 +2651,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     <React.Fragment key={`s-${stop}`}>
                                                         {hasRecovery && (
                                                             <td
-                                                                className={`p-0 relative ${southArrivalConnections.length > 0 ? 'h-14' : 'h-10'} group/arr ${gridNav.isCellActive(rowIdx, sArrGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                                className={`p-0 relative ${showConnections && southArrivalConnections.length > 0 ? 'h-14' : 'h-10'} group/arr ${gridNav.isCellActive(rowIdx, sArrGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                                 title={arrCellRef}
                                                                 data-grid-row={rowIdx}
                                                                 data-grid-col={sArrGridCol}
                                                                 {...getEditableCellProps(sArrGridCol, 'South', stop, 'arr', southArrivalAtStop)}
                                                             >
-                                                                <div className={`flex ${southArrivalConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
+                                                                <div className={`flex ${showConnections && southArrivalConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
                                                                     {onTimeAdjust && southTrip && southArrivalAtStop && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(southTrip.id, `${stop}__ARR`, -1)}
@@ -2477,7 +2695,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             readOnly,
                                                                         })}
                                                                     />
-                                                                    {southArrivalConnections.length > 0 && (
+                                                                    {showConnections && southArrivalConnections.length > 0 && (
                                                                         <ConnectionIndicator
                                                                             connections={southArrivalConnections}
                                                                             popoverAlign={getConnectionPopoverAlign(i, southDisplayStops.length)}
@@ -2564,7 +2782,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             const canAdjustSouthDep = !!southTrip && !!southDepValue;
                                                             const southDepTimeMinutes = southDepValue ? TimeUtils.toMinutes(southDepValue) : null;
                                                             const southStopCode = combined.southStopIds?.[stop] || '';
-                                                            const southConnections = connectionLibrary && southStopCode && (southArrivalTimeMinutes !== null || southDepTimeMinutes !== null)
+                                                            const southConnections = effectiveConnectionLibrary && southStopCode && (southArrivalTimeMinutes !== null || southDepTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
                                                                     southStopCode,
                                                                     hasRecovery
@@ -2576,7 +2794,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             arrival: null,
                                                                             departure: southDepTimeMinutes
                                                                         },
-                                                                    connectionLibrary,
+                                                                    effectiveConnectionLibrary,
                                                                     dayType,
                                                                     routeConnectionConfig?.connections
                                                                 )
@@ -2587,13 +2805,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                                             return (
                                                         <td
-                                                            className={`p-0 relative ${departureConnections.length > 0 ? 'h-14' : 'h-10'} group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''} ${gridNav.isCellActive(rowIdx, sDepGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                            className={`p-0 relative ${showConnections && departureConnections.length > 0 ? 'h-14' : 'h-10'} group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''} ${gridNav.isCellActive(rowIdx, sDepGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                             title={depCellRef}
                                                             data-grid-row={rowIdx}
                                                             data-grid-col={sDepGridCol}
                                                             {...getEditableCellProps(sDepGridCol, 'South', stop, 'dep', southDepValue)}
                                                         >
-                                                            <div className={`flex ${departureConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
+                                                            <div className={`flex ${showConnections && departureConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
                                                                 {onTimeAdjust && southTrip && canAdjustSouthDep && (
                                                                     <button
                                                                         onClick={() => onTimeAdjust(southTrip.id, stop, -1)}
@@ -2640,7 +2858,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         <ChevronUp size={12} />
                                                                     </button>
                                                                 )}
-                                                                {departureConnections.length > 0 && (
+                                                                {showConnections && departureConnections.length > 0 && (
                                                                     <ConnectionIndicator
                                                                         connections={departureConnections}
                                                                         popoverAlign={getConnectionPopoverAlign(i, southDisplayStops.length)}
@@ -2666,16 +2884,26 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 {showMetaCols && (
                                                     <>
                                                         <td className="p-2 text-center text-sm font-semibold text-gray-700 border-l border-gray-100" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalTravel}</td>
-                                                        <td className="p-1 text-center" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
-                                                            {(() => {
-                                                                const displayBand = northTrip?.assignedBand || southTrip?.assignedBand || '-';
-                                                                return (
-                                                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                                                        {(() => {
+                                                            const displayBand = northTrip?.assignedBand || southTrip?.assignedBand || '-';
+                                                            const bandTone = useSidebarTools
+                                                                ? getStep4BandToneClasses(displayBand)
+                                                                : getStep4BandToneClasses('-');
+
+                                                            return (
+                                                                <td
+                                                                    className={`p-1 text-center transition-colors ${useSidebarTools ? bandTone.cell : ''}`}
+                                                                    title={columnMapping[dataColIdx++]?.letter + displayRowNum}
+                                                                >
+                                                                    <span
+                                                                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${bandTone.badge}`}
+                                                                        aria-label={`Time band ${displayBand}`}
+                                                                    >
                                                                         {displayBand}
                                                                     </span>
-                                                                );
-                                                            })()}
-                                                        </td>
+                                                                </td>
+                                                            );
+                                                        })()}
                                                         <td className="p-2 text-center text-sm text-gray-700" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalRec}</td>
 
                                                         <td className={`p-2 text-center text-sm font-semibold ${ratio > 25 ? 'text-amber-700' : ratio < 10 ? 'text-red-700' : 'text-gray-700'}`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
@@ -2723,6 +2951,29 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                     })()}
                                 </tbody>
                             </table>
+                            </div>
+                            {showReviewSidebar && (
+                                <aside
+                                    id="review-tools-sidebar"
+                                    className={`hidden xl:flex ${reviewSidebarWidthClass} shrink-0 flex-col gap-3 overflow-y-auto border-l border-gray-200 bg-white p-3`}
+                                >
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                        <div className="text-sm font-extrabold text-gray-900">Review Tools</div>
+                                        <p className="mt-1 text-xs text-gray-500">Adjust views, compare results, and open secondary actions.</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsReviewSidebarOpen(false)}
+                                            className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                                        >
+                                            Hide
+                                        </button>
+                                    </div>
+                                    {reviewToolsSlot}
+                                    {viewTools}
+                                </aside>
+                            )}
                         </div>
                     </div>
                 );
@@ -2731,3 +2982,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         </div>
     );
 };
+
+
+

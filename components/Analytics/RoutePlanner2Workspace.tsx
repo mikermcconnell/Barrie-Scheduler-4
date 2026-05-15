@@ -56,7 +56,7 @@ import {
     type RoutePlanner2RuntimeEvidenceDiagnostic,
 } from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
 import { buildRoutePlanner2StopCardDetails, type RoutePlanner2StopCardDetail } from '../../utils/route-planner-2/routePlanner2StopTimes';
-import { RoutePlanner2MapCanvas } from './route-planner-2/RoutePlanner2MapCanvas';
+import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle } from './route-planner-2/RoutePlanner2MapCanvas';
 import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
 import {
     RoutePlanner2AddressImportModal,
@@ -585,6 +585,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [isRightRailOpen, setIsRightRailOpen] = useState(true);
     const [isActionSidebarOpen, setIsActionSidebarOpen] = useState(false);
     const runtimeSourceDetailsRef = useRef<HTMLDivElement | null>(null);
+    const mapCanvasRef = useRef<RoutePlanner2MapCanvasHandle | null>(null);
     const [isDrawFocusMode, setIsDrawFocusMode] = useState(false);
     const [isExportingOperatorPdf, setIsExportingOperatorPdf] = useState(false);
     const [isExportingMapPdf, setIsExportingMapPdf] = useState(false);
@@ -1241,11 +1242,28 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     async function exportMapPdf() {
         if (!selectedScenario || selectedScenario.stops.length < 2 || isExportingMapPdf) return;
         setIsExportingMapPdf(true);
+        setSaveMessage(null);
         try {
+            const mapImage = await mapCanvasRef.current?.captureMapImage();
+            if (!mapImage) {
+                throw new Error('The map is still loading. Please try the export again in a moment.');
+            }
             await exportRoutePlanner2MapPdf(selectedScenario, {
                 projectName: project.name,
                 routeLabel: selectedScenario.name,
+                mapImage,
+                summaryItems: [
+                    { label: 'Stops', value: String(selectedScenario.stops.length) },
+                    { label: 'Runtime', value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes) },
+                    { label: 'Cycle', value: formatRuntime(selectedFeasibility?.cycleTimeMinutes) },
+                    { label: 'Buses', value: formatBuses(selectedFeasibility?.busesRequired) },
+                    { label: 'Shape', value: routeShapeLabel },
+                ],
             });
+        } catch (error) {
+            console.error('Failed to export Route Planner 2 map PDF', error);
+            setSaveState('error');
+            setSaveMessage(error instanceof Error ? error.message : 'Map PDF export failed. Please try again.');
         } finally {
             setIsExportingMapPdf(false);
         }
@@ -1306,6 +1324,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                 className="relative h-full min-h-0 overflow-hidden bg-slate-100 p-0"
             >
                     <RoutePlanner2MapCanvas
+                        ref={mapCanvasRef}
                         scenario={selectedScenario}
                         selectedStopId={selectedStopId}
                         highlightedStopId={hoveredMapItem?.type === 'stop' ? hoveredMapItem.id : null}

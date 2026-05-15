@@ -23,8 +23,20 @@ const EMPTY_OTP: OTPBreakdown = {
   avgDeviationSeconds: 0,
 };
 
+const MERGED_AB_ROUTES = new Set(['2', '7', '12']);
+
+function getMergedCanonicalRouteId(routeId: string | undefined): string | null {
+  const normalized = (routeId || '').trim().toUpperCase();
+  const match = normalized.match(/^(\d+)([AB])$/);
+  if (!match) return null;
+  return MERGED_AB_ROUTES.has(match[1]) ? match[1] : null;
+}
+
 function routeMatches(routeId: string | undefined, selectedRouteId: string): boolean {
-  return (routeId || '').trim().toUpperCase() === selectedRouteId.trim().toUpperCase();
+  const normalizedRouteId = (routeId || '').trim().toUpperCase();
+  const normalizedSelectedRouteId = selectedRouteId.trim().toUpperCase();
+  if (normalizedRouteId === normalizedSelectedRouteId) return true;
+  return getMergedCanonicalRouteId(normalizedRouteId) === normalizedSelectedRouteId;
 }
 
 function mergeOtp(breakdowns: OTPBreakdown[]): OTPBreakdown {
@@ -192,6 +204,13 @@ export function getAvailablePerformanceRoutes(summary: PerformanceDataSummary | 
         routeId: route.routeId,
         routeName: route.routeName || `Route ${route.routeId}`,
       });
+      const canonicalRouteId = getMergedCanonicalRouteId(route.routeId);
+      if (canonicalRouteId && !routeMap.has(canonicalRouteId)) {
+        routeMap.set(canonicalRouteId, {
+          routeId: canonicalRouteId,
+          routeName: `Route ${canonicalRouteId}`,
+        });
+      }
     }
   }
 

@@ -125,6 +125,30 @@ Responsibilities:
 - return fallback estimates when evidence is missing
 - explain source and confidence per segment
 
+### Map PDF Export Adapter
+
+Owns the map-first export path for planning review.
+
+Responsibilities:
+- ask the map canvas to fit the active route and capture the current rendered map
+  as an image
+- hide editor-only controls, popovers, and transient metrics during capture
+- render export-only stop markers and stop callouts through inline SVG text with
+  explicit centered baselines before map capture
+- draw the PDF header, KPI cards, and legend as vector jsPDF text/shapes with
+  `baseline: 'middle'`
+- embed the captured map image into the PDF without rasterizing the header
+
+Rules:
+- do not recreate the route map with jsPDF drawing primitives when the app map is
+  already the source of truth
+- do not rely on plain HTML/CSS label pills for captured export labels; text
+  baselines can render low under `html2canvas`
+- do not rasterize an SVG header into a PNG; it makes the PDF header text and
+  metric cards blurry
+- when using direct jsPDF text in tight header cards or legends, set the text
+  baseline explicitly instead of relying on the default alphabetic baseline
+
 ## Data Flow
 
 ```text

@@ -1,6 +1,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Eye, EyeOff, GitCompare, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Clock3, Eye, EyeOff, GitCompare, Loader2, RefreshCw, X } from 'lucide-react';
 import { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import { ScheduleEditor } from '../../ScheduleEditor';
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
@@ -15,6 +15,11 @@ import {
     buildDetailedMasterComparison,
     buildMasterComparisonChangeSummary,
 } from '../../../utils/schedule/masterComparison';
+import {
+    previewScheduleHeadwayRegularization,
+    regularizeScheduleHeadways,
+    type HeadwayRegularizationSummary,
+} from '../../../utils/schedule/headwayRegularization';
 
 interface Step4ScheduleProps {
     initialSchedules: MasterRouteTable[];
@@ -86,12 +91,21 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     // even after edits sync back to the parent via onUpdateSchedules
     const [originalSnapshot, setOriginalSnapshot] = useState<MasterRouteTable[]>(() => resolvedOriginalSchedules);
     const lastSyncedSchedulesRef = useRef<MasterRouteTable[] | null>(initialSchedules);
+    const latestInitialSchedulesRef = useRef(initialSchedules);
+    const latestResolvedOriginalSchedulesRef = useRef(resolvedOriginalSchedules);
     const compareRequestTokenRef = useRef(0);
     const [masterCompare, setMasterCompare] = useState<Step4MasterCompareState>({
         status: 'idle',
         baseline: null,
     });
     const [showMasterDeltas, setShowMasterDeltas] = useState(true);
+    const [lastHeadwayRegularization, setLastHeadwayRegularization] = useState<HeadwayRegularizationSummary | null>(null);
+    const [headwayTargetOverride, setHeadwayTargetOverride] = useState<number | null>(null);
+    const [isHeadwayModalOpen, setIsHeadwayModalOpen] = useState(false);
+    const [headwayInput, setHeadwayInput] = useState(() => (
+        targetHeadway && targetHeadway > 0 ? String(Math.round(targetHeadway)) : '30'
+    ));
+    const [headwayInputError, setHeadwayInputError] = useState<string | null>(null);
 
     const resolvedApprovedRuntimeModel = React.useMemo(
         () => buildStep2ApprovedRuntimeModelFromContract(approvedRuntimeContract),
@@ -100,6 +114,8 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     const resolvedStep4Bands = resolvedApprovedRuntimeModel?.bands ?? bands;
     const resolvedStep4Analysis = resolvedApprovedRuntimeModel?.buckets ?? analysis;
     const resolvedStep4SegmentNames = resolvedApprovedRuntimeModel?.segmentColumns.map(column => column.segmentName) ?? segmentNames;
+    latestInitialSchedulesRef.current = initialSchedules;
+    latestResolvedOriginalSchedulesRef.current = resolvedOriginalSchedules;
 
     // We use a local Undo/Redo stack for the session in this step
     // syncing changes back to the parent for persistence
@@ -113,10 +129,11 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     // Only reset the local Step 4 editor session when the wizard explicitly starts
     // a new Step 4 payload (fresh generation, resume, or project load).
     useEffect(() => {
-        lastSyncedSchedulesRef.current = initialSchedules;
-        setOriginalSnapshot(resolvedOriginalSchedules);
-        resetSchedules(initialSchedules);
-    }, [editorSessionKey, initialSchedules, resetSchedules, resolvedOriginalSchedules]);
+        const nextInitialSchedules = latestInitialSchedulesRef.current;
+        lastSyncedSchedulesRef.current = nextInitialSchedules;
+        setOriginalSnapshot(latestResolvedOriginalSchedulesRef.current);
+        resetSchedules(nextInitialSchedules);
+    }, [editorSessionKey, resetSchedules]);
 
     const handleResetOriginals = useCallback(() => {
         setSchedules(originalSnapshot);
@@ -218,6 +235,264 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
         ? { masterBaseline: showMasterDeltas ? masterCompare.baseline : null }
         : {};
 
+    const buildTargetHeadway = Number.isFinite(targetHeadway || NaN) && (targetHeadway || 0) > 0
+        ? Math.round(targetHeadway as number)
+        : null;
+    const headwayTargetMinutes = headwayTargetOverride ?? buildTargetHeadway;
+
+    const openHeadwayModal = useCallback(() => {
+        setHeadwayInput(String(headwayTargetMinutes ?? 30));
+        setHeadwayInputError(null);
+        setIsHeadwayModalOpen(true);
+    }, [headwayTargetMinutes]);
+
+    const handleSaveHeadwayTarget = useCallback(() => {
+        const parsed = Number(headwayInput);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            setHeadwayInputError('Enter a headway greater than 0 minutes.');
+            return;
+        }
+
+        const rounded = Math.round(parsed);
+        setHeadwayTargetOverride(rounded);
+        setLastHeadwayRegularization(null);
+        setHeadwayInput(String(rounded));
+        setHeadwayInputError(null);
+        setIsHeadwayModalOpen(false);
+    }, [headwayInput]);
+
+    const headwaySourceLabel = headwayTargetOverride !== null
+        ? 'Custom target'
+        : buildTargetHeadway !== null
+            ? 'Build target'
+        : null;
+
+    const headwayPreview = useMemo(() => (
+        headwayTargetMinutes
+            ? previewScheduleHeadwayRegularization(schedules, {
+                targetHeadwayMinutes: headwayTargetMinutes,
+                minRecoveryMinutes: 5,
+            })
+            : null
+    ), [headwayTargetMinutes, schedules]);
+
+    const handleRegularizeHeadway = useCallback(() => {
+        if (!headwayTargetMinutes) return;
+
+        const result = regularizeScheduleHeadways(schedules, {
+            targetHeadwayMinutes: headwayTargetMinutes,
+            minRecoveryMinutes: 5,
+        });
+        setSchedules(result.schedules);
+        setLastHeadwayRegularization(result.summary);
+    }, [headwayTargetMinutes, schedules, setSchedules]);
+
+    const reviewToolsSlot = (
+        <div className="space-y-3">
+            <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                <div className="flex items-center gap-2 text-sm font-extrabold text-emerald-950">
+                    <Clock3 size={16} className="text-emerald-700" />
+                    Regularize headway
+                </div>
+                <p className="mt-1 text-xs leading-5 text-emerald-900">
+                    Snap each direction to the target headway and rebalance terminal recovery. Travel times stay unchanged.
+                </p>
+
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/80 px-3 py-2">
+                    <div>
+                        <div className="text-xs font-bold uppercase tracking-wide text-emerald-700">Target</div>
+                        <div className="text-sm font-extrabold text-emerald-950">
+                            {headwayTargetMinutes ? `${headwayTargetMinutes} min` : 'Not set'}
+                        </div>
+                        {headwaySourceLabel && (
+                            <div className="text-[11px] font-semibold text-emerald-700">{headwaySourceLabel}</div>
+                        )}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={openHeadwayModal}
+                        className="rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-extrabold text-emerald-800 hover:bg-emerald-50"
+                    >
+                        {headwayTargetMinutes ? 'Change target' : 'Set target'}
+                    </button>
+                </div>
+
+                {headwayPreview ? (
+                    <div className="mt-3 space-y-2">
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="rounded-lg bg-white/80 px-3 py-2">
+                                <div className="font-bold text-gray-500">Before</div>
+                                <div className="mt-1 font-extrabold text-gray-900">
+                                    {headwayPreview.before.offTargetHeadways} off-target
+                                </div>
+                                <div className="text-gray-600">
+                                    Worst ±{headwayPreview.before.worstDeviationMinutes}m
+                                </div>
+                            </div>
+                            <div className="rounded-lg bg-white/80 px-3 py-2">
+                                <div className="font-bold text-gray-500">After</div>
+                                <div className="mt-1 font-extrabold text-gray-900">
+                                    {headwayPreview.after.offTargetHeadways} off-target
+                                </div>
+                                <div className="text-gray-600">
+                                    Worst ±{headwayPreview.after.worstDeviationMinutes}m
+                                </div>
+                            </div>
+                        </div>
+
+                        {(headwayPreview.tightRecoveryCount > 0 || headwayPreview.overlapCount > 0) && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                                {headwayPreview.overlapCount > 0
+                                    ? `${headwayPreview.overlapCount} block connection${headwayPreview.overlapCount === 1 ? '' : 's'} would overlap.`
+                                    : `${headwayPreview.tightRecoveryCount} recovery window${headwayPreview.tightRecoveryCount === 1 ? '' : 's'} would be under 5 minutes.`}
+                            </div>
+                        )}
+
+                        <div className="text-xs font-semibold text-emerald-900">
+                            Preview: {headwayPreview.adjustedTripCount} trip{headwayPreview.adjustedTripCount === 1 ? '' : 's'} would shift, up to {headwayPreview.maxTripShiftMinutes} minutes.
+                        </div>
+
+                        {lastHeadwayRegularization && (
+                            <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900">
+                                Applied: {lastHeadwayRegularization.adjustedTripCount} trip{lastHeadwayRegularization.adjustedTripCount === 1 ? '' : 's'} shifted, {lastHeadwayRegularization.changedRecoveryCount} recovery value{lastHeadwayRegularization.changedRecoveryCount === 1 ? '' : 's'} updated.
+                            </div>
+                        )}
+
+                        <button
+                            type="button"
+                            onClick={handleRegularizeHeadway}
+                            disabled={headwayPreview.before.totalHeadways === 0}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <RefreshCw size={15} />
+                            Regularize to {headwayTargetMinutes} min
+                        </button>
+                    </div>
+                ) : (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                        Set a target headway before using this tool.
+                    </div>
+                )}
+            </section>
+
+            <section className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <div className="flex items-center gap-2 text-sm font-extrabold text-gray-900">
+                    <GitCompare size={16} className="text-indigo-600" />
+                    Compare to master
+                </div>
+                <p className="mt-1 text-xs leading-5 text-gray-600">
+                    Review differences from the published master for {resolvedRouteLabel}. Publishing is not blocked.
+                </p>
+
+                {masterCompare.status === 'unavailable' && (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                        No published master found for {resolvedRouteLabel}.
+                    </div>
+                )}
+
+                {masterCompare.status === 'error' && (
+                    <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                        {masterCompare.error || 'Could not load master comparison.'}
+                    </div>
+                )}
+
+                {isCompareStale && (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                        Refresh before trusting visible deltas.
+                    </div>
+                )}
+
+                {isCompareCurrent && compareSummary && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {[
+                            ['Matched', compareSummary.matched, 'border-slate-200 bg-white text-slate-700'],
+                            ['Retimed', compareSummary.retimed, 'border-indigo-200 bg-indigo-50 text-indigo-800'],
+                            ['New', compareSummary.new, 'border-green-200 bg-green-50 text-green-800'],
+                            ['Removed', compareSummary.removed, 'border-red-200 bg-red-50 text-red-800'],
+                            ['Review', compareSummary.review, 'border-amber-200 bg-amber-50 text-amber-900'],
+                        ].map(([label, count, className]) => (
+                            <span
+                                key={label}
+                                className={`rounded-full border px-2.5 py-1 text-xs font-bold ${className}`}
+                            >
+                                {label} {count}
+                            </span>
+                        ))}
+                        {hasCompareWarnings && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-900">
+                                <AlertTriangle size={12} />
+                                Review
+                            </span>
+                        )}
+                    </div>
+                )}
+
+                <div className="mt-3 grid gap-2">
+                    {isCompareCurrent && (
+                        <button
+                            type="button"
+                            onClick={() => setShowMasterDeltas(value => !value)}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                            {showMasterDeltas ? <EyeOff size={14} /> : <Eye size={14} />}
+                            {showMasterDeltas ? 'Hide deltas' : 'Show deltas'}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => { void handleLoadMasterCompare(); }}
+                        disabled={!compareScopeReady || masterCompare.status === 'loading'}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        title={!compareScopeReady ? 'A team and route/day are required before comparison can load.' : undefined}
+                    >
+                        {masterCompare.status === 'loading' ? (
+                            <Loader2 size={15} className="animate-spin" />
+                        ) : isCompareCurrent || isCompareStale ? (
+                            <RefreshCw size={15} />
+                        ) : (
+                            <GitCompare size={15} />
+                        )}
+                        {masterCompare.status === 'loading'
+                            ? 'Loading comparison'
+                            : isCompareCurrent || isCompareStale
+                                ? 'Refresh comparison'
+                                : 'Load comparison'}
+                    </button>
+                </div>
+            </section>
+
+            {resolvedApprovedRuntimeModel && (
+                <section className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                    <div className="text-sm font-extrabold text-blue-900">Approved runtime contract</div>
+                    <p className="mt-1 text-xs leading-5 text-blue-800">
+                        {resolvedApprovedRuntimeModel.usableBucketCount} active bucket{resolvedApprovedRuntimeModel.usableBucketCount === 1 ? '' : 's'} across {resolvedApprovedRuntimeModel.usableBandCount} active band{resolvedApprovedRuntimeModel.usableBandCount === 1 ? '' : 's'}.
+                    </p>
+                    <div className="mt-2 rounded-lg bg-white/70 px-3 py-2 text-xs font-semibold text-blue-800">
+                        <div>{resolvedApprovedRuntimeModel.chartBasis === 'observed-cycle' ? 'Observed cycle totals' : 'Uploaded bucket percentiles'}</div>
+                        <div className="mt-1 text-blue-700">{resolvedApprovedRuntimeModel.directions.join(', ') || 'No directions'}</div>
+                    </div>
+                </section>
+            )}
+
+            {resolvedStep4Bands && resolvedStep4Bands.length > 0 && (
+                <section>
+                    <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">Time bands</div>
+                    <div className="mt-2 space-y-1.5">
+                        {resolvedStep4Bands.map(band => (
+                            <div key={band.id} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm">
+                                <div className="flex items-center gap-2 font-semibold text-gray-800">
+                                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: band.color }} />
+                                    {band.id}
+                                </div>
+                                <span className="font-semibold text-gray-600">{band.avg.toFixed(0)}m</span>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
+        </div>
+    );
+
     // Sync back to parent whenever schedules change
     useEffect(() => {
         if (lastSyncedSchedulesRef.current === schedules) return;
@@ -227,116 +502,89 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
 
     return (
         <div className="h-full flex flex-col -m-8 min-h-0 overflow-hidden">
-            {resolvedApprovedRuntimeModel && (
-                <div className="border-b border-blue-100 bg-blue-50 px-8 py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                            <div className="text-xs font-bold uppercase tracking-wide text-blue-700">
-                                Approved runtime contract
+            {isHeadwayModalOpen && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/40 px-4">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="headway-target-title"
+                        className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl"
+                    >
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <h2 id="headway-target-title" className="text-lg font-extrabold text-gray-900">
+                                    Set target headway
+                                </h2>
+                                <p className="mt-1 text-sm leading-6 text-gray-600">
+                                    Choose the clock-face spacing Step 4 should regularize toward. This only changes trip timing and terminal recovery.
+                                </p>
                             </div>
-                            <p className="mt-1 text-sm text-blue-900">
-                                This schedule was generated from the Step 2 approved model: {resolvedApprovedRuntimeModel.usableBucketCount} active bucket{resolvedApprovedRuntimeModel.usableBucketCount === 1 ? '' : 's'} across {resolvedApprovedRuntimeModel.usableBandCount} active band{resolvedApprovedRuntimeModel.usableBandCount === 1 ? '' : 's'}.
-                            </p>
+                            <button
+                                type="button"
+                                onClick={() => setIsHeadwayModalOpen(false)}
+                                className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                                aria-label="Close target headway modal"
+                            >
+                                <X size={18} />
+                            </button>
                         </div>
-                        <div className="text-right text-xs text-blue-700">
-                            <div className="font-semibold">
-                                {resolvedApprovedRuntimeModel.chartBasis === 'observed-cycle' ? 'Observed cycle totals' : 'Uploaded bucket percentiles'}
+
+                        <label className="mt-4 block">
+                            <span className="text-sm font-bold text-gray-800">Target headway, minutes</span>
+                            <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={headwayInput}
+                                onChange={event => {
+                                    setHeadwayInput(event.target.value);
+                                    setHeadwayInputError(null);
+                                }}
+                                className="mt-2 w-full rounded-xl border border-gray-300 px-3 py-2 text-base font-semibold text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            />
+                        </label>
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {[15, 20, 30, 60].map(value => (
+                                <button
+                                    key={value}
+                                    type="button"
+                                    onClick={() => {
+                                        setHeadwayInput(String(value));
+                                        setHeadwayInputError(null);
+                                    }}
+                                    className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-bold text-gray-700 hover:bg-emerald-50 hover:text-emerald-800"
+                                >
+                                    {value} min
+                                </button>
+                            ))}
+                        </div>
+
+                        {headwayInputError && (
+                            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                                {headwayInputError}
                             </div>
-                            <div>{resolvedApprovedRuntimeModel.directions.join(', ') || 'No directions'}</div>
+                        )}
+
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setIsHeadwayModalOpen(false)}
+                                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleSaveHeadwayTarget}
+                                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
+                            >
+                                Use target
+                            </button>
                         </div>
                     </div>
                 </div>
             )}
-            <div className="border-b border-gray-200 bg-white px-8 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="max-w-3xl">
-                        <div className="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide text-gray-800">
-                            <GitCompare size={16} className="text-indigo-600" />
-                            Compare to master
-                        </div>
-                        <p className="mt-1 text-sm text-gray-600">
-                            Review how this draft differs from the published master for {resolvedRouteLabel} before publishing.
-                            Publishing is not blocked by this review.
-                        </p>
-
-                        {masterCompare.status === 'unavailable' && (
-                            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                                No published master found for {resolvedRouteLabel}.
-                            </div>
-                        )}
-
-                        {masterCompare.status === 'error' && (
-                            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                                {masterCompare.error || 'Could not load master comparison.'}
-                            </div>
-                        )}
-
-                        {isCompareStale && (
-                            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                                This comparison is from a previous Step 4 schedule. Refresh it before trusting visible deltas.
-                            </div>
-                        )}
-
-                        {isCompareCurrent && compareSummary && (
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                                {[
-                                    ['Matched', compareSummary.matched, 'border-slate-200 bg-slate-50 text-slate-700'],
-                                    ['Retimed', compareSummary.retimed, 'border-indigo-200 bg-indigo-50 text-indigo-800'],
-                                    ['New', compareSummary.new, 'border-green-200 bg-green-50 text-green-800'],
-                                    ['Removed', compareSummary.removed, 'border-red-200 bg-red-50 text-red-800'],
-                                    ['Review', compareSummary.review, 'border-amber-200 bg-amber-50 text-amber-900'],
-                                ].map(([label, count, className]) => (
-                                    <span
-                                        key={label}
-                                        className={`rounded-full border px-3 py-1 text-xs font-bold ${className}`}
-                                    >
-                                        {label} {count}
-                                    </span>
-                                ))}
-                                {hasCompareWarnings && (
-                                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-900">
-                                        <AlertTriangle size={12} />
-                                        Review before publishing
-                                    </span>
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                        {isCompareCurrent && (
-                            <button
-                                type="button"
-                                onClick={() => setShowMasterDeltas(value => !value)}
-                                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                            >
-                                {showMasterDeltas ? <EyeOff size={14} /> : <Eye size={14} />}
-                                {showMasterDeltas ? 'Hide deltas' : 'Show deltas'}
-                            </button>
-                        )}
-                        <button
-                            type="button"
-                            onClick={() => { void handleLoadMasterCompare(); }}
-                            disabled={!compareScopeReady || masterCompare.status === 'loading'}
-                            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                            title={!compareScopeReady ? 'A team and route/day are required before comparison can load.' : undefined}
-                        >
-                            {masterCompare.status === 'loading' ? (
-                                <Loader2 size={15} className="animate-spin" />
-                            ) : isCompareCurrent || isCompareStale ? (
-                                <RefreshCw size={15} />
-                            ) : (
-                                <GitCompare size={15} />
-                            )}
-                            {masterCompare.status === 'loading'
-                                ? 'Loading comparison'
-                                : isCompareCurrent || isCompareStale
-                                    ? 'Refresh comparison'
-                                    : 'Load comparison'}
-                        </button>
-                    </div>
-                </div>
-            </div>
             <div className="flex-grow min-h-0 overflow-hidden">
                 <ScheduleEditor
                     schedules={schedules}
@@ -351,10 +599,6 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                     onRenameDraft={() => { }}
                     autoSaveStatus={autoSaveStatus || 'saved'}
                     lastSaved={lastSaved || null}
-                    onSaveVersion={async () => { }}
-                    onClose={() => { }}
-                    onNewDraft={() => { }}
-                    onOpenDrafts={() => { }}
                     canUndo={canUndo}
                     canRedo={canRedo}
                     undo={undo}
@@ -364,11 +608,13 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                     analysis={resolvedStep4Analysis}
                     segmentNames={resolvedStep4SegmentNames}
                     targetCycleTime={targetCycleTime}
-                    targetHeadway={targetHeadway}
+                    targetHeadway={headwayTargetMinutes ?? undefined}
                     hideAutoSave={true}
                     teamId={teamId}
                     userId={userId}
                     connectionScopeSchedules={connectionScopeSchedules}
+                    compactStep4
+                    reviewToolsSlot={reviewToolsSlot}
                     {...scheduleEditorCompareProps}
                 />
             </div>

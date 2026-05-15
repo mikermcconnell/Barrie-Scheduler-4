@@ -158,3 +158,11 @@ When a route has at least two stops, the planner can export a map-first PDF for
 review. The export should show the route line, numbered stops, start/end
 markers, address callouts with imported kids counts, and route road-name labels
 derived from Mapbox direction steps when available.
+
+Implementation gotcha: keep this export screenshot-first for the map itself.
+Capture the app map as an image and place it into the PDF; do not redraw the map
+with jsPDF primitives. For captured map labels, use inline SVG text with explicit
+centered baselines because plain HTML/CSS text captured by `html2canvas` can
+drift low inside pills. For the PDF header, KPI cards, and legend, use vector
+jsPDF text/shapes with `baseline: 'middle'`; do not rasterize an SVG header into
+a PNG because it makes the header text and cards blurry.
