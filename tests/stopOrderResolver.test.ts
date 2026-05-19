@@ -653,4 +653,47 @@ describe('stopOrderResolver.resolveStopOrderFromPerformance', () => {
     expect(result.warnings).toContain('Missing resolved stop order for North.');
     expect(result.warnings).toContain('Missing resolved stop order for South.');
   });
+
+  it('uses detour-only trips for stop order when detour fallback is explicitly requested', () => {
+    const summaries: DailySummary[] = ['2026-03-30', '2026-03-31', '2026-04-01'].map((date) => {
+      const northDetour = {
+        ...buildFullNorthTrip(date),
+        patternKind: 'detour' as const,
+      };
+      const southDetour = {
+        ...buildFullSouthTrip(date),
+        patternKind: 'detour' as const,
+      };
+
+      return makeSummary({
+        date,
+        dayType: 'weekday',
+        routeNames: { '12A': 'Georgian Mall', '12B': 'Barrie South GO' },
+        stopEntries: [
+          ...buildNorthStopEntries().map(entry => ({ ...entry, patternKind: 'detour' as const })),
+          ...buildSouthStopEntries().map(entry => ({ ...entry, patternKind: 'detour' as const })),
+        ],
+        tripEntries: [northDetour, southDetour],
+      });
+    });
+
+    const result = resolveStopOrderFromPerformance(summaries, {
+      routeId: '12',
+      dayType: 'weekday',
+      patternAnchorStops: {
+        North: ['Georgian Mall', 'Barrie South GO Station'],
+        South: ['Barrie South GO Station', 'Georgian Mall'],
+      },
+      runtimePatternStrategy: 'detour-fallback',
+    });
+
+    expect(result.decision).toBe('accept');
+    expect(result.confidence).toBe('high');
+    expect(result.resolvedDirections.North?.source).toBe('observed-midday-pattern');
+    expect(result.resolvedDirections.South?.source).toBe('observed-midday-pattern');
+    expect(result.resolvedDirections.North?.stopIds).toEqual(['gm', 'dt', 'pp', 'sg']);
+    expect(result.resolvedDirections.South?.stopIds).toEqual(['sg', 'pp', 'dt', 'gm']);
+    expect(result.resolvedDirections.North?.tripCountUsed).toBe(3);
+    expect(result.resolvedDirections.South?.tripCountUsed).toBe(3);
+  });
 });

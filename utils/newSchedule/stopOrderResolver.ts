@@ -44,6 +44,7 @@ export interface StopOrderResolverOptions {
   dateRange?: { start: string; end: string };
   middayWindow?: { start: string; end: string };
   patternAnchorStops?: Partial<Record<StopOrderDirection, string[]>>;
+  runtimePatternStrategy?: 'normal-only' | 'detour-fallback';
 }
 
 export interface StopOrderResolutionResult {
@@ -530,19 +531,28 @@ export function resolveStopOrderFromPerformance(
   const canonicalRouteId = getCanonicalRouteId(normalizedRouteId);
   const stopNameLookup = buildStopNameLookup(dailySummaries, normalizedRouteId, dayType, dateRange);
 
-  const candidates: TripCandidate[] = [];
-  dailySummaries.forEach((day) => {
-    if (day.dayType !== dayType) return;
-    if (dateRange && (day.date < dateRange.start || day.date > dateRange.end)) return;
+  const buildCandidates = (patternKind: 'normal' | 'detour'): TripCandidate[] => {
+    const candidates: TripCandidate[] = [];
+    dailySummaries.forEach((day) => {
+      if (day.dayType !== dayType) return;
+      if (dateRange && (day.date < dateRange.start || day.date > dateRange.end)) return;
 
-    (day.tripStopSegmentRuntimes?.entries || []).forEach((trip) => {
-      if (!routeMatchesSelection(trip.routeId, normalizedRouteId)) return;
-      if (trip.patternKind === 'detour') return;
-      const candidate = buildTripCandidate(trip, day.date, stopNameLookup);
-      if (!candidate) return;
-      candidates.push(candidate);
+      (day.tripStopSegmentRuntimes?.entries || []).forEach((trip) => {
+        if (!routeMatchesSelection(trip.routeId, normalizedRouteId)) return;
+        const tripPatternKind = trip.patternKind === 'detour' ? 'detour' : 'normal';
+        if (tripPatternKind !== patternKind) return;
+        const candidate = buildTripCandidate(trip, day.date, stopNameLookup);
+        if (!candidate) return;
+        candidates.push(candidate);
+      });
     });
-  });
+    return candidates;
+  };
+
+  const normalCandidates = buildCandidates('normal');
+  const candidates = normalCandidates.length > 0 || options.runtimePatternStrategy !== 'detour-fallback'
+    ? normalCandidates
+    : buildCandidates('detour');
 
   const aggregatesByDirection = aggregatePatterns(candidates, middayWindow, patternAnchorStops);
   const resolvedDirections: Partial<Record<StopOrderDirection, ResolvedDirectionStopOrder>> = {};

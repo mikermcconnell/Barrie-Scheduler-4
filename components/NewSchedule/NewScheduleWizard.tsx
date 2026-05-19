@@ -1376,6 +1376,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         dayType: normalizedDayType,
                         dateRange: performanceConfig.dateRange || undefined,
                         patternAnchorStops: masterCanonicalStops,
+                        runtimePatternStrategy: 'detour-fallback',
                     });
                     const resolvedCanonicalStops = stopOrderResolution.decision === 'accept'
                         ? getUsableCanonicalDirectionStops(
