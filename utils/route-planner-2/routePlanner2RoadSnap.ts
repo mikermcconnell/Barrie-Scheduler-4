@@ -8,6 +8,12 @@ export interface RoutePlanner2RoadSnapResult {
     source: RoutePlanner2RoadSnapSource;
     durationSeconds?: number;
     distanceMeters?: number;
+    roadLabels?: RoutePlanner2RoadLabelGeometry[];
+}
+
+export interface RoutePlanner2RoadLabelGeometry {
+    name: string;
+    coordinates: [number, number][];
 }
 
 export interface RoutePlanner2ScenarioRoadSnapResult extends RoutePlanner2RoadSnapResult {
@@ -17,6 +23,7 @@ export interface RoutePlanner2ScenarioRoadSnapResult extends RoutePlanner2RoadSn
         fromStopId: string;
         toStopId: string;
         coordinates: [number, number][];
+        roadLabels?: RoutePlanner2RoadLabelGeometry[];
     }>;
 }
 
@@ -34,6 +41,15 @@ interface MapboxDirectionsRoute {
     };
     duration?: number;
     distance?: number;
+    legs?: Array<{
+        steps?: Array<{
+            name?: string;
+            geometry?: {
+                coordinates?: [number, number][];
+                type?: 'LineString';
+            };
+        }>;
+    }>;
 }
 
 interface MapboxDirectionsResponse {
@@ -125,6 +141,32 @@ function stitchSegmentCoordinates(segments: [number, number][][]): [number, numb
     return stitched;
 }
 
+function normalizeRoadName(value: string | undefined): string | null {
+    const normalized = value?.replace(/\s+/g, ' ').trim();
+    return normalized || null;
+}
+
+function buildRoadLabelsFromRoute(route: MapboxDirectionsRoute | undefined): RoutePlanner2RoadLabelGeometry[] {
+    const labels: RoutePlanner2RoadLabelGeometry[] = [];
+    const steps = route?.legs?.flatMap((leg) => leg.steps ?? []) ?? [];
+
+    steps.forEach((step) => {
+        const name = normalizeRoadName(step.name);
+        const coordinates = step.geometry?.coordinates;
+        if (!name || !coordinates || coordinates.length < 2) return;
+
+        const previous = labels[labels.length - 1];
+        if (previous && previous.name.toLocaleLowerCase() === name.toLocaleLowerCase()) {
+            previous.coordinates = stitchSegmentCoordinates([previous.coordinates, coordinates]);
+            return;
+        }
+
+        labels.push({ name, coordinates });
+    });
+
+    return labels;
+}
+
 async function fetchRoadSegment(
     from: [number, number],
     to: [number, number],
@@ -145,7 +187,7 @@ async function fetchRoadSegment(
     if (!token) return { coordinates: [from, to], source: 'fallback', distanceMeters: distanceMetersBetween(from, to) };
 
     try {
-        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full&steps=false&access_token=${token}`;
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full&steps=true&access_token=${token}`;
         const response = signal ? await fetchImpl(url, { signal }) : await fetchImpl(url);
         if (!response.ok) throw new Error(`Mapbox returned ${response.status}`);
 
@@ -155,11 +197,13 @@ async function fetchRoadSegment(
             throw new Error(`Mapbox returned code ${data.code ?? 'unknown'}`);
         }
 
+        const route = data.routes[0];
         const result = {
             coordinates,
             source: 'mapbox' as const,
-            durationSeconds: data.routes[0]?.duration,
-            distanceMeters: data.routes[0]?.distance,
+            durationSeconds: route?.duration,
+            distanceMeters: route?.distance,
+            roadLabels: buildRoadLabelsFromRoute(route),
         };
         setCachedSegment(cacheKey, result);
         return result;
@@ -211,12 +255,14 @@ export async function snapRoutePlanner2WaypointsToRoad(
     const distanceMeters = segmentResults.every((result) => typeof result.distanceMeters === 'number')
         ? segmentResults.reduce((sum, result) => sum + (result.distanceMeters ?? 0), 0)
         : undefined;
+    const roadLabels = segmentResults.flatMap((result) => result.roadLabels ?? []);
 
     return {
         coordinates: stitchSegmentCoordinates(segmentResults.map((result) => result.coordinates)),
         source: segmentResults.every((result) => result.source === 'mapbox') ? 'mapbox' : 'fallback',
         durationSeconds,
         distanceMeters,
+        roadLabels,
     };
 }
 
@@ -305,6 +351,7 @@ export async function snapRoutePlanner2ScenarioToRoad(
                 fromStopId: segment.fromStopId,
                 toStopId: segment.toStopId,
                 coordinates: result.coordinates,
+                roadLabels: result.roadLabels,
             };
             completedSegments += 1;
             options.onProgress?.({

@@ -26,6 +26,24 @@ describe('Route Planner 2 road snap', () => {
             type: 'LineString',
             coordinates: [[-79.7, 44.38], [-79.69, 44.385], [-79.68, 44.39]],
           },
+          legs: [{
+            steps: [
+              {
+                name: 'Mapleview Drive',
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [[-79.7, 44.38], [-79.69, 44.385]],
+                },
+              },
+              {
+                name: 'Yonge Street',
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [[-79.69, 44.385], [-79.68, 44.39]],
+                },
+              },
+            ],
+          }],
         }],
       }),
     } as Response));
@@ -39,7 +57,9 @@ describe('Route Planner 2 road snap', () => {
     expect(result.coordinates).toEqual([[-79.7, 44.38], [-79.69, 44.385], [-79.68, 44.39]]);
     expect(result.durationSeconds).toBe(180);
     expect(result.distanceMeters).toBe(1200);
+    expect(result.roadLabels?.map((label) => label.name)).toEqual(['Mapleview Drive', 'Yonge Street']);
     expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('api.mapbox.com/directions/v5/mapbox/driving'));
+    expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('steps=true'));
     expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('access_token=test-token'));
   });
 

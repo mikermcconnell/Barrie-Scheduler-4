@@ -7,6 +7,7 @@ import { MapBase } from '../../shared';
 import {
     buildRoutePlanner2FallbackRoadSnapResult,
     snapRoutePlanner2ScenarioToRoad,
+    type RoutePlanner2RoadLabelGeometry,
     type RoutePlanner2RoadSnapProgress,
 } from '../../../utils/route-planner-2/routePlanner2RoadSnap';
 import {
@@ -26,6 +27,8 @@ const ROUTE_RUNTIME_SOURCE_SOURCE_ID = 'route-planner-2-runtime-source-overlay';
 const ROUTE_RUNTIME_SOURCE_LAYER_ID = 'route-planner-2-runtime-source-line';
 const ROUTE_HIGHLIGHTED_SEGMENT_SOURCE_ID = 'route-planner-2-highlighted-segment';
 const ROUTE_HIGHLIGHTED_SEGMENT_LAYER_ID = 'route-planner-2-highlighted-segment-line';
+const ROUTE_ROAD_NAME_LABEL_SOURCE_ID = 'route-planner-2-road-name-labels';
+const ROUTE_ROAD_NAME_LABEL_LAYER_ID = 'route-planner-2-road-name-labels-text';
 
 interface RoutePlanner2MapCanvasProps {
     scenario: RoutePlanner2Scenario | null | undefined;
@@ -61,6 +64,7 @@ interface RoutePlanner2MapCanvasProps {
     segmentRuntimes?: RoutePlanner2SegmentRuntime[];
     stopLabelDetails?: RoutePlanner2MapStopLabelDetail[];
     showRuntimeSourceOverlay?: boolean;
+    showRoadNameLabels?: boolean;
     overlayInsets?: {
         left: string;
         right: string;
@@ -73,6 +77,7 @@ interface RoutePlanner2SegmentGeometry {
     fromStopId: string;
     toStopId: string;
     coordinates: [number, number][];
+    roadLabels?: RoutePlanner2RoadLabelGeometry[];
 }
 
 interface PendingLineAction {
@@ -197,6 +202,29 @@ const routeDirectionArrowReturnLayer: LayerProps = {
         'text-color': '#4f46e5',
         'text-halo-color': '#ffffff',
         'text-halo-width': 3,
+    },
+};
+
+const roadNameLabelLayer: LayerProps = {
+    id: ROUTE_ROAD_NAME_LABEL_LAYER_ID,
+    type: 'symbol',
+    layout: {
+        'symbol-placement': 'line',
+        'symbol-spacing': 140,
+        'text-field': ['get', 'name'],
+        'text-size': 13,
+        'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+        'text-rotation-alignment': 'map',
+        'text-pitch-alignment': 'viewport',
+        'text-keep-upright': true,
+        'text-max-angle': 30,
+        'text-padding': 3,
+    },
+    paint: {
+        'text-color': '#334155',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 2.4,
+        'text-halo-blur': 0.4,
     },
 };
 
@@ -423,6 +451,26 @@ function buildRuntimeSourceGeoJson(segments: Array<RuntimeSourceOverlayItem & { 
                 coordinates: segment.coordinates,
             },
         })),
+    };
+}
+
+function buildRoadNameLabelGeoJson(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
+    return {
+        type: 'FeatureCollection' as const,
+        features: segmentGeometries
+            .flatMap((segment) => segment.roadLabels ?? [])
+            .filter((label) => label.name.trim() && label.coordinates.length >= 2)
+            .map((label, index) => ({
+                type: 'Feature' as const,
+                properties: {
+                    id: `road-label-${index}`,
+                    name: label.name,
+                },
+                geometry: {
+                    type: 'LineString' as const,
+                    coordinates: label.coordinates,
+                },
+            })),
     };
 }
 
@@ -804,6 +852,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     segmentRuntimes = [],
     stopLabelDetails = [],
     showRuntimeSourceOverlay = false,
+    showRoadNameLabels = false,
     overlayInsets = { left: '8rem', right: '8rem' },
 }, ref) {
     const [mapLoaded, setMapLoaded] = useState(false);
@@ -864,6 +913,10 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         () => buildRuntimeSourceGeoJson(runtimeSourceOverlaySegments),
         [runtimeSourceOverlaySegments],
     );
+    const roadNameLabelGeoJson = useMemo(
+        () => buildRoadNameLabelGeoJson(snappedSegmentGeometries),
+        [snappedSegmentGeometries],
+    );
     const highlightedSegmentGeoJson = useMemo(() => {
         if (!scenario || !highlightedSegmentId) return buildHighlightedSegmentGeoJson(null);
         const fallbackGeometries = buildRoutePlanner2StopSegmentPaths(scenario).map((segment) => ({
@@ -878,6 +931,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     }, [highlightedSegmentId, scenario, snappedSegmentGeometries]);
     const hasRouteLine = lineGeoJson.features.length > 0;
     const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
+    const hasRoadNameLabels = roadNameLabelGeoJson.features.length > 0;
     const hasDirectionArrows = directionArrowGeoJson.features.length > 0;
     const hasHighlightedSegment = highlightedSegmentGeoJson.features.length > 0;
     const activeRouteLineLayer = useMemo<LayerProps>(() => ({
@@ -910,6 +964,18 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             ...routeDirectionArrowReturnLayer.layout,
             'text-size': isExportCaptureMode ? 30 : 24,
             'symbol-spacing': isExportCaptureMode ? 62 : 54,
+        },
+    }), [isExportCaptureMode]);
+    const activeRoadNameLabelLayer = useMemo<LayerProps>(() => ({
+        ...roadNameLabelLayer,
+        layout: {
+            ...roadNameLabelLayer.layout,
+            'symbol-spacing': isExportCaptureMode ? 170 : 140,
+            'text-size': isExportCaptureMode ? 16 : 13,
+        },
+        paint: {
+            ...roadNameLabelLayer.paint,
+            'text-halo-width': isExportCaptureMode ? 3.2 : 2.4,
         },
     }), [isExportCaptureMode]);
 
@@ -1257,6 +1323,11 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             <Layer {...activeDirectionArrowCenterLayer} />
                             <Layer {...activeDirectionArrowOutboundLayer} />
                             <Layer {...activeDirectionArrowReturnLayer} />
+                        </Source>
+                    )}
+                    {mapLoaded && (showRoadNameLabels || isExportCaptureMode) && hasRoadNameLabels && (
+                        <Source id={ROUTE_ROAD_NAME_LABEL_SOURCE_ID} type="geojson" data={roadNameLabelGeoJson}>
+                            <Layer {...activeRoadNameLabelLayer} />
                         </Source>
                     )}
                     {mapLoaded && showRuntimeSourceOverlay && runtimeSourceOverlaySegments.map((segment) => (

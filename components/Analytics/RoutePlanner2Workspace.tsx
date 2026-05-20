@@ -610,6 +610,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
     const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
+    const [showRoadNameLabels, setShowRoadNameLabels] = useState(false);
     const [hoveredMapItem, setHoveredMapItem] = useState<{ type: 'stop' | 'waypoint' | 'segment'; id: string } | null>(null);
     const [draggedStopOrderKey, setDraggedStopOrderKey] = useState<string | null>(null);
     const [addressQuery, setAddressQuery] = useState('');
@@ -1308,6 +1309,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const saveStatusLabel = project.status === 'local-saved' ? 'Saved to team' : 'Local draft';
     const visibleSaveMessage = project.status === 'local-draft' && saveState === 'saved' ? null : saveMessage;
     const canShowRuntimeSourceOverlay = Boolean(selectedScenario && selectedScenario.stops.length >= 2);
+    const canShowRoadNameLabels = Boolean(selectedScenario && selectedScenario.stops.length >= 2);
     const drawingGuide = getDrawingGuide(selectedScenario);
     const stopVisitSequence = selectedScenario ? buildRoutePlanner2StopVisitSequence(selectedScenario) : [];
     const routeShapeLabel = selectedScenario?.routeShape === 'closed-loop'
@@ -1345,6 +1347,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         segmentRuntimes={selectedFeasibility?.segmentSummaries ?? []}
                         stopLabelDetails={stopMapLabelDetails}
                         showRuntimeSourceOverlay={showRuntimeSourceOverlay}
+                        showRoadNameLabels={showRoadNameLabels}
                         overlayInsets={mapOverlayInsets}
                     />
                     {showActionSidebar && (
@@ -1483,6 +1486,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         title={showRuntimeSourceOverlay ? 'Hide source overlay' : 'Show source overlay'}
                                     >
                                         <Eye size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{showRuntimeSourceOverlay ? 'Hide source overlay' : 'Show source overlay'}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowRoadNameLabels((current) => !current)}
+                                        disabled={!canShowRoadNameLabels}
+                                        data-testid="rp2-road-name-label-toggle"
+                                        aria-pressed={showRoadNameLabels}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${showRoadNameLabels ? 'border-blue-300 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-700'}`}
+                                        title={showRoadNameLabels ? 'Hide road names' : 'Show road names'}
+                                    >
+                                        <MapPin size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{showRoadNameLabels ? 'Hide road names' : 'Show road names'}</span>
                                     </button>
                                     <button
                                         type="button"

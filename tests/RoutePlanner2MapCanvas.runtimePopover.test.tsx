@@ -3,6 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
+const html2canvasMock = vi.hoisted(() => vi.fn(async () => ({
+  width: 1850,
+  height: 1000,
+  getContext: vi.fn(),
+  toDataURL: vi.fn(() => 'data:image/png;base64,mock-capture'),
+})));
+
+vi.mock('html2canvas', () => ({
+  default: html2canvasMock,
+}));
+
 vi.mock('react-map-gl/mapbox', () => ({
   Source: ({ children, id, data }: { children?: React.ReactNode; id?: string; data?: { features?: unknown[] } }) => (
     <div data-testid={id ? `mock-source-${id}` : undefined} data-feature-count={data?.features?.length ?? ''}>
@@ -80,6 +91,10 @@ vi.mock('../utils/route-planner-2/routePlanner2RoadSnap', () => ({
         fromStopId: stop.id,
         toStopId: nextStop.id,
         coordinates: [[stop.lng, stop.lat], [nextStop.lng, nextStop.lat]],
+        roadLabels: [{
+          name: 'Mapleview Drive',
+          coordinates: [[stop.lng, stop.lat], [nextStop.lng, nextStop.lat]],
+        }],
       };
     }),
     segmentEstimates: [] as unknown[],
@@ -95,6 +110,10 @@ vi.mock('../utils/route-planner-2/routePlanner2RoadSnap', () => ({
         fromStopId: stop.id,
         toStopId: nextStop.id,
         coordinates: [[stop.lng, stop.lat], [nextStop.lng, nextStop.lat]],
+        roadLabels: [{
+          name: 'Mapleview Drive',
+          coordinates: [[stop.lng, stop.lat], [nextStop.lng, nextStop.lat]],
+        }],
       };
     }),
     segmentEstimates: [],
@@ -105,7 +124,7 @@ vi.mock('../utils/route-planner-2/routePlanner2AddressSearch', () => ({
   searchRoutePlanner2Addresses: vi.fn(async () => []),
 }));
 
-import { RoutePlanner2MapCanvas } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
+import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
 import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop, updateRoutePlanner2RouteShape } from '../utils/route-planner-2/routePlanner2Authoring';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 
@@ -131,6 +150,7 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
     container?.remove();
     root = null;
     container = null;
+    html2canvasMock.mockClear();
   });
 
   it('lets planners save a manual runtime override from a clicked map segment', async () => {
@@ -498,6 +518,89 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
 
     const highlightedSource = container.querySelector('[data-testid="mock-source-route-planner-2-highlighted-segment"]');
     expect(highlightedSource?.getAttribute('data-feature-count')).toBe('1');
+  });
+
+  it('renders road-name labels when the planner toggles them on', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          showRoadNameLabels
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const roadLabelSource = container.querySelector('[data-testid="mock-source-route-planner-2-road-name-labels"]');
+    expect(roadLabelSource?.getAttribute('data-feature-count')).toBe('1');
+  });
+
+  it('forces road-name labels on while capturing the map PDF image', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Georgian Mall', lat: 44.39, lng: -79.68 });
+    const mapRef = React.createRef<RoutePlanner2MapCanvasHandle>();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          ref={mapRef}
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('[data-testid="mock-source-route-planner-2-road-name-labels"]')).toBeNull();
+
+    html2canvasMock.mockImplementationOnce(async () => {
+      const roadLabelSource = container?.querySelector('[data-testid="mock-source-route-planner-2-road-name-labels"]');
+      expect(roadLabelSource?.getAttribute('data-feature-count')).toBe('1');
+      return {
+        width: 1850,
+        height: 1000,
+        getContext: vi.fn(),
+        toDataURL: vi.fn(() => 'data:image/png;base64,mock-capture'),
+      };
+    });
+
+    const capture = await mapRef.current?.captureMapImage();
+
+    expect(capture?.dataUrl).toBe('data:image/png;base64,mock-capture');
+    expect(html2canvasMock).toHaveBeenCalledOnce();
   });
 
   it('does not add a stop from a blank map click when no popover is open', async () => {

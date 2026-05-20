@@ -221,6 +221,10 @@ export const sendDailyReport = onSchedule(
     secrets: [REPORT_RECIPIENTS, REPORT_ALERT_RECIPIENTS],
     memory: '1GiB',
     timeoutSeconds: 120,
+    retryCount: 3,
+    minBackoffSeconds: 60,
+    maxBackoffSeconds: 900,
+    maxRetrySeconds: 3600,
     region: 'us-central1',
   },
   async () => {

@@ -55,7 +55,7 @@ The left action sidebar should be collapsible:
 - collapsed: icons only, with accessible labels
 - expanded: route concepts, icons plus labels, and saved-plan selector
 - route concepts: add route and select route concept from compact vertical cards
-- actions: undo, redo, source overlay, save, load, duplicate, import GTFS, import addresses, operator PDF, camp focus, review route
+- actions: undo, redo, source overlay, road-name labels, save, load, duplicate, import GTFS, import addresses, operator PDF, camp focus, review route
 - operator turn-by-turn PDF export
 - Camp Focus action for the seasonal camp shuttle concept review
 - disabled or future-labelled save/export if not implemented
@@ -112,6 +112,7 @@ V1 interactions:
 - drag route-line `+` waypoint handles to bend the travel path, Google Maps-style
 - delete route-line waypoint handles directly from the map
 - show direction arrows on route lines; out-and-back shared segments should show arrows in both directions
+- optionally show road-name labels along the active route line using Mapbox direction-step names; keep them toggleable so dense local street routes do not become cluttered
 - undo and redo planner edits from the sidebar or keyboard shortcuts (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Y`, `Ctrl/Cmd+Shift+Z`)
 
 The full stop order belongs in the review rail as a scrollable panel, not as an expandable map overlay or duplicate map tray. This prevents imported routes with many stops from covering route controls or metrics.
