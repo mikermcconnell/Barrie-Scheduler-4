@@ -19,6 +19,7 @@ export interface RoutePlanner2StopVisitRuntimeDetail {
     segmentId?: string;
     segmentRuntimeMinutes: number | null;
     segmentRuntimeLabel: string;
+    previousRunningRuntimeMinutes: number | null;
     runningRuntimeMinutes: number | null;
     runningRuntimeLabel: string;
     arrivalMinutes: number | null;
@@ -179,6 +180,7 @@ export function buildRoutePlanner2StopVisitRuntimeDetails(
         visitIndex: 0,
         segmentRuntimeMinutes: null,
         segmentRuntimeLabel: 'Start',
+        previousRunningRuntimeMinutes: null,
         runningRuntimeMinutes,
         runningRuntimeLabel: formatTravelTime(runningRuntimeMinutes),
         arrivalMinutes: currentArrivalMinutes,
@@ -208,6 +210,9 @@ export function buildRoutePlanner2StopVisitRuntimeDetails(
             segmentId: segmentRuntime?.id ?? getRoutePlanner2SegmentId(fromStop.id, toStop.id),
             segmentRuntimeMinutes,
             segmentRuntimeLabel: segmentRuntimeMinutes == null ? 'Not estimated' : formatTravelTime(segmentRuntimeMinutes),
+            previousRunningRuntimeMinutes: runningRuntimeMinutes != null && segmentRuntimeMinutes != null
+                ? runningRuntimeMinutes - segmentRuntimeMinutes
+                : null,
             runningRuntimeMinutes,
             runningRuntimeLabel: formatTravelTime(runningRuntimeMinutes),
             arrivalMinutes: currentArrivalMinutes,

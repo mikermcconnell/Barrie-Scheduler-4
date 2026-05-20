@@ -767,6 +767,29 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(stopCard?.textContent).toContain('Running time 0 min');
   });
 
+  it('lets planners edit running time directly from the stop order', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+
+    const runningTimeInput = view.querySelector('input[aria-label="Override running time to Stop 2 in minutes"]') as HTMLInputElement | null;
+    expect(runningTimeInput).not.toBeNull();
+
+    flushSync(() => {
+      setInputValue(runningTimeInput!, '9');
+    });
+
+    const stopTwoCard = runningTimeInput!.closest('li');
+    expect(stopTwoCard?.textContent).toContain('From previous 9 min');
+    expect(stopTwoCard?.textContent).toContain('Running time 9 min');
+    expect(stopTwoCard?.textContent).toContain('Planner override');
+  });
+
   it('supports undo and redo for route planner edits', () => {
     const view = renderWorkspace();
 

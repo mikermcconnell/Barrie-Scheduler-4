@@ -1152,6 +1152,19 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         const runtimeMinutes = Number(trimmedValue);
         setProject((current) => setRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, segmentId, runtimeMinutes));
     }
+    function updateStopOrderRunningTimeOverride(detail: RoutePlanner2StopVisitRuntimeDetail, value: string) {
+        if (!selectedScenario || !detail.segmentId) return;
+        const trimmedValue = value.trim();
+        if (!trimmedValue) {
+            setProject((current) => clearRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, detail.segmentId!));
+            return;
+        }
+
+        const runningRuntimeMinutes = Number(trimmedValue);
+        const previousRunningRuntimeMinutes = detail.previousRunningRuntimeMinutes ?? 0;
+        const segmentRuntimeMinutes = runningRuntimeMinutes - previousRunningRuntimeMinutes;
+        setProject((current) => setRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, detail.segmentId!, segmentRuntimeMinutes));
+    }
     function clearSegmentRuntimeOverride(segmentId: string) {
         if (!selectedScenario) return;
         setProject((current) => clearRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, segmentId));
@@ -1815,7 +1828,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                         {(() => {
                                                             const stopDetail = stopCardDetailsByStopId.get(item.stop.id);
                                                             const runtimeDetail = stopVisitRuntimeDetailsByKey.get(item.key);
+                                                            const canEditRunningTime = Boolean(runtimeDetail?.segmentId && runtimeDetail.previousStopId);
+                                                            const minimumRunningTime = Math.max(1, (runtimeDetail?.previousRunningRuntimeMinutes ?? 0) + 1);
                                                             return (
+                                                        <>
                                                         <div className="flex items-start gap-2">
                                                             <button
                                                                 type="button"
@@ -1870,6 +1886,33 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                                 <Trash2 size={14} />
                                                             </button>
                                                         </div>
+                                                        {runtimeDetail && canEditRunningTime && (
+                                                            <div className="mt-2 grid grid-cols-[1fr_auto] items-end gap-2 pl-8">
+                                                                <label className="text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                                                    Edit running time
+                                                                    <input
+                                                                        type="number"
+                                                                        min={minimumRunningTime}
+                                                                        step="1"
+                                                                        value={runtimeDetail.runningRuntimeMinutes ?? ''}
+                                                                        onChange={(event) => updateStopOrderRunningTimeOverride(runtimeDetail, event.target.value)}
+                                                                        onMouseDown={(event) => event.stopPropagation()}
+                                                                        onClick={(event) => event.stopPropagation()}
+                                                                        className="mt-1 w-full rounded-xl border border-cyan-100 bg-white px-2 py-1.5 text-sm font-black text-slate-900"
+                                                                        aria-label={`Override running time to ${item.stop.name} in minutes`}
+                                                                    />
+                                                                </label>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => runtimeDetail.segmentId && clearSegmentRuntimeOverride(runtimeDetail.segmentId)}
+                                                                    disabled={runtimeDetail.source !== 'manual'}
+                                                                    className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-40"
+                                                                >
+                                                                    Clear
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                        </>
                                                             );
                                                         })()}
                                                         <div className="mt-2 grid grid-cols-2 gap-2">

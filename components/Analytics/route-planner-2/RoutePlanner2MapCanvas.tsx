@@ -27,8 +27,10 @@ const ROUTE_RUNTIME_SOURCE_SOURCE_ID = 'route-planner-2-runtime-source-overlay';
 const ROUTE_RUNTIME_SOURCE_LAYER_ID = 'route-planner-2-runtime-source-line';
 const ROUTE_HIGHLIGHTED_SEGMENT_SOURCE_ID = 'route-planner-2-highlighted-segment';
 const ROUTE_HIGHLIGHTED_SEGMENT_LAYER_ID = 'route-planner-2-highlighted-segment-line';
-const ROUTE_ROAD_NAME_LABEL_SOURCE_ID = 'route-planner-2-road-name-labels';
-const ROUTE_ROAD_NAME_LABEL_LAYER_ID = 'route-planner-2-road-name-labels-text';
+const ROUTE_ROAD_NAME_LINE_LABEL_SOURCE_ID = 'route-planner-2-road-name-line-labels';
+const ROUTE_ROAD_NAME_LINE_LABEL_LAYER_ID = 'route-planner-2-road-name-line-labels-text';
+const ROUTE_ROAD_NAME_OVERVIEW_LABEL_SOURCE_ID = 'route-planner-2-road-name-overview-labels';
+const ROUTE_ROAD_NAME_OVERVIEW_LABEL_LAYER_ID = 'route-planner-2-road-name-overview-labels-text';
 
 interface RoutePlanner2MapCanvasProps {
     scenario: RoutePlanner2Scenario | null | undefined;
@@ -205,26 +207,52 @@ const routeDirectionArrowReturnLayer: LayerProps = {
     },
 };
 
-const roadNameLabelLayer: LayerProps = {
-    id: ROUTE_ROAD_NAME_LABEL_LAYER_ID,
+const roadNameLineLabelLayer: LayerProps = {
+    id: ROUTE_ROAD_NAME_LINE_LABEL_LAYER_ID,
     type: 'symbol',
+    minzoom: 12.8,
     layout: {
         'symbol-placement': 'line',
-        'symbol-spacing': 140,
-        'text-field': ['get', 'name'],
-        'text-size': 13,
+        'symbol-spacing': 72,
+        'text-field': ['get', 'label'],
+        'text-size': 12,
         'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
         'text-rotation-alignment': 'map',
         'text-pitch-alignment': 'viewport',
         'text-keep-upright': true,
-        'text-max-angle': 30,
-        'text-padding': 3,
+        'text-max-angle': 45,
+        'text-padding': 1,
     },
     paint: {
-        'text-color': '#334155',
+        'text-color': '#1f2937',
         'text-halo-color': '#ffffff',
-        'text-halo-width': 2.4,
-        'text-halo-blur': 0.4,
+        'text-halo-width': 2.8,
+        'text-halo-blur': 0.3,
+    },
+};
+
+const roadNameOverviewLabelLayer: LayerProps = {
+    id: ROUTE_ROAD_NAME_OVERVIEW_LABEL_LAYER_ID,
+    type: 'symbol',
+    maxzoom: 13.2,
+    layout: {
+        'symbol-placement': 'point',
+        'text-field': ['get', 'label'],
+        'text-size': 11,
+        'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+        'text-anchor': 'center',
+        'text-offset': [0, -1.15],
+        'text-padding': 0,
+    },
+    paint: {
+        'text-color': '#1f2937',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 3,
+        'text-halo-blur': 0.25,
     },
 };
 
@@ -454,23 +482,72 @@ function buildRuntimeSourceGeoJson(segments: Array<RuntimeSourceOverlayItem & { 
     };
 }
 
-function buildRoadNameLabelGeoJson(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
+const ROAD_NAME_ABBREVIATIONS: Array<[RegExp, string]> = [
+    [/\bStreet\b/gi, 'St'],
+    [/\bRoad\b/gi, 'Rd'],
+    [/\bDrive\b/gi, 'Dr'],
+    [/\bAvenue\b/gi, 'Ave'],
+    [/\bBoulevard\b/gi, 'Blvd'],
+    [/\bCrescent\b/gi, 'Cres'],
+    [/\bCourt\b/gi, 'Ct'],
+    [/\bLane\b/gi, 'Ln'],
+    [/\bParkway\b/gi, 'Pkwy'],
+    [/\bTerrace\b/gi, 'Terr'],
+    [/\bPlace\b/gi, 'Pl'],
+    [/\bTrail\b/gi, 'Trl'],
+    [/\bCircle\b/gi, 'Cir'],
+    [/\bHighway\b/gi, 'Hwy'],
+];
+
+export function formatRoutePlanner2RoadNameLabel(name: string): string {
+    return ROAD_NAME_ABBREVIATIONS.reduce(
+        (label, [pattern, replacement]) => label.replace(pattern, replacement),
+        name.replace(/\s+/g, ' ').trim(),
+    );
+}
+
+function getRoadLabelFeatures(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
+    return segmentGeometries
+        .flatMap((segment) => segment.roadLabels ?? [])
+        .filter((label) => label.name.trim() && label.coordinates.length >= 2);
+}
+
+export function buildRoadNameLineLabelGeoJson(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
     return {
         type: 'FeatureCollection' as const,
-        features: segmentGeometries
-            .flatMap((segment) => segment.roadLabels ?? [])
-            .filter((label) => label.name.trim() && label.coordinates.length >= 2)
-            .map((label, index) => ({
+        features: getRoadLabelFeatures(segmentGeometries).map((label, index) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: `road-line-label-${index}`,
+                name: label.name,
+                label: formatRoutePlanner2RoadNameLabel(label.name),
+            },
+            geometry: {
+                type: 'LineString' as const,
+                coordinates: label.coordinates,
+            },
+        })),
+    };
+}
+
+export function buildRoadNameOverviewLabelGeoJson(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
+    return {
+        type: 'FeatureCollection' as const,
+        features: getRoadLabelFeatures(segmentGeometries).map((label, index) => {
+            const midpoint = getLineMidpointCoordinate(label.coordinates);
+            return {
                 type: 'Feature' as const,
                 properties: {
-                    id: `road-label-${index}`,
+                    id: `road-overview-label-${index}`,
                     name: label.name,
+                    label: formatRoutePlanner2RoadNameLabel(label.name),
                 },
                 geometry: {
-                    type: 'LineString' as const,
-                    coordinates: label.coordinates,
+                    type: 'Point' as const,
+                    coordinates: [midpoint.lng, midpoint.lat] as [number, number],
                 },
-            })),
+            };
+        }),
     };
 }
 
@@ -913,8 +990,12 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         () => buildRuntimeSourceGeoJson(runtimeSourceOverlaySegments),
         [runtimeSourceOverlaySegments],
     );
-    const roadNameLabelGeoJson = useMemo(
-        () => buildRoadNameLabelGeoJson(snappedSegmentGeometries),
+    const roadNameLineLabelGeoJson = useMemo(
+        () => buildRoadNameLineLabelGeoJson(snappedSegmentGeometries),
+        [snappedSegmentGeometries],
+    );
+    const roadNameOverviewLabelGeoJson = useMemo(
+        () => buildRoadNameOverviewLabelGeoJson(snappedSegmentGeometries),
         [snappedSegmentGeometries],
     );
     const highlightedSegmentGeoJson = useMemo(() => {
@@ -931,7 +1012,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     }, [highlightedSegmentId, scenario, snappedSegmentGeometries]);
     const hasRouteLine = lineGeoJson.features.length > 0;
     const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
-    const hasRoadNameLabels = roadNameLabelGeoJson.features.length > 0;
+    const hasRoadNameLabels = roadNameLineLabelGeoJson.features.length > 0 || roadNameOverviewLabelGeoJson.features.length > 0;
     const hasDirectionArrows = directionArrowGeoJson.features.length > 0;
     const hasHighlightedSegment = highlightedSegmentGeoJson.features.length > 0;
     const activeRouteLineLayer = useMemo<LayerProps>(() => ({
@@ -966,16 +1047,28 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             'symbol-spacing': isExportCaptureMode ? 62 : 54,
         },
     }), [isExportCaptureMode]);
-    const activeRoadNameLabelLayer = useMemo<LayerProps>(() => ({
-        ...roadNameLabelLayer,
+    const activeRoadNameLineLabelLayer = useMemo<LayerProps>(() => ({
+        ...roadNameLineLabelLayer,
         layout: {
-            ...roadNameLabelLayer.layout,
-            'symbol-spacing': isExportCaptureMode ? 170 : 140,
-            'text-size': isExportCaptureMode ? 16 : 13,
+            ...roadNameLineLabelLayer.layout,
+            'symbol-spacing': isExportCaptureMode ? 84 : 72,
+            'text-size': isExportCaptureMode ? 16 : 12,
         },
         paint: {
-            ...roadNameLabelLayer.paint,
-            'text-halo-width': isExportCaptureMode ? 3.2 : 2.4,
+            ...roadNameLineLabelLayer.paint,
+            'text-halo-width': isExportCaptureMode ? 3.4 : 2.8,
+        },
+    }), [isExportCaptureMode]);
+    const activeRoadNameOverviewLabelLayer = useMemo<LayerProps>(() => ({
+        ...roadNameOverviewLabelLayer,
+        layout: {
+            ...roadNameOverviewLabelLayer.layout,
+            'text-size': isExportCaptureMode ? 15 : 11,
+            'text-offset': isExportCaptureMode ? [0, -1.25] : [0, -1.15],
+        },
+        paint: {
+            ...roadNameOverviewLabelLayer.paint,
+            'text-halo-width': isExportCaptureMode ? 3.4 : 3,
         },
     }), [isExportCaptureMode]);
 
@@ -1318,16 +1411,21 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             <Layer {...highlightedSegmentLineLayer} />
                         </Source>
                     )}
+                    {mapLoaded && (showRoadNameLabels || isExportCaptureMode) && hasRoadNameLabels && (
+                        <>
+                            <Source id={ROUTE_ROAD_NAME_OVERVIEW_LABEL_SOURCE_ID} type="geojson" data={roadNameOverviewLabelGeoJson}>
+                                <Layer {...activeRoadNameOverviewLabelLayer} />
+                            </Source>
+                            <Source id={ROUTE_ROAD_NAME_LINE_LABEL_SOURCE_ID} type="geojson" data={roadNameLineLabelGeoJson}>
+                                <Layer {...activeRoadNameLineLabelLayer} />
+                            </Source>
+                        </>
+                    )}
                     {mapLoaded && hasDirectionArrows && (
                         <Source id={ROUTE_DIRECTION_ARROW_SOURCE_ID} type="geojson" data={directionArrowGeoJson}>
                             <Layer {...activeDirectionArrowCenterLayer} />
                             <Layer {...activeDirectionArrowOutboundLayer} />
                             <Layer {...activeDirectionArrowReturnLayer} />
-                        </Source>
-                    )}
-                    {mapLoaded && (showRoadNameLabels || isExportCaptureMode) && hasRoadNameLabels && (
-                        <Source id={ROUTE_ROAD_NAME_LABEL_SOURCE_ID} type="geojson" data={roadNameLabelGeoJson}>
-                            <Layer {...activeRoadNameLabelLayer} />
                         </Source>
                     )}
                     {mapLoaded && showRuntimeSourceOverlay && runtimeSourceOverlaySegments.map((segment) => (
