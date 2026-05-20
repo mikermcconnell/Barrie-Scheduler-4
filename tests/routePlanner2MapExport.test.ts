@@ -14,6 +14,7 @@ const pdfMocks = vi.hoisted(() => {
     line: vi.fn(),
     text: vi.fn(),
     addImage: vi.fn(),
+    addPage: vi.fn(),
     save: vi.fn(),
     internal: {
       pageSize: {
@@ -37,6 +38,7 @@ vi.mock('jspdf', () => ({
 
 import { addRoutePlanner2Stop, updateRoutePlanner2StopRole } from '../utils/route-planner-2/routePlanner2Authoring';
 import {
+  buildRoutePlanner2MapBookSections,
   buildRoutePlanner2MapExportPlan,
   exportRoutePlanner2MapPdf,
 } from '../utils/route-planner-2/routePlanner2MapExport';
@@ -161,6 +163,65 @@ describe('Route Planner 2 map export', () => {
       expect.any(Number),
       expect.any(Number),
       expect.objectContaining({ baseline: 'middle' }),
+    );
+  });
+
+  it('builds overlapping map book sections for long routes', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    for (let index = 0; index < 11; index += 1) {
+      project = addRoutePlanner2Stop(project, 'scenario-1', {
+        id: `stop-${index + 1}`,
+        name: `Stop ${index + 1}`,
+        lat: 44.34 + (index * 0.005),
+        lng: -79.70 + (index * 0.004),
+        now,
+      });
+    }
+
+    const sections = buildRoutePlanner2MapBookSections(project.scenarios[0]!);
+
+    expect(sections.map((section) => section.subtitle)).toEqual([
+      'Stops 1-4 · 4 stops',
+      'Stops 4-7 · 4 stops',
+      'Stops 7-11 · 5 stops',
+    ]);
+    expect(sections.every((section) => section.coordinates.length >= 2)).toBe(true);
+  });
+
+  it('adds detail pages when map book pages are provided', async () => {
+    const project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+
+    await exportRoutePlanner2MapPdf(project.scenarios[0]!, {
+      projectName: 'Camp Shuttle',
+      routeLabel: 'ampshuttle1',
+      now: new Date('2026-05-15T12:00:00.000Z'),
+      mapImage: {
+        dataUrl: 'data:image/png;base64,mock-route-overview',
+        width: 1200,
+        height: 800,
+      },
+      mapPages: [
+        {
+          title: 'Section 1 of route',
+          subtitle: 'Stops 1-4 · 4 stops',
+          mapImage: {
+            dataUrl: 'data:image/png;base64,mock-route-section',
+            width: 1200,
+            height: 800,
+          },
+        },
+      ],
+    });
+
+    expect(pdfMocks.doc.addPage).toHaveBeenCalledTimes(1);
+    expect(pdfMocks.doc.addImage).toHaveBeenCalledTimes(2);
+    expect(pdfMocks.doc.addImage).toHaveBeenLastCalledWith(
+      'data:image/png;base64,mock-route-section',
+      'PNG',
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
     );
   });
 });

@@ -550,8 +550,10 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const roadLabelSource = container.querySelector('[data-testid="mock-source-route-planner-2-road-name-labels"]');
-    expect(roadLabelSource?.getAttribute('data-feature-count')).toBe('1');
+    const overviewRoadLabelSource = container.querySelector('[data-testid="mock-source-route-planner-2-road-name-overview-labels"]');
+    const lineRoadLabelSource = container.querySelector('[data-testid="mock-source-route-planner-2-road-name-line-labels"]');
+    expect(overviewRoadLabelSource?.getAttribute('data-feature-count')).toBe('1');
+    expect(lineRoadLabelSource?.getAttribute('data-feature-count')).toBe('1');
   });
 
   it('forces road-name labels on while capturing the map PDF image', async () => {
@@ -584,11 +586,14 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(container.querySelector('[data-testid="mock-source-route-planner-2-road-name-labels"]')).toBeNull();
+    expect(container.querySelector('[data-testid="mock-source-route-planner-2-road-name-overview-labels"]')).toBeNull();
+    expect(container.querySelector('[data-testid="mock-source-route-planner-2-road-name-line-labels"]')).toBeNull();
 
     html2canvasMock.mockImplementationOnce(async () => {
-      const roadLabelSource = container?.querySelector('[data-testid="mock-source-route-planner-2-road-name-labels"]');
-      expect(roadLabelSource?.getAttribute('data-feature-count')).toBe('1');
+      const overviewRoadLabelSource = container?.querySelector('[data-testid="mock-source-route-planner-2-road-name-overview-labels"]');
+      const lineRoadLabelSource = container?.querySelector('[data-testid="mock-source-route-planner-2-road-name-line-labels"]');
+      expect(overviewRoadLabelSource?.getAttribute('data-feature-count')).toBe('1');
+      expect(lineRoadLabelSource?.getAttribute('data-feature-count')).toBe('1');
       return {
         width: 1850,
         height: 1000,

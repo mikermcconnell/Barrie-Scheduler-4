@@ -352,8 +352,13 @@ export interface RoutePlanner2MapCapture {
     height: number;
 }
 
+export interface RoutePlanner2MapCaptureOptions {
+    fitCoordinates?: [number, number][];
+    padding?: number;
+}
+
 export interface RoutePlanner2MapCanvasHandle {
-    captureMapImage: () => Promise<RoutePlanner2MapCapture>;
+    captureMapImage: (options?: RoutePlanner2MapCaptureOptions) => Promise<RoutePlanner2MapCapture>;
 }
 
 type RuntimeSourceOverlayItem = {
@@ -1072,7 +1077,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         },
     }), [isExportCaptureMode]);
 
-    const captureMapImage = useCallback(async (): Promise<RoutePlanner2MapCapture> => {
+    const captureMapImage = useCallback(async (options: RoutePlanner2MapCaptureOptions = {}): Promise<RoutePlanner2MapCapture> => {
         if (!captureContainerRef.current) {
             throw new Error('The route map is not ready to export yet.');
         }
@@ -1086,10 +1091,12 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                 pitch: map.getPitch(),
             }
             : null;
-        const exportCoordinates = [
-            ...(snappedCoordinates.length ? snappedCoordinates : waypoints),
-            ...(scenario?.stops.map((stop): [number, number] => [stop.lng, stop.lat]) ?? []),
-        ];
+        const exportCoordinates = options.fitCoordinates?.length
+            ? options.fitCoordinates
+            : [
+                ...(snappedCoordinates.length ? snappedCoordinates : waypoints),
+                ...(scenario?.stops.map((stop): [number, number] => [stop.lng, stop.lat]) ?? []),
+            ];
 
         setIsExportCaptureMode(true);
 
@@ -1099,7 +1106,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             if (map && exportCoordinates.length > 0) {
                 map.resize();
                 map.fitBounds(getBoundsForCoordinates(exportCoordinates), {
-                    padding: 42,
+                    padding: options.padding ?? 42,
                     duration: 0,
                     animate: false,
                 });

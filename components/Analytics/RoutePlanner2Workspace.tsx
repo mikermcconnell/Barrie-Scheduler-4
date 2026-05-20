@@ -35,7 +35,8 @@ import {
 } from '../../utils/route-planner-2/routePlanner2ProjectController';
 import { createRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2ProjectFactory';
 import { exportRoutePlanner2OperatorDirectionsPdf } from '../../utils/route-planner-2/routePlanner2OperatorExport';
-import { exportRoutePlanner2MapPdf } from '../../utils/route-planner-2/routePlanner2MapExport';
+import { buildRoutePlanner2MapBookSections, exportRoutePlanner2MapPdf } from '../../utils/route-planner-2/routePlanner2MapExport';
+import type { RoutePlanner2MapBookPage } from '../../utils/route-planner-2/routePlanner2MapExport';
 import { loadRoutePlanner2GtfsImportPatterns } from '../../utils/route-planner-2/routePlanner2GtfsClient';
 import {
     createRoutePlanner2ScenarioFromGtfsPattern,
@@ -1275,10 +1276,29 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             if (!mapImage) {
                 throw new Error('The map is still loading. Please try the export again in a moment.');
             }
+            const mapBookSections = buildRoutePlanner2MapBookSections(selectedScenario);
+            const mapPages: RoutePlanner2MapBookPage[] = [];
+            if (mapBookSections.length > 1) {
+                for (const section of mapBookSections) {
+                    const sectionMapImage = await mapCanvasRef.current?.captureMapImage({
+                        fitCoordinates: section.coordinates,
+                        padding: 72,
+                    });
+                    if (!sectionMapImage) {
+                        throw new Error('The map section could not be captured. Please try the export again in a moment.');
+                    }
+                    mapPages.push({
+                        title: section.title,
+                        subtitle: section.subtitle,
+                        mapImage: sectionMapImage,
+                    });
+                }
+            }
             await exportRoutePlanner2MapPdf(selectedScenario, {
                 projectName: project.name,
                 routeLabel: selectedScenario.name,
                 mapImage,
+                mapPages,
                 summaryItems: [
                     { label: 'Stops', value: String(selectedScenario.stops.length) },
                     { label: 'Runtime', value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes) },

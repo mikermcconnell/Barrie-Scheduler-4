@@ -82,6 +82,7 @@ vi.mock('../utils/gtfs/corridorSpeed', async (importOriginal) => {
 
 vi.mock('../utils/route-planner-2/routePlanner2ProjectPersistence', () => projectPersistenceMocks);
 vi.mock('../utils/route-planner-2/routePlanner2MapExport', () => ({
+  buildRoutePlanner2MapBookSections: vi.fn(() => []),
   exportRoutePlanner2MapPdf: vi.fn(async () => undefined),
 }));
 

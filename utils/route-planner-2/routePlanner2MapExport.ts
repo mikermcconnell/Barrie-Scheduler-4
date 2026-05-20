@@ -15,6 +15,7 @@ type JsPdfInstance = {
     line: (x1: number, y1: number, x2: number, y2: number) => void;
     text: (text: string | string[], x: number, y: number, options?: Record<string, unknown>) => void;
     addImage: (imageData: string, format: string, x: number, y: number, width: number, height: number) => void;
+    addPage: () => void;
     save: (fileName: string) => void;
     internal: {
         pageSize: {
@@ -74,6 +75,19 @@ export interface RoutePlanner2MapExportImage {
     height: number;
 }
 
+export interface RoutePlanner2MapBookSection {
+    id: string;
+    title: string;
+    subtitle: string;
+    coordinates: [number, number][];
+}
+
+export interface RoutePlanner2MapBookPage {
+    title: string;
+    subtitle?: string;
+    mapImage: RoutePlanner2MapExportImage;
+}
+
 export interface RoutePlanner2MapExportSummaryItem {
     label: string;
     value: string;
@@ -83,6 +97,7 @@ interface ExportOptions {
     projectName: string;
     routeLabel?: string;
     mapImage?: RoutePlanner2MapExportImage;
+    mapPages?: RoutePlanner2MapBookPage[];
     summaryItems?: RoutePlanner2MapExportSummaryItem[];
     token?: string | null;
     fetchImpl?: typeof fetch;
@@ -371,10 +386,14 @@ export async function exportRoutePlanner2MapPdf(
     const imageAspect = options.mapImage.width > 0 && options.mapImage.height > 0
         ? options.mapImage.width / options.mapImage.height
         : 16 / 9;
-    const fittedHeight = Math.min(imageBox.height, imageBox.width / imageAspect);
-    const fittedWidth = Math.min(imageBox.width, fittedHeight * imageAspect);
-    const imageX = imageBox.x + ((imageBox.width - fittedWidth) / 2);
-    const imageY = imageBox.y + ((imageBox.height - fittedHeight) / 2);
+    const pages: RoutePlanner2MapBookPage[] = [
+        {
+            title: `${title} · Overview`,
+            subtitle: 'Full route overview',
+            mapImage: options.mapImage,
+        },
+        ...(options.mapPages ?? []),
+    ];
 
     doc.setProperties({
         title: `${title} Map`,
@@ -383,22 +402,112 @@ export async function exportRoutePlanner2MapPdf(
         creator: 'TransitScheduler Route Planner 2',
     });
 
-    doc.setFillColor(31, 85, 139);
-    doc.rect(0, 0, 3.5, pageHeight, 'F');
-
     const summaryItems = options.summaryItems?.slice(0, 5) ?? [];
-    drawHeader(doc, title, generatedAt, summaryItems, headerBox);
 
-    doc.setFillColor(255, 255, 255);
-    doc.setDrawColor(203, 213, 225);
-    doc.setLineWidth(0.6);
-    doc.roundedRect(imageX, imageY, fittedWidth, fittedHeight, 2.4, 2.4, 'FD');
-    doc.addImage(options.mapImage.dataUrl, 'PNG', imageX, imageY, fittedWidth, fittedHeight);
+    pages.forEach((page, index) => {
+        if (index > 0) doc.addPage();
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(80, 80, 80);
-    doc.text('Planning map - verify route and stop placement before issuing.', margin, pageHeight - 4.5);
+        const pageImageAspect = page.mapImage.width > 0 && page.mapImage.height > 0
+            ? page.mapImage.width / page.mapImage.height
+            : imageAspect;
+        const fittedHeight = Math.min(imageBox.height, imageBox.width / pageImageAspect);
+        const fittedWidth = Math.min(imageBox.width, fittedHeight * pageImageAspect);
+        const imageX = imageBox.x + ((imageBox.width - fittedWidth) / 2);
+        const imageY = imageBox.y + ((imageBox.height - fittedHeight) / 2);
+        const pageTitle = index === 0 ? title : `${title} · ${page.title}`;
+
+        doc.setFillColor(31, 85, 139);
+        doc.rect(0, 0, 3.5, pageHeight, 'F');
+
+        drawHeader(doc, pageTitle, generatedAt, index === 0 ? summaryItems : [], headerBox);
+
+        if (page.subtitle) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(7);
+            doc.setTextColor(71, 85, 105);
+            drawMiddleText(doc, page.subtitle, pageWidth - margin, mapY - 4.5, { align: 'right' });
+        }
+
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(203, 213, 225);
+        doc.setLineWidth(0.6);
+        doc.roundedRect(imageX, imageY, fittedWidth, fittedHeight, 2.4, 2.4, 'FD');
+        doc.addImage(page.mapImage.dataUrl, 'PNG', imageX, imageY, fittedWidth, fittedHeight);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(80, 80, 80);
+        doc.text(
+            index === 0
+                ? 'Planning map - verify route and stop placement before issuing.'
+                : `Detail page ${index} of ${pages.length - 1} - verify turns, road labels, and stop placement.`,
+            margin,
+            pageHeight - 4.5,
+        );
+    });
 
     doc.save(`${sanitizeFilePart(title)}-map.pdf`);
+}
+
+function stitchLngLatCoordinates(coordinateGroups: [number, number][][]): [number, number][] {
+    const coordinates: [number, number][] = [];
+
+    coordinateGroups.forEach((group) => {
+        group.forEach((coordinate, index) => {
+            const last = coordinates[coordinates.length - 1];
+            if (index > 0 || !last || Math.abs(last[0] - coordinate[0]) > 0.000001 || Math.abs(last[1] - coordinate[1]) > 0.000001) {
+                coordinates.push(coordinate);
+            }
+        });
+    });
+
+    return coordinates;
+}
+
+export function buildRoutePlanner2MapBookSections(
+    scenario: RoutePlanner2Scenario,
+    stopsPerPage = 4,
+    overlapStops = 1,
+): RoutePlanner2MapBookSection[] {
+    const stopVisits = buildRoutePlanner2StopVisitSequence(scenario);
+    if (stopVisits.length < 2) return [];
+
+    const segmentPaths = buildRoutePlanner2StopSegmentPaths(scenario);
+    const pageStopCount = Math.max(3, stopsPerPage);
+    const overlap = Math.max(1, Math.min(overlapStops, pageStopCount - 2));
+    const sections: RoutePlanner2MapBookSection[] = [];
+    let startIndex = 0;
+
+    while (startIndex < stopVisits.length - 1) {
+        let endIndex = Math.min(stopVisits.length, startIndex + pageStopCount);
+
+        if (stopVisits.length - endIndex === 1 && endIndex < stopVisits.length) {
+            endIndex = stopVisits.length;
+        }
+
+        const sectionStops = stopVisits.slice(startIndex, endIndex);
+        const sectionSegments = segmentPaths.slice(startIndex, Math.max(startIndex, endIndex - 1));
+        const coordinates = stitchLngLatCoordinates([
+            ...sectionSegments.map((segment) => segment.coordinates),
+            ...sectionStops.map((stop): [number, number][] => [[stop.lng, stop.lat]]),
+        ]);
+        const firstStop = sectionStops[0]!;
+        const lastStop = sectionStops[sectionStops.length - 1]!;
+        const stopRange = `Stops ${firstStop.sequence}-${lastStop.sequence}`;
+
+        sections.push({
+            id: `section-${sections.length + 1}`,
+            title: `Section ${sections.length + 1} of route`,
+            subtitle: `${stopRange} · ${sectionStops.length} stops`,
+            coordinates,
+        });
+
+        if (endIndex >= stopVisits.length) break;
+        startIndex = Math.max(startIndex + 1, endIndex - overlap);
+    }
+
+    return sections.map((section, index) => ({
+        ...section,
+        title: `Section ${index + 1} of ${sections.length}`,
+    }));
 }
