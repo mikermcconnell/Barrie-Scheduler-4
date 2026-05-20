@@ -616,7 +616,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
     const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
-    const [showRoadNameLabels, setShowRoadNameLabels] = useState(false);
+    const [showRoadNameLabels, setShowRoadNameLabels] = useState(true);
     const [hoveredMapItem, setHoveredMapItem] = useState<{ type: 'stop' | 'waypoint' | 'segment'; id: string } | null>(null);
     const [draggedStopOrderKey, setDraggedStopOrderKey] = useState<string | null>(null);
     const [addressQuery, setAddressQuery] = useState('');
@@ -1272,7 +1272,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setIsExportingMapPdf(true);
         setSaveMessage(null);
         try {
-            const mapImage = await mapCanvasRef.current?.captureMapImage();
+            const mapImage = await mapCanvasRef.current?.captureMapImage({ padding: 96 });
             if (!mapImage) {
                 throw new Error('The map is still loading. Please try the export again in a moment.');
             }
@@ -1282,7 +1282,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                 for (const section of mapBookSections) {
                     const sectionMapImage = await mapCanvasRef.current?.captureMapImage({
                         fitCoordinates: section.coordinates,
-                        padding: 72,
+                        padding: 48,
                     });
                     if (!sectionMapImage) {
                         throw new Error('The map section could not be captured. Please try the export again in a moment.');

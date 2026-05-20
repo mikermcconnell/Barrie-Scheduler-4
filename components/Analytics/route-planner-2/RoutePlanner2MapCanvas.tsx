@@ -411,6 +411,12 @@ function getCoordinateDistance(first: [number, number], second: [number, number]
     return Math.hypot((second[0] - first[0]) * lngScale, (second[1] - first[1]) * latScale);
 }
 
+function getLineDistance(coordinates: [number, number][]): number {
+    return coordinates.slice(1).reduce((sum, coordinate, index) => (
+        sum + getCoordinateDistance(coordinates[index]!, coordinate)
+    ), 0);
+}
+
 function getLineMidpointCoordinate(coordinates: [number, number][]): { lat: number; lng: number } {
     if (coordinates.length === 0) return { lat: 0, lng: 0 };
     if (coordinates.length === 1) return { lng: coordinates[0]![0], lat: coordinates[0]![1] };
@@ -512,9 +518,27 @@ export function formatRoutePlanner2RoadNameLabel(name: string): string {
 }
 
 function getRoadLabelFeatures(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
-    return segmentGeometries
+    const uniqueLabels: RoutePlanner2RoadLabelGeometry[] = [];
+    const indexesByName = new Map<string, number>();
+
+    segmentGeometries
         .flatMap((segment) => segment.roadLabels ?? [])
-        .filter((label) => label.name.trim() && label.coordinates.length >= 2);
+        .filter((label) => label.name.trim() && label.coordinates.length >= 2)
+        .forEach((label) => {
+            const key = formatRoutePlanner2RoadNameLabel(label.name).toLocaleLowerCase();
+            const existingIndex = indexesByName.get(key);
+            if (existingIndex == null) {
+                indexesByName.set(key, uniqueLabels.length);
+                uniqueLabels.push(label);
+                return;
+            }
+
+            if (getLineDistance(label.coordinates) > getLineDistance(uniqueLabels[existingIndex]!.coordinates)) {
+                uniqueLabels[existingIndex] = label;
+            }
+        });
+
+    return uniqueLabels;
 }
 
 export function buildRoadNameLineLabelGeoJson(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
@@ -698,30 +722,6 @@ function getBoundsForCoordinates(coordinates: [number, number][]) {
         [minLng - lngPadding, minLat - latPadding],
         [maxLng + lngPadding, maxLat + latPadding],
     ] as [[number, number], [number, number]];
-}
-
-function cropCanvasToAspectRatio(canvas: HTMLCanvasElement, targetAspectRatio: number): HTMLCanvasElement {
-    if (!Number.isFinite(targetAspectRatio) || targetAspectRatio <= 0 || typeof canvas.getContext !== 'function') return canvas;
-    const sourceAspectRatio = canvas.width / canvas.height;
-    if (!Number.isFinite(sourceAspectRatio) || sourceAspectRatio <= 0 || Math.abs(sourceAspectRatio - targetAspectRatio) < 0.02) {
-        return canvas;
-    }
-
-    const cropWidth = sourceAspectRatio > targetAspectRatio
-        ? Math.round(canvas.height * targetAspectRatio)
-        : canvas.width;
-    const cropHeight = sourceAspectRatio < targetAspectRatio
-        ? Math.round(canvas.width / targetAspectRatio)
-        : canvas.height;
-    const sourceX = Math.max(0, Math.round((canvas.width - cropWidth) / 2));
-    const sourceY = Math.max(0, Math.round((canvas.height - cropHeight) / 2));
-    const croppedCanvas = document.createElement('canvas');
-    croppedCanvas.width = cropWidth;
-    croppedCanvas.height = cropHeight;
-    const context = croppedCanvas.getContext('2d');
-    if (!context) return canvas;
-    context.drawImage(canvas, sourceX, sourceY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-    return croppedCanvas;
 }
 
 function getLineAnchorForSegment(
@@ -1054,6 +1054,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     }), [isExportCaptureMode]);
     const activeRoadNameLineLabelLayer = useMemo<LayerProps>(() => ({
         ...roadNameLineLabelLayer,
+        minzoom: isExportCaptureMode ? 0 : roadNameLineLabelLayer.minzoom,
         layout: {
             ...roadNameLineLabelLayer.layout,
             'symbol-spacing': isExportCaptureMode ? 84 : 72,
@@ -1066,6 +1067,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     }), [isExportCaptureMode]);
     const activeRoadNameOverviewLabelLayer = useMemo<LayerProps>(() => ({
         ...roadNameOverviewLabelLayer,
+        maxzoom: isExportCaptureMode ? 0 : roadNameOverviewLabelLayer.maxzoom,
         layout: {
             ...roadNameOverviewLabelLayer.layout,
             'text-size': isExportCaptureMode ? 15 : 11,
@@ -1121,7 +1123,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                 allowTaint: false,
                 scale: Math.min(window.devicePixelRatio || 1, 2),
             });
-            const canvas = cropCanvasToAspectRatio(rawCanvas, 1.85);
+            const canvas = rawCanvas;
 
             return {
                 dataUrl: canvas.toDataURL('image/png'),

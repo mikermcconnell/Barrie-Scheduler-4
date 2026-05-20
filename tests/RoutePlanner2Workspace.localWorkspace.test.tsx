@@ -234,6 +234,21 @@ describe('RoutePlanner2Workspace local workspace', () => {
     );
   });
 
+  it('defaults road-name labels on once a route has enough stops', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+      addMapStop(view);
+    });
+
+    const roadNameToggle = view.querySelector('[data-testid="rp2-road-name-label-toggle"]') as HTMLButtonElement | null;
+
+    expect(roadNameToggle?.disabled).toBe(false);
+    expect(roadNameToggle?.getAttribute('aria-pressed')).toBe('true');
+    expect(roadNameToggle?.textContent).toContain('Hide road names');
+  });
+
   it('saves the current route plan to the team workspace', async () => {
     const view = renderWorkspace();
 

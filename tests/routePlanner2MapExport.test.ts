@@ -181,9 +181,11 @@ describe('Route Planner 2 map export', () => {
     const sections = buildRoutePlanner2MapBookSections(project.scenarios[0]!);
 
     expect(sections.map((section) => section.subtitle)).toEqual([
-      'Stops 1-4 · 4 stops',
-      'Stops 4-7 · 4 stops',
-      'Stops 7-11 · 5 stops',
+      'Stops 1-3 · 3 stops',
+      'Stops 3-5 · 3 stops',
+      'Stops 5-7 · 3 stops',
+      'Stops 7-9 · 3 stops',
+      'Stops 9-11 · 3 stops',
     ]);
     expect(sections.every((section) => section.coordinates.length >= 2)).toBe(true);
   });

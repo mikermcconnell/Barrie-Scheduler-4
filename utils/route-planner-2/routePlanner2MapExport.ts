@@ -466,7 +466,7 @@ function stitchLngLatCoordinates(coordinateGroups: [number, number][][]): [numbe
 
 export function buildRoutePlanner2MapBookSections(
     scenario: RoutePlanner2Scenario,
-    stopsPerPage = 4,
+    stopsPerPage = 3,
     overlapStops = 1,
 ): RoutePlanner2MapBookSection[] {
     const stopVisits = buildRoutePlanner2StopVisitSequence(scenario);

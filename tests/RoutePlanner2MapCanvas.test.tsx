@@ -44,6 +44,10 @@ describe('RoutePlanner2MapCanvas road labels', () => {
         name: 'Ardagh Road',
         coordinates: [[-79.68, 44.39], [-79.67, 44.395]] as [number, number][],
       },
+      {
+        name: 'Mapleview Drive',
+        coordinates: [[-79.66, 44.40], [-79.655, 44.405]] as [number, number][],
+      },
     ],
   }];
 
@@ -52,7 +56,7 @@ describe('RoutePlanner2MapCanvas road labels', () => {
     expect(formatRoutePlanner2RoadNameLabel('  Ardagh   Road  ')).toBe('Ardagh Rd');
   });
 
-  it('builds both line-following and overview midpoint labels for every road name', () => {
+  it('builds one line-following and overview midpoint label per unique road name', () => {
     const lineLabels = buildRoadNameLineLabelGeoJson(segmentGeometries);
     const overviewLabels = buildRoadNameOverviewLabelGeoJson(segmentGeometries);
 
