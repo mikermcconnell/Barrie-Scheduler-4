@@ -67,6 +67,8 @@ interface RoutePlanner2MapCanvasProps {
     stopLabelDetails?: RoutePlanner2MapStopLabelDetail[];
     showRuntimeSourceOverlay?: boolean;
     showRoadNameLabels?: boolean;
+    roadNameLabelDensity?: RoutePlanner2RoadNameLabelDensity;
+    onRoadNameLabelStatusChange?: (status: { available: boolean; count: number }) => void;
     overlayInsets?: {
         left: string;
         right: string;
@@ -81,6 +83,27 @@ interface RoutePlanner2SegmentGeometry {
     coordinates: [number, number][];
     roadLabels?: RoutePlanner2RoadLabelGeometry[];
 }
+
+interface RoutePlanner2RoadLabelBounds {
+    minLng: number;
+    minLat: number;
+    maxLng: number;
+    maxLat: number;
+}
+
+export type RoutePlanner2RoadNameLabelDensity = 'fewer' | 'normal' | 'more';
+
+const ROAD_NAME_LABEL_DENSITY_LIMITS: Record<RoutePlanner2RoadNameLabelDensity, number> = {
+    fewer: 6,
+    normal: 12,
+    more: 24,
+};
+
+const ROAD_NAME_LABEL_LINE_SPACING: Record<RoutePlanner2RoadNameLabelDensity, number> = {
+    fewer: 150,
+    normal: 96,
+    more: 62,
+};
 
 interface PendingLineAction {
     fromStopId: string;
@@ -212,7 +235,7 @@ const roadNameLineLabelLayer: LayerProps = {
     type: 'symbol',
     minzoom: 12.8,
     layout: {
-        'symbol-placement': 'line',
+        'symbol-placement': 'line-center',
         'symbol-spacing': 72,
         'text-field': ['get', 'label'],
         'text-size': 12,
@@ -238,14 +261,16 @@ const roadNameOverviewLabelLayer: LayerProps = {
     type: 'symbol',
     maxzoom: 13.2,
     layout: {
-        'symbol-placement': 'point',
+        'symbol-placement': 'line-center',
         'text-field': ['get', 'label'],
         'text-size': 11,
         'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
         'text-allow-overlap': true,
         'text-ignore-placement': true,
-        'text-anchor': 'center',
-        'text-offset': [0, -1.15],
+        'text-rotation-alignment': 'map',
+        'text-pitch-alignment': 'viewport',
+        'text-keep-upright': true,
+        'text-max-angle': 45,
         'text-padding': 0,
     },
     paint: {
@@ -417,6 +442,46 @@ function getLineDistance(coordinates: [number, number][]): number {
     ), 0);
 }
 
+function coordinateWithinBounds(coordinate: [number, number], bounds: RoutePlanner2RoadLabelBounds): boolean {
+    return coordinate[0] >= bounds.minLng
+        && coordinate[0] <= bounds.maxLng
+        && coordinate[1] >= bounds.minLat
+        && coordinate[1] <= bounds.maxLat;
+}
+
+function segmentIntersectsBounds(first: [number, number], second: [number, number], bounds: RoutePlanner2RoadLabelBounds): boolean {
+    const minLng = Math.min(first[0], second[0]);
+    const maxLng = Math.max(first[0], second[0]);
+    const minLat = Math.min(first[1], second[1]);
+    const maxLat = Math.max(first[1], second[1]);
+    return maxLng >= bounds.minLng
+        && minLng <= bounds.maxLng
+        && maxLat >= bounds.minLat
+        && minLat <= bounds.maxLat;
+}
+
+function constrainRoadLabelToBounds(
+    label: RoutePlanner2RoadLabelGeometry,
+    bounds: RoutePlanner2RoadLabelBounds | null,
+): RoutePlanner2RoadLabelGeometry | null {
+    if (!bounds) return label;
+
+    const coordinates: [number, number][] = [];
+    label.coordinates.slice(1).forEach((coordinate, index) => {
+        const previous = label.coordinates[index]!;
+        if (!segmentIntersectsBounds(previous, coordinate, bounds)) return;
+        if (coordinates.length === 0 || !coordinatesEqual(coordinates[coordinates.length - 1]!, previous)) {
+            coordinates.push(previous);
+        }
+        coordinates.push(coordinate);
+    });
+
+    const hasVisibleCoordinate = coordinates.some((coordinate) => coordinateWithinBounds(coordinate, bounds));
+    if (coordinates.length < 2 || !hasVisibleCoordinate) return null;
+
+    return { ...label, coordinates };
+}
+
 function getLineMidpointCoordinate(coordinates: [number, number][]): { lat: number; lng: number } {
     if (coordinates.length === 0) return { lat: 0, lng: 0 };
     if (coordinates.length === 1) return { lng: coordinates[0]![0], lat: coordinates[0]![1] };
@@ -517,34 +582,52 @@ export function formatRoutePlanner2RoadNameLabel(name: string): string {
     );
 }
 
-function getRoadLabelFeatures(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
-    const uniqueLabels: RoutePlanner2RoadLabelGeometry[] = [];
+function getRoadLabelFeatures(
+    segmentGeometries: RoutePlanner2SegmentGeometry[],
+    bounds: RoutePlanner2RoadLabelBounds | null = null,
+    density: RoutePlanner2RoadNameLabelDensity = 'normal',
+) {
+    const uniqueLabels: Array<RoutePlanner2RoadLabelGeometry & { originalIndex: number }> = [];
     const indexesByName = new Map<string, number>();
 
     segmentGeometries
         .flatMap((segment) => segment.roadLabels ?? [])
+        .map((label) => constrainRoadLabelToBounds(label, bounds))
+        .filter((label): label is RoutePlanner2RoadLabelGeometry => Boolean(label))
         .filter((label) => label.name.trim() && label.coordinates.length >= 2)
-        .forEach((label) => {
+        .forEach((label, originalIndex) => {
             const key = formatRoutePlanner2RoadNameLabel(label.name).toLocaleLowerCase();
             const existingIndex = indexesByName.get(key);
             if (existingIndex == null) {
                 indexesByName.set(key, uniqueLabels.length);
-                uniqueLabels.push(label);
+                uniqueLabels.push({ ...label, originalIndex });
                 return;
             }
 
             if (getLineDistance(label.coordinates) > getLineDistance(uniqueLabels[existingIndex]!.coordinates)) {
-                uniqueLabels[existingIndex] = label;
+                uniqueLabels[existingIndex] = { ...label, originalIndex: uniqueLabels[existingIndex]!.originalIndex };
             }
         });
 
-    return uniqueLabels;
+    const limit = ROAD_NAME_LABEL_DENSITY_LIMITS[density];
+    if (uniqueLabels.length <= limit) return uniqueLabels;
+
+    return uniqueLabels
+        .map((label) => ({ label, distance: getLineDistance(label.coordinates) }))
+        .sort((first, second) => second.distance - first.distance)
+        .slice(0, limit)
+        .map((item) => item.label)
+        .sort((first, second) => first.originalIndex - second.originalIndex);
 }
 
-export function buildRoadNameLineLabelGeoJson(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
+export function buildRoadNameLineLabelGeoJson(
+    segmentGeometries: RoutePlanner2SegmentGeometry[],
+    bounds: RoutePlanner2RoadLabelBounds | null = null,
+    density: RoutePlanner2RoadNameLabelDensity = 'normal',
+) {
     return {
         type: 'FeatureCollection' as const,
-        features: getRoadLabelFeatures(segmentGeometries).map((label, index) => ({
+        features: getRoadLabelFeatures(segmentGeometries, bounds, density).map((label, index) => ({
             type: 'Feature' as const,
             properties: {
                 id: `road-line-label-${index}`,
@@ -559,24 +642,25 @@ export function buildRoadNameLineLabelGeoJson(segmentGeometries: RoutePlanner2Se
     };
 }
 
-export function buildRoadNameOverviewLabelGeoJson(segmentGeometries: RoutePlanner2SegmentGeometry[]) {
+export function buildRoadNameOverviewLabelGeoJson(
+    segmentGeometries: RoutePlanner2SegmentGeometry[],
+    bounds: RoutePlanner2RoadLabelBounds | null = null,
+    density: RoutePlanner2RoadNameLabelDensity = 'normal',
+) {
     return {
         type: 'FeatureCollection' as const,
-        features: getRoadLabelFeatures(segmentGeometries).map((label, index) => {
-            const midpoint = getLineMidpointCoordinate(label.coordinates);
-            return {
-                type: 'Feature' as const,
-                properties: {
-                    id: `road-overview-label-${index}`,
-                    name: label.name,
-                    label: formatRoutePlanner2RoadNameLabel(label.name),
-                },
-                geometry: {
-                    type: 'Point' as const,
-                    coordinates: [midpoint.lng, midpoint.lat] as [number, number],
-                },
-            };
-        }),
+        features: getRoadLabelFeatures(segmentGeometries, bounds, density).map((label, index) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: `road-overview-label-${index}`,
+                name: label.name,
+                label: formatRoutePlanner2RoadNameLabel(label.name),
+            },
+            geometry: {
+                type: 'LineString' as const,
+                coordinates: label.coordinates,
+            },
+        })),
     };
 }
 
@@ -722,6 +806,12 @@ function getBoundsForCoordinates(coordinates: [number, number][]) {
         [minLng - lngPadding, minLat - latPadding],
         [maxLng + lngPadding, maxLat + latPadding],
     ] as [[number, number], [number, number]];
+}
+
+function getRoadLabelBoundsForCoordinates(coordinates: [number, number][]): RoutePlanner2RoadLabelBounds | null {
+    if (coordinates.length === 0) return null;
+    const [[minLng, minLat], [maxLng, maxLat]] = getBoundsForCoordinates(coordinates);
+    return { minLng, minLat, maxLng, maxLat };
 }
 
 function getLineAnchorForSegment(
@@ -935,6 +1025,8 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     stopLabelDetails = [],
     showRuntimeSourceOverlay = false,
     showRoadNameLabels = false,
+    roadNameLabelDensity = 'normal',
+    onRoadNameLabelStatusChange,
     overlayInsets = { left: '8rem', right: '8rem' },
 }, ref) {
     const [mapLoaded, setMapLoaded] = useState(false);
@@ -946,6 +1038,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const [runtimeOverrideValue, setRuntimeOverrideValue] = useState('');
     const [activeDragPreview, setActiveDragPreview] = useState<ActiveDragPreview | null>(null);
     const [isExportCaptureMode, setIsExportCaptureMode] = useState(false);
+    const [exportRoadLabelBounds, setExportRoadLabelBounds] = useState<RoutePlanner2RoadLabelBounds | null>(null);
     const [mouseMapCoordinate, setMouseMapCoordinate] = useState<{ lat: number; lng: number } | null>(null);
     const mapRef = useRef<MapRef | null>(null);
     const captureContainerRef = useRef<HTMLElement | null>(null);
@@ -995,13 +1088,14 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         () => buildRuntimeSourceGeoJson(runtimeSourceOverlaySegments),
         [runtimeSourceOverlaySegments],
     );
+    const activeRoadNameLabelDensity = isExportCaptureMode ? 'more' : roadNameLabelDensity;
     const roadNameLineLabelGeoJson = useMemo(
-        () => buildRoadNameLineLabelGeoJson(snappedSegmentGeometries),
-        [snappedSegmentGeometries],
+        () => buildRoadNameLineLabelGeoJson(snappedSegmentGeometries, exportRoadLabelBounds, activeRoadNameLabelDensity),
+        [activeRoadNameLabelDensity, exportRoadLabelBounds, snappedSegmentGeometries],
     );
     const roadNameOverviewLabelGeoJson = useMemo(
-        () => buildRoadNameOverviewLabelGeoJson(snappedSegmentGeometries),
-        [snappedSegmentGeometries],
+        () => buildRoadNameOverviewLabelGeoJson(snappedSegmentGeometries, exportRoadLabelBounds, activeRoadNameLabelDensity),
+        [activeRoadNameLabelDensity, exportRoadLabelBounds, snappedSegmentGeometries],
     );
     const highlightedSegmentGeoJson = useMemo(() => {
         if (!scenario || !highlightedSegmentId) return buildHighlightedSegmentGeoJson(null);
@@ -1018,8 +1112,12 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const hasRouteLine = lineGeoJson.features.length > 0;
     const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
     const hasRoadNameLabels = roadNameLineLabelGeoJson.features.length > 0 || roadNameOverviewLabelGeoJson.features.length > 0;
+    const roadNameLabelCount = Math.max(roadNameLineLabelGeoJson.features.length, roadNameOverviewLabelGeoJson.features.length);
     const hasDirectionArrows = directionArrowGeoJson.features.length > 0;
     const hasHighlightedSegment = highlightedSegmentGeoJson.features.length > 0;
+    useEffect(() => {
+        onRoadNameLabelStatusChange?.({ available: hasRoadNameLabels, count: roadNameLabelCount });
+    }, [hasRoadNameLabels, onRoadNameLabelStatusChange, roadNameLabelCount]);
     const activeRouteLineLayer = useMemo<LayerProps>(() => ({
         ...routeLineLayer,
         paint: {
@@ -1027,7 +1125,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             'line-width': isExportCaptureMode ? 7 : 5,
             'line-opacity': isExportCaptureMode ? 0.95 : 0.86,
         },
-    }), [isExportCaptureMode]);
+    }), [isExportCaptureMode, roadNameLabelDensity]);
     const activeDirectionArrowCenterLayer = useMemo<LayerProps>(() => ({
         ...routeDirectionArrowCenterLayer,
         layout: {
@@ -1057,8 +1155,8 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         minzoom: isExportCaptureMode ? 0 : roadNameLineLabelLayer.minzoom,
         layout: {
             ...roadNameLineLabelLayer.layout,
-            'symbol-spacing': isExportCaptureMode ? 84 : 72,
-            'text-size': isExportCaptureMode ? 16 : 12,
+            'symbol-spacing': isExportCaptureMode ? 84 : ROAD_NAME_LABEL_LINE_SPACING[roadNameLabelDensity],
+            'text-size': isExportCaptureMode ? 16 : roadNameLabelDensity === 'more' ? 11 : 12,
         },
         paint: {
             ...roadNameLineLabelLayer.paint,
@@ -1070,14 +1168,13 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         maxzoom: isExportCaptureMode ? 0 : roadNameOverviewLabelLayer.maxzoom,
         layout: {
             ...roadNameOverviewLabelLayer.layout,
-            'text-size': isExportCaptureMode ? 15 : 11,
-            'text-offset': isExportCaptureMode ? [0, -1.25] : [0, -1.15],
+            'text-size': isExportCaptureMode ? 15 : roadNameLabelDensity === 'more' ? 10 : 11,
         },
         paint: {
             ...roadNameOverviewLabelLayer.paint,
             'text-halo-width': isExportCaptureMode ? 3.4 : 3,
         },
-    }), [isExportCaptureMode]);
+    }), [isExportCaptureMode, roadNameLabelDensity]);
 
     const captureMapImage = useCallback(async (options: RoutePlanner2MapCaptureOptions = {}): Promise<RoutePlanner2MapCapture> => {
         if (!captureContainerRef.current) {
@@ -1101,6 +1198,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             ];
 
         setIsExportCaptureMode(true);
+        setExportRoadLabelBounds(options.fitCoordinates?.length ? getRoadLabelBoundsForCoordinates(options.fitCoordinates) : null);
 
         try {
             await waitForNextPaint();
@@ -1135,6 +1233,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                 map.jumpTo(originalView);
             }
             setIsExportCaptureMode(false);
+            setExportRoadLabelBounds(null);
         }
     }, [scenario?.stops, snappedCoordinates, waypoints]);
 

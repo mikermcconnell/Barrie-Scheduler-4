@@ -62,7 +62,7 @@ import {
     type RoutePlanner2StopCardDetail,
     type RoutePlanner2StopVisitRuntimeDetail,
 } from '../../utils/route-planner-2/routePlanner2StopTimes';
-import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle } from './route-planner-2/RoutePlanner2MapCanvas';
+import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle, type RoutePlanner2RoadNameLabelDensity } from './route-planner-2/RoutePlanner2MapCanvas';
 import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
 import {
     RoutePlanner2AddressImportModal,
@@ -617,6 +617,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
     const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
     const [showRoadNameLabels, setShowRoadNameLabels] = useState(true);
+    const [roadNameLabelDensity, setRoadNameLabelDensity] = useState<RoutePlanner2RoadNameLabelDensity>('normal');
+    const [roadNameLabelStatus, setRoadNameLabelStatus] = useState<{ available: boolean; count: number }>({ available: false, count: 0 });
     const [hoveredMapItem, setHoveredMapItem] = useState<{ type: 'stop' | 'waypoint' | 'segment'; id: string } | null>(null);
     const [draggedStopOrderKey, setDraggedStopOrderKey] = useState<string | null>(null);
     const [addressQuery, setAddressQuery] = useState('');
@@ -1394,6 +1396,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         stopLabelDetails={stopMapLabelDetails}
                         showRuntimeSourceOverlay={showRuntimeSourceOverlay}
                         showRoadNameLabels={showRoadNameLabels}
+                        roadNameLabelDensity={roadNameLabelDensity}
+                        onRoadNameLabelStatusChange={setRoadNameLabelStatus}
                         overlayInsets={mapOverlayInsets}
                     />
                     {showActionSidebar && (
@@ -1544,6 +1548,31 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     >
                                         <MapPin size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{showRoadNameLabels ? 'Hide road names' : 'Show road names'}</span>
                                     </button>
+                                    {actionSidebarExpanded && canShowRoadNameLabels && showRoadNameLabels && (
+                                        <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-2">
+                                            <div className="mb-1 flex items-center justify-between gap-2">
+                                                <span className="text-[10px] font-black uppercase tracking-wide text-blue-800">Road label density</span>
+                                                <span className="text-[10px] font-bold text-blue-700">{roadNameLabelStatus.count} shown</span>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-1" data-testid="rp2-road-name-density-controls">
+                                                {(['fewer', 'normal', 'more'] as const).map((density) => (
+                                                    <button
+                                                        key={density}
+                                                        type="button"
+                                                        onClick={() => setRoadNameLabelDensity(density)}
+                                                        className={`rounded-xl border px-2 py-1 text-[10px] font-black capitalize ${roadNameLabelDensity === density ? 'border-blue-300 bg-white text-blue-800 shadow-sm' : 'border-transparent bg-blue-100 text-blue-700'}`}
+                                                    >
+                                                        {density}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            {!roadNameLabelStatus.available && (
+                                                <p className="mt-1.5 text-[10px] font-semibold leading-4 text-blue-700">
+                                                    Labels appear after Mapbox road snapping. Fallback segments may not have road names.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
                                     <button
                                         type="button"
                                         onClick={openLoadPicker}
