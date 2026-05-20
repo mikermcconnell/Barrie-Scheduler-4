@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { addRoutePlanner2Stop, setRoutePlanner2SegmentRuntimeOverride } from '../utils/route-planner-2/routePlanner2Authoring';
+import { addRoutePlanner2Stop, setRoutePlanner2SegmentRuntimeOverride, updateRoutePlanner2RouteShape } from '../utils/route-planner-2/routePlanner2Authoring';
 import { deriveRoutePlanner2Feasibility, updateRoutePlanner2Service } from '../utils/route-planner-2/routePlanner2Feasibility';
-import { buildRoutePlanner2StopCardDetails } from '../utils/route-planner-2/routePlanner2StopTimes';
+import { buildRoutePlanner2StopCardDetails, buildRoutePlanner2StopVisitRuntimeDetails } from '../utils/route-planner-2/routePlanner2StopTimes';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 
 describe('Route Planner 2 stop card details', () => {
@@ -100,5 +100,31 @@ describe('Route Planner 2 stop card details', () => {
 
     expect(details.map((detail) => detail.arrivalLabel)).toEqual(['Not set', 'Not set']);
     expect(details.map((detail) => detail.travelTimeLabel)).toEqual(['0 min', '6 min']);
+  });
+
+  it('builds stop-order runtime rows with previous-segment and running-time metrics per visit', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Start', lat: 44.34, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Turnaround', lat: 44.41, lng: -79.66, now });
+    project = updateRoutePlanner2RouteShape(project, 'scenario-1', 'out-and-back', { turnaroundStopId: 'stop-2' });
+    project = updateRoutePlanner2Service(project, 'scenario-1', { firstTripTime: '08:00' }, now);
+    project = setRoutePlanner2SegmentRuntimeOverride(project, 'scenario-1', 'segment-stop-1-stop-2', 6, now);
+    project = setRoutePlanner2SegmentRuntimeOverride(project, 'scenario-1', 'segment-stop-2-stop-1', 7, now);
+
+    const scenario = project.scenarios[0]!;
+    const details = buildRoutePlanner2StopVisitRuntimeDetails(scenario, deriveRoutePlanner2Feasibility(scenario));
+
+    expect(details.map((detail) => ({
+      key: detail.key,
+      stopId: detail.stopId,
+      segmentRuntimeLabel: detail.segmentRuntimeLabel,
+      runningRuntimeLabel: detail.runningRuntimeLabel,
+      arrivalLabel: detail.arrivalLabel,
+      source: detail.source,
+    }))).toEqual([
+      { key: 'stop-stop-1-0', stopId: 'stop-1', segmentRuntimeLabel: 'Start', runningRuntimeLabel: '0 min', arrivalLabel: '8:00 AM', source: undefined },
+      { key: 'stop-stop-2-1', stopId: 'stop-2', segmentRuntimeLabel: '6 min', runningRuntimeLabel: '6 min', arrivalLabel: '8:06 AM', source: 'manual' },
+      { key: 'stop-stop-1-2', stopId: 'stop-1', segmentRuntimeLabel: '7 min', runningRuntimeLabel: '13 min', arrivalLabel: '8:13 AM', source: 'manual' },
+    ]);
   });
 });

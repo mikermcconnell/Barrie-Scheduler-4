@@ -1,5 +1,5 @@
-import { buildRoutePlanner2StopSegmentPairs, buildRoutePlanner2StopVisitSequence, sortRoutePlanner2Stops } from './routePlanner2Segments';
-import type { RoutePlanner2FeasibilitySummary, RoutePlanner2Scenario, RoutePlanner2Stop } from './routePlanner2Types';
+import { buildRoutePlanner2StopSegmentPairs, buildRoutePlanner2StopVisitSequence, getRoutePlanner2SegmentId, sortRoutePlanner2Stops } from './routePlanner2Segments';
+import type { RoutePlanner2FeasibilitySummary, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime, RoutePlanner2Stop } from './routePlanner2Types';
 
 export interface RoutePlanner2StopCardDetail {
     stopId: string;
@@ -9,6 +9,22 @@ export interface RoutePlanner2StopCardDetail {
     travelTimeLabel: string;
     arrivalMinutes: number | null;
     arrivalLabel: string;
+}
+
+export interface RoutePlanner2StopVisitRuntimeDetail {
+    key: string;
+    stopId: string;
+    visitIndex: number;
+    previousStopId?: string;
+    segmentId?: string;
+    segmentRuntimeMinutes: number | null;
+    segmentRuntimeLabel: string;
+    runningRuntimeMinutes: number | null;
+    runningRuntimeLabel: string;
+    arrivalMinutes: number | null;
+    arrivalLabel: string;
+    source?: RoutePlanner2SegmentRuntime['source'];
+    confidence?: RoutePlanner2SegmentRuntime['confidence'];
 }
 
 function parseClockTimeToMinutes(value: string | undefined): number | null {
@@ -66,6 +82,20 @@ function getSegmentRuntime(
         segment.fromStopId === fromStopId && segment.toStopId === toStopId,
     )?.runtimeMinutes;
     return Number.isFinite(runtime) && runtime != null ? Math.max(0, Math.round(runtime)) : 0;
+}
+
+function getSegmentRuntimeSummary(
+    feasibility: RoutePlanner2FeasibilitySummary | null | undefined,
+    fromStopId: string,
+    toStopId: string,
+): RoutePlanner2SegmentRuntime | null {
+    return feasibility?.segmentSummaries.find((segment) =>
+        segment.fromStopId === fromStopId && segment.toStopId === toStopId,
+    ) ?? null;
+}
+
+function getDisplayRuntimeMinutes(runtime: number | null | undefined): number | null {
+    return Number.isFinite(runtime) && runtime != null ? Math.max(0, Math.round(runtime)) : null;
 }
 
 export function buildRoutePlanner2StopArrivalMinutes(
@@ -128,6 +158,66 @@ export function buildRoutePlanner2StopTravelMinutes(
     });
 
     return travelMinutesByStopId;
+}
+
+export function buildRoutePlanner2StopVisitRuntimeDetails(
+    scenario: RoutePlanner2Scenario,
+    feasibility: RoutePlanner2FeasibilitySummary | null | undefined,
+): RoutePlanner2StopVisitRuntimeDetail[] {
+    const stopVisits = buildRoutePlanner2StopVisitSequence(scenario);
+    if (stopVisits.length === 0) return [];
+
+    const firstTripMinutes = parseClockTimeToMinutes(scenario.service.firstTripTime);
+    const dwellMinutes = Math.round((scenario.service.intermediateStopDwellSeconds ?? 0) / 60);
+    const details: RoutePlanner2StopVisitRuntimeDetail[] = [];
+    let runningRuntimeMinutes: number | null = 0;
+    let currentArrivalMinutes: number | null = firstTripMinutes;
+
+    details.push({
+        key: `stop-${stopVisits[0]!.id}-0`,
+        stopId: stopVisits[0]!.id,
+        visitIndex: 0,
+        segmentRuntimeMinutes: null,
+        segmentRuntimeLabel: 'Start',
+        runningRuntimeMinutes,
+        runningRuntimeLabel: formatTravelTime(runningRuntimeMinutes),
+        arrivalMinutes: currentArrivalMinutes,
+        arrivalLabel: formatClockTime(currentArrivalMinutes),
+    });
+
+    buildRoutePlanner2StopSegmentPairs(scenario).forEach(({ fromStop, toStop }, index) => {
+        const segmentRuntime = getSegmentRuntimeSummary(feasibility, fromStop.id, toStop.id);
+        const segmentRuntimeMinutes = getDisplayRuntimeMinutes(segmentRuntime?.runtimeMinutes);
+
+        if (index > 0 && isIntermediateDwellStop(fromStop) && currentArrivalMinutes != null) {
+            currentArrivalMinutes += dwellMinutes;
+        }
+
+        runningRuntimeMinutes = runningRuntimeMinutes != null && segmentRuntimeMinutes != null
+            ? runningRuntimeMinutes + segmentRuntimeMinutes
+            : null;
+        currentArrivalMinutes = currentArrivalMinutes != null && segmentRuntimeMinutes != null
+            ? currentArrivalMinutes + segmentRuntimeMinutes
+            : null;
+
+        details.push({
+            key: `stop-${toStop.id}-${index + 1}`,
+            stopId: toStop.id,
+            visitIndex: index + 1,
+            previousStopId: fromStop.id,
+            segmentId: segmentRuntime?.id ?? getRoutePlanner2SegmentId(fromStop.id, toStop.id),
+            segmentRuntimeMinutes,
+            segmentRuntimeLabel: segmentRuntimeMinutes == null ? 'Not estimated' : formatTravelTime(segmentRuntimeMinutes),
+            runningRuntimeMinutes,
+            runningRuntimeLabel: formatTravelTime(runningRuntimeMinutes),
+            arrivalMinutes: currentArrivalMinutes,
+            arrivalLabel: formatClockTime(currentArrivalMinutes),
+            source: segmentRuntime?.source,
+            confidence: segmentRuntime?.confidence,
+        });
+    });
+
+    return details;
 }
 
 export function buildRoutePlanner2StopCardDetails(

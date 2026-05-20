@@ -55,7 +55,12 @@ import {
     deriveRoutePlanner2EvidenceRuntimeEstimates,
     type RoutePlanner2RuntimeEvidenceDiagnostic,
 } from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
-import { buildRoutePlanner2StopCardDetails, type RoutePlanner2StopCardDetail } from '../../utils/route-planner-2/routePlanner2StopTimes';
+import {
+    buildRoutePlanner2StopCardDetails,
+    buildRoutePlanner2StopVisitRuntimeDetails,
+    type RoutePlanner2StopCardDetail,
+    type RoutePlanner2StopVisitRuntimeDetail,
+} from '../../utils/route-planner-2/routePlanner2StopTimes';
 import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle } from './route-planner-2/RoutePlanner2MapCanvas';
 import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
 import {
@@ -658,6 +663,14 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const stopCardDetailsByStopId = useMemo(
         () => new Map<string, RoutePlanner2StopCardDetail>(stopCardDetails.map((detail) => [detail.stopId, detail])),
         [stopCardDetails],
+    );
+    const stopVisitRuntimeDetails = useMemo(
+        () => selectedScenario ? buildRoutePlanner2StopVisitRuntimeDetails(selectedScenario, selectedFeasibility) : [],
+        [selectedFeasibility, selectedScenario],
+    );
+    const stopVisitRuntimeDetailsByKey = useMemo(
+        () => new Map<string, RoutePlanner2StopVisitRuntimeDetail>(stopVisitRuntimeDetails.map((detail) => [detail.key, detail])),
+        [stopVisitRuntimeDetails],
     );
     const stopMapLabelDetails = useMemo(
         () => stopCardDetails.map((detail) => ({
@@ -1801,6 +1814,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                     >
                                                         {(() => {
                                                             const stopDetail = stopCardDetailsByStopId.get(item.stop.id);
+                                                            const runtimeDetail = stopVisitRuntimeDetailsByKey.get(item.key);
                                                             return (
                                                         <div className="flex items-start gap-2">
                                                             <button
@@ -1815,17 +1829,36 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                                 <span className="mt-1 block truncate pl-8 text-xs font-semibold text-slate-500">
                                                                     {stopRoleLabel(item.stop.role)}{item.stop.stopCode ? ` · Stop ${item.stop.stopCode}` : ''}
                                                                 </span>
-                                                                <span className="mt-2 grid grid-cols-3 gap-1 pl-8">
+                                                                <span className="mt-2 grid grid-cols-2 gap-1 pl-8">
                                                                     <span className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
                                                                         Kids {stopDetail?.kidsAtStop ?? 0}
                                                                     </span>
                                                                     <span className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
-                                                                        Running {stopDetail?.runningKidsTotal ?? 0}
-                                                                    </span>
-                                                                    <span className="rounded-xl border border-cyan-100 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-700">
-                                                                        Travel {stopDetail?.travelTimeLabel ?? 'Not estimated'}
+                                                                        Kids total {stopDetail?.runningKidsTotal ?? 0}
                                                                     </span>
                                                                 </span>
+                                                                <span className="mt-2 grid gap-1 pl-8 sm:grid-cols-2">
+                                                                    <span className="rounded-xl border border-cyan-100 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-700">
+                                                                        From previous {runtimeDetail?.segmentRuntimeLabel ?? 'Not estimated'}
+                                                                    </span>
+                                                                    <span className="rounded-xl border border-cyan-100 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-700">
+                                                                        Running time {runtimeDetail?.runningRuntimeLabel ?? 'Not estimated'}
+                                                                    </span>
+                                                                </span>
+                                                                {runtimeDetail && (runtimeDetail.source || runtimeDetail.arrivalLabel !== 'Not set') && (
+                                                                    <span className="mt-2 flex flex-wrap items-center gap-1 pl-8">
+                                                                        {runtimeDetail.arrivalLabel !== 'Not set' && (
+                                                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-slate-600">
+                                                                                Arrival {runtimeDetail.arrivalLabel}
+                                                                            </span>
+                                                                        )}
+                                                                        {runtimeDetail.source && (
+                                                                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${getRuntimeSourceBadgeClass(runtimeDetail.source)}`}>
+                                                                                {runtimeSourceLabel(runtimeDetail.source)}
+                                                                            </span>
+                                                                        )}
+                                                                    </span>
+                                                                )}
                                                             </button>
                                                             <button
                                                                 type="button"
@@ -2073,9 +2106,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         </details>
                                     </div>
                                     {selectedFeasibility && selectedFeasibility.segmentSummaries.length > 0 && (
-                                        <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                                            <h3 className="text-sm font-black text-slate-900">Segment runtimes</h3>
-                                            <div className="mt-2 space-y-2">
+                                        <details className="rounded-2xl border border-slate-200 bg-white p-3">
+                                            <summary className="cursor-pointer text-sm font-black text-slate-900">
+                                                Segment runtimes and overrides
+                                                <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                                    {selectedFeasibility.segmentSummaries.length}
+                                                </span>
+                                            </summary>
+                                            <p className="mt-1 text-xs font-semibold text-slate-500">
+                                                Stop order shows the working running time. Open this only to inspect sources or override a segment.
+                                            </p>
+                                            <div className="mt-3 space-y-2">
                                                 {selectedFeasibility.segmentSummaries.map((segment) => {
                                                     const fromStop = selectedScenario.stops.find((stop) => stop.id === segment.fromStopId);
                                                     const toStop = selectedScenario.stops.find((stop) => stop.id === segment.toStopId);
@@ -2182,7 +2223,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                     );
                                                 })}
                                             </div>
-                                        </div>
+                                        </details>
                                     )}
                                     <div className="grid grid-cols-2 gap-2">
                                         <button type="button" onClick={() => setProject((current) => markRoutePlanner2PreferredScenario(current, selectedScenario.id))} className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700"><Star size={16} />Mark preferred</button>
