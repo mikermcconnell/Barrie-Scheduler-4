@@ -1279,7 +1279,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setIsExportingMapPdf(true);
         setSaveMessage(null);
         try {
-            const mapImage = await mapCanvasRef.current?.captureMapImage({ padding: 96 });
+            const mapImage = await mapCanvasRef.current?.captureMapImage({
+                padding: 96,
+                showStopLabels: false,
+            });
             if (!mapImage) {
                 throw new Error('The map is still loading. Please try the export again in a moment.');
             }

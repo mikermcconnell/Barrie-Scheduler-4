@@ -156,8 +156,10 @@ known.
 
 When a route has at least two stops, the planner can export a map-first PDF for
 review. The export should show the route line, numbered stops, start/end
-markers, address callouts with imported kids counts, and route road-name labels
-derived from Mapbox direction steps when available.
+markers, and route road-name labels derived from Mapbox direction steps when
+available. The full-route overview page should keep the numbered stops but hide
+stop text labels so the route remains readable; close-up detail pages should
+keep the stop/address labels and imported kids counts.
 
 Implementation gotcha: keep this export screenshot-first for the map itself.
 Capture the app map as an image and place it into the PDF; do not redraw the map

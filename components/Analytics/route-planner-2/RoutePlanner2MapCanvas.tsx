@@ -412,6 +412,7 @@ export interface RoutePlanner2MapCapture {
 export interface RoutePlanner2MapCaptureOptions {
     fitCoordinates?: [number, number][];
     padding?: number;
+    showStopLabels?: boolean;
 }
 
 export interface RoutePlanner2MapCanvasHandle {
@@ -1135,6 +1136,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const [runtimeOverrideValue, setRuntimeOverrideValue] = useState('');
     const [activeDragPreview, setActiveDragPreview] = useState<ActiveDragPreview | null>(null);
     const [isExportCaptureMode, setIsExportCaptureMode] = useState(false);
+    const [exportCaptureShowStopLabels, setExportCaptureShowStopLabels] = useState(true);
     const [exportRoadLabelBounds, setExportRoadLabelBounds] = useState<RoutePlanner2RoadLabelBounds | null>(null);
     const [mouseMapCoordinate, setMouseMapCoordinate] = useState<{ lat: number; lng: number } | null>(null);
     const [, setMapViewVersion] = useState(0);
@@ -1321,6 +1323,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                 ...(scenario?.stops.map((stop): [number, number] => [stop.lng, stop.lat]) ?? []),
             ];
 
+        setExportCaptureShowStopLabels(options.showStopLabels ?? true);
         setIsExportCaptureMode(true);
         setExportRoadLabelBounds(options.fitCoordinates?.length ? getRoadLabelBoundsForCoordinates(options.fitCoordinates) : null);
 
@@ -1357,6 +1360,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                 map.jumpTo(originalView);
             }
             setIsExportCaptureMode(false);
+            setExportCaptureShowStopLabels(true);
             setExportRoadLabelBounds(null);
         }
     }, [scenario?.stops, snappedCoordinates, waypoints]);
@@ -1869,7 +1873,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             </div>
                         </Marker>
                     )}
-                    {mapLoaded && scenario?.stops.map((stop) => {
+                    {mapLoaded && (!isExportCaptureMode || exportCaptureShowStopLabels) && scenario?.stops.map((stop) => {
                         const coordinate = getPreviewCoordinate('stop', stop.id, stop);
                         const label = formatRoutePlanner2MapStopLabel(
                             stopLabelDetailsByStopId.get(stop.id),
