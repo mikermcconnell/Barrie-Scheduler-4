@@ -8,15 +8,30 @@ import {
 } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
 
 describe('RoutePlanner2MapCanvas stop labels', () => {
-  it('formats subtle map labels with travel time and kids count', () => {
+  it('includes address context in stop labels', () => {
     expect(formatRoutePlanner2MapStopLabel({
       stopId: 'stop-1',
+      stopName: 'Johnson School',
+      address: '37 Johnson Street, Barrie, ON L4M 5C3',
       kidsAtStop: 2,
       travelTimeLabel: '6 min',
-    })).toBe('6 min · 2 kids');
+    }, {
+      includePlaceLabel: true,
+    })).toBe('37 Johnson Street\n6 min · 2 kids');
   });
 
   it('falls back to kids count when travel time is not estimated', () => {
+    expect(formatRoutePlanner2MapStopLabel({
+      stopId: 'stop-1',
+      stopName: 'Johnson School',
+      kidsAtStop: 1,
+      travelTimeLabel: 'Not estimated',
+    }, {
+      includePlaceLabel: true,
+    })).toBe('Johnson School\n1 kid');
+  });
+
+  it('keeps the previous metric-only label when no address or stop name is available', () => {
     expect(formatRoutePlanner2MapStopLabel({
       stopId: 'stop-1',
       kidsAtStop: 1,

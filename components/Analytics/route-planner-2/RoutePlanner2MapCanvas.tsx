@@ -303,12 +303,14 @@ function getStopMarkerColor(stop: RoutePlanner2Stop): string {
 }
 
 function getExportLabelWidth(label: string): number {
-    return Math.max(72, Math.min(168, Math.ceil((label.length * 7.2) + 24)));
+    const longestLine = getRoutePlanner2MapStopLabelLines(label).reduce((longest, line) => Math.max(longest, line.length), 0);
+    return Math.max(88, Math.min(212, Math.ceil((longestLine * 7.2) + 24)));
 }
 
 function RoutePlanner2ExportStopLabel({ label }: { label: string }) {
+    const lines = getRoutePlanner2MapStopLabelLines(label);
     const width = getExportLabelWidth(label);
-    const height = 28;
+    const height = lines.length > 1 ? 42 : 28;
 
     return (
         <svg
@@ -316,23 +318,26 @@ function RoutePlanner2ExportStopLabel({ label }: { label: string }) {
             width={width}
             height={height}
             viewBox={`0 0 ${width} ${height}`}
-            className="pointer-events-none mb-10 overflow-visible drop-shadow-md"
+            className="pointer-events-none overflow-visible drop-shadow-md"
             aria-hidden="true"
         >
             <rect x="1" y="1" width={width - 2} height={height - 2} rx="13" fill="rgba(255,255,255,0.94)" stroke="#cbd5e1" />
-            <text
-                x={width / 2}
-                y={height / 2}
-                textAnchor="middle"
-                dominantBaseline="central"
-                alignmentBaseline="middle"
-                fontFamily="Nunito, Arial, sans-serif"
-                fontSize="13"
-                fontWeight="800"
-                fill="#334155"
-            >
-                {label}
-            </text>
+            {lines.map((line, index) => (
+                <text
+                    key={`${line}-${index}`}
+                    x={width / 2}
+                    y={lines.length > 1 ? (index === 0 ? 15 : 29) : height / 2}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    alignmentBaseline="middle"
+                    fontFamily="Nunito, Arial, sans-serif"
+                    fontSize={index === 0 ? '12.5' : '11.5'}
+                    fontWeight={index === 0 ? '900' : '800'}
+                    fill={index === 0 ? '#0f172a' : '#475569'}
+                >
+                    {line}
+                </text>
+            ))}
         </svg>
     );
 }
@@ -367,9 +372,36 @@ function RoutePlanner2ExportStopMarker({ stop }: { stop: RoutePlanner2Stop }) {
 
 export interface RoutePlanner2MapStopLabelDetail {
     stopId: string;
+    stopName?: string;
+    address?: string;
     kidsAtStop: number;
     travelTimeLabel: string;
 }
+
+interface RoutePlanner2MapStopLabelOptions {
+    includePlaceLabel?: boolean;
+}
+
+type RoutePlanner2StopLabelAnchor = 'top' | 'bottom' | 'left' | 'right';
+
+interface RoutePlanner2StopLabelPlacement {
+    anchor: RoutePlanner2StopLabelAnchor;
+    offset: [number, number];
+}
+
+interface RoutePlanner2StopLabelBox {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+}
+
+const STOP_LABEL_PLACEMENT_OPTIONS: Array<RoutePlanner2StopLabelPlacement & { preference: number }> = [
+    { anchor: 'bottom', offset: [0, -24], preference: 0 },
+    { anchor: 'right', offset: [-24, 0], preference: 8 },
+    { anchor: 'left', offset: [24, 0], preference: 10 },
+    { anchor: 'top', offset: [0, 28], preference: 16 },
+];
 
 export interface RoutePlanner2MapCapture {
     dataUrl: string;
@@ -664,12 +696,77 @@ export function buildRoadNameOverviewLabelGeoJson(
     };
 }
 
-export function formatRoutePlanner2MapStopLabel(detail: RoutePlanner2MapStopLabelDetail | undefined): string | null {
+function truncateStopLabelLine(value: string, maxLength: number): string {
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function formatRoutePlanner2StopAddressLabel(detail: RoutePlanner2MapStopLabelDetail): string | null {
+    const addressLine = detail.address?.split(',')[0]?.replace(/\s+/g, ' ').trim();
+    const fallbackName = detail.stopName?.replace(/\s+/g, ' ').trim();
+    const label = addressLine || fallbackName;
+    return label ? truncateStopLabelLine(label, 34) : null;
+}
+
+export function formatRoutePlanner2MapStopLabel(
+    detail: RoutePlanner2MapStopLabelDetail | undefined,
+    options: RoutePlanner2MapStopLabelOptions = {},
+): string | null {
     if (!detail) return null;
+    const placeLabel = options.includePlaceLabel ? formatRoutePlanner2StopAddressLabel(detail) : null;
     const kidsLabel = `${detail.kidsAtStop} ${detail.kidsAtStop === 1 ? 'kid' : 'kids'}`;
-    return detail.travelTimeLabel === 'Not estimated'
+    const metricLabel = detail.travelTimeLabel === 'Not estimated'
         ? kidsLabel
         : `${detail.travelTimeLabel} · ${kidsLabel}`;
+    return placeLabel ? `${placeLabel}\n${metricLabel}` : metricLabel;
+}
+
+function getRoutePlanner2MapStopLabelLines(label: string): string[] {
+    return label.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+function estimateRoutePlanner2StopLabelSize(label: string): { width: number; height: number } {
+    const lines = getRoutePlanner2MapStopLabelLines(label);
+    const longestLine = lines.reduce((longest, line) => Math.max(longest, line.length), 0);
+    return {
+        width: Math.max(92, Math.min(172, Math.ceil((longestLine * 6.4) + 26))),
+        height: Math.max(28, (lines.length * 13) + 16),
+    };
+}
+
+function getRoutePlanner2StopLabelBox(
+    point: { x: number; y: number },
+    size: { width: number; height: number },
+    placement: RoutePlanner2StopLabelPlacement,
+): RoutePlanner2StopLabelBox {
+    const x = point.x + placement.offset[0];
+    const y = point.y + placement.offset[1];
+
+    if (placement.anchor === 'bottom') {
+        return { left: x - (size.width / 2), right: x + (size.width / 2), top: y - size.height, bottom: y };
+    }
+    if (placement.anchor === 'top') {
+        return { left: x - (size.width / 2), right: x + (size.width / 2), top: y, bottom: y + size.height };
+    }
+    if (placement.anchor === 'left') {
+        return { left: x, right: x + size.width, top: y - (size.height / 2), bottom: y + (size.height / 2) };
+    }
+    return { left: x - size.width, right: x, top: y - (size.height / 2), bottom: y + (size.height / 2) };
+}
+
+function getRoutePlanner2StopLabelOverlapArea(first: RoutePlanner2StopLabelBox, second: RoutePlanner2StopLabelBox): number {
+    const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left));
+    const height = Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top));
+    return width * height;
+}
+
+function getRoutePlanner2StopLabelEdgePenalty(box: RoutePlanner2StopLabelBox, bounds: { width: number; height: number } | null): number {
+    if (!bounds) return 0;
+    const margin = 8;
+    return Math.max(0, margin - box.left)
+        + Math.max(0, box.right - bounds.width + margin)
+        + Math.max(0, margin - box.top)
+        + Math.max(0, box.bottom - bounds.height + margin);
 }
 
 function buildHighlightedSegmentGeoJson(segment: RoutePlanner2SegmentGeometry | null) {
@@ -1040,6 +1137,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const [isExportCaptureMode, setIsExportCaptureMode] = useState(false);
     const [exportRoadLabelBounds, setExportRoadLabelBounds] = useState<RoutePlanner2RoadLabelBounds | null>(null);
     const [mouseMapCoordinate, setMouseMapCoordinate] = useState<{ lat: number; lng: number } | null>(null);
+    const [, setMapViewVersion] = useState(0);
     const mapRef = useRef<MapRef | null>(null);
     const captureContainerRef = useRef<HTMLElement | null>(null);
     const suppressMapClickUntilRef = useRef(0);
@@ -1118,6 +1216,32 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     useEffect(() => {
         onRoadNameLabelStatusChange?.({ available: hasRoadNameLabels, count: roadNameLabelCount });
     }, [hasRoadNameLabels, onRoadNameLabelStatusChange, roadNameLabelCount]);
+    useEffect(() => {
+        if (!mapLoaded) return;
+        const map = mapRef.current?.getMap();
+        if (!map) return;
+
+        let animationFrame = 0;
+        const scheduleLabelPlacementRefresh = () => {
+            if (animationFrame) return;
+            animationFrame = window.requestAnimationFrame(() => {
+                animationFrame = 0;
+                setMapViewVersion((version) => (version + 1) % 100000);
+            });
+        };
+
+        scheduleLabelPlacementRefresh();
+        map.on('move', scheduleLabelPlacementRefresh);
+        map.on('zoom', scheduleLabelPlacementRefresh);
+        map.on('resize', scheduleLabelPlacementRefresh);
+
+        return () => {
+            if (animationFrame) window.cancelAnimationFrame(animationFrame);
+            map.off('move', scheduleLabelPlacementRefresh);
+            map.off('zoom', scheduleLabelPlacementRefresh);
+            map.off('resize', scheduleLabelPlacementRefresh);
+        };
+    }, [mapLoaded]);
     const activeRouteLineLayer = useMemo<LayerProps>(() => ({
         ...routeLineLayer,
         paint: {
@@ -1448,6 +1572,52 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             : fallback;
     }
 
+    const stopLabelPlacementsByStopId = (() => {
+        const placements = new Map<string, RoutePlanner2StopLabelPlacement>();
+        if (!scenario?.stops.length) return placements;
+
+        const map = mapRef.current?.getMap();
+        const bounds = map
+            ? { width: map.getCanvas().clientWidth, height: map.getCanvas().clientHeight }
+            : null;
+        const placedBoxes: RoutePlanner2StopLabelBox[] = [];
+
+        scenario.stops
+            .slice()
+            .sort((first, second) => first.sequence - second.sequence)
+            .forEach((stop) => {
+                const detail = stopLabelDetailsByStopId.get(stop.id);
+                const label = formatRoutePlanner2MapStopLabel(detail, { includePlaceLabel: true });
+                if (!label || !map) {
+                    placements.set(stop.id, STOP_LABEL_PLACEMENT_OPTIONS[0]);
+                    return;
+                }
+
+                const coordinate = getPreviewCoordinate('stop', stop.id, stop);
+                const point = map.project([coordinate.lng, coordinate.lat]);
+                const size = estimateRoutePlanner2StopLabelSize(label);
+                const bestPlacement = STOP_LABEL_PLACEMENT_OPTIONS
+                    .map((placement) => {
+                        const box = getRoutePlanner2StopLabelBox(point, size, placement);
+                        const overlapPenalty = placedBoxes.reduce(
+                            (total, placedBox) => total + getRoutePlanner2StopLabelOverlapArea(box, placedBox),
+                            0,
+                        );
+                        return {
+                            placement,
+                            box,
+                            score: overlapPenalty + (getRoutePlanner2StopLabelEdgePenalty(box, bounds) * 20) + placement.preference,
+                        };
+                    })
+                    .sort((first, second) => first.score - second.score)[0];
+
+                placements.set(stop.id, bestPlacement.placement);
+                placedBoxes.push(bestPlacement.box);
+            });
+
+        return placements;
+    })();
+
     function startMarkerDrag(type: ActiveDragPreview['type'], id: string, coordinate: { lat: number; lng: number }) {
         suppressMapClickUntilRef.current = Date.now() + 500;
         setApplyAnchorToReturn(false);
@@ -1701,15 +1871,21 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                     )}
                     {mapLoaded && scenario?.stops.map((stop) => {
                         const coordinate = getPreviewCoordinate('stop', stop.id, stop);
-                        const label = formatRoutePlanner2MapStopLabel(stopLabelDetailsByStopId.get(stop.id));
+                        const label = formatRoutePlanner2MapStopLabel(
+                            stopLabelDetailsByStopId.get(stop.id),
+                            { includePlaceLabel: true },
+                        );
                         if (!label) return null;
+                        const labelLines = getRoutePlanner2MapStopLabelLines(label);
+                        const labelPlacement = stopLabelPlacementsByStopId.get(stop.id) ?? STOP_LABEL_PLACEMENT_OPTIONS[0];
 
                         return (
                             <Marker
                                 key={`stop-label-${stop.id}`}
                                 longitude={coordinate.lng}
                                 latitude={coordinate.lat}
-                                anchor="bottom"
+                                anchor={labelPlacement.anchor}
+                                offset={labelPlacement.offset}
                                 style={{ pointerEvents: 'none' }}
                             >
                                 {isExportCaptureMode ? (
@@ -1717,9 +1893,18 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                                 ) : (
                                     <div
                                         data-testid={`rp2-map-stop-label-${stop.id}`}
-                                        className="pointer-events-none mb-7 inline-flex min-h-5 items-center justify-center whitespace-nowrap rounded-full border border-slate-200 bg-white/90 px-2 text-center text-[10px] font-bold leading-none text-slate-700 shadow-md backdrop-blur-sm"
+                                        className="pointer-events-none inline-flex min-h-8 max-w-56 flex-col items-center justify-center rounded-xl border border-slate-200 bg-white/95 px-2.5 py-1 text-center shadow-md backdrop-blur-sm"
                                     >
-                                        {label}
+                                        {labelLines.map((line, index) => (
+                                            <span
+                                                key={`${line}-${index}`}
+                                                className={index === 0
+                                                    ? 'max-w-full truncate text-[10px] font-black leading-tight text-slate-900'
+                                                    : 'max-w-full truncate text-[9px] font-bold leading-tight text-slate-600'}
+                                            >
+                                                {line}
+                                            </span>
+                                        ))}
                                     </div>
                                 )}
                             </Marker>

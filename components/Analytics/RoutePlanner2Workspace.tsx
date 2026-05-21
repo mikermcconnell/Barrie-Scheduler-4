@@ -676,12 +676,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         [stopVisitRuntimeDetails],
     );
     const stopMapLabelDetails = useMemo(
-        () => stopCardDetails.map((detail) => ({
-            stopId: detail.stopId,
-            kidsAtStop: detail.kidsAtStop,
-            travelTimeLabel: detail.travelTimeLabel,
-        })),
-        [stopCardDetails],
+        () => selectedScenarioStops.map((stop) => {
+            const detail = stopCardDetailsByStopId.get(stop.id);
+            return {
+                stopId: stop.id,
+                stopName: stop.name,
+                address: stop.address,
+                kidsAtStop: detail?.kidsAtStop ?? 0,
+                travelTimeLabel: detail?.travelTimeLabel ?? 'Not estimated',
+            };
+        }),
+        [selectedScenarioStops, stopCardDetailsByStopId],
     );
     const stopOrderItems = useMemo(() => buildStopOrderItems(selectedScenario), [selectedScenario]);
     const selectedScenarioFirstStopSequence = selectedScenarioStops[0]?.sequence ?? 1;
