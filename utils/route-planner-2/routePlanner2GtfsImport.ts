@@ -121,6 +121,8 @@ const DEFAULT_SERVICE: RoutePlanner2ServiceAssumptions = {
     intermediateStopDwellSeconds: 0,
 };
 
+const MIN_SELECTABLE_PATTERN_TRIPS = 6;
+
 function createId(prefix: string): string {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
         return `${prefix}-${crypto.randomUUID()}`;
@@ -265,7 +267,10 @@ function filterToFullRoutePatterns(patterns: RoutePlanner2GtfsImportPattern[]): 
         maxStopCountByGroup.set(key, Math.max(maxStopCountByGroup.get(key) ?? 0, pattern.stopCount));
     });
 
-    return patterns.filter((pattern) => pattern.stopCount === maxStopCountByGroup.get(getFullRouteGroupKey(pattern)));
+    return patterns.filter((pattern) => (
+        pattern.tripCount >= MIN_SELECTABLE_PATTERN_TRIPS
+        && pattern.stopCount === maxStopCountByGroup.get(getFullRouteGroupKey(pattern))
+    ));
 }
 
 export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImportFeed): RoutePlanner2GtfsImportPattern[] {

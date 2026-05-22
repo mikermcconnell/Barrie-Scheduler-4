@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { Layer, Marker, Source } from 'react-map-gl/mapbox';
 import type { LayerProps, MapMouseEvent, MarkerDragEvent, MapRef } from 'react-map-gl/mapbox';
@@ -15,10 +15,20 @@ import {
     buildRoutePlanner2StopSegmentPaths,
     getRoutePlanner2SegmentId,
 } from '../../../utils/route-planner-2/routePlanner2Segments';
+import {
+    selectRoutePlanner2ItemsInBox,
+    selectRoutePlanner2ItemsInLasso,
+    type RoutePlanner2MapSelection,
+    type RoutePlanner2MapSelectionMode,
+    type RoutePlanner2SelectableMapItem,
+    type RoutePlanner2SelectionPoint,
+} from '../../../utils/route-planner-2/routePlanner2MapSelection';
 import type { RoutePlanner2RoutePoint, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime, RoutePlanner2Stop } from '../../../utils/route-planner-2/routePlanner2Types';
 
 const ROUTE_LINE_LAYER_ID = 'route-planner-2-line';
 const ROUTE_LINE_HIT_LAYER_ID = 'route-planner-2-line-hit';
+const ROUTE_BACKGROUND_ROUTES_SOURCE_ID = 'route-planner-2-background-routes-source';
+const ROUTE_BACKGROUND_ROUTES_LAYER_ID = 'route-planner-2-background-routes-line';
 const ROUTE_DIRECTION_ARROW_SOURCE_ID = 'route-planner-2-direction-arrows';
 const ROUTE_DIRECTION_ARROW_CENTER_LAYER_ID = 'route-planner-2-direction-arrows-center';
 const ROUTE_DIRECTION_ARROW_OUTBOUND_LAYER_ID = 'route-planner-2-direction-arrows-outbound';
@@ -34,10 +44,15 @@ const ROUTE_ROAD_NAME_OVERVIEW_LABEL_LAYER_ID = 'route-planner-2-road-name-overv
 
 interface RoutePlanner2MapCanvasProps {
     scenario: RoutePlanner2Scenario | null | undefined;
+    backgroundScenarios?: RoutePlanner2Scenario[];
     selectedStopId: string | null;
     highlightedStopId?: string | null;
     highlightedWaypointId?: string | null;
     highlightedSegmentId?: string | null;
+    selectionMode?: RoutePlanner2MapSelectionMode | null;
+    selectedStopIds?: string[];
+    selectedWaypointIds?: string[];
+    onSelectionChange?: (selection: RoutePlanner2MapSelection) => void;
     onSelectStop: (stopId: string) => void;
     onAddStop: (coordinate: { lat: number; lng: number; name?: string }) => void;
     onDeleteStop: (stopId: string) => void;
@@ -93,6 +108,13 @@ interface RoutePlanner2RoadLabelBounds {
 
 export type RoutePlanner2RoadNameLabelDensity = 'fewer' | 'normal' | 'more';
 
+interface SelectionDraft {
+    mode: RoutePlanner2MapSelectionMode;
+    start: RoutePlanner2SelectionPoint;
+    current: RoutePlanner2SelectionPoint;
+    points: RoutePlanner2SelectionPoint[];
+}
+
 const ROAD_NAME_LABEL_DENSITY_LIMITS: Record<RoutePlanner2RoadNameLabelDensity, number> = {
     fewer: 6,
     normal: 12,
@@ -130,6 +152,20 @@ const routeLineLayer: LayerProps = {
         'line-color': '#0891b2',
         'line-width': 5,
         'line-opacity': 0.86,
+    },
+    layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+    },
+};
+
+const backgroundRouteLineLayer: LayerProps = {
+    id: ROUTE_BACKGROUND_ROUTES_LAYER_ID,
+    type: 'line',
+    paint: {
+        'line-color': '#64748b',
+        'line-width': 3,
+        'line-opacity': 0.35,
     },
     layout: {
         'line-cap': 'round',
@@ -569,6 +605,28 @@ function buildLineGeoJson(coordinates: [number, number][]) {
                 },
             }]
             : [],
+    };
+}
+
+export function buildRoutePlanner2ScenarioOverlayGeoJson(scenarios: RoutePlanner2Scenario[]) {
+    return {
+        type: 'FeatureCollection' as const,
+        features: scenarios.flatMap((scenario, index) => {
+            const coordinates = getScenarioWaypoints(scenario);
+            if (coordinates.length < 2) return [];
+            return [{
+                type: 'Feature' as const,
+                properties: {
+                    scenarioId: scenario.id,
+                    name: scenario.name,
+                    index,
+                },
+                geometry: {
+                    type: 'LineString' as const,
+                    coordinates,
+                },
+            }];
+        }),
     };
 }
 
@@ -1103,10 +1161,15 @@ function clickedRouteLine(event: MapMouseEvent): boolean {
 
 export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, RoutePlanner2MapCanvasProps>(function RoutePlanner2MapCanvas({
     scenario,
+    backgroundScenarios = [],
     selectedStopId,
     highlightedStopId,
     highlightedWaypointId,
     highlightedSegmentId,
+    selectionMode = null,
+    selectedStopIds = [],
+    selectedWaypointIds = [],
+    onSelectionChange,
     onSelectStop,
     onAddStop,
     onDeleteStop,
@@ -1139,6 +1202,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const [exportCaptureShowStopLabels, setExportCaptureShowStopLabels] = useState(true);
     const [exportRoadLabelBounds, setExportRoadLabelBounds] = useState<RoutePlanner2RoadLabelBounds | null>(null);
     const [mouseMapCoordinate, setMouseMapCoordinate] = useState<{ lat: number; lng: number } | null>(null);
+    const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(null);
     const [, setMapViewVersion] = useState(0);
     const mapRef = useRef<MapRef | null>(null);
     const captureContainerRef = useRef<HTMLElement | null>(null);
@@ -1147,11 +1211,17 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const waypoints = useMemo(() => scenario ? getScenarioWaypoints(scenario) : [], [scenario]);
     const roadBuildKey = useMemo(() => getScenarioRoadBuildKey(scenario), [scenario]);
     const lineAnchorHandles = useMemo(() => scenario ? getRouteLineAnchorHandles(scenario) : [], [scenario]);
+    const selectedStopIdSet = useMemo(() => new Set(selectedStopIds), [selectedStopIds]);
+    const selectedWaypointIdSet = useMemo(() => new Set(selectedWaypointIds), [selectedWaypointIds]);
     const stopLabelDetailsByStopId = useMemo(
         () => new Map(stopLabelDetails.map((detail) => [detail.stopId, detail])),
         [stopLabelDetails],
     );
     const lineGeoJson = useMemo(() => buildLineGeoJson(snappedCoordinates.length ? snappedCoordinates : waypoints), [snappedCoordinates, waypoints]);
+    const backgroundRouteGeoJson = useMemo(
+        () => buildRoutePlanner2ScenarioOverlayGeoJson(backgroundScenarios),
+        [backgroundScenarios],
+    );
     const directionArrowGeoJson = useMemo(
         () => buildRoutePlanner2DirectionArrowGeoJson(scenario, snappedSegmentGeometries),
         [scenario, snappedSegmentGeometries],
@@ -1210,6 +1280,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         return buildHighlightedSegmentGeoJson(highlightedSegment);
     }, [highlightedSegmentId, scenario, snappedSegmentGeometries]);
     const hasRouteLine = lineGeoJson.features.length > 0;
+    const hasBackgroundRoutes = backgroundRouteGeoJson.features.length > 0;
     const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
     const hasRoadNameLabels = roadNameLineLabelGeoJson.features.length > 0 || roadNameOverviewLabelGeoJson.features.length > 0;
     const roadNameLabelCount = Math.max(roadNameLineLabelGeoJson.features.length, roadNameOverviewLabelGeoJson.features.length);
@@ -1503,7 +1574,106 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         return () => controller.abort();
     }, [roadBuildKey, onSegmentRuntimeEstimates, activeDragPreview]);
 
+    function getSelectionPoint(event: PointerEvent<HTMLElement>): RoutePlanner2SelectionPoint {
+        const rect = event.currentTarget.getBoundingClientRect();
+        return {
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+        };
+    }
+
+    function projectSelectablePoint(point: { lat: number; lng: number }): RoutePlanner2SelectionPoint {
+        const projected = mapRef.current?.getMap()?.project?.([point.lng, point.lat] as [number, number]);
+        if (projected && typeof projected.x === 'number' && typeof projected.y === 'number') {
+            return { x: projected.x, y: projected.y };
+        }
+
+        const rect = captureContainerRef.current?.getBoundingClientRect();
+        const width = Math.max(1, rect?.width ?? 1);
+        const height = Math.max(1, rect?.height ?? 1);
+        const coordinates = [
+            ...(scenario?.stops ?? []),
+            ...lineAnchorHandles,
+        ];
+        const lngValues = coordinates.map((coordinate) => coordinate.lng);
+        const latValues = coordinates.map((coordinate) => coordinate.lat);
+        const minLng = Math.min(...lngValues, point.lng);
+        const maxLng = Math.max(...lngValues, point.lng);
+        const minLat = Math.min(...latValues, point.lat);
+        const maxLat = Math.max(...latValues, point.lat);
+
+        return {
+            x: ((point.lng - minLng) / Math.max(0.000001, maxLng - minLng)) * width,
+            y: ((maxLat - point.lat) / Math.max(0.000001, maxLat - minLat)) * height,
+        };
+    }
+
+    function getSelectableMapItems(): RoutePlanner2SelectableMapItem[] {
+        if (!scenario) return [];
+        return [
+            ...scenario.stops.map((stop): RoutePlanner2SelectableMapItem => ({
+                id: stop.id,
+                type: 'stop',
+                point: projectSelectablePoint(stop),
+            })),
+            ...lineAnchorHandles.map((anchor): RoutePlanner2SelectableMapItem => ({
+                id: anchor.id,
+                type: 'waypoint',
+                point: projectSelectablePoint(anchor),
+            })),
+        ];
+    }
+
+    function shouldIgnoreSelectionStart(target: EventTarget | null): boolean {
+        return target instanceof HTMLElement
+            && Boolean(target.closest('button,input,textarea,select,[data-rp2-selection-ignore]'));
+    }
+
+    function handleSelectionPointerDown(event: PointerEvent<HTMLElement>) {
+        if (!selectionMode || isExportCaptureMode || shouldIgnoreSelectionStart(event.target)) return;
+        const point = getSelectionPoint(event);
+        event.currentTarget.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        event.stopPropagation();
+        suppressMapClickUntilRef.current = Date.now() + 500;
+        setSelectionDraft({ mode: selectionMode, start: point, current: point, points: [point] });
+    }
+
+    function handleSelectionPointerMove(event: PointerEvent<HTMLElement>) {
+        if (!selectionDraft) return;
+        const point = getSelectionPoint(event);
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectionDraft((current) => {
+            if (!current) return current;
+            const previousPoint = current.points[current.points.length - 1] ?? current.start;
+            const distance = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y);
+            return {
+                ...current,
+                current: point,
+                points: current.mode === 'lasso' && distance >= 4 ? [...current.points, point] : current.points,
+            };
+        });
+    }
+
+    function handleSelectionPointerUp(event: PointerEvent<HTMLElement>) {
+        if (!selectionDraft) return;
+        const point = getSelectionPoint(event);
+        event.preventDefault();
+        event.stopPropagation();
+        suppressMapClickUntilRef.current = Date.now() + 500;
+
+        const items = getSelectableMapItems();
+        const points = selectionDraft.mode === 'lasso' ? [...selectionDraft.points, point] : selectionDraft.points;
+        const selection = selectionDraft.mode === 'box'
+            ? selectRoutePlanner2ItemsInBox(items, selectionDraft.start, point)
+            : selectRoutePlanner2ItemsInLasso(items, points);
+        onSelectionChange?.(selection);
+        setSelectionDraft(null);
+    }
+
     function handleMapClick(event: MapMouseEvent) {
+        if (selectionMode) return;
         if (Date.now() < suppressMapClickUntilRef.current) return;
         if (!scenario) return;
         const coordinate = { lat: event.lngLat.lat, lng: event.lngLat.lng };
@@ -1658,9 +1828,20 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             data-testid="rp2-map-canvas"
             ref={captureContainerRef}
             style={overlayStyle}
-            className="h-full min-h-0 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
+            onPointerDown={handleSelectionPointerDown}
+            onPointerMove={handleSelectionPointerMove}
+            onPointerUp={handleSelectionPointerUp}
+            className={`h-full min-h-0 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm ${selectionMode ? 'cursor-crosshair' : ''}`}
         >
             <div className="relative h-full min-h-0">
+                {!isExportCaptureMode && selectionMode && (
+                    <div
+                        data-testid="rp2-map-selection-banner"
+                        className="pointer-events-none absolute left-[var(--rp2-overlay-left)] top-[var(--rp2-overlay-top)] z-20 rounded-2xl border border-cyan-200 bg-white/95 px-3 py-2 text-xs font-black text-cyan-800 shadow-lg"
+                    >
+                        {selectionMode === 'box' ? 'Box selection active' : 'Lasso selection active'} · drag around stops and anchors
+                    </div>
+                )}
                 <MapBase
                     longitude={-79.69}
                     latitude={44.38}
@@ -1677,6 +1858,11 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                     onMouseMove={handleMapMouseMove}
                     onClick={handleMapClick}
                 >
+                    {mapLoaded && hasBackgroundRoutes && (
+                        <Source id={ROUTE_BACKGROUND_ROUTES_SOURCE_ID} type="geojson" data={backgroundRouteGeoJson}>
+                            <Layer {...backgroundRouteLineLayer} />
+                        </Source>
+                    )}
                     {mapLoaded && hasRouteLine && (
                         <Source id="route-planner-2-line-source" type="geojson" data={lineGeoJson}>
                             <Layer {...activeRouteLineLayer} />
@@ -1746,7 +1932,8 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                                     type="button"
                                     onClick={(event) => event.stopPropagation()}
                                     data-highlighted={isHighlighted ? 'true' : undefined}
-                                    className={`flex h-7 w-7 cursor-grab items-center justify-center rounded-full border-2 border-cyan-700 bg-white text-xs font-black text-cyan-700 shadow-lg ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''}`}
+                                    data-selected={selectedWaypointIdSet.has(handle.id) ? 'true' : undefined}
+                                    className={`flex h-7 w-7 cursor-grab items-center justify-center rounded-full border-2 border-cyan-700 bg-white text-xs font-black text-cyan-700 shadow-lg ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''} ${selectedWaypointIdSet.has(handle.id) ? 'scale-110 ring-4 ring-violet-300' : ''}`}
                                     aria-label="Drag route line anchor"
                                     title="Drag to bend this route segment"
                                 >
@@ -1918,6 +2105,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                         const coordinate = getPreviewCoordinate('stop', stop.id, stop);
                         const isDragging = activeDragPreview?.type === 'stop' && activeDragPreview.id === stop.id;
                         const isHighlighted = highlightedStopId === stop.id;
+                        const isBulkSelected = selectedStopIdSet.has(stop.id);
                         return (
                         <Marker
                             key={stop.id}
@@ -1942,7 +2130,8 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                                         onSelectStop(stop.id);
                                     }}
                                     data-highlighted={isHighlighted ? 'true' : undefined}
-                                    className={`${getStopMarkerClass(stop, selectedStopId === stop.id, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''}`}
+                                    data-selected={isBulkSelected ? 'true' : undefined}
+                                    className={`${getStopMarkerClass(stop, selectedStopId === stop.id || isBulkSelected, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''} ${isBulkSelected ? 'ring-4 ring-violet-300' : ''}`}
                                     aria-label={`Select ${stop.name}`}
                                 >
                                     {stop.sequence}
@@ -1952,6 +2141,32 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                         );
                     })}
                 </MapBase>
+                {!isExportCaptureMode && selectionDraft && selectionDraft.mode === 'box' && (
+                    <div
+                        data-testid="rp2-map-selection-overlay"
+                        className="pointer-events-none absolute z-20 rounded-xl border-2 border-dashed border-violet-500 bg-violet-500/10"
+                        style={{
+                            left: Math.min(selectionDraft.start.x, selectionDraft.current.x),
+                            top: Math.min(selectionDraft.start.y, selectionDraft.current.y),
+                            width: Math.abs(selectionDraft.current.x - selectionDraft.start.x),
+                            height: Math.abs(selectionDraft.current.y - selectionDraft.start.y),
+                        }}
+                    />
+                )}
+                {!isExportCaptureMode && selectionDraft && selectionDraft.mode === 'lasso' && (
+                    <svg
+                        data-testid="rp2-map-selection-overlay"
+                        className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+                    >
+                        <polyline
+                            points={[...selectionDraft.points, selectionDraft.current].map((point) => `${point.x},${point.y}`).join(' ')}
+                            fill="rgba(139, 92, 246, 0.12)"
+                            stroke="#8b5cf6"
+                            strokeDasharray="6 5"
+                            strokeWidth="2"
+                        />
+                    </svg>
+                )}
 
                 {!isExportCaptureMode && roadBuildProgress && roadBuildProgress.totalSegments > 0 && roadBuildProgress.completedSegments < roadBuildProgress.totalSegments && (
                     <div

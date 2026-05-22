@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRoadNameLineLabelGeoJson,
   buildRoadNameOverviewLabelGeoJson,
+  buildRoutePlanner2ScenarioOverlayGeoJson,
   formatRoutePlanner2MapStopLabel,
   formatRoutePlanner2RoadNameLabel,
 } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
+import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
+import type { RoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2Types';
 
 describe('RoutePlanner2MapCanvas stop labels', () => {
   it('includes address context in stop labels', () => {
@@ -126,5 +129,45 @@ describe('RoutePlanner2MapCanvas road labels', () => {
       'Local St 5',
       'Local St 6',
     ]);
+  });
+});
+
+describe('RoutePlanner2MapCanvas route overlays', () => {
+  it('builds one muted background route feature per non-selected route concept', () => {
+    const base = createRoutePlanner2Project({
+      id: 'project-1',
+      scenarioId: 'selected-route',
+      now: '2026-04-29T12:00:00.000Z',
+    }).scenarios[0]!;
+    const routeA: RoutePlanner2Scenario = {
+      ...base,
+      id: 'route-a',
+      name: 'Route 2A',
+      stops: [
+        { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, sequence: 1, role: 'start-terminal', source: 'custom' },
+        { id: 'a-2', name: 'A2', lat: 44.39, lng: -79.68, sequence: 2, role: 'end-terminal', source: 'custom' },
+      ],
+    };
+    const routeB: RoutePlanner2Scenario = {
+      ...base,
+      id: 'route-b',
+      name: 'Route 8A',
+      stops: [
+        { id: 'b-1', name: 'B1', lat: 44.4, lng: -79.67, sequence: 1, role: 'start-terminal', source: 'custom' },
+        { id: 'b-2', name: 'B2', lat: 44.41, lng: -79.66, sequence: 2, role: 'end-terminal', source: 'custom' },
+      ],
+    };
+    const emptyRoute: RoutePlanner2Scenario = {
+      ...base,
+      id: 'empty-route',
+      name: 'Empty route',
+      stops: [],
+    };
+
+    const overlays = buildRoutePlanner2ScenarioOverlayGeoJson([routeA, routeB, emptyRoute]);
+
+    expect(overlays.features).toHaveLength(2);
+    expect(overlays.features.map((feature) => feature.properties.scenarioId)).toEqual(['route-a', 'route-b']);
+    expect(overlays.features[0]?.geometry.coordinates).toEqual([[-79.69, 44.38], [-79.68, 44.39]]);
   });
 });

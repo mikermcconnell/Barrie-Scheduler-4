@@ -218,6 +218,25 @@ function createUniqueTransferredStopId(
     return candidate;
 }
 
+function createUniqueTransferredWaypointId(
+    sourcePointId: string,
+    now: string,
+    index: number,
+    usedIds: Set<string>,
+): string {
+    const base = `transfer-bend-${createStableIdPart(sourcePointId)}-${createStableIdPart(now)}-${index + 1}`;
+    let candidate = base;
+    let suffix = 2;
+
+    while (usedIds.has(candidate)) {
+        candidate = `${base}-${suffix}`;
+        suffix += 1;
+    }
+
+    usedIds.add(candidate);
+    return candidate;
+}
+
 export function addRoutePlanner2RoutePoint(
     project: RoutePlanner2Project,
     scenarioId: string,
@@ -1113,6 +1132,24 @@ export function reassignRoutePlanner2StopRange(
                     : 'regular'
             : 'regular',
     }));
+    const transferredStopIdBySourceId = new Map(stopsToTransfer.map((stop, index) => [
+        stop.id,
+        transferredStops[index]!.id,
+    ]));
+    const targetUsedPointIds = new Set(targetScenario.alignment.map((point) => point.id));
+    const transferredAlignment = sourceScenario.alignment
+        .filter((point) =>
+            Boolean(point.afterStopId)
+            && Boolean(point.beforeStopId)
+            && transferredStopIdBySourceId.has(point.afterStopId!)
+            && transferredStopIdBySourceId.has(point.beforeStopId!),
+        )
+        .map((point, index): RoutePlanner2RoutePoint => ({
+            ...point,
+            id: createUniqueTransferredWaypointId(point.id, now, index, targetUsedPointIds),
+            afterStopId: transferredStopIdBySourceId.get(point.afterStopId!)!,
+            beforeStopId: transferredStopIdBySourceId.get(point.beforeStopId!)!,
+        }));
 
     const targetScenarioWithStops = {
         ...targetScenario,
@@ -1124,7 +1161,10 @@ export function reassignRoutePlanner2StopRange(
     };
     const updatedTargetScenario = cleanRuntimeForCurrentSegments({
         ...targetScenarioWithStops,
-        alignment: resequenceScenarioAlignment(targetScenarioWithStops, targetScenario.alignment),
+        alignment: resequenceScenarioAlignment(targetScenarioWithStops, [
+            ...targetScenario.alignment,
+            ...transferredAlignment,
+        ]),
     });
 
     const sourceScenarioWithStops = {

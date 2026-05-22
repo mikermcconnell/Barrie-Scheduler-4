@@ -24,7 +24,7 @@ import { Step2ReadinessPanel } from './Step2ReadinessPanel';
 import { Step2RuntimeReviewHeader } from './Step2RuntimeReviewHeader';
 import { Step2TravelViewsPanel } from './Step2TravelViewsPanel';
 import { useStep2RuntimeReview } from '../hooks/useStep2RuntimeReview';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
 import { AlertTriangle, CheckCircle2, TrendingUp, BarChart2, ChevronDown, ChevronRight, Eye, EyeOff, Table } from 'lucide-react';
 import { buildNormalizedSegmentNameLookup, resolveCanonicalSegmentName } from '../../../utils/runtimeSegmentMatching';
 
@@ -137,6 +137,47 @@ const getBucketColumnTone = (
     if (confidence?.hasMissingSegments) return 'bg-orange-50 text-orange-800';
     if (confidence?.isLowConfidence) return 'bg-amber-50 text-amber-800';
     return 'bg-white text-gray-700';
+};
+
+const renderPartialRouteBarLabel = (props: {
+    x?: number;
+    y?: number;
+    width?: number;
+    value?: string;
+}) => {
+    const { x, y, width, value } = props;
+    if (!value || typeof x !== 'number' || typeof y !== 'number' || typeof width !== 'number') {
+        return null;
+    }
+
+    const labelWidth = 42;
+    const labelHeight = 16;
+    const labelX = x + (width / 2) - (labelWidth / 2);
+    const labelY = Math.max(0, y - labelHeight - 4);
+
+    return (
+        <g>
+            <rect
+                x={labelX}
+                y={labelY}
+                width={labelWidth}
+                height={labelHeight}
+                rx={8}
+                fill="#FFF7ED"
+                stroke="#FB923C"
+            />
+            <text
+                x={labelX + (labelWidth / 2)}
+                y={labelY + 11}
+                textAnchor="middle"
+                fill="#C2410C"
+                fontSize={9}
+                fontWeight={700}
+            >
+                Partial
+            </text>
+        </g>
+    );
 };
 
 // Segment Breakdown Matrix - Shows runtime data summarized by TIME BAND
@@ -733,6 +774,15 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
         [chartData]
     );
     const runtimeAxisIsZoomed = runtimeAxisDomain[0] > 0;
+    const partialRouteChartBuckets = useMemo(
+        () => chartData.filter(entry => entry.isPartialRouteBucket),
+        [chartData]
+    );
+    const partialRouteBucketLabels = partialRouteChartBuckets
+        .map(entry => entry.name)
+        .slice(0, 8)
+        .join(', ');
+    const hiddenPartialRouteBucketCount = Math.max(0, partialRouteChartBuckets.length - 8);
 
     return (
         <div className="space-y-6 pb-28 animate-in fade-in duration-500">
@@ -766,6 +816,11 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                 </div>
                 <p className="mb-4 text-xs text-gray-500">
                     Bars show actual {metricLabel} bucket totals. {bandContextLabel}
+                    {partialRouteChartBuckets.length > 0 && (
+                        <span className="mt-1 block font-semibold text-orange-700">
+                            Partial-route buckets are tagged on the chart and excluded from banding until the full route is observed.
+                        </span>
+                    )}
                     {runtimeAxisIsZoomed && (
                         <span className="mt-1 block font-semibold text-slate-600">
                             The runtime scale is zoomed from {runtimeAxisDomain[0]} min to make band-to-band variation easier to compare.
@@ -775,7 +830,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
 
                 <div className="h-[280px] w-full xl:h-[320px]">
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                        <BarChart data={chartData} margin={{ top: 36, right: 30, left: 20, bottom: 5 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                             <XAxis
                                 dataKey="name"
@@ -880,14 +935,15 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                 }}
                             />
                             <Bar dataKey="runtime" radius={[4, 4, 0, 0]}>
+                                <LabelList dataKey="partialRouteLabel" content={renderPartialRouteBarLabel} />
                                 {chartData.map((entry, index) => (
                                     <Cell
                                         key={`cell-${index}`}
-                                        fill={entry.ignored ? '#E5E7EB' : entry.color}
-                                        fillOpacity={entry.ignored ? 1 : entry.confidence?.isLowConfidence ? 0.45 : 1}
-                                        stroke={entry.ignored ? '#9CA3AF' : entry.confidence?.isLowConfidence ? '#F59E0B' : 'none'}
+                                        fill={entry.ignored ? '#E5E7EB' : entry.isPartialRouteBucket ? '#FFF7ED' : entry.color}
+                                        fillOpacity={entry.ignored ? 1 : entry.isPartialRouteBucket ? 1 : entry.confidence?.isLowConfidence ? 0.45 : 1}
+                                        stroke={entry.ignored ? '#9CA3AF' : entry.isPartialRouteBucket ? '#F97316' : entry.confidence?.isLowConfidence ? '#F59E0B' : 'none'}
                                         strokeWidth={entry.confidence?.isLowConfidence ? 2 : 0}
-                                        strokeDasharray={entry.ignored ? '4 4' : 'none'}
+                                        strokeDasharray={entry.ignored || entry.isPartialRouteBucket ? '4 4' : 'none'}
                                         cursor="pointer"
                                         onClick={() => toggleIgnore(entry.fullBucket)}
                                     />
@@ -896,6 +952,22 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                         </BarChart>
                     </ResponsiveContainer>
                 </div>
+                {partialRouteChartBuckets.length > 0 && (
+                    <div
+                        data-testid="step2-partial-route-bucket-callout"
+                        className="mt-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900"
+                    >
+                        <div className="flex items-start gap-2">
+                            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-orange-700" />
+                            <div>
+                                <div className="font-bold">Partial route buckets shown: {partialRouteBucketLabels}{hiddenPartialRouteBucketCount > 0 ? ` +${hiddenPartialRouteBucketCount} more` : ''}</div>
+                                <p className="mt-1 text-xs text-orange-800">
+                                    These buckets have only part of the route observed, so they stay visible for review but remain unbanded and excluded from planning bands. This marker appears in both Median and P80 views.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Stats Summary */}

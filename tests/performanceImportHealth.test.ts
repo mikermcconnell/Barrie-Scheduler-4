@@ -96,6 +96,7 @@ function makeDay(params: {
 function makeSummary(params: {
   importedAt: string;
   runtimeLogicVersion?: number;
+  cleanHistoryStartDate?: string;
   dailySummaries: DailySummary[];
 }): PerformanceDataSummary {
   const dates = params.dailySummaries.map(day => day.date).sort();
@@ -111,6 +112,7 @@ function makeSummary(params: {
       dayCount: params.dailySummaries.length,
       totalRecords: 0,
       runtimeLogicVersion: params.runtimeLogicVersion,
+      cleanHistoryStartDate: params.cleanHistoryStartDate,
     },
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
@@ -157,6 +159,29 @@ describe('buildPerformanceImportHealth', () => {
     expect(result.checks.find(check => check.id === 'runtime-logic')?.status).toBe('warning');
     expect(result.checks.find(check => check.id === 'history-consistency')?.status).toBe('warning');
     expect(result.checks.find(check => check.id === 'trip-linked-runtimes')?.status).toBe('warning');
+  });
+
+  it('does not warn for retained mixed-version history after a current rebuild', () => {
+    const summary = makeSummary({
+      importedAt: '2026-05-22T14:41:28Z',
+      runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
+      cleanHistoryStartDate: '2026-03-30',
+      dailySummaries: [
+        makeDay({ date: '2026-02-16', schemaVersion: 1, tripEntries: 2, stopEntries: 4 }),
+        makeDay({ date: '2026-03-30', schemaVersion: PERFORMANCE_SCHEMA_VERSION, tripEntries: 2, stopEntries: 4 }),
+        makeDay({ date: '2026-05-05', schemaVersion: 8, tripEntries: 2, stopEntries: 4 }),
+        makeDay({ date: '2026-05-21', schemaVersion: PERFORMANCE_SCHEMA_VERSION, tripEntries: 2, stopEntries: 4 }),
+      ],
+    });
+
+    const result = buildPerformanceImportHealth(summary, {
+      now: new Date('2026-05-22T16:00:00Z'),
+    });
+
+    expect(result.overallStatus).toBe('healthy');
+    expect(result.checks.find(check => check.id === 'history-consistency')?.status).toBe('healthy');
+    expect(result.checks.find(check => check.id === 'history-consistency')?.summary)
+      .toContain('retained older day records');
   });
 });
 

@@ -115,6 +115,8 @@ export interface UseStep2RuntimeReviewResult {
         color: string;
         ignored?: boolean;
         isOutlier?: boolean;
+        isPartialRouteBucket?: boolean;
+        partialRouteLabel?: string;
         fullBucket: string;
         confidence?: Step2BucketConfidence;
         contributingDays?: Array<{ date: string; runtime: number }>;
@@ -370,17 +372,24 @@ export const useStep2RuntimeReview = ({
     }, [segmentBreakdownByBand]);
 
     const chartData = useMemo(() => (
-        analysis.map(bucket => ({
-            name: bucket.timeBucket.split(' - ')[0],
-            runtime: getBucketDisplayedTotal(bucket, viewMetric),
-            band: bucket.assignedBand,
-            color: bands.find(band => band.id === bucket.assignedBand)?.color || '#cccccc',
-            ignored: bucket.ignored,
-            isOutlier: bucket.isOutlier,
-            fullBucket: bucket.timeBucket,
-            confidence: bucketConfidence[bucket.timeBucket],
-            contributingDays: bucket.contributingDays,
-        }))
+        analysis.map((bucket) => {
+            const confidence = bucketConfidence[bucket.timeBucket];
+            const isPartialRouteBucket = confidence?.hasMissingSegments && confidence.coverageCause === 'boundary-service';
+
+            return {
+                name: bucket.timeBucket.split(' - ')[0],
+                runtime: getBucketDisplayedTotal(bucket, viewMetric),
+                band: bucket.assignedBand,
+                color: bands.find(band => band.id === bucket.assignedBand)?.color || '#cccccc',
+                ignored: bucket.ignored,
+                isOutlier: bucket.isOutlier,
+                isPartialRouteBucket,
+                partialRouteLabel: isPartialRouteBucket ? 'Partial' : undefined,
+                fullBucket: bucket.timeBucket,
+                confidence,
+                contributingDays: bucket.contributingDays,
+            };
+        })
     ), [analysis, bands, bucketConfidence, viewMetric]);
 
     return {

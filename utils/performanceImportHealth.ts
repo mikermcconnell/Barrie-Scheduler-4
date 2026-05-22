@@ -191,17 +191,30 @@ export function buildPerformanceImportHealth(
   });
   const schemaVersions = Array.from(schemaCounts.keys()).sort((a, b) => a - b);
   const legacyDayCount = data.dailySummaries.filter(day => day.schemaVersion < PERFORMANCE_SCHEMA_VERSION).length;
+  const hasCurrentSummarySchema = data.schemaVersion >= PERFORMANCE_SCHEMA_VERSION;
+  const hasCurrentRuntimeLogic =
+    typeof runtimeLogicVersion === 'number'
+    && runtimeLogicVersion >= PERFORMANCE_RUNTIME_LOGIC_VERSION;
+  const hasCleanHistoryMarker = typeof data.metadata?.cleanHistoryStartDate === 'string'
+    && data.metadata.cleanHistoryStartDate.trim().length > 0;
+  const retainedLegacyHistoryIsInformational =
+    legacyDayCount > 0
+    && hasCurrentSummarySchema
+    && hasCurrentRuntimeLogic
+    && hasCleanHistoryMarker;
   const schemaStatus: ImportHealthStatus =
-    schemaVersions.length <= 1 && legacyDayCount === 0
+    (schemaVersions.length <= 1 && legacyDayCount === 0) || retainedLegacyHistoryIsInformational
       ? 'healthy'
       : 'warning';
   checks.push({
     id: 'history-consistency',
     label: 'History consistency',
     status: schemaStatus,
-    summary: schemaStatus === 'healthy'
+    summary: legacyDayCount === 0
       ? `All stored days use the current schema v${PERFORMANCE_SCHEMA_VERSION}.`
-      : `Stored history mixes schema versions ${schemaVersions.join(', ')}. ${pluralize(legacyDayCount, 'day')} are older than the current schema v${PERFORMANCE_SCHEMA_VERSION}.`,
+      : retainedLegacyHistoryIsInformational
+        ? `Current import metadata is on schema v${PERFORMANCE_SCHEMA_VERSION}; retained older day records are kept for dashboard continuity.`
+        : `Stored history mixes schema versions ${schemaVersions.join(', ')}. ${pluralize(legacyDayCount, 'day')} are older than the current schema v${PERFORMANCE_SCHEMA_VERSION}.`,
   });
   overallStatus = maxStatus(overallStatus, schemaStatus);
 

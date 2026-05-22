@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ArrowLeft, ClipboardList, Copy, Database, Eye, FileDown, FileSpreadsheet, FolderOpen, Layers3, Loader2, MapPin, MapPinned, PanelRightOpen, PencilRuler, Plus, Redo2, Save, Search, Star, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeft, BoxSelect, ClipboardList, Copy, Database, Eye, FileDown, FileSpreadsheet, FolderOpen, LassoSelect, Layers3, Loader2, MapPin, MapPinned, MousePointer2, PanelRightOpen, PencilRuler, Plus, Redo2, Save, Search, Star, Trash2, Undo2 } from 'lucide-react';
 import {
     addRoutePlanner2LineWaypoint,
     addRoutePlanner2Stop,
@@ -42,7 +42,7 @@ import {
     createRoutePlanner2ScenarioFromGtfsPattern,
     type RoutePlanner2GtfsImportPattern,
 } from '../../utils/route-planner-2/routePlanner2GtfsImport';
-import { summarizeRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2Summary';
+import { summarizeRoutePlanner2Project, summarizeRoutePlanner2Scenario } from '../../utils/route-planner-2/routePlanner2Summary';
 import {
     listRoutePlanner2SavedProjects,
     loadRoutePlanner2Project,
@@ -63,6 +63,7 @@ import {
     type RoutePlanner2StopVisitRuntimeDetail,
 } from '../../utils/route-planner-2/routePlanner2StopTimes';
 import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle, type RoutePlanner2RoadNameLabelDensity } from './route-planner-2/RoutePlanner2MapCanvas';
+import type { RoutePlanner2MapSelection, RoutePlanner2MapSelectionMode } from '../../utils/route-planner-2/routePlanner2MapSelection';
 import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
 import {
     RoutePlanner2AddressImportModal,
@@ -95,6 +96,8 @@ interface RoutePlanner2WorkspaceProps {
     teamId?: string | null;
 }
 
+const EMPTY_MAP_SELECTION: RoutePlanner2MapSelection = { stopIds: [], waypointIds: [] };
+
 function formatRuntime(minutes: number | null | undefined): string {
     return minutes != null ? `${minutes} min` : 'Not estimated';
 }
@@ -106,6 +109,36 @@ function formatBuses(value: number | null | undefined): string {
 function formatRecovery(minutes: number | null | undefined, percent: number | null | undefined): string {
     if (minutes == null) return 'Not ready';
     return percent != null ? `${minutes} min (${percent}%)` : `${minutes} min`;
+}
+
+function formatRuntimeDelta(before: number | null | undefined, after: number | null | undefined): string {
+    if (before == null || after == null) return 'not estimated';
+    const delta = Math.round(after - before);
+    return `${delta >= 0 ? '+' : ''}${delta} min`;
+}
+
+function buildSegmentTransferImpactMessage(
+    beforeProject: RoutePlanner2Project,
+    afterProject: RoutePlanner2Project,
+    sourceScenarioId: string,
+    targetScenarioId: string,
+    movedStopCount: number,
+    mode: 'copy' | 'move',
+): string | null {
+    const sourceBefore = beforeProject.scenarios.find((scenario) => scenario.id === sourceScenarioId);
+    const targetBefore = beforeProject.scenarios.find((scenario) => scenario.id === targetScenarioId);
+    const sourceAfter = afterProject.scenarios.find((scenario) => scenario.id === sourceScenarioId);
+    const targetAfter = afterProject.scenarios.find((scenario) => scenario.id === targetScenarioId);
+    if (!sourceBefore || !targetBefore || !sourceAfter || !targetAfter) return null;
+
+    const sourceBeforeSummary = summarizeRoutePlanner2Scenario(sourceBefore);
+    const sourceAfterSummary = summarizeRoutePlanner2Scenario(sourceAfter);
+    const targetBeforeSummary = summarizeRoutePlanner2Scenario(targetBefore);
+    const targetAfterSummary = summarizeRoutePlanner2Scenario(targetAfter);
+    const action = mode === 'move' ? 'Moved' : 'Copied';
+    const stopsLabel = movedStopCount === 1 ? '1 stop' : `${movedStopCount} stops`;
+
+    return `${action} ${stopsLabel} from ${sourceBefore.name} to ${targetBefore.name}. Source runtime ${formatRuntimeDelta(sourceBeforeSummary.feasibility.oneWayRuntimeMinutes, sourceAfterSummary.feasibility.oneWayRuntimeMinutes)}; target runtime ${formatRuntimeDelta(targetBeforeSummary.feasibility.oneWayRuntimeMinutes, targetAfterSummary.feasibility.oneWayRuntimeMinutes)}.`;
 }
 
 function getRoutePlanner2SaveErrorMessage(error: unknown): string {
@@ -595,6 +628,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [isDrawFocusMode, setIsDrawFocusMode] = useState(false);
     const [isExportingOperatorPdf, setIsExportingOperatorPdf] = useState(false);
     const [isExportingMapPdf, setIsExportingMapPdf] = useState(false);
+    const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+    const [isSelectionMenuOpen, setIsSelectionMenuOpen] = useState(false);
+    const [mapSelectionMode, setMapSelectionMode] = useState<RoutePlanner2MapSelectionMode | null>(null);
+    const [mapSelection, setMapSelection] = useState<RoutePlanner2MapSelection>(EMPTY_MAP_SELECTION);
     const [isGtfsImportOpen, setIsGtfsImportOpen] = useState(false);
     const [isAddressImportOpen, setIsAddressImportOpen] = useState(false);
     const [gtfsPatterns, setGtfsPatterns] = useState<RoutePlanner2GtfsImportPattern[]>([]);
@@ -604,6 +641,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [transferToSequence, setTransferToSequence] = useState(1);
     const [transferTargetScenarioId, setTransferTargetScenarioId] = useState('');
     const [transferInsertAfterStopId, setTransferInsertAfterStopId] = useState('__end');
+    const [segmentTransferImpactMessage, setSegmentTransferImpactMessage] = useState<string | null>(null);
     const [runtimeDayType, setRuntimeDayType] = useState<DayType>('weekday');
     const [runtimePeriod, setRuntimePeriod] = useState<TimePeriod>('full-day');
     const [runtimeAvailableRoutesByScenario, setRuntimeAvailableRoutesByScenario] = useState<Record<string, string[]>>({});
@@ -630,6 +668,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const selectedScenario = useMemo(
         () => project.scenarios.find((scenario) => scenario.id === project.selectedScenarioId) ?? project.scenarios[0],
         [project.scenarios, project.selectedScenarioId],
+    );
+    const backgroundScenarios = useMemo(
+        () => project.scenarios.filter((scenario) => scenario.id !== selectedScenario?.id),
+        [project.scenarios, selectedScenario?.id],
     );
     const selectedScenarioSummary = projectSummary.selectedScenarioSummary;
     const selectedFeasibility = selectedScenarioSummary?.feasibility ?? null;
@@ -714,6 +756,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setAddressSuggestions([]);
         setSelectedAddress(null);
         setAddressSearchError(null);
+        setMapSelection(EMPTY_MAP_SELECTION);
     }, [selectedScenario?.id]);
     useEffect(() => {
         const trimmedQuery = addressQuery.trim();
@@ -1013,6 +1056,12 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setSelectedStopId(backStartStopId);
         setIsRightRailOpen(true);
     }
+    function deleteSelectedRouteConcept() {
+        if (!selectedScenario || project.scenarios.length <= 1) return;
+        setProject((current) => deleteRoutePlanner2Scenario(current, selectedScenario.id));
+        setSelectedStopId(null);
+        setMapSelection(EMPTY_MAP_SELECTION);
+    }
     function deleteStop(stopId: string) {
         if (!selectedScenario) return;
         const remainingStops = selectedScenario.stops.filter((stop) => stop.id !== stopId);
@@ -1020,6 +1069,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (selectedStopId === stopId) {
             setSelectedStopId(remainingStops[0]?.id ?? null);
         }
+        setMapSelection((current) => ({
+            stopIds: current.stopIds.filter((id) => id !== stopId),
+            waypointIds: current.waypointIds,
+        }));
     }
     function clearStopOrder() {
         if (!selectedScenario) return;
@@ -1027,6 +1080,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setSelectedStopId(null);
         setHoveredMapItem(null);
         setDraggedStopOrderKey(null);
+        setMapSelection(EMPTY_MAP_SELECTION);
     }
     function moveStopOrderItem(item: RoutePlanner2StopOrderItem, direction: 'up' | 'down') {
         if (!selectedScenario) return;
@@ -1127,28 +1181,70 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     function applyStopTransfer(mode: 'copy' | 'move') {
         if (!selectedScenario || !transferTargetScenarioId) return;
         const targetStops = transferTargetStops;
+        const transferredStopCount = selectedScenarioStops.filter((stop) =>
+            stop.sequence >= Math.min(transferFromSequence, transferToSequence)
+            && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
+        ).length;
+        if (transferredStopCount === 0) return;
         const insertAfterStopId = transferInsertAfterStopId === '__start'
             ? null
             : transferInsertAfterStopId === '__end'
                 ? targetStops[targetStops.length - 1]?.id ?? null
                 : transferInsertAfterStopId;
-        setProject((current) => {
-            const updated = reassignRoutePlanner2StopRange(current, {
-                sourceScenarioId: selectedScenario.id,
-                targetScenarioId: transferTargetScenarioId,
-                fromSequence: transferFromSequence,
-                toSequence: transferToSequence,
-                insertAfterStopId,
-                mode,
-            });
-            return selectRoutePlanner2Scenario(updated, transferTargetScenarioId);
+        const now = new Date().toISOString();
+        const updated = reassignRoutePlanner2StopRange(project, {
+            sourceScenarioId: selectedScenario.id,
+            targetScenarioId: transferTargetScenarioId,
+            fromSequence: transferFromSequence,
+            toSequence: transferToSequence,
+            insertAfterStopId,
+            mode,
+            now,
         });
+        const nextProject = selectRoutePlanner2Scenario(updated, transferTargetScenarioId);
+        setProject(nextProject);
+        setSegmentTransferImpactMessage(buildSegmentTransferImpactMessage(
+            project,
+            updated,
+            selectedScenario.id,
+            transferTargetScenarioId,
+            transferredStopCount,
+            mode,
+        ));
         setSelectedStopId(null);
         setIsRightRailOpen(true);
     }
     function deleteLineWaypoint(waypointId: string) {
         if (!selectedScenario) return;
         setProject((current) => deleteRoutePlanner2LineWaypoint(current, selectedScenario.id, waypointId));
+        setMapSelection((current) => ({
+            stopIds: current.stopIds,
+            waypointIds: current.waypointIds.filter((id) => id !== waypointId),
+        }));
+    }
+    function activateMapSelectionMode(mode: RoutePlanner2MapSelectionMode) {
+        setIsActionSidebarOpen(true);
+        setIsSelectionMenuOpen(true);
+        setMapSelectionMode(mode);
+    }
+    function deleteSelectedMapItems() {
+        if (!selectedScenario || mapSelectionCount === 0) return;
+        const stopIds = new Set(mapSelection.stopIds);
+        const waypointIds = new Set(mapSelection.waypointIds);
+        setProject((current) => {
+            let next = current;
+            waypointIds.forEach((waypointId) => {
+                next = deleteRoutePlanner2LineWaypoint(next, selectedScenario.id, waypointId);
+            });
+            stopIds.forEach((stopId) => {
+                next = deleteRoutePlanner2Stop(next, selectedScenario.id, stopId);
+            });
+            return next;
+        });
+        setSelectedStopId((current) => current && stopIds.has(current) ? null : current);
+        setHoveredMapItem(null);
+        setDraggedStopOrderKey(null);
+        setMapSelection(EMPTY_MAP_SELECTION);
     }
     function updateSegmentRuntimeOverride(segmentId: string, value: string) {
         if (!selectedScenario) return;
@@ -1215,6 +1311,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             return selectedImport ? selectRoutePlanner2Scenario(nextProject, selectedImport.id) : nextProject;
         });
         setSelectedStopId(selectedImport?.stops[0]?.id ?? null);
+        setIsActionSidebarOpen(true);
         setIsRightRailOpen(true);
         setIsDrawFocusMode(false);
         setIsGtfsImportOpen(false);
@@ -1366,6 +1463,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const visibleSaveMessage = project.status === 'local-draft' && saveState === 'saved' ? null : saveMessage;
     const canShowRuntimeSourceOverlay = Boolean(selectedScenario && selectedScenario.stops.length >= 2);
     const canShowRoadNameLabels = Boolean(selectedScenario && selectedScenario.stops.length >= 2);
+    const mapSelectionCount = mapSelection.stopIds.length + mapSelection.waypointIds.length;
     const drawingGuide = getDrawingGuide(selectedScenario);
     const stopVisitSequence = selectedScenario ? buildRoutePlanner2StopVisitSequence(selectedScenario) : [];
     const routeShapeLabel = selectedScenario?.routeShape === 'closed-loop'
@@ -1384,10 +1482,15 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                     <RoutePlanner2MapCanvas
                         ref={mapCanvasRef}
                         scenario={selectedScenario}
+                        backgroundScenarios={backgroundScenarios}
                         selectedStopId={selectedStopId}
                         highlightedStopId={hoveredMapItem?.type === 'stop' ? hoveredMapItem.id : null}
                         highlightedWaypointId={hoveredMapItem?.type === 'waypoint' ? hoveredMapItem.id : null}
                         highlightedSegmentId={hoveredMapItem?.type === 'segment' ? hoveredMapItem.id : null}
+                        selectionMode={mapSelectionMode}
+                        selectedStopIds={mapSelection.stopIds}
+                        selectedWaypointIds={mapSelection.waypointIds}
+                        onSelectionChange={setMapSelection}
                         onSelectStop={setSelectedStopId}
                         onAddStop={addStop}
                         onDeleteStop={deleteStop}
@@ -1491,6 +1594,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                 );
                                             })}
                                         </div>
+                                        <button
+                                            type="button"
+                                            data-testid="rp2-delete-selected-route-concept"
+                                            onClick={deleteSelectedRouteConcept}
+                                            disabled={!selectedScenario || project.scenarios.length <= 1}
+                                            className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-2.5 py-2 text-xs font-black text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                            title={project.scenarios.length <= 1 ? 'Add another route concept before deleting this one' : 'Delete selected route concept'}
+                                        >
+                                            <Trash2 size={14} /> Delete concept
+                                        </button>
                                     </section>
                                 ) : (
                                     <div className="mt-2 space-y-1.5">
@@ -1583,6 +1696,66 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     )}
                                     <button
                                         type="button"
+                                        onClick={() => {
+                                            setIsActionSidebarOpen(true);
+                                            setIsSelectionMenuOpen((current) => !current);
+                                        }}
+                                        data-testid="rp2-selection-menu-toggle"
+                                        aria-expanded={isSelectionMenuOpen}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${mapSelectionMode ? 'border-violet-300 bg-violet-50 text-violet-800' : 'border-slate-200 bg-white text-slate-700'}`}
+                                        title="Select stops and bend anchors"
+                                    >
+                                        <MousePointer2 size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Select</span>
+                                    </button>
+                                    {actionSidebarExpanded && isSelectionMenuOpen && (
+                                        <div data-testid="rp2-selection-menu" className="rounded-2xl border border-violet-100 bg-violet-50/70 p-2">
+                                            <div className="grid grid-cols-2 gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => activateMapSelectionMode('box')}
+                                                    aria-pressed={mapSelectionMode === 'box'}
+                                                    className={`inline-flex items-center justify-center gap-1 rounded-xl border px-2 py-1.5 text-xs font-black ${mapSelectionMode === 'box' ? 'border-violet-300 bg-white text-violet-800 shadow-sm' : 'border-transparent bg-violet-100 text-violet-700'}`}
+                                                >
+                                                    <BoxSelect size={14} /> Box
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => activateMapSelectionMode('lasso')}
+                                                    aria-pressed={mapSelectionMode === 'lasso'}
+                                                    className={`inline-flex items-center justify-center gap-1 rounded-xl border px-2 py-1.5 text-xs font-black ${mapSelectionMode === 'lasso' ? 'border-violet-300 bg-white text-violet-800 shadow-sm' : 'border-transparent bg-violet-100 text-violet-700'}`}
+                                                >
+                                                    <LassoSelect size={14} /> Lasso
+                                                </button>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                data-testid="rp2-delete-selected-map-items"
+                                                onClick={deleteSelectedMapItems}
+                                                disabled={mapSelectionCount === 0}
+                                                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-2 py-1.5 text-xs font-black text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                                <Trash2 size={14} /> Delete selected{mapSelectionCount > 0 ? ` (${mapSelectionCount})` : ''}
+                                            </button>
+                                            <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-bold text-violet-700">
+                                                <span>{mapSelectionCount} selected</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setMapSelection(EMPTY_MAP_SELECTION);
+                                                        setMapSelectionMode(null);
+                                                    }}
+                                                    className="rounded-full bg-white px-2 py-1 font-black text-violet-800"
+                                                >
+                                                    Clear
+                                                </button>
+                                            </div>
+                                            <p className="mt-1.5 text-[10px] font-semibold leading-4 text-violet-700">
+                                                Choose Box or Lasso, then drag on the map around stops and bend anchors.
+                                            </p>
+                                        </div>
+                                    )}
+                                    <button
+                                        type="button"
                                         onClick={openLoadPicker}
                                         disabled={!canUseTeamSave || loadState === 'loading'}
                                         className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:opacity-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
@@ -1619,22 +1792,39 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={exportOperatorDirections}
-                                        disabled={!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800 disabled:opacity-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
-                                        title="Operator PDF"
+                                        onClick={() => {
+                                            setIsActionSidebarOpen(true);
+                                            setIsExportMenuOpen((current) => !current);
+                                        }}
+                                        data-testid="rp2-export-menu-toggle"
+                                        aria-expanded={isExportMenuOpen}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        title="Export PDFs"
                                     >
-                                        <FileDown size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{isExportingOperatorPdf ? 'Preparing PDF' : 'Operator PDF'}</span>
+                                        <FileDown size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Export</span>
                                     </button>
-                                    <button
-                                        type="button"
-                                        onClick={exportMapPdf}
-                                        disabled={!selectedScenario || selectedScenario.stops.length < 2 || isExportingMapPdf}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-2.5 py-2 text-xs font-bold text-blue-800 disabled:opacity-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
-                                        title="Map PDF"
-                                    >
-                                        <MapPinned size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{isExportingMapPdf ? 'Preparing map' : 'Map PDF'}</span>
-                                    </button>
+                                    {actionSidebarExpanded && isExportMenuOpen && (
+                                        <div data-testid="rp2-export-menu" className="rounded-2xl border border-cyan-100 bg-cyan-50/70 p-2">
+                                            <button
+                                                type="button"
+                                                onClick={exportOperatorDirections}
+                                                disabled={!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf}
+                                                className="inline-flex w-full items-center gap-2 rounded-xl border border-cyan-200 bg-white px-2 py-1.5 text-xs font-black text-cyan-800 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                title="Operator PDF"
+                                            >
+                                                <FileDown size={14} /> {isExportingOperatorPdf ? 'Preparing PDF' : 'Operator PDF'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={exportMapPdf}
+                                                disabled={!selectedScenario || selectedScenario.stops.length < 2 || isExportingMapPdf}
+                                                className="mt-1 inline-flex w-full items-center gap-2 rounded-xl border border-blue-200 bg-white px-2 py-1.5 text-xs font-black text-blue-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                title="Map PDF"
+                                            >
+                                                <MapPinned size={14} /> {isExportingMapPdf ? 'Preparing map' : 'Map PDF'}
+                                            </button>
+                                        </div>
+                                    )}
                                     <button
                                         type="button"
                                         onClick={toggleRightRail}
@@ -2057,8 +2247,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <div className="rounded-2xl border border-slate-200 bg-white p-3">
                                         <div className="flex items-start justify-between gap-3">
                                             <div>
-                                                <h3 className="text-sm font-black text-slate-900">Reassign stops</h3>
-                                                <p className="mt-1 text-xs leading-5 text-slate-500">Copy or move a contiguous stop range into another route concept.</p>
+                                                <h3 className="text-sm font-black text-slate-900">Move segment between routes</h3>
+                                                <p className="mt-1 text-xs leading-5 text-slate-500">Move a contiguous stop segment into another route concept to compare runtime changes.</p>
                                             </div>
                                             <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-500">Planning copy</span>
                                         </div>
@@ -2068,6 +2258,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <p className="mt-3 text-sm leading-6 text-slate-500">Add stops to this route before reassigning them.</p>
                                         ) : (
                                             <div className="mt-3 space-y-3">
+                                                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                                                    Source route: <span className="font-bold text-slate-900">{selectedScenario.name}</span>
+                                                </div>
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-from">
                                                         From stop
@@ -2096,9 +2289,14 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                         <option value="__end">At end</option>
                                                     </select>
                                                 </label>
+                                                {segmentTransferImpactMessage && (
+                                                    <div data-testid="rp2-segment-transfer-impact" className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-900">
+                                                        <span className="font-black">Runtime impact:</span> {segmentTransferImpactMessage}
+                                                    </div>
+                                                )}
                                                 <div className="grid grid-cols-2 gap-2">
-                                                    <button type="button" onClick={() => applyStopTransfer('copy')} className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-black text-cyan-800">Copy stops</button>
-                                                    <button type="button" onClick={() => applyStopTransfer('move')} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-black text-amber-800">Move stops</button>
+                                                    <button type="button" onClick={() => applyStopTransfer('move')} className="rounded-xl border border-cyan-200 bg-cyan-600 px-3 py-2 text-sm font-black text-white shadow-sm">Move segment</button>
+                                                    <button type="button" onClick={() => applyStopTransfer('copy')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700">Copy segment</button>
                                                 </div>
                                             </div>
                                         )}
@@ -2327,7 +2525,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     )}
                                     <div className="grid grid-cols-2 gap-2">
                                         <button type="button" onClick={() => setProject((current) => markRoutePlanner2PreferredScenario(current, selectedScenario.id))} className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700"><Star size={16} />Mark preferred</button>
-                                        <button type="button" onClick={() => setProject((current) => deleteRoutePlanner2Scenario(current, selectedScenario.id))} disabled={project.scenarios.length <= 1} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-50"><Trash2 size={16} />Delete</button>
+                                    <button type="button" onClick={deleteSelectedRouteConcept} disabled={project.scenarios.length <= 1} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-50"><Trash2 size={16} />Delete</button>
                                     </div>
                                 </div>
                             ) : <p className="mt-3 text-sm text-slate-500">Select a route to edit details.</p>}

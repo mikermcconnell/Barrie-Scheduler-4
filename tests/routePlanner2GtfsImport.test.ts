@@ -17,6 +17,10 @@ const feed: RoutePlanner2GtfsImportFeed = {
   trips: [
     { route_id: '8A', service_id: 'weekday', trip_id: 't1', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
     { route_id: '8A', service_id: 'weekday', trip_id: 't2', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't3', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't4', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't5', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't6', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
     { route_id: '8A', service_id: 'weekday', trip_id: 'partial-1', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-partial' },
   ],
   stopTimes: [
@@ -26,6 +30,18 @@ const feed: RoutePlanner2GtfsImportFeed = {
     { trip_id: 't2', arrival_time: '06:30:00', departure_time: '06:30:00', stop_id: 's1', stop_sequence: 1 },
     { trip_id: 't2', arrival_time: '06:35:00', departure_time: '06:35:00', stop_id: 's2', stop_sequence: 2 },
     { trip_id: 't2', arrival_time: '06:42:00', departure_time: '06:42:00', stop_id: 's3', stop_sequence: 3 },
+    { trip_id: 't3', arrival_time: '07:00:00', departure_time: '07:00:00', stop_id: 's1', stop_sequence: 1 },
+    { trip_id: 't3', arrival_time: '07:05:00', departure_time: '07:05:00', stop_id: 's2', stop_sequence: 2 },
+    { trip_id: 't3', arrival_time: '07:12:00', departure_time: '07:12:00', stop_id: 's3', stop_sequence: 3 },
+    { trip_id: 't4', arrival_time: '07:30:00', departure_time: '07:30:00', stop_id: 's1', stop_sequence: 1 },
+    { trip_id: 't4', arrival_time: '07:35:00', departure_time: '07:35:00', stop_id: 's2', stop_sequence: 2 },
+    { trip_id: 't4', arrival_time: '07:42:00', departure_time: '07:42:00', stop_id: 's3', stop_sequence: 3 },
+    { trip_id: 't5', arrival_time: '08:00:00', departure_time: '08:00:00', stop_id: 's1', stop_sequence: 1 },
+    { trip_id: 't5', arrival_time: '08:05:00', departure_time: '08:05:00', stop_id: 's2', stop_sequence: 2 },
+    { trip_id: 't5', arrival_time: '08:12:00', departure_time: '08:12:00', stop_id: 's3', stop_sequence: 3 },
+    { trip_id: 't6', arrival_time: '08:30:00', departure_time: '08:30:00', stop_id: 's1', stop_sequence: 1 },
+    { trip_id: 't6', arrival_time: '08:35:00', departure_time: '08:35:00', stop_id: 's2', stop_sequence: 2 },
+    { trip_id: 't6', arrival_time: '08:42:00', departure_time: '08:42:00', stop_id: 's3', stop_sequence: 3 },
     { trip_id: 'partial-1', arrival_time: '07:00:00', departure_time: '07:00:00', stop_id: 's1', stop_sequence: 1 },
     { trip_id: 'partial-1', arrival_time: '07:05:00', departure_time: '07:05:00', stop_id: 's2', stop_sequence: 2 },
   ],
@@ -51,7 +67,7 @@ describe('routePlanner2GtfsImport', () => {
       serviceId: 'weekday',
       directionId: 0,
       shapeId: 'shape-8a-a',
-      tripCount: 2,
+      tripCount: 6,
       stopCount: 3,
     });
   });
@@ -61,6 +77,16 @@ describe('routePlanner2GtfsImport', () => {
     expect(patterns).toHaveLength(1);
     expect(patterns[0]?.stopCount).toBe(3);
     expect(patterns[0]?.shapeId).toBe('shape-8a-a');
+  });
+
+  it('hides GTFS patterns with five trips or fewer', () => {
+    const lowTripFeed: RoutePlanner2GtfsImportFeed = {
+      ...feed,
+      trips: feed.trips.filter((trip) => ['t1', 't2', 't3', 't4', 't5'].includes(trip.trip_id)),
+      stopTimes: feed.stopTimes.filter((stopTime) => ['t1', 't2', 't3', 't4', 't5'].includes(stopTime.trip_id)),
+    };
+
+    expect(buildRoutePlanner2GtfsImportPatterns(lowTripFeed)).toHaveLength(0);
   });
 
   it('creates an editable Route Planner 2 scenario from a GTFS pattern', () => {
@@ -90,6 +116,18 @@ describe('routePlanner2GtfsImport', () => {
         { trip_id: 't2', arrival_time: '06:30:00', departure_time: '06:30:00', stop_id: 's1', stop_sequence: 1 },
         { trip_id: 't2', arrival_time: '06:30:00', departure_time: '06:30:00', stop_id: 's2', stop_sequence: 2 },
         { trip_id: 't2', arrival_time: '06:35:00', departure_time: '06:35:00', stop_id: 's3', stop_sequence: 3 },
+        { trip_id: 't3', arrival_time: '07:00:00', departure_time: '07:00:00', stop_id: 's1', stop_sequence: 1 },
+        { trip_id: 't3', arrival_time: '07:00:00', departure_time: '07:00:00', stop_id: 's2', stop_sequence: 2 },
+        { trip_id: 't3', arrival_time: '07:05:00', departure_time: '07:05:00', stop_id: 's3', stop_sequence: 3 },
+        { trip_id: 't4', arrival_time: '07:30:00', departure_time: '07:30:00', stop_id: 's1', stop_sequence: 1 },
+        { trip_id: 't4', arrival_time: '07:30:00', departure_time: '07:30:00', stop_id: 's2', stop_sequence: 2 },
+        { trip_id: 't4', arrival_time: '07:35:00', departure_time: '07:35:00', stop_id: 's3', stop_sequence: 3 },
+        { trip_id: 't5', arrival_time: '08:00:00', departure_time: '08:00:00', stop_id: 's1', stop_sequence: 1 },
+        { trip_id: 't5', arrival_time: '08:00:00', departure_time: '08:00:00', stop_id: 's2', stop_sequence: 2 },
+        { trip_id: 't5', arrival_time: '08:05:00', departure_time: '08:05:00', stop_id: 's3', stop_sequence: 3 },
+        { trip_id: 't6', arrival_time: '08:30:00', departure_time: '08:30:00', stop_id: 's1', stop_sequence: 1 },
+        { trip_id: 't6', arrival_time: '08:30:00', departure_time: '08:30:00', stop_id: 's2', stop_sequence: 2 },
+        { trip_id: 't6', arrival_time: '08:35:00', departure_time: '08:35:00', stop_id: 's3', stop_sequence: 3 },
         { trip_id: 'partial-1', arrival_time: '07:00:00', departure_time: '07:00:00', stop_id: 's1', stop_sequence: 1 },
         { trip_id: 'partial-1', arrival_time: '07:05:00', departure_time: '07:05:00', stop_id: 's2', stop_sequence: 2 },
       ],

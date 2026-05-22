@@ -85,6 +85,9 @@ vi.mock('../utils/route-planner-2/routePlanner2MapExport', () => ({
   buildRoutePlanner2MapBookSections: vi.fn(() => []),
   exportRoutePlanner2MapPdf: vi.fn(async () => undefined),
 }));
+vi.mock('../utils/route-planner-2/routePlanner2OperatorExport', () => ({
+  exportRoutePlanner2OperatorDirectionsPdf: vi.fn(async () => undefined),
+}));
 
 vi.mock('html2canvas', () => ({
   default: vi.fn(async () => ({
@@ -98,6 +101,7 @@ import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Wor
 import { buildCorridorSpeedIndex, buildCorridorSpeedMapIndex } from '../utils/gtfs/corridorSpeed';
 import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop } from '../utils/route-planner-2/routePlanner2Authoring';
 import { exportRoutePlanner2MapPdf } from '../utils/route-planner-2/routePlanner2MapExport';
+import { exportRoutePlanner2OperatorDirectionsPdf } from '../utils/route-planner-2/routePlanner2OperatorExport';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 
 function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
@@ -184,8 +188,9 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
     expect(view.textContent).toContain('Route Planner');
     expect(view.textContent).toContain('Local draft');
-    expect(view.textContent).toContain('Operator PDF');
-    expect(view.textContent).toContain('Map PDF');
+    expect(view.textContent).toContain('Select');
+    expect(view.textContent).toContain('Export');
+    expect(view.querySelector('[data-testid="rp2-export-menu"]')).toBeNull();
     expect(view.textContent).toContain('Import addresses');
     expect(view.textContent).toContain('Move the mouse over the map and press 1 to place Stop 1');
     expect(view.textContent).toContain('Route concepts');
@@ -198,10 +203,36 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
   it('keeps Map PDF disabled until the selected route has at least two stops', () => {
     const view = renderWorkspace();
+    flushSync(() => {
+      click(findButton(view, 'Export'));
+    });
     const mapPdfButton = findButton(view, 'Map PDF');
 
     expect(mapPdfButton?.disabled).toBe(true);
     expect(exportRoutePlanner2MapPdf).not.toHaveBeenCalled();
+  });
+
+  it('opens the main export menu with operator and map PDF choices', async () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+      addMapStop(view);
+      click(findButton(view, 'Export'));
+    });
+
+    expect(view.querySelector('[data-testid="rp2-export-menu"]')?.textContent).toContain('Operator PDF');
+    expect(view.querySelector('[data-testid="rp2-export-menu"]')?.textContent).toContain('Map PDF');
+
+    flushSync(() => {
+      click(findButton(view, 'Operator PDF'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(exportRoutePlanner2OperatorDirectionsPdf).toHaveBeenCalledWith(
+      expect.objectContaining({ stops: expect.arrayContaining([expect.objectContaining({ name: 'Stop 1' })]) }),
+      expect.objectContaining({ projectName: expect.any(String) }),
+    );
   });
 
   it('enables Map PDF export once the selected route has at least two stops', async () => {
@@ -210,6 +241,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     flushSync(() => {
       addMapStop(view);
       addMapStop(view);
+      click(findButton(view, 'Export'));
     });
 
     const mapPdfButton = findButton(view, 'Map PDF');
@@ -232,6 +264,26 @@ describe('RoutePlanner2Workspace local workspace', () => {
         }),
       }),
     );
+  });
+
+  it('opens map selection tools with box, lasso, and bulk delete controls', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Select'));
+    });
+
+    const selectionMenu = view.querySelector('[data-testid="rp2-selection-menu"]');
+    expect(selectionMenu?.textContent).toContain('Box');
+    expect(selectionMenu?.textContent).toContain('Lasso');
+    expect(selectionMenu?.textContent).toContain('Delete selected');
+    expect((view.querySelector('[data-testid="rp2-delete-selected-map-items"]') as HTMLButtonElement | null)?.disabled).toBe(true);
+
+    flushSync(() => {
+      click(findButton(view, 'Box'));
+    });
+
+    expect(view.querySelector('[data-testid="rp2-map-canvas"]')?.textContent).toContain('Box selection active');
   });
 
   it('defaults road-name labels on once a route has enough stops', () => {
@@ -574,6 +626,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Route 400 - To Barrie South GO');
     expect(view.textContent).toContain('Route 401 - To Park Place');
     expect(view.textContent).toContain('Route concepts');
+    expect(view.querySelector('[data-testid="rp2-action-sidebar"]')?.getAttribute('data-state')).toBe('expanded');
   });
 
   it('adds Option 2 as a local route', () => {
@@ -622,6 +675,30 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
     flushSync(() => {
       click(findButton(view, 'Delete'));
+    });
+
+    expect(view.textContent).not.toContain('Option 2');
+    expect(view.textContent).toContain('Clean Concept A');
+  });
+
+  it('shows a visible delete route concept action in the left sidebar', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Add route'));
+    });
+    flushSync(() => {
+      const actionSidebar = view.querySelector('[data-testid="rp2-action-sidebar"]');
+      click(actionSidebar?.querySelector('button[aria-expanded="false"]'));
+    });
+
+    const deleteConceptButton = view.querySelector('[data-testid="rp2-delete-selected-route-concept"]') as HTMLButtonElement | null;
+    expect(deleteConceptButton).not.toBeNull();
+    expect(deleteConceptButton?.textContent).toContain('Delete concept');
+    expect(deleteConceptButton?.disabled).toBe(false);
+
+    flushSync(() => {
+      click(deleteConceptButton);
     });
 
     expect(view.textContent).not.toContain('Option 2');
@@ -919,9 +996,12 @@ describe('RoutePlanner2Workspace local workspace', () => {
       setInputValue(toSelect!, '3');
     });
     flushSync(() => {
-      click(findButton(view, 'Move stops'));
+      click(findButton(view, 'Move segment'));
     });
 
+    const impact = view.querySelector('[data-testid="rp2-segment-transfer-impact"]');
+    expect(impact?.textContent).toContain('Runtime impact');
+    expect(impact?.textContent).toContain('Moved 2 stops from Clean Concept A to Option 2');
     const routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
       button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
     );

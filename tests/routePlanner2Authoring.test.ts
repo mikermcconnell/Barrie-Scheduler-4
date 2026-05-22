@@ -214,6 +214,69 @@ describe('Route Planner 2 authoring', () => {
     ]);
   });
 
+  it('moves the selected segment line geometry with the stop range', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-a', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, role: 'start-terminal', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-2', name: 'A2', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-3', name: 'A3', lat: 44.4, lng: -79.67, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-4', name: 'A4', lat: 44.41, lng: -79.66, role: 'end-terminal', now });
+    project = addRoutePlanner2LineWaypoint(project, 'route-a', {
+      id: 'bend-a-2-a-3',
+      afterStopId: 'a-2',
+      beforeStopId: 'a-3',
+      lat: 44.395,
+      lng: -79.675,
+      now,
+    });
+    project = addRoutePlanner2LineWaypoint(project, 'route-a', {
+      id: 'bend-a-3-a-4',
+      afterStopId: 'a-3',
+      beforeStopId: 'a-4',
+      lat: 44.405,
+      lng: -79.665,
+      now,
+    });
+    project = {
+      ...project,
+      scenarios: [
+        project.scenarios[0]!,
+        {
+          ...project.scenarios[0]!,
+          id: 'route-b',
+          name: 'Route B',
+          stops: [],
+          alignment: [],
+          runtimeEstimates: undefined,
+          runtimeOverrides: undefined,
+        },
+      ],
+    };
+
+    project = reassignRoutePlanner2StopRange(project, {
+      sourceScenarioId: 'route-a',
+      targetScenarioId: 'route-b',
+      fromSequence: 2,
+      toSequence: 3,
+      mode: 'move',
+      now,
+    });
+
+    const source = project.scenarios.find((scenario) => scenario.id === 'route-a')!;
+    const target = project.scenarios.find((scenario) => scenario.id === 'route-b')!;
+    const movedWaypoint = target.alignment[0];
+
+    expect(source.alignment).toEqual([]);
+    expect(target.alignment).toHaveLength(1);
+    expect(movedWaypoint).toMatchObject({
+      lat: 44.395,
+      lng: -79.675,
+      afterStopId: target.stops[0]?.id,
+      beforeStopId: target.stops[1]?.id,
+      segmentSequence: 1,
+    });
+    expect(movedWaypoint?.id).not.toBe('bend-a-2-a-3');
+  });
+
   it('creates, orders, and moves multiple route line waypoints between stops', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'First', lat: 44.38, lng: -79.69, now });

@@ -12,6 +12,7 @@ vi.mock('recharts', () => ({
     CartesianGrid: (): null => null,
     Tooltip: (): null => null,
     ResponsiveContainer: ({ children }: { children?: React.ReactNode }): React.ReactElement => <div>{children}</div>,
+    LabelList: (): null => null,
     Cell: (): null => null,
 }));
 
@@ -834,6 +835,94 @@ describe('Step2Analysis', () => {
         expect(container.textContent).toContain('selected reliable (P80) travel time');
         expect(container.querySelector('[data-testid="step2-matrix-cell-06-30-06-59-park-place-to-peggy-hill"]')?.textContent).toContain('12');
         expect(container.querySelector('[data-testid="step2-matrix-cell-06-30-06-59-peggy-hill-to-allandale-go-station"]')?.textContent).toContain('14');
+    });
+
+    it('flags partial-route buckets on the cycle-time chart in both median and P80 views', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step2Analysis
+                    dayType="Weekday"
+                    routeNumber="7"
+                    analysis={[
+                        {
+                            timeBucket: '06:30 - 06:59',
+                            totalP50: 20,
+                            totalP80: 24,
+                            observedCycleP50: 20,
+                            observedCycleP80: 24,
+                            assignedBand: 'A',
+                            isOutlier: false,
+                            ignored: false,
+                            details: [
+                                { segmentName: 'Park Place to Peggy Hill', p50: 9, p80: 11, n: 6 },
+                                { segmentName: 'Peggy Hill to Allandale GO Station', p50: 11, p80: 13, n: 6 },
+                            ],
+                            expectedSegmentCount: 2,
+                            observedSegmentCount: 2,
+                            sampleCountMode: 'days',
+                            contributingDays: [],
+                            coverageCause: 'complete',
+                        },
+                        {
+                            timeBucket: '22:00 - 22:29',
+                            totalP50: 9,
+                            totalP80: 11,
+                            observedCycleP50: 9,
+                            observedCycleP80: 11,
+                            assignedBand: undefined,
+                            isOutlier: false,
+                            ignored: false,
+                            details: [
+                                { segmentName: 'Park Place to Peggy Hill', p50: 9, p80: 11, n: 6 },
+                            ],
+                            expectedSegmentCount: 2,
+                            observedSegmentCount: 1,
+                            sampleCountMode: 'days',
+                            contributingDays: [],
+                            missingSegmentNames: ['Peggy Hill to Allandale GO Station'],
+                            coverageCause: 'boundary-service',
+                        },
+                    ]}
+                    bands={[
+                        { id: 'A', label: 'Band A', min: 18, max: 22, avg: 20, color: '#2563eb', count: 1 },
+                    ]}
+                    setAnalysis={vi.fn()}
+                    segmentsMap={{
+                        North: [
+                            { segmentName: 'Park Place to Peggy Hill', timeBuckets: {} },
+                            { segmentName: 'Peggy Hill to Allandale GO Station', timeBuckets: {} },
+                        ],
+                    }}
+                    canonicalSegmentColumns={[
+                        { segmentName: 'Park Place to Peggy Hill', direction: 'North', groupLabel: '7A' },
+                        { segmentName: 'Peggy Hill to Allandale GO Station', direction: 'North', groupLabel: '7A' },
+                    ]}
+                />
+            );
+        });
+
+        const partialRouteCallout = container.querySelector('[data-testid="step2-partial-route-bucket-callout"]');
+        expect(container.textContent).toContain('Median Cycle Time (50%)');
+        expect(partialRouteCallout?.textContent).toContain('Partial route buckets shown');
+        expect(partialRouteCallout?.textContent).toContain('22:00');
+        expect(partialRouteCallout?.textContent).toContain('This marker appears in both Median and P80 views.');
+        expect(container.textContent).toContain('Partial route / short turn');
+
+        const p80Button = Array.from(container.querySelectorAll('button')).find(
+            button => button.textContent?.includes('80th Percentile')
+        );
+
+        flushSync(() => {
+            p80Button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(container.textContent).toContain('Reliable Cycle Time (80%)');
+        expect(container.querySelector('[data-testid="step2-partial-route-bucket-callout"]')?.textContent)
+            .toContain('Partial route buckets shown');
     });
 
     it('lets the planner ignore a bucket from the detailed table', () => {

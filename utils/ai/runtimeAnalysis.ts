@@ -339,7 +339,7 @@ export const getBucketCoverageCauseLabel = (cause?: BucketCoverageCause): string
         case 'single-gap':
             return 'Single missing segment';
         case 'boundary-service':
-            return 'Boundary service / short turn';
+            return 'Partial route / short turn';
         case 'partial-cycle-gap':
             return 'Internal cycle gap';
         case 'fragmented-gap':

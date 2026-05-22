@@ -15,8 +15,27 @@ interface RoutePlanner2GtfsImportModalProps {
 }
 
 function getPatternSubtitle(pattern: RoutePlanner2GtfsImportPattern): string {
-    const headsign = pattern.tripHeadsign || (pattern.directionId == null ? 'Direction not specified' : `Direction ${pattern.directionId}`);
-    return `${headsign} · ${pattern.dayTypeLabel || pattern.serviceId}`;
+    return pattern.tripHeadsign || (pattern.directionId == null ? 'Direction not specified' : `Direction ${pattern.directionId}`);
+}
+
+const DAY_GROUPS = ['Weekday', 'Saturday', 'Sunday'] as const;
+
+function getDayGroupLabel(pattern: RoutePlanner2GtfsImportPattern): string {
+    const label = `${pattern.dayTypeLabel || ''} ${pattern.serviceId || ''}`.toLowerCase();
+    if (label.includes('weekday')) return 'Weekday';
+    if (label.includes('saturday')) return 'Saturday';
+    if (label.includes('sunday')) return 'Sunday';
+    return pattern.dayTypeLabel || 'Other';
+}
+
+function compareRoutes(a: string, b: string): number {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function comparePatterns(a: RoutePlanner2GtfsImportPattern, b: RoutePlanner2GtfsImportPattern): number {
+    const headsignCompare = (a.tripHeadsign ?? '').localeCompare(b.tripHeadsign ?? '', undefined, { sensitivity: 'base' });
+    if (headsignCompare !== 0) return headsignCompare;
+    return a.serviceId.localeCompare(b.serviceId, undefined, { numeric: true, sensitivity: 'base' });
 }
 
 export function RoutePlanner2GtfsImportModal({
@@ -31,12 +50,44 @@ export function RoutePlanner2GtfsImportModal({
 }: RoutePlanner2GtfsImportModalProps) {
     const [selectedPatternIds, setSelectedPatternIds] = useState<Set<string>>(() => new Set());
     const sortedPatterns = useMemo(() => [...patterns].sort((a, b) => {
-        const routeCompare = a.routeShortName.localeCompare(b.routeShortName, undefined, { numeric: true });
+        const dayIndexA = DAY_GROUPS.indexOf(getDayGroupLabel(a) as typeof DAY_GROUPS[number]);
+        const dayIndexB = DAY_GROUPS.indexOf(getDayGroupLabel(b) as typeof DAY_GROUPS[number]);
+        const dayCompare = (dayIndexA === -1 ? Number.MAX_SAFE_INTEGER : dayIndexA) - (dayIndexB === -1 ? Number.MAX_SAFE_INTEGER : dayIndexB);
+        if (dayCompare !== 0) return dayCompare;
+        const routeCompare = compareRoutes(a.routeShortName, b.routeShortName);
         if (routeCompare !== 0) return routeCompare;
-        const headsignCompare = (a.tripHeadsign ?? '').localeCompare(b.tripHeadsign ?? '');
-        if (headsignCompare !== 0) return headsignCompare;
-        return a.serviceId.localeCompare(b.serviceId);
+        return comparePatterns(a, b);
     }), [patterns]);
+    const groupedPatterns = useMemo(() => {
+        const dayOrder = new Map<string, number>(DAY_GROUPS.map((day, index) => [day, index]));
+        const dayMap = new Map<string, Map<string, RoutePlanner2GtfsImportPattern[]>>();
+
+        sortedPatterns.forEach((pattern) => {
+            const dayLabel = getDayGroupLabel(pattern);
+            const routeMap = dayMap.get(dayLabel) ?? new Map<string, RoutePlanner2GtfsImportPattern[]>();
+            const routePatterns = routeMap.get(pattern.routeShortName) ?? [];
+            routePatterns.push(pattern);
+            routeMap.set(pattern.routeShortName, routePatterns);
+            dayMap.set(dayLabel, routeMap);
+        });
+
+        return Array.from(dayMap.entries())
+            .sort(([dayA], [dayB]) => {
+                const indexA = dayOrder.get(dayA) ?? Number.MAX_SAFE_INTEGER;
+                const indexB = dayOrder.get(dayB) ?? Number.MAX_SAFE_INTEGER;
+                if (indexA !== indexB) return indexA - indexB;
+                return dayA.localeCompare(dayB, undefined, { sensitivity: 'base' });
+            })
+            .map(([dayLabel, routeMap]) => ({
+                dayLabel,
+                routes: Array.from(routeMap.entries())
+                    .sort(([routeA], [routeB]) => compareRoutes(routeA, routeB))
+                    .map(([routeShortName, routePatterns]) => ({
+                        routeShortName,
+                        patterns: [...routePatterns].sort(comparePatterns),
+                    })),
+            }));
+    }, [sortedPatterns]);
     const selectedPatterns = sortedPatterns.filter((pattern) => selectedPatternIds.has(pattern.id));
 
     useEffect(() => {
@@ -55,6 +106,22 @@ export function RoutePlanner2GtfsImportModal({
             } else {
                 next.add(patternId);
             }
+            return next;
+        });
+    }
+
+    function toggleRoutePatterns(routePatterns: RoutePlanner2GtfsImportPattern[]) {
+        setSelectedPatternIds((current) => {
+            const routePatternIds = routePatterns.map((pattern) => pattern.id);
+            const allSelected = routePatternIds.every((patternId) => current.has(patternId));
+            const next = new Set(current);
+            routePatternIds.forEach((patternId) => {
+                if (allSelected) {
+                    next.delete(patternId);
+                } else {
+                    next.add(patternId);
+                }
+            });
             return next;
         });
     }
@@ -109,41 +176,72 @@ export function RoutePlanner2GtfsImportModal({
                     )}
 
                     {!loading && !error && sortedPatterns.length > 0 && (
-                        <div className="grid gap-3 md:grid-cols-2">
-                            {sortedPatterns.map((pattern) => {
-                                const selected = selectedPatternIds.has(pattern.id);
-                                return (
-                                    <button
-                                        key={pattern.id}
-                                        type="button"
-                                        onClick={() => togglePattern(pattern.id)}
-                                        className={`rounded-3xl border p-4 text-left shadow-sm transition ${selected ? 'border-cyan-300 bg-cyan-50' : 'border-slate-200 bg-white hover:border-cyan-200'}`}
-                                        aria-pressed={selected}
-                                    >
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <div className="text-lg font-black text-slate-900">Route {pattern.routeShortName}</div>
-                                                <div className="mt-1 text-sm font-bold text-slate-700">{getPatternSubtitle(pattern)}</div>
-                                            </div>
-                                            <div className="flex shrink-0 items-center gap-2">
-                                                {pattern.routeColor && (
-                                                    <span className="h-5 w-5 rounded-full border border-white shadow" style={{ backgroundColor: `#${pattern.routeColor}` }} aria-label="route color" />
-                                                )}
-                                                <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${selected ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                                                    {selected ? 'Selected' : 'Select'}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        {pattern.routeLongName && <div className="mt-2 text-xs font-semibold text-slate-500">{pattern.routeLongName}</div>}
-                                        <div className="mt-3 flex flex-wrap gap-2 text-xs font-black text-slate-600">
-                                            <span className="rounded-full bg-slate-100 px-2 py-1">{pattern.tripCount} trips</span>
-                                            <span className="rounded-full bg-slate-100 px-2 py-1">{pattern.stopCount} stops</span>
-                                            <span className="rounded-full bg-slate-100 px-2 py-1">{pattern.shapePointCount} shape points</span>
-                                            <span className="rounded-full bg-slate-100 px-2 py-1">Service {pattern.serviceId}</span>
-                                        </div>
-                                    </button>
-                                );
-                            })}
+                        <div className="space-y-7">
+                            {groupedPatterns.map((dayGroup) => (
+                                <section key={dayGroup.dayLabel} aria-labelledby={`rp2-gtfs-day-${dayGroup.dayLabel}`}>
+                                    <h3 id={`rp2-gtfs-day-${dayGroup.dayLabel}`} className="text-xs font-black uppercase tracking-[0.2em] text-cyan-700">
+                                        {dayGroup.dayLabel}
+                                    </h3>
+                                    <div className="mt-3 grid grid-cols-2 gap-3">
+                                        {dayGroup.routes.map((routeGroup) => {
+                                            const selectedRoutePatternCount = routeGroup.patterns.filter((pattern) => selectedPatternIds.has(pattern.id)).length;
+                                            const routeSelected = selectedRoutePatternCount === routeGroup.patterns.length;
+                                            return (
+                                            <section key={`${dayGroup.dayLabel}-${routeGroup.routeShortName}`} aria-labelledby={`rp2-gtfs-route-${dayGroup.dayLabel}-${routeGroup.routeShortName}`}>
+                                                <button
+                                                    id={`rp2-gtfs-route-${dayGroup.dayLabel}-${routeGroup.routeShortName}`}
+                                                    type="button"
+                                                    onClick={() => toggleRoutePatterns(routeGroup.patterns)}
+                                                    aria-pressed={routeSelected}
+                                                    className={`flex w-full items-center justify-between gap-2 rounded-2xl border px-3 py-2 text-left transition ${routeSelected ? 'border-cyan-300 bg-cyan-50 text-cyan-900' : 'border-slate-200 bg-white text-slate-900 hover:border-cyan-200'}`}
+                                                >
+                                                    <span className="text-lg font-black">Route {routeGroup.routeShortName}</span>
+                                                    <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${routeSelected ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                                        {routeSelected ? 'Selected' : selectedRoutePatternCount > 0 ? `${selectedRoutePatternCount}/${routeGroup.patterns.length}` : 'Select'}
+                                                    </span>
+                                                </button>
+                                                <div className="mt-2 space-y-3">
+                                                    {routeGroup.patterns.map((pattern) => {
+                                                        const selected = selectedPatternIds.has(pattern.id);
+                                                        return (
+                                                            <button
+                                                                key={pattern.id}
+                                                                type="button"
+                                                                onClick={() => togglePattern(pattern.id)}
+                                                                className={`rounded-3xl border p-4 text-left shadow-sm transition ${selected ? 'border-cyan-300 bg-cyan-50' : 'border-slate-200 bg-white hover:border-cyan-200'}`}
+                                                                aria-pressed={selected}
+                                                                aria-label={`Route ${pattern.routeShortName} ${getPatternSubtitle(pattern)} ${getDayGroupLabel(pattern)}`}
+                                                            >
+                                                                <div className="flex items-start justify-between gap-3">
+                                                                    <div>
+                                                                        <div className="text-sm font-bold text-slate-700">{getPatternSubtitle(pattern)}</div>
+                                                                        {pattern.routeLongName && <div className="mt-2 text-xs font-semibold text-slate-500">{pattern.routeLongName}</div>}
+                                                                    </div>
+                                                                    <div className="flex shrink-0 items-center gap-2">
+                                                                        {pattern.routeColor && (
+                                                                            <span className="h-5 w-5 rounded-full border border-white shadow" style={{ backgroundColor: `#${pattern.routeColor}` }} aria-label="route color" />
+                                                                        )}
+                                                                        <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${selected ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                                                            {selected ? 'Selected' : 'Select'}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="mt-3 flex flex-wrap gap-2 text-xs font-black text-slate-600">
+                                                                    <span className="rounded-full bg-slate-100 px-2 py-1">{pattern.tripCount} trips</span>
+                                                                    <span className="rounded-full bg-slate-100 px-2 py-1">{pattern.stopCount} stops</span>
+                                                                    <span className="rounded-full bg-slate-100 px-2 py-1">{pattern.shapePointCount} shape points</span>
+                                                                    <span className="rounded-full bg-slate-100 px-2 py-1">Service {pattern.serviceId}</span>
+                                                                </div>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </section>
+                                            );
+                                        })}
+                                    </div>
+                                </section>
+                            ))}
                         </div>
                     )}
                 </div>

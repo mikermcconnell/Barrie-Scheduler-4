@@ -56,18 +56,19 @@ Required v1 actions:
 - select active route
 - mark one route as preferred when ready
 
-## Stop Reassignment Workflow
+## Segment Transfer Workflow
 
-When a planner is redesigning service coverage, they can reassign a contiguous stop range between route concepts.
+When a planner is redesigning service coverage, they can move or copy a contiguous segment between route concepts.
 
 1. Open the source route concept.
-2. Use **Reassign stops** in the details panel.
+2. Use **Move segment between routes** in the details panel.
 3. Choose the first and last stop in the range.
 4. Choose the target route concept.
 5. Choose whether to insert the stops at the beginning, after a target stop, or at the end.
-6. Use **Copy stops** to test coverage overlap or **Move stops** to transfer coverage.
+6. Use **Move segment** to transfer coverage or **Copy segment** to test coverage overlap.
+7. Review the runtime impact message for source and target one-way runtime changes.
 
-Moved stops are removed from the source route and copied into the target route with new local IDs. Existing route-line bend anchors and stale segment runtimes are cleaned up where the stop order changes.
+Moved stops are removed from the source route and copied into the target route with new local IDs. Line bends between stops inside the selected segment move with that segment. Bends that connect to stops outside the selected segment are cleaned up, and stale segment runtimes are cleared where the stop order changes.
 
 V1 may store this state locally only. The workflow should still use stable IDs and a structure that can later move to Firebase.
 
