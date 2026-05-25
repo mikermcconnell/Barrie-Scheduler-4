@@ -887,12 +887,18 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                         </div>
                     </div>
 
+                    {!transferScopeSourceComplete && (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                            This saved import uses a legacy capped transfer summary. Re-import Transit App data to enable complete scoped rankings and exact map time-band volumes.
+                        </div>
+                    )}
+
                     {/* ── Top Transfer Pairs — Hero Section ───────────────── */}
                     <SectionCard
                         title="Top Transfer Pairs"
                         subtitle={viewMode === 'map'
-                            ? `Showing ${mapLimit === 'all' ? mapPairs.length : mapLimit} pairs on map`
-                            : `${filteredTopPairs.length} pairs ranked by transfer volume`
+                            ? `Showing ${mapLimit === 'all' ? mapPairs.length : Math.min(mapLimit, mapPairs.length)} pairs on map`
+                            : `Top ${visibleTopPairs.length} of ${scopedTopPairs.length} ${scope === 'all' ? 'systemwide' : scope} pairs ranked by transfer volume`
                         }
                         noPadding
                     >
@@ -904,7 +910,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                 onIsolateStop={setIsolatedStop}
                                 showRoutes={showRoutes}
                             />
-                        ) : filteredTopPairs.length > 0 ? (
+                        ) : visibleTopPairs.length > 0 ? (
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
@@ -919,7 +925,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filteredTopPairs.map((row, i) => (
+                                        {visibleTopPairs.map((row, i) => (
                                             <tr key={i} className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors ${i % 2 === 1 ? 'bg-slate-25' : ''}`}>
                                                 <td className="py-2.5 px-4">
                                                     <span className="inline-flex items-center justify-center w-8 h-6 rounded bg-slate-100 text-xs font-bold text-slate-700">
@@ -980,10 +986,10 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <SectionCard
                             title="GO-Linked Transfers"
-                            subtitle="Volumes by route pair and time band"
+                            subtitle={`Top ${visibleGoLinked.length} of ${scopedGoLinked.length} scoped rows by route pair and time band`}
                             accentColor="#6366f1"
                         >
-                            {filteredGoLinked.length > 0 ? (
+                            {visibleGoLinked.length > 0 ? (
                                 <div className="overflow-x-auto -mx-5 -mb-5">
                                     <table className="w-full text-sm">
                                         <thead>
@@ -995,7 +1001,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {filteredGoLinked.slice(0, 15).map((row, i) => (
+                                            {visibleGoLinked.map((row, i) => (
                                                 <tr key={i} className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors ${i % 2 === 1 ? 'bg-slate-25' : ''}`}>
                                                     <td className="py-2 px-5">
                                                         <span className="inline-flex items-center justify-center px-1.5 h-5 rounded bg-indigo-50 text-[10px] font-bold text-indigo-700">
@@ -1025,10 +1031,10 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
 
                         <SectionCard
                             title="Connection Targets"
-                            subtitle="Import-ready candidates for Scheduler 4"
+                            subtitle={`Top ${visibleConnectionTargets.length} of ${scopedConnectionTargets.length} scoped import-ready candidates`}
                             accentColor="#10b981"
                         >
-                            {filteredConnectionTargets.length > 0 ? (
+                            {visibleConnectionTargets.length > 0 ? (
                                 <div className="overflow-x-auto -mx-5 -mb-5">
                                     <table className="w-full text-sm">
                                         <thead>
@@ -1041,7 +1047,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {filteredConnectionTargets.slice(0, 15).map((row, i) => (
+                                            {visibleConnectionTargets.map((row, i) => (
                                                 <tr key={i} className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors ${i % 2 === 1 ? 'bg-slate-25' : ''}`}>
                                                     <td className="py-2 px-5">
                                                         <div className="font-semibold text-slate-800 text-xs">{row.fromRoute} → {row.toRoute}</div>
@@ -1138,7 +1144,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
             ) : (
                 <SectionCard
                     title="Transfer Patterns"
-                    subtitle={`${fmt(sortedPatterns.length)} route-to-route transfers`}
+                    subtitle={`Top ${fmt(visiblePatterns.length)} of ${fmt(sortedPatterns.length)} scoped route-to-route transfers`}
                     headerExtra={
                         <div className="flex items-center gap-3">
                             <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
@@ -1161,7 +1167,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                     }
                     noPadding
                 >
-                    {sortedPatterns.length > 0 ? (
+                    {visiblePatterns.length > 0 ? (
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
@@ -1177,7 +1183,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {sortedPatterns.map((tp, i) => (
+                                    {visiblePatterns.map((tp, i) => (
                                         <tr key={i} className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors ${i % 2 === 1 ? 'bg-slate-25' : ''}`}>
                                             <td className="py-2 px-4">
                                                 <span className="inline-flex items-center justify-center w-8 h-5 rounded bg-slate-100 text-[10px] font-bold text-slate-700">

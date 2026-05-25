@@ -143,6 +143,9 @@ describe('aggregateTransitAppData transfer analysis', () => {
         expect(goRow?.timeBand).toBe('pm_peak');
         expect(goRow?.transferType).toBe('barrie_to_go');
 
+        const topGoPair = transferAnalysis?.topTransferPairs.find(row => row.fromRoute === '8A' && row.toRoute === 'BR');
+        expect(topGoPair?.timeBandCounts?.pm_peak).toBe(1);
+
         const goTarget = transferAnalysis?.connectionTargets.find(target => target.fromRoute === '8A' && target.toRoute === 'BR');
         expect(goTarget).toBeDefined();
         expect(goTarget?.priorityTier).toBe('high');
@@ -154,6 +157,7 @@ describe('aggregateTransitAppData transfer analysis', () => {
         const legacyPattern = summary.transferPatterns.find(tp => tp.fromRoute === '8A' && tp.toRoute === 'BR');
         expect(legacyPattern?.fromTripAnchors?.[0]?.timeLabel).toBe('17:00');
         expect(legacyPattern?.toTripAnchors?.[0]?.timeLabel).toBe('17:06');
+        expect(legacyPattern?.totalWaitMinutes).toBe(6);
     });
 
     it('deduplicates repeated itinerary checks across duplicate chains', () => {
@@ -215,5 +219,53 @@ describe('aggregateTransitAppData transfer analysis', () => {
         expect(transferAnalysis?.totals.tripChainsProcessed).toBe(2);
         expect(transferAnalysis?.totals.tripChainsDeduplicated).toBe(1);
         expect(transferAnalysis?.totals.transferEvents).toBe(1);
+    });
+
+    it('keeps full rankable transfer lists so scope filters can rank before display caps', () => {
+        const goTripLegs: TransitAppTripLegRow[] = [];
+
+        for (let i = 0; i < 20; i++) {
+            const hour = 10 + Math.floor(i / 4);
+            const minute = (i % 4) * 10;
+            const startMinute = minute.toString().padStart(2, '0');
+            const endMinute = (minute + 4).toString().padStart(2, '0');
+            const nextMinute = (minute + 7).toString().padStart(2, '0');
+            goTripLegs.push(
+                makeLeg({
+                    userTripId: `unique-${i}`,
+                    serviceName: 'Barrie Transit',
+                    route: '101',
+                    startTime: `2025-01-08 ${hour}:${startMinute}:00 UTC`,
+                    endTime: `2025-01-08 ${hour}:${endMinute}:00 UTC`,
+                    startStop: `Origin ${i}`,
+                    endStop: `Transfer Stop ${i}`,
+                }),
+                makeLeg({
+                    userTripId: `unique-${i}`,
+                    serviceName: 'Barrie Transit',
+                    route: `${400 + i}`,
+                    startTime: `2025-01-08 ${hour}:${nextMinute}:00 UTC`,
+                    endTime: `2025-01-08 ${hour}:59:00 UTC`,
+                    startStop: `Transfer Stop ${i}`,
+                    endStop: `Destination ${i}`,
+                })
+            );
+        }
+
+        const parsed: TransitAppParsedData = {
+            lines: [],
+            trips: [],
+            locations: [],
+            goTripLegs,
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+
+        expect(summary.transferAnalysis?.topTransferPairs).toHaveLength(20);
+        expect(summary.transferAnalysis?.connectionTargets).toHaveLength(20);
+        expect(summary.transferPatterns).toHaveLength(20);
     });
 });

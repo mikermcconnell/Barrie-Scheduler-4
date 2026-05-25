@@ -60,18 +60,16 @@ Check an item only after confirming:
   - Tests: `tests/appUsageChartUtils.test.ts`, `tests/transitAppParsers.test.ts`, `tests/transitAppPipeline.e2e.test.ts`, and `tests/transitAppAggregator.transferAnalysis.test.ts`.
   - Follow-up note: `Days Covered` currently uses `appUsage.length || tripDistribution.daily.length`. Local data has 92 app-usage days and 93 Eastern-time trip day bins because one trip rolls into `2025-02-01`; the displayed 92 is correct for source `users.csv` days but could be misleading if interpreted as distinct trip-demand days.
 
-### Transfer tab - reviewed with findings, not checked off
+### Transfer tab - checked
 
-- [ ] **Transfer metrics and tables**
+- [x] **Transfer metrics and tables**
   - UI: `components/Analytics/TransfersModule.tsx`
   - Source: `go_trip_legs_*.csv` and `tapped_trip_view_legs_*.csv` -> `parseTripLegsFile` -> `analyzeTransferConnections` -> `data.transferAnalysis` and `data.transferPatterns`
   - Local validation: 87,202 GO trip legs, 363,293 tapped trip legs, 30,898 trip chains processed, 8,939 duplicate chains removed, 29,676 transfer events, 3,372 GO-linked events, 1,975 unique route pairs, 1,298 unique transfer stops.
-  - Tests: `tests/transitAppAggregator.transferAnalysis.test.ts` and `tests/transitAppPipeline.e2e.test.ts`.
-  - Findings to fix before checking off:
-    1. The scope control defaults to `Barrie`, but the KPI cards still show all-system totals, so the visible table scope and KPI scope do not match.
-    2. Scope filtering happens after capped lists are built (`topTransferPairs` top 15, `goLinkedSummary` top 30, `connectionTargets` top 30, `transferPatterns` top 50). This means filtered views may omit valid in-scope rows below the all-system cap.
-    3. In map mode, the time-band filter uses `dominantTimeBands.includes(...)`, but marker volume still shows total pair volume rather than exact volume for that band.
-    4. Grouped transfer average wait is computed from already-rounded pattern averages, so grouped averages can be slightly off.
+  - Fixes completed: scope-aware KPI cards, full rankable transfer lists saved before display caps, exact map time-band marker volumes via `timeBandCounts`, grouped wait averages from total wait, and a legacy-import warning when saved transfer summaries are capped.
+  - Local post-fix validation: full `topTransferPairs` now represents all 29,676 transfer events; local full-list counts are 2,977 top pair rows, 354 GO-linked rows, 3,061 connection target rows, and 3,447 transfer pattern rows.
+  - Tests: `tests/transitAppAggregator.transferAnalysis.test.ts`, `tests/transitAppTransferScope.test.ts`, and `tests/transitAppPipeline.e2e.test.ts`.
+  - Rollout note: existing saved Transit App imports must be re-imported to regenerate uncapped transfer summaries and exact time-band counts.
 
 ## Active workspace inventory
 
@@ -121,16 +119,16 @@ Check an item only after confirming:
 
 | Reviewed | Surface | UI label / columns | Source fields | Review notes |
 |---|---|---|---|---|
-| [ ] | Metric | Transfer Events | `transferAnalysis.totals.transferEvents` | Reviewed. Local total is 29,676 after duplicate-chain removal. Not checked off because KPI does not follow selected scope. |
-| [ ] | Metric | GO-Linked Events | `goLinkedTransferEvents` | Reviewed. Local total is 3,372. Not checked off because KPI does not follow selected scope. |
-| [ ] | Metric | Unique Route Pairs | `uniqueRoutePairs` | Reviewed. Local total is 1,975. Not checked off because KPI does not follow selected scope. |
-| [ ] | Metric | Route Match Rate | `transferAnalysis.normalization.routeMatchRate` | Reviewed. Local route match rate is 31.39% and stop match rate is 59.71%. Not checked off because KPI does not follow selected scope. |
-| [ ] | Map/table | Top Transfer Pairs | `transferAnalysis.topTransferPairs` | Reviewed. Local saved list has 15 all-system pairs; default Barrie scope leaves 10. Needs scoped ranking before cap. |
-| [ ] | Table | Top Transfer Pairs: from, to, transfer stop, arrival/departure times, peak bands, volume, avg wait | `filteredTopPairs` | Reviewed. Values match saved top-pair rows, but filtering happens after top-15 cap. |
-| [ ] | Table | GO-Linked Transfers: from, to, band, count | `goLinkedSummary` | Reviewed. Local saved list has 30 rows; needs scoped ranking before cap for filtered views. |
-| [ ] | Table | Connection Targets: pair, stop ID, arr/dep times, bands, tier | `connectionTargets` | Reviewed. Local saved list has 30 all-system rows; default Barrie scope leaves 22. Needs scoped ranking before cap. |
-| [ ] | Table | Grouped transfer pattern tables: from stop, to stop, arrival/departure times, count, avg wait, range | `groupedPatterns` | Reviewed. Grouping works, but average wait is based on rounded pattern averages and source list is capped before scope. |
-| [ ] | Table | Transfer Patterns: from, to, transfer stop, arrival/departure times, count, avg wait, range | `transferPatterns` | Reviewed. Local saved list has 50 all-system rows; default Barrie scope leaves 37. Needs scoped ranking before cap. |
+| [x] | Metric | Transfer Events | Scoped `topTransferPairs` count sum, with all-system fallback | Verified local all-system total is 29,676 and Barrie-scope total is 23,067. |
+| [x] | Metric | GO-Linked Events | Scoped `topTransferPairs` GO-linked count sum, with all-system fallback | Verified local all-system total is 3,372 and Barrie-scope total is 3,368. |
+| [x] | Metric | Unique Route Pairs | Scoped `topTransferPairs` route-pair set | Verified route-pair count follows the selected scope. |
+| [x] | Metric | Route Match Rate | Scoped route-reference matches from `topTransferPairs` | Verified all-system route match rate is 31.39%; scoped KPI now follows selected scope. |
+| [x] | Map/table | Top Transfer Pairs | `transferAnalysis.topTransferPairs` | Verified full rankable list is saved before UI display caps; local full list has 2,977 rows. |
+| [x] | Table | Top Transfer Pairs: from, to, transfer stop, arrival/departure times, peak bands, volume, avg wait | `visibleTopPairs` after scope filtering | Verified scope filtering happens before top-50 display cap. |
+| [x] | Table | GO-Linked Transfers: from, to, band, count | `visibleGoLinked` after scope filtering | Verified scope filtering happens before top-15 display cap; local full GO-linked list has 354 rows. |
+| [x] | Table | Connection Targets: pair, stop ID, arr/dep times, bands, tier | `visibleConnectionTargets` after scope filtering | Verified scope filtering happens before top-15 display cap; local full target list has 3,061 rows. |
+| [x] | Table | Grouped transfer pattern tables: from stop, to stop, arrival/departure times, count, avg wait, range | `groupedPatterns` | Verified grouping uses scoped visible rows and weighted total-wait math where available. |
+| [x] | Table | Transfer Patterns: from, to, transfer stop, arrival/departure times, count, avg wait, range | `visiblePatterns` after scope filtering | Verified scope filtering happens before top-100 display cap; local full transfer-pattern list has 3,447 rows. |
 
 ### Heatmap tab - `HeatmapModule.tsx`
 
