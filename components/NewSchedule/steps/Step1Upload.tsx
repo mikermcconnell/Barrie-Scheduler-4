@@ -154,49 +154,49 @@ export const Step1Upload: React.FC<Step1Props> = ({
     };
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="text-center space-y-2">
-                <h2 className="text-2xl font-bold text-gray-900">Let's Get Started</h2>
-                <p className="text-gray-500">Choose how you want to create your schedule.</p>
+        <div className="space-y-4 animate-in fade-in duration-500">
+            <div className="text-center space-y-1">
+                <h2 className="text-xl font-bold text-gray-900 sm:text-2xl">Let's Get Started</h2>
+                <p className="text-xs text-gray-500 sm:text-sm">Choose how you want to create your schedule.</p>
             </div>
 
             {/* Import Mode Selector */}
-            <div className="grid grid-cols-3 gap-4 max-w-3xl mx-auto">
+            <div className="mx-auto grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-3">
                 <button
                     onClick={() => setImportMode('csv')}
-                    className={`flex flex-col items-center p-6 rounded-xl border-2 transition-all duration-200 ${
+                    className={`flex min-h-[64px] flex-col items-center justify-center rounded-xl border-2 p-2.5 text-center transition-all duration-200 md:min-h-[116px] md:p-3 lg:min-h-[132px] lg:p-4 ${
                         importMode === 'csv'
                             ? 'border-brand-blue bg-blue-50 text-brand-blue shadow-md scale-[1.02]'
                             : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
                     }`}
                 >
-                    <FileSpreadsheet className={`mb-3 ${importMode === 'csv' ? 'text-brand-blue' : 'text-gray-400'}`} size={32} />
-                    <span className="font-bold text-lg">Create from Runtime CSV</span>
-                    <span className="text-sm text-gray-500 mt-1">Build a new optimized schedule</span>
+                    <FileSpreadsheet className={`mb-1 ${importMode === 'csv' ? 'text-brand-blue' : 'text-gray-400'}`} size={22} />
+                    <span className="text-sm font-bold leading-tight lg:text-base">Runtime CSV</span>
+                    <span className="mt-1 hidden text-xs leading-snug text-gray-500 lg:block">Build a new optimized schedule</span>
                 </button>
                 <button
                     onClick={() => setImportMode('performance')}
-                    className={`flex flex-col items-center p-6 rounded-xl border-2 transition-all duration-200 ${
+                    className={`flex min-h-[64px] flex-col items-center justify-center rounded-xl border-2 p-2.5 text-center transition-all duration-200 md:min-h-[116px] md:p-3 lg:min-h-[132px] lg:p-4 ${
                         importMode === 'performance'
                             ? 'border-teal-500 bg-teal-50 text-teal-600 shadow-md scale-[1.02]'
                             : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
                     }`}
                 >
-                    <BarChart3 className={`mb-3 ${importMode === 'performance' ? 'text-teal-600' : 'text-gray-400'}`} size={32} />
-                    <span className="font-bold text-lg">Create from Performance Data</span>
-                    <span className="text-sm text-gray-500 mt-1">Use imported STREETS runtimes</span>
+                    <BarChart3 className={`mb-1 ${importMode === 'performance' ? 'text-teal-600' : 'text-gray-400'}`} size={22} />
+                    <span className="text-sm font-bold leading-tight lg:text-base">Performance Data</span>
+                    <span className="mt-1 hidden text-xs leading-snug text-gray-500 lg:block">Use imported STREETS runtimes</span>
                 </button>
                 <button
                     onClick={() => setImportMode('gtfs')}
-                    className={`flex flex-col items-center p-6 rounded-xl border-2 transition-all duration-200 ${
+                    className={`flex min-h-[64px] flex-col items-center justify-center rounded-xl border-2 p-2.5 text-center transition-all duration-200 md:min-h-[116px] md:p-3 lg:min-h-[132px] lg:p-4 ${
                         importMode === 'gtfs'
                             ? 'border-indigo-500 bg-indigo-50 text-indigo-600 shadow-md scale-[1.02]'
                             : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
                     }`}
                 >
-                    <Database className={`mb-3 ${importMode === 'gtfs' ? 'text-indigo-600' : 'text-gray-400'}`} size={32} />
-                    <span className="font-bold text-lg">Import from GTFS</span>
-                    <span className="text-sm text-gray-500 mt-1">Import existing Barrie Transit schedule</span>
+                    <Database className={`mb-1 ${importMode === 'gtfs' ? 'text-indigo-600' : 'text-gray-400'}`} size={22} />
+                    <span className="text-sm font-bold leading-tight lg:text-base">GTFS Import</span>
+                    <span className="mt-1 hidden text-xs leading-snug text-gray-500 lg:block">Import an existing schedule</span>
                 </button>
             </div>
 
@@ -204,18 +204,18 @@ export const Step1Upload: React.FC<Step1Props> = ({
             {importMode === 'csv' && (
                 <>
                     {/* Day Type Selector */}
-                    <div className="grid grid-cols-3 gap-4 max-w-2xl mx-auto">
+                    <div className="mx-auto grid max-w-2xl grid-cols-3 gap-3">
                         {(['Weekday', 'Saturday', 'Sunday'] as const).map((type) => (
                             <button
                                 key={type}
                                 onClick={() => setDayType(type)}
-                                className={`flex flex-col items-center p-4 rounded-xl border-2 transition-all duration-200 ${dayType === type
+                                className={`flex flex-col items-center rounded-xl border-2 p-3 transition-all duration-200 ${dayType === type
                                         ? 'border-brand-blue bg-blue-50 text-brand-blue shadow-md scale-[1.02]'
                                         : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
                                     }`}
                             >
-                                <Calendar className={`mb-2 ${dayType === type ? 'text-brand-blue' : 'text-gray-400'}`} size={24} />
-                                <span className="font-bold text-lg">{type}</span>
+                                <Calendar className={`mb-1.5 ${dayType === type ? 'text-brand-blue' : 'text-gray-400'}`} size={20} />
+                                <span className="text-sm font-bold sm:text-base">{type}</span>
                             </button>
                         ))}
                     </div>
@@ -224,7 +224,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
                     <div className="max-w-2xl mx-auto">
                         <div
                             {...getRootProps()}
-                            className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-200 ${isDragActive
+                            className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition-all duration-200 sm:p-8 ${isDragActive
                                     ? 'border-brand-blue bg-blue-50 scale-[1.01]'
                                     : 'border-gray-300 hover:border-brand-blue/50 hover:bg-gray-50'
                                 }`}
@@ -232,10 +232,10 @@ export const Step1Upload: React.FC<Step1Props> = ({
                             <input {...getInputProps()} />
                             <div className="flex flex-col items-center space-y-4">
                                 <div className="bg-gray-100 p-4 rounded-full">
-                                    <Upload className="text-gray-500" size={32} />
+                                    <Upload className="text-gray-500" size={28} />
                                 </div>
                                 <div>
-                                    <p className="text-lg font-bold text-gray-700">Click to upload or drag and drop</p>
+                                    <p className="text-base font-bold text-gray-700 sm:text-lg">Click to upload or drag and drop</p>
                                     <p className="text-sm text-gray-500">Upload your Observed Runtime CSVs (Max 2 files)</p>
                                 </div>
                             </div>
@@ -269,7 +269,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
 
             {/* Performance Data Mode */}
             {importMode === 'performance' && (
-                <div className="max-w-4xl mx-auto space-y-6">
+                <div className="mx-auto max-w-4xl space-y-4">
                     {performanceMetadataLoading ? (
                         <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm font-medium text-gray-500">
                             Loading route list...
@@ -304,25 +304,25 @@ export const Step1Upload: React.FC<Step1Props> = ({
                     )}
 
                     {/* Day Type Selector */}
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-3 gap-3">
                         {(['Weekday', 'Saturday', 'Sunday'] as const).map((type) => (
                             <button
                                 key={type}
                                 onClick={() => setDayType(type)}
-                                className={`flex flex-col items-center p-4 rounded-xl border-2 transition-all duration-200 ${dayType === type
+                                className={`flex flex-col items-center rounded-xl border-2 p-3 transition-all duration-200 ${dayType === type
                                         ? 'border-teal-500 bg-teal-50 text-teal-600 shadow-md scale-[1.02]'
                                         : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
                                     }`}
                             >
-                                <Calendar className={`mb-2 ${dayType === type ? 'text-teal-600' : 'text-gray-400'}`} size={24} />
-                                <span className="font-bold text-lg">{type}</span>
+                                <Calendar className={`mb-1.5 ${dayType === type ? 'text-teal-600' : 'text-gray-400'}`} size={20} />
+                                <span className="text-sm font-bold sm:text-base">{type}</span>
                             </button>
                         ))}
                     </div>
 
                     {performanceDataLoading ? (
-                        <div className="text-center p-8 bg-gray-50 rounded-xl border border-gray-200">
-                            <div className="animate-spin w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full mx-auto mb-3" />
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-center">
+                            <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
                             <p className="text-gray-600 font-medium">Loading performance data...</p>
                         </div>
                     ) : !availableRoutes || availableRoutes.length === 0 ? (

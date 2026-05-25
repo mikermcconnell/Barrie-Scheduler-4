@@ -185,129 +185,130 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
 
     return (
         <>
-            <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-[60]">
-                {/* Left Section: Back + Project Menu */}
-                <div className="flex items-center gap-4 w-1/4">
-                    {/* Back Button */}
-                    <button
-                        onClick={handleExitClick}
-                        className="text-gray-400 hover:text-gray-600 transition-colors p-1"
-                        title="Back to Dashboard"
-                    >
-                        <ArrowLeft size={20} />
-                    </button>
+            <div className="sticky top-0 z-[60] border-b border-gray-200 bg-white/95 shadow-sm backdrop-blur">
+                <div className="flex flex-col gap-2 px-4 py-2.5 lg:px-6">
+                    {/* Top row: project identity + project actions */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex min-w-0 items-center gap-3">
+                            <button
+                                onClick={handleExitClick}
+                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                                title="Back to Dashboard"
+                            >
+                                <ArrowLeft size={19} />
+                            </button>
 
-                    {/* Project File Menu */}
-                    <div className="flex items-center gap-2">
-                        {/* Project Name (Editable) */}
-                        <div className="flex flex-col">
-                            <span className="text-[10px] uppercase font-bold text-gray-400 leading-none tracking-wider">Project</span>
-                            {isRenaming ? (
-                                <input
-                                    autoFocus
-                                    value={renameValue}
-                                    onChange={(e) => setRenameValue(e.target.value)}
-                                    onBlur={handleRename}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleRename()}
-                                    className="text-sm font-bold text-gray-800 bg-transparent border-b border-blue-500 outline-none px-0 py-0 min-w-[150px]"
-                                />
-                            ) : (
+                            <div className="min-w-0">
+                                <span className="text-[10px] font-bold uppercase leading-none tracking-wider text-gray-400">Project</span>
+                                {isRenaming ? (
+                                    <input
+                                        autoFocus
+                                        value={renameValue}
+                                        onChange={(e) => setRenameValue(e.target.value)}
+                                        onBlur={handleRename}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleRename()}
+                                        className="mt-0.5 w-full min-w-[180px] max-w-sm border-0 border-b border-blue-500 bg-transparent px-0 py-0 text-sm font-bold text-gray-800 outline-none focus:ring-0"
+                                    />
+                                ) : (
+                                    <button
+                                        onClick={() => setIsRenaming(true)}
+                                        className="mt-0.5 flex max-w-[min(420px,70vw)] items-center gap-1 text-left text-sm font-bold leading-tight text-gray-900 hover:text-blue-600"
+                                        title="Rename Project"
+                                    >
+                                        <span className="truncate">{projectName}</span>
+                                        {isDirty && (
+                                            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" title="Unsaved changes" />
+                                        )}
+                                    </button>
+                                )}
+                                {(routeNumber || dayType) && (
+                                    <p className="mt-1 hidden truncate text-xs font-medium text-gray-500 md:block">
+                                        {[routeNumber ? `Route ${routeNumber}` : null, dayType].filter(Boolean).join(' - ')}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                            {onNewProject && (
                                 <button
-                                    onClick={() => setIsRenaming(true)}
-                                    className="text-sm font-bold text-gray-800 hover:text-blue-600 truncate max-w-[200px] text-left leading-tight flex items-center gap-1"
-                                    title="Rename Project"
+                                    onClick={onNewProject}
+                                    className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                                    title="Start a new project"
                                 >
-                                    {projectName}
-                                    {isDirty && (
-                                        <span className="inline-block w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" title="Unsaved changes" />
-                                    )}
+                                    <Plus size={14} />
+                                    New
                                 </button>
                             )}
+
+                            {onOpenProjects && (
+                                <button
+                                    onClick={onOpenProjects}
+                                    className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                                    title="Open saved projects"
+                                >
+                                    <FolderOpen size={14} />
+                                    Open
+                                </button>
+                            )}
+
+                            <div className="hidden h-6 w-px bg-gray-200 sm:block" />
+
+                            <div className="flex min-h-8 items-center rounded-lg bg-gray-50 px-2.5">
+                                {renderSaveStatus()}
+                            </div>
+
+                            <button
+                                onClick={handleExitClick}
+                                className="flex h-8 items-center gap-2 rounded-lg bg-gray-100 px-2.5 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200 hover:text-gray-900"
+                            >
+                                <Save size={14} />
+                                Exit
+                            </button>
                         </div>
                     </div>
-                </div>
 
-                {/* Middle Section: Interactive Stepper */}
-                <div className="flex items-center justify-center gap-2 flex-grow">
-                    {steps.map((s, idx) => {
-                        const isCompleted = s.num < currentStep;
-                        const isCurrent = s.num === currentStep;
-                        const isReachable = s.num <= maxStepReached;
-                        const isLast = idx === steps.length - 1;
+                    {/* Stepper */}
+                    <div className="overflow-x-auto pb-0.5">
+                        <div className="flex min-w-max items-center justify-start gap-2 lg:min-w-0 lg:justify-center">
+                            {steps.map((s, idx) => {
+                                const isCompleted = s.num < currentStep;
+                                const isCurrent = s.num === currentStep;
+                                const isReachable = s.num <= maxStepReached;
+                                const isLast = idx === steps.length - 1;
 
-                        return (
-                            <React.Fragment key={s.num}>
-                                <button
-                                    onClick={() => isReachable && onStepClick && onStepClick(s.num)}
-                                    disabled={!isReachable}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all ${isCurrent
-                                        ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
-                                        : isCompleted
-                                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
-                                            : 'bg-white border-transparent text-gray-400 cursor-not-allowed'
-                                        }`}
-                                >
-                                    {isCompleted ? (
-                                        <CheckCircle2 size={16} className="text-emerald-500" />
-                                    ) : (
-                                        <span className={`flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold ${isCurrent ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'
-                                            }`}>
-                                            {s.num}
-                                        </span>
-                                    )}
-                                    <span className="text-sm font-bold">{s.label}</span>
-                                </button>
+                                return (
+                                    <React.Fragment key={s.num}>
+                                        <button
+                                            onClick={() => isReachable && onStepClick && onStepClick(s.num)}
+                                            disabled={!isReachable}
+                                            className={`flex items-center gap-2 rounded-full border px-2.5 py-1 transition-all ${isCurrent
+                                                ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
+                                                : isCompleted
+                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                                    : 'cursor-not-allowed border-gray-100 bg-white text-gray-400'
+                                                }`}
+                                        >
+                                            {isCompleted ? (
+                                                <CheckCircle2 size={16} className="text-emerald-500" />
+                                            ) : (
+                                                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${isCurrent ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'
+                                                    }`}>
+                                                    {s.num}
+                                                </span>
+                                            )}
+                                            <span className="text-sm font-bold">{s.label}</span>
+                                        </button>
 
-                                {!isLast && (
-                                    <div className={`w-8 h-0.5 ${isCompleted ? 'bg-emerald-200' : 'bg-gray-100'
-                                        }`} />
-                                )}
-                            </React.Fragment>
-                        );
-                    })}
-                </div>
-
-                {/* Right Section: Project Actions + Save Status + Exit */}
-                <div className="flex items-center gap-3 w-1/4 justify-end">
-                    {/* New Project Button */}
-                    {onNewProject && (
-                        <button
-                            onClick={onNewProject}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-                            title="Start a new project"
-                        >
-                            <Plus size={14} />
-                            New
-                        </button>
-                    )}
-
-                    {/* Open Projects Button */}
-                    {onOpenProjects && (
-                        <button
-                            onClick={onOpenProjects}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-                            title="Open saved projects"
-                        >
-                            <FolderOpen size={14} />
-                            Open
-                        </button>
-                    )}
-
-                    <div className="h-6 w-px bg-gray-200" />
-
-                    {/* Unified Save Status */}
-                    <div className="flex items-center px-2">
-                        {renderSaveStatus()}
+                                        {!isLast && (
+                                            <div className={`h-0.5 w-6 ${isCompleted ? 'bg-emerald-200' : 'bg-gray-100'
+                                                }`} />
+                                        )}
+                                    </React.Fragment>
+                                );
+                            })}
+                        </div>
                     </div>
-
-                    {/* Exit Button */}
-                    <button
-                        onClick={handleExitClick}
-                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                    >
-                        <Save size={14} />
-                        Exit
-                    </button>
                 </div>
             </div>
 

@@ -16,13 +16,9 @@ import type {
     TransitAppTripLegRow,
 } from './transitAppTypes';
 
-const TRANSFER_ANALYSIS_SCHEMA_VERSION = 1;
+const TRANSFER_ANALYSIS_SCHEMA_VERSION = 2;
 const MAX_REASONABLE_TRANSFER_WAIT_MINUTES = 180;
 const MAX_VOLUME_MATRIX_ROWS = 1000;
-const MAX_TOP_TRANSFER_PAIRS = 15;
-const MAX_GO_LINKED_ROWS = 30;
-const MAX_CONNECTION_TARGETS = 30;
-const MAX_LEGACY_TRANSFER_PATTERNS = 50;
 const MAX_TRIP_ANCHORS = 3;
 
 type NormalizedAgency = 'barrie' | 'go' | 'regional' | 'unknown';
@@ -789,11 +785,11 @@ export function analyzeTransferConnections(
             totalCount: entry.totalCount,
             avgWaitMinutes: Math.round(entry.totalWait / entry.totalCount),
             dominantTimeBands: dominantTimeBands(entry.timeBands),
+            timeBandCounts: Object.fromEntries(entry.timeBands.entries()) as Partial<Record<TransferTimeBand, number>>,
             fromTripAnchors: dominantTripAnchors(entry.fromTripMinutes),
             toTripAnchors: dominantTripAnchors(entry.toTripMinutes),
         }))
-        .sort((a, b) => b.totalCount - a.totalCount)
-        .slice(0, MAX_TOP_TRANSFER_PAIRS);
+        .sort((a, b) => b.totalCount - a.totalCount);
 
     const goLinkedSummary: GoLinkedTransferSummary[] = Array.from(goLinkedMap.values())
         .map(entry => ({
@@ -801,8 +797,7 @@ export function analyzeTransferConnections(
             totalCount: entry.totalCount,
             avgWaitMinutes: Math.round(entry.totalWait / entry.totalCount),
         }))
-        .sort((a, b) => b.totalCount - a.totalCount)
-        .slice(0, MAX_GO_LINKED_ROWS);
+        .sort((a, b) => b.totalCount - a.totalCount);
 
     const connectionTargetCandidates = Array.from(targetMap.values())
         .map(entry => ({
@@ -813,7 +808,6 @@ export function analyzeTransferConnections(
             toTripAnchors: dominantTripAnchors(entry.toTripMinutes),
         }))
         .sort((a, b) => b.totalTransfers - a.totalTransfers)
-        .slice(0, MAX_CONNECTION_TARGETS)
         .map((entry, idx): TransferConnectionTargetCandidate => {
             let priorityTier: TransferConnectionTargetCandidate['priorityTier'] = 'low';
             if (entry.goLinked) {
@@ -848,12 +842,12 @@ export function analyzeTransferConnections(
                 toTripAnchors: dominantTripAnchors(entry.toTripMinutes),
                 count: entry.count,
                 avgWaitMinutes: Math.round(entry.waits.reduce((sum, wait) => sum + wait, 0) / entry.waits.length),
+                totalWaitMinutes: Math.round(entry.waits.reduce((sum, wait) => sum + wait, 0)),
                 minWaitMinutes: Math.round(sortedWaits[0] || 0),
                 maxWaitMinutes: Math.round(sortedWaits[sortedWaits.length - 1] || 0),
             };
         })
-        .sort((a, b) => b.count - a.count)
-        .slice(0, MAX_LEGACY_TRANSFER_PATTERNS);
+        .sort((a, b) => b.count - a.count);
 
     const routePairs = new Set(transferEvents.map(e => `${e.fromRoute}|${e.toRoute}`));
     const transferStops = new Set(transferEvents.map(e => e.transferStopName).filter(Boolean));

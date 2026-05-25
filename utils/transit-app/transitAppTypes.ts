@@ -454,6 +454,7 @@ export interface TransferPattern {
     avgWaitMinutes: number;
     minWaitMinutes: number;
     maxWaitMinutes: number;
+    totalWaitMinutes?: number;
 }
 
 export type TransferTimeBand = 'am_peak' | 'midday' | 'pm_peak' | 'evening' | 'overnight';
@@ -506,6 +507,7 @@ export interface TransferPairSummary {
     totalCount: number;
     avgWaitMinutes: number;
     dominantTimeBands: TransferTimeBand[];
+    timeBandCounts?: Partial<Record<TransferTimeBand, number>>;
     fromTripAnchors?: TransferTripAnchor[];
     toTripAnchors?: TransferTripAnchor[];
 }

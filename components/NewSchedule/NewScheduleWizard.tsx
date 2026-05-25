@@ -1838,7 +1838,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     return (
         <>
-            <div className="flex flex-col h-full bg-gray-50/50">
+            <div className="flex h-full min-h-0 flex-col bg-gray-50/50">
                 {(isPreparingStep2 || isPreparingStep4) && (
                     <div
                         className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/35 px-4 backdrop-blur-sm"
@@ -1886,8 +1886,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 />
 
                 {/* Content Area */}
-                <div className="flex-grow p-8 overflow-auto">
-                    <div className={step === 4 || step === 2 ? "w-full" : "max-w-5xl mx-auto"}>
+                <div className="min-h-0 flex-1 overflow-auto px-4 py-3 sm:px-6 sm:py-5 lg:px-8">
+                    <div className={step === 4 || step === 2 ? "w-full" : "mx-auto max-w-5xl"}>
                         {step === 1 && (
                             <Step1Upload
                                 files={files}
@@ -1981,11 +1981,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 </div>
 
                 {/* Footer / Actions */}
-                <div className="flex flex-col gap-3 border-t border-gray-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+                <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-2.5 sm:px-6 lg:px-8">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <button
                         onClick={() => setStep(s => Math.max(1, s - 1))}
                         disabled={step === 1}
-                        className="px-6 py-2 rounded-lg text-gray-600 font-bold hover:bg-gray-100 disabled:opacity-50 disabled:hover:bg-transparent"
+                        className="rounded-lg px-5 py-1.5 text-sm font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:hover:bg-transparent"
                     >
                         Back
                     </button>
@@ -1996,7 +1997,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             <button
                                 onClick={handleSaveProgress}
                                 disabled={isManualSaving || (!isDirty && cloudSaveStatus === 'saved')}
-                                className={`whitespace-nowrap px-4 py-2 rounded-lg border font-bold flex items-center justify-center gap-2 transition-all ${
+                                className={`flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-4 py-1.5 text-sm font-bold transition-all ${
                                     cloudSaveStatus === 'error'
                                         ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
                                         : manualSaveSuccess
@@ -2034,7 +2035,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         {step === 4 && hasTeam && generatedSchedules.length > 0 && (
                             <button
                                 onClick={handleUploadToMaster}
-                                className="px-6 py-2 rounded-lg border-2 border-brand-green text-brand-green font-bold hover:bg-green-50 flex items-center gap-2"
+                                className="flex items-center gap-2 rounded-lg border-2 border-brand-green px-5 py-1.5 text-sm font-bold text-brand-green hover:bg-green-50"
                             >
                                 <Upload size={18} />
                                 Upload to Master
@@ -2078,7 +2079,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             <button
                                 onClick={handleNext}
                                 disabled={primaryActionDisabled}
-                                className={`px-6 py-2 rounded-lg font-bold shadow-md flex items-center gap-2 ${
+                                className={`flex items-center justify-center gap-2 rounded-lg px-5 py-1.5 text-sm font-bold shadow-md ${
                                     primaryActionDisabled
                                         ? 'bg-gray-300 text-gray-500 shadow-none cursor-not-allowed'
                                         : 'bg-brand-blue text-white hover:brightness-110 shadow-blue-500/20'
@@ -2088,6 +2089,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 <ArrowRight size={18} />
                             </button>
                         )}
+                    </div>
                     </div>
                 </div>
             </div>

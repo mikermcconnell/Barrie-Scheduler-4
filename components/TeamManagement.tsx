@@ -757,7 +757,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
 
     // Has Team - Show Team Info
     return (
-        <div className="bg-white rounded-xl border border-gray-200 p-8 max-w-3xl mx-auto">
+        <div className="w-full max-w-full overflow-x-hidden rounded-xl border border-gray-200 bg-white p-4 sm:p-6">
             {onClose && (
                 <button
                     onClick={onClose}
@@ -833,18 +833,18 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             </div>
 
             {canLookupTeams && (
-                <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6">
+                <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-3">
                         <PlusCircle size={18} className="text-brand-green" />
                         <p className="text-sm font-semibold text-gray-900">Create partner team</p>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr]">
+                    <div className="grid gap-3 sm:grid-cols-2">
                         <input
                             type="text"
                             value={partnerTeamName}
                             onChange={(event) => setPartnerTeamName(event.target.value)}
                             placeholder="Team name, e.g. Lane Transit"
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-brand-green"
+                            className="min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-green focus:ring-2 focus:ring-brand-green"
                         />
                         <input
                             type="text"
@@ -854,12 +854,12 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                             )}
                             placeholder="Code optional"
                             maxLength={6}
-                            className="px-3 py-2 border border-gray-300 rounded-lg font-mono uppercase tracking-wider focus:ring-2 focus:ring-brand-green focus:border-brand-green"
+                            className="min-w-0 rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm uppercase tracking-wider focus:border-brand-green focus:ring-2 focus:ring-brand-green"
                         />
                         <select
                             value={partnerDefaultAccessLevel}
                             onChange={(event) => setPartnerDefaultAccessLevel(event.target.value as WorkspaceAccessLevel)}
-                            className="px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-brand-green focus:border-brand-green"
+                            className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brand-green focus:ring-2 focus:ring-brand-green sm:col-span-2"
                         >
                             {WORKSPACE_ACCESS_LEVELS.map(level => (
                                 <option key={level} value={level}>
@@ -875,7 +875,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         <button
                             onClick={handleCreatePartnerTeam}
                             disabled={creatingPartnerTeam || !partnerTeamName.trim()}
-                            className="px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="w-full rounded-lg bg-brand-green px-4 py-2 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                         >
                             {creatingPartnerTeam ? 'Creating...' : 'Create team'}
                         </button>
@@ -906,24 +906,30 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             )}
 
             {canLookupTeams && activeTeamDetails && (
-                <div className="bg-purple-50 border border-purple-100 rounded-xl p-4 mb-6">
-                    <div className="mb-4">
-                        <p className="text-sm font-semibold text-purple-900">Developer Access Wizard</p>
-                        <p className="text-xs text-purple-700">
-                            Select a team, choose a preset, then fine-tune exactly which workspaces are visible.
-                        </p>
+                <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                        <div>
+                            <p className="text-sm font-semibold text-gray-900">Developer Access Wizard</p>
+                            <p className="mt-1 text-xs text-gray-500">
+                                Set team defaults, copy invites, and fine-tune user workspace access.
+                            </p>
+                        </div>
+                        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-blue-700">
+                            Admin
+                        </span>
                     </div>
 
-                    <div className="grid gap-4 lg:grid-cols-2">
-                        <div className="rounded-lg border border-purple-100 bg-white p-4">
-                            <p className="text-xs font-bold uppercase tracking-wide text-purple-700">1. Team</p>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                            <div>
+                                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Team</p>
                             <select
                                 value={activeTeamDetails.id}
                                 onChange={(event) => {
                                     const selectedTeam = availableTeams.find(teamOption => teamOption.id === event.target.value);
                                     if (selectedTeam) void handleSelectTeam(selectedTeam);
                                 }}
-                                className="mt-2 w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800"
+                                    className="mt-1 w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-800 focus:border-brand-blue focus:ring-2 focus:ring-blue-100"
                             >
                                 {availableTeams.map(teamOption => (
                                     <option key={teamOption.id} value={teamOption.id}>
@@ -938,37 +944,27 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 Active team: <span className="font-semibold">{activeTeamDetails.name}</span>
                             </p>
                         </div>
-
-                        <div className="rounded-lg border border-purple-100 bg-white p-4">
-                            <p className="text-xs font-bold uppercase tracking-wide text-purple-700">2. Invite link</p>
                             <button
                                 onClick={() => handleCopyInviteLink(activeTeamDetails.inviteCode)}
-                                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-purple-200 px-3 py-2 text-sm font-bold text-purple-800 hover:bg-purple-50"
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 hover:bg-gray-100 sm:w-auto"
                             >
                                 <Link size={16} />
                                 Copy invite link
                             </button>
-                            <p className="mt-2 text-xs text-gray-500">
-                                New users who join receive the team default access below.
-                            </p>
                         </div>
                     </div>
 
-                    <div className="mt-4 rounded-lg border border-purple-100 bg-white p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex flex-col gap-3">
                             <div>
-                                <p className="text-xs font-bold uppercase tracking-wide text-purple-700">
-                                    3. Team default access
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                    This applies to future users who join with the invite link.
-                                </p>
+                                <p className="text-sm font-semibold text-gray-900">Team default access</p>
+                                <p className="text-xs text-gray-500">Applies to future users who join with the invite link.</p>
                             </div>
-                            <div className="flex flex-col gap-2 sm:flex-row">
+                            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                                 <select
                                     value={wizardTeamAccessLevel}
                                     onChange={(event) => handleWizardTeamAccessLevelChange(event.target.value as WorkspaceAccessLevel)}
-                                    className="rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800"
+                                    className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-800 focus:border-brand-blue focus:ring-2 focus:ring-blue-100"
                                 >
                                     {WORKSPACE_ACCESS_LEVELS.map(level => (
                                         <option key={level} value={level}>
@@ -979,15 +975,15 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 <button
                                     onClick={handleSaveWizardTeamAccess}
                                     disabled={savingWizardTeamAccess}
-                                    className="rounded-lg bg-purple-700 px-4 py-2 text-sm font-bold text-white hover:bg-purple-800 disabled:opacity-50"
+                                    className="rounded-lg bg-brand-blue px-4 py-2 text-sm font-bold text-white hover:bg-blue-600 disabled:opacity-50"
                                 >
                                     {savingWizardTeamAccess ? 'Saving...' : 'Save team default'}
                                 </button>
                             </div>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
                             {WORKSPACE_ACCESS_FEATURES.map(feature => (
-                                <label key={feature} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700">
+                                <label key={feature} className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
                                     <input
                                         type="checkbox"
                                         checked={wizardTeamWorkspaceSelection[feature]}
@@ -995,29 +991,25 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                             ...selection,
                                             [feature]: event.target.checked,
                                         }))}
-                                        className="h-4 w-4 rounded border-gray-300 text-purple-700 focus:ring-purple-600"
+                                        className="h-4 w-4 rounded border-gray-300 text-brand-blue focus:ring-blue-500"
                                     />
-                                    {WORKSPACE_FEATURE_LABELS[feature]}
+                                    <span className="truncate">{WORKSPACE_FEATURE_LABELS[feature]}</span>
                                 </label>
                             ))}
                         </div>
                     </div>
 
-                    <div className="mt-4 rounded-lg border border-purple-100 bg-white p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex flex-col gap-3">
                             <div>
-                                <p className="text-xs font-bold uppercase tracking-wide text-purple-700">
-                                    4. User-specific access
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                    Override access for an individual team member when needed.
-                                </p>
+                                <p className="text-sm font-semibold text-gray-900">User-specific access</p>
+                                <p className="text-xs text-gray-500">Override access for one team member when needed.</p>
                             </div>
-                            <div className="flex flex-col gap-2 sm:flex-row">
+                            <div className="grid gap-2 sm:grid-cols-2">
                                 <select
                                     value={selectedWizardMemberId}
                                     onChange={(event) => setSelectedWizardMemberId(event.target.value)}
-                                    className="rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800"
+                                    className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-800 focus:border-brand-blue focus:ring-2 focus:ring-blue-100"
                                 >
                                     {activeTeamDetails.members.map(member => (
                                         <option key={member.id} value={member.id}>
@@ -1029,7 +1021,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                     value={wizardMemberAccessLevel}
                                     onChange={(event) => handleWizardMemberAccessLevelChange(event.target.value as WorkspaceAccessLevel)}
                                     disabled={!selectedWizardMember}
-                                    className="rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800 disabled:opacity-50"
+                                    className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-800 disabled:opacity-50 focus:border-brand-blue focus:ring-2 focus:ring-blue-100"
                                 >
                                     {WORKSPACE_ACCESS_LEVELS.map(level => (
                                         <option key={level} value={level}>
@@ -1040,15 +1032,15 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 <button
                                     onClick={handleSaveWizardMemberAccess}
                                     disabled={savingWizardMemberAccess || !selectedWizardMember}
-                                    className="rounded-lg bg-purple-700 px-4 py-2 text-sm font-bold text-white hover:bg-purple-800 disabled:opacity-50"
+                                    className="rounded-lg bg-brand-blue px-4 py-2 text-sm font-bold text-white hover:bg-blue-600 disabled:opacity-50 sm:col-span-2"
                                 >
                                     {savingWizardMemberAccess ? 'Saving...' : 'Save user access'}
                                 </button>
                             </div>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
                             {WORKSPACE_ACCESS_FEATURES.map(feature => (
-                                <label key={feature} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700">
+                                <label key={feature} className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
                                     <input
                                         type="checkbox"
                                         checked={wizardMemberWorkspaceSelection[feature]}
@@ -1057,15 +1049,15 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                             [feature]: event.target.checked,
                                         }))}
                                         disabled={!selectedWizardMember}
-                                        className="h-4 w-4 rounded border-gray-300 text-purple-700 focus:ring-purple-600 disabled:opacity-50"
+                                        className="h-4 w-4 rounded border-gray-300 text-brand-blue focus:ring-blue-500 disabled:opacity-50"
                                     />
-                                    {WORKSPACE_FEATURE_LABELS[feature]}
+                                    <span className="truncate">{WORKSPACE_FEATURE_LABELS[feature]}</span>
                                 </label>
                             ))}
                         </div>
                     </div>
 
-                    <p className="mt-3 text-xs text-purple-700">
+                    <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
                         Lane Transit setup: select <span className="font-semibold">Transit App Data only</span> and leave only Transit App Data checked.
                     </p>
                 </div>

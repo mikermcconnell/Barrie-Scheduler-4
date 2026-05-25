@@ -22,6 +22,11 @@ import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
 import { MapBase, RouteOverlay } from '../shared';
 import { NoData, fmt, formatTimeBand } from './AnalyticsShared';
+import {
+    calculateTransferScopeStats,
+    isTransferRowInScope,
+    type TransferScopeFilter,
+} from '../../utils/transit-app/transitAppTransferScope';
 
 interface TransfersModuleProps {
     data: TransitAppDataSummary;
@@ -31,7 +36,12 @@ type SortField = 'count' | 'avgWaitMinutes';
 type ViewMode = 'table' | 'map';
 type MapLimit = 10 | 20 | 'all';
 type TimeBandFilter = 'all' | TransferTimeBand;
+type ScopeFilter = TransferScopeFilter;
 
+const TOP_TRANSFER_TABLE_LIMIT = 50;
+const GO_LINKED_TABLE_LIMIT = 15;
+const CONNECTION_TARGET_TABLE_LIMIT = 15;
+const TRANSFER_PATTERN_TABLE_LIMIT = 100;
 
 function formatPriority(priority: TransferPriorityTier): string {
     switch (priority) {
@@ -63,51 +73,6 @@ function formatTripAnchors(anchors?: TransferTripAnchor[]): string {
         .slice(0, 2)
         .map(anchor => `${anchor.timeLabel} (${anchor.sharePct}%)`)
         .join(', ');
-}
-
-type ScopeFilter = 'all' | 'barrie' | 'regional';
-
-/** Barrie Transit routes are local numbered routes + letter suffixes. GO = "BR" or 60–69 range. */
-function isBarrieRoute(route: string): boolean {
-    const upper = route.trim().toUpperCase();
-    if (upper === 'BR') return false;
-    const num = parseInt(upper, 10);
-    if (!isNaN(num) && num >= 60 && num <= 69) return false;
-    return true;
-}
-
-function looksBarrieStopName(stopName: string): boolean {
-    const upper = stopName.trim().toUpperCase();
-    if (!upper) return false;
-    return upper.includes('BARRIE') || upper.includes('ALLANDALE');
-}
-
-function isBarrieTransferStop(
-    transferStopId: string | null | undefined,
-    transferStopName: string | null | undefined,
-    fromStop: string | null | undefined,
-    toStop: string | null | undefined,
-    fromRoute: string | null | undefined,
-    toRoute: string | null | undefined
-): boolean {
-    if (transferStopId) return true;
-    const routeSuggestsBarrie = isBarrieRoute(fromRoute || '') && isBarrieRoute(toRoute || '');
-
-    const stopHints = [transferStopName, fromStop, toStop]
-        .filter((value): value is string => Boolean(value && value.trim().length > 0));
-
-    if (stopHints.length > 0) {
-        return stopHints.some(looksBarrieStopName) || routeSuggestsBarrie;
-    }
-
-    // Backward-compatibility fallback for older saved rows with no stop metadata.
-    return routeSuggestsBarrie;
-}
-
-function matchesScope(isBarrieStop: boolean, scope: ScopeFilter): boolean {
-    if (scope === 'all') return true;
-    if (scope === 'barrie') return isBarrieStop;
-    return !isBarrieStop;
 }
 
 // ── Transfer Map Sub-Component ──────────────────────────────────────────────
@@ -333,13 +298,18 @@ const TransferMap: React.FC<TransferMapProps> = ({
     const geoPairs = useMemo((): GeocodedTransferPair[] => {
         const results: GeocodedTransferPair[] = [];
         for (const pair of pairs) {
+            let displayCount = pair.totalCount;
             if (timeBandFilter !== 'all') {
-                if (!pair.dominantTimeBands.includes(timeBandFilter)) continue;
+                const bandCount = pair.timeBandCounts?.[timeBandFilter];
+                displayCount = typeof bandCount === 'number'
+                    ? bandCount
+                    : pair.dominantTimeBands.includes(timeBandFilter) ? pair.totalCount : 0;
+                if (displayCount <= 0) continue;
             }
             if (!pair.transferStopName) continue;
             const coords = stopCoordMap.get(pair.transferStopName.toLowerCase().trim());
             if (coords) {
-                results.push({ ...pair, lat: coords.lat, lon: coords.lon });
+                results.push({ ...pair, totalCount: displayCount, lat: coords.lat, lon: coords.lon });
             }
         }
         return results;
@@ -686,24 +656,22 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
 
     const sortedPatterns = useMemo(() => {
         return [...transferPatterns]
-            .filter(tp => matchesScope(isBarrieTransferStop(
-                tp.transferStopId,
-                tp.transferStopName,
-                tp.fromStop,
-                tp.toStop,
-                tp.fromRoute,
-                tp.toRoute
-            ), scope))
+            .filter(tp => isTransferRowInScope(tp, scope))
             .sort((a, b) => {
                 if (sortBy === 'count') return b.count - a.count;
                 return a.avgWaitMinutes - b.avgWaitMinutes;
             });
     }, [transferPatterns, sortBy, scope]);
 
+    const visiblePatterns = useMemo(
+        () => sortedPatterns.slice(0, TRANSFER_PATTERN_TABLE_LIMIT),
+        [sortedPatterns]
+    );
+
     const groupedPatterns = useMemo(() => {
         if (!groupByRoute) return null;
         const groups = new Map<string, TransferPattern[]>();
-        for (const tp of sortedPatterns) {
+        for (const tp of visiblePatterns) {
             const key = `${tp.fromRoute} → ${tp.toRoute}`;
             const existing = groups.get(key);
             if (existing) {
@@ -716,63 +684,72 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
             .map(([routePair, patterns]) => ({
                 routePair,
                 totalCount: patterns.reduce((sum, p) => sum + p.count, 0),
-                avgWait: patterns.reduce((sum, p) => sum + p.avgWaitMinutes * p.count, 0)
-                    / patterns.reduce((sum, p) => sum + p.count, 0),
+                avgWait: patterns.reduce((sum, p) => sum + (p.totalWaitMinutes ?? p.avgWaitMinutes * p.count), 0)
+                    / Math.max(1, patterns.reduce((sum, p) => sum + p.count, 0)),
                 patterns,
             }))
             .sort((a, b) => b.totalCount - a.totalCount);
-    }, [sortedPatterns, groupByRoute]);
+    }, [visiblePatterns, groupByRoute]);
 
-    const filteredTopPairs = useMemo(() => {
+    const scopedTopPairs = useMemo(() => {
         if (!transferAnalysis) return [];
-        return transferAnalysis.topTransferPairs.filter(row =>
-            matchesScope(isBarrieTransferStop(
-                row.transferStopId,
-                row.transferStopName,
-                null,
-                null,
-                row.fromRoute,
-                row.toRoute
-            ), scope)
-        );
+        return transferAnalysis.topTransferPairs.filter(row => isTransferRowInScope(row, scope));
     }, [transferAnalysis, scope]);
+
+    const visibleTopPairs = useMemo(
+        () => scopedTopPairs.slice(0, TOP_TRANSFER_TABLE_LIMIT),
+        [scopedTopPairs]
+    );
 
     const maxTopPairVolume = useMemo(() => {
-        return Math.max(...filteredTopPairs.map(p => p.totalCount), 1);
-    }, [filteredTopPairs]);
+        return Math.max(...visibleTopPairs.map(p => p.totalCount), 1);
+    }, [visibleTopPairs]);
 
-    const filteredGoLinked = useMemo(() => {
+    const scopedGoLinked = useMemo(() => {
         if (!transferAnalysis) return [];
-        return transferAnalysis.goLinkedSummary.filter(row =>
-            matchesScope(isBarrieTransferStop(
-                row.transferStopId,
-                row.transferStopName,
-                null,
-                null,
-                row.fromRoute,
-                row.toRoute
-            ), scope)
-        );
+        return transferAnalysis.goLinkedSummary.filter(row => isTransferRowInScope(row, scope));
     }, [transferAnalysis, scope]);
 
-    const filteredConnectionTargets = useMemo(() => {
+    const visibleGoLinked = useMemo(
+        () => scopedGoLinked.slice(0, GO_LINKED_TABLE_LIMIT),
+        [scopedGoLinked]
+    );
+
+    const scopedConnectionTargets = useMemo(() => {
         if (!transferAnalysis) return [];
-        return transferAnalysis.connectionTargets.filter(row =>
-            matchesScope(isBarrieTransferStop(
-                row.locationStopId,
-                row.locationStopName,
-                null,
-                null,
-                row.fromRoute,
-                row.toRoute
-            ), scope)
-        );
+        return transferAnalysis.connectionTargets.filter(row => isTransferRowInScope(row, scope));
     }, [transferAnalysis, scope]);
+
+    const visibleConnectionTargets = useMemo(
+        () => scopedConnectionTargets.slice(0, CONNECTION_TARGET_TABLE_LIMIT),
+        [scopedConnectionTargets]
+    );
 
     const mapPairs = useMemo(() => {
-        if (mapLimit === 'all') return filteredTopPairs;
-        return filteredTopPairs.slice(0, mapLimit);
-    }, [filteredTopPairs, mapLimit]);
+        if (mapLimit === 'all') return scopedTopPairs;
+        return scopedTopPairs.slice(0, mapLimit);
+    }, [scopedTopPairs, mapLimit]);
+
+    const transferScopeSourceComplete = useMemo(() => {
+        if (!transferAnalysis) return true;
+        const representedEvents = transferAnalysis.topTransferPairs.reduce((sum, pair) => sum + pair.totalCount, 0);
+        return representedEvents >= transferAnalysis.totals.transferEvents;
+    }, [transferAnalysis]);
+
+    const scopedTransferStats = useMemo(() => {
+        if (!transferAnalysis) return null;
+        const allScopeFallback = scope === 'all'
+            ? {
+                transferEvents: transferAnalysis.totals.transferEvents,
+                goLinkedTransferEvents: transferAnalysis.totals.goLinkedTransferEvents,
+                uniqueRoutePairs: transferAnalysis.totals.uniqueRoutePairs,
+                routeReferencesMatched: transferAnalysis.normalization.routeReferencesMatched,
+                routeReferencesTotal: transferAnalysis.normalization.routeReferencesTotal,
+                routeMatchRate: transferAnalysis.normalization.routeMatchRate,
+            }
+            : undefined;
+        return calculateTransferScopeStats(scopedTopPairs, allScopeFallback);
+    }, [scopedTopPairs, scope, transferAnalysis]);
 
     return (
         <div className="space-y-6">
@@ -787,7 +764,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                 </div>
                                 <div className="min-w-0">
                                     <p className="text-2xl font-bold text-slate-900 tracking-tight tabular-nums">
-                                        {fmt(transferAnalysis.totals.transferEvents)}
+                                        {fmt(scopedTransferStats?.transferEvents ?? transferAnalysis.totals.transferEvents)}
                                     </p>
                                     <p className="text-sm text-slate-500">Transfer Events</p>
                                 </div>
@@ -801,7 +778,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                 </div>
                                 <div className="min-w-0">
                                     <p className="text-2xl font-bold text-slate-900 tracking-tight tabular-nums">
-                                        {fmt(transferAnalysis.totals.goLinkedTransferEvents)}
+                                        {fmt(scopedTransferStats?.goLinkedTransferEvents ?? transferAnalysis.totals.goLinkedTransferEvents)}
                                     </p>
                                     <p className="text-sm text-slate-500">GO-Linked Events</p>
                                 </div>
@@ -815,7 +792,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                 </div>
                                 <div className="min-w-0">
                                     <p className="text-2xl font-bold text-slate-900 tracking-tight tabular-nums">
-                                        {fmt(transferAnalysis.totals.uniqueRoutePairs)}
+                                        {fmt(scopedTransferStats?.uniqueRoutePairs ?? transferAnalysis.totals.uniqueRoutePairs)}
                                     </p>
                                     <p className="text-sm text-slate-500">Unique Route Pairs</p>
                                 </div>
@@ -829,7 +806,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                                 </div>
                                 <div className="min-w-0">
                                     <p className="text-2xl font-bold text-slate-900 tracking-tight tabular-nums">
-                                        {`${Math.round(transferAnalysis.normalization.routeMatchRate * 100)}%`}
+                                        {`${Math.round((scopedTransferStats?.routeMatchRate ?? transferAnalysis.normalization.routeMatchRate) * 100)}%`}
                                     </p>
                                     <p className="text-sm text-slate-500">Route Match Rate</p>
                                 </div>

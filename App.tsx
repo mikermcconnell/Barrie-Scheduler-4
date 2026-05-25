@@ -125,7 +125,7 @@ const AppContent: React.FC = () => {
       <Modal
         isOpen={showTeamManagement}
         onClose={() => setShowTeamManagement(false)}
-        size="lg"
+        size="xl"
         zIndex="high"
       >
         <Modal.Header>Team Management</Modal.Header>
