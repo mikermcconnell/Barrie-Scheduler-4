@@ -42,7 +42,7 @@ import {
     filterPairsByRouteCorridor,
     getAvailableRouteNamesFromShapes,
 } from '../../utils/transit-app/transitAppOdDisplay';
-import { isInBarrieAnalysisArea } from '../../utils/transit-app/transitAppGeo';
+import { describeLocationRelativeToBarrie, isInBarrieAnalysisArea } from '../../utils/transit-app/transitAppGeo';
 import { loadGtfsRouteShapes, loadGtfsRouteShapeVariants } from '../../utils/gtfs/gtfsShapesLoader';
 import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { formatTimeBand, formatDayType, formatSeason } from './AnalyticsShared';
@@ -89,6 +89,7 @@ const OD_ZONE_DOT_LAYER_ID = 'transit-app-zone-dots';
 const OD_ARC_LAYER_ID = 'transit-app-arcs-lines';
 const OD_ENDPOINT_LAYER_ID = 'transit-app-endpoints';
 const COVERAGE_LAYER_ID = 'transit-app-coverage-clusters';
+const MAPBOX_TOKEN_AVAILABLE = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
 
 function isInBarrie(lat: number, lon: number): boolean {
     return isInBarrieAnalysisArea(lat, lon);
@@ -138,29 +139,19 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** Describe a lat/lon as a human-readable location relative to Barrie centre */
-export function describeLocationRelativeToBarrie(lat: number, lon: number): string {
-    const dist = haversineKm(BARRIE_CENTER[0], BARRIE_CENTER[1], lat, lon);
-    const dLat = lat - BARRIE_CENTER[0];
-    const dLon = lon - BARRIE_CENTER[1];
-    const angle = Math.atan2(dLon, dLat) * 180 / Math.PI;
-    let dir: string;
-    if (angle >= -22.5 && angle < 22.5) dir = 'N';
-    else if (angle >= 22.5 && angle < 67.5) dir = 'NE';
-    else if (angle >= 67.5 && angle < 112.5) dir = 'E';
-    else if (angle >= 112.5 && angle < 157.5) dir = 'SE';
-    else if (angle >= 157.5 || angle < -157.5) dir = 'S';
-    else if (angle >= -157.5 && angle < -112.5) dir = 'SW';
-    else if (angle >= -112.5 && angle < -67.5) dir = 'W';
-    else dir = 'NW';
-
-    if (dist < 1) return 'Central Barrie';
-    if (isInBarrie(lat, lon)) return `${dir} Barrie`;
-    return `${dist.toFixed(0)}km ${dir} of Barrie`;
-}
-
 function coordKey(lat: number, lon: number): string {
     return `${lat.toFixed(4)}_${lon.toFixed(4)}`;
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+    const [debouncedValue, setDebouncedValue] = useState(value);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setDebouncedValue(value), delayMs);
+        return () => window.clearTimeout(timer);
+    }, [delayMs, value]);
+
+    return debouncedValue;
 }
 
 interface MapBoundsState {
@@ -265,6 +256,9 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     const [popupState, setPopupState] = useState<TransitMapPopupState | null>(null);
     const [mapReady, setMapReady] = useState(false);
     const [mapBounds, setMapBounds] = useState<MapBoundsState | null>(null);
+    const [availableRouteNames, setAvailableRouteNames] = useState<string[]>([]);
+    const debouncedMinCount = useDebouncedValue(minCount, 120);
+    const filtersUpdating = minCount !== debouncedMinCount;
     const seasonFilter = externalSeasonFilter ?? localSeasonFilter;
     const setSeasonFilter = (v: SeasonFilter) => {
         setLocalSeasonFilter(v);
@@ -287,7 +281,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             .filter(p => p.count > 0);
 
         // Step 3: Min count threshold
-        filtered = filtered.filter(p => p.count >= minCount);
+        filtered = filtered.filter(p => p.count >= debouncedMinCount);
 
         // Step 4: Distance band filter
         if (distanceBand !== 'all') {
@@ -324,7 +318,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         }
 
         return merged;
-    }, [odPairs, geoFilter, timePeriod, dayFilter, seasonFilter, minCount, distanceBand, corridorRoute, mergeBidirectional, isolatedZone]);
+    }, [odPairs, geoFilter, timePeriod, dayFilter, seasonFilter, debouncedMinCount, distanceBand, corridorRoute, mergeBidirectional, isolatedZone]);
 
     const displayedPairs = useMemo(
         () => allZonesMode ? filteredPairs : filteredPairs.slice(0, topN),
@@ -475,34 +469,53 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         setMatrixPage(1);
     }, [matrixSearch, filteredPairs, allZonesMode]);
 
-    // Check if any pair has hourly data
-    const hasHourlyData = useMemo(() => {
-        if (!odPairs) return false;
-        return odPairs.pairs.some(p => p.hourlyBins && p.hourlyBins.some(b => b > 0));
-    }, [odPairs]);
+    const odCapabilities = useMemo(() => {
+        const caps = {
+            hasHourlyData: false,
+            hasWeekdayData: false,
+            hasSeasonData: false,
+            hasOtherSeasonData: false,
+        };
+        if (!odPairs) return caps;
 
-    // Available GTFS route short names for corridor filter
-    const availableRouteNames = useMemo(() => {
-        try {
-            return getAvailableRouteNamesFromShapes(loadGtfsRouteShapeVariants());
-        } catch { return []; }
+        for (const pair of odPairs.pairs) {
+            if (!caps.hasHourlyData && pair.hourlyBins?.some(bin => bin > 0)) caps.hasHourlyData = true;
+            if (!caps.hasWeekdayData && ((pair.weekdayCount ?? 0) > 0 || (pair.weekendCount ?? 0) > 0)) caps.hasWeekdayData = true;
+            if (pair.seasonBins) {
+                if (!caps.hasSeasonData && (
+                    pair.seasonBins.jan > 0
+                    || pair.seasonBins.jul > 0
+                    || pair.seasonBins.sep > 0
+                    || pair.seasonBins.other > 0
+                )) {
+                    caps.hasSeasonData = true;
+                }
+                if (!caps.hasOtherSeasonData && pair.seasonBins.other > 0) caps.hasOtherSeasonData = true;
+            }
+            if (caps.hasHourlyData && caps.hasWeekdayData && caps.hasSeasonData && caps.hasOtherSeasonData) break;
+        }
+
+        return caps;
+    }, [odPairs]);
+    const { hasHourlyData, hasWeekdayData, hasSeasonData, hasOtherSeasonData } = odCapabilities;
+
+    // Defer GTFS route-name lookup so the OD map can render first.
+    useEffect(() => {
+        let cancelled = false;
+        const timer = window.setTimeout(() => {
+            try {
+                const routeNames = getAvailableRouteNamesFromShapes(loadGtfsRouteShapeVariants());
+                if (!cancelled) setAvailableRouteNames(routeNames);
+            } catch {
+                if (!cancelled) setAvailableRouteNames([]);
+            }
+        }, 300);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
     }, []);
-
-    // Check if any pair has weekday/weekend data
-    const hasWeekdayData = useMemo(() => {
-        if (!odPairs) return false;
-        return odPairs.pairs.some(p => (p.weekdayCount ?? 0) > 0 || (p.weekendCount ?? 0) > 0);
-    }, [odPairs]);
-
-    // Check if any pair has season data
-    const hasSeasonData = useMemo(() => {
-        if (!odPairs) return false;
-        return odPairs.pairs.some(p => p.seasonBins && (p.seasonBins.jan > 0 || p.seasonBins.jul > 0 || p.seasonBins.sep > 0 || p.seasonBins.other > 0));
-    }, [odPairs]);
-    const hasOtherSeasonData = useMemo(() => {
-        if (!odPairs) return false;
-        return odPairs.pairs.some(p => (p.seasonBins?.other || 0) > 0);
-    }, [odPairs]);
 
     const heatmapCells = useMemo(() => {
         const filtered = geoFilter === 'barrie'
@@ -1024,10 +1037,11 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         doc.save(`transit-od-summary-${date}.pdf`);
     }, [displayedPairs, getZoneName, geoFilter, corridorRoute, timePeriod, dayFilter, seasonFilter, distanceBand, mergeBidirectional, topN, hasWeekdayData, odPairs, allZonesMode]);
 
-    const hasOD = odPairs && odPairs.pairs.length > 0;
+    const hasOD = Boolean(odPairs && odPairs.pairs.length > 0);
 
     // Sorted table data — maintains original index for map↔table linking
     const sortedTableData = useMemo(() => {
+        if (!showTable) return [];
         const indexed = displayedPairs.map((pair, i) => ({ pair, idx: i }));
         indexed.sort((a, b) => {
             let cmp = 0;
@@ -1050,7 +1064,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             return sortDir === 'asc' ? cmp : -cmp;
         });
         return indexed;
-    }, [displayedPairs, sortColumn, sortDir, getZoneName]);
+    }, [displayedPairs, sortColumn, sortDir, getZoneName, showTable]);
 
     const handleSort = useCallback((col: typeof sortColumn) => {
         if (sortColumn === col) {
@@ -1067,6 +1081,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     );
 
     const matrixRows = useMemo(() => {
+        if (!(activeLayer === 'od' && hasOD && plannerView === 'matrix')) return [];
         const rows = matrixSourcePairs.map((pair, idx) => {
             const originKey = coordKey(pair.originLat, pair.originLon);
             const destKey = coordKey(pair.destLat, pair.destLon);
@@ -1094,7 +1109,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             row.originName.toLowerCase().includes(q)
             || row.destName.toLowerCase().includes(q)
         );
-    }, [matrixSourcePairs, getZoneName, odPairs, matrixSearch]);
+    }, [activeLayer, hasOD, plannerView, matrixSourcePairs, getZoneName, odPairs, matrixSearch]);
 
     const matrixPages = Math.max(1, Math.ceil(matrixRows.length / MATRIX_PAGE_SIZE));
     const matrixPageRows = useMemo(() => {
@@ -1425,6 +1440,12 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                             <span className="text-gray-600">{mapZoom.toFixed(2)}x zoom</span>
                         </>
                     )}
+                    {filtersUpdating && (
+                        <>
+                            <span className="text-gray-300"> · </span>
+                            <span className="text-cyan-700">Updating filter…</span>
+                        </>
+                    )}
                     <span className="text-gray-300"> · </span>
                     <span className="text-gray-400 italic">Transit App sample — not total ridership</span>
                     {(odPairs?.totalTripsDroppedByPairLimit ?? 0) > 0 && (
@@ -1456,7 +1477,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                  style={{ height: isFullscreen ? 'calc(100vh - 200px)' : height }}>
                 {/* Map container */}
                 <div
-                    className={`flex-1 overflow-hidden border border-gray-200 ${
+                    className={`relative flex-1 overflow-hidden border border-gray-200 ${
                         isolatedZone && zonePanelData && activeLayer === 'od' ? 'rounded-l-lg' : 'rounded-lg'
                     }`}
                     style={{ minHeight: 0 }}
@@ -1700,6 +1721,19 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                             </Popup>
                         )}
                     </MapBase>
+                    {MAPBOX_TOKEN_AVAILABLE && (!mapReady || filtersUpdating) && (
+                        <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-white/60 backdrop-blur-[1px]">
+                            <div className="rounded-xl border border-gray-200 bg-white/95 px-5 py-4 text-center shadow-sm">
+                                <div className="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-cyan-500" />
+                                <div className="text-sm font-semibold text-gray-800">
+                                    {mapReady ? 'Applying OD filter...' : 'Loading OD map...'}
+                                </div>
+                                <div className="mt-1 text-xs text-gray-500">
+                                    {mapReady ? 'Updating visible pairs and map layers' : 'Preparing map tiles and OD lines'}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Zone Detail Panel */}

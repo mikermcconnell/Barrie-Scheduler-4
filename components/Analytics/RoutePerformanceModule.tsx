@@ -7,7 +7,6 @@ import {
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
-    Legend,
 } from 'recharts';
 import { ArrowUpDown } from 'lucide-react';
 import type { RoutePerformanceScorecardRow, TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
@@ -30,7 +29,6 @@ type SortKey =
 export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ data }) => {
     const [sortKey, setSortKey] = useState<SortKey>('compositeScore');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-    const [selectedRoute, setSelectedRoute] = useState<string>('');
 
     const fallbackScorecard = useMemo(() => {
         const legMap = new Map(data.routeLegs.map(l => [l.route.toUpperCase(), l]));
@@ -103,21 +101,7 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
         return rows;
     }, [scorecard, sortDirection, sortKey]);
 
-    const selectedRouteValue = selectedRoute || sortedScorecard[0]?.route || '';
-
-    const seasonalData = useMemo(() => {
-        if (!data.routePerformance || !selectedRouteValue) return [];
-        const monthlyRows = data.routePerformance.monthly
-            .filter(m => m.route === selectedRouteValue)
-            .sort((a, b) => a.month.localeCompare(b.month));
-
-        return monthlyRows.map(row => ({
-            month: row.month,
-            score: row.compositeScore,
-            weekday: row.weekdayScore,
-            weekend: row.weekendScore,
-        }));
-    }, [data.routePerformance, selectedRouteValue]);
+    const selectedRouteValue = sortedScorecard[0]?.route || '';
 
     const selectedScore = sortedScorecard.find(s => s.route === selectedRouteValue) || null;
     const funnelData = selectedScore
@@ -182,55 +166,21 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                 )}
             </ChartCard>
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <ChartCard title="Seasonal Score Trend" subtitle={`Composite scores by month for route ${selectedRouteValue || 'N/A'}`}>
-                    {data.routePerformance && seasonalData.length > 0 ? (
-                        <>
-                            <div className="mb-3">
-                                <select
-                                    value={selectedRouteValue}
-                                    onChange={e => setSelectedRoute(e.target.value)}
-                                    className="px-3 py-2 border border-gray-200 rounded-lg text-sm"
-                                >
-                                    {sortedScorecard.map(r => (
-                                        <option key={r.route} value={r.route}>{r.route}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <ResponsiveContainer width="100%" height={300}>
-                                <BarChart data={seasonalData}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                    <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                                    <YAxis tick={{ fontSize: 11 }} />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Bar dataKey="score" fill="#06b6d4" name="Composite" radius={[4, 4, 0, 0]} />
-                                    <Bar dataKey="weekday" fill="#10b981" name="Weekday" radius={[4, 4, 0, 0]} />
-                                    <Bar dataKey="weekend" fill="#f59e0b" name="Weekend" radius={[4, 4, 0, 0]} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </>
-                    ) : (
-                        <NoData message="Select a route with monthly data to view score trends." />
-                    )}
-                </ChartCard>
-
-                <ChartCard title="Route Conversion Funnel" subtitle={`Views → Taps → Suggestions → GO Trips for route ${selectedRouteValue || 'N/A'}`}>
-                    {funnelData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={300}>
-                            <BarChart data={funnelData}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="stage" tick={{ fontSize: 11 }} />
-                                <YAxis tick={{ fontSize: 11 }} />
-                                <Tooltip />
-                                <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    ) : (
-                        <NoData />
-                    )}
-                </ChartCard>
-            </div>
+            <ChartCard title="Route Conversion Funnel" subtitle={`Views → Taps → Suggestions → GO Trips for route ${selectedRouteValue || 'N/A'}`}>
+                {funnelData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={funnelData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                            <XAxis dataKey="stage" tick={{ fontSize: 11 }} />
+                            <YAxis tick={{ fontSize: 11 }} />
+                            <Tooltip />
+                            <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                    </ResponsiveContainer>
+                ) : (
+                    <NoData />
+                )}
+            </ChartCard>
 
             <ChartCard title="Route Performance Scorecard" subtitle={`Routes: ${fmt(sortedScorecard.length)} • Months: ${months.length > 0 ? months.join(', ') : 'N/A'}`}>
                 {sortedScorecard.length > 0 ? (

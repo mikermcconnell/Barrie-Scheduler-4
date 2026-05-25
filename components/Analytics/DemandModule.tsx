@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { Suspense, useEffect, useState, useMemo } from 'react';
 import {
     BarChart,
     Bar,
@@ -9,39 +9,57 @@ import {
     ResponsiveContainer,
 } from 'recharts';
 import type { TransitAppDataSummary, ODCoverageGap, ODPair } from '../../utils/transit-app/transitAppTypes';
-import { TransitAppMap, type SeasonFilter, describeLocationRelativeToBarrie } from './TransitAppMap';
+import type { TransitAppODSeasonFilter as SeasonFilter } from '../../utils/transit-app/transitAppOdPairs';
+import { describeLocationRelativeToBarrie } from '../../utils/transit-app/transitAppGeo';
 import { ChartCard, NoData, fmt } from './AnalyticsShared';
-import { analyzeODCoverageGaps } from '../../utils/transit-app/transitAppAggregator';
-import {
-    getHoursForODTimePeriod,
-    TRANSIT_APP_OD_TIME_FILTERS,
-    type TransitAppODTimePeriod,
-} from '../../utils/transit-app/transitAppOdPairs';
 import { findNearestStopName } from '../../utils/gtfs/gtfsStopLookup';
-import { CoverageGapMap } from './CoverageGapMap';
+
+const TransitAppMap = React.lazy(() =>
+    import('./TransitAppMap').then(module => ({ default: module.TransitAppMap }))
+);
+const CoverageGapMap = React.lazy(() =>
+    import('./CoverageGapMap').then(module => ({ default: module.CoverageGapMap }))
+);
 
 interface DemandModuleProps {
     data: TransitAppDataSummary;
 }
 
-type TimeFilter = TransitAppODTimePeriod;
-
-const BASE_SEASON_FILTERS: { key: SeasonFilter; label: string }[] = [
-    { key: 'all', label: 'All' },
-    { key: 'jan', label: 'Jan' },
-    { key: 'jul', label: 'Jul' },
-    { key: 'sep', label: 'Sep' },
-];
-
 export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
-    const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
     const [seasonFilter, setSeasonFilter] = useState<SeasonFilter>('all');
     const [displayedODPairs, setDisplayedODPairs] = useState<ODPair[] | null>(null);
     const [highlightedGapIdx, setHighlightedGapIdx] = useState<number | null>(null);
+    const [coverageGaps, setCoverageGaps] = useState<ODCoverageGap[]>([]);
     const { tripDistribution, locationDensity, odPairs } = data;
 
     useEffect(() => {
         setDisplayedODPairs(null);
+    }, [odPairs]);
+
+    useEffect(() => {
+        setCoverageGaps([]);
+        if (!odPairs) return undefined;
+
+        let cancelled = false;
+        const timer = window.setTimeout(() => {
+            void import('../../utils/transit-app/transitAppAggregator')
+                .then(({ analyzeODCoverageGaps }) => {
+                    if (cancelled) return;
+                    try {
+                        setCoverageGaps(analyzeODCoverageGaps(odPairs, 25));
+                    } catch {
+                        setCoverageGaps([]);
+                    }
+                })
+                .catch(() => {
+                    if (!cancelled) setCoverageGaps([]);
+                });
+        }, 500);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
     }, [odPairs]);
 
     // Hourly distribution data — full 24h
@@ -49,14 +67,6 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
         hour: `${h.hour.toString().padStart(2, '0')}:00`,
         count: h.count,
     }));
-
-    // Filtered hourly data by time period
-    const filteredHourlyData = useMemo(() => {
-        if (timeFilter === 'all') return hourlyData;
-        return getHoursForODTimePeriod(timeFilter)
-            .map(hour => hourlyData[hour])
-            .filter((row): row is { hour: string; count: number } => Boolean(row));
-    }, [hourlyData, timeFilter]);
 
     // Check if season data is available
     const hasSeasonData = useMemo(() => {
@@ -67,15 +77,11 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
         if (!odPairs) return false;
         return odPairs.pairs.some(p => (p.seasonBins?.other || 0) > 0);
     }, [odPairs]);
-    const seasonFilters = useMemo(
-        () => hasOtherSeasonData ? [...BASE_SEASON_FILTERS, { key: 'other' as SeasonFilter, label: 'Other' }] : BASE_SEASON_FILTERS,
-        [hasOtherSeasonData]
-    );
 
     // Top OD pairs ranked table — mirrors the current TransitAppMap ranking/filter state
     const topODPairs = useMemo(() => {
         if (!odPairs) return [];
-        const sourcePairs = displayedODPairs ?? odPairs.pairs;
+        const sourcePairs = displayedODPairs ?? odPairs.pairs.slice(0, 20);
         return sourcePairs
             .map((p, i) => {
                 const zoneName = (lat: number, lon: number) =>
@@ -114,16 +120,6 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
             });
     }, [odPairs, hasSeasonData]);
 
-    // Coverage gap analysis
-    const coverageGaps = useMemo((): ODCoverageGap[] => {
-        if (!odPairs) return [];
-        try {
-            return analyzeODCoverageGaps(odPairs, 25);
-        } catch {
-            return [];
-        }
-    }, [odPairs]);
-
     const gapStats = useMemo(() => {
         if (coverageGaps.length === 0) return null;
         const gaps = coverageGaps.filter(g => !g.isServedByDirectRoute);
@@ -139,73 +135,32 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
 
     return (
         <div className="space-y-6">
-            {/* Filter Bar — Time period + Season */}
-            <div className="flex items-center flex-wrap gap-4">
-                <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-500 font-medium mr-2">Time period:</span>
-                    <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                        {TRANSIT_APP_OD_TIME_FILTERS.map(({ key, label }) => (
-                            <button
-                                key={key}
-                                onClick={() => setTimeFilter(key)}
-                                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                                    timeFilter === key
-                                        ? 'bg-gray-900 text-white'
-                                        : 'bg-white text-gray-500 hover:bg-gray-50'
-                                }`}
-                            >
-                                {label}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                {hasSeasonData && (
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-500 font-medium mr-2">Season:</span>
-                        <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                            {seasonFilters.map(({ key, label }) => (
-                                <button
-                                    key={key}
-                                    onClick={() => setSeasonFilter(key)}
-                                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                                        seasonFilter === key
-                                            ? 'bg-cyan-500 text-white'
-                                            : 'bg-white text-gray-500 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    {label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
-
             {/* OD Map — with season filter synced */}
             <ChartCard
                 title="Origin-Destination Map"
                 subtitle={`${fmt(locationDensity.totalPoints)} location points${odPairs ? `, ${fmt(odPairs.pairs.length)} OD pairs` : ''}`}
             >
-                <TransitAppMap
-                    locationDensity={locationDensity}
-                    odPairs={odPairs}
-                    height={520}
-                    defaultLayer="od"
-                    seasonFilter={seasonFilter}
-                    onSeasonFilterChange={setSeasonFilter}
-                    onDisplayedODPairsChange={setDisplayedODPairs}
-                />
+                <Suspense fallback={<MapLoadingState height={520} label="Preparing OD map..." />}>
+                    <TransitAppMap
+                        locationDensity={locationDensity}
+                        odPairs={odPairs}
+                        height={520}
+                        defaultLayer="od"
+                        seasonFilter={seasonFilter}
+                        onSeasonFilterChange={setSeasonFilter}
+                        onDisplayedODPairsChange={setDisplayedODPairs}
+                    />
+                </Suspense>
             </ChartCard>
 
             {/* Hourly Trip Distribution */}
             <ChartCard
                 title="Hourly Trip Distribution"
-                subtitle={timeFilter === 'all' ? 'When riders plan trips (all day)' : `Filtered: ${TRANSIT_APP_OD_TIME_FILTERS.find(f => f.key === timeFilter)?.label}`}
+                subtitle="When riders plan trips (all day)"
             >
-                {filteredHourlyData.some(h => h.count > 0) ? (
+                {hourlyData.some(h => h.count > 0) ? (
                     <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={filteredHourlyData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                        <BarChart data={hourlyData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                             <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval={0} />
                             <YAxis tick={{ fontSize: 11 }} />
@@ -261,12 +216,14 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                         ? `${gapStats.gapCount} of top ${gapStats.totalAnalyzed} Barrie-only OD pairs lack direct route service (${gapStats.gapPct}% of trip volume)`
                         : 'Analyzing route coverage for top Barrie-only OD pairs'}
                 >
-                    <CoverageGapMap
-                        gaps={coverageGaps}
-                        height={380}
-                        highlightedIndex={highlightedGapIdx}
-                        onGapHover={setHighlightedGapIdx}
-                    />
+                    <Suspense fallback={<MapLoadingState height={380} label="Preparing coverage map..." />}>
+                        <CoverageGapMap
+                            gaps={coverageGaps}
+                            height={380}
+                            highlightedIndex={highlightedGapIdx}
+                            onGapHover={setHighlightedGapIdx}
+                        />
+                    </Suspense>
                     <div className="overflow-x-auto mt-4">
                         <table className="w-full text-sm">
                             <thead>
@@ -395,3 +352,24 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
         </div>
     );
 };
+
+const MapLoadingState: React.FC<{ height: number; label: string }> = ({ height, label }) => (
+    <div
+        className="relative overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+        style={{ height }}
+        role="status"
+        aria-live="polite"
+    >
+        <div className="absolute inset-0 bg-gradient-to-br from-white via-gray-50 to-gray-100" />
+        <div className="absolute inset-x-6 top-6 h-8 rounded-lg bg-white/80 shadow-sm" />
+        <div className="absolute left-6 top-24 h-32 w-48 rounded-xl bg-white/70 shadow-sm" />
+        <div className="absolute bottom-8 right-8 h-28 w-40 rounded-xl bg-white/70 shadow-sm" />
+        <div className="absolute inset-0 grid place-items-center">
+            <div className="rounded-xl border border-gray-200 bg-white/95 px-5 py-4 text-center shadow-sm">
+                <div className="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-cyan-500" />
+                <div className="text-sm font-semibold text-gray-800">{label}</div>
+                <div className="mt-1 text-xs text-gray-500">Loading map layers and OD lines</div>
+            </div>
+        </div>
+    </div>
+);

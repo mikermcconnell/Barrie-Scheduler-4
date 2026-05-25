@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft,
     RefreshCw,
@@ -9,18 +9,31 @@ import {
     Smartphone,
     Clock,
     MapPinned,
-    Train,
-    CheckCircle2,
 } from 'lucide-react';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { OverviewPanel } from './OverviewPanel';
-import { RoutePerformanceModule } from './RoutePerformanceModule';
-import { DemandModule } from './DemandModule';
-import { TransfersModule } from './TransfersModule';
-import { AppUsageModule } from './AppUsageModule';
-import { ServiceGapsModule } from './ServiceGapsModule';
-import { HeatmapModule } from './HeatmapModule';
-import { StopAnalysisModule } from './StopAnalysisModule';
+
+const RoutePerformanceModule = React.lazy(() =>
+    import('./RoutePerformanceModule').then(module => ({ default: module.RoutePerformanceModule }))
+);
+const DemandModule = React.lazy(() =>
+    import('./DemandModule').then(module => ({ default: module.DemandModule }))
+);
+const TransfersModule = React.lazy(() =>
+    import('./TransfersModule').then(module => ({ default: module.TransfersModule }))
+);
+const AppUsageModule = React.lazy(() =>
+    import('./AppUsageModule').then(module => ({ default: module.AppUsageModule }))
+);
+const ServiceGapsModule = React.lazy(() =>
+    import('./ServiceGapsModule').then(module => ({ default: module.ServiceGapsModule }))
+);
+const HeatmapModule = React.lazy(() =>
+    import('./HeatmapModule').then(module => ({ default: module.HeatmapModule }))
+);
+const StopAnalysisModule = React.lazy(() =>
+    import('./StopAnalysisModule').then(module => ({ default: module.StopAnalysisModule }))
+);
 
 interface TransitAppWorkspaceProps {
     data: TransitAppDataSummary;
@@ -44,9 +57,6 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'heatmaps', label: 'Heatmap', icon: MapPinned, status: 'partial' },
     { id: 'route-performance', label: 'Route Performance', icon: TrendingUp, status: 'complete' },
     { id: 'app-usage', label: 'App Usage', icon: Smartphone, status: 'complete' },
-    { id: 'go-integration', label: 'GO Integration', icon: Train, status: 'partial' },
-    { id: 'validation', label: 'Validation', icon: CheckCircle2, status: 'not-started' },
-    { id: 'service-gaps', label: 'Service Gaps', icon: Clock, status: 'complete' },
 ];
 
 export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
@@ -191,11 +201,29 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
 
             {/* Active Panel */}
             <div className="pt-6">
-                {renderPanel()}
+                <Suspense fallback={<TransitAppPanelLoading />}>
+                    {renderPanel()}
+                </Suspense>
             </div>
         </div>
     );
 };
+
+const TransitAppPanelLoading: React.FC = () => (
+    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm" role="status" aria-live="polite">
+        <div className="mb-5 flex items-center gap-3">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-cyan-500" />
+            <div>
+                <div className="text-sm font-semibold text-gray-800">Loading analysis tab...</div>
+                <div className="text-xs text-gray-500">Preparing charts and map layers</div>
+            </div>
+        </div>
+        <div className="space-y-3">
+            <div className="h-4 w-1/3 rounded bg-gray-100" />
+            <div className="h-40 rounded-lg bg-gray-50" />
+        </div>
+    </div>
+);
 
 const ComingSoonPlaceholder: React.FC = () => (
     <div className="flex flex-col items-center justify-center py-24 text-gray-400">
