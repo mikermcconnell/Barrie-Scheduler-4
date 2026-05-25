@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { aggregateTransitAppData } from '../utils/transit-app/transitAppAggregator';
 import type { TransitAppFileStats, TransitAppParsedData, TransitAppTripRow } from '../utils/transit-app/transitAppTypes';
 import {
+    aggregateTransitAppODPairs,
+    filterODPairForDisplay,
     getDirectionalCountsForZone,
     getHoursForODTimePeriod,
     getODPairCountForFilters,
     mergeBidirectionalODPairs,
+    validateODPairTotals,
 } from '../utils/transit-app/transitAppOdPairs';
 
 function makeTrip(
@@ -83,7 +86,7 @@ describe('Transit App OD pair aggregation', () => {
             -79.0 + (index % 1000) * 0.005,
         ));
 
-        const odPairs = summarizeTrips(trips);
+        const odPairs = aggregateTransitAppODPairs(trips);
         const retainedTrips = odPairs.pairs.reduce((sum, pair) => sum + pair.count, 0);
 
         expect(odPairs.totalTripsProcessed).toBe(5002);
@@ -100,6 +103,20 @@ describe('Transit App OD pair aggregation', () => {
         expect(odPairs.pairs[0].hourlyBins?.[0]).toBe(1);
         expect(odPairs.pairs[0].weekdayCount).toBe(1);
         expect(odPairs.pairs[0].weekendCount).toBe(0);
+    });
+
+    it('keeps invalid timestamps out of day, season, and hourly bins instead of assuming weekday', () => {
+        const odPairs = summarizeTrips([
+            makeTrip(44.39, -79.69, 44.41, -79.67, 'not-a-real-timestamp'),
+        ]);
+
+        expect(odPairs.totalTripsProcessed).toBe(1);
+        expect(odPairs.pairs[0].count).toBe(1);
+        expect(odPairs.pairs[0].weekdayCount).toBe(0);
+        expect(odPairs.pairs[0].weekendCount).toBe(0);
+        expect(odPairs.pairs[0].hourlyBins?.reduce((sum, count) => sum + count, 0)).toBe(0);
+        expect(odPairs.pairs[0].seasonBins).toEqual({ jan: 0, jul: 0, sep: 0, other: 0 });
+        expect(odPairs.pairs[0].odFilterBins).toEqual({});
     });
 });
 
@@ -134,6 +151,37 @@ describe('Transit App bidirectional OD merge', () => {
             inbound: 10,
         });
     });
+
+    it('does not fabricate zero day counts when merged source pairs have no valid breakdown bins', () => {
+        const filteredLegacyForward = filterODPairForDisplay({
+            originLat: 44.39,
+            originLon: -79.69,
+            destLat: 44.41,
+            destLon: -79.67,
+            count: 10,
+            hourlyBins: new Array(24).fill(0),
+            weekdayCount: 7,
+            weekendCount: 3,
+            seasonBins: { jan: 10, jul: 0, sep: 0, other: 0 },
+        }, 'pm', 'weekday', 'jan');
+        const filteredLegacyReverse = filterODPairForDisplay({
+            originLat: 44.41,
+            originLon: -79.67,
+            destLat: 44.39,
+            destLon: -79.69,
+            count: 5,
+            hourlyBins: new Array(24).fill(0),
+            weekdayCount: 4,
+            weekendCount: 1,
+            seasonBins: { jan: 5, jul: 0, sep: 0, other: 0 },
+        }, 'pm', 'weekday', 'jan');
+
+        const [merged] = mergeBidirectionalODPairs([filteredLegacyForward, filteredLegacyReverse]);
+
+        expect(merged.count).toBe(0);
+        expect(merged.weekdayCount).toBeUndefined();
+        expect(merged.weekendCount).toBeUndefined();
+    });
 });
 
 describe('Transit App OD time filters', () => {
@@ -162,5 +210,50 @@ describe('Transit App OD time filters', () => {
         expect(getODPairCountForFilters(pair, 'pm', 'weekday', 'jan')).toBe(2);
         expect(getODPairCountForFilters(pair, 'evening', 'weekday', 'jan')).toBe(3);
         expect(getODPairCountForFilters(pair, 'overnight', 'weekend', 'jan')).toBe(4);
+    });
+
+    it('rebuilds display bins to match the active exact OD filter intersection', () => {
+        const filtered = filterODPairForDisplay({
+            originLat: 44.39,
+            originLon: -79.69,
+            destLat: 44.41,
+            destLon: -79.67,
+            count: 12,
+            odFilterBins: {
+                'weekday|jan|17': 2,
+                'weekday|jan|18': 3,
+                'saturday|jan|23': 4,
+                'weekday|sep|17': 3,
+            },
+        }, 'pm', 'weekday', 'jan');
+
+        expect(filtered.count).toBe(2);
+        expect(filtered.hourlyBins?.reduce((sum, count) => sum + count, 0)).toBe(2);
+        expect(filtered.hourlyBins?.[17]).toBe(2);
+        expect(filtered.hourlyBins?.[18]).toBe(0);
+        expect(filtered.weekdayCount).toBe(2);
+        expect(filtered.weekendCount).toBe(0);
+        expect(filtered.seasonBins).toEqual({ jan: 2, jul: 0, sep: 0, other: 0 });
+        expect(validateODPairTotals(filtered)).toBe(true);
+    });
+
+    it('does not carry stale breakdown bins when exact OD filter bins are unavailable', () => {
+        const filtered = filterODPairForDisplay({
+            originLat: 44.39,
+            originLon: -79.69,
+            destLat: 44.41,
+            destLon: -79.67,
+            count: 9,
+            hourlyBins: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3],
+            weekdayCount: 7,
+            weekendCount: 2,
+            seasonBins: { jan: 4, jul: 2, sep: 3, other: 0 },
+        }, 'overnight', 'weekday', 'jan');
+
+        expect(filtered.count).toBe(4);
+        expect(filtered.hourlyBins).toBeUndefined();
+        expect(filtered.weekdayCount).toBeUndefined();
+        expect(filtered.weekendCount).toBeUndefined();
+        expect(filtered.seasonBins).toBeUndefined();
     });
 });

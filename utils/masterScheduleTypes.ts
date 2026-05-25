@@ -25,6 +25,7 @@ export interface Team {
     createdBy: string;
     inviteCode: string;
     defaultMemberAccessLevel?: WorkspaceAccessLevel;
+    defaultMemberWorkspaceOverrides?: WorkspaceAccessOverrides;
     partnerTeam?: boolean;
 }
 

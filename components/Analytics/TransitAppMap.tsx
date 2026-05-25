@@ -28,8 +28,8 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transit-app/transitAppTypes';
 import {
+    filterODPairForDisplay,
     getDirectionalCountsForZone,
-    getODPairCountForFilters,
     mergeBidirectionalODPairs,
     toUnmergedODPair,
     TRANSIT_APP_OD_TIME_FILTERS,
@@ -280,10 +280,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
 
         // Step 2: Apply time/day/season filters together with conservative count intersection.
         filtered = filtered
-            .map(p => ({
-                ...p,
-                count: getODPairCountForFilters(p, timePeriod, dayFilter, seasonFilter),
-            }))
+            .map(p => filterODPairForDisplay(p, timePeriod, dayFilter, seasonFilter))
             .filter(p => p.count > 0);
 
         // Step 3: Min count threshold

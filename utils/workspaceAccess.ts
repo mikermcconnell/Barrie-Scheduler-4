@@ -2,7 +2,7 @@ import type { FeatureFlags, FeatureKey } from './features';
 import { FEATURE_DEFINITIONS, featureFlags, isFeatureEnabled } from './features';
 import type { TeamMember, TeamRole } from './masterScheduleTypes';
 
-export type WorkspaceAccessLevel = 'production' | 'planner' | 'external-planner' | 'admin' | 'internal';
+export type WorkspaceAccessLevel = 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'admin' | 'internal';
 
 export type WorkspaceAccessFeatureKey =
     | 'workspaceOndemand'
@@ -29,6 +29,7 @@ export const WORKSPACE_ACCESS_LEVELS: WorkspaceAccessLevel[] = [
     'production',
     'planner',
     'external-planner',
+    'transit-app-only',
     'admin',
     'internal',
 ];
@@ -37,6 +38,7 @@ export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string>
     production: 'Production only',
     planner: 'Planner',
     'external-planner': 'External agency planner',
+    'transit-app-only': 'Transit App Data only',
     admin: 'Admin access',
     internal: 'Developer/internal',
 };
@@ -45,6 +47,7 @@ export const WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS: Record<WorkspaceAccessLevel, s
     production: 'Only production-ready workspaces.',
     planner: 'Production workspaces plus selected planning tools.',
     'external-planner': 'Limited non-Barrie planner access for partner agency planning data.',
+    'transit-app-only': 'Only the Transit App Data workspace.',
     admin: 'Planner access plus broader operational tools.',
     internal: 'Everything, including unfinished workspaces.',
 };
@@ -87,6 +90,10 @@ const EXTERNAL_PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     'analyticsOdMatrix',
 ];
 
+const TRANSIT_APP_ONLY_WORKSPACES: WorkspaceAccessFeatureKey[] = [
+    'analyticsTransitApp',
+];
+
 const ADMIN_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     ...PLANNER_WORKSPACES,
     'analyticsOdMatrix',
@@ -100,6 +107,7 @@ const WORKSPACE_ACCESS_BY_LEVEL: Record<WorkspaceAccessLevel, ReadonlySet<Worksp
     production: new Set(PRODUCTION_WORKSPACES),
     planner: new Set(PLANNER_WORKSPACES),
     'external-planner': new Set(EXTERNAL_PLANNER_WORKSPACES),
+    'transit-app-only': new Set(TRANSIT_APP_ONLY_WORKSPACES),
     admin: new Set(ADMIN_WORKSPACES),
     internal: new Set(INTERNAL_WORKSPACES),
 };

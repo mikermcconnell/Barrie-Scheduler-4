@@ -53,6 +53,8 @@ import {
   joinTeamByInviteCode,
   removeMember,
   updateTeamDefaultMemberAccessLevel,
+  updateTeamDefaultWorkspaceAccess,
+  updateMemberWorkspaceAccess,
 } from '../utils/services/teamService';
 
 describe('teamService security-sensitive flows', () => {
@@ -222,6 +224,41 @@ describe('teamService security-sensitive flows', () => {
     );
   });
 
+  it('uses team default workspace overrides for newly joined members', async () => {
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ teamId: 'lane-transit', teamName: 'Lane Transit' }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => false,
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          name: 'Lane Transit',
+          defaultMemberAccessLevel: 'transit-app-only',
+          defaultMemberWorkspaceOverrides: {
+            analyticsTransitApp: true,
+            workspaceFixedRoute: false,
+          },
+        }),
+      });
+
+    await joinTeamByInviteCode('lane-user', 'LANE01', 'Lane User', 'lane@example.com');
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
+      expect.objectContaining({
+        accessLevel: 'transit-app-only',
+        workspaceOverrides: {
+          analyticsTransitApp: true,
+          workspaceFixedRoute: false,
+        },
+      })
+    );
+  });
+
   it('does not give newly created team owners internal workspace access by default', async () => {
     await createTeam('user-1', 'Lane Transit', 'Owner', 'owner@example.com');
 
@@ -241,6 +278,53 @@ describe('teamService security-sensitive flows', () => {
       expect.objectContaining({ path: 'teams/lane-transit' }),
       { defaultMemberAccessLevel: 'external-planner' }
     );
+  });
+
+  it('allows changing the team default workspace access profile and overrides', async () => {
+    await updateTeamDefaultWorkspaceAccess('lane-transit', 'transit-app-only', {
+      analyticsTransitApp: true,
+      workspaceFixedRoute: false,
+    });
+
+    expect(updateDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit' }),
+      {
+        defaultMemberAccessLevel: 'transit-app-only',
+        defaultMemberWorkspaceOverrides: {
+          analyticsTransitApp: true,
+          workspaceFixedRoute: false,
+        },
+      }
+    );
+  });
+
+  it('allows changing a specific member workspace access profile and overrides', async () => {
+    await updateMemberWorkspaceAccess('lane-transit', 'lane-user', 'transit-app-only', {
+      analyticsTransitApp: true,
+      workspaceFixedRoute: false,
+    });
+
+    expect(updateDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
+      {
+        accessLevel: 'transit-app-only',
+        workspaceOverrides: {
+          analyticsTransitApp: true,
+          workspaceFixedRoute: false,
+        },
+      }
+    );
+  });
+
+  it('rejects unknown workspace override keys', async () => {
+    await expect(
+      updateMemberWorkspaceAccess('lane-transit', 'lane-user', 'planner', {
+        analyticsTransitApp: true,
+        madeUpWorkspace: true,
+      } as any)
+    ).rejects.toThrow('Invalid workspace override key');
+
+    expect(updateDocMock).not.toHaveBeenCalled();
   });
 
   it('creates a partner team without moving the current admin into that team', async () => {

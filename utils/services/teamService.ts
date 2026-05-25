@@ -18,7 +18,11 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { Team, TeamMember, TeamWithMembers, TeamRole, WorkspaceAccessLevel, WorkspaceAccessOverrides } from '../masterScheduleTypes';
-import { getDefaultWorkspaceAccessLevelForRole, isWorkspaceAccessLevel } from '../workspaceAccess';
+import {
+    getDefaultWorkspaceAccessLevelForRole,
+    isWorkspaceAccessFeature,
+    isWorkspaceAccessLevel,
+} from '../workspaceAccess';
 
 interface TeamInviteLookup {
     id: string;
@@ -31,6 +35,7 @@ export interface CreatePartnerTeamInput {
     teamName: string;
     inviteCode?: string;
     defaultMemberAccessLevel?: WorkspaceAccessLevel;
+    defaultMemberWorkspaceOverrides?: WorkspaceAccessOverrides;
 }
 
 // ============ HELPER FUNCTIONS ============
@@ -94,7 +99,7 @@ function readMemberData(docId: string, data: Record<string, any>): TeamMember {
         accessLevel: isWorkspaceAccessLevel(data.accessLevel)
             ? data.accessLevel
             : getDefaultWorkspaceAccessLevelForRole(role),
-        workspaceOverrides: data.workspaceOverrides as WorkspaceAccessOverrides | undefined,
+        workspaceOverrides: sanitizeWorkspaceOverrides(data.workspaceOverrides),
         joinedAt: timestampToDate(data.joinedAt),
         displayName: data.displayName,
         email: data.email
@@ -111,21 +116,47 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
         defaultMemberAccessLevel: isWorkspaceAccessLevel(data.defaultMemberAccessLevel)
             ? data.defaultMemberAccessLevel
             : getDefaultWorkspaceAccessLevelForRole('member'),
+        defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(data.defaultMemberWorkspaceOverrides),
         partnerTeam: data.partnerTeam === true
     };
 }
 
-async function getTeamDefaultMemberAccessLevel(teamId: string): Promise<WorkspaceAccessLevel> {
+function sanitizeWorkspaceOverrides(overrides: unknown): WorkspaceAccessOverrides | undefined {
+    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+        return undefined;
+    }
+
+    const sanitized: WorkspaceAccessOverrides = {};
+    Object.entries(overrides as Record<string, unknown>).forEach(([key, value]) => {
+        if (!isWorkspaceAccessFeature(key as any)) {
+            throw new Error(`Invalid workspace override key: ${key}`);
+        }
+        if (typeof value !== 'boolean') {
+            throw new Error(`Invalid workspace override value for ${key}`);
+        }
+        sanitized[key as keyof WorkspaceAccessOverrides] = value;
+    });
+
+    return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+async function getTeamDefaultWorkspaceAccess(teamId: string): Promise<{
+    accessLevel: WorkspaceAccessLevel;
+    workspaceOverrides?: WorkspaceAccessOverrides;
+}> {
     const teamRef = doc(db, 'teams', teamId);
     const teamSnap = await getDoc(teamRef);
     if (!teamSnap.exists()) {
-        return getDefaultWorkspaceAccessLevelForRole('member');
+        return { accessLevel: getDefaultWorkspaceAccessLevelForRole('member') };
     }
 
     const defaultAccessLevel = teamSnap.data().defaultMemberAccessLevel;
-    return isWorkspaceAccessLevel(defaultAccessLevel)
-        ? defaultAccessLevel
-        : getDefaultWorkspaceAccessLevelForRole('member');
+    return {
+        accessLevel: isWorkspaceAccessLevel(defaultAccessLevel)
+            ? defaultAccessLevel
+            : getDefaultWorkspaceAccessLevelForRole('member'),
+        workspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides),
+    };
 }
 
 // ============ TEAM CRUD ============
@@ -211,6 +242,9 @@ export async function createPartnerTeam(input: CreatePartnerTeamInput): Promise<
         createdBy: input.createdBy,
         inviteCode,
         defaultMemberAccessLevel,
+        ...(input.defaultMemberWorkspaceOverrides
+            ? { defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(input.defaultMemberWorkspaceOverrides) }
+            : {}),
         partnerTeam: true
     });
 
@@ -443,13 +477,14 @@ export async function joinTeamByInviteCode(
         return teamId;
     }
 
-    const defaultAccessLevel = await getTeamDefaultMemberAccessLevel(teamId);
+    const defaultAccess = await getTeamDefaultWorkspaceAccess(teamId);
 
     // Add as new member
     await setDoc(memberRef, {
         userId,
         role: 'member' as TeamRole,
-        accessLevel: defaultAccessLevel,
+        accessLevel: defaultAccess.accessLevel,
+        ...(defaultAccess.workspaceOverrides ? { workspaceOverrides: defaultAccess.workspaceOverrides } : {}),
         joinedAt: serverTimestamp(),
         displayName,
         email,
@@ -522,6 +557,27 @@ export async function updateMemberAccessLevel(
 }
 
 /**
+ * Update a member's workspace profile and optional per-workspace overrides.
+ */
+export async function updateMemberWorkspaceAccess(
+    teamId: string,
+    memberId: string,
+    accessLevel: WorkspaceAccessLevel,
+    workspaceOverrides?: WorkspaceAccessOverrides
+): Promise<void> {
+    if (!isWorkspaceAccessLevel(accessLevel)) {
+        throw new Error('Invalid workspace access level');
+    }
+
+    const memberRef = doc(db, 'teams', teamId, 'members', memberId);
+    const sanitizedOverrides = sanitizeWorkspaceOverrides(workspaceOverrides);
+    await updateDoc(memberRef, {
+        accessLevel,
+        workspaceOverrides: sanitizedOverrides ?? {},
+    });
+}
+
+/**
  * Update the access level assigned to future users who join with this team's invite code.
  */
 export async function updateTeamDefaultMemberAccessLevel(
@@ -534,6 +590,26 @@ export async function updateTeamDefaultMemberAccessLevel(
 
     const teamRef = doc(db, 'teams', teamId);
     await updateDoc(teamRef, { defaultMemberAccessLevel: accessLevel });
+}
+
+/**
+ * Update the workspace profile and optional overrides assigned to future invite joins.
+ */
+export async function updateTeamDefaultWorkspaceAccess(
+    teamId: string,
+    accessLevel: WorkspaceAccessLevel,
+    workspaceOverrides?: WorkspaceAccessOverrides
+): Promise<void> {
+    if (!isWorkspaceAccessLevel(accessLevel)) {
+        throw new Error('Invalid workspace access level');
+    }
+
+    const teamRef = doc(db, 'teams', teamId);
+    const sanitizedOverrides = sanitizeWorkspaceOverrides(workspaceOverrides);
+    await updateDoc(teamRef, {
+        defaultMemberAccessLevel: accessLevel,
+        defaultMemberWorkspaceOverrides: sanitizedOverrides ?? {},
+    });
 }
 
 /**

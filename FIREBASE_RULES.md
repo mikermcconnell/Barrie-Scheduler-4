@@ -70,8 +70,9 @@ If you prefer to publish in the Firebase Console, copy from the current local fi
 1. Open Team Management with a global admin account.
 2. Use **Create partner team**.
 3. Set the team name, optional custom code, and default access level.
-4. Use `external-planner` for external agencies unless they need broader access.
-5. Copy the generated invite link and send that instead of a bare code.
-6. Confirm each joined user has the expected role and access level.
-7. Rotate the invite code/link after onboarding.
-8. Test with one agency account before sharing broadly.
+4. Use the Developer Access Wizard to set the exact default workspace access and any user-specific overrides.
+5. Use `transit-app-only` when the agency should see only Transit App Data; use `external-planner` when they need the external planning profile.
+6. Copy the generated invite link and send that instead of a bare code.
+7. Confirm each joined user has the expected role, access level, and workspace override set.
+8. Rotate the invite code/link after onboarding.
+9. Test with one agency account before sharing broadly.

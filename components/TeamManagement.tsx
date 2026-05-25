@@ -21,18 +21,74 @@ import {
     renameTeam,
     deleteTeam,
     updateMemberAccessLevel,
+    updateMemberWorkspaceAccess,
     updateTeamDefaultMemberAccessLevel,
+    updateTeamDefaultWorkspaceAccess,
     regenerateInviteCode,
     setInviteCode as setTeamInviteCode
 } from '../utils/services/teamService';
-import type { Team, TeamWithMembers, TeamMember, WorkspaceAccessLevel } from '../utils/masterScheduleTypes';
+import type {
+    Team,
+    TeamWithMembers,
+    TeamMember,
+    WorkspaceAccessFeatureKey,
+    WorkspaceAccessLevel,
+    WorkspaceAccessOverrides,
+} from '../utils/masterScheduleTypes';
 import {
+    getAllowedWorkspaceFeatures,
     resolveWorkspaceAccessLevel,
+    WORKSPACE_ACCESS_FEATURES,
     WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS,
     WORKSPACE_ACCESS_LEVEL_LABELS,
     WORKSPACE_ACCESS_LEVELS,
 } from '../utils/workspaceAccess';
 import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
+
+const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
+    workspaceOndemand: 'On Demand',
+    workspaceFixedRoute: 'Scheduled Transit',
+    workspaceOperations: 'Operations',
+    analyticsTransitApp: 'Transit App Data',
+    analyticsOdMatrix: 'OD Matrix',
+    analyticsCorridorSpeed: 'Corridor Speed',
+    analyticsCorridorHeadway: 'Corridor Headway',
+    analyticsStudentPass: 'Student Pass',
+    analyticsFleetPlan: 'Fleet Plan',
+    analyticsResidentialGrowth: 'Residential Growth',
+    analyticsNetworkConnections: 'Network Connections',
+    analyticsRoutePlanner2: 'Route Planner',
+    analyticsShuttlePlanner: 'Shuttle Planner',
+    operationsLoadProfiles: 'Load Profiles',
+    operationsOperatorDwell: 'Operator Dwell',
+};
+
+type WorkspaceSelection = Record<WorkspaceAccessFeatureKey, boolean>;
+
+function buildWorkspaceSelection(
+    accessLevel: WorkspaceAccessLevel,
+    overrides: WorkspaceAccessOverrides = {},
+): WorkspaceSelection {
+    const allowed = new Set(getAllowedWorkspaceFeatures(accessLevel, overrides));
+    return WORKSPACE_ACCESS_FEATURES.reduce((selection, feature) => {
+        selection[feature] = allowed.has(feature);
+        return selection;
+    }, {} as WorkspaceSelection);
+}
+
+function buildWorkspaceOverrides(
+    accessLevel: WorkspaceAccessLevel,
+    selection: WorkspaceSelection,
+): WorkspaceAccessOverrides {
+    const baseAllowed = new Set(getAllowedWorkspaceFeatures(accessLevel));
+    return WORKSPACE_ACCESS_FEATURES.reduce((overrides, feature) => {
+        const selected = selection[feature];
+        if (selected !== baseAllowed.has(feature)) {
+            overrides[feature] = selected;
+        }
+        return overrides;
+    }, {} as WorkspaceAccessOverrides);
+}
 
 interface TeamManagementProps {
     onClose?: () => void;
@@ -69,6 +125,17 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [partnerDefaultAccessLevel, setPartnerDefaultAccessLevel] = useState<WorkspaceAccessLevel>('external-planner');
     const [creatingPartnerTeam, setCreatingPartnerTeam] = useState(false);
     const [createdPartnerInviteLink, setCreatedPartnerInviteLink] = useState('');
+    const [wizardTeamAccessLevel, setWizardTeamAccessLevel] = useState<WorkspaceAccessLevel>('transit-app-only');
+    const [wizardTeamWorkspaceSelection, setWizardTeamWorkspaceSelection] = useState<WorkspaceSelection>(
+        () => buildWorkspaceSelection('transit-app-only')
+    );
+    const [savingWizardTeamAccess, setSavingWizardTeamAccess] = useState(false);
+    const [selectedWizardMemberId, setSelectedWizardMemberId] = useState('');
+    const [wizardMemberAccessLevel, setWizardMemberAccessLevel] = useState<WorkspaceAccessLevel>('transit-app-only');
+    const [wizardMemberWorkspaceSelection, setWizardMemberWorkspaceSelection] = useState<WorkspaceSelection>(
+        () => buildWorkspaceSelection('transit-app-only')
+    );
+    const [savingWizardMemberAccess, setSavingWizardMemberAccess] = useState(false);
 
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
@@ -81,6 +148,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const canEditActiveTeam = isCurrentTeamOwnerOrAdmin || canLookupTeams;
     const canManageActiveAccess = isCurrentTeamOwnerOrAdmin || canLookupTeams;
     const canRemoveActiveMembers = isCurrentTeamOwnerOrAdmin || canLookupTeams;
+    const selectedWizardMember = activeTeamDetails?.members.find(member => member.id === selectedWizardMemberId) ?? null;
     const filteredAvailableTeams = availableTeams.filter(availableTeam => {
         const filter = teamLookupCode.trim().toLowerCase();
         if (!filter) return true;
@@ -101,6 +169,45 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             loadAvailableTeams();
         }
     }, [canLookupTeams]);
+
+    useEffect(() => {
+        if (!activeTeamDetails) return;
+
+        const nextAccessLevel = activeTeamDetails.defaultMemberAccessLevel ?? 'planner';
+        setWizardTeamAccessLevel(nextAccessLevel);
+        setWizardTeamWorkspaceSelection(
+            buildWorkspaceSelection(nextAccessLevel, activeTeamDetails.defaultMemberWorkspaceOverrides)
+        );
+    }, [
+        activeTeamDetails?.id,
+        activeTeamDetails?.defaultMemberAccessLevel,
+        JSON.stringify(activeTeamDetails?.defaultMemberWorkspaceOverrides ?? {}),
+    ]);
+
+    useEffect(() => {
+        if (!activeTeamDetails?.members.length) {
+            setSelectedWizardMemberId('');
+            return;
+        }
+
+        if (!activeTeamDetails.members.some(member => member.id === selectedWizardMemberId)) {
+            setSelectedWizardMemberId(activeTeamDetails.members[0].id);
+        }
+    }, [activeTeamDetails?.id, activeTeamDetails?.members, selectedWizardMemberId]);
+
+    useEffect(() => {
+        if (!selectedWizardMember) return;
+
+        const nextAccessLevel = resolveWorkspaceAccessLevel(selectedWizardMember);
+        setWizardMemberAccessLevel(nextAccessLevel);
+        setWizardMemberWorkspaceSelection(
+            buildWorkspaceSelection(nextAccessLevel, selectedWizardMember.workspaceOverrides)
+        );
+    }, [
+        selectedWizardMember?.id,
+        selectedWizardMember?.accessLevel,
+        JSON.stringify(selectedWizardMember?.workspaceOverrides ?? {}),
+    ]);
 
     const loadTeamDetails = async () => {
         if (!team) return;
@@ -477,6 +584,63 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         }
     };
 
+    const handleWizardTeamAccessLevelChange = (nextAccessLevel: WorkspaceAccessLevel) => {
+        setWizardTeamAccessLevel(nextAccessLevel);
+        setWizardTeamWorkspaceSelection(buildWorkspaceSelection(nextAccessLevel));
+    };
+
+    const handleWizardMemberAccessLevelChange = (nextAccessLevel: WorkspaceAccessLevel) => {
+        setWizardMemberAccessLevel(nextAccessLevel);
+        setWizardMemberWorkspaceSelection(buildWorkspaceSelection(nextAccessLevel));
+    };
+
+    const handleSaveWizardTeamAccess = async () => {
+        if (!activeTeamId || !canLookupTeams) return;
+
+        setSavingWizardTeamAccess(true);
+        try {
+            await updateTeamDefaultWorkspaceAccess(
+                activeTeamId,
+                wizardTeamAccessLevel,
+                buildWorkspaceOverrides(wizardTeamAccessLevel, wizardTeamWorkspaceSelection)
+            );
+            await reloadActiveTeamDetails();
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
+            toast?.success('Team default workspace access saved');
+        } catch (error) {
+            console.error('Error saving team workspace access:', error);
+            toast?.error('Failed to save team workspace access');
+        } finally {
+            setSavingWizardTeamAccess(false);
+        }
+    };
+
+    const handleSaveWizardMemberAccess = async () => {
+        if (!activeTeamId || !selectedWizardMember || !canLookupTeams) return;
+
+        setSavingWizardMemberAccess(true);
+        try {
+            await updateMemberWorkspaceAccess(
+                activeTeamId,
+                selectedWizardMember.id,
+                wizardMemberAccessLevel,
+                buildWorkspaceOverrides(wizardMemberAccessLevel, wizardMemberWorkspaceSelection)
+            );
+            await reloadActiveTeamDetails();
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
+            toast?.success(`Workspace access saved for ${selectedWizardMember.displayName}`);
+        } catch (error) {
+            console.error('Error saving member workspace access:', error);
+            toast?.error('Failed to save member workspace access');
+        } finally {
+            setSavingWizardMemberAccess(false);
+        }
+    };
+
     // No Team State - Create or Join
     if (!team) {
         return (
@@ -738,6 +902,172 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                             </div>
                         </div>
                     )}
+                </div>
+            )}
+
+            {canLookupTeams && activeTeamDetails && (
+                <div className="bg-purple-50 border border-purple-100 rounded-xl p-4 mb-6">
+                    <div className="mb-4">
+                        <p className="text-sm font-semibold text-purple-900">Developer Access Wizard</p>
+                        <p className="text-xs text-purple-700">
+                            Select a team, choose a preset, then fine-tune exactly which workspaces are visible.
+                        </p>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="rounded-lg border border-purple-100 bg-white p-4">
+                            <p className="text-xs font-bold uppercase tracking-wide text-purple-700">1. Team</p>
+                            <select
+                                value={activeTeamDetails.id}
+                                onChange={(event) => {
+                                    const selectedTeam = availableTeams.find(teamOption => teamOption.id === event.target.value);
+                                    if (selectedTeam) void handleSelectTeam(selectedTeam);
+                                }}
+                                className="mt-2 w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800"
+                            >
+                                {availableTeams.map(teamOption => (
+                                    <option key={teamOption.id} value={teamOption.id}>
+                                        {teamOption.name}
+                                    </option>
+                                ))}
+                                {!availableTeams.some(teamOption => teamOption.id === activeTeamDetails.id) && (
+                                    <option value={activeTeamDetails.id}>{activeTeamDetails.name}</option>
+                                )}
+                            </select>
+                            <p className="mt-2 text-xs text-gray-500">
+                                Active team: <span className="font-semibold">{activeTeamDetails.name}</span>
+                            </p>
+                        </div>
+
+                        <div className="rounded-lg border border-purple-100 bg-white p-4">
+                            <p className="text-xs font-bold uppercase tracking-wide text-purple-700">2. Invite link</p>
+                            <button
+                                onClick={() => handleCopyInviteLink(activeTeamDetails.inviteCode)}
+                                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-purple-200 px-3 py-2 text-sm font-bold text-purple-800 hover:bg-purple-50"
+                            >
+                                <Link size={16} />
+                                Copy invite link
+                            </button>
+                            <p className="mt-2 text-xs text-gray-500">
+                                New users who join receive the team default access below.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="mt-4 rounded-lg border border-purple-100 bg-white p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-wide text-purple-700">
+                                    3. Team default access
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                    This applies to future users who join with the invite link.
+                                </p>
+                            </div>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                                <select
+                                    value={wizardTeamAccessLevel}
+                                    onChange={(event) => handleWizardTeamAccessLevelChange(event.target.value as WorkspaceAccessLevel)}
+                                    className="rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800"
+                                >
+                                    {WORKSPACE_ACCESS_LEVELS.map(level => (
+                                        <option key={level} value={level}>
+                                            {WORKSPACE_ACCESS_LEVEL_LABELS[level]}
+                                        </option>
+                                    ))}
+                                </select>
+                                <button
+                                    onClick={handleSaveWizardTeamAccess}
+                                    disabled={savingWizardTeamAccess}
+                                    className="rounded-lg bg-purple-700 px-4 py-2 text-sm font-bold text-white hover:bg-purple-800 disabled:opacity-50"
+                                >
+                                    {savingWizardTeamAccess ? 'Saving...' : 'Save team default'}
+                                </button>
+                            </div>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            {WORKSPACE_ACCESS_FEATURES.map(feature => (
+                                <label key={feature} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700">
+                                    <input
+                                        type="checkbox"
+                                        checked={wizardTeamWorkspaceSelection[feature]}
+                                        onChange={(event) => setWizardTeamWorkspaceSelection(selection => ({
+                                            ...selection,
+                                            [feature]: event.target.checked,
+                                        }))}
+                                        className="h-4 w-4 rounded border-gray-300 text-purple-700 focus:ring-purple-600"
+                                    />
+                                    {WORKSPACE_FEATURE_LABELS[feature]}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="mt-4 rounded-lg border border-purple-100 bg-white p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-wide text-purple-700">
+                                    4. User-specific access
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                    Override access for an individual team member when needed.
+                                </p>
+                            </div>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                                <select
+                                    value={selectedWizardMemberId}
+                                    onChange={(event) => setSelectedWizardMemberId(event.target.value)}
+                                    className="rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800"
+                                >
+                                    {activeTeamDetails.members.map(member => (
+                                        <option key={member.id} value={member.id}>
+                                            {member.displayName} ({member.email})
+                                        </option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={wizardMemberAccessLevel}
+                                    onChange={(event) => handleWizardMemberAccessLevelChange(event.target.value as WorkspaceAccessLevel)}
+                                    disabled={!selectedWizardMember}
+                                    className="rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800 disabled:opacity-50"
+                                >
+                                    {WORKSPACE_ACCESS_LEVELS.map(level => (
+                                        <option key={level} value={level}>
+                                            {WORKSPACE_ACCESS_LEVEL_LABELS[level]}
+                                        </option>
+                                    ))}
+                                </select>
+                                <button
+                                    onClick={handleSaveWizardMemberAccess}
+                                    disabled={savingWizardMemberAccess || !selectedWizardMember}
+                                    className="rounded-lg bg-purple-700 px-4 py-2 text-sm font-bold text-white hover:bg-purple-800 disabled:opacity-50"
+                                >
+                                    {savingWizardMemberAccess ? 'Saving...' : 'Save user access'}
+                                </button>
+                            </div>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            {WORKSPACE_ACCESS_FEATURES.map(feature => (
+                                <label key={feature} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700">
+                                    <input
+                                        type="checkbox"
+                                        checked={wizardMemberWorkspaceSelection[feature]}
+                                        onChange={(event) => setWizardMemberWorkspaceSelection(selection => ({
+                                            ...selection,
+                                            [feature]: event.target.checked,
+                                        }))}
+                                        disabled={!selectedWizardMember}
+                                        className="h-4 w-4 rounded border-gray-300 text-purple-700 focus:ring-purple-600 disabled:opacity-50"
+                                    />
+                                    {WORKSPACE_FEATURE_LABELS[feature]}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    <p className="mt-3 text-xs text-purple-700">
+                        Lane Transit setup: select <span className="font-semibold">Transit App Data only</span> and leave only Transit App Data checked.
+                    </p>
                 </div>
             )}
 

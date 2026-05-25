@@ -40,18 +40,18 @@ service cloud.firestore {
                          (request.auth.uid == memberId || isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager());
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                          (isWorkspacePermissionManager() &&
-                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessLevel']));
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessLevel', 'workspaceOverrides']));
         allow delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
       }
 
       // Master Schedules
       match /masterSchedules/{scheduleId} {
-        allow read: if isTeamMember(teamId);
+        allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute');
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
 
         // Version History
         match /versions/{versionId} {
-          allow read: if isTeamMember(teamId);
+          allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute');
           allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
         }
       }
@@ -80,7 +80,7 @@ service cloud.firestore {
 
       // Transit App Data
       match /transitAppData/{docId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read, write: if canAccessWorkspace(teamId, 'analyticsTransitApp');
       }
 
       // Performance Data
@@ -95,43 +95,43 @@ service cloud.firestore {
 
       // OD Matrix Data
       match /odMatrixData/{docId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read, write: if canAccessWorkspace(teamId, 'analyticsOdMatrix');
 
         // Import history subcollection
         match /imports/{importId} {
-          allow read, write: if isTeamMember(teamId);
+          allow read, write: if canAccessWorkspace(teamId, 'analyticsOdMatrix');
         }
       }
 
       // Fleet Plan data
       match /fleetPlan/{docId} {
-        allow read: if isTeamMember(teamId);
+        allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan');
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
 
         // Fleet Plan version history
         match /versions/{versionId} {
-          allow read: if isTeamMember(teamId);
+          allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan');
           allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
         }
       }
 
       // Residential Growth planning data
       match /residentialGrowth/{docId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read, write: if canAccessWorkspace(teamId, 'analyticsResidentialGrowth');
 
         // Import history subcollection
         match /imports/{importId} {
-          allow read, write: if isTeamMember(teamId);
+          allow read, write: if canAccessWorkspace(teamId, 'analyticsResidentialGrowth');
         }
       }
 
       // Route Planner 2 saved route concepts
       match /routePlanner2Projects/{projectId} {
-        allow read, write: if isTeamMember(teamId) || isWorkspacePermissionManager();
+        allow read, write: if canAccessWorkspace(teamId, 'analyticsRoutePlanner2');
 
         // Editable scenarios saved under each route planner project
         match /scenarios/{scenarioId} {
-          allow read, write: if isTeamMember(teamId) || isWorkspacePermissionManager();
+          allow read, write: if canAccessWorkspace(teamId, 'analyticsRoutePlanner2');
         }
       }
     }
@@ -163,6 +163,60 @@ service cloud.firestore {
       let member = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
       return request.auth != null &&
              (member.data.role == 'owner' || member.data.role == 'admin');
+    }
+
+    function memberAccessLevel(teamId) {
+      let member = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+      return member.data.accessLevel is string
+             ? member.data.accessLevel
+             : ((member.data.role == 'owner' || member.data.role == 'admin') ? 'internal' : 'planner');
+    }
+
+    function memberWorkspaceOverride(teamId, feature) {
+      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.workspaceOverrides[feature];
+    }
+
+    function workspaceAllowedByProfile(accessLevel, feature) {
+      return accessLevel == 'internal' ||
+             (accessLevel == 'admin' &&
+              (feature in [
+                'workspaceFixedRoute',
+                'workspaceOperations',
+                'workspaceOndemand',
+                'analyticsTransitApp',
+                'analyticsOdMatrix',
+                'analyticsStudentPass',
+                'analyticsFleetPlan',
+                'analyticsResidentialGrowth',
+                'analyticsRoutePlanner2',
+                'operationsLoadProfiles',
+                'operationsOperatorDwell'
+              ])) ||
+             (accessLevel == 'planner' &&
+              (feature in [
+                'workspaceFixedRoute',
+                'workspaceOperations',
+                'workspaceOndemand',
+                'analyticsTransitApp',
+                'analyticsStudentPass',
+                'analyticsFleetPlan',
+                'analyticsResidentialGrowth',
+                'analyticsRoutePlanner2'
+              ])) ||
+             (accessLevel == 'production' &&
+              (feature in ['workspaceFixedRoute', 'workspaceOperations'])) ||
+             (accessLevel == 'external-planner' &&
+              (feature in ['workspaceFixedRoute', 'analyticsOdMatrix'])) ||
+             (accessLevel == 'transit-app-only' &&
+              feature == 'analyticsTransitApp');
+    }
+
+    function canAccessWorkspace(teamId, feature) {
+      return isWorkspacePermissionManager() ||
+             (isTeamMember(teamId) &&
+              (memberWorkspaceOverride(teamId, feature) == true ||
+               (memberWorkspaceOverride(teamId, feature) != false &&
+                workspaceAllowedByProfile(memberAccessLevel(teamId), feature))));
     }
 
     function isWorkspacePermissionManager() {

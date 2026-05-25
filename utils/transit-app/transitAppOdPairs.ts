@@ -112,11 +112,11 @@ function getTorontoParts(dt: Date): { year: number; month: number; day: number; 
 
 function classifyTripTimestamp(timestamp: string): {
     hour: number;
-    dayType: TransferDayType;
+    dayType: TransferDayType | null;
     season: TransferSeason | null;
 } {
     const dt = parseUtcDateTime(timestamp);
-    if (!dt) return { hour: -1, dayType: 'weekday', season: null };
+    if (!dt) return { hour: -1, dayType: null, season: null };
 
     const local = getTorontoParts(dt);
     const localDay = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay();
@@ -151,15 +151,15 @@ function addPairToAccumulator(
     accumulator: PairAccumulator,
     trip: TransitAppTripRow,
     hour: number,
-    dayType: TransferDayType,
+    dayType: TransferDayType | null,
     season: TransferSeason | null,
 ): void {
     accumulator.count++;
     if (hour >= 0 && hour < 24) accumulator.hourlyBins[hour]++;
     if (dayType === 'saturday' || dayType === 'sunday') accumulator.weekendCount++;
-    else accumulator.weekdayCount++;
+    else if (dayType === 'weekday') accumulator.weekdayCount++;
     if (season) accumulator.seasonBins[season]++;
-    if (hour >= 0 && hour < 24 && season) {
+    if (hour >= 0 && hour < 24 && dayType && season) {
         const filterKey = `${dayType}|${season}|${hour}`;
         accumulator.odFilterBins[filterKey] = (accumulator.odFilterBins[filterKey] || 0) + 1;
     }
@@ -284,7 +284,7 @@ export function aggregateTransitAppODPairs(
 }
 
 export function getHoursForODTimePeriod(period: TransitAppODTimePeriod): number[] {
-    return TIME_PERIOD_HOURS[period];
+    return [...TIME_PERIOD_HOURS[period]];
 }
 
 export function getODPairCountForFilters(
@@ -332,6 +332,83 @@ export function getODPairCountForFilters(
     return activeCounts.length === 0 ? pair.count : Math.min(pair.count, ...activeCounts);
 }
 
+function getDaysForFilter(dayFilter: TransitAppODDayFilter): TransferDayType[] {
+    return dayFilter === 'weekday'
+        ? ['weekday']
+        : dayFilter === 'weekend'
+            ? ['saturday', 'sunday']
+            : ['weekday', 'saturday', 'sunday'];
+}
+
+function getSeasonsForFilter(seasonFilter: TransitAppODSeasonFilter): TransferSeason[] {
+    return seasonFilter === 'all'
+        ? ['jan', 'jul', 'sep', 'other']
+        : [seasonFilter];
+}
+
+function isWeekendDay(day: TransferDayType): boolean {
+    return day === 'saturday' || day === 'sunday';
+}
+
+export function filterODPairForDisplay(
+    pair: ODPair,
+    timePeriod: TransitAppODTimePeriod,
+    dayFilter: TransitAppODDayFilter,
+    seasonFilter: TransitAppODSeasonFilter,
+): ODPair {
+    if (timePeriod === 'all' && dayFilter === 'all' && seasonFilter === 'all') {
+        return { ...pair };
+    }
+
+    if (!pair.odFilterBins) {
+        return {
+            ...pair,
+            count: getODPairCountForFilters(pair, timePeriod, dayFilter, seasonFilter),
+            hourlyBins: undefined,
+            weekdayCount: undefined,
+            weekendCount: undefined,
+            seasonBins: undefined,
+        };
+    }
+
+    const selectedDays = new Set(getDaysForFilter(dayFilter));
+    const selectedSeasons = new Set(getSeasonsForFilter(seasonFilter));
+    const selectedHours = new Set(getHoursForODTimePeriod(timePeriod));
+    const hourlyBins = new Array(24).fill(0);
+    const seasonBins = { jan: 0, jul: 0, sep: 0, other: 0 };
+    const odFilterBins: Record<string, number> = {};
+    let count = 0;
+    let weekdayCount = 0;
+    let weekendCount = 0;
+
+    Object.entries(pair.odFilterBins).forEach(([key, binCount]) => {
+        const [dayRaw, seasonRaw, hourRaw] = key.split('|');
+        const day = dayRaw as TransferDayType;
+        const season = seasonRaw as TransferSeason;
+        const hour = Number(hourRaw);
+
+        if (!selectedDays.has(day) || !selectedSeasons.has(season) || !selectedHours.has(hour)) return;
+
+        const safeCount = Number.isFinite(binCount) ? binCount : 0;
+        odFilterBins[key] = (odFilterBins[key] || 0) + safeCount;
+        hourlyBins[hour] += safeCount;
+        seasonBins[season] += safeCount;
+        if (isWeekendDay(day)) weekendCount += safeCount;
+        else weekdayCount += safeCount;
+        count += safeCount;
+    });
+
+    return {
+        ...pair,
+        count,
+        hourlyBins,
+        weekdayCount,
+        weekendCount,
+        seasonBins,
+        odFilterBins,
+    };
+}
+
 function coordKey(lat: number, lon: number): string {
     return `${lat.toFixed(4)}_${lon.toFixed(4)}`;
 }
@@ -367,6 +444,11 @@ function addFilterBins(
     return next;
 }
 
+function addOptionalCount(target: number | undefined, source: number | undefined): number | undefined {
+    if (target === undefined && source === undefined) return undefined;
+    return (target ?? 0) + (source ?? 0);
+}
+
 function recalculateNetDirection(pair: MergedTransitAppODPair): void {
     const diff = pair.forwardCount - pair.reverseCount;
     const maxDirectional = Math.max(pair.forwardCount, pair.reverseCount);
@@ -399,8 +481,8 @@ export function mergeBidirectionalODPairs(pairs: ODPair[]): MergedTransitAppODPa
                 netDirection: 'balanced',
                 isMerged: true,
                 hourlyBins: undefined,
-                weekdayCount: 0,
-                weekendCount: 0,
+                weekdayCount: undefined,
+                weekendCount: undefined,
                 seasonBins: undefined,
                 odFilterBins: undefined,
             };
@@ -411,8 +493,8 @@ export function mergeBidirectionalODPairs(pairs: ODPair[]): MergedTransitAppODPa
         else merged.reverseCount += pair.count;
         merged.count += pair.count;
         merged.hourlyBins = addHourlyBins(merged.hourlyBins, pair.hourlyBins);
-        merged.weekdayCount = (merged.weekdayCount ?? 0) + (pair.weekdayCount ?? 0);
-        merged.weekendCount = (merged.weekendCount ?? 0) + (pair.weekendCount ?? 0);
+        merged.weekdayCount = addOptionalCount(merged.weekdayCount, pair.weekdayCount);
+        merged.weekendCount = addOptionalCount(merged.weekendCount, pair.weekendCount);
         merged.seasonBins = addSeasonBins(merged.seasonBins, pair.seasonBins);
         merged.odFilterBins = addFilterBins(merged.odFilterBins, pair.odFilterBins);
         recalculateNetDirection(merged);

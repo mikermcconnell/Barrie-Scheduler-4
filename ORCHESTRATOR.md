@@ -35,9 +35,9 @@ Top-level app shells in `App.tsx`:
 
 The app uses hash-based navigation rather than a router library. The top-level shell lives in `App.tsx`, with `index.tsx` as the mount point.
 
-Workspace visibility is controlled by `utils/workspaceAccess.ts` and `hooks/useWorkspaceAccess.ts`. Existing global feature flags still control build-wide availability; workspace access profiles (`production`, `planner`, `external-planner`, `admin`, `internal`) control what each team member sees.
+Workspace visibility is controlled by `utils/workspaceAccess.ts` and `hooks/useWorkspaceAccess.ts`. Existing global feature flags still control build-wide availability; workspace access profiles (`production`, `planner`, `external-planner`, `transit-app-only`, `admin`, `internal`) control what each team member sees, with optional `workspaceOverrides` for exact allow/block changes.
 
-Cross-team team lookup and permission management require a Firebase Auth custom claim such as `schedulerAdmin: true`; do not infer global admin power from a user's own team role or workspace access level. External agencies such as Ontario Northland or Lane Transit should be separate partner teams with `defaultMemberAccessLevel: external-planner`. Prefer the Team Management "Create partner team" flow and share the generated invite link rather than a bare code.
+Cross-team team lookup and permission management require a Firebase Auth custom claim such as `schedulerAdmin: true`; do not infer global admin power from a user's own team role or workspace access level. External agencies such as Ontario Northland or Lane Transit should be separate partner teams. Use Team Management's Developer Access Wizard to set team defaults and per-user workspace overrides. For Lane Transit-style access, use `defaultMemberAccessLevel: transit-app-only` so only Transit App Data is visible. Prefer the generated invite link rather than a bare code.
 
 This is a domain-heavy monolith:
 - UI lives in `components/`

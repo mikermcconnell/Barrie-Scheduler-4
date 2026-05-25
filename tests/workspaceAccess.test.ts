@@ -70,11 +70,18 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('operationsOperatorDwell');
     });
 
+    it('supports a Transit App Data only access profile', () => {
+        const allowed = getAllowedWorkspaceFeatures('transit-app-only');
+
+        expect(allowed).toEqual(['analyticsTransitApp']);
+    });
+
     it('uses agency-neutral language for external planner access', async () => {
         const labels = await import('../utils/workspaceAccess');
 
         expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS['external-planner']).toBe('External agency planner');
         expect(labels.WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS['external-planner']).not.toMatch(/Ontario Northland/i);
+        expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS['transit-app-only']).toBe('Transit App Data only');
     });
 
     it('keeps developer-only workspaces out of admin access', () => {

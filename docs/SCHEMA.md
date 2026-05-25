@@ -106,6 +106,7 @@ interface Team {
   createdBy: string;        // userId
   inviteCode: string;       // For joining
   defaultMemberAccessLevel?: WorkspaceAccessLevel; // Access assigned to new invite joins.
+  defaultMemberWorkspaceOverrides?: Partial<Record<string, boolean>>; // Optional default per-workspace allow/block overrides.
   partnerTeam?: boolean;    // True for externally onboarded agency teams.
 }
 ```
@@ -114,7 +115,7 @@ interface Team {
 
 ```typescript
 type TeamRole = 'owner' | 'admin' | 'member';
-type WorkspaceAccessLevel = 'production' | 'planner' | 'external-planner' | 'admin' | 'internal';
+type WorkspaceAccessLevel = 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'admin' | 'internal';
 
 interface TeamMember {
   id: string;
@@ -128,9 +129,9 @@ interface TeamMember {
 }
 ```
 
-`role` controls team permissions and writes. `accessLevel` controls which app workspaces are visible. Use `external-planner` for non-Barrie planning users such as Ontario Northland or Lane Transit; it exposes the Scheduled Transit shell plus partner agency planning data only. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
+`role` controls team permissions and writes. `accessLevel` controls which app workspaces are visible. Use `external-planner` for non-Barrie planning users who need partner planning data, or `transit-app-only` for agencies that should see only Transit App Data. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
 
-`defaultMemberAccessLevel` controls the access assigned to future members who join with the team's invite code or invite link. External agency teams should normally set this to `external-planner` before sharing the invite link.
+`defaultMemberAccessLevel` and `defaultMemberWorkspaceOverrides` control the access assigned to future members who join with the team's invite code or invite link. The Developer Access Wizard in Team Management can set both the team default and individual member `workspaceOverrides`.
 
 Partner agency onboarding uses invite links in the form `?invite=CODE` or `#/join/CODE`. A signed-out user is prompted to sign in; after authentication, the app joins them to the matching team automatically if they are not already assigned to a team.
 

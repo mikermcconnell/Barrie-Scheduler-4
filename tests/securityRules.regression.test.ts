@@ -23,22 +23,36 @@ describe('security rules regression checks', () => {
     const firestoreRules = readRepoFile('firestore.rules');
     const storageRules = readRepoFile('storage.rules');
 
-    expect(firestoreRules).toMatch(/match \/masterSchedules\/\{scheduleId\} \{[\s\S]*allow read: if isTeamMember\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\);/);
+    expect(firestoreRules).toMatch(/match \/masterSchedules\/\{scheduleId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'workspaceFixedRoute'\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\);/);
     expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/masterSchedules\/\{allPaths=\*\*\} \{[\s\S]*allow read: if isTeamMember\(teamId\);[\s\S]*allow write: if isTeamManager\(teamId\);/);
   });
 
-  it('restricts Fleet Plan writes to team managers and keeps versions readable by members', () => {
+  it('restricts Fleet Plan writes to team managers and reads to users with Fleet Plan access', () => {
     const firestoreRules = readRepoFile('firestore.rules');
     const storageRules = readRepoFile('storage.rules');
 
-    expect(firestoreRules).toMatch(/match \/fleetPlan\/\{docId\} \{[\s\S]*allow read: if isTeamMember\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\);[\s\S]*match \/versions\/\{versionId\} \{[\s\S]*allow read: if isTeamMember\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\);/);
+    expect(firestoreRules).toMatch(/match \/fleetPlan\/\{docId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsFleetPlan'\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\);[\s\S]*match \/versions\/\{versionId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsFleetPlan'\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\);/);
     expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/fleetPlan\/\{allPaths=\*\*\} \{[\s\S]*allow read: if isTeamMember\(teamId\);[\s\S]*allow write: if isTeamManager\(teamId\);/);
   });
 
-  it('allows workspace permission managers to use Route Planner 2 saved route concepts', () => {
+  it('gates Route Planner 2 saved route concepts by workspace access', () => {
     const firestoreRules = readRepoFile('firestore.rules');
 
-    expect(firestoreRules).toMatch(/match \/routePlanner2Projects\/\{projectId\} \{[\s\S]*allow read, write: if isTeamMember\(teamId\) \|\| isWorkspacePermissionManager\(\);[\s\S]*match \/scenarios\/\{scenarioId\} \{[\s\S]*allow read, write: if isTeamMember\(teamId\) \|\| isWorkspacePermissionManager\(\);/);
+    expect(firestoreRules).toMatch(/match \/routePlanner2Projects\/\{projectId\} \{[\s\S]*allow read, write: if canAccessWorkspace\(teamId, 'analyticsRoutePlanner2'\);[\s\S]*match \/scenarios\/\{scenarioId\} \{[\s\S]*allow read, write: if canAccessWorkspace\(teamId, 'analyticsRoutePlanner2'\);/);
+  });
+
+  it('gates Transit App Data and OD Matrix by workspace access', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/match \/transitAppData\/\{docId\} \{[\s\S]*allow read, write: if canAccessWorkspace\(teamId, 'analyticsTransitApp'\);/);
+    expect(firestoreRules).toMatch(/match \/odMatrixData\/\{docId\} \{[\s\S]*allow read, write: if canAccessWorkspace\(teamId, 'analyticsOdMatrix'\);/);
+    expect(firestoreRules).toMatch(/accessLevel == 'transit-app-only' &&[\s\S]*feature == 'analyticsTransitApp'/);
+  });
+
+  it('keeps old owner and admin member docs working when accessLevel is missing', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/member\.data\.accessLevel is string[\s\S]*member\.data\.role == 'owner' \|\| member\.data\.role == 'admin'[\s\S]*'internal'[\s\S]*'planner'/);
   });
 
   it('requires a Firebase custom claim for global workspace permission management', () => {
@@ -49,5 +63,13 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).not.toMatch(/currentUserAccessLevel\(\) == 'internal'/);
     expect(firestoreRules).not.toMatch(/currentUserTeamRole\(\) == 'owner'/);
     expect(firestoreRules).not.toMatch(/currentUserTeamRole\(\) == 'admin'/);
+  });
+
+  it('lets global permission managers update member workspace overrides without broader member edits', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(
+      /isWorkspacePermissionManager\(\) &&[\s\S]*affectedKeys\(\)\.hasOnly\(\['accessLevel', 'workspaceOverrides'\]\)/
+    );
   });
 });
