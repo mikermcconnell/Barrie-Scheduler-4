@@ -29,6 +29,17 @@ interface RouteServiceAccumulator {
 let cachedServiceLevels: Map<string, RouteServiceLevel> | null = null;
 let cachedSupplyProfiles: Map<string, RouteSupplyProfile> | null = null;
 
+const MERGED_AB_ROUTE_BASES = new Set(['2', '7', '12']);
+
+function normalizeTransitAppRouteKey(route: string): string {
+    const normalized = normalizeRoute(route);
+    const match = normalized.match(/^(\d+)([AB])$/);
+    if (match && MERGED_AB_ROUTE_BASES.has(match[1])) {
+        return match[1];
+    }
+    return normalized;
+}
+
 export function parseCsvRow(line: string): string[] {
     const values: string[] = [];
     let current = '';
@@ -234,11 +245,12 @@ function buildRouteSupplyProfiles(): Map<string, RouteSupplyProfile> {
     const accumulators = new Map<string, RouteServiceAccumulator>();
 
     const addDeparture = (route: string, dayType: TransferDayType, depMin: number) => {
-        const key = `${route}|${dayType}`;
+        const routeKey = normalizeTransitAppRouteKey(route);
+        const key = `${routeKey}|${dayType}`;
         let acc = accumulators.get(key);
         if (!acc) {
             acc = {
-                route,
+                route: routeKey,
                 dayType,
                 departuresByHour: new Array(24).fill(0),
                 departureTimes: [],
@@ -313,8 +325,9 @@ function buildRouteServiceLevels(): Map<string, RouteServiceLevel> {
         const service = serviceMap.get(serviceId);
         if (!routeShortName || !service) continue;
 
-        const existing = serviceLevels.get(routeShortName) || {
-            route: routeShortName,
+        const routeKey = normalizeTransitAppRouteKey(routeShortName);
+        const existing = serviceLevels.get(routeKey) || {
+            route: routeKey,
             weekday: 0,
             saturday: 0,
             sunday: 0,
@@ -324,7 +337,7 @@ function buildRouteServiceLevels(): Map<string, RouteServiceLevel> {
         if (service.saturday) existing.saturday += 1;
         if (service.sunday) existing.sunday += 1;
 
-        serviceLevels.set(routeShortName, existing);
+        serviceLevels.set(routeKey, existing);
     }
 
     return serviceLevels;
@@ -350,7 +363,7 @@ export function getScheduledTripsForRouteOnDate(route: string, date: string): nu
     const dayType = getDayTypeBucket(date);
     if (!dayType) return null;
 
-    const service = getServiceLevels().get(normalizeRoute(route));
+    const service = getServiceLevels().get(normalizeTransitAppRouteKey(route));
     if (!service) return null;
 
     const value = service[dayType];
@@ -366,7 +379,7 @@ export function hasGtfsNormalizationData(): boolean {
 }
 
 export function getRouteSupplyProfile(route: string, dayType: TransferDayType): RouteSupplyProfile | null {
-    const key = `${normalizeRoute(route)}|${dayType}`;
+    const key = `${normalizeTransitAppRouteKey(route)}|${dayType}`;
     return getSupplyProfiles().get(key) || null;
 }
 

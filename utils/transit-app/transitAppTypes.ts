@@ -314,12 +314,13 @@ export interface LocationGridCell {
     count: number;
 }
 
-export type LocationTimeBand = 'am_peak' | 'midday' | 'pm_peak' | 'evening';
+export type LocationTimeBand = 'am_peak' | 'midday' | 'pm_peak' | 'evening' | 'overnight';
 export type HeatmapAtlasSliceId =
     | 'weekday_am_peak'
     | 'weekday_midday'
     | 'weekday_pm_peak'
     | 'weekday_evening'
+    | 'weekday_overnight'
     | 'saturday_all_day'
     | 'sunday_all_day';
 
@@ -395,6 +396,9 @@ export interface TransitAppStopProximityAnalysis {
         farEndpointCount: number;
         farEndpointSharePct: number;
         clusterCount: number;
+        candidateTripEndpoints?: number;
+        invalidEndpointCount?: number;
+        outOfScopeEndpointCount?: number;
     };
     farThresholdKm: number;
     topClusters: StopCoverageGapCluster[];
@@ -426,6 +430,8 @@ export interface ODPairData {
     totalTripsDroppedByPairLimit?: number;
 }
 
+export type ODCoverageStatus = 'served' | 'partial' | 'gap';
+
 export interface ODCoverageGap {
     pair: ODPair;
     originZoneName: string;
@@ -437,6 +443,7 @@ export interface ODCoverageGap {
     destRouteDistKm: number;
     isServedByDirectRoute: boolean;
     servingRoutes: string[];
+    coverageStatus: ODCoverageStatus;
 }
 
 export interface TransferPattern {

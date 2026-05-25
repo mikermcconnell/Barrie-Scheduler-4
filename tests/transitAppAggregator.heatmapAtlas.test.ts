@@ -33,7 +33,7 @@ const baseStats: TransitAppFileStats = {
 };
 
 describe('aggregateTransitAppData heatmap analysis (UC6)', () => {
-    it('applies 15-min debiasing and builds 18-slice atlas', () => {
+    it('applies 15-min debiasing and builds a 21-slice Jan/Jul/Sep atlas', () => {
         const parsed: TransitAppParsedData = {
             lines: [],
             trips: [],
@@ -50,6 +50,9 @@ describe('aggregateTransitAppData heatmap analysis (UC6)', () => {
 
                 // Sep saturday
                 { user_id: 'u3', longitude: -79.6500, latitude: 44.3600, timestamp: '2025-09-13 18:10:00 UTC' },
+
+                // Jan weekday overnight, separate from evening
+                { user_id: 'u4', longitude: -79.6500, latitude: 44.3600, timestamp: '2025-01-07 04:30:00 UTC' },
             ],
             goTripLegs: [],
             plannedTripLegs: [],
@@ -61,15 +64,81 @@ describe('aggregateTransitAppData heatmap analysis (UC6)', () => {
         const heat = summary.heatmapAnalysis;
 
         expect(heat).toBeDefined();
-        expect(heat?.debiasing.rawPoints).toBe(5);
-        expect(heat?.debiasing.debiasedPoints).toBe(4);
-        expect(heat?.atlas.length).toBe(18);
+        expect(heat?.schemaVersion).toBe(2);
+        expect(heat?.debiasing.rawPoints).toBe(6);
+        expect(heat?.debiasing.debiasedPoints).toBe(5);
+        expect(heat?.atlas.length).toBe(21);
 
         const janAm = heat?.atlas.find(slice => slice.season === 'jan' && slice.id === 'weekday_am_peak');
         expect(janAm).toBeDefined();
         expect(janAm?.totalPoints).toBeGreaterThan(0);
 
-        expect(summary.locationDensity.rawPoints).toBe(5);
-        expect(summary.locationDensity.debiasedPoints).toBe(4);
+        const janEvening = heat?.atlas.find(slice => slice.season === 'jan' && slice.id === 'weekday_evening');
+        const janOvernight = heat?.atlas.find(slice => slice.season === 'jan' && slice.id === 'weekday_overnight');
+        expect(janEvening?.totalPoints).toBe(0);
+        expect(janOvernight?.totalPoints).toBe(1);
+
+        expect(summary.locationDensity.rawPoints).toBe(6);
+        expect(summary.locationDensity.debiasedPoints).toBe(5);
+    });
+
+    it('retains callouts for every non-empty atlas slice instead of capping globally', () => {
+        const points: TransitAppParsedData['locations'] = [
+            // January EST
+            ['2025-01-06 12:00:00 UTC', 'jan_weekday_am_peak'],
+            ['2025-01-06 15:00:00 UTC', 'jan_weekday_midday'],
+            ['2025-01-06 21:00:00 UTC', 'jan_weekday_pm_peak'],
+            ['2025-01-07 00:00:00 UTC', 'jan_weekday_evening'],
+            ['2025-01-07 04:00:00 UTC', 'jan_weekday_overnight'],
+            ['2025-01-04 17:00:00 UTC', 'jan_saturday_all_day'],
+            ['2025-01-05 17:00:00 UTC', 'jan_sunday_all_day'],
+            // July EDT
+            ['2025-07-07 11:00:00 UTC', 'jul_weekday_am_peak'],
+            ['2025-07-07 14:00:00 UTC', 'jul_weekday_midday'],
+            ['2025-07-07 20:00:00 UTC', 'jul_weekday_pm_peak'],
+            ['2025-07-07 23:00:00 UTC', 'jul_weekday_evening'],
+            ['2025-07-08 03:00:00 UTC', 'jul_weekday_overnight'],
+            ['2025-07-05 16:00:00 UTC', 'jul_saturday_all_day'],
+            ['2025-07-06 16:00:00 UTC', 'jul_sunday_all_day'],
+            // September EDT
+            ['2025-09-08 11:00:00 UTC', 'sep_weekday_am_peak'],
+            ['2025-09-08 14:00:00 UTC', 'sep_weekday_midday'],
+            ['2025-09-08 20:00:00 UTC', 'sep_weekday_pm_peak'],
+            ['2025-09-08 23:00:00 UTC', 'sep_weekday_evening'],
+            ['2025-09-09 03:00:00 UTC', 'sep_weekday_overnight'],
+            ['2025-09-06 16:00:00 UTC', 'sep_saturday_all_day'],
+            ['2025-09-07 16:00:00 UTC', 'sep_sunday_all_day'],
+            // Other season EST
+            ['2025-02-03 12:00:00 UTC', 'other_weekday_am_peak'],
+            ['2025-02-03 15:00:00 UTC', 'other_weekday_midday'],
+            ['2025-02-03 21:00:00 UTC', 'other_weekday_pm_peak'],
+            ['2025-02-04 00:00:00 UTC', 'other_weekday_evening'],
+            ['2025-02-04 04:00:00 UTC', 'other_weekday_overnight'],
+            ['2025-02-01 17:00:00 UTC', 'other_saturday_all_day'],
+            ['2025-02-02 17:00:00 UTC', 'other_sunday_all_day'],
+        ].map(([timestamp, label], index) => ({
+            user_id: `u-${label}`,
+            longitude: -79.6900 + index * 0.00001,
+            latitude: 44.3800 + index * 0.00001,
+            timestamp,
+        }));
+
+        const parsed: TransitAppParsedData = {
+            lines: [],
+            trips: [],
+            locations: points,
+            goTripLegs: [],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const heat = summary.heatmapAnalysis;
+
+        expect(heat?.atlas).toHaveLength(28);
+        expect(heat?.callouts).toHaveLength(28);
+        expect(heat?.callouts.some(callout => callout.season === 'other')).toBe(true);
+        expect(heat?.callouts.some(callout => callout.timeBand === 'overnight')).toBe(true);
     });
 });

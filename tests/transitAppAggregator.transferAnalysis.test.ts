@@ -325,6 +325,48 @@ describe('aggregateTransitAppData transfer analysis', () => {
         expect(summary.transferPatterns).toHaveLength(2);
     });
 
+    it('uses service name to avoid treating regional route labels as Barrie GTFS route matches', () => {
+        const parsed: TransitAppParsedData = {
+            lines: [],
+            trips: [],
+            locations: [],
+            goTripLegs: [
+                makeLeg({
+                    userTripId: 'regional-route-collision',
+                    serviceName: 'GO Transit',
+                    route: '400',
+                    startTime: '2025-01-08 13:00:00 UTC',
+                    endTime: '2025-01-08 13:10:00 UTC',
+                    startStop: 'Regional origin',
+                    endStop: 'Barrie South GO Station',
+                    endLat: 44.35185862,
+                    endLon: -79.62838858,
+                }),
+                makeLeg({
+                    userTripId: 'regional-route-collision',
+                    serviceName: 'Barrie Transit',
+                    route: '8A',
+                    startTime: '2025-01-08 13:16:00 UTC',
+                    endTime: '2025-01-08 13:35:00 UTC',
+                    startStop: 'Barrie South GO Station',
+                    endStop: 'Downtown Hub',
+                }),
+            ],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const row = summary.transferAnalysis?.topTransferPairs[0];
+
+        expect(row?.fromRoute).toBe('400');
+        expect(row?.fromRouteId).toBeNull();
+        expect(row?.toRouteId).toBe('8A');
+        expect(row?.transferType).toBe('go_to_barrie');
+        expect(summary.transferAnalysis?.totals.goLinkedTransferEvents).toBe(1);
+    });
+
     it('keeps full rankable transfer lists so scope filters can rank before display caps', () => {
         const goTripLegs: TransitAppTripLegRow[] = [];
 

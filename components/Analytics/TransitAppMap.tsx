@@ -29,7 +29,6 @@ import autoTable from 'jspdf-autotable';
 import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transit-app/transitAppTypes';
 import {
     filterODPairForDisplay,
-    getDirectionalCountsForZone,
     mergeBidirectionalODPairs,
     toUnmergedODPair,
     TRANSIT_APP_OD_TIME_FILTERS,
@@ -38,7 +37,13 @@ import {
     type TransitAppODSeasonFilter,
     type TransitAppODTimePeriod,
 } from '../../utils/transit-app/transitAppOdPairs';
-import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../../utils/gtfs/gtfsShapesLoader';
+import {
+    buildODZonePanelData,
+    filterPairsByRouteCorridor,
+    getAvailableRouteNamesFromShapes,
+} from '../../utils/transit-app/transitAppOdDisplay';
+import { isInBarrieAnalysisArea } from '../../utils/transit-app/transitAppGeo';
+import { loadGtfsRouteShapes, loadGtfsRouteShapeVariants } from '../../utils/gtfs/gtfsShapesLoader';
 import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { formatTimeBand, formatDayType, formatSeason } from './AnalyticsShared';
 import { ArcLayer, MapBase, RouteOverlay, StopDotLayer, heatColor, quadraticBezierArc, toGeoJSON } from '../shared';
@@ -73,7 +78,6 @@ export type SeasonFilter = TransitAppODSeasonFilter;
 type MergedODPair = MergedTransitAppODPair;
 
 const BARRIE_CENTER: [number, number] = [44.38, -79.69];
-const BARRIE_BOUNDS = { minLat: 44.28, maxLat: 44.48, minLon: -79.80, maxLon: -79.58 };
 // Tighter view bounds for fitBounds — urban core only
 const BARRIE_VIEW_BOUNDS = { minLat: 44.34, maxLat: 44.42, minLon: -79.73, maxLon: -79.64 };
 const MAP_STYLE = 'mapbox://styles/mapbox/light-v11';
@@ -87,8 +91,7 @@ const OD_ENDPOINT_LAYER_ID = 'transit-app-endpoints';
 const COVERAGE_LAYER_ID = 'transit-app-coverage-clusters';
 
 function isInBarrie(lat: number, lon: number): boolean {
-    return lat >= BARRIE_BOUNDS.minLat && lat <= BARRIE_BOUNDS.maxLat
-        && lon >= BARRIE_BOUNDS.minLon && lon <= BARRIE_BOUNDS.maxLon;
+    return isInBarrieAnalysisArea(lat, lon);
 }
 
 // Rank-based colors: 1-7 get distinct vivid colors, 8+ get dark→light grey
@@ -299,16 +302,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         // Step 4b: Route corridor filter
         if (corridorRoute) {
             try {
-                const shapes = loadGtfsRouteShapes();
-                const matchShape = shapes.find(s => s.routeShortName === corridorRoute);
-                if (matchShape && matchShape.points.length > 0) {
-                    const BUFFER_KM = 1.0;
-                    filtered = filtered.filter(p => {
-                        const oDist = pointToPolylineDistanceKm([p.originLat, p.originLon], matchShape.points);
-                        const dDist = pointToPolylineDistanceKm([p.destLat, p.destLon], matchShape.points);
-                        return oDist <= BUFFER_KM && dDist <= BUFFER_KM;
-                    });
-                }
+                filtered = filterPairsByRouteCorridor(filtered, corridorRoute, loadGtfsRouteShapeVariants());
             } catch { /* shapes not available */ }
         }
 
@@ -439,10 +433,15 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         resizeMap(100);
     }, [isolatedZone, resizeMap]);
 
+    const zoneNamePairs = useMemo(
+        () => isolatedZone ? filteredPairs : displayedPairs,
+        [isolatedZone, filteredPairs, displayedPairs]
+    );
+
     const zoneNameCache = useMemo(() => {
         const cache = new Map<string, string>();
-        if (!displayedPairs.length) return cache;
-        for (const pair of displayedPairs) {
+        if (!zoneNamePairs.length) return cache;
+        for (const pair of zoneNamePairs) {
             for (const [lat, lon] of [
                 [pair.originLat, pair.originLon],
                 [pair.destLat, pair.destLon],
@@ -454,104 +453,23 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             }
         }
         return cache;
-    }, [displayedPairs]);
+    }, [zoneNamePairs]);
 
     const getZoneName = useCallback((lat: number, lon: number): string => {
         const key = `${lat.toFixed(4)}_${lon.toFixed(4)}`;
         return zoneNameCache.get(key) ?? describeLocationRelativeToBarrie(lat, lon);
     }, [zoneNameCache]);
 
-    // Zone detail panel data
+    const zonePanelPairs = useMemo(
+        () => isolatedZone ? filteredPairs : displayedPairs,
+        [isolatedZone, filteredPairs, displayedPairs]
+    );
+
+    // Zone detail panel data uses all filtered flows for the selected zone, not only the Top N map slice.
     const zonePanelData = useMemo(() => {
-        if (!isolatedZone || displayedPairs.length === 0) return null;
-
-        const [latStr, lonStr] = isolatedZone.split('_');
-        const zoneLat = parseFloat(latStr);
-        const zoneLon = parseFloat(lonStr);
-        const zoneName = getZoneName(zoneLat, zoneLon);
-
-        let totalTrips = 0;
-        const connectionSet = new Set<string>();
-        let totalDistKm = 0;
-        const hourlyTotals = new Array(24).fill(0);
-        let hasHourly = false;
-
-        interface FlowEntry {
-            name: string;
-            lat: number;
-            lon: number;
-            outbound: number;
-            inbound: number;
-            total: number;
-            distKm: number;
-        }
-        const flowMap = new Map<string, FlowEntry>();
-
-        for (const pair of displayedPairs) {
-            const oKey = coordKey(pair.originLat, pair.originLon);
-            const dKey = coordKey(pair.destLat, pair.destLon);
-            const isOrigin = oKey === isolatedZone;
-            const directionalCounts = getDirectionalCountsForZone(pair, isolatedZone);
-            if (!directionalCounts) continue;
-
-            const otherKey = isOrigin ? dKey : oKey;
-            const otherLat = isOrigin ? pair.destLat : pair.originLat;
-            const otherLon = isOrigin ? pair.destLon : pair.originLon;
-            const flowTotal = directionalCounts.outbound + directionalCounts.inbound;
-
-            totalTrips += flowTotal;
-            connectionSet.add(otherKey);
-
-            const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
-            totalDistKm += distKm * flowTotal;
-
-            if (pair.hourlyBins) {
-                hasHourly = true;
-                for (let h = 0; h < 24; h++) hourlyTotals[h] += pair.hourlyBins[h];
-            }
-
-            const existing = flowMap.get(otherKey);
-            if (existing) {
-                existing.outbound += directionalCounts.outbound;
-                existing.inbound += directionalCounts.inbound;
-                existing.total += flowTotal;
-            } else {
-                flowMap.set(otherKey, {
-                    name: getZoneName(otherLat, otherLon),
-                    lat: otherLat,
-                    lon: otherLon,
-                    outbound: directionalCounts.outbound,
-                    inbound: directionalCounts.inbound,
-                    total: flowTotal,
-                    distKm,
-                });
-            }
-        }
-
-        const flows = Array.from(flowMap.values()).sort((a, b) => b.total - a.total);
-        const avgDistKm = totalTrips > 0 ? totalDistKm / totalTrips : 0;
-
-        let peakPeriod: string | null = null;
-        if (hasHourly) {
-            const maxHour = hourlyTotals.indexOf(Math.max(...hourlyTotals));
-            if (maxHour >= 6 && maxHour < 9) peakPeriod = 'AM Peak';
-            else if (maxHour >= 9 && maxHour < 15) peakPeriod = 'Midday';
-            else if (maxHour >= 15 && maxHour < 18) peakPeriod = 'PM Peak';
-            else if (maxHour >= 18 && maxHour < 22) peakPeriod = 'Evening';
-            else peakPeriod = 'Overnight';
-        }
-
-        return {
-            zoneName,
-            zoneLat,
-            zoneLon,
-            totalTrips,
-            uniqueConnections: connectionSet.size,
-            avgDistKm,
-            peakPeriod,
-            flows,
-        };
-    }, [isolatedZone, displayedPairs, getZoneName]);
+        if (!isolatedZone || zonePanelPairs.length === 0) return null;
+        return buildODZonePanelData(zonePanelPairs, isolatedZone, getZoneName);
+    }, [isolatedZone, zonePanelPairs, getZoneName]);
 
     useEffect(() => {
         setMatrixPage(1);
@@ -566,7 +484,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     // Available GTFS route short names for corridor filter
     const availableRouteNames = useMemo(() => {
         try {
-            return loadGtfsRouteShapes().map(s => s.routeShortName);
+            return getAvailableRouteNamesFromShapes(loadGtfsRouteShapeVariants());
         } catch { return []; }
     }, []);
 

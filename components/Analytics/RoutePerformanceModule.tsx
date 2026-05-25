@@ -95,6 +95,9 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
 
             const aVal = numericSortValue(a, sortKey);
             const bVal = numericSortValue(b, sortKey);
+            if (aVal === null && bVal === null) return a.route.localeCompare(b.route, undefined, { numeric: true });
+            if (aVal === null) return 1;
+            if (bVal === null) return -1;
             return mult * (aVal - bVal);
         });
         return rows;
@@ -175,7 +178,7 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                         </table>
                     </div>
                 ) : (
-                    <NoData message="No routes flagged for review. Re-import data to enable watchlist scoring." />
+                    <NoData message={data.routePerformance ? 'No routes are currently flagged for review.' : 'Re-import data to enable watchlist scoring.'} />
                 )}
             </ChartCard>
 
@@ -301,11 +304,11 @@ function getViewToSuggestionRate(row: RoutePerformanceScorecardRow): number | nu
     return row.viewToSuggestionRate ?? row.tapToSuggestionRate ?? null;
 }
 
-function numericSortValue(row: RoutePerformanceScorecardRow, sortKey: Exclude<SortKey, 'route' | 'trend' | 'confidence'>): number {
+function numericSortValue(row: RoutePerformanceScorecardRow, sortKey: Exclude<SortKey, 'route' | 'trend' | 'confidence'>): number | null {
     if (sortKey === 'viewToSuggestionRate') {
-        return getViewToSuggestionRate(row) ?? Number.POSITIVE_INFINITY;
+        return getViewToSuggestionRate(row);
     }
-    return (row[sortKey] ?? Number.POSITIVE_INFINITY) as number;
+    return row[sortKey] as number | null;
 }
 
 function trendBadge(trend: string): string {

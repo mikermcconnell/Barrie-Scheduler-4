@@ -246,7 +246,7 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                                 </p>
                             </div>
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-100">
-                                <p className="text-xs text-gray-500">Demand Outside Span</p>
+                                <p className="text-xs text-gray-500">Avg Demand Outside Span</p>
                                 <p className="text-sm font-bold text-gray-900">
                                     {fmt(selectedProfile.demandBeforeFirst + selectedProfile.demandAfterLast)}
                                 </p>
@@ -264,7 +264,7 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                                 <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
                                 <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
                                 <Tooltip
-                                    formatter={(value: number, name: string) => [value, name === 'demand' ? 'App Demand' : 'Scheduled Departures']}
+                                    formatter={(value: number, name: string) => [value, name === 'demand' ? 'Avg App Demand' : 'Scheduled Departures']}
                                     labelFormatter={(label: number) => `Hour ${formatHour(label)}`}
                                 />
                                 <Legend />
@@ -274,7 +274,7 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                                 {lastSpanHour !== null && canShadePostSpan && lastSpanHour < 23 && (
                                     <ReferenceArea x1={lastSpanHour + 0.01} x2={23} fill="#fee2e2" fillOpacity={0.25} yAxisId="left" />
                                 )}
-                                <Bar yAxisId="left" dataKey="demand" fill="#06b6d4" name="App Demand" radius={[4, 4, 0, 0]} />
+                                <Bar yAxisId="left" dataKey="demand" fill="#06b6d4" name="Avg App Demand" radius={[4, 4, 0, 0]} />
                                 <Line yAxisId="right" type="monotone" dataKey="supply" stroke="#f59e0b" strokeWidth={2.5} dot={false} name="Scheduled Departures" />
                             </ComposedChart>
                         </ResponsiveContainer>
@@ -306,7 +306,7 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Day</th>
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Band</th>
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Season</th>
-                                        <th className="text-right py-2 px-2 text-gray-500 font-medium">Demand/h</th>
+                                        <th className="text-right py-2 px-2 text-gray-500 font-medium">Avg Demand/h</th>
                                         <th className="text-right py-2 px-2 text-gray-500 font-medium">Supply/h</th>
                                     </tr>
                                 </thead>
@@ -329,7 +329,7 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                     )}
                 </ChartCard>
 
-                <ChartCard title="Route Gap Priority" subtitle="Routes with strongest demand-minus-supply signals">
+                <ChartCard title="Route Gap Priority" subtitle="Routes with strongest average demand-minus-supply signals">
                     {routeGapSummary.length > 0 ? (
                         <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                             <table className="w-full text-sm">

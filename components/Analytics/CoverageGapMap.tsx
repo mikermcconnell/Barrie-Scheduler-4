@@ -16,8 +16,8 @@ import type { LayerProps, MapRef } from 'react-map-gl/mapbox';
 import type { MapMouseEvent } from 'mapbox-gl';
 import { MapBase, ArcLayer, RouteOverlay } from '../shared';
 import type { ArcData } from '../shared';
-import type { ODCoverageGap } from '../../utils/transit-app/transitAppTypes';
-import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
+import type { ODCoverageGap, ODCoverageStatus } from '../../utils/transit-app/transitAppTypes';
+import { loadGtfsRouteShapeVariants } from '../../utils/gtfs/gtfsShapesLoader';
 
 interface CoverageGapMapProps {
     gaps: ODCoverageGap[];
@@ -32,10 +32,8 @@ const STATUS_COLORS = {
     gap: '#dc2626',
 } as const;
 
-function getGapStatus(gap: ODCoverageGap): 'served' | 'partial' | 'gap' {
-    if (gap.isServedByDirectRoute) return 'served';
-    if (gap.originRouteDistKm > 1 && gap.destRouteDistKm > 1) return 'gap';
-    return 'partial';
+function getGapStatus(gap: ODCoverageGap): ODCoverageStatus {
+    return gap.coverageStatus;
 }
 
 /** Compute arc line width from trip count using a 2px–8px range */
@@ -96,7 +94,7 @@ export const CoverageGapMap: React.FC<CoverageGapMapProps> = ({
     const routeShapes = useMemo(() => {
         if (!showRoutes) return [];
         try {
-            return loadGtfsRouteShapes();
+            return loadGtfsRouteShapeVariants();
         } catch {
             return [];
         }

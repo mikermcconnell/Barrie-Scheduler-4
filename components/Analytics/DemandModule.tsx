@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
     BarChart,
     Bar,
@@ -33,17 +33,16 @@ const BASE_SEASON_FILTERS: { key: SeasonFilter; label: string }[] = [
     { key: 'sep', label: 'Sep' },
 ];
 
-const BARRIE_BOUNDS = { minLat: 44.28, maxLat: 44.48, minLon: -79.80, maxLon: -79.58 };
-const isInBarrie = (lat: number, lon: number): boolean =>
-    lat >= BARRIE_BOUNDS.minLat && lat <= BARRIE_BOUNDS.maxLat
-    && lon >= BARRIE_BOUNDS.minLon && lon <= BARRIE_BOUNDS.maxLon;
-
 export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
     const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
     const [seasonFilter, setSeasonFilter] = useState<SeasonFilter>('all');
-    const [displayedODPairs, setDisplayedODPairs] = useState<ODPair[]>([]);
+    const [displayedODPairs, setDisplayedODPairs] = useState<ODPair[] | null>(null);
     const [highlightedGapIdx, setHighlightedGapIdx] = useState<number | null>(null);
     const { tripDistribution, locationDensity, odPairs } = data;
+
+    useEffect(() => {
+        setDisplayedODPairs(null);
+    }, [odPairs]);
 
     // Hourly distribution data — full 24h
     const hourlyData = tripDistribution.hourly.map(h => ({
@@ -76,7 +75,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
     // Top OD pairs ranked table — mirrors the current TransitAppMap ranking/filter state
     const topODPairs = useMemo(() => {
         if (!odPairs) return [];
-        const sourcePairs = displayedODPairs.length > 0 ? displayedODPairs : odPairs.pairs;
+        const sourcePairs = displayedODPairs ?? odPairs.pairs;
         return sourcePairs
             .map((p, i) => {
                 const zoneName = (lat: number, lon: number) =>
@@ -110,6 +109,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                     jan: p.seasonBins?.jan ?? 0,
                     jul: p.seasonBins?.jul ?? 0,
                     sep: p.seasonBins?.sep ?? 0,
+                    other: p.seasonBins?.other ?? 0,
                 };
             });
     }, [odPairs, hasSeasonData]);
@@ -118,17 +118,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
     const coverageGaps = useMemo((): ODCoverageGap[] => {
         if (!odPairs) return [];
         try {
-            const barrieOnlyPairs = odPairs.pairs.filter(pair =>
-                isInBarrie(pair.originLat, pair.originLon) && isInBarrie(pair.destLat, pair.destLon)
-            );
-            if (barrieOnlyPairs.length === 0) return [];
-            return analyzeODCoverageGaps(
-                {
-                    ...odPairs,
-                    pairs: barrieOnlyPairs,
-                },
-                25
-            );
+            return analyzeODCoverageGaps(odPairs, 25);
         } catch {
             return [];
         }
@@ -293,9 +283,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                             </thead>
                             <tbody>
                                 {coverageGaps.map((gap, i) => {
-                                    const isSevere = !gap.isServedByDirectRoute
-                                        && gap.originRouteDistKm > 1
-                                        && gap.destRouteDistKm > 1;
+                                    const isSevere = gap.coverageStatus === 'gap';
                                     const isHighlighted = highlightedGapIdx === i;
                                     return (
                                         <tr
@@ -332,7 +320,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
                                                         Served ({gap.servingRoutes.join(', ')})
                                                     </span>
-                                                ) : isSevere ? (
+                                                ) : gap.coverageStatus === 'gap' ? (
                                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
                                                         Gap
                                                     </span>
@@ -355,7 +343,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
             {seasonalComparison.length > 0 && (
                 <ChartCard
                     title="Seasonal OD Comparison"
-                    subtitle="Top 10 OD pairs — trip counts by month for seasonal shift visibility"
+                    subtitle="Overall top 10 OD pairs — trip counts by season for shift visibility"
                 >
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
@@ -368,11 +356,14 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                                     <th className="text-right py-2 px-3 text-blue-500 font-medium">Jan</th>
                                     <th className="text-right py-2 px-3 text-amber-500 font-medium">Jul</th>
                                     <th className="text-right py-2 px-3 text-emerald-500 font-medium">Sep</th>
+                                    {hasOtherSeasonData && (
+                                        <th className="text-right py-2 px-3 text-gray-500 font-medium">Other</th>
+                                    )}
                                 </tr>
                             </thead>
                             <tbody>
                                 {seasonalComparison.map(p => {
-                                    const maxSeason = Math.max(p.jan, p.jul, p.sep);
+                                    const maxSeason = Math.max(p.jan, p.jul, p.sep, hasOtherSeasonData ? p.other : 0);
                                     return (
                                         <tr key={p.rank} className="border-b border-gray-50 hover:bg-gray-50">
                                             <td className="py-2 px-3 text-gray-400 font-medium">{p.rank}</td>
@@ -388,6 +379,11 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                                             <td className={`py-2 px-3 text-right ${p.sep === maxSeason && maxSeason > 0 ? 'font-bold text-emerald-600' : 'text-gray-500'}`}>
                                                 {fmt(p.sep)}
                                             </td>
+                                            {hasOtherSeasonData && (
+                                                <td className={`py-2 px-3 text-right ${p.other === maxSeason && maxSeason > 0 ? 'font-bold text-gray-700' : 'text-gray-500'}`}>
+                                                    {fmt(p.other)}
+                                                </td>
+                                            )}
                                         </tr>
                                     );
                                 })}

@@ -11,11 +11,12 @@ interface StopAnalysisModuleProps {
 export const StopAnalysisModule: React.FC<StopAnalysisModuleProps> = ({ data }) => {
     const { stopProximityAnalysis, locationDensity, odPairs } = data;
 
-    const topCoverageGaps = useMemo(() => (
-        (stopProximityAnalysis?.topClusters ?? [])
-            .slice(0, 25)
-            .sort((a, b) => b.tripCount - a.tripCount)
+    const sortedClusters = useMemo(() => (
+        [...(stopProximityAnalysis?.topClusters ?? [])]
+            .sort((a, b) => b.tripCount - a.tripCount || b.avgNearestStopDistanceKm - a.avgNearestStopDistanceKm)
     ), [stopProximityAnalysis]);
+
+    const topCoverageGaps = useMemo(() => sortedClusters.slice(0, 25), [sortedClusters]);
 
     if (!stopProximityAnalysis) {
         return (
@@ -25,6 +26,10 @@ export const StopAnalysisModule: React.FC<StopAnalysisModuleProps> = ({ data }) 
         );
     }
 
+    const farThresholdMetres = Math.round(stopProximityAnalysis.farThresholdKm * 1000);
+    const excludedEndpointCount = (stopProximityAnalysis.totals.invalidEndpointCount ?? 0)
+        + (stopProximityAnalysis.totals.outOfScopeEndpointCount ?? 0);
+
     return (
         <div className="space-y-6">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -33,10 +38,11 @@ export const StopAnalysisModule: React.FC<StopAnalysisModuleProps> = ({ data }) 
                     label="Endpoints Analyzed"
                     value={fmt(stopProximityAnalysis.totals.tripEndpointsAnalyzed)}
                     color="cyan"
+                    subValue={excludedEndpointCount > 0 ? `${fmt(excludedEndpointCount)} excluded outside analysis area` : undefined}
                 />
                 <MetricCard
                     icon={<AlertCircle size={20} />}
-                    label={`Far Endpoints (> ${Math.round(stopProximityAnalysis.farThresholdKm * 1000)}m)`}
+                    label={`Far Endpoints (> ${farThresholdMetres}m)`}
                     value={fmt(stopProximityAnalysis.totals.farEndpointCount)}
                     color="amber"
                     subValue={`${stopProximityAnalysis.totals.farEndpointSharePct}% of endpoints`}
@@ -57,7 +63,7 @@ export const StopAnalysisModule: React.FC<StopAnalysisModuleProps> = ({ data }) 
 
             <ChartCard
                 title="Coverage Gap Map"
-                subtitle="Clusters farther than 400m from nearest stop with dominant time/day annotations"
+                subtitle={`Barrie-area clusters farther than ${farThresholdMetres}m from nearest stop with dominant time/day annotations`}
             >
                 <TransitAppMap
                     locationDensity={locationDensity}
@@ -69,7 +75,7 @@ export const StopAnalysisModule: React.FC<StopAnalysisModuleProps> = ({ data }) 
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <ChartCard title="Far-From-Stops Clusters" subtitle="Ranked by trip count">
-                    {(stopProximityAnalysis.topClusters ?? []).length > 0 ? (
+                    {sortedClusters.length > 0 ? (
                         <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                             <table className="w-full text-sm">
                                 <thead className="sticky top-0 bg-white z-10">
@@ -82,7 +88,7 @@ export const StopAnalysisModule: React.FC<StopAnalysisModuleProps> = ({ data }) 
                                     </tr>
                                 </thead>
                                 <tbody className="tabular-nums">
-                                    {(stopProximityAnalysis.topClusters ?? []).slice(0, 40).map(cluster => (
+                                    {sortedClusters.slice(0, 40).map(cluster => (
                                         <tr key={cluster.clusterId} className="border-b border-gray-50 hover:bg-gray-50">
                                             <td className="py-2 px-2">
                                                 <div className="font-medium text-gray-800">{cluster.nearestStopName || 'Unknown Stop'}</div>

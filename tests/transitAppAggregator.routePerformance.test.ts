@@ -86,6 +86,7 @@ describe('aggregateTransitAppData routePerformance', () => {
 
         const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
         expect(summary.routePerformance).toBeDefined();
+        expect(summary.routePerformance?.schemaVersion).toBe(3);
         expect(summary.routePerformance?.months).toEqual(['2025-01', '2025-07', '2025-09']);
         expect(summary.routePerformance?.scorecard.length).toBe(3);
 
@@ -184,5 +185,101 @@ describe('aggregateTransitAppData routePerformance', () => {
         expect(januaryB?.totalLegs).toBe(3);
         expect(septemberB?.totalLegs).toBe(1);
         expect(scorecardB?.totalLegs).toBe(1);
+    });
+
+    it('assigns observed legs to the Toronto-local month', () => {
+        const parsed: TransitAppParsedData = {
+            lines: [makeLine('A', '2025-01-31', 100, 50, 30, 6)],
+            trips: [],
+            locations: [],
+            goTripLegs: [
+                {
+                    ...makeLeg('A', 'a-late-evening'),
+                    start_time: '2025-02-01 02:30:00 UTC',
+                    end_time: '2025-02-01 02:50:00 UTC',
+                    mode: ' transit ',
+                },
+            ],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const januaryA = summary.routePerformance?.monthly.find(r => r.route === 'A' && r.month === '2025-01');
+
+        expect(januaryA?.totalLegs).toBe(1);
+        expect(summary.routePerformance?.monthly.some(r => r.route === 'A' && r.month === '2025-02')).toBe(false);
+    });
+
+    it('uses daypart-specific observed legs in weekday and weekend scores', () => {
+        const parsed: TransitAppParsedData = {
+            lines: [
+                makeLine('A', '2025-09-09', 100, 50, 25, 5),
+                makeLine('B', '2025-09-09', 100, 50, 25, 5),
+            ],
+            trips: [],
+            locations: [],
+            goTripLegs: [
+                {
+                    ...makeLeg('A', 'a-weekday'),
+                    start_time: '2025-09-09 12:00:00 UTC',
+                    end_time: '2025-09-09 12:20:00 UTC',
+                },
+                {
+                    ...makeLeg('B', 'b-weekend'),
+                    start_time: '2025-09-13 12:00:00 UTC',
+                    end_time: '2025-09-13 12:20:00 UTC',
+                },
+            ],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const routeA = summary.routePerformance?.monthly.find(r => r.route === 'A' && r.month === '2025-09');
+        const routeB = summary.routePerformance?.monthly.find(r => r.route === 'B' && r.month === '2025-09');
+
+        expect(routeA?.totalLegs).toBe(1);
+        expect(routeB?.totalLegs).toBe(1);
+        expect(routeA?.weekdayScore).toBe(57.5);
+        expect(routeB?.weekdayScore).toBe(42.5);
+    });
+
+    it('compares stale scorecard rows to their own latest month median', () => {
+        const parsed: TransitAppParsedData = {
+            lines: [
+                makeLine('A', '2025-01-09', 100, 50, 25, 5),
+                makeLine('B', '2025-01-09', 100, 50, 25, 5),
+                makeLine('C', '2025-09-09', 100, 50, 25, 5),
+            ],
+            trips: [],
+            locations: [],
+            goTripLegs: [
+                {
+                    ...makeLeg('A', 'a-jan'),
+                    start_time: '2025-01-09 12:00:00 UTC',
+                    end_time: '2025-01-09 12:20:00 UTC',
+                },
+                {
+                    ...makeLeg('B', 'b-jan'),
+                    start_time: '2025-01-09 12:00:00 UTC',
+                    end_time: '2025-01-09 12:20:00 UTC',
+                },
+                makeLeg('C', 'c-sep'),
+            ],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const routeB = summary.routePerformance?.scorecard.find(r => r.route === 'B');
+
+        expect(summary.routePerformance?.latestMedianScore).toBe(100);
+        expect(routeB?.latestMonth).toBe('2025-01');
+        expect(routeB?.compositeScore).toBe(50);
+        expect(routeB?.belowMedian).toBe(false);
     });
 });

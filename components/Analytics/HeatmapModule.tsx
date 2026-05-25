@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Radio, Filter, Layers, MessageCircle } from 'lucide-react';
+import { Filter, Info, Layers, MessageCircle, Radio } from 'lucide-react';
 import type { HeatmapAtlasSliceId, TransitAppDataSummary, TransferSeason } from '../../utils/transit-app/transitAppTypes';
 import { TransitAppMap } from './TransitAppMap';
 import { ChartCard, MetricCard, NoData, fmt, formatTimeBand, formatDayType, formatSeason } from './AnalyticsShared';
@@ -23,6 +23,7 @@ const ATLAS_ORDER: { id: HeatmapAtlasSliceId; label: string }[] = [
     { id: 'weekday_midday', label: 'Weekday Midday' },
     { id: 'weekday_pm_peak', label: 'Weekday PM' },
     { id: 'weekday_evening', label: 'Weekday Evening' },
+    { id: 'weekday_overnight', label: 'Weekday Overnight' },
     { id: 'saturday_all_day', label: 'Saturday All Day' },
     { id: 'sunday_all_day', label: 'Sunday All Day' },
 ];
@@ -33,6 +34,35 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
     const [sliceId, setSliceId] = useState<HeatmapAtlasSliceId>('weekday_am_peak');
 
     const atlas = useMemo(() => heatmapAnalysis?.atlas ?? [], [heatmapAnalysis]);
+    const availableSeasonOptions = useMemo(() => (
+        SEASON_OPTIONS.filter(option => option.key !== 'other'
+            || (heatmapAnalysis?.seasonalTotals.other ?? 0) > 0
+            || atlas.some(slice => slice.season === 'other'))
+    ), [atlas, heatmapAnalysis]);
+
+    useEffect(() => {
+        if (availableSeasonOptions.length === 0) return;
+        if (!availableSeasonOptions.some(option => option.key === season)) {
+            setSeason(availableSeasonOptions[0].key);
+        }
+    }, [availableSeasonOptions, season]);
+
+    const availableSliceOptions = useMemo(() => {
+        const sliceIdsForSeason = new Set(
+            atlas
+                .filter(slice => slice.season === season)
+                .map(slice => slice.id)
+        );
+        const matchingOptions = ATLAS_ORDER.filter(option => sliceIdsForSeason.has(option.id));
+        return matchingOptions.length > 0 ? matchingOptions : ATLAS_ORDER;
+    }, [atlas, season]);
+
+    useEffect(() => {
+        if (availableSliceOptions.length === 0) return;
+        if (!availableSliceOptions.some(option => option.id === sliceId)) {
+            setSliceId(availableSliceOptions[0].id);
+        }
+    }, [availableSliceOptions, sliceId]);
 
     const activeSlice = useMemo(() => (
         atlas.find(slice => slice.season === season && slice.id === sliceId) || null
@@ -54,6 +84,15 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
         return rows.sort((a, b) => b.totalPoints - a.totalPoints);
     }, [atlas]);
 
+    const emptyMapDensity = useMemo<TransitAppDataSummary['locationDensity']>(() => ({
+        cells: [],
+        bounds: { minLat: 0, maxLat: 0, minLon: 0, maxLon: 0 },
+        totalPoints: 0,
+        rawPoints: locationDensity.rawPoints,
+        debiasedPoints: locationDensity.debiasedPoints,
+        debiasWindowMinutes: locationDensity.debiasWindowMinutes,
+    }), [locationDensity.debiasedPoints, locationDensity.debiasWindowMinutes, locationDensity.rawPoints]);
+
     const mapDensity = activeSlice
         ? {
             cells: activeSlice.cells,
@@ -63,7 +102,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
             debiasedPoints: locationDensity.debiasedPoints,
             debiasWindowMinutes: locationDensity.debiasWindowMinutes,
         }
-        : locationDensity;
+        : emptyMapDensity;
 
     const topCallouts = useMemo(() => {
         const callouts = heatmapAnalysis?.callouts || [];
@@ -86,7 +125,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
         doc.text(
-            `Debiasing: ${heatmapAnalysis.debiasing.rawPoints.toLocaleString()} raw -> ${heatmapAnalysis.debiasing.debiasedPoints.toLocaleString()} debiased (${heatmapAnalysis.debiasing.reductionPct}% reduction)`,
+                            `Repeat ping reduction: ${heatmapAnalysis.debiasing.rawPoints.toLocaleString()} raw -> ${heatmapAnalysis.debiasing.debiasedPoints.toLocaleString()} cleaned (${heatmapAnalysis.debiasing.reductionPct}% reduction)`,
             pageWidth / 2,
             margin + 6,
             { align: 'center' }
@@ -113,7 +152,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
             margin: { left: margin, right: margin },
         });
 
-        const callouts = heatmapAnalysis.callouts
+        const callouts = [...heatmapAnalysis.callouts]
             .sort((a, b) => b.pointCount - a.pointCount)
             .slice(0, 10);
         const calloutHead = [['Season', 'Day', 'Band', 'Points', 'Note']];
@@ -175,7 +214,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                             onChange={e => setSeason(e.target.value as TransferSeason)}
                             className="px-2 py-1.5 border border-gray-200 rounded text-xs"
                         >
-                            {SEASON_OPTIONS.map(option => (
+                            {availableSeasonOptions.map(option => (
                                 <option key={option.key} value={option.key}>{option.label}</option>
                             ))}
                         </select>
@@ -184,7 +223,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                             onChange={e => setSliceId(e.target.value as HeatmapAtlasSliceId)}
                             className="px-2 py-1.5 border border-gray-200 rounded text-xs"
                         >
-                            {ATLAS_ORDER.map(option => (
+                            {availableSliceOptions.map(option => (
                                 <option key={option.id} value={option.id}>{option.label}</option>
                             ))}
                         </select>
@@ -208,23 +247,42 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                             <p className="font-bold text-gray-900">{fmt(activeSlice?.totalPoints || 0)}</p>
                         </div>
                         <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
-                            <p className="text-xs text-gray-500">Debias Reduction</p>
+                            <p className="text-xs text-gray-500">Repeat Ping Reduction</p>
                             <p className="font-bold text-gray-900">{heatmapAnalysis.debiasing.reductionPct}%</p>
                         </div>
                     </div>
-                    <TransitAppMap
-                        locationDensity={mapDensity}
-                        odPairs={odPairs}
-                        height={560}
-                        defaultLayer="heatmap"
-                    />
+                    <div
+                        className="relative group outline-none"
+                        tabIndex={0}
+                        aria-label="Heatmap debiasing explanation"
+                    >
+                        <div className="pointer-events-none absolute left-3 top-3 z-20 max-w-sm rounded-xl border border-gray-200 bg-white/95 p-3 text-xs text-gray-600 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus:opacity-100 group-focus-within:opacity-100">
+                            <div className="mb-1 flex items-center gap-1.5 font-semibold text-gray-900">
+                                <Info size={14} />
+                                Repeat Ping Reduction
+                            </div>
+                            <p>
+                                Repeat ping reduction is the share of raw location pings removed before mapping.
+                                We keep one ping per user per 15-minute window so one active phone does not overpower the heatmap.
+                            </p>
+                            <p className="mt-1 font-medium text-gray-700">
+                                Current reduction: {heatmapAnalysis.debiasing.reductionPct}% ({fmt(heatmapAnalysis.debiasing.rawPoints)} raw → {fmt(heatmapAnalysis.debiasing.debiasedPoints)} debiased).
+                            </p>
+                        </div>
+                        <TransitAppMap
+                            locationDensity={mapDensity}
+                            odPairs={odPairs}
+                            height={560}
+                            defaultLayer="heatmap"
+                        />
+                    </div>
                 </div>
             </ChartCard>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <ChartCard
                     title={`Atlas Matrix (${atlas.length} Slices)`}
-                    subtitle={`6 day/time slices x ${new Set(atlas.map(slice => slice.season)).size} seasons`}
+                    subtitle={`${ATLAS_ORDER.length} day/time slices x ${new Set(atlas.map(slice => slice.season)).size} seasons`}
                 >
                     {atlasRows.length > 0 ? (
                         <div className="overflow-x-auto max-h-[400px] overflow-y-auto">

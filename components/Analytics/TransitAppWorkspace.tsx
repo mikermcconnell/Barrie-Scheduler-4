@@ -46,7 +46,7 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'app-usage', label: 'App Usage', icon: Smartphone, status: 'complete' },
     { id: 'go-integration', label: 'GO Integration', icon: Train, status: 'partial' },
     { id: 'validation', label: 'Validation', icon: CheckCircle2, status: 'not-started' },
-    { id: 'service-gaps', label: 'Service Gaps', icon: Clock, status: 'partial', underDevelopment: true },
+    { id: 'service-gaps', label: 'Service Gaps', icon: Clock, status: 'complete' },
 ];
 
 export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({

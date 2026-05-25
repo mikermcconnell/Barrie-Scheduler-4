@@ -11,26 +11,54 @@ import routesRaw from '../../gtfs/routes.txt?raw';
 
 export interface GtfsRouteShape {
     routeId: string;
+    shapeId?: string;
     routeShortName: string;
     routeColor: string; // hex without #
     points: [number, number][]; // [lat, lon][]
 }
 
 let cachedShapes: GtfsRouteShape[] | null = null;
+let cachedShapeVariants: GtfsRouteShape[] | null = null;
 
-export function loadGtfsRouteShapes(): GtfsRouteShape[] {
-    if (cachedShapes) return cachedShapes;
+function parseCsvRow(line: string): string[] {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
 
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+                current += '"';
+                i++;
+                continue;
+            }
+            inQuotes = !inQuotes;
+            continue;
+        }
+        if (char === ',' && !inQuotes) {
+            values.push(current.trim());
+            current = '';
+            continue;
+        }
+        current += char;
+    }
+
+    values.push(current.trim());
+    return values;
+}
+
+function buildGtfsRouteShapes(includeAllVariants: boolean): GtfsRouteShape[] {
     // Parse routes.txt → Map<routeId, { shortName, color }>
-    const routeLines = routesRaw.trim().split('\n');
-    const routeHeader = routeLines[0].split(',');
+    const routeLines = routesRaw.trim().split(/\r?\n/);
+    const routeHeader = parseCsvRow(routeLines[0]);
     const rIdIdx = routeHeader.indexOf('route_id');
     const rNameIdx = routeHeader.indexOf('route_short_name');
     const rColorIdx = routeHeader.indexOf('route_color');
 
     const routeMap = new Map<string, { shortName: string; color: string }>();
     for (let i = 1; i < routeLines.length; i++) {
-        const cols = routeLines[i].split(',');
+        const cols = parseCsvRow(routeLines[i]);
         if (cols.length <= rIdIdx) continue;
         routeMap.set(cols[rIdIdx], {
             shortName: cols[rNameIdx] || cols[rIdIdx],
@@ -38,25 +66,36 @@ export function loadGtfsRouteShapes(): GtfsRouteShape[] {
         });
     }
 
-    // Parse trips.txt → Map<routeId, shapeId> (pick first shape per route)
-    const tripLines = tripsRaw.trim().split('\n');
-    const tripHeader = tripLines[0].split(',');
+    // Parse trips.txt → Map<routeId, shapeId[]>.
+    // The default loader keeps one shape per route for legacy overlays.
+    // Coverage analysis can request every shape variant so direction/branch
+    // variants are not silently ignored.
+    const tripLines = tripsRaw.trim().split(/\r?\n/);
+    const tripHeader = parseCsvRow(tripLines[0]);
     const tRouteIdx = tripHeader.indexOf('route_id');
     const tShapeIdx = tripHeader.indexOf('shape_id');
 
-    const routeToShape = new Map<string, string>();
+    const routeToShapes = new Map<string, string[]>();
     for (let i = 1; i < tripLines.length; i++) {
-        const cols = tripLines[i].split(',');
+        const cols = parseCsvRow(tripLines[i]);
         if (cols.length <= tShapeIdx) continue;
         const routeId = cols[tRouteIdx];
-        if (!routeToShape.has(routeId) && cols[tShapeIdx]) {
-            routeToShape.set(routeId, cols[tShapeIdx]);
+        const shapeId = cols[tShapeIdx];
+        if (!routeId || !shapeId) continue;
+
+        const existing = routeToShapes.get(routeId);
+        if (!existing) {
+            routeToShapes.set(routeId, [shapeId]);
+            continue;
+        }
+        if (includeAllVariants && !existing.includes(shapeId)) {
+            existing.push(shapeId);
         }
     }
 
     // Parse shapes.txt → Map<shapeId, sorted points>
-    const shapeLines = shapesRaw.trim().split('\n');
-    const shapeHeader = shapeLines[0].split(',');
+    const shapeLines = shapesRaw.trim().split(/\r?\n/);
+    const shapeHeader = parseCsvRow(shapeLines[0]);
     const sIdIdx = shapeHeader.indexOf('shape_id');
     const sLatIdx = shapeHeader.indexOf('shape_pt_lat');
     const sLonIdx = shapeHeader.indexOf('shape_pt_lon');
@@ -64,7 +103,7 @@ export function loadGtfsRouteShapes(): GtfsRouteShape[] {
 
     const shapePoints = new Map<string, { lat: number; lon: number; seq: number }[]>();
     for (let i = 1; i < shapeLines.length; i++) {
-        const cols = shapeLines[i].split(',');
+        const cols = parseCsvRow(shapeLines[i]);
         if (cols.length <= sSeqIdx) continue;
         const id = cols[sIdIdx];
         const pt = {
@@ -78,27 +117,50 @@ export function loadGtfsRouteShapes(): GtfsRouteShape[] {
         else shapePoints.set(id, [pt]);
     }
 
-    // Build one shape per route
+    // Build route shapes
     const results: GtfsRouteShape[] = [];
-    for (const [routeId, shapeId] of routeToShape) {
+    for (const [routeId, shapeIds] of routeToShapes) {
         const route = routeMap.get(routeId);
         if (!route) continue;
-        const pts = shapePoints.get(shapeId);
-        if (!pts || pts.length === 0) continue;
 
-        pts.sort((a, b) => a.seq - b.seq);
-        results.push({
-            routeId,
-            routeShortName: route.shortName,
-            routeColor: route.color,
-            points: pts.map(p => [p.lat, p.lon]),
-        });
+        for (const shapeId of shapeIds) {
+            const pts = shapePoints.get(shapeId);
+            if (!pts || pts.length === 0) continue;
+
+            pts.sort((a, b) => a.seq - b.seq);
+            results.push({
+                routeId,
+                shapeId,
+                routeShortName: route.shortName,
+                routeColor: route.color,
+                points: pts.map(p => [p.lat, p.lon]),
+            });
+        }
     }
 
     // Sort by route short name for consistent display
-    results.sort((a, b) => a.routeShortName.localeCompare(b.routeShortName, undefined, { numeric: true }));
+    results.sort((a, b) =>
+        a.routeShortName.localeCompare(b.routeShortName, undefined, { numeric: true })
+        || a.routeId.localeCompare(b.routeId)
+        || (a.shapeId || '').localeCompare(b.shapeId || '')
+    );
 
+    return results;
+}
+
+export function loadGtfsRouteShapes(): GtfsRouteShape[] {
+    if (cachedShapes) return cachedShapes;
+
+    const results = buildGtfsRouteShapes(false);
     cachedShapes = results;
+    return results;
+}
+
+export function loadGtfsRouteShapeVariants(): GtfsRouteShape[] {
+    if (cachedShapeVariants) return cachedShapeVariants;
+
+    const results = buildGtfsRouteShapes(true);
+    cachedShapeVariants = results;
     return results;
 }
 

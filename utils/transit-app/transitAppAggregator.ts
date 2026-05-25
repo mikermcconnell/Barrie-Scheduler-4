@@ -60,8 +60,9 @@ import {
 } from './transitAppGtfsNormalization';
 import { analyzeTransferConnections } from './transitAppTransferAnalysis';
 import { aggregateTransitAppODPairs } from './transitAppOdPairs';
+import { isBarrieOnlyODPair, isInBarrieAnalysisArea } from './transitAppGeo';
 import { getAllStopsWithCoords, findNearestStopName } from '../gtfs/gtfsStopLookup';
-import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../gtfs/gtfsShapesLoader';
+import { loadGtfsRouteShapeVariants, pointToPolylineDistanceKm, type GtfsRouteShape } from '../gtfs/gtfsShapesLoader';
 
 // ============ MAIN AGGREGATOR ============
 
@@ -91,7 +92,7 @@ export function aggregateTransitAppData(
     ];
     const routeLegs = aggregateRouteLegSummary(allLegs);
     const routePerformance = aggregateRoutePerformance(routeMetrics.daily, allLegs);
-    const serviceGapAnalysis = aggregateServiceGapAnalysis(allLegs, routeMetrics.summary, routePerformance?.scorecard || []);
+    const serviceGapAnalysis = aggregateServiceGapAnalysis(allLegs, routeMetrics.daily, routeMetrics.summary, routePerformance?.scorecard || []);
     const odPairs = aggregateTransitAppODPairs(parsed.trips);
     const stopProximityAnalysis = aggregateStopProximityAnalysis(parsed.trips, allLegs, odPairs);
     const appUsage = aggregateAppUsage(parsed.users);
@@ -184,22 +185,50 @@ function aggregateRouteMetrics(lines: TransitAppParsedData['lines']): TransitApp
     return { daily, summary };
 }
 
-const ROUTE_PERFORMANCE_SCHEMA_VERSION = 1;
+const ROUTE_PERFORMANCE_SCHEMA_VERSION = 3;
 const MINIMUM_VIEWS_FOR_RATIOS = 30;
 const TREND_DELTA_POINTS = 5;
-const SERVICE_GAP_SCHEMA_VERSION = 1;
-const MAX_GAP_REGISTER_ROWS = 500;
-const STOP_PROXIMITY_SCHEMA_VERSION = 1;
-const HEATMAP_ANALYSIS_SCHEMA_VERSION = 1;
+const SERVICE_GAP_SCHEMA_VERSION = 2;
+const STOP_PROXIMITY_SCHEMA_VERSION = 2;
+const HEATMAP_ANALYSIS_SCHEMA_VERSION = 2;
 const STOP_PROXIMITY_THRESHOLD_KM = 0.4;
 const STOP_CLUSTER_RESOLUTION = 0.004; // ~400m
 const LOCATION_DEBIAS_WINDOW_MINUTES = 15;
+const CANADA_BOUNDS = {
+    minLat: 41.0,
+    maxLat: 84.0,
+    minLon: -141.5,
+    maxLon: -52.0,
+};
+const STOP_INDEX_SEARCH_RADIUS = 2;
+const TORONTO_TIME_ZONE = 'America/Toronto';
+
+const TORONTO_PART_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TORONTO_TIME_ZONE,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+});
 
 interface DayPartAccumulator {
     views: number;
     taps: number;
     suggestions: number;
     goTrips: number;
+}
+
+interface DayPartScoreMetrics extends DayPartAccumulator {
+    totalLegs: number;
+}
+
+interface RouteLegMonthSummary {
+    totalLegs: number;
+    uniqueTrips: number;
+    weekdayLegs: number;
+    weekendLegs: number;
 }
 
 interface RouteMonthAccumulator {
@@ -266,7 +295,7 @@ function aggregateRoutePerformance(
     }
 
     const monthlyRows: RoutePerformanceMonthly[] = [];
-    const dayPartByKey = new Map<string, { weekday: DayPartAccumulator; weekend: DayPartAccumulator }>();
+    const dayPartByKey = new Map<string, { weekday: DayPartScoreMetrics; weekend: DayPartScoreMetrics }>();
 
     for (const [key, acc] of monthlyMap.entries()) {
         const monthLegs = routeLegMonthMap.get(key);
@@ -310,7 +339,10 @@ function aggregateRoutePerformance(
         };
 
         monthlyRows.push(monthly);
-        dayPartByKey.set(key, { weekday: acc.weekday, weekend: acc.weekend });
+        dayPartByKey.set(key, {
+            weekday: { ...acc.weekday, totalLegs: monthLegs?.weekdayLegs || 0 },
+            weekend: { ...acc.weekend, totalLegs: monthLegs?.weekendLegs || 0 },
+        });
     }
 
     monthlyRows.sort((a, b) => a.month.localeCompare(b.month) || a.route.localeCompare(b.route));
@@ -320,8 +352,11 @@ function aggregateRoutePerformance(
 
     const months = Array.from(new Set(monthlyRows.map(r => r.month))).sort((a, b) => a.localeCompare(b));
     const latestMonth = months.length > 0 ? months[months.length - 1] : null;
-    const latestRows = latestMonth ? monthlyRows.filter(r => r.month === latestMonth) : [];
-    const latestMedianScore = median(latestRows.map(r => r.compositeScore));
+    const medianScoreByMonth = new Map<string, number | null>();
+    for (const month of months) {
+        medianScoreByMonth.set(month, median(monthlyRows.filter(r => r.month === month).map(r => r.compositeScore)));
+    }
+    const latestMedianScore = latestMonth ? (medianScoreByMonth.get(latestMonth) ?? null) : null;
 
     const rowsByRoute = new Map<string, RoutePerformanceMonthly[]>();
     for (const row of monthlyRows) {
@@ -337,14 +372,17 @@ function aggregateRoutePerformance(
     }
 
     const scorecard: RoutePerformanceScorecardRow[] = [];
+    const medianForRouteLatestMonth = new Map<string, number | null>();
     for (const [route, rows] of rowsByRoute.entries()) {
         const latest = rows[rows.length - 1];
         const previous = rows.length > 1 ? rows[rows.length - 2] : null;
         const trendInfo = classifyTrend(latest.compositeScore, previous?.compositeScore ?? null, TREND_DELTA_POINTS);
+        const medianForLatest = medianScoreByMonth.get(latest.month) ?? null;
+        medianForRouteLatestMonth.set(route, medianForLatest);
 
-        const belowMedian = latestMedianScore !== null
+        const belowMedian = medianForLatest !== null
             && latest.compositeScore !== null
-            && latest.compositeScore < latestMedianScore;
+            && latest.compositeScore < medianForLatest;
 
         const priorScores = rows
             .slice(0, rows.length - 1)
@@ -425,7 +463,7 @@ function aggregateRoutePerformance(
             confidence: row.confidence,
             diagnosisCode: row.diagnosisCode,
             recommendedAction: row.recommendedAction,
-            priorityScore: computePriorityScore(row, latestMedianScore),
+            priorityScore: computePriorityScore(row, medianForRouteLatestMonth.get(row.route) ?? null),
         }))
         .sort((a, b) => b.priorityScore - a.priorityScore);
 
@@ -474,7 +512,7 @@ function applyMonthlyPercentilesAndScores(rows: RoutePerformanceMonthly[]): void
 
 function applyDayPartScores(
     rows: RoutePerformanceMonthly[],
-    dayPartByKey: Map<string, { weekday: DayPartAccumulator; weekend: DayPartAccumulator }>,
+    dayPartByKey: Map<string, { weekday: DayPartScoreMetrics; weekend: DayPartScoreMetrics }>,
     dayPart: 'weekday' | 'weekend'
 ): void {
     const months = Array.from(new Set(rows.map(r => r.month)));
@@ -482,7 +520,7 @@ function applyDayPartScores(
         const monthRows = rows.filter(r => r.month === month);
         const metrics = monthRows.map(row => {
             const key = `${row.route}|${row.month}`;
-            const dayMetrics = dayPartByKey.get(key)?.[dayPart] || { views: 0, taps: 0, suggestions: 0, goTrips: 0 };
+            const dayMetrics = dayPartByKey.get(key)?.[dayPart] || { views: 0, taps: 0, suggestions: 0, goTrips: 0, totalLegs: 0 };
             const viewRatioEligible = dayMetrics.views >= MINIMUM_VIEWS_FOR_RATIOS;
             return {
                 route: row.route,
@@ -490,7 +528,7 @@ function applyDayPartScores(
                 viewToSuggestionRate: viewRatioEligible ? safeRate(dayMetrics.suggestions, dayMetrics.views, 4) : null,
                 suggestionToGoRate: safeRate(dayMetrics.goTrips, dayMetrics.suggestions, 4),
                 goTrips: dayMetrics.goTrips,
-                totalLegs: row.totalLegs,
+                totalLegs: dayMetrics.totalLegs,
             };
         });
 
@@ -533,31 +571,56 @@ function normalizeRouteKey(route: string): string {
     return route.trim().toUpperCase();
 }
 
+const MERGED_BARRIE_ROUTE_BASES = new Set(['2', '7', '12']);
+
+function normalizeBarrieRouteForSupply(route: string): string {
+    const normalized = normalizeRouteKey(route);
+    const match = normalized.match(/^(\d+)([AB])$/);
+    if (match && MERGED_BARRIE_ROUTE_BASES.has(match[1])) {
+        return match[1];
+    }
+    return normalized;
+}
+
+function isBarrieTransitServiceName(serviceName: string): boolean {
+    return serviceName.trim().toUpperCase().includes('BARRIE TRANSIT');
+}
+
 function parseUtcDateTime(value: string): Date | null {
     if (!value) return null;
     const dt = new Date(value.replace(' UTC', 'Z'));
     return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
-/** Convert a UTC Date to Eastern Time hour (0-23). Accounts for EDT/EST. */
-function getEasternOffsetHours(dt: Date): number {
-    const month = dt.getUTCMonth(); // 0-indexed
-    const day = dt.getUTCDate();
-    // Approximate DST: EDT = second Sunday in March to first Sunday in November
-    // Simplified: March 10 – November 3 (close enough for hourly binning)
-    const isEDT = (month > 2 && month < 10) ||
-        (month === 2 && day >= 10) ||
-        (month === 10 && day < 3);
-    return isEDT ? -4 : -5;
+function getTorontoParts(dt: Date): { year: number; month: number; day: number; hour: number; minute: number } {
+    const parts = TORONTO_PART_FORMATTER.formatToParts(dt);
+    const lookup: Record<string, string> = {};
+    parts.forEach(part => {
+        if (part.type !== 'literal') lookup[part.type] = part.value;
+    });
+
+    return {
+        year: Number(lookup.year),
+        month: Number(lookup.month),
+        day: Number(lookup.day),
+        hour: Number(lookup.hour),
+        minute: Number(lookup.minute || '0'),
+    };
 }
 
+/** Convert a UTC Date to a Toronto-local date/hour represented in a UTC Date. */
 function utcToEasternDate(dt: Date): Date {
-    const offset = getEasternOffsetHours(dt);
-    return new Date(dt.getTime() + offset * 3600_000);
+    const local = getTorontoParts(dt);
+    return new Date(Date.UTC(local.year, local.month - 1, local.day, local.hour, local.minute));
 }
 
 function utcToEasternHour(dt: Date): number {
     return utcToEasternDate(dt).getUTCHours();
+}
+
+function utcToEasternOperationMinute(dt: Date): number {
+    const local = getTorontoParts(dt);
+    return toOperationMinute(local.hour, local.minute);
 }
 
 /** Convert a UTC Date to Eastern Time date string (YYYY-MM-DD), accounting for day rollover. */
@@ -591,8 +654,25 @@ function inferDayTypeForDate(date: Date): TransferDayType {
     return 'weekday';
 }
 
+function inferDayTypeForDateString(date: string): TransferDayType | null {
+    const dt = new Date(`${date}T00:00:00`);
+    if (Number.isNaN(dt.getTime())) return null;
+    const day = dt.getUTCDay();
+    if (day === 0) return 'sunday';
+    if (day === 6) return 'saturday';
+    return 'weekday';
+}
+
 function inferSeasonForDate(date: Date): TransferSeason {
     const month = utcToEasternDate(date).getUTCMonth() + 1;
+    if (month === 1) return 'jan';
+    if (month === 7) return 'jul';
+    if (month === 9) return 'sep';
+    return 'other';
+}
+
+function inferSeasonForDateString(date: string): TransferSeason {
+    const month = Number(date.slice(5, 7));
     if (month === 1) return 'jan';
     if (month === 7) return 'jul';
     if (month === 9) return 'sep';
@@ -603,16 +683,22 @@ function inferLocationTimeBand(hour: number): LocationTimeBand {
     if (hour >= 6 && hour < 9) return 'am_peak';
     if (hour >= 9 && hour < 15) return 'midday';
     if (hour >= 15 && hour < 18) return 'pm_peak';
-    return 'evening';
+    if (hour >= 18 && hour < 22) return 'evening';
+    return 'overnight';
 }
 
-function toOperationMinute(hour: number): number {
+function toOperationMinute(hour: number, minute = 0): number {
     // Keep late-night buckets in-service-day order (00:00-02:59 treated as after 24:00).
-    return hour < 3 ? (hour + 24) * 60 : hour * 60;
+    return hour < 3 ? ((hour + 24) * 60) + minute : (hour * 60) + minute;
+}
+
+function roundToTenth(value: number): number {
+    return Math.round(value * 10) / 10;
 }
 
 function aggregateServiceGapAnalysis(
     allLegs: TransitAppTripLegRow[],
+    dailyMetrics: RouteMetricDaily[],
     routeSummary: RouteMetricSummary[],
     scorecard: RoutePerformanceScorecardRow[]
 ): TransitAppServiceGapAnalysis | undefined {
@@ -621,23 +707,73 @@ function aggregateServiceGapAnalysis(
     const supplyProfiles = getRouteSupplyProfiles();
     if (supplyProfiles.length === 0) return undefined;
 
+    const supplyByRouteDay = new Map<string, RouteSupplyProfile>();
+    const routesWithSupply = new Set<string>();
+    for (const profile of supplyProfiles) {
+        const route = normalizeBarrieRouteForSupply(profile.route);
+        supplyByRouteDay.set(`${route}|${profile.dayType}`, { ...profile, route });
+        routesWithSupply.add(route);
+    }
+
     const routeDemandHourly = new Map<string, number>();
+    const routeDemandEvents = new Map<string, Array<{ hour: number; opMinute: number }>>();
+    const serviceDatesByProfile = new Map<string, Set<string>>();
+    const demandDatesByProfile = new Map<string, Set<string>>();
     const seasonsByRouteDay = new Map<string, Set<TransferSeason>>();
     const routesWithDemand = new Set<string>();
+
+    for (const daily of dailyMetrics) {
+        const route = normalizeBarrieRouteForSupply(daily.route);
+        if (!routesWithSupply.has(route)) continue;
+        const dayType = inferDayTypeForDateString(daily.date);
+        if (!dayType) continue;
+        const season = inferSeasonForDateString(daily.date);
+        const profileKey = `${route}|${dayType}|${season}`;
+        const existing = serviceDatesByProfile.get(profileKey);
+        if (existing) {
+            existing.add(daily.date);
+        } else {
+            serviceDatesByProfile.set(profileKey, new Set([daily.date]));
+        }
+    }
 
     for (const leg of allLegs) {
         if (!leg.route_short_name) continue;
         if ((leg.mode || '').trim().toUpperCase() !== 'TRANSIT') continue;
+        const rawRoute = normalizeBarrieRouteForSupply(leg.route_short_name);
+        if (!rawRoute) continue;
+
+        if (leg.service_name?.trim()) {
+            if (!isBarrieTransitServiceName(leg.service_name)) continue;
+        } else if (!routesWithSupply.has(rawRoute)) {
+            continue;
+        }
+
         const timestamp = parseUtcDateTime(leg.start_time || leg.end_time);
         if (!timestamp) continue;
 
-        const route = normalizeRouteKey(leg.route_short_name);
+        const route = rawRoute;
         const dayType = inferDayTypeForDate(timestamp);
         const season = inferSeasonForDate(timestamp);
         const hour = utcToEasternHour(timestamp);
-        const key = `${route}|${dayType}|${season}|${hour}`;
-        routeDemandHourly.set(key, (routeDemandHourly.get(key) || 0) + 1);
+        const localDate = utcToEasternDateStr(timestamp);
+        const profileKey = `${route}|${dayType}|${season}`;
+        const hourlyKey = `${profileKey}|${hour}`;
+        routeDemandHourly.set(hourlyKey, (routeDemandHourly.get(hourlyKey) || 0) + 1);
         routesWithDemand.add(route);
+        const existingDates = demandDatesByProfile.get(profileKey);
+        if (existingDates) {
+            existingDates.add(localDate);
+        } else {
+            demandDatesByProfile.set(profileKey, new Set([localDate]));
+        }
+        const event = { hour, opMinute: utcToEasternOperationMinute(timestamp) };
+        const existingEvents = routeDemandEvents.get(profileKey);
+        if (existingEvents) {
+            existingEvents.push(event);
+        } else {
+            routeDemandEvents.set(profileKey, [event]);
+        }
 
         const routeDayKey = `${route}|${dayType}`;
         const existingSeasons = seasonsByRouteDay.get(routeDayKey);
@@ -646,14 +782,6 @@ function aggregateServiceGapAnalysis(
         } else {
             seasonsByRouteDay.set(routeDayKey, new Set([season]));
         }
-    }
-
-    const supplyByRouteDay = new Map<string, RouteSupplyProfile>();
-    const routesWithSupply = new Set<string>();
-    for (const profile of supplyProfiles) {
-        const route = normalizeRouteKey(profile.route);
-        supplyByRouteDay.set(`${route}|${profile.dayType}`, profile);
-        routesWithSupply.add(route);
     }
 
     const engagementByRoute = new Map(routeSummary.map(row => [normalizeRouteKey(row.route), row]));
@@ -675,24 +803,31 @@ function aggregateServiceGapAnalysis(
             const lastOpMin = lastDepMin === null ? null : lastDepMin;
 
             for (const season of Array.from(seasonSet.values()).sort()) {
+                const profileKey = `${route}|${dayType}|${season}`;
+                const activeDayCount = serviceDatesByProfile.get(profileKey)?.size
+                    || demandDatesByProfile.get(profileKey)?.size
+                    || 1;
                 const hourly = new Array(24).fill(null).map((_, hour) => {
-                    const demand = routeDemandHourly.get(`${route}|${dayType}|${season}|${hour}`) || 0;
+                    const demand = roundToTenth((routeDemandHourly.get(`${route}|${dayType}|${season}|${hour}`) || 0) / activeDayCount);
                     const supplyAtHour = supply?.departuresByHour?.[hour] || 0;
                     return { hour, demand, supply: supplyAtHour };
                 });
 
-                const totalDemand = hourly.reduce((sum, h) => sum + h.demand, 0);
+                const totalDemand = Array.from({ length: 24 }, (_, hour) => routeDemandHourly.get(`${route}|${dayType}|${season}|${hour}`) || 0)
+                    .reduce((sum, demand) => sum + demand, 0);
                 const totalSupply = hourly.reduce((sum, h) => sum + h.supply, 0);
 
                 let demandBeforeFirst = 0;
                 let demandAfterLast = 0;
+                const demandEvents = routeDemandEvents.get(profileKey) || [];
                 if (firstOpMin !== null || lastOpMin !== null) {
-                    for (const point of hourly) {
-                        const opMinute = toOperationMinute(point.hour);
-                        if (firstOpMin !== null && opMinute < firstOpMin) demandBeforeFirst += point.demand;
-                        if (lastOpMin !== null && opMinute > lastOpMin) demandAfterLast += point.demand;
+                    for (const event of demandEvents) {
+                        if (firstOpMin !== null && event.opMinute < firstOpMin) demandBeforeFirst += 1;
+                        if (lastOpMin !== null && event.opMinute > lastOpMin) demandAfterLast += 1;
                     }
                 }
+                demandBeforeFirst = roundToTenth(demandBeforeFirst / activeDayCount);
+                demandAfterLast = roundToTenth(demandAfterLast / activeDayCount);
 
                 const profile: RouteDemandSupplyProfile = {
                     route,
@@ -771,21 +906,55 @@ function aggregateServiceGapAnalysis(
 
         const firstOpMin = profile.firstDepartureMin;
         const lastOpMin = profile.lastDepartureMin;
+        const profileKey = `${profile.route}|${profile.dayType}|${profile.season}`;
+        const activeDayCount = serviceDatesByProfile.get(profileKey)?.size
+            || demandDatesByProfile.get(profileKey)?.size
+            || 1;
+        const demandEvents = routeDemandEvents.get(profileKey) || [];
+        const spanStartDemandByHour = new Map<number, number>();
+        const spanEndDemandByHour = new Map<number, number>();
+
+        for (const event of demandEvents) {
+            if (firstOpMin !== null && event.opMinute < firstOpMin) {
+                spanStartDemandByHour.set(event.hour, (spanStartDemandByHour.get(event.hour) || 0) + 1);
+            }
+            if (lastOpMin !== null && event.opMinute > lastOpMin) {
+                spanEndDemandByHour.set(event.hour, (spanEndDemandByHour.get(event.hour) || 0) + 1);
+            }
+        }
 
         for (const point of profile.hourly) {
             if (point.demand <= 0) continue;
 
-            const opMinute = toOperationMinute(point.hour);
-            if (firstOpMin !== null && opMinute < firstOpMin) {
-                addGap(profile.route, 'span_start', profile.dayType, profile.season, point.hour, point.demand, point.supply, context);
-                continue;
+            const rawDemand = routeDemandHourly.get(`${profileKey}|${point.hour}`) || 0;
+            const rawSpanStartDemand = spanStartDemandByHour.get(point.hour) || 0;
+            const rawSpanEndDemand = spanEndDemandByHour.get(point.hour) || 0;
+            const spanStartDemand = roundToTenth(rawSpanStartDemand / activeDayCount);
+            const spanEndDemand = roundToTenth(rawSpanEndDemand / activeDayCount);
+            const inSpanDemand = roundToTenth(Math.max(0, rawDemand - rawSpanStartDemand - rawSpanEndDemand) / activeDayCount);
+
+            if (spanStartDemand > 0) {
+                addGap(profile.route, 'span_start', profile.dayType, profile.season, point.hour, spanStartDemand, point.supply, context);
             }
-            if (lastOpMin !== null && opMinute > lastOpMin) {
-                addGap(profile.route, 'span_end', profile.dayType, profile.season, point.hour, point.demand, point.supply, context);
-                continue;
+            if (spanEndDemand > 0) {
+                addGap(profile.route, 'span_end', profile.dayType, profile.season, point.hour, spanEndDemand, point.supply, context);
             }
-            if (point.supply === 0 && point.demand >= 3) {
-                addGap(profile.route, 'frequency_gap', profile.dayType, profile.season, point.hour, point.demand, point.supply, context || 'Demand with zero scheduled departures');
+
+            const demandGap = roundToTenth(inSpanDemand - point.supply);
+            if (inSpanDemand >= 3 && (point.supply === 0 || demandGap >= 3 || inSpanDemand >= point.supply * 2)) {
+                const note = point.supply === 0
+                    ? 'Demand with zero scheduled departures'
+                    : `Demand exceeds scheduled departures by ${demandGap}/h`;
+                addGap(
+                    profile.route,
+                    'frequency_gap',
+                    profile.dayType,
+                    profile.season,
+                    point.hour,
+                    inSpanDemand,
+                    point.supply,
+                    context ? `${context}, ${note}` : note
+                );
             }
         }
     }
@@ -875,8 +1044,7 @@ function aggregateServiceGapAnalysis(
             const bSeverity = (b.appRequestsPerHour - b.scheduledTripsPerHour);
             if (bSeverity !== aSeverity) return bSeverity - aSeverity;
             return a.route.localeCompare(b.route, undefined, { numeric: true });
-        })
-        .slice(0, MAX_GAP_REGISTER_ROWS);
+        });
 
     const matchedRoutes = Array.from(routesWithDemand).filter(route => routesWithSupply.has(route)).length;
     const gapsByType: Record<ServiceGapType, number> = {
@@ -1003,30 +1171,123 @@ function findNearestStop(
     const latBin = Math.round(lat / index.bucketSize);
     const lonBin = Math.round(lon / index.bucketSize);
     const candidates: StopIndexEntry[] = [];
-    for (let dLat = -1; dLat <= 1; dLat++) {
-        for (let dLon = -1; dLon <= 1; dLon++) {
+    for (let dLat = -STOP_INDEX_SEARCH_RADIUS; dLat <= STOP_INDEX_SEARCH_RADIUS; dLat++) {
+        for (let dLon = -STOP_INDEX_SEARCH_RADIUS; dLon <= STOP_INDEX_SEARCH_RADIUS; dLon++) {
             const bucket = index.buckets.get(`${latBin + dLat}_${lonBin + dLon}`);
             if (bucket) candidates.push(...bucket);
         }
     }
     const searchSet = candidates.length > 0 ? candidates : index.stops;
 
-    let bestName: string | null = null;
-    let bestDistanceKm = Number.POSITIVE_INFINITY;
-    for (const stop of searchSet) {
-        const dist = haversineKm(lat, lon, stop.lat, stop.lon);
-        if (dist < bestDistanceKm) {
-            bestDistanceKm = dist;
-            bestName = stop.stopName;
+    const findBest = (stops: StopIndexEntry[]): { stopName: string | null; distanceKm: number } => {
+        let bestName: string | null = null;
+        let bestDistanceKm = Number.POSITIVE_INFINITY;
+        for (const stop of stops) {
+            const dist = haversineKm(lat, lon, stop.lat, stop.lon);
+            if (dist < bestDistanceKm) {
+                bestDistanceKm = dist;
+                bestName = stop.stopName;
+            }
+        }
+
+        return {
+            stopName: bestName,
+            distanceKm: Number.isFinite(bestDistanceKm) ? bestDistanceKm : 0,
+        };
+    };
+
+    let result = findBest(searchSet);
+    if (searchSet !== index.stops && result.distanceKm > STOP_PROXIMITY_THRESHOLD_KM) {
+        result = findBest(index.stops);
+    }
+
+    cache.set(cacheKey, result);
+    return result;
+}
+
+function isValidStopAnalysisCoordinate(lat: number, lon: number): boolean {
+    return Number.isFinite(lat)
+        && Number.isFinite(lon)
+        && !(lat === 0 && lon === 0)
+        && lat >= CANADA_BOUNDS.minLat
+        && lat <= CANADA_BOUNDS.maxLat
+        && lon >= CANADA_BOUNDS.minLon
+        && lon <= CANADA_BOUNDS.maxLon
+        && isInBarrieAnalysisArea(lat, lon);
+}
+
+function normalizeStopMentionDisplayName(value: string): string {
+    return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeStopMentionKey(value: string): string {
+    return normalizeStopMentionDisplayName(value).toLowerCase();
+}
+
+function getMostCommonStopMentionDisplayName(displayCounts: Map<string, number>): string {
+    let selected = '';
+    let selectedCount = -1;
+    for (const [displayName, count] of displayCounts.entries()) {
+        if (count > selectedCount) {
+            selected = displayName;
+            selectedCount = count;
+        }
+    }
+    return selected;
+}
+
+function buildStopMentionRanking(allLegs: TransitAppTripLegRow[]): StopMentionRankingRow[] {
+    const mentionMap = new Map<string, { mentions: number; displayCounts: Map<string, number> }>();
+    for (const leg of allLegs) {
+        const names = [leg.start_stop_name, leg.end_stop_name];
+        for (const rawName of names) {
+            const displayName = normalizeStopMentionDisplayName(rawName || '');
+            if (!displayName) continue;
+
+            const key = normalizeStopMentionKey(displayName);
+            let entry = mentionMap.get(key);
+            if (!entry) {
+                entry = { mentions: 0, displayCounts: new Map<string, number>() };
+                mentionMap.set(key, entry);
+            }
+
+            entry.mentions += 1;
+            entry.displayCounts.set(displayName, (entry.displayCounts.get(displayName) || 0) + 1);
         }
     }
 
-    const result = {
-        stopName: bestName,
-        distanceKm: Number.isFinite(bestDistanceKm) ? bestDistanceKm : 0,
+    return Array.from(mentionMap.values())
+        .map(entry => ({
+            stopName: getMostCommonStopMentionDisplayName(entry.displayCounts),
+            mentions: entry.mentions,
+        }))
+        .sort((a, b) => b.mentions - a.mentions || a.stopName.localeCompare(b.stopName))
+        .slice(0, 80);
+}
+
+function buildEmptyStopProximityAnalysis(
+    candidateEndpointCount: number,
+    invalidEndpointCount: number,
+    outOfScopeEndpointCount: number,
+    stopMentions: StopMentionRankingRow[],
+): TransitAppStopProximityAnalysis {
+    return {
+        schemaVersion: STOP_PROXIMITY_SCHEMA_VERSION,
+        generatedAt: new Date().toISOString(),
+        totals: {
+            tripEndpointsAnalyzed: 0,
+            avgNearestStopDistanceKm: 0,
+            farEndpointCount: 0,
+            farEndpointSharePct: 0,
+            clusterCount: 0,
+            candidateTripEndpoints: candidateEndpointCount,
+            invalidEndpointCount,
+            outOfScopeEndpointCount,
+        },
+        farThresholdKm: STOP_PROXIMITY_THRESHOLD_KM,
+        topClusters: [],
+        stopMentions,
     };
-    cache.set(cacheKey, result);
-    return result;
 }
 
 function buildDensityFromPoints(points: Array<{ lat: number; lon: number }>): DensityResult {
@@ -1112,6 +1373,7 @@ function aggregateHeatmapAnalysis(locations: TransitAppParsedData['locations']):
         { id: 'weekday_midday', dayType: 'weekday', timeBand: 'midday' },
         { id: 'weekday_pm_peak', dayType: 'weekday', timeBand: 'pm_peak' },
         { id: 'weekday_evening', dayType: 'weekday', timeBand: 'evening' },
+        { id: 'weekday_overnight', dayType: 'weekday', timeBand: 'overnight' },
         { id: 'saturday_all_day', dayType: 'saturday', timeBand: 'all_day' },
         { id: 'sunday_all_day', dayType: 'sunday', timeBand: 'all_day' },
     ];
@@ -1168,8 +1430,7 @@ function aggregateHeatmapAnalysis(locations: TransitAppParsedData['locations']):
                 note,
             };
         })
-        .sort((a, b) => b.pointCount - a.pointCount)
-        .slice(0, 18);
+        .sort((a, b) => b.pointCount - a.pointCount);
 
     const debiasedCount = debiasedPoints.length;
     const reductionPct = rawPoints > 0
@@ -1208,6 +1469,7 @@ function aggregateStopProximityAnalysis(
     if (stopIndex.stops.length === 0) return undefined;
 
     const stopCache = new Map<string, { stopName: string | null; distanceKm: number }>();
+    const stopMentions = buildStopMentionRanking(allLegs);
     const endpointSummaries: Array<{
         lat: number;
         lon: number;
@@ -1217,6 +1479,9 @@ function aggregateStopProximityAnalysis(
         dayType: TransferDayType;
         season: TransferSeason;
     }> = [];
+    let candidateEndpointCount = 0;
+    let invalidEndpointCount = 0;
+    let outOfScopeEndpointCount = 0;
 
     for (const trip of trips) {
         const timestamp = parseUtcDateTime(trip.timestamp);
@@ -1231,8 +1496,15 @@ function aggregateStopProximityAnalysis(
         ];
 
         for (const endpoint of endpoints) {
-            if (!Number.isFinite(endpoint.lat) || !Number.isFinite(endpoint.lon)) continue;
-            if (endpoint.lat === 0 && endpoint.lon === 0) continue;
+            candidateEndpointCount += 1;
+            if (!Number.isFinite(endpoint.lat) || !Number.isFinite(endpoint.lon) || (endpoint.lat === 0 && endpoint.lon === 0)) {
+                invalidEndpointCount += 1;
+                continue;
+            }
+            if (!isValidStopAnalysisCoordinate(endpoint.lat, endpoint.lon)) {
+                outOfScopeEndpointCount += 1;
+                continue;
+            }
             const nearest = findNearestStop(endpoint.lat, endpoint.lon, stopIndex, stopCache);
             endpointSummaries.push({
                 lat: endpoint.lat,
@@ -1246,7 +1518,14 @@ function aggregateStopProximityAnalysis(
         }
     }
 
-    if (endpointSummaries.length === 0) return undefined;
+    if (endpointSummaries.length === 0) {
+        return buildEmptyStopProximityAnalysis(
+            candidateEndpointCount,
+            invalidEndpointCount,
+            outOfScopeEndpointCount,
+            stopMentions,
+        );
+    }
 
     const farEndpoints = endpointSummaries.filter(point => point.nearestStopDistanceKm > STOP_PROXIMITY_THRESHOLD_KM);
 
@@ -1336,20 +1615,6 @@ function aggregateStopProximityAnalysis(
         .sort((a, b) => b.tripCount - a.tripCount || b.avgNearestStopDistanceKm - a.avgNearestStopDistanceKm)
         .slice(0, 150);
 
-    const mentionMap = new Map<string, number>();
-    for (const leg of allLegs) {
-        const names = [leg.start_stop_name, leg.end_stop_name];
-        for (const rawName of names) {
-            const name = (rawName || '').trim();
-            if (!name) continue;
-            mentionMap.set(name, (mentionMap.get(name) || 0) + 1);
-        }
-    }
-    const stopMentions: StopMentionRankingRow[] = Array.from(mentionMap.entries())
-        .map(([stopName, mentions]) => ({ stopName, mentions }))
-        .sort((a, b) => b.mentions - a.mentions)
-        .slice(0, 80);
-
     const avgNearestStopDistanceKm = endpointSummaries.reduce((sum, point) => sum + point.nearestStopDistanceKm, 0) / endpointSummaries.length;
     const farEndpointCount = farEndpoints.length;
     const farEndpointSharePct = Math.round((farEndpointCount / endpointSummaries.length) * 1000) / 10;
@@ -1362,7 +1627,10 @@ function aggregateStopProximityAnalysis(
             avgNearestStopDistanceKm: Math.round(avgNearestStopDistanceKm * 1000) / 1000,
             farEndpointCount,
             farEndpointSharePct,
-            clusterCount: topClusters.length,
+            clusterCount: clusterMap.size,
+            candidateTripEndpoints: candidateEndpointCount,
+            invalidEndpointCount,
+            outOfScopeEndpointCount,
         },
         farThresholdKm: STOP_PROXIMITY_THRESHOLD_KM,
         topClusters,
@@ -1420,23 +1688,39 @@ function aggregateRouteLegSummary(allLegs: TransitAppTripLegRow[]): RouteLegSumm
     return summaries;
 }
 
-function aggregateRouteLegsByMonth(allLegs: TransitAppTripLegRow[]): Map<string, { totalLegs: number; uniqueTrips: number }> {
-    const routeMonthMap = new Map<string, { totalLegs: number; trips: Set<string> }>();
+function aggregateRouteLegsByMonth(allLegs: TransitAppTripLegRow[]): Map<string, RouteLegMonthSummary> {
+    const routeMonthMap = new Map<string, {
+        totalLegs: number;
+        trips: Set<string>;
+        weekdayLegs: number;
+        weekendLegs: number;
+    }>();
 
     for (const leg of allLegs) {
-        if (leg.mode !== 'Transit' || !leg.route_short_name || !leg.start_time || leg.start_time.length < 7) continue;
+        if ((leg.mode || '').trim().toUpperCase() !== 'TRANSIT' || !leg.route_short_name) continue;
+        const timestamp = parseUtcDateTime(leg.start_time || leg.end_time);
+        if (!timestamp) continue;
 
         const route = normalizeRouteKey(leg.route_short_name);
-        const month = leg.start_time.slice(0, 7);
+        const month = toMonthKey(utcToEasternDateStr(timestamp));
         const key = `${route}|${month}`;
         const existing = routeMonthMap.get(key);
+        const dayType = inferDayTypeForDate(timestamp);
+        const isWeekdayLeg = dayType === 'weekday';
 
         if (existing) {
             existing.totalLegs += 1;
+            if (isWeekdayLeg) {
+                existing.weekdayLegs += 1;
+            } else {
+                existing.weekendLegs += 1;
+            }
             existing.trips.add(leg.user_trip_id);
         } else {
             routeMonthMap.set(key, {
                 totalLegs: 1,
+                weekdayLegs: isWeekdayLeg ? 1 : 0,
+                weekendLegs: isWeekdayLeg ? 0 : 1,
                 trips: new Set([leg.user_trip_id]),
             });
         }
@@ -1448,6 +1732,8 @@ function aggregateRouteLegsByMonth(allLegs: TransitAppTripLegRow[]): Map<string,
             {
                 totalLegs: value.totalLegs,
                 uniqueTrips: value.trips.size,
+                weekdayLegs: value.weekdayLegs,
+                weekendLegs: value.weekendLegs,
             },
         ]))
     );
@@ -1473,26 +1759,61 @@ function aggregateAppUsage(users: TransitAppParsedData['users']): AppUsageDaily[
 
 // ============ OD COVERAGE GAP ANALYSIS ============
 
+type CoverageRouteGroup = {
+    route: string;
+    shapes: GtfsRouteShape[];
+};
+
+function buildCoverageRouteGroups(shapes: GtfsRouteShape[]): CoverageRouteGroup[] {
+    const groups = new Map<string, GtfsRouteShape[]>();
+    for (const shape of shapes) {
+        if (shape.points.length === 0) continue;
+        const route = normalizeBarrieRouteForSupply(shape.routeShortName);
+        const existing = groups.get(route);
+        if (existing) existing.push(shape);
+        else groups.set(route, [shape]);
+    }
+
+    return Array.from(groups.entries())
+        .map(([route, routeShapes]) => ({ route, shapes: routeShapes }))
+        .sort((a, b) => a.route.localeCompare(b.route, undefined, { numeric: true }));
+}
+
+function minDistanceToRouteGroupKm(point: [number, number], group: CoverageRouteGroup): number {
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (const shape of group.shapes) {
+        const distance = pointToPolylineDistanceKm(point, shape.points);
+        if (distance < minDistance) minDistance = distance;
+    }
+    return minDistance;
+}
+
 /**
- * Analyze OD pairs for route coverage gaps.
- * For each top OD pair, checks if both origin and destination are within
- * a 1km buffer of the same GTFS route shape. Pairs where no single route
- * covers both endpoints are identified as coverage gaps.
+ * Analyze Barrie-only OD pairs for route coverage gaps.
+ * For each top OD pair, checks whether both endpoints are within a 1km
+ * buffer of the same normalized Barrie GTFS route. A/B routes that operate
+ * as one Transit App route key (2, 7, 12) are grouped together, and every
+ * GTFS shape variant is considered before classifying direct service.
  */
 export function analyzeODCoverageGaps(
     odPairs: ODPairData,
     topN: number = 25
 ): ODCoverageGap[] {
-    let shapes: ReturnType<typeof loadGtfsRouteShapes>;
+    let shapes: GtfsRouteShape[];
     try {
-        shapes = loadGtfsRouteShapes();
+        shapes = loadGtfsRouteShapeVariants();
     } catch {
         return [];
     }
     if (shapes.length === 0) return [];
 
     const BUFFER_KM = 1.0;
-    const pairs = odPairs.pairs.slice(0, topN);
+    const routeGroups = buildCoverageRouteGroups(shapes);
+    if (routeGroups.length === 0) return [];
+
+    const pairs = odPairs.pairs
+        .filter(isBarrieOnlyODPair)
+        .slice(0, topN);
     const results: ODCoverageGap[] = [];
 
     for (const pair of pairs) {
@@ -1503,35 +1824,42 @@ export function analyzeODCoverageGaps(
         let nearestRouteDest: string | null = null;
         let originRouteDistKm = Infinity;
         let destRouteDistKm = Infinity;
-        const servingRoutes: string[] = [];
+        const servingRoutes = new Set<string>();
 
-        for (const shape of shapes) {
-            if (shape.points.length === 0) continue;
-
-            const oDist = pointToPolylineDistanceKm(originPt, shape.points);
-            const dDist = pointToPolylineDistanceKm(destPt, shape.points);
+        for (const group of routeGroups) {
+            const oDist = minDistanceToRouteGroupKm(originPt, group);
+            const dDist = minDistanceToRouteGroupKm(destPt, group);
 
             // Track nearest route to origin
             if (oDist < originRouteDistKm) {
                 originRouteDistKm = oDist;
-                nearestRouteOrigin = shape.routeShortName;
+                nearestRouteOrigin = group.route;
             }
             // Track nearest route to dest
             if (dDist < destRouteDistKm) {
                 destRouteDistKm = dDist;
-                nearestRouteDest = shape.routeShortName;
+                nearestRouteDest = group.route;
             }
 
             // Check if this route covers both endpoints
             if (oDist <= BUFFER_KM && dDist <= BUFFER_KM) {
-                servingRoutes.push(shape.routeShortName);
+                servingRoutes.add(group.route);
             }
         }
+
+        const directServingRoutes = Array.from(servingRoutes)
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
         const originZoneName = findNearestStopName(pair.originLat, pair.originLon, 0.5)
             ?? `${pair.originLat.toFixed(3)}, ${pair.originLon.toFixed(3)}`;
         const destZoneName = findNearestStopName(pair.destLat, pair.destLon, 0.5)
             ?? `${pair.destLat.toFixed(3)}, ${pair.destLon.toFixed(3)}`;
+
+        const coverageStatus = directServingRoutes.length > 0
+            ? 'served'
+            : originRouteDistKm > BUFFER_KM && destRouteDistKm > BUFFER_KM
+                ? 'gap'
+                : 'partial';
 
         results.push({
             pair,
@@ -1542,8 +1870,9 @@ export function analyzeODCoverageGaps(
             nearestRouteDest,
             originRouteDistKm: Math.round(originRouteDistKm * 100) / 100,
             destRouteDistKm: Math.round(destRouteDistKm * 100) / 100,
-            isServedByDirectRoute: servingRoutes.length > 0,
-            servingRoutes,
+            isServedByDirectRoute: directServingRoutes.length > 0,
+            servingRoutes: directServingRoutes,
+            coverageStatus,
         });
     }
 

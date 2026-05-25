@@ -286,12 +286,12 @@ function getStopsByCanonicalName(): { byName: Map<string, GtfsStopRecord>; all: 
 
 function inferAgency(serviceName: string, routeId: string | null): NormalizedAgency {
     const canonicalService = canonicalText(serviceName);
-    if (routeId) return 'barrie';
     if (canonicalService.includes('GO')) return 'go';
     if (canonicalService.includes('BARRIE TRANSIT')) return 'barrie';
     if (canonicalService.includes('TRANSIT') || canonicalService.includes('TTC') || canonicalService.includes('YRT')) {
         return 'regional';
     }
+    if (routeId) return 'barrie';
     return 'unknown';
 }
 
@@ -299,10 +299,11 @@ function normalizeRouteReference(routeShortName: string, serviceName: string): N
     const normalizedRoute = normalizeWhitespace(routeShortName);
     const routeKey = canonicalRoute(routeShortName);
     const routeRecord = routeKey ? getRoutesByShortName().get(routeKey) : undefined;
-    const routeId = routeRecord?.routeId || null;
-    const agency = inferAgency(serviceName, routeId);
+    const matchedBarrieRouteId = routeRecord?.routeId || null;
+    const agency = inferAgency(serviceName, matchedBarrieRouteId);
+    const routeId = agency === 'barrie' ? matchedBarrieRouteId : null;
     return {
-        routeLabel: routeRecord?.routeShortName || normalizedRoute,
+        routeLabel: routeId ? (routeRecord?.routeShortName || normalizedRoute) : normalizedRoute,
         routeId,
         agency,
     };
