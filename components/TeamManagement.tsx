@@ -4,8 +4,8 @@
  * Allows users to create teams, join via invite code, and manage team members.
  */
 
-import React, { useState, useEffect } from 'react';
-import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle, Eye } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
 import { useTeam } from './contexts/TeamContext';
 import { useToast } from './contexts/ToastContext';
@@ -43,6 +43,7 @@ import {
     WORKSPACE_ACCESS_LEVEL_LABELS,
     WORKSPACE_ACCESS_LEVELS,
 } from '../utils/workspaceAccess';
+import { buildWorkspaceAccessPreview, type WorkspacePreviewItem } from '../utils/workspaceAccessPreview';
 import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
 
 const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
@@ -89,6 +90,97 @@ function buildWorkspaceOverrides(
         return overrides;
     }, {} as WorkspaceAccessOverrides);
 }
+
+type WorkspaceAccessPreview = ReturnType<typeof buildWorkspaceAccessPreview>;
+
+const PreviewSection: React.FC<{
+    title: string;
+    items: WorkspacePreviewItem[];
+    emptyMessage: string;
+}> = ({ title, items, emptyMessage }) => (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{title}</p>
+        {items.length > 0 ? (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {items.map(item => (
+                    <div key={item.feature} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        <p className="text-sm font-semibold text-gray-900">{item.label}</p>
+                        <p className="mt-1 text-xs leading-snug text-gray-500">{item.description}</p>
+                    </div>
+                ))}
+            </div>
+        ) : (
+            <p className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">{emptyMessage}</p>
+        )}
+    </div>
+);
+
+const WorkspaceAccessPreviewPanel: React.FC<{
+    title: string;
+    preview: WorkspaceAccessPreview;
+}> = ({ title, preview }) => {
+    const hiddenPreview = preview.hiddenFeatures.slice(0, 8);
+    const hiddenRemainder = preview.hiddenFeatures.length - hiddenPreview.length;
+
+    return (
+        <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-start gap-2">
+                    <div className="mt-0.5 rounded-lg bg-white p-2 text-blue-600 shadow-sm">
+                        <Eye size={16} />
+                    </div>
+                    <div>
+                        <p className="text-sm font-semibold text-gray-900">{title}</p>
+                        <p className="text-xs text-gray-600">
+                            {preview.profileName} will see <span className="font-semibold">{preview.visibleCount}</span> workspace item{preview.visibleCount === 1 ? '' : 's'} as <span className="font-semibold">{preview.accessLabel}</span>.
+                        </p>
+                    </div>
+                </div>
+                <span className="w-fit rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-blue-700 shadow-sm">
+                    Preview only
+                </span>
+            </div>
+
+            <div className="mt-3 grid gap-3">
+                <PreviewSection
+                    title="Home screen"
+                    items={preview.homeWorkspaces}
+                    emptyMessage="No main workspace cards will appear on the home screen."
+                />
+                <PreviewSection
+                    title="Analytics screen"
+                    items={preview.analyticsCards}
+                    emptyMessage="No analytics cards will appear."
+                />
+                <PreviewSection
+                    title="Operations tools"
+                    items={preview.operationsTools}
+                    emptyMessage="No extra operations tools will appear."
+                />
+            </div>
+
+            {preview.hiddenFeatures.length > 0 && (
+                <div className="mt-3 rounded-lg border border-blue-100 bg-white px-3 py-2">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">
+                        Hidden from this profile
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                        {hiddenPreview.map(label => (
+                            <span key={label} className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-600">
+                                {label}
+                            </span>
+                        ))}
+                        {hiddenRemainder > 0 && (
+                            <span className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-600">
+                                +{hiddenRemainder} more
+                            </span>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 interface TeamManagementProps {
     onClose?: () => void;
@@ -149,6 +241,25 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const canManageActiveAccess = isCurrentTeamOwnerOrAdmin || canLookupTeams;
     const canRemoveActiveMembers = isCurrentTeamOwnerOrAdmin || canLookupTeams;
     const selectedWizardMember = activeTeamDetails?.members.find(member => member.id === selectedWizardMemberId) ?? null;
+    const wizardTeamAccessPreview = useMemo(() => buildWorkspaceAccessPreview({
+        displayName: activeTeamDetails ? `${activeTeamDetails.name} invite user` : 'Invite user',
+        accessLevel: wizardTeamAccessLevel,
+        overrides: buildWorkspaceOverrides(wizardTeamAccessLevel, wizardTeamWorkspaceSelection),
+    }), [
+        activeTeamDetails?.name,
+        wizardTeamAccessLevel,
+        JSON.stringify(wizardTeamWorkspaceSelection),
+    ]);
+    const wizardMemberAccessPreview = useMemo(() => buildWorkspaceAccessPreview({
+        displayName: selectedWizardMember?.displayName || selectedWizardMember?.email || 'Selected user',
+        accessLevel: wizardMemberAccessLevel,
+        overrides: buildWorkspaceOverrides(wizardMemberAccessLevel, wizardMemberWorkspaceSelection),
+    }), [
+        selectedWizardMember?.displayName,
+        selectedWizardMember?.email,
+        wizardMemberAccessLevel,
+        JSON.stringify(wizardMemberWorkspaceSelection),
+    ]);
     const filteredAvailableTeams = availableTeams.filter(availableTeam => {
         const filter = teamLookupCode.trim().toLowerCase();
         if (!filter) return true;
@@ -997,6 +1108,10 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 </label>
                             ))}
                         </div>
+                        <WorkspaceAccessPreviewPanel
+                            title="Preview for future invite users"
+                            preview={wizardTeamAccessPreview}
+                        />
                     </div>
 
                     <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
@@ -1055,6 +1170,10 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 </label>
                             ))}
                         </div>
+                        <WorkspaceAccessPreviewPanel
+                            title="Preview selected user's app"
+                            preview={wizardMemberAccessPreview}
+                        />
                     </div>
 
                     <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
