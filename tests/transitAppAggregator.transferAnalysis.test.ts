@@ -221,6 +221,110 @@ describe('aggregateTransitAppData transfer analysis', () => {
         expect(transferAnalysis?.totals.transferEvents).toBe(1);
     });
 
+    it('uses real America/Toronto local time for transfer day and trip anchors around DST boundaries', () => {
+        const parsed: TransitAppParsedData = {
+            lines: [],
+            trips: [],
+            locations: [],
+            goTripLegs: [
+                makeLeg({
+                    userTripId: 'dst-chain',
+                    serviceName: 'Barrie Transit',
+                    route: '101',
+                    startTime: '2026-03-09 04:00:00 UTC',
+                    endTime: '2026-03-09 04:25:00 UTC',
+                    startStop: 'Georgian College',
+                    endStop: 'Downtown Hub',
+                }),
+                makeLeg({
+                    userTripId: 'dst-chain',
+                    serviceName: 'Barrie Transit',
+                    route: '400',
+                    startTime: '2026-03-09 04:30:00 UTC',
+                    endTime: '2026-03-09 04:50:00 UTC',
+                    startStop: 'Downtown Hub',
+                    endStop: 'Georgian Mall',
+                }),
+            ],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const transferRow = summary.transferAnalysis?.volumeMatrix[0];
+        const pattern = summary.transferPatterns[0];
+
+        expect(transferRow?.dayType).toBe('weekday');
+        expect(transferRow?.timeBand).toBe('overnight');
+        expect(pattern?.fromTripAnchors?.[0]?.timeLabel).toBe('00:25');
+        expect(pattern?.toTripAnchors?.[0]?.timeLabel).toBe('00:30');
+    });
+
+    it('keeps same-name GTFS transfer stops separate when stop ids differ', () => {
+        const parsed: TransitAppParsedData = {
+            lines: [],
+            trips: [],
+            locations: [],
+            goTripLegs: [
+                makeLeg({
+                    userTripId: 'owen-1',
+                    serviceName: 'Barrie Transit',
+                    route: '101',
+                    startTime: '2025-01-08 13:00:00 UTC',
+                    endTime: '2025-01-08 13:10:00 UTC',
+                    startStop: 'Origin A',
+                    endStop: 'Owen Street',
+                    endLat: 44.390480034976,
+                    endLon: -79.6876996569454,
+                }),
+                makeLeg({
+                    userTripId: 'owen-1',
+                    serviceName: 'Barrie Transit',
+                    route: '400',
+                    startTime: '2025-01-08 13:15:00 UTC',
+                    endTime: '2025-01-08 13:30:00 UTC',
+                    startStop: 'Owen Street',
+                    endStop: 'Destination A',
+                }),
+                makeLeg({
+                    userTripId: 'owen-2',
+                    serviceName: 'Barrie Transit',
+                    route: '101',
+                    startTime: '2025-01-08 13:40:00 UTC',
+                    endTime: '2025-01-08 13:45:00 UTC',
+                    startStop: 'Origin B',
+                    endStop: 'Owen Street',
+                    endLat: 44.39829531,
+                    endLon: -79.6930308,
+                }),
+                makeLeg({
+                    userTripId: 'owen-2',
+                    serviceName: 'Barrie Transit',
+                    route: '400',
+                    startTime: '2025-01-08 13:50:00 UTC',
+                    endTime: '2025-01-08 14:05:00 UTC',
+                    startStop: 'Owen Street',
+                    endStop: 'Destination B',
+                }),
+            ],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const matchingTopPairs = summary.transferAnalysis?.topTransferPairs
+            .filter(row => row.fromRoute === '101' && row.toRoute === '400');
+        const stopIds = new Set(matchingTopPairs?.map(row => row.transferStopId));
+
+        expect(matchingTopPairs).toHaveLength(2);
+        expect(stopIds).toEqual(new Set(['191', '349']));
+        expect(summary.transferAnalysis?.totals.uniqueTransferStops).toBe(2);
+        expect(summary.transferAnalysis?.volumeMatrix).toHaveLength(2);
+        expect(summary.transferPatterns).toHaveLength(2);
+    });
+
     it('keeps full rankable transfer lists so scope filters can rank before display caps', () => {
         const goTripLegs: TransitAppTripLegRow[] = [];
 

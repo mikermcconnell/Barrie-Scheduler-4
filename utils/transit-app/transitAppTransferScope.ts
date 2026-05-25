@@ -30,10 +30,18 @@ export interface TransferScopeStats {
 
 /** Barrie Transit routes are local numbered routes + letter suffixes. GO = "BR" or 60-69 range. */
 export function isBarrieRoute(route: string): boolean {
-    const upper = route.trim().toUpperCase();
+    const upper = route
+        .trim()
+        .toUpperCase()
+        .replace(/^BARRIE\s+TRANSIT\s+/, '')
+        .replace(/^ROUTE\s+/, '');
     if (upper === 'BR') return false;
-    const num = parseInt(upper, 10);
-    if (!isNaN(num) && num >= 60 && num <= 69) return false;
+
+    const routeMatch = upper.match(/^(\d{1,3})([A-Z])?$/);
+    if (!routeMatch) return false;
+
+    const num = Number(routeMatch[1]);
+    if (num >= 60 && num <= 69) return false;
     return true;
 }
 

@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import type {
     TransitAppDataSummary,
-    TransferPattern,
     TransferPairSummary,
     TransferPriorityTier,
     TransferTripAnchor,
@@ -27,6 +26,14 @@ import {
     isTransferRowInScope,
     type TransferScopeFilter,
 } from '../../utils/transit-app/transitAppTransferScope';
+import {
+    getTransferPairDisplayCount,
+    groupTransferPatternsByRoute,
+    rankConnectionTargetsForScope,
+    rankTransferPairsForMap,
+    type GroupedTransferPattern,
+    type TransferMapTimeBandFilter,
+} from '../../utils/transit-app/transitAppTransferUiMetrics';
 
 interface TransfersModuleProps {
     data: TransitAppDataSummary;
@@ -35,7 +42,7 @@ interface TransfersModuleProps {
 type SortField = 'count' | 'avgWaitMinutes';
 type ViewMode = 'table' | 'map';
 type MapLimit = 10 | 20 | 'all';
-type TimeBandFilter = 'all' | TransferTimeBand;
+type TimeBandFilter = TransferMapTimeBandFilter;
 type ScopeFilter = TransferScopeFilter;
 
 const TOP_TRANSFER_TABLE_LIMIT = 50;
@@ -264,6 +271,7 @@ const TIME_BAND_OPTIONS: { key: TimeBandFilter; label: string }[] = [
     { key: 'midday', label: 'Mid' },
     { key: 'pm_peak', label: 'PM' },
     { key: 'evening', label: 'Eve' },
+    { key: 'overnight', label: 'Night' },
 ];
 
 interface TransferMapProps {
@@ -298,14 +306,8 @@ const TransferMap: React.FC<TransferMapProps> = ({
     const geoPairs = useMemo((): GeocodedTransferPair[] => {
         const results: GeocodedTransferPair[] = [];
         for (const pair of pairs) {
-            let displayCount = pair.totalCount;
-            if (timeBandFilter !== 'all') {
-                const bandCount = pair.timeBandCounts?.[timeBandFilter];
-                displayCount = typeof bandCount === 'number'
-                    ? bandCount
-                    : pair.dominantTimeBands.includes(timeBandFilter) ? pair.totalCount : 0;
-                if (displayCount <= 0) continue;
-            }
+            const displayCount = getTransferPairDisplayCount(pair, timeBandFilter);
+            if (displayCount <= 0) continue;
             if (!pair.transferStopName) continue;
             const coords = stopCoordMap.get(pair.transferStopName.toLowerCase().trim());
             if (coords) {
@@ -659,7 +661,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
             .filter(tp => isTransferRowInScope(tp, scope))
             .sort((a, b) => {
                 if (sortBy === 'count') return b.count - a.count;
-                return a.avgWaitMinutes - b.avgWaitMinutes;
+                return b.avgWaitMinutes - a.avgWaitMinutes;
             });
     }, [transferPatterns, sortBy, scope]);
 
@@ -668,28 +670,10 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
         [sortedPatterns]
     );
 
-    const groupedPatterns = useMemo(() => {
+    const groupedPatterns = useMemo((): GroupedTransferPattern[] | null => {
         if (!groupByRoute) return null;
-        const groups = new Map<string, TransferPattern[]>();
-        for (const tp of visiblePatterns) {
-            const key = `${tp.fromRoute} → ${tp.toRoute}`;
-            const existing = groups.get(key);
-            if (existing) {
-                existing.push(tp);
-            } else {
-                groups.set(key, [tp]);
-            }
-        }
-        return Array.from(groups.entries())
-            .map(([routePair, patterns]) => ({
-                routePair,
-                totalCount: patterns.reduce((sum, p) => sum + p.count, 0),
-                avgWait: patterns.reduce((sum, p) => sum + (p.totalWaitMinutes ?? p.avgWaitMinutes * p.count), 0)
-                    / Math.max(1, patterns.reduce((sum, p) => sum + p.count, 0)),
-                patterns,
-            }))
-            .sort((a, b) => b.totalCount - a.totalCount);
-    }, [visiblePatterns, groupByRoute]);
+        return groupTransferPatternsByRoute(sortedPatterns);
+    }, [sortedPatterns, groupByRoute]);
 
     const scopedTopPairs = useMemo(() => {
         if (!transferAnalysis) return [];
@@ -717,7 +701,9 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
 
     const scopedConnectionTargets = useMemo(() => {
         if (!transferAnalysis) return [];
-        return transferAnalysis.connectionTargets.filter(row => isTransferRowInScope(row, scope));
+        return rankConnectionTargetsForScope(
+            transferAnalysis.connectionTargets.filter(row => isTransferRowInScope(row, scope))
+        );
     }, [transferAnalysis, scope]);
 
     const visibleConnectionTargets = useMemo(
@@ -726,9 +712,8 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
     );
 
     const mapPairs = useMemo(() => {
-        if (mapLimit === 'all') return scopedTopPairs;
-        return scopedTopPairs.slice(0, mapLimit);
-    }, [scopedTopPairs, mapLimit]);
+        return rankTransferPairsForMap(scopedTopPairs, timeBandFilter, mapLimit);
+    }, [scopedTopPairs, mapLimit, timeBandFilter]);
 
     const transferScopeSourceComplete = useMemo(() => {
         if (!transferAnalysis) return true;

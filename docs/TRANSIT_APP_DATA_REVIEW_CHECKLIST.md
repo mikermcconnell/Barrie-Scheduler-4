@@ -66,9 +66,9 @@ Check an item only after confirming:
   - UI: `components/Analytics/TransfersModule.tsx`
   - Source: `go_trip_legs_*.csv` and `tapped_trip_view_legs_*.csv` -> `parseTripLegsFile` -> `analyzeTransferConnections` -> `data.transferAnalysis` and `data.transferPatterns`
   - Local validation: 87,202 GO trip legs, 363,293 tapped trip legs, 30,898 trip chains processed, 8,939 duplicate chains removed, 29,676 transfer events, 3,372 GO-linked events, 1,975 unique route pairs, 1,298 unique transfer stops.
-  - Fixes completed: scope-aware KPI cards, full rankable transfer lists saved before display caps, exact map time-band marker volumes via `timeBandCounts`, grouped wait averages from total wait, and a legacy-import warning when saved transfer summaries are capped.
+  - Fixes completed: scope-aware KPI cards, full rankable transfer lists saved before display caps, exact map time-band marker volumes via `timeBandCounts`, map top-N ranking after the selected time-band filter, exact `America/Toronto` transfer time buckets, scoped connection-target priorities, grouped wait averages from total wait, grouped route totals from all scoped rows, stricter Barrie-vs-regional route-hint classification, same-name stop disambiguation by GTFS stop ID, and a legacy-import warning when saved transfer summaries are capped.
   - Local post-fix validation: full `topTransferPairs` now represents all 29,676 transfer events; local full-list counts are 2,977 top pair rows, 354 GO-linked rows, 3,061 connection target rows, and 3,447 transfer pattern rows.
-  - Tests: `tests/transitAppAggregator.transferAnalysis.test.ts`, `tests/transitAppTransferScope.test.ts`, and `tests/transitAppPipeline.e2e.test.ts`.
+  - Tests: `tests/transitAppAggregator.transferAnalysis.test.ts`, `tests/transitAppTransferScope.test.ts`, `tests/transitAppTransferUiMetrics.test.ts`, and `tests/transitAppPipeline.e2e.test.ts`.
   - Rollout note: existing saved Transit App imports must be re-imported to regenerate uncapped transfer summaries and exact time-band counts.
 
 ## Active workspace inventory
@@ -119,15 +119,15 @@ Check an item only after confirming:
 
 | Reviewed | Surface | UI label / columns | Source fields | Review notes |
 |---|---|---|---|---|
-| [x] | Metric | Transfer Events | Scoped `topTransferPairs` count sum, with all-system fallback | Verified local all-system total is 29,676 and Barrie-scope total is 23,067. |
+| [x] | Metric | Transfer Events | Scoped `topTransferPairs` count sum, with all-system fallback | Verified local all-system total is 29,676 and Barrie-scope total is 23,067. Scope route hints now require numbered Barrie local routes so labels like TTC or Viva Blue stay regional. |
 | [x] | Metric | GO-Linked Events | Scoped `topTransferPairs` GO-linked count sum, with all-system fallback | Verified local all-system total is 3,372 and Barrie-scope total is 3,368. |
 | [x] | Metric | Unique Route Pairs | Scoped `topTransferPairs` route-pair set | Verified route-pair count follows the selected scope. |
 | [x] | Metric | Route Match Rate | Scoped route-reference matches from `topTransferPairs` | Verified all-system route match rate is 31.39%; scoped KPI now follows selected scope. |
-| [x] | Map/table | Top Transfer Pairs | `transferAnalysis.topTransferPairs` | Verified full rankable list is saved before UI display caps; local full list has 2,977 rows. |
+| [x] | Map/table | Top Transfer Pairs | `transferAnalysis.topTransferPairs` | Verified full rankable list is saved before UI display caps; local full list has 2,977 rows. Map top-N is ranked after the selected time-band count is applied and includes overnight filtering. Same-name GTFS stops stay separate by stop ID. |
 | [x] | Table | Top Transfer Pairs: from, to, transfer stop, arrival/departure times, peak bands, volume, avg wait | `visibleTopPairs` after scope filtering | Verified scope filtering happens before top-50 display cap. |
 | [x] | Table | GO-Linked Transfers: from, to, band, count | `visibleGoLinked` after scope filtering | Verified scope filtering happens before top-15 display cap; local full GO-linked list has 354 rows. |
-| [x] | Table | Connection Targets: pair, stop ID, arr/dep times, bands, tier | `visibleConnectionTargets` after scope filtering | Verified scope filtering happens before top-15 display cap; local full target list has 3,061 rows. |
-| [x] | Table | Grouped transfer pattern tables: from stop, to stop, arrival/departure times, count, avg wait, range | `groupedPatterns` | Verified grouping uses scoped visible rows and weighted total-wait math where available. |
+| [x] | Table | Connection Targets: pair, stop ID, arr/dep times, bands, tier | `visibleConnectionTargets` after scope filtering | Verified scope filtering happens before top-15 display cap; local full target list has 3,061 rows. Priority tier is recomputed after scope ranking. |
+| [x] | Table | Grouped transfer pattern tables: from stop, to stop, arrival/departure times, count, avg wait, range | `groupedPatterns` | Verified grouping uses all scoped rows and weighted total-wait math where available, not only the top-100 visible rows. |
 | [x] | Table | Transfer Patterns: from, to, transfer stop, arrival/departure times, count, avg wait, range | `visiblePatterns` after scope filtering | Verified scope filtering happens before top-100 display cap; local full transfer-pattern list has 3,447 rows. |
 
 ### Heatmap tab - `HeatmapModule.tsx`

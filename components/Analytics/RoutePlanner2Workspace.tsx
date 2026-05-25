@@ -1556,31 +1556,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         onRoadNameLabelStatusChange={setRoadNameLabelStatus}
                         overlayInsets={mapOverlayInsets}
                     />
-                    <div
-                        className="pointer-events-none absolute z-30"
-                        style={{ top: mapOverlayInsets.top, right: mapOverlayInsets.right }}
-                    >
-                        <button
-                            type="button"
-                            data-testid="rp2-camp-shuttle-label-toggle"
-                            aria-pressed={showCampShuttleLabels}
-                            onClick={() => setShowCampShuttleLabels((current) => !current)}
-                            className={`pointer-events-auto inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black shadow-xl backdrop-blur transition ${
-                                showCampShuttleLabels
-                                    ? 'border-emerald-300 bg-emerald-50/95 text-emerald-800'
-                                    : 'border-slate-200 bg-white/95 text-slate-700 hover:bg-slate-50'
-                            }`}
-                            title={showCampShuttleLabels ? 'Hide camp shuttle stop labels' : 'Show camp shuttle stop labels'}
-                        >
-                            <MapPinned size={16} />
-                            <span>Camp Shuttle</span>
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
-                                showCampShuttleLabels ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
-                            }`}>
-                                {showCampShuttleLabels ? 'Labels on' : 'Off'}
-                            </span>
-                        </button>
-                    </div>
                     {showActionSidebar && (
                         <>
                             <div className="pointer-events-none absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-start gap-3">
@@ -1738,6 +1713,28 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         title={showRoadNameLabels ? 'Hide road names' : 'Show road names'}
                                     >
                                         <MapPin size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{showRoadNameLabels ? 'Hide road names' : 'Show road names'}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        data-testid="rp2-camp-shuttle-label-toggle"
+                                        aria-pressed={showCampShuttleLabels}
+                                        onClick={() => setShowCampShuttleLabels((current) => !current)}
+                                        className={`inline-flex items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${
+                                            showCampShuttleLabels
+                                                ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                                                : 'border-slate-200 bg-white text-slate-700'
+                                        }`}
+                                        title={showCampShuttleLabels ? 'Hide camp shuttle stop labels' : 'Show camp shuttle stop labels'}
+                                    >
+                                        <MapPinned size={16} />
+                                        <span className={actionSidebarExpanded ? undefined : 'sr-only'}>Camp Shuttle</span>
+                                        {actionSidebarExpanded && (
+                                            <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${
+                                                showCampShuttleLabels ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                                            }`}>
+                                                {showCampShuttleLabels ? 'On' : 'Off'}
+                                            </span>
+                                        )}
                                     </button>
                                     {actionSidebarExpanded && canShowRoadNameLabels && showRoadNameLabels && (
                                         <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-2">

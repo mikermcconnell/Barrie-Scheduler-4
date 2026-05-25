@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     calculateTransferScopeStats,
+    isBarrieRoute,
     isTransferRowInScope,
 } from '../utils/transit-app/transitAppTransferScope';
 import type { TransferPairSummary } from '../utils/transit-app/transitAppTypes';
@@ -22,6 +23,15 @@ const pair = (overrides: Partial<TransferPairSummary>): TransferPairSummary => (
 });
 
 describe('transitAppTransferScope', () => {
+    it('only treats numbered local Barrie routes as Barrie route hints', () => {
+        expect(isBarrieRoute('8A')).toBe(true);
+        expect(isBarrieRoute('Route 400')).toBe(true);
+        expect(isBarrieRoute('BR')).toBe(false);
+        expect(isBarrieRoute('68')).toBe(false);
+        expect(isBarrieRoute('TTC')).toBe(false);
+        expect(isBarrieRoute('Viva Blue')).toBe(false);
+    });
+
     it('classifies Barrie scoped rows from stop ids, stop names, and local route hints', () => {
         expect(isTransferRowInScope(pair({}), 'barrie')).toBe(true);
         expect(isTransferRowInScope(pair({
@@ -39,6 +49,12 @@ describe('transitAppTransferScope', () => {
             toRoute: 'BR',
             transferStopId: null,
             transferStopName: 'Aurora GO Bus',
+        }), 'regional')).toBe(true);
+        expect(isTransferRowInScope(pair({
+            fromRoute: 'TTC',
+            toRoute: 'Viva Blue',
+            transferStopId: null,
+            transferStopName: 'Finch Station',
         }), 'regional')).toBe(true);
     });
 

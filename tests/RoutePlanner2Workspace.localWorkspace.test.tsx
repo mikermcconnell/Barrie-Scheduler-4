@@ -314,7 +314,9 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.querySelector('[data-testid^="rp2-map-stop-label-"]')).toBeNull();
 
     const campToggle = view.querySelector('[data-testid="rp2-camp-shuttle-label-toggle"]') as HTMLButtonElement | null;
+    const actionSidebar = view.querySelector('[data-testid="rp2-action-sidebar"]');
     expect(campToggle).not.toBeNull();
+    expect(actionSidebar?.contains(campToggle)).toBe(true);
     expect(campToggle?.getAttribute('aria-pressed')).toBe('false');
     expect(campToggle?.textContent).toContain('Camp Shuttle');
 

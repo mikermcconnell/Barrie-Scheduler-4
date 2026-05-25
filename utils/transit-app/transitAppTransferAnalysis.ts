@@ -16,10 +16,21 @@ import type {
     TransitAppTripLegRow,
 } from './transitAppTypes';
 
-const TRANSFER_ANALYSIS_SCHEMA_VERSION = 2;
+const TRANSFER_ANALYSIS_SCHEMA_VERSION = 3;
 const MAX_REASONABLE_TRANSFER_WAIT_MINUTES = 180;
 const MAX_VOLUME_MATRIX_ROWS = 1000;
 const MAX_TRIP_ANCHORS = 3;
+const TORONTO_TIME_ZONE = 'America/Toronto';
+
+const TORONTO_PART_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TORONTO_TIME_ZONE,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+});
 
 type NormalizedAgency = 'barrie' | 'go' | 'regional' | 'unknown';
 
@@ -124,19 +135,20 @@ function parseUtcDate(value: string): Date | null {
     return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
-function getEasternOffsetHours(dt: Date): number {
-    const month = dt.getUTCMonth(); // 0-indexed
-    const day = dt.getUTCDate();
-    // Approximate DST: EDT = second Sunday in March to first Sunday in November.
-    const isEDT = (month > 2 && month < 10)
-        || (month === 2 && day >= 10)
-        || (month === 10 && day < 3);
-    return isEDT ? -4 : -5;
-}
+function getTorontoParts(dt: Date): { year: number; month: number; day: number; hour: number; minute: number } {
+    const parts = TORONTO_PART_FORMATTER.formatToParts(dt);
+    const lookup: Record<string, string> = {};
+    parts.forEach(part => {
+        if (part.type !== 'literal') lookup[part.type] = part.value;
+    });
 
-function utcToEasternDate(dt: Date): Date {
-    const offset = getEasternOffsetHours(dt);
-    return new Date(dt.getTime() + offset * 3600_000);
+    return {
+        year: Number(lookup.year),
+        month: Number(lookup.month),
+        day: Number(lookup.day),
+        hour: Number(lookup.hour),
+        minute: Number(lookup.minute),
+    };
 }
 
 function normalizeWhitespace(value: string): string {
@@ -165,7 +177,7 @@ function toRate(numerator: number, denominator: number): number {
 }
 
 function inferTimeBand(date: Date): TransferTimeBand {
-    const hour = utcToEasternDate(date).getUTCHours();
+    const { hour } = getTorontoParts(date);
     if (hour >= 6 && hour < 9) return 'am_peak';
     if (hour >= 9 && hour < 15) return 'midday';
     if (hour >= 15 && hour < 18) return 'pm_peak';
@@ -174,14 +186,15 @@ function inferTimeBand(date: Date): TransferTimeBand {
 }
 
 function inferDayType(date: Date): TransferDayType {
-    const day = utcToEasternDate(date).getUTCDay();
+    const local = getTorontoParts(date);
+    const day = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay();
     if (day === 0) return 'sunday';
     if (day === 6) return 'saturday';
     return 'weekday';
 }
 
 function inferSeason(date: Date): TransferSeason {
-    const month = utcToEasternDate(date).getUTCMonth() + 1;
+    const { month } = getTorontoParts(date);
     if (month === 1) return 'jan';
     if (month === 7) return 'jul';
     if (month === 9) return 'sep';
@@ -301,9 +314,17 @@ function findNearestStop(lat: number, lon: number): GtfsStopRecord | null {
     }
 
     const { all } = getStopsByCanonicalName();
+    return findNearestStopInList(all, lat, lon);
+}
+
+function findNearestStopInList(stops: GtfsStopRecord[], lat: number, lon: number): GtfsStopRecord | null {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) {
+        return null;
+    }
+
     let best: GtfsStopRecord | null = null;
     let bestDistanceSquared = Number.POSITIVE_INFINITY;
-    for (const stop of all) {
+    for (const stop of stops) {
         if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) continue;
         const dLat = stop.lat - lat;
         const dLon = stop.lon - lon;
@@ -333,11 +354,14 @@ function normalizeStopReference(
     const cached = cache.get(cacheKey);
     if (cached) return cached;
 
-    const { byName } = getStopsByCanonicalName();
+    const { byName, all } = getStopsByCanonicalName();
     const canonicalName = canonicalText(stopName);
     let matched: GtfsStopRecord | undefined;
     if (canonicalName) {
-        matched = byName.get(canonicalName);
+        const sameNameCandidates = all.filter(stop => canonicalText(stop.stopName) === canonicalName);
+        matched = sameNameCandidates.length > 1
+            ? (findNearestStopInList(sameNameCandidates, lat, lon) || sameNameCandidates[0])
+            : byName.get(canonicalName);
     }
     if (!matched) {
         matched = findNearestStop(lat, lon) || undefined;
@@ -350,6 +374,10 @@ function normalizeStopReference(
     };
     cache.set(cacheKey, normalized);
     return normalized;
+}
+
+function stopIdentityKey(stopName: string, stopId: string | null, stopCode: string | null): string {
+    return stopId || stopCode || canonicalText(stopName);
 }
 
 function isTransitLeg(leg: TransitAppTripLegRow): boolean {
@@ -419,8 +447,8 @@ function dominantTimeBands(counts: Map<TransferTimeBand, number>): TransferTimeB
 }
 
 function minuteOfDay(date: Date): number {
-    const local = utcToEasternDate(date);
-    return (local.getUTCHours() * 60) + local.getUTCMinutes();
+    const local = getTorontoParts(date);
+    return (local.hour * 60) + local.minute;
 }
 
 function formatMinuteOfDay(minute: number): string {
@@ -591,10 +619,11 @@ export function analyzeTransferConnections(
     }>();
 
     for (const event of transferEvents) {
+        const transferStopKey = stopIdentityKey(event.transferStopName, event.transferStopId, event.transferStopCode);
         const volumeKey = [
             event.fromRoute,
             event.toRoute,
-            event.transferStopName,
+            transferStopKey,
             event.timeBand,
             event.dayType,
             event.season,
@@ -631,7 +660,7 @@ export function analyzeTransferConnections(
         const topPairKey = [
             event.fromRoute,
             event.toRoute,
-            event.transferStopName,
+            transferStopKey,
             event.transferType,
         ].join('|');
         const existingPair = topPairMap.get(topPairKey);
@@ -671,7 +700,7 @@ export function analyzeTransferConnections(
             const goKey = [
                 event.fromRoute,
                 event.toRoute,
-                event.transferStopName,
+                transferStopKey,
                 event.timeBand,
                 event.transferType,
             ].join('|');
@@ -701,8 +730,7 @@ export function analyzeTransferConnections(
         const targetKey = [
             event.fromRoute,
             event.toRoute,
-            event.transferStopName,
-            event.transferStopId || '',
+            transferStopKey,
         ].join('|');
         const existingTarget = targetMap.get(targetKey);
         if (existingTarget) {
@@ -738,7 +766,7 @@ export function analyzeTransferConnections(
             });
         }
 
-        const legacyKey = `${event.fromRoute}->${event.toRoute}|${event.fromStopName}->${event.toStopName}`;
+        const legacyKey = `${event.fromRoute}->${event.toRoute}|${event.fromStopName}->${event.toStopName}|${transferStopKey}`;
         const existingLegacy = legacyPatternMap.get(legacyKey);
         const isBarrieTransferStop = Boolean(event.transferStopId);
         if (existingLegacy) {
@@ -850,7 +878,9 @@ export function analyzeTransferConnections(
         .sort((a, b) => b.count - a.count);
 
     const routePairs = new Set(transferEvents.map(e => `${e.fromRoute}|${e.toRoute}`));
-    const transferStops = new Set(transferEvents.map(e => e.transferStopName).filter(Boolean));
+    const transferStops = new Set(transferEvents
+        .map(e => stopIdentityKey(e.transferStopName, e.transferStopId, e.transferStopCode))
+        .filter(Boolean));
     const goLinkedTransferEvents = transferEvents.filter(e => isGoLinked(e.transferType)).length;
 
     return {
