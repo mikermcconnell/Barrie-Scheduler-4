@@ -85,6 +85,30 @@ describe('Route Planner 2 feasibility', () => {
     expect(result.warnings.map((warning) => warning.id)).toContain('fallback-runtime');
   });
 
+  it('uses a target bus count to reflect an existing scheduled service', () => {
+    let project = validTwoStopProject();
+    project = addCurrentEstimate(project, {
+      runtimeMinutes: 42,
+      source: 'scheduled-proxy',
+      confidence: 'high',
+      scheduledRuntimeMinutes: 42,
+    });
+    project = updateRoutePlanner2Service(project, 'scenario-1', {
+      frequencyMinutes: 30,
+      targetBuses: 3,
+      startTerminalLayoverMinutes: 0,
+      endTerminalLayoverMinutes: 0,
+    }, now);
+
+    const result = deriveRoutePlanner2Feasibility(project.scenarios[0]!);
+
+    expect(result.oneWayRuntimeMinutes).toBe(42);
+    expect(result.busesRequired).toBe(3);
+    expect(result.cycleTimeMinutes).toBe(90);
+    expect(result.recoveryTimeMinutes).toBe(6);
+    expect(result.recoveryPercent).toBe(7);
+  });
+
   it('estimates one-way runtime for two stops before terminals are marked', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.7, now });
@@ -248,6 +272,57 @@ describe('Route Planner 2 feasibility', () => {
       confidence: 'medium',
     });
     expect(result.warnings.map((warning) => warning.id)).not.toContain('fallback-runtime');
+  });
+
+
+  it('selects the scheduled runtime estimate for the active GTFS time band', () => {
+    const project = validTwoStopProject();
+    const segmentPath = buildRoutePlanner2StopSegmentPaths(project.scenarios[0]!)[0]!;
+    const scenario = {
+      ...project.scenarios[0]!,
+      service: {
+        ...project.scenarios[0]!.service,
+        dayType: 'weekday' as const,
+        planningPeriod: 'am-peak' as const,
+      },
+      runtimeEstimates: [
+        {
+          id: `${segmentPath.id}-full-day`,
+          fromStopId: segmentPath.fromStopId,
+          toStopId: segmentPath.toStopId,
+          runtimeMinutes: 42,
+          source: 'scheduled-proxy' as const,
+          confidence: 'high' as const,
+          scheduledRuntimeMinutes: 42,
+          evidenceDayType: 'weekday' as const,
+          evidencePeriod: 'full-day' as const,
+          updatedAt: now,
+        },
+        {
+          id: `${segmentPath.id}-am-peak`,
+          fromStopId: segmentPath.fromStopId,
+          toStopId: segmentPath.toStopId,
+          runtimeMinutes: 47,
+          source: 'scheduled-proxy' as const,
+          confidence: 'high' as const,
+          scheduledRuntimeMinutes: 47,
+          evidenceDayType: 'weekday' as const,
+          evidencePeriod: 'am-peak' as const,
+          updatedAt: now,
+        },
+      ],
+    };
+
+    const amPeak = deriveRoutePlanner2Feasibility(scenario);
+    const fullDay = deriveRoutePlanner2Feasibility({
+      ...scenario,
+      service: { ...scenario.service, planningPeriod: 'all-day' as const },
+    });
+
+    expect(amPeak.segmentRuntimeMinutes).toBe(47);
+    expect(amPeak.segmentSummaries[0]?.evidencePeriod).toBe('am-peak');
+    expect(fullDay.segmentRuntimeMinutes).toBe(42);
+    expect(fullDay.segmentSummaries[0]?.evidencePeriod).toBe('full-day');
   });
 
   it('uses Mapbox estimates instead of scheduled evidence when Mapbox-only runtime is selected', () => {

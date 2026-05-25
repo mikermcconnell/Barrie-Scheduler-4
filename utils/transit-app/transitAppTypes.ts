@@ -421,6 +421,9 @@ export interface ODPairData {
     totalTripsSkipped: number;
     bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number };
     seasonTotals?: { jan: number; jul: number; sep: number; other: number };
+    totalPairsGenerated?: number;
+    totalTripsRetained?: number;
+    totalTripsDroppedByPairLimit?: number;
 }
 
 export interface ODCoverageGap {

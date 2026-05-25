@@ -5,12 +5,13 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Users, Copy, Check, Trash2, Shield, User, LogOut, X } from 'lucide-react';
+import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
 import { useTeam } from './contexts/TeamContext';
 import { useToast } from './contexts/ToastContext';
 import {
     createTeam,
+    createPartnerTeam,
     joinTeamByInviteCode,
     getTeamWithMembers,
     getTeamWithMembersByInviteCode,
@@ -20,6 +21,7 @@ import {
     renameTeam,
     deleteTeam,
     updateMemberAccessLevel,
+    updateTeamDefaultMemberAccessLevel,
     regenerateInviteCode,
     setInviteCode as setTeamInviteCode
 } from '../utils/services/teamService';
@@ -30,14 +32,15 @@ import {
     WORKSPACE_ACCESS_LEVEL_LABELS,
     WORKSPACE_ACCESS_LEVELS,
 } from '../utils/workspaceAccess';
+import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
 
 interface TeamManagementProps {
     onClose?: () => void;
 }
 
 export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
-    const { user } = useAuth();
-    const { team, refreshTeam, accessLevel } = useTeam();
+    const { user, isGlobalAdmin } = useAuth();
+    const { team, refreshTeam } = useTeam();
     const toast = useToast();
 
     const [isCreating, setIsCreating] = useState(false);
@@ -47,6 +50,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [loading, setLoading] = useState(false);
     const [teamDetails, setTeamDetails] = useState<TeamWithMembers | null>(null);
     const [copiedCode, setCopiedCode] = useState(false);
+    const [copiedLink, setCopiedLink] = useState(false);
     const [isEditingInviteCode, setIsEditingInviteCode] = useState(false);
     const [customInviteCode, setCustomInviteCode] = useState('');
     const [savingInviteCode, setSavingInviteCode] = useState(false);
@@ -59,12 +63,20 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [editedTeamName, setEditedTeamName] = useState('');
     const [savingTeamName, setSavingTeamName] = useState(false);
     const [deletingTeam, setDeletingTeam] = useState(false);
+    const [savingDefaultAccessLevel, setSavingDefaultAccessLevel] = useState(false);
+    const [partnerTeamName, setPartnerTeamName] = useState('');
+    const [partnerInviteCode, setPartnerInviteCode] = useState('');
+    const [partnerDefaultAccessLevel, setPartnerDefaultAccessLevel] = useState<WorkspaceAccessLevel>('external-planner');
+    const [creatingPartnerTeam, setCreatingPartnerTeam] = useState(false);
+    const [createdPartnerInviteLink, setCreatedPartnerInviteLink] = useState('');
 
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
-    const canLookupTeams = accessLevel === 'internal' || accessLevel === 'admin';
+    const canLookupTeams = isGlobalAdmin;
     const activeTeamDetails = managedTeamDetails ?? teamDetails;
     const activeTeamId = activeTeamDetails?.id ?? team?.id;
+    const activeDefaultAccessLevel: WorkspaceAccessLevel =
+        activeTeamDetails?.defaultMemberAccessLevel ?? team?.defaultMemberAccessLevel ?? 'planner';
     const isViewingCurrentTeam = !managedTeamDetails || managedTeamDetails.id === team?.id;
     const canEditActiveTeam = isCurrentTeamOwnerOrAdmin || canLookupTeams;
     const canManageActiveAccess = isCurrentTeamOwnerOrAdmin || canLookupTeams;
@@ -178,6 +190,60 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             }
         } catch (error) {
             toast?.error('Failed to regenerate code');
+        }
+    };
+
+    const handleCopyInviteLink = async (codeOverride?: string) => {
+        const code = codeOverride ?? activeTeamDetails?.inviteCode ?? team?.inviteCode;
+        if (!code) return;
+
+        try {
+            const link = buildInviteLinkForCurrentLocation(code);
+            await navigator.clipboard.writeText(link);
+            setCopiedLink(true);
+            toast?.success('Invite link copied!');
+            setTimeout(() => setCopiedLink(false), 2000);
+        } catch (error) {
+            toast?.error('Failed to copy link');
+        }
+    };
+
+    const handleCreatePartnerTeam = async () => {
+        if (!user || !canLookupTeams || !partnerTeamName.trim()) return;
+
+        const normalizedCode = partnerInviteCode.trim()
+            ? normalizeInviteCode(partnerInviteCode)
+            : null;
+        if (partnerInviteCode.trim() && !normalizedCode) {
+            toast?.error('Invite code must be exactly 6 letters/numbers');
+            return;
+        }
+
+        setCreatingPartnerTeam(true);
+        try {
+            const result = await createPartnerTeam({
+                createdBy: user.uid,
+                teamName: partnerTeamName.trim(),
+                inviteCode: normalizedCode ?? undefined,
+                defaultMemberAccessLevel: partnerDefaultAccessLevel,
+            });
+            const details = await getTeamWithMembers(result.teamId);
+            if (details) {
+                setManagedTeamDetails(details);
+                setTeamLookupCode(details.inviteCode);
+            }
+            await loadAvailableTeams();
+            const inviteLink = buildInviteLinkForCurrentLocation(result.inviteCode);
+            setCreatedPartnerInviteLink(inviteLink);
+            setPartnerTeamName('');
+            setPartnerInviteCode('');
+            setPartnerDefaultAccessLevel('external-planner');
+            toast?.success(`Created ${partnerTeamName.trim()}`);
+        } catch (error: any) {
+            console.error('Error creating partner team:', error);
+            toast?.error(error?.message || 'Failed to create partner team');
+        } finally {
+            setCreatingPartnerTeam(false);
         }
     };
 
@@ -392,6 +458,25 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         }
     };
 
+    const handleChangeDefaultAccessLevel = async (nextAccessLevel: WorkspaceAccessLevel) => {
+        if (!activeTeamId || !canEditActiveTeam) return;
+
+        setSavingDefaultAccessLevel(true);
+        try {
+            await updateTeamDefaultMemberAccessLevel(activeTeamId, nextAccessLevel);
+            await reloadActiveTeamDetails();
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
+            toast?.success('Default access for new members updated');
+        } catch (error) {
+            console.error('Error updating default member access:', error);
+            toast?.error('Failed to update default access');
+        } finally {
+            setSavingDefaultAccessLevel(false);
+        }
+    };
+
     // No Team State - Create or Join
     if (!team) {
         return (
@@ -584,6 +669,79 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             </div>
 
             {canLookupTeams && (
+                <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6">
+                    <div className="flex items-center gap-2 mb-3">
+                        <PlusCircle size={18} className="text-brand-green" />
+                        <p className="text-sm font-semibold text-gray-900">Create partner team</p>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr]">
+                        <input
+                            type="text"
+                            value={partnerTeamName}
+                            onChange={(event) => setPartnerTeamName(event.target.value)}
+                            placeholder="Team name, e.g. Lane Transit"
+                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-brand-green"
+                        />
+                        <input
+                            type="text"
+                            value={partnerInviteCode}
+                            onChange={(event) => setPartnerInviteCode(
+                                event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+                            )}
+                            placeholder="Code optional"
+                            maxLength={6}
+                            className="px-3 py-2 border border-gray-300 rounded-lg font-mono uppercase tracking-wider focus:ring-2 focus:ring-brand-green focus:border-brand-green"
+                        />
+                        <select
+                            value={partnerDefaultAccessLevel}
+                            onChange={(event) => setPartnerDefaultAccessLevel(event.target.value as WorkspaceAccessLevel)}
+                            className="px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-brand-green focus:border-brand-green"
+                        >
+                            {WORKSPACE_ACCESS_LEVELS.map(level => (
+                                <option key={level} value={level}>
+                                    {WORKSPACE_ACCESS_LEVEL_LABELS[level]}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-gray-500">
+                            Recommended for external agencies: External agency planner. The invite link will auto-join users after sign-in.
+                        </p>
+                        <button
+                            onClick={handleCreatePartnerTeam}
+                            disabled={creatingPartnerTeam || !partnerTeamName.trim()}
+                            className="px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {creatingPartnerTeam ? 'Creating...' : 'Create team'}
+                        </button>
+                    </div>
+                    {createdPartnerInviteLink && (
+                        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                            <p className="text-xs font-semibold text-emerald-800">Invite link ready</p>
+                            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                <input
+                                    readOnly
+                                    value={createdPartnerInviteLink}
+                                    className="flex-1 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm text-gray-700"
+                                />
+                                <button
+                                    onClick={async () => {
+                                        await navigator.clipboard.writeText(createdPartnerInviteLink);
+                                        toast?.success('Invite link copied!');
+                                    }}
+                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-300 px-3 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100"
+                                >
+                                    <Copy size={16} />
+                                    Copy
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {canLookupTeams && (
                 <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6">
                     <p className="text-sm font-semibold text-blue-900 mb-2">Admin team lookup</p>
                     <div className="flex flex-col gap-2 sm:flex-row">
@@ -657,6 +815,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         >
                             {copiedCode ? <Check size={20} /> : <Copy size={20} />}
                         </button>
+                        <button
+                            onClick={() => handleCopyInviteLink()}
+                            className="p-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-gray-700"
+                            title="Copy invite link"
+                        >
+                            {copiedLink ? <Check size={20} /> : <Link size={20} />}
+                        </button>
                         {canEditActiveTeam && (
                             <>
                                 <button
@@ -678,6 +843,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         )}
                     </div>
                 </div>
+                <p className="mt-3 text-xs text-gray-500">
+                    Share the invite link for easiest setup. Users will be asked to sign in, then joined automatically.
+                </p>
                 {canEditActiveTeam && isEditingInviteCode && (
                     <div className="mt-3">
                         <div className="flex gap-2">
@@ -702,6 +870,40 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         <p className="mt-2 text-xs text-gray-500">Use exactly 6 letters/numbers (example: BARRIE).</p>
                     </div>
                 )}
+            </div>
+
+            {/* Default Access */}
+            <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <p className="text-sm font-semibold text-gray-900">Default access for new members</p>
+                        <p className="text-xs text-gray-500">
+                            New users who join with this invite code receive this workspace access level.
+                        </p>
+                    </div>
+                    {canEditActiveTeam ? (
+                        <select
+                            value={activeDefaultAccessLevel}
+                            onChange={(event) => handleChangeDefaultAccessLevel(event.target.value as WorkspaceAccessLevel)}
+                            disabled={savingDefaultAccessLevel}
+                            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 disabled:opacity-50"
+                            title={WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS[activeDefaultAccessLevel]}
+                        >
+                            {WORKSPACE_ACCESS_LEVELS.map(level => (
+                                <option key={level} value={level}>
+                                    {WORKSPACE_ACCESS_LEVEL_LABELS[level]}
+                                </option>
+                            ))}
+                        </select>
+                    ) : (
+                        <span
+                            className="inline-flex rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-700"
+                            title={WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS[activeDefaultAccessLevel]}
+                        >
+                            {WORKSPACE_ACCESS_LEVEL_LABELS[activeDefaultAccessLevel]}
+                        </span>
+                    )}
+                </div>
             </div>
 
             {/* Members List */}

@@ -6,7 +6,8 @@ import {
     createUserWithEmailAndPassword,
     signInWithPopup,
     signOut as firebaseSignOut,
-    sendPasswordResetEmail
+    sendPasswordResetEmail,
+    getIdTokenResult
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, googleProvider } from '../../utils/firebase';
@@ -24,6 +25,7 @@ interface AuthContextType {
     signInWithDevAccess: () => Promise<void>;
     hasDevAccess: boolean;
     devAccessLabel: string | null;
+    isGlobalAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -43,6 +45,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isGlobalAdmin, setIsGlobalAdmin] = useState(false);
     const devAuth = getDevAuthConfig();
 
     /**
@@ -69,9 +72,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 // Ensure user document exists in Firestore
                 try {
                     await ensureUserDocument(user);
+                    const token = await getIdTokenResult(user);
+                    setIsGlobalAdmin(
+                        token.claims.schedulerAdmin === true ||
+                        token.claims.admin === true ||
+                        token.claims.globalAdmin === true
+                    );
                 } catch (error) {
                     console.error('Error ensuring user document:', error);
+                    setIsGlobalAdmin(false);
                 }
+            } else {
+                setIsGlobalAdmin(false);
             }
             setUser(user);
             setLoading(false);
@@ -125,6 +137,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         signInWithDevAccess,
         hasDevAccess: devAuth.enabled,
         devAccessLabel: devAuth.enabled ? devAuth.label : null,
+        isGlobalAdmin,
     };
 
     return (

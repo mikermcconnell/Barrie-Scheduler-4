@@ -56,7 +56,7 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsNetworkConnections');
     });
 
-    it('gives Ontario Northland planners only the scheduled transit shell and Ontario Northland planning data', () => {
+    it('gives external agency planners only the scheduled transit shell and partner planning data', () => {
         const allowed = getAllowedWorkspaceFeatures('external-planner');
 
         expect(allowed).toContain('workspaceFixedRoute');
@@ -68,6 +68,13 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsFleetPlan');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
+    });
+
+    it('uses agency-neutral language for external planner access', async () => {
+        const labels = await import('../utils/workspaceAccess');
+
+        expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS['external-planner']).toBe('External agency planner');
+        expect(labels.WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS['external-planner']).not.toMatch(/Ontario Northland/i);
     });
 
     it('keeps developer-only workspaces out of admin access', () => {

@@ -278,6 +278,8 @@ function formatSavedProjectLabel(project: RoutePlanner2SavedProjectSummary): str
 
 function getRuntimeSourceDetail(
     feasibility: RoutePlanner2Project['scenarios'][number]['feasibility'] | null | undefined,
+    dayType: DayType,
+    period: TimePeriod,
 ): string {
     const segments = feasibility?.segmentSummaries ?? [];
     if (segments.length === 0) return 'Source not ready';
@@ -285,13 +287,40 @@ function getRuntimeSourceDetail(
     const sourceLabel = sources.length === 1 ? conciseRuntimeSourceLabel(sources[0]!) : 'Mixed sources';
     const matchedRoutes = segments.flatMap((segment) => segment.matchedRoutes ?? []);
     const routeLabel = formatRouteSource(matchedRoutes);
-    return routeLabel ? `${sourceLabel} · ${routeLabel}` : sourceLabel;
+    const timeLabel = getRuntimeEvidencePeriodDetail(segments, dayType, period);
+    return [sourceLabel, routeLabel, timeLabel].filter(Boolean).join(' · ');
 }
 
 function getRuntimePeriodDetail(dayType: DayType, period: TimePeriod): string {
     const dayLabel = DAY_TYPES.find((day) => day.id === dayType)?.label ?? dayType;
     const periodLabel = TIME_PERIODS.find((item) => item.id === period)?.label ?? period;
     return `${dayLabel} · ${periodLabel}`;
+}
+
+function getRuntimeEvidencePeriodDetail(
+    segments: RoutePlanner2SegmentRuntime[],
+    dayType: DayType,
+    period: TimePeriod,
+): string {
+    const evidencePairs = [...new Set(segments
+        .filter((segment) => segment.evidenceDayType && segment.evidencePeriod)
+        .map((segment) => `${segment.evidenceDayType}|${segment.evidencePeriod}`))];
+    if (evidencePairs.length === 1) {
+        const [evidenceDayType, evidencePeriod] = evidencePairs[0]!.split('|') as [DayType, TimePeriod];
+        return getRuntimePeriodDetail(evidenceDayType, evidencePeriod);
+    }
+    return getRuntimePeriodDetail(dayType, period);
+}
+
+function getRuntimeBandDisclosure(
+    feasibility: RoutePlanner2Project['scenarios'][number]['feasibility'] | null | undefined,
+    dayType: DayType,
+    period: TimePeriod,
+): string {
+    const selectedLabel = getRuntimePeriodDetail(dayType, period);
+    const actualLabel = getRuntimeEvidencePeriodDetail(feasibility?.segmentSummaries ?? [], dayType, period);
+    if (actualLabel === selectedLabel) return actualLabel;
+    return `${actualLabel} (fallback for selected ${selectedLabel})`;
 }
 
 function getRuntimeSourceBadgeClass(source: RoutePlanner2SegmentRuntime['source']): string {
@@ -655,6 +684,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
     const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
     const [showRoadNameLabels, setShowRoadNameLabels] = useState(true);
+    const [showCampShuttleLabels, setShowCampShuttleLabels] = useState(false);
     const [roadNameLabelDensity, setRoadNameLabelDensity] = useState<RoutePlanner2RoadNameLabelDensity>('normal');
     const [roadNameLabelStatus, setRoadNameLabelStatus] = useState<{ available: boolean; count: number }>({ available: false, count: 0 });
     const [hoveredMapItem, setHoveredMapItem] = useState<{ type: 'stop' | 'waypoint' | 'segment'; id: string } | null>(null);
@@ -726,6 +756,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                 address: stop.address,
                 kidsAtStop: detail?.kidsAtStop ?? 0,
                 travelTimeLabel: detail?.travelTimeLabel ?? 'Not estimated',
+                departureLabel: detail?.arrivalLabel,
             };
         }),
         [selectedScenarioStops, stopCardDetailsByStopId],
@@ -832,6 +863,13 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (selectedStopId && selectedScenario.stops.some((stop) => stop.id === selectedStopId)) return;
         setSelectedStopId(selectedScenario.stops[0]?.id ?? null);
     }, [selectedScenario, selectedStopId]);
+    useEffect(() => {
+        if (!selectedScenario) return;
+        setRuntimeDayType(selectedScenario.service.dayType ?? 'weekday');
+        setRuntimePeriod(selectedScenario.service.planningPeriod === 'all-day'
+            ? 'full-day'
+            : selectedScenario.service.planningPeriod ?? 'full-day');
+    }, [selectedScenario?.id, selectedScenario?.service.dayType, selectedScenario?.service.planningPeriod]);
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             const hasShortcutModifier = event.ctrlKey || event.metaKey;
@@ -1036,6 +1074,12 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         value: string,
     ) {
         updateService({ [key]: Number(value) } as Partial<RoutePlanner2ServiceAssumptions>);
+    }
+    function updateOptionalNumericServiceField(
+        key: 'targetBuses',
+        value: string,
+    ) {
+        updateService({ [key]: value.trim() === '' ? undefined : Number(value) } as Partial<RoutePlanner2ServiceAssumptions>);
     }
     function updateSelectedStopRole(role: RoutePlanner2StopRole) {
         if (!selectedScenario || !selectedStop) return;
@@ -1422,13 +1466,14 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             setIsExportingMapPdf(false);
         }
     }
+    const runtimeBandDisclosure = getRuntimeBandDisclosure(selectedFeasibility, runtimeDayType, runtimePeriod);
     const mapMetricItems = [
         {
             label: 'Runtime',
             value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes),
-            detail: `Data source: ${getRuntimeSourceDetail(selectedFeasibility)}`,
+            detail: `Data source: ${getRuntimeSourceDetail(selectedFeasibility, runtimeDayType, runtimePeriod)}`,
             description: runtimeSourceMode === 'gtfs'
-                ? `Runtime source and selected time window: ${getRuntimePeriodDetail(runtimeDayType, runtimePeriod)}. Click to review segment-level source details.`
+                ? `Runtime source and time band in use: ${runtimeBandDisclosure}. Click to review segment-level source details.`
                 : 'Runtime source: Mapbox only. Click to review segment-level source details.',
             onClick: openRuntimeSourceDetails,
         },
@@ -1504,13 +1549,38 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         onClearSegmentRuntimeOverride={clearSegmentRuntimeOverride}
                         metricItems={mapMetricItems}
                         segmentRuntimes={selectedFeasibility?.segmentSummaries ?? []}
-                        stopLabelDetails={stopMapLabelDetails}
+                        stopLabelDetails={showCampShuttleLabels ? stopMapLabelDetails : []}
                         showRuntimeSourceOverlay={showRuntimeSourceOverlay}
                         showRoadNameLabels={showRoadNameLabels}
                         roadNameLabelDensity={roadNameLabelDensity}
                         onRoadNameLabelStatusChange={setRoadNameLabelStatus}
                         overlayInsets={mapOverlayInsets}
                     />
+                    <div
+                        className="pointer-events-none absolute z-30"
+                        style={{ top: mapOverlayInsets.top, right: mapOverlayInsets.right }}
+                    >
+                        <button
+                            type="button"
+                            data-testid="rp2-camp-shuttle-label-toggle"
+                            aria-pressed={showCampShuttleLabels}
+                            onClick={() => setShowCampShuttleLabels((current) => !current)}
+                            className={`pointer-events-auto inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black shadow-xl backdrop-blur transition ${
+                                showCampShuttleLabels
+                                    ? 'border-emerald-300 bg-emerald-50/95 text-emerald-800'
+                                    : 'border-slate-200 bg-white/95 text-slate-700 hover:bg-slate-50'
+                            }`}
+                            title={showCampShuttleLabels ? 'Hide camp shuttle stop labels' : 'Show camp shuttle stop labels'}
+                        >
+                            <MapPinned size={16} />
+                            <span>Camp Shuttle</span>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
+                                showCampShuttleLabels ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                                {showCampShuttleLabels ? 'Labels on' : 'Off'}
+                            </span>
+                        </button>
+                    </div>
                     {showActionSidebar && (
                         <>
                             <div className="pointer-events-none absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-start gap-3">
@@ -2029,7 +2099,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         </div>
                                         <div className="flex items-center justify-between gap-3 py-2">
                                             <span className="font-bold text-slate-500">Source</span>
-                                            <span className="text-right font-semibold text-slate-700">{getRuntimeSourceDetail(selectedFeasibility)}</span>
+                                            <span className="text-right font-semibold text-slate-700">{getRuntimeSourceDetail(selectedFeasibility, runtimeDayType, runtimePeriod)}</span>
                                         </div>
                                         <div className="flex items-center justify-between gap-3 py-2">
                                             <span className="font-bold text-slate-500">Cycle</span>
@@ -2216,14 +2286,18 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">First trip<input type="time" value={selectedScenario.service.firstTripTime} onChange={(event) => updateService({ firstTripTime: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Last trip<input type="time" value={selectedScenario.service.lastTripTime} onChange={(event) => updateService({ lastTripTime: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Frequency<input type="number" min="0" value={selectedScenario.service.frequencyMinutes} onChange={(event) => updateNumericServiceField('frequencyMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
+                                            <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Buses<input type="number" min="1" step="1" placeholder="Auto" value={selectedScenario.service.targetBuses ?? ''} onChange={(event) => updateOptionalNumericServiceField('targetBuses', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Runtime day<select value={runtimeDayType} onChange={(event) => updateRuntimeDayType(event.target.value as DayType)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">{DAY_TYPES.map((day) => <option key={day.id} value={day.id}>{day.label}</option>)}</select></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Runtime period<select value={runtimePeriod} onChange={(event) => updateRuntimePeriod(event.target.value as TimePeriod)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">{TIME_PERIODS.map((period) => <option key={period.id} value={period.id}>{period.label}</option>)}</select></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Start layover<input type="number" value={selectedScenario.service.startTerminalLayoverMinutes} onChange={(event) => updateNumericServiceField('startTerminalLayoverMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">End layover<input type="number" value={selectedScenario.service.endTerminalLayoverMinutes} onChange={(event) => updateNumericServiceField('endTerminalLayoverMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Dwell / stop sec<input type="number" min="0" value={selectedScenario.service.intermediateStopDwellSeconds ?? 0} onChange={(event) => updateNumericServiceField('intermediateStopDwellSeconds', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                                 </div>
+                                                <div data-testid="rp2-runtime-band-disclosure" className="mt-3 rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs leading-5 text-cyan-900">
+                                                    <span className="font-black">Runtime band in use:</span> {runtimeBandDisclosure}
+                                                </div>
                                                 <p className="mt-2 text-xs leading-5 text-slate-500">
-                                                    Dwell is added for intermediate stops only. Terminal layover stays separate.
+                                                    GTFS imports fill first/last trip, frequency, buses, and scheduled runtimes by time band when the feed has enough schedule and block data. Leave buses blank to calculate it from runtime and frequency. Terminal layover stays separate.
                                                 </p>
                                             </div>
                                             <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-notes">

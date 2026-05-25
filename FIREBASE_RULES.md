@@ -18,7 +18,7 @@ The app uses a mixed model:
 - invite lookup under `teamInvites/{inviteCode}`
 - role checks for owners and admins on team management operations
 - team membership checks for shared schedules, analytics, storage assets, and imports
-- Fleet Plan writes currently use team membership rather than owner/admin-only access
+- global cross-team permission management requires a Firebase Auth custom claim, such as `schedulerAdmin: true`
 
 ### Firestore
 
@@ -35,6 +35,8 @@ The app uses a mixed model:
 
 Authorization should come from membership documents under `teams/{teamId}/members/{userId}`.
 Do not rely on `users/{userId}.teamId` for authorization.
+
+Cross-team team lookup and permission management should come from Firebase Auth custom claims, not from a user's own team role or workspace access level.
 
 ### Storage
 
@@ -62,3 +64,14 @@ If you prefer to publish in the Firebase Console, copy from the current local fi
 - If team membership behavior changes, update `firestore.rules` and this summary together.
 - If new storage prefixes are introduced, update `storage.rules` and `docs/SCHEMA.md`.
 - Keep this file explanatory. Avoid duplicating the full ruleset here.
+
+## External Agency Onboarding Checklist
+
+1. Open Team Management with a global admin account.
+2. Use **Create partner team**.
+3. Set the team name, optional custom code, and default access level.
+4. Use `external-planner` for external agencies unless they need broader access.
+5. Copy the generated invite link and send that instead of a bare code.
+6. Confirm each joined user has the expected role and access level.
+7. Rotate the invite code/link after onboarding.
+8. Test with one agency account before sharing broadly.

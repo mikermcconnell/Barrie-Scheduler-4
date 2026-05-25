@@ -40,4 +40,14 @@ describe('security rules regression checks', () => {
 
     expect(firestoreRules).toMatch(/match \/routePlanner2Projects\/\{projectId\} \{[\s\S]*allow read, write: if isTeamMember\(teamId\) \|\| isWorkspacePermissionManager\(\);[\s\S]*match \/scenarios\/\{scenarioId\} \{[\s\S]*allow read, write: if isTeamMember\(teamId\) \|\| isWorkspacePermissionManager\(\);/);
   });
+
+  it('requires a Firebase custom claim for global workspace permission management', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/function isWorkspacePermissionManager\(\) \{[\s\S]*request\.auth\.token\.schedulerAdmin == true/);
+    expect(firestoreRules).not.toMatch(/currentUserAccessLevel\(\) == 'admin'/);
+    expect(firestoreRules).not.toMatch(/currentUserAccessLevel\(\) == 'internal'/);
+    expect(firestoreRules).not.toMatch(/currentUserTeamRole\(\) == 'owner'/);
+    expect(firestoreRules).not.toMatch(/currentUserTeamRole\(\) == 'admin'/);
+  });
 });

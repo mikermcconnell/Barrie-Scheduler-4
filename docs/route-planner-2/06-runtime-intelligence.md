@@ -76,6 +76,7 @@ For v1 route concepts:
 ```text
 one-way route runtime = rounded stop-to-stop segment runtime + intermediate stop dwell allowance
 one-way cycle time = one-way route runtime * 2 + start terminal layover + end terminal layover
+one-way scheduled cycle window with a target bus count = target buses * target frequency
 closed-loop/out-and-back estimated full runtime = stop-to-stop segment runtime + intermediate dwell for the complete route shape
 closed-loop/out-and-back buses required = ceiling(estimated full runtime / target frequency)
 closed-loop/out-and-back scheduled cycle window = buses required * target frequency
@@ -89,6 +90,7 @@ Intermediate stop dwell is not terminal recovery. Keep terminal layover/recovery
 Closed-loop runtime includes the final segment from the last stop back to Stop 1.
 Out-and-back runtime includes the reverse stop sequence from the turnaround stop back to Stop 1.
 For closed-loop and out-and-back shapes, `cycleTimeMinutes` in the current model represents the scheduled cycle window needed to operate the full route at the target frequency. One-way routes keep the existing formula above.
+If a route has `targetBuses`, including from a GTFS import with `block_id` data, `cycleTimeMinutes` represents the scheduled cycle window from that bus count and frequency. Recovery then shows the spare time or deficit between that window and the estimated full runtime.
 
 ## Buses Required
 
@@ -98,6 +100,8 @@ Suggested v1 estimate:
 one-way buses required = ceiling(cycle time / target frequency)
 closed-loop/out-and-back buses required = ceiling(estimated full runtime / target frequency)
 ```
+
+When `targetBuses` is set, buses required is that target count. This lets an imported existing route, such as a three-bus route running every 30 minutes, display the current GTFS service level before the planner edits the concept.
 
 Show “not ready” if cycle time or frequency is missing or invalid.
 
@@ -134,3 +138,10 @@ Info:
 ## Important Boundary
 
 Do not reuse fixed-route schedule generator logic for v1 feasibility estimates. Route Planner 2 is estimating concept feasibility, not generating a publishable schedule.
+
+
+## GTFS Import Runtime Bands
+
+Imported GTFS route concepts calculate scheduled segment runtimes from the trips in each time band: AM Peak, Midday, PM Peak, Evening, and Full Day. Each adjacent stop segment uses the median scheduled stop-to-stop runtime for the selected band, with each segment rounded independently before route totals are summed.
+
+The Runtime day and Runtime period controls in Service assumptions select which evidence band feasibility uses. If a narrow band has no scheduled sample, the planner keeps the imported full-day GTFS runtime instead of dropping to Mapbox/fallback, and the UI labels the actual band in use.

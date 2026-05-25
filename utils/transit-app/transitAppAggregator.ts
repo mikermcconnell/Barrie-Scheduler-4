@@ -19,7 +19,6 @@ import type {
     TransitAppTripRow,
     TransitAppTripLegRow,
     ODPairData,
-    ODPair,
     ODCoverageGap,
     RoutePerformanceMonthly,
     TransitAppRoutePerformance,
@@ -60,6 +59,7 @@ import {
     hasGtfsSupplyProfiles,
 } from './transitAppGtfsNormalization';
 import { analyzeTransferConnections } from './transitAppTransferAnalysis';
+import { aggregateTransitAppODPairs } from './transitAppOdPairs';
 import { getAllStopsWithCoords, findNearestStopName } from '../gtfs/gtfsStopLookup';
 import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../gtfs/gtfsShapesLoader';
 
@@ -92,7 +92,7 @@ export function aggregateTransitAppData(
     const routeLegs = aggregateRouteLegSummary(allLegs);
     const routePerformance = aggregateRoutePerformance(routeMetrics.daily, allLegs);
     const serviceGapAnalysis = aggregateServiceGapAnalysis(allLegs, routeMetrics.summary, routePerformance?.scorecard || []);
-    const odPairs = aggregateODPairs(parsed.trips);
+    const odPairs = aggregateTransitAppODPairs(parsed.trips);
     const stopProximityAnalysis = aggregateStopProximityAnalysis(parsed.trips, allLegs, odPairs);
     const appUsage = aggregateAppUsage(parsed.users);
 
@@ -1469,148 +1469,6 @@ function aggregateAppUsage(users: TransitAppParsedData['users']): AppUsageDaily[
             downloads: u.downloads,
         }))
         .sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function aggregateODPairs(trips: TransitAppTripRow[]): ODPairData {
-    const RESOLUTION = 0.005; // ~500m grid cells
-    // Keep a safety cap for memory, but high enough to support all-zones planning views.
-    const MAX_PAIRS = 5000;
-
-    const pairMap = new Map<string, {
-        count: number;
-        hourlyBins: number[];
-        weekdayCount: number;
-        weekendCount: number;
-        seasonBins: { jan: number; jul: number; sep: number; other: number };
-        odFilterBins: Record<string, number>;
-    }>();
-    let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
-    let skipped = 0;
-
-    for (const trip of trips) {
-        const oLat = trip.start_latitude;
-        const oLon = trip.start_longitude;
-        const dLat = trip.end_latitude;
-        const dLon = trip.end_longitude;
-
-        // Skip trips with zero coords
-        if (oLat === 0 && oLon === 0 || dLat === 0 && dLon === 0) {
-            skipped++;
-            continue;
-        }
-
-        const oLatBin = Math.round(oLat / RESOLUTION) * RESOLUTION;
-        const oLonBin = Math.round(oLon / RESOLUTION) * RESOLUTION;
-        const dLatBin = Math.round(dLat / RESOLUTION) * RESOLUTION;
-        const dLonBin = Math.round(dLon / RESOLUTION) * RESOLUTION;
-
-        // Skip intra-zone trips
-        if (oLatBin === dLatBin && oLonBin === dLonBin) {
-            skipped++;
-            continue;
-        }
-
-        // Extract date, hour, and month from timestamp — convert UTC to Eastern Time
-        let hour = -1;
-        let dayType: TransferDayType = 'weekday';
-        let monthNum = -1;
-        const tripDt = parseUtcDateTime(trip.timestamp);
-        if (tripDt) {
-            hour = utcToEasternHour(tripDt);
-            const localDate = utcToEasternDateStr(tripDt);
-            const localDay = new Date(`${localDate}T00:00:00Z`).getUTCDay();
-            dayType = localDay === 0 ? 'sunday' : localDay === 6 ? 'saturday' : 'weekday';
-            monthNum = parseInt(localDate.split('-')[1], 10);
-        }
-
-        const isWeekend = dayType === 'saturday' || dayType === 'sunday';
-        const seasonKey: 'jan' | 'jul' | 'sep' | 'other' =
-            monthNum === 1 ? 'jan' : monthNum === 7 ? 'jul' : monthNum === 9 ? 'sep' : 'other';
-
-        const key = `${oLatBin.toFixed(4)}_${oLonBin.toFixed(4)}|${dLatBin.toFixed(4)}_${dLonBin.toFixed(4)}`;
-        const existing = pairMap.get(key);
-        if (existing) {
-            existing.count++;
-            if (hour >= 0 && hour < 24) existing.hourlyBins[hour]++;
-            if (isWeekend) existing.weekendCount++;
-            else existing.weekdayCount++;
-            if (monthNum > 0) existing.seasonBins[seasonKey]++;
-            if (hour >= 0 && hour < 24 && monthNum > 0) {
-                const filterKey = `${dayType}|${seasonKey}|${hour}`;
-                existing.odFilterBins[filterKey] = (existing.odFilterBins[filterKey] || 0) + 1;
-            }
-        } else {
-            const bins = new Array(24).fill(0);
-            if (hour >= 0 && hour < 24) bins[hour]++;
-            const sBins = { jan: 0, jul: 0, sep: 0, other: 0 };
-            if (monthNum > 0) sBins[seasonKey]++;
-            const odFilterBins: Record<string, number> = {};
-            if (hour >= 0 && hour < 24 && monthNum > 0) {
-                odFilterBins[`${dayType}|${seasonKey}|${hour}`] = 1;
-            }
-            pairMap.set(key, {
-                count: 1,
-                hourlyBins: bins,
-                weekdayCount: isWeekend ? 0 : 1,
-                weekendCount: isWeekend ? 1 : 0,
-                seasonBins: sBins,
-                odFilterBins,
-            });
-        }
-
-        // Track bounds from raw coords
-        if (oLat < minLat) minLat = oLat;
-        if (oLat > maxLat) maxLat = oLat;
-        if (dLat < minLat) minLat = dLat;
-        if (dLat > maxLat) maxLat = dLat;
-        if (oLon < minLon) minLon = oLon;
-        if (oLon > maxLon) maxLon = oLon;
-        if (dLon < minLon) minLon = dLon;
-        if (dLon > maxLon) maxLon = dLon;
-    }
-
-    const pairs: ODPair[] = Array.from(pairMap.entries())
-        .map(([key, data]) => {
-            const [originPart, destPart] = key.split('|');
-            const [oLat, oLon] = originPart.split('_').map(Number);
-            const [dLat, dLon] = destPart.split('_').map(Number);
-            return {
-                originLat: oLat, originLon: oLon,
-                destLat: dLat, destLon: dLon,
-                count: data.count,
-                hourlyBins: data.hourlyBins,
-                weekdayCount: data.weekdayCount,
-                weekendCount: data.weekendCount,
-                seasonBins: data.seasonBins,
-                odFilterBins: data.odFilterBins,
-            };
-        })
-        .sort((a, b) => b.count - a.count)
-        .slice(0, MAX_PAIRS);
-
-    const processed = trips.length - skipped;
-
-    // Compute season totals across all retained pairs
-    const seasonTotals = { jan: 0, jul: 0, sep: 0, other: 0 };
-    for (const p of pairs) {
-        if (p.seasonBins) {
-            seasonTotals.jan += p.seasonBins.jan;
-            seasonTotals.jul += p.seasonBins.jul;
-            seasonTotals.sep += p.seasonBins.sep;
-            seasonTotals.other += p.seasonBins.other;
-        }
-    }
-
-    return {
-        pairs,
-        resolution: RESOLUTION,
-        totalTripsProcessed: processed,
-        totalTripsSkipped: skipped,
-        bounds: processed > 0
-            ? { minLat, maxLat, minLon, maxLon }
-            : { minLat: 0, maxLat: 0, minLon: 0, maxLon: 0 },
-        seasonTotals,
-    };
 }
 
 // ============ OD COVERAGE GAP ANALYSIS ============

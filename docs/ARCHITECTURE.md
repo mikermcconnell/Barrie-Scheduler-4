@@ -77,7 +77,7 @@ STREETS-style operational reporting and dashboards live in:
 
 Broader planning and analysis tools mostly live under `components/Analytics/` plus matching domain folders in `utils/`.
 
-Visible workspace access is controlled by `utils/workspaceAccess.ts`. Global feature flags decide whether a feature exists in the build; user/team workspace access decides whether the current user can see and enter it.
+Visible workspace access is controlled by `utils/workspaceAccess.ts`. Global feature flags decide whether a feature exists in the build; user/team workspace access decides whether the current user can see and enter it. External agency teams should use the `external-planner` access level by default and should be onboarded through Team Management's partner-team invite-link flow.
 
 Notable areas:
 - Transit App analytics → `components/Analytics/TransitApp*`, `utils/transit-app/`

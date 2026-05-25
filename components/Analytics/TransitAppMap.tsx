@@ -27,6 +27,17 @@ import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transit-app/transitAppTypes';
+import {
+    getDirectionalCountsForZone,
+    getODPairCountForFilters,
+    mergeBidirectionalODPairs,
+    toUnmergedODPair,
+    TRANSIT_APP_OD_TIME_FILTERS,
+    type MergedTransitAppODPair,
+    type TransitAppODDayFilter,
+    type TransitAppODSeasonFilter,
+    type TransitAppODTimePeriod,
+} from '../../utils/transit-app/transitAppOdPairs';
 import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../../utils/gtfs/gtfsShapesLoader';
 import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { formatTimeBand, formatDayType, formatSeason } from './AnalyticsShared';
@@ -51,20 +62,15 @@ interface TransitAppMapProps {
 type MapLayer = 'heatmap' | 'od';
 type GeoFilter = 'barrie' | 'all';
 type DistanceBand = 'all' | 'short' | 'medium' | 'long';
-type TimePeriod = 'all' | 'am' | 'midday' | 'pm' | 'evening';
-type DayFilter = 'all' | 'weekday' | 'weekend';
+type TimePeriod = TransitAppODTimePeriod;
+type DayFilter = TransitAppODDayFilter;
 type ODPlannerView = 'map' | 'matrix';
 type AllZonesRenderMode = 'focused' | 'overview' | 'corridor' | 'detail';
-export type SeasonFilter = 'all' | 'jan' | 'jul' | 'sep' | 'other';
+export type SeasonFilter = TransitAppODSeasonFilter;
 
 
 
-// Merged pair extends ODPair with bidirectional info
-interface MergedODPair extends ODPair {
-    reverseCount: number;
-    netDirection: 'AB' | 'BA' | 'balanced';
-    isMerged: boolean;
-}
+type MergedODPair = MergedTransitAppODPair;
 
 const BARRIE_CENTER: [number, number] = [44.38, -79.69];
 const BARRIE_BOUNDS = { minLat: 44.28, maxLat: 44.48, minLon: -79.80, maxLon: -79.58 };
@@ -148,91 +154,6 @@ export function describeLocationRelativeToBarrie(lat: number, lon: number): stri
     if (dist < 1) return 'Central Barrie';
     if (isInBarrie(lat, lon)) return `${dir} Barrie`;
     return `${dist.toFixed(0)}km ${dir} of Barrie`;
-}
-
-// Time period hour ranges
-const TIME_RANGES: Record<TimePeriod, [number, number]> = {
-    all: [0, 24],
-    am: [6, 9],
-    midday: [9, 15],
-    pm: [15, 19],
-    evening: [19, 6], // wraps around midnight
-};
-
-function getCountForTimePeriod(pair: ODPair, period: TimePeriod): number {
-    if (period === 'all' || !pair.hourlyBins) return pair.count;
-    const [start, end] = TIME_RANGES[period];
-    let sum = 0;
-    if (start < end) {
-        for (let h = start; h < end; h++) sum += pair.hourlyBins[h];
-    } else {
-        // Evening wraps: 19-23 + 0-5
-        for (let h = start; h < 24; h++) sum += pair.hourlyBins[h];
-        for (let h = 0; h < end; h++) sum += pair.hourlyBins[h];
-    }
-    return sum;
-}
-
-function getCountForFilters(
-    pair: ODPair,
-    timePeriod: TimePeriod,
-    dayFilter: DayFilter,
-    seasonFilter: SeasonFilter
-): number {
-    if (pair.odFilterBins && (timePeriod !== 'all' || dayFilter !== 'all' || seasonFilter !== 'all')) {
-        const days: Array<'weekday' | 'saturday' | 'sunday'> =
-            dayFilter === 'weekday'
-                ? ['weekday']
-                : dayFilter === 'weekend'
-                    ? ['saturday', 'sunday']
-                    : ['weekday', 'saturday', 'sunday'];
-
-        const seasons: Array<'jan' | 'jul' | 'sep' | 'other'> =
-            seasonFilter === 'all'
-                ? ['jan', 'jul', 'sep', 'other']
-                : [seasonFilter];
-
-        const [start, end] = TIME_RANGES[timePeriod];
-        const hours: number[] = [];
-        if (timePeriod === 'all') {
-            for (let h = 0; h < 24; h++) hours.push(h);
-        } else if (start < end) {
-            for (let h = start; h < end; h++) hours.push(h);
-        } else {
-            for (let h = start; h < 24; h++) hours.push(h);
-            for (let h = 0; h < end; h++) hours.push(h);
-        }
-
-        let exact = 0;
-        for (const day of days) {
-            for (const season of seasons) {
-                for (const hour of hours) {
-                    exact += pair.odFilterBins[`${day}|${season}|${hour}`] || 0;
-                }
-            }
-        }
-        return exact;
-    }
-
-    const activeCounts: number[] = [];
-    if (timePeriod !== 'all') {
-        activeCounts.push(getCountForTimePeriod(pair, timePeriod));
-    }
-
-    if (dayFilter !== 'all') {
-        const dayCount = dayFilter === 'weekday' ? pair.weekdayCount : pair.weekendCount;
-        if (typeof dayCount === 'number') activeCounts.push(dayCount);
-    }
-
-    if (seasonFilter !== 'all') {
-        const seasonCount = pair.seasonBins?.[seasonFilter];
-        if (typeof seasonCount === 'number') activeCounts.push(seasonCount);
-    }
-
-    if (activeCounts.length === 0) return pair.count;
-    // We do not have cross-tab data (time x day x season), so use a conservative
-    // intersection proxy: the minimum count across active dimensions.
-    return Math.min(pair.count, ...activeCounts);
 }
 
 function coordKey(lat: number, lon: number): string {
@@ -361,7 +282,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         filtered = filtered
             .map(p => ({
                 ...p,
-                count: getCountForFilters(p, timePeriod, dayFilter, seasonFilter),
+                count: getODPairCountForFilters(p, timePeriod, dayFilter, seasonFilter),
             }))
             .filter(p => p.count > 0);
 
@@ -398,54 +319,9 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         filtered.sort((a, b) => b.count - a.count);
 
         // Step 6: Bidirectional merge (optional)
-        let merged: MergedODPair[];
-        if (mergeBidirectional) {
-            const mergeMap = new Map<string, MergedODPair>();
-            for (const p of filtered) {
-                // Canonical key: alphabetically smaller coord pair first
-                const keyAB = `${p.originLat.toFixed(4)}_${p.originLon.toFixed(4)}|${p.destLat.toFixed(4)}_${p.destLon.toFixed(4)}`;
-                const keyBA = `${p.destLat.toFixed(4)}_${p.destLon.toFixed(4)}|${p.originLat.toFixed(4)}_${p.originLon.toFixed(4)}`;
-                const canonical = keyAB < keyBA ? keyAB : keyBA;
-                const isForward = keyAB <= keyBA;
-
-                const existing = mergeMap.get(canonical);
-                if (existing) {
-                    if (isForward) {
-                        existing.count += p.count;
-                    } else {
-                        existing.reverseCount += p.count;
-                    }
-                    // Recalc net direction
-                    const diff = existing.count - existing.reverseCount;
-                    existing.netDirection = Math.abs(diff) < Math.max(existing.count, existing.reverseCount) * 0.2
-                        ? 'balanced' : diff > 0 ? 'AB' : 'BA';
-                } else {
-                    mergeMap.set(canonical, {
-                        originLat: isForward ? p.originLat : p.destLat,
-                        originLon: isForward ? p.originLon : p.destLon,
-                        destLat: isForward ? p.destLat : p.originLat,
-                        destLon: isForward ? p.destLon : p.originLon,
-                        count: isForward ? p.count : 0,
-                        reverseCount: isForward ? 0 : p.count,
-                        netDirection: 'AB',
-                        isMerged: true,
-                        hourlyBins: p.hourlyBins,
-                    });
-                }
-            }
-            merged = Array.from(mergeMap.values()).map(m => ({
-                ...m,
-                count: m.count + m.reverseCount, // total for display
-            }));
-            merged.sort((a, b) => b.count - a.count);
-        } else {
-            merged = filtered.map(p => ({
-                ...p,
-                reverseCount: 0,
-                netDirection: 'AB' as const,
-                isMerged: false,
-            }));
-        }
+        let merged: MergedODPair[] = mergeBidirectional
+            ? mergeBidirectionalODPairs(filtered)
+            : filtered.map(toUnmergedODPair);
 
         // Step 7: Isolated zone filter
         if (isolatedZone) {
@@ -618,15 +494,19 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             const oKey = coordKey(pair.originLat, pair.originLon);
             const dKey = coordKey(pair.destLat, pair.destLon);
             const isOrigin = oKey === isolatedZone;
+            const directionalCounts = getDirectionalCountsForZone(pair, isolatedZone);
+            if (!directionalCounts) continue;
+
             const otherKey = isOrigin ? dKey : oKey;
             const otherLat = isOrigin ? pair.destLat : pair.originLat;
             const otherLon = isOrigin ? pair.destLon : pair.originLon;
+            const flowTotal = directionalCounts.outbound + directionalCounts.inbound;
 
-            totalTrips += pair.count;
+            totalTrips += flowTotal;
             connectionSet.add(otherKey);
 
             const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
-            totalDistKm += distKm * pair.count;
+            totalDistKm += distKm * flowTotal;
 
             if (pair.hourlyBins) {
                 hasHourly = true;
@@ -635,17 +515,17 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
 
             const existing = flowMap.get(otherKey);
             if (existing) {
-                if (isOrigin) existing.outbound += pair.count;
-                else existing.inbound += pair.count;
-                existing.total += pair.count;
+                existing.outbound += directionalCounts.outbound;
+                existing.inbound += directionalCounts.inbound;
+                existing.total += flowTotal;
             } else {
                 flowMap.set(otherKey, {
                     name: getZoneName(otherLat, otherLon),
                     lat: otherLat,
                     lon: otherLon,
-                    outbound: isOrigin ? pair.count : 0,
-                    inbound: isOrigin ? 0 : pair.count,
-                    total: pair.count,
+                    outbound: directionalCounts.outbound,
+                    inbound: directionalCounts.inbound,
+                    total: flowTotal,
                     distKm,
                 });
             }
@@ -659,8 +539,9 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             const maxHour = hourlyTotals.indexOf(Math.max(...hourlyTotals));
             if (maxHour >= 6 && maxHour < 9) peakPeriod = 'AM Peak';
             else if (maxHour >= 9 && maxHour < 15) peakPeriod = 'Midday';
-            else if (maxHour >= 15 && maxHour < 19) peakPeriod = 'PM Peak';
-            else peakPeriod = 'Evening';
+            else if (maxHour >= 15 && maxHour < 18) peakPeriod = 'PM Peak';
+            else if (maxHour >= 18 && maxHour < 22) peakPeriod = 'Evening';
+            else peakPeriod = 'Overnight';
         }
 
         return {
@@ -1160,7 +1041,10 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         const filters: string[] = [];
         if (geoFilter === 'barrie') filters.push('Barrie only');
         if (corridorRoute) filters.push(`Route ${corridorRoute} corridor`);
-        if (timePeriod !== 'all') filters.push(`Time: ${timePeriod}`);
+        if (timePeriod !== 'all') {
+            const timeLabel = TRANSIT_APP_OD_TIME_FILTERS.find(filter => filter.key === timePeriod)?.label ?? timePeriod;
+            filters.push(`Time: ${timeLabel}`);
+        }
         if (dayFilter !== 'all') filters.push(`Day: ${dayFilter}`);
         if (seasonFilter !== 'all') filters.push(`Season: ${seasonFilter.toUpperCase()}`);
         if (distanceBand !== 'all') filters.push(`Distance: ${distanceBand}`);
@@ -1535,18 +1419,12 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                         <div className="flex flex-col">
                             <span className="text-[10px] text-gray-400 uppercase tracking-wider">Time</span>
                             <div className="flex rounded border border-gray-200 overflow-hidden">
-                                {([
-                                    { key: 'all', label: 'All' },
-                                    { key: 'am', label: 'AM' },
-                                    { key: 'midday', label: 'Mid' },
-                                    { key: 'pm', label: 'PM' },
-                                    { key: 'evening', label: 'Eve' },
-                                ] as { key: TimePeriod; label: string }[]).map(({ key, label }) => (
+                                {TRANSIT_APP_OD_TIME_FILTERS.map(({ key, shortLabel }) => (
                                     <button key={key} onClick={() => setTimePeriod(key)}
                                         className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
                                             timePeriod === key ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
                                         }`}>
-                                        {label}
+                                        {shortLabel}
                                     </button>
                                 ))}
                             </div>
@@ -1634,6 +1512,14 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                     )}
                     <span className="text-gray-300"> · </span>
                     <span className="text-gray-400 italic">Transit App sample — not total ridership</span>
+                    {(odPairs?.totalTripsDroppedByPairLimit ?? 0) > 0 && (
+                        <>
+                            <span className="text-gray-300"> · </span>
+                            <span className="text-amber-700">
+                                Legacy cap dropped {odPairs.totalTripsDroppedByPairLimit?.toLocaleString()} trips
+                            </span>
+                        </>
+                    )}
                     {isolatedZone && (() => {
                         const [latStr, lonStr] = isolatedZone.split('_');
                         const spiderName = getZoneName(parseFloat(latStr), parseFloat(lonStr));
@@ -1869,7 +1755,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                                     {popupState.pair.isMerged && (
                                         <>
                                             <div>
-                                                A to B: {(popupState.pair.count - popupState.pair.reverseCount).toLocaleString()}
+                                                A to B: {popupState.pair.forwardCount.toLocaleString()}
                                                 {' '}| B to A: {popupState.pair.reverseCount.toLocaleString()}
                                             </div>
                                             <div>Direction: {popupState.pair.netDirection}</div>

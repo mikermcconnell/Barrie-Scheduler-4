@@ -138,6 +138,7 @@ interface RoutePlanner2ServiceAssumptions {
   firstTripTime: string;
   lastTripTime: string;
   frequencyMinutes: number;
+  targetBuses?: number;
   startTerminalLayoverMinutes: number;
   endTerminalLayoverMinutes: number;
   intermediateStopDwellSeconds: number;
@@ -148,6 +149,7 @@ interface RoutePlanner2ServiceAssumptions {
 
 Terminal layover fields are planning assumptions for v1 concept feasibility. They are not fixed-route schedule recovery rules.
 Intermediate stop dwell is an optional planning allowance added for non-terminal stops only. It stays separate from terminal layover/recovery.
+`targetBuses` is optional. When present, feasibility uses that bus count and the selected frequency as the scheduled cycle window instead of calculating buses from runtime. GTFS imports set it from distinct `block_id` values when the feed provides them.
 
 ## Feasibility Summary
 
@@ -183,6 +185,8 @@ interface RoutePlanner2SegmentRuntime {
   matchedFromStopId?: string;
   matchedToStopId?: string;
   matchedRoutes?: string[];
+  evidenceDayType?: 'weekday' | 'saturday' | 'sunday';
+  evidencePeriod?: 'am-peak' | 'midday' | 'pm-peak' | 'evening' | 'full-day';
   confidence: 'high' | 'medium' | 'low' | 'missing';
   distanceKm?: number;
   durationSeconds?: number;
@@ -201,7 +205,7 @@ Runtime source values:
 - `fallback`: distance/default-speed estimate when stronger evidence is unavailable.
 - `missing`: no usable runtime estimate yet.
 
-`runtimeSourceMode` defaults to `mapbox` for new route concepts. In `mapbox` mode, GTFS evidence is ignored and segment runtime uses Mapbox estimates when available, then fallback assumptions. In `gtfs` mode, scheduled GTFS evidence is allowed to outrank Mapbox. Manual overrides remain planner-controlled and still outrank automatic sources.
+`runtimeSourceMode` defaults to `mapbox` for new blank/custom route concepts and to `gtfs` for routes imported from GTFS. In `mapbox` mode, GTFS evidence is ignored and segment runtime uses Mapbox estimates when available, then fallback assumptions. In `gtfs` mode, scheduled GTFS evidence is allowed to outrank Mapbox. Manual overrides remain planner-controlled and still outrank automatic sources. A segment can have multiple scheduled runtime estimates for the same stop pair, one per `evidencePeriod`; feasibility prefers the estimate matching the route's selected day type and runtime period, then falls back to full-day scheduled evidence when a narrower band is unavailable.
 
 Runtime evidence fields disclose how automatic estimates were produced:
 - `scheduledRuntimeMinutes`: scheduled stop-to-stop runtime used as evidence.
@@ -209,6 +213,7 @@ Runtime evidence fields disclose how automatic estimates were produced:
 - `matchQuality`: stop matching method: exact stop code, normalized name, nearby coordinate, or unmatched.
 - `matchedFromStopId` / `matchedToStopId`: matched GTFS stop IDs used for evidence.
 - `matchedRoutes`: route IDs that contributed matching runtime evidence.
+- `evidenceDayType` / `evidencePeriod`: the service day and time band used for scheduled runtime evidence.
 
 `recoveryTimeMinutes` is the spare time between the estimated full runtime and the scheduled cycle window created by the selected frequency and required buses. Example: 24 minutes of estimated full runtime at 30-minute frequency with 1 bus leaves 6 minutes of recovery. `recoveryPercent` is recovery time divided by estimated full runtime.
 

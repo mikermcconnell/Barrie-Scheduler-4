@@ -36,7 +36,7 @@ export const WORKSPACE_ACCESS_LEVELS: WorkspaceAccessLevel[] = [
 export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string> = {
     production: 'Production only',
     planner: 'Planner',
-    'external-planner': 'Ontario Northland planner',
+    'external-planner': 'External agency planner',
     admin: 'Admin access',
     internal: 'Developer/internal',
 };
@@ -44,7 +44,7 @@ export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string>
 export const WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS: Record<WorkspaceAccessLevel, string> = {
     production: 'Only production-ready workspaces.',
     planner: 'Production workspaces plus selected planning tools.',
-    'external-planner': 'Non-Barrie planner access for Ontario Northland planning data.',
+    'external-planner': 'Limited non-Barrie planner access for partner agency planning data.',
     admin: 'Planner access plus broader operational tools.',
     internal: 'Everything, including unfinished workspaces.',
 };

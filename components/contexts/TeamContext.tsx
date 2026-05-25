@@ -10,6 +10,7 @@ import { getUserTeam, joinTeamByInviteCode, getTeamMember } from '../../utils/se
 import type { Team, TeamMember, TeamRole, WorkspaceAccessLevel } from '../../utils/masterScheduleTypes';
 import { resolveWorkspaceAccessLevel } from '../../utils/workspaceAccess';
 import { getDevAuthConfig } from '../../utils/dev/devAuth';
+import { clearPendingInviteCodeFromUrl, getPendingInviteCode } from '../../utils/inviteLinks';
 
 interface TeamContextType {
     team: Team | null;
@@ -63,6 +64,24 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         try {
             setLoading(true);
             let userTeam = await getUserTeam(user.uid);
+
+            const pendingInviteCode = getPendingInviteCode();
+            if (pendingInviteCode) {
+                if (!userTeam) {
+                    try {
+                        await joinTeamByInviteCode(
+                            user.uid,
+                            pendingInviteCode,
+                            user.displayName || user.email?.split('@')[0] || 'User',
+                            user.email || '',
+                        );
+                        userTeam = await getUserTeam(user.uid);
+                    } catch (error) {
+                        console.error('Error joining team from invite link:', error);
+                    }
+                }
+                clearPendingInviteCodeFromUrl();
+            }
 
             if (!userTeam && devAuth.enabled && devAuth.teamInviteCode) {
                 await joinTeamByInviteCode(

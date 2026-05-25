@@ -212,6 +212,15 @@ describe('Route Planner 2 authoring', () => {
       '1:A2:start-terminal',
       '2:A3:end-terminal',
     ]);
+    expect(target.runtimeEstimates).toHaveLength(1);
+    expect(target.runtimeEstimates?.[0]).toMatchObject({
+      fromStopId: target.stops[0]?.id,
+      toStopId: target.stops[1]?.id,
+      runtimeMinutes: 5,
+      source: 'scheduled-proxy',
+      confidence: 'high',
+    });
+    expect(target.runtimeEstimates?.[0]?.id).toBe(`segment-${target.stops[0]?.id}-${target.stops[1]?.id}`);
   });
 
   it('moves the selected segment line geometry with the stop range', () => {

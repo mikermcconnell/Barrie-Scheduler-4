@@ -98,6 +98,7 @@ export interface RoutePlanner2ServiceAssumptions {
     firstTripTime: string;
     lastTripTime: string;
     frequencyMinutes: number;
+    targetBuses?: number;
     startTerminalLayoverMinutes: number;
     endTerminalLayoverMinutes: number;
     intermediateStopDwellSeconds: number;

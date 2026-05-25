@@ -26,6 +26,13 @@ interface TeamInviteLookup {
     inviteCode: string;
 }
 
+export interface CreatePartnerTeamInput {
+    createdBy: string;
+    teamName: string;
+    inviteCode?: string;
+    defaultMemberAccessLevel?: WorkspaceAccessLevel;
+}
+
 // ============ HELPER FUNCTIONS ============
 
 /**
@@ -54,6 +61,20 @@ async function generateUniqueInviteCode(excludeTeamId?: string): Promise<string>
         }
     }
     throw new Error('Unable to generate unique invite code');
+}
+
+async function normalizeUniqueInviteCode(inviteCode: string, excludeTeamId?: string): Promise<string> {
+    const normalized = inviteCode.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(normalized)) {
+        throw new Error('Invite code must be exactly 6 letters/numbers');
+    }
+
+    const existingInvite = await getDoc(doc(db, 'teamInvites', normalized));
+    if (existingInvite.exists() && existingInvite.data().teamId !== excludeTeamId) {
+        throw new Error('Invite code is already in use');
+    }
+
+    return normalized;
 }
 
 /**
@@ -86,8 +107,25 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
         name: data.name,
         createdAt: data.createdAt ? timestampToDate(data.createdAt) : new Date(0),
         createdBy: data.createdBy,
-        inviteCode: data.inviteCode
+        inviteCode: data.inviteCode,
+        defaultMemberAccessLevel: isWorkspaceAccessLevel(data.defaultMemberAccessLevel)
+            ? data.defaultMemberAccessLevel
+            : getDefaultWorkspaceAccessLevelForRole('member'),
+        partnerTeam: data.partnerTeam === true
     };
+}
+
+async function getTeamDefaultMemberAccessLevel(teamId: string): Promise<WorkspaceAccessLevel> {
+    const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await getDoc(teamRef);
+    if (!teamSnap.exists()) {
+        return getDefaultWorkspaceAccessLevelForRole('member');
+    }
+
+    const defaultAccessLevel = teamSnap.data().defaultMemberAccessLevel;
+    return isWorkspaceAccessLevel(defaultAccessLevel)
+        ? defaultAccessLevel
+        : getDefaultWorkspaceAccessLevelForRole('member');
 }
 
 // ============ TEAM CRUD ============
@@ -112,7 +150,8 @@ export async function createTeam(
         name: teamName,
         createdAt: serverTimestamp(),
         createdBy: userId,
-        inviteCode
+        inviteCode,
+        defaultMemberAccessLevel: getDefaultWorkspaceAccessLevelForRole('member')
     });
 
     // Add creator as owner in members subcollection
@@ -120,7 +159,7 @@ export async function createTeam(
     await setDoc(memberRef, {
         userId,
         role: 'owner' as TeamRole,
-        accessLevel: 'internal' as WorkspaceAccessLevel,
+        accessLevel: getDefaultWorkspaceAccessLevelForRole('member'),
         joinedAt: serverTimestamp(),
         displayName: userDisplayName,
         email: userEmail
@@ -139,6 +178,52 @@ export async function createTeam(
     await setDoc(userRef, { teamId }, { merge: true });
 
     return teamId;
+}
+
+/**
+ * Create a partner agency team without switching the current admin into that team.
+ * Intended for global admins setting up external agencies such as Lane Transit.
+ */
+export async function createPartnerTeam(input: CreatePartnerTeamInput): Promise<{ teamId: string; inviteCode: string }> {
+    const normalizedName = input.teamName.trim();
+    if (!normalizedName) {
+        throw new Error('Team name is required');
+    }
+
+    const defaultMemberAccessLevel = input.defaultMemberAccessLevel ?? 'external-planner';
+    if (!isWorkspaceAccessLevel(defaultMemberAccessLevel)) {
+        throw new Error('Invalid workspace access level');
+    }
+
+    const inviteCode = input.inviteCode
+        ? await normalizeUniqueInviteCode(input.inviteCode)
+        : await generateUniqueInviteCode();
+
+    const teamsRef = collection(db, 'teams');
+    const teamDocRef = doc(teamsRef);
+    const teamId = teamDocRef.id;
+
+    const batch = writeBatch(db);
+
+    batch.set(teamDocRef, {
+        name: normalizedName,
+        createdAt: serverTimestamp(),
+        createdBy: input.createdBy,
+        inviteCode,
+        defaultMemberAccessLevel,
+        partnerTeam: true
+    });
+
+    batch.set(doc(db, 'teamInvites', inviteCode), {
+        teamId,
+        teamName: normalizedName,
+        createdBy: input.createdBy,
+        updatedAt: serverTimestamp()
+    });
+
+    await batch.commit();
+
+    return { teamId, inviteCode };
 }
 
 /**
@@ -297,6 +382,10 @@ export async function deleteTeam(teamId: string): Promise<void> {
  */
 export async function findTeamByInviteCode(code: string): Promise<TeamInviteLookup | null> {
     const normalizedCode = code.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(normalizedCode)) {
+        return null;
+    }
+
     const inviteRef = doc(db, 'teamInvites', normalizedCode);
     const inviteSnap = await getDoc(inviteRef);
 
@@ -354,11 +443,13 @@ export async function joinTeamByInviteCode(
         return teamId;
     }
 
+    const defaultAccessLevel = await getTeamDefaultMemberAccessLevel(teamId);
+
     // Add as new member
     await setDoc(memberRef, {
         userId,
         role: 'member' as TeamRole,
-        accessLevel: getDefaultWorkspaceAccessLevelForRole('member'),
+        accessLevel: defaultAccessLevel,
         joinedAt: serverTimestamp(),
         displayName,
         email,
@@ -422,8 +513,27 @@ export async function updateMemberAccessLevel(
     memberId: string,
     accessLevel: WorkspaceAccessLevel
 ): Promise<void> {
+    if (!isWorkspaceAccessLevel(accessLevel)) {
+        throw new Error('Invalid workspace access level');
+    }
+
     const memberRef = doc(db, 'teams', teamId, 'members', memberId);
     await updateDoc(memberRef, { accessLevel });
+}
+
+/**
+ * Update the access level assigned to future users who join with this team's invite code.
+ */
+export async function updateTeamDefaultMemberAccessLevel(
+    teamId: string,
+    accessLevel: WorkspaceAccessLevel
+): Promise<void> {
+    if (!isWorkspaceAccessLevel(accessLevel)) {
+        throw new Error('Invalid workspace access level');
+    }
+
+    const teamRef = doc(db, 'teams', teamId);
+    await updateDoc(teamRef, { defaultMemberAccessLevel: accessLevel });
 }
 
 /**
@@ -456,15 +566,7 @@ export async function regenerateInviteCode(teamId: string): Promise<string> {
  * Must be 6 alphanumeric characters and unique across teams.
  */
 export async function setInviteCode(teamId: string, inviteCode: string): Promise<string> {
-    const normalized = inviteCode.trim().toUpperCase();
-    if (!/^[A-Z0-9]{6}$/.test(normalized)) {
-        throw new Error('Invite code must be exactly 6 letters/numbers');
-    }
-
-    const existingInvite = await getDoc(doc(db, 'teamInvites', normalized));
-    if (existingInvite.exists() && existingInvite.data().teamId !== teamId) {
-        throw new Error('Invite code is already in use');
-    }
+    const normalized = await normalizeUniqueInviteCode(inviteCode, teamId);
 
     const teamRef = doc(db, 'teams', teamId);
     const teamSnap = await getDoc(teamRef);

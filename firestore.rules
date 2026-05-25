@@ -18,7 +18,7 @@ service cloud.firestore {
     // ========== TEAMS ==========
 
     // Team documents are readable by team members.
-    // Internal/developer and admin workspace users can also look up teams
+    // Global workspace permission managers can also look up teams
     // by code for user permission management.
     // Team creation remains authenticated; updates/deletes are available to
     // team owners and workspace permission managers.
@@ -165,34 +165,11 @@ service cloud.firestore {
              (member.data.role == 'owner' || member.data.role == 'admin');
     }
 
-    function currentUserTeamId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
-    }
-
-    function currentUserAccessLevel() {
-      let teamId = currentUserTeamId();
-      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.accessLevel;
-    }
-
-    function currentUserTeamRole() {
-      let teamId = currentUserTeamId();
-      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role;
-    }
-
-    function currentUserHasMemberDoc() {
-      let teamId = currentUserTeamId();
-      return exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
-    }
-
     function isWorkspacePermissionManager() {
       return request.auth != null &&
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             currentUserTeamId() is string &&
-             currentUserHasMemberDoc() &&
-             (currentUserAccessLevel() == 'admin' ||
-              currentUserAccessLevel() == 'internal' ||
-              currentUserTeamRole() == 'owner' ||
-              currentUserTeamRole() == 'admin');
+             (request.auth.token.schedulerAdmin == true ||
+              request.auth.token.admin == true ||
+              request.auth.token.globalAdmin == true);
     }
   }
 }

@@ -58,6 +58,20 @@ export function getGeocodedPairs(
         .sort((a, b) => b.journeys - a.journeys);
 }
 
+export function resolveValidCachedGeocode(
+    stationName: string,
+    geocodeCache: GeocodeCache | null
+): GeocodedLocation | null {
+    if (!geocodeCache) return null;
+    const key = Object.keys(geocodeCache.stations).find(
+        candidate => candidate.toLowerCase() === stationName.toLowerCase()
+    );
+    if (!key) return null;
+
+    const location = geocodeCache.stations[key];
+    return isWithinCanada(location.lat, location.lon) ? location : null;
+}
+
 export function filterODPairs(args: {
     pairs: ODPairRecord[];
     isolatedStation: string | null;

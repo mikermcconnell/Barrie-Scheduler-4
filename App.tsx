@@ -14,6 +14,7 @@ import { lazyWithRetry } from './utils/lazyWithRetry';
 import { isFeatureEnabled } from './utils/features';
 import { loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
 import { useWorkspaceAccess } from './hooks/useWorkspaceAccess';
+import { getPendingInviteCode } from './utils/inviteLinks';
 
 const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
@@ -49,6 +50,7 @@ const AppContent: React.FC = () => {
   const [showFileManager, setShowFileManager] = useState(false);
   const [showTeamManagement, setShowTeamManagement] = useState(false);
   const [fixedRouteResume, setFixedRouteResume] = useState(() => loadFixedRouteResumeState());
+  const pendingInviteCode = getPendingInviteCode();
 
   const isViewAvailable = useCallback((view: View): boolean => {
     const feature = APP_VIEW_FEATURES[view];
@@ -78,6 +80,12 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('hashchange', handler);
   }, [isViewAvailable]);
 
+  useEffect(() => {
+    if (!loading && !user && pendingInviteCode) {
+      setShowAuthModal(true);
+    }
+  }, [loading, pendingInviteCode, user]);
+
   // Show loading state while checking auth
   if (loading || accessLoading) {
     return <WorkspaceLoadingState label="Loading..." />;
@@ -92,7 +100,11 @@ const AppContent: React.FC = () => {
     <div className="flex flex-col h-screen font-sans text-gray-800 bg-[#F7F7F7] overflow-hidden">
 
       {/* Auth Modal */}
-      <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        inviteCode={pendingInviteCode ?? undefined}
+      />
 
       {/* File Manager Modal */}
       {showFileManager && user && (

@@ -5,9 +5,10 @@ import { X, Mail, Lock, User, Loader2, AlertCircle, KeyRound } from 'lucide-reac
 interface AuthModalProps {
     isOpen: boolean;
     onClose: () => void;
+    inviteCode?: string;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
+export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, inviteCode }) => {
     const {
         signIn,
         signUp,
@@ -128,12 +129,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                         </h2>
                     </div>
                     <p className="text-white/80 font-medium">
-                        {mode === 'signin'
+                        {inviteCode
+                            ? 'Sign in or create an account to join your team.'
+                            : mode === 'signin'
                             ? 'Sign in to access your schedules'
                             : mode === 'signup'
                                 ? 'Start managing your transit schedules'
                                 : 'We\'ll send you a reset link'}
                     </p>
+                    {inviteCode && (
+                        <div className="mt-4 inline-flex rounded-full bg-white/20 px-3 py-1 text-xs font-bold uppercase tracking-wider">
+                            Invite {inviteCode}
+                        </div>
+                    )}
                 </div>
 
                 {/* Form */}

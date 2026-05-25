@@ -18,9 +18,10 @@ describe('RoutePlanner2MapCanvas stop labels', () => {
       address: '37 Johnson Street, Barrie, ON L4M 5C3',
       kidsAtStop: 2,
       travelTimeLabel: '6 min',
+      departureLabel: '8:21 AM',
     }, {
       includePlaceLabel: true,
-    })).toBe('37 Johnson Street\n6 min · 2 kids');
+    })).toBe('37 Johnson Street\nDep 8:21 AM · 6 min · 2 kids');
   });
 
   it('falls back to kids count when travel time is not estimated', () => {

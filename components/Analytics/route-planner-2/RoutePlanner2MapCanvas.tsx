@@ -412,6 +412,7 @@ export interface RoutePlanner2MapStopLabelDetail {
     address?: string;
     kidsAtStop: number;
     travelTimeLabel: string;
+    departureLabel?: string;
 }
 
 interface RoutePlanner2MapStopLabelOptions {
@@ -774,9 +775,14 @@ export function formatRoutePlanner2MapStopLabel(
     if (!detail) return null;
     const placeLabel = options.includePlaceLabel ? formatRoutePlanner2StopAddressLabel(detail) : null;
     const kidsLabel = `${detail.kidsAtStop} ${detail.kidsAtStop === 1 ? 'kid' : 'kids'}`;
-    const metricLabel = detail.travelTimeLabel === 'Not estimated'
-        ? kidsLabel
-        : `${detail.travelTimeLabel} · ${kidsLabel}`;
+    const departureLabel = detail.departureLabel && detail.departureLabel !== 'Not set'
+        ? `Dep ${detail.departureLabel}`
+        : null;
+    const metricLabel = [
+        departureLabel,
+        detail.travelTimeLabel === 'Not estimated' ? null : detail.travelTimeLabel,
+        kidsLabel,
+    ].filter(Boolean).join(' · ');
     return placeLabel ? `${placeLabel}\n${metricLabel}` : metricLabel;
 }
 
@@ -1826,6 +1832,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     return (
         <section
             data-testid="rp2-map-canvas"
+            data-camp-shuttle-labels={stopLabelDetails.length > 0 ? 'on' : 'off'}
             ref={captureContainerRef}
             style={overlayStyle}
             onPointerDown={handleSelectionPointerDown}

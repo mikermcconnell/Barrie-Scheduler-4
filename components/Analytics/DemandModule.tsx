@@ -12,6 +12,11 @@ import type { TransitAppDataSummary, ODCoverageGap, ODPair } from '../../utils/t
 import { TransitAppMap, type SeasonFilter, describeLocationRelativeToBarrie } from './TransitAppMap';
 import { ChartCard, NoData, fmt } from './AnalyticsShared';
 import { analyzeODCoverageGaps } from '../../utils/transit-app/transitAppAggregator';
+import {
+    getHoursForODTimePeriod,
+    TRANSIT_APP_OD_TIME_FILTERS,
+    type TransitAppODTimePeriod,
+} from '../../utils/transit-app/transitAppOdPairs';
 import { findNearestStopName } from '../../utils/gtfs/gtfsStopLookup';
 import { CoverageGapMap } from './CoverageGapMap';
 
@@ -19,15 +24,7 @@ interface DemandModuleProps {
     data: TransitAppDataSummary;
 }
 
-type TimeFilter = 'all' | 'am' | 'midday' | 'pm' | 'evening';
-
-const TIME_FILTERS: { key: TimeFilter; label: string; hours: string }[] = [
-    { key: 'all', label: 'All Day', hours: '0-23' },
-    { key: 'am', label: 'AM Peak', hours: '6-9' },
-    { key: 'midday', label: 'Midday', hours: '9-15' },
-    { key: 'pm', label: 'PM Peak', hours: '15-19' },
-    { key: 'evening', label: 'Evening/Night', hours: '19-6' },
-];
+type TimeFilter = TransitAppODTimePeriod;
 
 const BASE_SEASON_FILTERS: { key: SeasonFilter; label: string }[] = [
     { key: 'all', label: 'All' },
@@ -57,18 +54,9 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
     // Filtered hourly data by time period
     const filteredHourlyData = useMemo(() => {
         if (timeFilter === 'all') return hourlyData;
-        const ranges: Record<TimeFilter, [number, number]> = {
-            all: [0, 24],
-            am: [6, 9],
-            midday: [9, 15],
-            pm: [15, 19],
-            evening: [19, 6],
-        };
-        const [start, end] = ranges[timeFilter];
-        return hourlyData.filter((_, i) => {
-            if (start < end) return i >= start && i < end;
-            return i >= start || i < end;
-        });
+        return getHoursForODTimePeriod(timeFilter)
+            .map(hour => hourlyData[hour])
+            .filter((row): row is { hour: string; count: number } => Boolean(row));
     }, [hourlyData, timeFilter]);
 
     // Check if season data is available
@@ -166,7 +154,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                 <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-500 font-medium mr-2">Time period:</span>
                     <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                        {TIME_FILTERS.map(({ key, label }) => (
+                        {TRANSIT_APP_OD_TIME_FILTERS.map(({ key, label }) => (
                             <button
                                 key={key}
                                 onClick={() => setTimeFilter(key)}
@@ -223,7 +211,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
             {/* Hourly Trip Distribution */}
             <ChartCard
                 title="Hourly Trip Distribution"
-                subtitle={timeFilter === 'all' ? 'When riders plan trips (all day)' : `Filtered: ${TIME_FILTERS.find(f => f.key === timeFilter)?.label}`}
+                subtitle={timeFilter === 'all' ? 'When riders plan trips (all day)' : `Filtered: ${TRANSIT_APP_OD_TIME_FILTERS.find(f => f.key === timeFilter)?.label}`}
             >
                 {filteredHourlyData.some(h => h.count > 0) ? (
                     <ResponsiveContainer width="100%" height={300}>

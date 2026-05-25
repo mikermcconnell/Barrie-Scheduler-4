@@ -15,12 +15,12 @@ const feed: RoutePlanner2GtfsImportFeed = {
     { stop_id: 's3', stop_code: '1003', stop_name: 'Terminal B', stop_lat: 44.39, stop_lon: -79.68 },
   ],
   trips: [
-    { route_id: '8A', service_id: 'weekday', trip_id: 't1', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
-    { route_id: '8A', service_id: 'weekday', trip_id: 't2', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
-    { route_id: '8A', service_id: 'weekday', trip_id: 't3', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
-    { route_id: '8A', service_id: 'weekday', trip_id: 't4', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
-    { route_id: '8A', service_id: 'weekday', trip_id: 't5', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
-    { route_id: '8A', service_id: 'weekday', trip_id: 't6', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't1', trip_headsign: 'To Terminal B', direction_id: 0, block_id: 'block-1', shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't2', trip_headsign: 'To Terminal B', direction_id: 0, block_id: 'block-2', shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't3', trip_headsign: 'To Terminal B', direction_id: 0, block_id: 'block-3', shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't4', trip_headsign: 'To Terminal B', direction_id: 0, block_id: 'block-1', shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't5', trip_headsign: 'To Terminal B', direction_id: 0, block_id: 'block-2', shape_id: 'shape-8a-a' },
+    { route_id: '8A', service_id: 'weekday', trip_id: 't6', trip_headsign: 'To Terminal B', direction_id: 0, block_id: 'block-3', shape_id: 'shape-8a-a' },
     { route_id: '8A', service_id: 'weekday', trip_id: 'partial-1', trip_headsign: 'To Terminal B', direction_id: 0, shape_id: 'shape-8a-partial' },
   ],
   stopTimes: [
@@ -31,17 +31,17 @@ const feed: RoutePlanner2GtfsImportFeed = {
     { trip_id: 't2', arrival_time: '06:35:00', departure_time: '06:35:00', stop_id: 's2', stop_sequence: 2 },
     { trip_id: 't2', arrival_time: '06:42:00', departure_time: '06:42:00', stop_id: 's3', stop_sequence: 3 },
     { trip_id: 't3', arrival_time: '07:00:00', departure_time: '07:00:00', stop_id: 's1', stop_sequence: 1 },
-    { trip_id: 't3', arrival_time: '07:05:00', departure_time: '07:05:00', stop_id: 's2', stop_sequence: 2 },
-    { trip_id: 't3', arrival_time: '07:12:00', departure_time: '07:12:00', stop_id: 's3', stop_sequence: 3 },
+    { trip_id: 't3', arrival_time: '07:06:00', departure_time: '07:06:00', stop_id: 's2', stop_sequence: 2 },
+    { trip_id: 't3', arrival_time: '07:15:00', departure_time: '07:15:00', stop_id: 's3', stop_sequence: 3 },
     { trip_id: 't4', arrival_time: '07:30:00', departure_time: '07:30:00', stop_id: 's1', stop_sequence: 1 },
-    { trip_id: 't4', arrival_time: '07:35:00', departure_time: '07:35:00', stop_id: 's2', stop_sequence: 2 },
-    { trip_id: 't4', arrival_time: '07:42:00', departure_time: '07:42:00', stop_id: 's3', stop_sequence: 3 },
-    { trip_id: 't5', arrival_time: '08:00:00', departure_time: '08:00:00', stop_id: 's1', stop_sequence: 1 },
-    { trip_id: 't5', arrival_time: '08:05:00', departure_time: '08:05:00', stop_id: 's2', stop_sequence: 2 },
-    { trip_id: 't5', arrival_time: '08:12:00', departure_time: '08:12:00', stop_id: 's3', stop_sequence: 3 },
-    { trip_id: 't6', arrival_time: '08:30:00', departure_time: '08:30:00', stop_id: 's1', stop_sequence: 1 },
-    { trip_id: 't6', arrival_time: '08:35:00', departure_time: '08:35:00', stop_id: 's2', stop_sequence: 2 },
-    { trip_id: 't6', arrival_time: '08:42:00', departure_time: '08:42:00', stop_id: 's3', stop_sequence: 3 },
+    { trip_id: 't4', arrival_time: '07:36:00', departure_time: '07:36:00', stop_id: 's2', stop_sequence: 2 },
+    { trip_id: 't4', arrival_time: '07:45:00', departure_time: '07:45:00', stop_id: 's3', stop_sequence: 3 },
+    { trip_id: 't5', arrival_time: '10:00:00', departure_time: '10:00:00', stop_id: 's1', stop_sequence: 1 },
+    { trip_id: 't5', arrival_time: '10:10:00', departure_time: '10:10:00', stop_id: 's2', stop_sequence: 2 },
+    { trip_id: 't5', arrival_time: '10:22:00', departure_time: '10:22:00', stop_id: 's3', stop_sequence: 3 },
+    { trip_id: 't6', arrival_time: '10:30:00', departure_time: '10:30:00', stop_id: 's1', stop_sequence: 1 },
+    { trip_id: 't6', arrival_time: '10:40:00', departure_time: '10:40:00', stop_id: 's2', stop_sequence: 2 },
+    { trip_id: 't6', arrival_time: '10:52:00', departure_time: '10:52:00', stop_id: 's3', stop_sequence: 3 },
     { trip_id: 'partial-1', arrival_time: '07:00:00', departure_time: '07:00:00', stop_id: 's1', stop_sequence: 1 },
     { trip_id: 'partial-1', arrival_time: '07:05:00', departure_time: '07:05:00', stop_id: 's2', stop_sequence: 2 },
   ],
@@ -69,6 +69,10 @@ describe('routePlanner2GtfsImport', () => {
       shapeId: 'shape-8a-a',
       tripCount: 6,
       stopCount: 3,
+      firstDepartureMinutes: 360,
+      lastDepartureMinutes: 630,
+      medianHeadwayMinutes: 30,
+      blockCount: 3,
     });
   });
 
@@ -99,11 +103,35 @@ describe('routePlanner2GtfsImport', () => {
     expect(scenario.stops[2]?.role).toBe('end-terminal');
     expect(scenario.stops.every(stop => stop.source === 'barrie-stop')).toBe(true);
     expect(scenario.alignment.length).toBeGreaterThan(0);
-    expect(scenario.runtimeEstimates?.map((estimate) => estimate.runtimeMinutes)).toEqual([5, 7]);
+    expect(scenario.runtimeEstimates?.filter((estimate) => estimate.evidencePeriod === 'full-day').map((estimate) => estimate.runtimeMinutes)).toEqual([6, 9]);
+    expect(scenario.runtimeEstimates?.filter((estimate) => estimate.evidencePeriod === 'am-peak').map((estimate) => estimate.runtimeMinutes)).toEqual([6, 9]);
+    expect(scenario.runtimeEstimates?.filter((estimate) => estimate.evidencePeriod === 'midday').map((estimate) => estimate.runtimeMinutes)).toEqual([10, 12]);
     expect(scenario.runtimeEstimates?.every((estimate) => estimate.source === 'scheduled-proxy' && estimate.confidence === 'high')).toBe(true);
     expect(scenario.runtimeEstimates?.every((estimate) => estimate.matchedRoutes?.includes('8A'))).toBe(true);
-    expect(scenario.runtimeSourceMode).toBe('mapbox');
-    expect(deriveRoutePlanner2Feasibility({ ...scenario, runtimeSourceMode: 'gtfs' }).confidence).toBe('high');
+    expect(scenario.runtimeSourceMode).toBe('gtfs');
+    expect(scenario.service).toMatchObject({
+      firstTripTime: '06:00',
+      lastTripTime: '10:30',
+      frequencyMinutes: 30,
+      targetBuses: 3,
+      startTerminalLayoverMinutes: 0,
+      endTerminalLayoverMinutes: 0,
+      dayType: 'weekday',
+      planningPeriod: 'all-day',
+    });
+    const feasibility = deriveRoutePlanner2Feasibility(scenario);
+    expect(feasibility.segmentRuntimeMinutes).toBe(15);
+    expect(feasibility.busesRequired).toBe(3);
+    expect(feasibility.cycleTimeMinutes).toBe(90);
+    expect(feasibility.segmentSummaries.map((segment) => segment.source)).toEqual(['scheduled-proxy', 'scheduled-proxy']);
+    expect(feasibility.confidence).toBe('high');
+
+    const middayFeasibility = deriveRoutePlanner2Feasibility({
+      ...scenario,
+      service: { ...scenario.service, planningPeriod: 'midday' },
+    });
+    expect(middayFeasibility.segmentRuntimeMinutes).toBe(22);
+    expect(middayFeasibility.segmentSummaries.every((segment) => segment.evidencePeriod === 'midday')).toBe(true);
   });
 
   it('keeps adjacent same-minute GTFS stop times as scheduled evidence with a one-minute minimum', () => {
@@ -136,8 +164,8 @@ describe('routePlanner2GtfsImport', () => {
     const pattern = buildRoutePlanner2GtfsImportPatterns(sameMinuteFeed)[0]!;
     const scenario = createRoutePlanner2ScenarioFromGtfsPattern(pattern, { id: 'scenario-imported', now: '2026-05-01T12:00:00.000Z' });
 
-    expect(scenario.runtimeEstimates).toHaveLength(2);
-    expect(scenario.runtimeEstimates?.map((estimate) => estimate.runtimeMinutes)).toEqual([1, 5]);
+    expect(scenario.runtimeEstimates?.filter((estimate) => estimate.evidencePeriod === 'full-day')).toHaveLength(2);
+    expect(scenario.runtimeEstimates?.filter((estimate) => estimate.evidencePeriod === 'full-day').map((estimate) => estimate.runtimeMinutes)).toEqual([1, 5]);
     expect(scenario.runtimeEstimates?.every((estimate) => estimate.source === 'scheduled-proxy')).toBe(true);
   });
 

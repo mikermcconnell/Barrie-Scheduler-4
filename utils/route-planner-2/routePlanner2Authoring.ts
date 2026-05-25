@@ -1150,6 +1150,22 @@ export function reassignRoutePlanner2StopRange(
             afterStopId: transferredStopIdBySourceId.get(point.afterStopId!)!,
             beforeStopId: transferredStopIdBySourceId.get(point.beforeStopId!)!,
         }));
+    const transferredRuntimeEstimates = (sourceScenario.runtimeEstimates ?? [])
+        .filter((estimate) =>
+            transferredStopIdBySourceId.has(estimate.fromStopId)
+            && transferredStopIdBySourceId.has(estimate.toStopId),
+        )
+        .map((estimate): RoutePlanner2SegmentRuntime => {
+            const fromStopId = transferredStopIdBySourceId.get(estimate.fromStopId)!;
+            const toStopId = transferredStopIdBySourceId.get(estimate.toStopId)!;
+            return {
+                ...estimate,
+                id: getRoutePlanner2SegmentId(fromStopId, toStopId),
+                fromStopId,
+                toStopId,
+                updatedAt: now,
+            };
+        });
 
     const targetScenarioWithStops = {
         ...targetScenario,
@@ -1158,6 +1174,10 @@ export function reassignRoutePlanner2StopRange(
             ...transferredStops,
             ...targetStops.slice(normalizedInsertIndex),
         ]),
+        runtimeEstimates: [
+            ...(targetScenario.runtimeEstimates ?? []),
+            ...transferredRuntimeEstimates,
+        ],
     };
     const updatedTargetScenario = cleanRuntimeForCurrentSegments({
         ...targetScenarioWithStops,

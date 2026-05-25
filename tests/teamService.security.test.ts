@@ -45,7 +45,15 @@ vi.mock('../utils/firebase', () => ({
   db: { name: 'db' },
 }));
 
-import { createTeam, deleteTeam, getUserTeam, joinTeamByInviteCode, removeMember } from '../utils/services/teamService';
+import {
+  createTeam,
+  createPartnerTeam,
+  deleteTeam,
+  getUserTeam,
+  joinTeamByInviteCode,
+  removeMember,
+  updateTeamDefaultMemberAccessLevel,
+} from '../utils/services/teamService';
 
 describe('teamService security-sensitive flows', () => {
   beforeEach(() => {
@@ -164,6 +172,10 @@ describe('teamService security-sensitive flows', () => {
       })
       .mockResolvedValueOnce({
         exists: () => false,
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ name: 'Ops Team' }),
       });
 
     await joinTeamByInviteCode('user-2', 'ABC123', 'New User', 'new@example.com');
@@ -174,6 +186,111 @@ describe('teamService security-sensitive flows', () => {
         role: 'member',
         accessLevel: 'planner',
       })
+    );
+  });
+
+  it('rejects malformed invite codes before reading Firestore paths', async () => {
+    await expect(
+      joinTeamByInviteCode('user-2', 'BAD/01', 'New User', 'new@example.com')
+    ).rejects.toThrow('Invalid invite code');
+
+    expect(getDocMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the team default access level for newly joined members', async () => {
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ teamId: 'lane-transit', teamName: 'Lane Transit' }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => false,
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ name: 'Lane Transit', defaultMemberAccessLevel: 'external-planner' }),
+      });
+
+    await joinTeamByInviteCode('lane-user', 'LANE01', 'Lane User', 'lane@example.com');
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
+      expect.objectContaining({
+        role: 'member',
+        accessLevel: 'external-planner',
+      })
+    );
+  });
+
+  it('does not give newly created team owners internal workspace access by default', async () => {
+    await createTeam('user-1', 'Lane Transit', 'Owner', 'owner@example.com');
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/generated-team/members/user-1' }),
+      expect.objectContaining({
+        role: 'owner',
+        accessLevel: 'planner',
+      })
+    );
+  });
+
+  it('allows changing the team default member access level', async () => {
+    await updateTeamDefaultMemberAccessLevel('lane-transit', 'external-planner');
+
+    expect(updateDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit' }),
+      { defaultMemberAccessLevel: 'external-planner' }
+    );
+  });
+
+  it('creates a partner team without moving the current admin into that team', async () => {
+    const batchSetMock = vi.fn();
+    const batchCommitMock = vi.fn().mockResolvedValue(undefined);
+    writeBatchMock.mockReturnValue({
+      set: batchSetMock,
+      commit: batchCommitMock,
+    });
+    getDocMock.mockResolvedValue({
+      exists: () => false,
+    });
+
+    const result = await createPartnerTeam({
+      createdBy: 'admin-user',
+      teamName: 'Lane Transit',
+      inviteCode: 'LANE01',
+      defaultMemberAccessLevel: 'external-planner',
+    });
+
+    expect(result).toEqual({
+      teamId: 'generated-team',
+      inviteCode: 'LANE01',
+    });
+    expect(batchSetMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/generated-team' }),
+      expect.objectContaining({
+        name: 'Lane Transit',
+        createdBy: 'admin-user',
+        inviteCode: 'LANE01',
+        defaultMemberAccessLevel: 'external-planner',
+      })
+    );
+    expect(batchSetMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teamInvites/LANE01' }),
+      expect.objectContaining({
+        teamId: 'generated-team',
+        teamName: 'Lane Transit',
+      })
+    );
+    expect(batchCommitMock).toHaveBeenCalledOnce();
+    expect(setDocMock).not.toHaveBeenCalled();
+    expect(setDocMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'users/admin-user' }),
+      expect.anything(),
+      expect.anything()
+    );
+    expect(setDocMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/generated-team/members/admin-user' }),
+      expect.anything()
     );
   });
 

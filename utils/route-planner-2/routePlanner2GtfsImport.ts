@@ -1,3 +1,4 @@
+import { TIME_PERIODS, type TimePeriod } from '../gtfs/corridorHeadway';
 import type {
     RoutePlanner2RoutePoint,
     RoutePlanner2Scenario,
@@ -28,6 +29,7 @@ export interface RoutePlanner2GtfsTrip {
     trip_id: string;
     trip_headsign?: string;
     direction_id?: number;
+    block_id?: string;
     shape_id?: string;
 }
 
@@ -93,6 +95,13 @@ export interface RoutePlanner2GtfsImportStop {
     departureMinutes?: number;
 }
 
+export interface RoutePlanner2GtfsImportPeriodRuntime {
+    period: TimePeriod;
+    sampleSize: number;
+    segmentRuntimeMinutes: number[];
+    totalRuntimeMinutes: number;
+}
+
 export interface RoutePlanner2GtfsImportPattern {
     id: string;
     routeId: string;
@@ -107,6 +116,11 @@ export interface RoutePlanner2GtfsImportPattern {
     tripCount: number;
     stopCount: number;
     shapePointCount: number;
+    firstDepartureMinutes?: number;
+    lastDepartureMinutes?: number;
+    medianHeadwayMinutes?: number;
+    blockCount?: number;
+    scheduledRuntimes?: RoutePlanner2GtfsImportPeriodRuntime[];
     stops: RoutePlanner2GtfsImportStop[];
     shapePoints: RoutePlanner2GtfsShapePoint[];
     feedVersion?: string;
@@ -139,6 +153,98 @@ function parseGtfsMinutes(value: string | undefined): number {
 function parseFiniteGtfsMinutes(value: string | undefined): number | undefined {
     const minutes = parseGtfsMinutes(value);
     return Number.isFinite(minutes) ? minutes : undefined;
+}
+
+function formatGtfsMinutesAsTime(value: number | undefined): string | undefined {
+    if (value == null || !Number.isFinite(value)) return undefined;
+    const rounded = Math.round(value);
+    const normalized = ((rounded % 1440) + 1440) % 1440;
+    const hours = Math.floor(normalized / 60);
+    const minutes = normalized % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function median(values: number[]): number | undefined {
+    const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+    if (sorted.length === 0) return undefined;
+    const midpoint = Math.floor(sorted.length / 2);
+    if (sorted.length % 2 === 1) return sorted[midpoint];
+    const left = sorted[midpoint - 1];
+    const right = sorted[midpoint];
+    if (left == null || right == null) return undefined;
+    return (left + right) / 2;
+}
+
+function deriveMedianHeadwayMinutes(departures: number[]): number | undefined {
+    const sortedDepartures = departures.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+    const headways = sortedDepartures
+        .slice(1)
+        .map((departure, index) => departure - sortedDepartures[index]!)
+        .filter((headway) => headway > 0);
+    const medianHeadway = median(headways);
+    return medianHeadway == null ? undefined : Math.max(1, Math.round(medianHeadway));
+}
+
+function isDepartureInPeriod(departureMinutes: number, period: TimePeriod): boolean {
+    const definition = TIME_PERIODS.find((item) => item.id === period);
+    if (!definition) return false;
+    return departureMinutes >= definition.startMinute && departureMinutes < definition.endMinute;
+}
+
+function deriveTripSegmentRuntimeMinutes(stopTimes: RoutePlanner2GtfsStopTime[], segmentIndex: number): number | undefined {
+    const fromStopTime = stopTimes[segmentIndex];
+    const toStopTime = stopTimes[segmentIndex + 1];
+    if (!fromStopTime || !toStopTime) return undefined;
+
+    const fromMinutes = parseFiniteGtfsMinutes(fromStopTime.departure_time) ?? parseFiniteGtfsMinutes(fromStopTime.arrival_time);
+    const toMinutes = parseFiniteGtfsMinutes(toStopTime.arrival_time) ?? parseFiniteGtfsMinutes(toStopTime.departure_time);
+    if (fromMinutes == null || toMinutes == null || toMinutes < fromMinutes) return undefined;
+
+    return Math.max(1, Math.round(toMinutes - fromMinutes));
+}
+
+interface GtfsTripStopTimeSample {
+    trip: RoutePlanner2GtfsTrip;
+    stopTimes: RoutePlanner2GtfsStopTime[];
+    firstDepartureMinutes: number;
+}
+
+function buildScheduledRuntimesForTripSamples(
+    tripStopTimes: GtfsTripStopTimeSample[],
+    stopCount: number,
+): RoutePlanner2GtfsImportPeriodRuntime[] {
+    if (stopCount < 2) return [];
+
+    return TIME_PERIODS.flatMap((period): RoutePlanner2GtfsImportPeriodRuntime[] => {
+        const periodTrips = tripStopTimes.filter((sample) => (
+            Number.isFinite(sample.firstDepartureMinutes)
+            && isDepartureInPeriod(sample.firstDepartureMinutes, period.id)
+        ));
+        if (periodTrips.length === 0) return [];
+
+        const segmentRuntimeValues = Array.from({ length: stopCount - 1 }, () => [] as number[]);
+        periodTrips.forEach((sample) => {
+            const tripSegmentRuntimes: number[] = [];
+            for (let index = 0; index < stopCount - 1; index += 1) {
+                const runtimeMinutes = deriveTripSegmentRuntimeMinutes(sample.stopTimes, index);
+                if (runtimeMinutes == null) return;
+                tripSegmentRuntimes.push(runtimeMinutes);
+            }
+            tripSegmentRuntimes.forEach((runtimeMinutes, index) => {
+                segmentRuntimeValues[index]?.push(runtimeMinutes);
+            });
+        });
+
+        if (segmentRuntimeValues.some((values) => values.length === 0)) return [];
+        const segmentRuntimeMinutes = segmentRuntimeValues.map((values) => Math.max(1, Math.round(median(values) ?? 1)));
+        const sampleSize = Math.min(...segmentRuntimeValues.map((values) => values.length));
+        return [{
+            period: period.id,
+            sampleSize,
+            segmentRuntimeMinutes,
+            totalRuntimeMinutes: segmentRuntimeMinutes.reduce((sum, runtimeMinutes) => sum + runtimeMinutes, 0),
+        }];
+    });
 }
 
 function getCalendarLabel(feed: RoutePlanner2GtfsImportFeed, serviceId: string): string {
@@ -305,6 +411,9 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
         sampleTrip: RoutePlanner2GtfsTrip;
         sampleStopTimes: RoutePlanner2GtfsStopTime[];
         firstDepartureMinutes: number;
+        departureMinutes: number[];
+        blockIds: Set<string>;
+        tripStopTimes: GtfsTripStopTimeSample[];
     }
 
     const groups = new Map<string, Group>();
@@ -334,11 +443,17 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
                 sampleTrip: trip,
                 sampleStopTimes: stopTimes,
                 firstDepartureMinutes,
+                departureMinutes: Number.isFinite(firstDepartureMinutes) ? [firstDepartureMinutes] : [],
+                blockIds: trip.block_id ? new Set([trip.block_id]) : new Set<string>(),
+                tripStopTimes: [{ trip, stopTimes, firstDepartureMinutes }],
             });
             return;
         }
 
         existing.trips.push(trip);
+        existing.tripStopTimes.push({ trip, stopTimes, firstDepartureMinutes });
+        if (Number.isFinite(firstDepartureMinutes)) existing.departureMinutes.push(firstDepartureMinutes);
+        if (trip.block_id) existing.blockIds.add(trip.block_id);
         if (firstDepartureMinutes < existing.firstDepartureMinutes) {
             existing.sampleTrip = trip;
             existing.sampleStopTimes = stopTimes;
@@ -368,6 +483,7 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
         );
         const directionLabel = group.directionId == null ? 'none' : String(group.directionId);
         const id = `${group.route.route_id}|${group.serviceId}|${directionLabel}|${group.shapeId ?? 'no-shape'}|${stops.map((stop) => stop.stopId).join('>')}`;
+        const sortedDepartures = group.departureMinutes.sort((a, b) => a - b);
 
         return {
             id,
@@ -383,6 +499,11 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
             tripCount: group.trips.length,
             stopCount: stops.length,
             shapePointCount: group.shapeId ? (shapesById.get(group.shapeId)?.length ?? 0) : 0,
+            firstDepartureMinutes: sortedDepartures[0],
+            lastDepartureMinutes: sortedDepartures[sortedDepartures.length - 1],
+            medianHeadwayMinutes: deriveMedianHeadwayMinutes(sortedDepartures),
+            blockCount: group.blockIds.size > 0 ? group.blockIds.size : undefined,
+            scheduledRuntimes: buildScheduledRuntimesForTripSamples(group.tripStopTimes, stops.length),
             stops,
             shapePoints,
             feedVersion: feed.feedInfo?.feedVersion,
@@ -398,44 +519,93 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
     return filterToFullRoutePatterns(patterns);
 }
 
+function buildFallbackFullDayScheduledRuntime(pattern: RoutePlanner2GtfsImportPattern): RoutePlanner2GtfsImportPeriodRuntime[] {
+    const segmentRuntimeMinutes = pattern.stops.slice(0, -1).flatMap((fromStop, index): number[] => {
+        const toStop = pattern.stops[index + 1];
+        if (!toStop) return [];
+
+        const fromMinutes = fromStop.departureMinutes ?? fromStop.arrivalMinutes;
+        const toMinutes = toStop.arrivalMinutes ?? toStop.departureMinutes;
+        if (fromMinutes == null || toMinutes == null || toMinutes < fromMinutes) return [];
+
+        return [Math.max(1, Math.round(toMinutes - fromMinutes))];
+    });
+
+    if (segmentRuntimeMinutes.length !== Math.max(0, pattern.stops.length - 1)) return [];
+    return [{
+        period: 'full-day',
+        sampleSize: pattern.tripCount,
+        segmentRuntimeMinutes,
+        totalRuntimeMinutes: segmentRuntimeMinutes.reduce((sum, runtimeMinutes) => sum + runtimeMinutes, 0),
+    }];
+}
+
 function buildGtfsScheduledRuntimeEstimates(
-    stops: RoutePlanner2GtfsImportStop[],
+    pattern: RoutePlanner2GtfsImportPattern,
     now: string,
-    sampleSize: number,
     routeShortName: string,
     evidenceDayType?: 'weekday' | 'saturday' | 'sunday',
 ): RoutePlanner2SegmentRuntime[] {
     const estimates: RoutePlanner2SegmentRuntime[] = [];
+    const scheduledRuntimes = pattern.scheduledRuntimes && pattern.scheduledRuntimes.length > 0
+        ? pattern.scheduledRuntimes
+        : buildFallbackFullDayScheduledRuntime(pattern);
 
-    stops.slice(0, -1).forEach((fromStop, index) => {
-        const toStop = stops[index + 1];
-        if (!toStop) return;
+    scheduledRuntimes.forEach((periodRuntime) => {
+        pattern.stops.slice(0, -1).forEach((fromStop, index) => {
+            const toStop = pattern.stops[index + 1];
+            const runtimeMinutes = periodRuntime.segmentRuntimeMinutes[index];
+            if (!toStop || runtimeMinutes == null || !Number.isFinite(runtimeMinutes) || runtimeMinutes <= 0) return;
 
-        const fromMinutes = fromStop.departureMinutes ?? fromStop.arrivalMinutes;
-        const toMinutes = toStop.arrivalMinutes ?? toStop.departureMinutes;
-        if (fromMinutes == null || toMinutes == null || toMinutes < fromMinutes) return;
-
-        const runtimeMinutes = Math.max(1, Math.round(toMinutes - fromMinutes));
-        estimates.push({
-            id: `segment-${fromStop.stopId}-${toStop.stopId}`,
-            fromStopId: fromStop.stopId,
-            toStopId: toStop.stopId,
-            runtimeMinutes,
-            source: 'scheduled-proxy',
-            confidence: 'high',
-            sampleSize,
-            scheduledRuntimeMinutes: runtimeMinutes,
-            matchQuality: 'exact-code',
-            matchedFromStopId: fromStop.gtfsStopId,
-            matchedToStopId: toStop.gtfsStopId,
-            matchedRoutes: [routeShortName],
-            evidenceDayType,
-            evidencePeriod: 'full-day',
-            updatedAt: now,
+            estimates.push({
+                id: `segment-${fromStop.stopId}-${toStop.stopId}-${periodRuntime.period}`,
+                fromStopId: fromStop.stopId,
+                toStopId: toStop.stopId,
+                runtimeMinutes,
+                source: 'scheduled-proxy',
+                confidence: 'high',
+                sampleSize: periodRuntime.sampleSize,
+                scheduledRuntimeMinutes: runtimeMinutes,
+                matchQuality: 'exact-code',
+                matchedFromStopId: fromStop.gtfsStopId,
+                matchedToStopId: toStop.gtfsStopId,
+                matchedRoutes: [routeShortName],
+                evidenceDayType,
+                evidencePeriod: periodRuntime.period,
+                updatedAt: now,
+            });
         });
     });
 
     return estimates;
+}
+
+function getGtfsDayType(dayTypeLabel: string): RoutePlanner2ServiceAssumptions['dayType'] {
+    const normalized = dayTypeLabel.toLowerCase();
+    if (normalized.includes('saturday')) return 'saturday';
+    if (normalized.includes('sunday')) return 'sunday';
+    if (normalized.includes('weekday')) return 'weekday';
+    return undefined;
+}
+
+function buildServiceAssumptionsFromGtfsPattern(pattern: RoutePlanner2GtfsImportPattern): RoutePlanner2ServiceAssumptions {
+    const firstTripTime = formatGtfsMinutesAsTime(pattern.firstDepartureMinutes);
+    const lastTripTime = formatGtfsMinutesAsTime(pattern.lastDepartureMinutes);
+    const targetBuses = pattern.blockCount && pattern.blockCount > 0 ? pattern.blockCount : undefined;
+
+    return {
+        ...DEFAULT_SERVICE,
+        ...(firstTripTime ? { firstTripTime } : {}),
+        ...(lastTripTime ? { lastTripTime } : {}),
+        ...(pattern.medianHeadwayMinutes ? { frequencyMinutes: pattern.medianHeadwayMinutes } : {}),
+        ...(targetBuses ? {
+            targetBuses,
+            startTerminalLayoverMinutes: 0,
+            endTerminalLayoverMinutes: 0,
+        } : {}),
+        dayType: getGtfsDayType(pattern.dayTypeLabel),
+        planningPeriod: 'all-day',
+    };
 }
 
 export function createRoutePlanner2ScenarioFromGtfsPattern(
@@ -458,15 +628,8 @@ export function createRoutePlanner2ScenarioFromGtfsPattern(
         stopCode: stop.stopCode,
     }));
     const alignment = buildSegmentWaypoints(pattern.stops, pattern.shapePoints);
-    const dayTypeLabel = pattern.dayTypeLabel.toLowerCase();
-    const evidenceDayType = dayTypeLabel.includes('saturday')
-        ? 'saturday'
-        : dayTypeLabel.includes('sunday')
-            ? 'sunday'
-            : dayTypeLabel.includes('weekday')
-                ? 'weekday'
-                : undefined;
-    const runtimeEstimates = buildGtfsScheduledRuntimeEstimates(pattern.stops, now, pattern.tripCount, pattern.routeShortName, evidenceDayType);
+    const evidenceDayType = getGtfsDayType(pattern.dayTypeLabel);
+    const runtimeEstimates = buildGtfsScheduledRuntimeEstimates(pattern, now, pattern.routeShortName, evidenceDayType);
 
     return {
         id: options.id ?? createId('scenario-gtfs'),
@@ -487,8 +650,8 @@ export function createRoutePlanner2ScenarioFromGtfsPattern(
         },
         alignment,
         stops,
-        service: { ...DEFAULT_SERVICE },
-        runtimeSourceMode: 'mapbox',
+        service: buildServiceAssumptionsFromGtfsPattern(pattern),
+        runtimeSourceMode: 'gtfs',
         runtimeEstimates,
         notes: 'Imported from GTFS as an editable planning copy. Changes here do not modify the GTFS feed.',
         createdAt: now,

@@ -111,23 +111,62 @@ function estimateMatchesCurrentPath(estimate: RoutePlanner2SegmentRuntime | unde
     return estimate.pathFingerprint === pathFingerprint;
 }
 
+function getExpectedEvidencePeriod(service: RoutePlanner2ServiceAssumptions): RoutePlanner2SegmentRuntime['evidencePeriod'] {
+    if (!service.planningPeriod || service.planningPeriod === 'all-day') return 'full-day';
+    return service.planningPeriod;
+}
+
+function scoreEstimateForServicePeriod(
+    estimate: RoutePlanner2SegmentRuntime,
+    service: RoutePlanner2ServiceAssumptions,
+): number {
+    let score = 0;
+    const expectedDayType = service.dayType;
+    const expectedPeriod = getExpectedEvidencePeriod(service);
+
+    if (estimate.evidenceDayType) {
+        if (expectedDayType && estimate.evidenceDayType !== expectedDayType) return -1;
+        score += expectedDayType ? 4 : 1;
+    } else {
+        score += 1;
+    }
+
+    if (estimate.evidencePeriod) {
+        if (estimate.evidencePeriod === expectedPeriod) return score + 8;
+        if (estimate.evidencePeriod === 'full-day') return score + 3;
+        return -1;
+    }
+
+    return score + 2;
+}
+
 function getCurrentSegmentEstimate(
     scenario: RoutePlanner2Scenario,
     fromStopId: string,
     toStopId: string,
     pathFingerprint: string,
 ): RoutePlanner2SegmentRuntime | null {
-    const estimate = scenario.runtimeEstimates?.find((item) =>
+    const candidates = (scenario.runtimeEstimates ?? []).filter((item) =>
         item.fromStopId === fromStopId
         && item.toStopId === toStopId
         && estimateMatchesCurrentPath(item, pathFingerprint)
+        && isPositiveNumber(item.runtimeMinutes ?? undefined)
         && (
             (scenario.runtimeSourceMode ?? 'gtfs') !== 'mapbox'
             || !GTFS_RUNTIME_EVIDENCE_SOURCES.has(item.source)
         ),
     );
-    if (!estimate || !isPositiveNumber(estimate.runtimeMinutes ?? undefined)) return null;
-    return estimate;
+
+    const rankedCandidates = candidates
+        .map((estimate, index) => ({
+            estimate,
+            index,
+            score: scoreEstimateForServicePeriod(estimate, scenario.service),
+        }))
+        .filter((candidate) => candidate.score >= 0)
+        .sort((a, b) => b.score - a.score || a.index - b.index);
+
+    return rankedCandidates[0]?.estimate ?? null;
 }
 
 function getManualSegmentOverride(
@@ -154,6 +193,10 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
     const warnings: RoutePlanner2Warning[] = [...validateRoutePlanner2Terminals(scenario)];
     const service = scenario.service;
     const intermediateStopDwellSeconds = service.intermediateStopDwellSeconds ?? 0;
+    const hasTargetBusCount = service.targetBuses != null;
+    const targetBuses = hasTargetBusCount && isPositiveNumber(service.targetBuses)
+        ? Math.max(1, Math.ceil(service.targetBuses))
+        : null;
 
     if (scenario.stops.length < 2) {
         warnings.push({
@@ -170,6 +213,15 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
             severity: 'blocking',
             message: 'Target frequency must be greater than zero.',
             action: 'Enter a positive frequency in minutes.',
+        });
+    }
+
+    if (hasTargetBusCount && targetBuses == null) {
+        warnings.push({
+            id: 'invalid-target-buses',
+            severity: 'blocking',
+            message: 'Target bus count must be greater than zero.',
+            action: 'Enter a positive bus count or leave the field blank to calculate it.',
         });
     }
 
@@ -191,7 +243,8 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
         });
     }
 
-    if (service.startTerminalLayoverMinutes < MIN_TERMINAL_LAYOVER_MINUTES || service.endTerminalLayoverMinutes < MIN_TERMINAL_LAYOVER_MINUTES) {
+    const suppressGtfsLayoverWarning = scenario.source?.type === 'gtfs' && targetBuses != null;
+    if (!suppressGtfsLayoverWarning && (service.startTerminalLayoverMinutes < MIN_TERMINAL_LAYOVER_MINUTES || service.endTerminalLayoverMinutes < MIN_TERMINAL_LAYOVER_MINUTES)) {
         warnings.push({
             id: 'low-layover',
             severity: 'warning',
@@ -259,25 +312,35 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
     if (!hasBlockingWarnings) {
         if (scenario.routeShape === 'closed-loop' || scenario.routeShape === 'out-and-back') {
             const fullRouteRuntimeMinutes = oneWayRuntimeMinutes;
-            busesRequired = Math.max(1, Math.ceil(fullRouteRuntimeMinutes / service.frequencyMinutes));
+            busesRequired = targetBuses ?? Math.max(1, Math.ceil(fullRouteRuntimeMinutes / service.frequencyMinutes));
             cycleTimeMinutes = busesRequired * service.frequencyMinutes;
             busThresholdBasisMinutes = fullRouteRuntimeMinutes;
-            recoveryTimeMinutes = Math.max(0, cycleTimeMinutes - fullRouteRuntimeMinutes);
+            recoveryTimeMinutes = cycleTimeMinutes - fullRouteRuntimeMinutes;
             recoveryPercent = fullRouteRuntimeMinutes > 0
                 ? Math.round((recoveryTimeMinutes / fullRouteRuntimeMinutes) * 100)
                 : null;
         } else {
-            cycleTimeMinutes = oneWayRuntimeMinutes * 2
+            const estimatedFullRuntimeMinutes = oneWayRuntimeMinutes * 2
                 + service.startTerminalLayoverMinutes
                 + service.endTerminalLayoverMinutes;
-            busesRequired = Math.ceil(cycleTimeMinutes / service.frequencyMinutes);
-            busThresholdBasisMinutes = cycleTimeMinutes;
+            busesRequired = targetBuses ?? Math.ceil(estimatedFullRuntimeMinutes / service.frequencyMinutes);
             const scheduledCycleWindowMinutes = busesRequired * service.frequencyMinutes;
-            recoveryTimeMinutes = Math.max(0, scheduledCycleWindowMinutes - cycleTimeMinutes);
-            recoveryPercent = cycleTimeMinutes > 0
-                ? Math.round((recoveryTimeMinutes / cycleTimeMinutes) * 100)
+            cycleTimeMinutes = targetBuses != null ? scheduledCycleWindowMinutes : estimatedFullRuntimeMinutes;
+            busThresholdBasisMinutes = estimatedFullRuntimeMinutes;
+            recoveryTimeMinutes = scheduledCycleWindowMinutes - estimatedFullRuntimeMinutes;
+            recoveryPercent = estimatedFullRuntimeMinutes > 0
+                ? Math.round((recoveryTimeMinutes / estimatedFullRuntimeMinutes) * 100)
                 : null;
         }
+    }
+
+    if (recoveryTimeMinutes != null && recoveryTimeMinutes < 0) {
+        warnings.push({
+            id: 'target-bus-deficit',
+            severity: 'warning',
+            message: 'The target bus count is below the estimated runtime need.',
+            action: 'Review frequency, runtime, layover, or bus count before treating this option as feasible.',
+        });
     }
 
     if (busThresholdBasisMinutes != null && busesRequired != null) {

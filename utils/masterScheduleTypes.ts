@@ -24,6 +24,8 @@ export interface Team {
     createdAt: Date;
     createdBy: string;
     inviteCode: string;
+    defaultMemberAccessLevel?: WorkspaceAccessLevel;
+    partnerTeam?: boolean;
 }
 
 export interface TeamMember {

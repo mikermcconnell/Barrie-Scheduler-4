@@ -24,9 +24,11 @@ A planner can start from an existing GTFS route instead of a blank concept.
 3. Select one or more full-route patterns. Partial/short-turn patterns are filtered out.
 4. Import them as new editable route concepts in the same workspace.
 5. Review each imported route line, stop sequence, terminal roles, and scheduled segment runtimes.
+   Imported GTFS routes default to GTFS route runtime, so the first runtime estimate comes from scheduled GTFS stop times rather than Mapbox/fallback assumptions. Scheduled runtimes are grouped by time band when enough trips exist, and the Runtime period selector controls which band is used.
+   When available, the import also fills service assumptions from the GTFS pattern: first trip, last trip, median scheduled headway, day type, and distinct GTFS block count as the target buses in service.
 6. Move, remove, add, or rename stops as needed.
 7. Adjust route line waypoints if the concept changes.
-8. Enter service assumptions and review feasibility.
+8. Review or edit service assumptions and feasibility.
 
 Imported GTFS routes are local planning copies. Editing them does not change the GTFS feed or create a fixed-route schedule draft.
 
@@ -68,7 +70,7 @@ When a planner is redesigning service coverage, they can move or copy a contiguo
 6. Use **Move segment** to transfer coverage or **Copy segment** to test coverage overlap.
 7. Review the runtime impact message for source and target one-way runtime changes.
 
-Moved stops are removed from the source route and copied into the target route with new local IDs. Line bends between stops inside the selected segment move with that segment. Bends that connect to stops outside the selected segment are cleaned up, and stale segment runtimes are cleared where the stop order changes.
+Moved stops are removed from the source route and copied into the target route with new local IDs. Line bends and scheduled runtime evidence between stops inside the selected segment move with that segment. Bends that connect to stops outside the selected segment are cleaned up, and stale segment runtimes are cleared where the stop order changes.
 
 V1 may store this state locally only. The workflow should still use stable IDs and a structure that can later move to Firebase.
 

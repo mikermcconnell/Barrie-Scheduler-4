@@ -53,6 +53,7 @@ import {
     type StopRouteDirection,
     type StopRouteDirectionSummaryRow,
 } from '../../utils/od-matrix/odTransferRouteSummary';
+import { resolveValidCachedGeocode } from '../../utils/od-matrix/odFlowMapMetrics';
 import { ODPairMapModal } from './ODPairMapModal';
 import { ArcLayer, MapBase } from '../shared';
 
@@ -281,11 +282,7 @@ function resolveGeocode(
     stationName: string,
     geocodeCache: GeocodeCache | null,
 ): GeocodedLocation | null {
-    if (!geocodeCache) return null;
-    const key = Object.keys(geocodeCache.stations).find(
-        k => k.toLowerCase() === stationName.toLowerCase(),
-    );
-    return key ? geocodeCache.stations[key] : null;
+    return resolveValidCachedGeocode(stationName, geocodeCache);
 }
 
 interface TransferPointAgg {

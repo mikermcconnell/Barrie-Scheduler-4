@@ -4,6 +4,7 @@ import {
     buildVisibleStopMetrics,
     filterODPairs,
     getGeocodedPairs,
+    resolveValidCachedGeocode,
 } from '../utils/od-matrix/odFlowMapMetrics';
 import type { GeocodeCache, ODPairRecord, ODStation } from '../utils/od-matrix/odMatrixTypes';
 
@@ -86,5 +87,10 @@ describe('odFlowMapMetrics', () => {
         expect(getGeocodedPairs(pairs, geoLookup)).toEqual([
             { origin: 'Barrie', destination: 'Sudbury', journeys: 12 },
         ]);
+    });
+
+    it('resolves cached geocodes case-insensitively but rejects out-of-Canada coordinates', () => {
+        expect(resolveValidCachedGeocode('barrie', geocodeCache)).toEqual(geocodeCache.stations.Barrie);
+        expect(resolveValidCachedGeocode('Buffalo', geocodeCache)).toBeNull();
     });
 });

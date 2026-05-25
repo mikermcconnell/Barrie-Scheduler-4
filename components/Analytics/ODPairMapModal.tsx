@@ -15,6 +15,7 @@ import { MapBase, quadraticBezierArc, toGeoJSON } from '../shared';
 import { fmt } from './AnalyticsShared';
 import type { GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
 import type { ODPairRouteMatch, MatchConfidence } from '../../utils/od-matrix/odRouteEstimation';
+import { resolveValidCachedGeocode } from '../../utils/od-matrix/odFlowMapMetrics';
 
 const ON_TEAL = '#00594C';
 const ORIGIN_COLOR = '#2563eb';
@@ -101,11 +102,7 @@ function resolveGeocode(
     stationName: string,
     geocodeCache: GeocodeCache | null
 ): GeocodedLocation | null {
-    if (!geocodeCache) return null;
-    const key = Object.keys(geocodeCache.stations).find(
-        (candidate) => candidate.toLowerCase() === stationName.toLowerCase()
-    );
-    return key ? geocodeCache.stations[key] : null;
+    return resolveValidCachedGeocode(stationName, geocodeCache);
 }
 
 function ConfidenceIcon({ confidence }: { confidence: MatchConfidence }) {

@@ -756,8 +756,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                         <AnalyticsCard
                             color="violet"
                             icon={<Network size={20} />}
-                            title="Ontario Northland"
-                            description="Import origin-destination ridership matrices, visualize travel patterns, and analyze station connectivity."
+                            title="Agency OD Analysis"
+                            description="Import origin-destination ridership matrices, visualize agency travel patterns, and analyze station connectivity."
                             hasData={hasODData}
                             underConstruction={isFeatureUnderConstruction('analyticsOdMatrix')}
                             onClick={handleODMatrixClick}

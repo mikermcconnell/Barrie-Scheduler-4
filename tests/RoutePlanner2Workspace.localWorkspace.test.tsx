@@ -301,6 +301,39 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(roadNameToggle?.textContent).toContain('Hide road names');
   });
 
+  it('shows camp shuttle stop labels only when the map toggle is enabled', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+      addMapStop(view);
+    });
+
+    const mapCanvas = view.querySelector('[data-testid="rp2-map-canvas"]');
+    expect(mapCanvas?.getAttribute('data-camp-shuttle-labels')).toBe('off');
+    expect(view.querySelector('[data-testid^="rp2-map-stop-label-"]')).toBeNull();
+
+    const campToggle = view.querySelector('[data-testid="rp2-camp-shuttle-label-toggle"]') as HTMLButtonElement | null;
+    expect(campToggle).not.toBeNull();
+    expect(campToggle?.getAttribute('aria-pressed')).toBe('false');
+    expect(campToggle?.textContent).toContain('Camp Shuttle');
+
+    flushSync(() => {
+      click(campToggle);
+    });
+
+    expect(campToggle?.getAttribute('aria-pressed')).toBe('true');
+    expect(mapCanvas?.getAttribute('data-camp-shuttle-labels')).toBe('on');
+
+    flushSync(() => {
+      click(campToggle);
+    });
+
+    expect(campToggle?.getAttribute('aria-pressed')).toBe('false');
+    expect(mapCanvas?.getAttribute('data-camp-shuttle-labels')).toBe('off');
+    expect(view.querySelector('[data-testid^="rp2-map-stop-label-"]')).toBeNull();
+  });
+
   it('saves the current route plan to the team workspace', async () => {
     const view = renderWorkspace();
 
@@ -513,11 +546,6 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Route 400 - To Barrie South GO');
     expect(view.textContent).toContain('Barrie South GO');
     expect(view.textContent).toContain('Imported from GTFS as an editable planning copy');
-    expect(view.textContent).toContain('Mapbox only');
-
-    flushSync(() => {
-      click(findButton(view, 'GTFS route run time'));
-    });
 
     expect(view.textContent).toContain('Scheduled runtime / high');
     expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Scheduled GTFS · Route 400');
