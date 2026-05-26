@@ -1,3 +1,4 @@
+import { getClientMapboxToken } from '../mapboxToken';
 // Walking Service — Mapbox Directions API for street-level walking paths
 // Fallback to haversine × buffer estimate when API unavailable
 
@@ -63,7 +64,7 @@ function estimateWalking(fromLat: number, fromLon: number, toLat: number, toLon:
 // ─── Mapbox API ──────────────────────────────────────────────────────
 
 function getMapboxToken(): string | null {
-  return import.meta.env?.VITE_MAPBOX_TOKEN ?? null;
+  return getClientMapboxToken();
 }
 
 interface MapboxLeg {

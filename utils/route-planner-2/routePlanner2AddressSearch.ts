@@ -1,4 +1,5 @@
 import { searchRoutePlanner2PopularBarriePlaces } from './routePlanner2PopularPlaces';
+import { normalizeMapboxToken, getClientMapboxToken } from '../mapboxToken';
 
 const BARRIE_PROXIMITY = { lng: -79.69, lat: 44.38 };
 const MIN_ADDRESS_QUERY_LENGTH = 3;
@@ -41,13 +42,8 @@ export interface RoutePlanner2AddressSearchOptions {
     onDiagnostic?: (diagnostic: RoutePlanner2AddressSearchDiagnostic) => void;
 }
 
-function normalizeMapboxToken(token: string | null | undefined): string | null {
-    const normalized = token?.trim() ?? '';
-    return normalized.length > 0 ? normalized : null;
-}
-
 function getMapboxToken(): string | null {
-    return normalizeMapboxToken(import.meta.env?.VITE_MAPBOX_TOKEN);
+    return getClientMapboxToken();
 }
 
 function shouldPreferServerProxy(options: RoutePlanner2AddressSearchOptions): boolean {

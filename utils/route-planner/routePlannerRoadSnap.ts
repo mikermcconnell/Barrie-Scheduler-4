@@ -1,5 +1,6 @@
 import type { RouteScenarioPattern, RouteStop } from './routePlannerTypes';
 
+import { getClientMapboxToken } from '../mapboxToken';
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const COORD_PRECISION = 5;
 const MAX_FULL_WAYPOINT_REROUTE_POINTS = 24;
@@ -39,7 +40,7 @@ function roundCoord(value: number): number {
 }
 
 function getMapboxToken(): string | null {
-    return import.meta.env?.VITE_MAPBOX_TOKEN ?? null;
+    return getClientMapboxToken();
 }
 
 function buildSegmentCacheKey(from: [number, number], to: [number, number]): string {

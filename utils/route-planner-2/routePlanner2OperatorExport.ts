@@ -1,6 +1,7 @@
 import { buildRoutePlanner2StopSegmentPaths, buildRoutePlanner2StopVisitSequence } from './routePlanner2Segments';
 import type { RoutePlanner2FeasibilitySummary, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime } from './routePlanner2Types';
 
+import { getClientMapboxToken } from '../mapboxToken';
 type JsPdfInstance = {
     setProperties: (properties: Record<string, string>) => void;
     setFillColor: (...args: [number, number, number] | [string]) => void;
@@ -84,7 +85,7 @@ interface ExportOptions {
 }
 
 function getMapboxToken(): string | null {
-    return import.meta.env?.VITE_MAPBOX_TOKEN ?? null;
+    return getClientMapboxToken();
 }
 
 function formatDateTime(date: Date): string {

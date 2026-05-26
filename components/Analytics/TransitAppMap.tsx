@@ -43,6 +43,7 @@ import {
     getAvailableRouteNamesFromShapes,
 } from '../../utils/transit-app/transitAppOdDisplay';
 import { describeLocationRelativeToBarrie, isInBarrieAnalysisArea } from '../../utils/transit-app/transitAppGeo';
+import { getClientMapboxToken } from '../../utils/mapboxToken';
 import { loadGtfsRouteShapes, loadGtfsRouteShapeVariants } from '../../utils/gtfs/gtfsShapesLoader';
 import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { formatTimeBand, formatDayType, formatSeason } from './AnalyticsShared';
@@ -89,7 +90,7 @@ const OD_ZONE_DOT_LAYER_ID = 'transit-app-zone-dots';
 const OD_ARC_LAYER_ID = 'transit-app-arcs-lines';
 const OD_ENDPOINT_LAYER_ID = 'transit-app-endpoints';
 const COVERAGE_LAYER_ID = 'transit-app-coverage-clusters';
-const MAPBOX_TOKEN_AVAILABLE = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
+const MAPBOX_TOKEN_AVAILABLE = Boolean(getClientMapboxToken());
 
 function isInBarrie(lat: number, lon: number): boolean {
     return isInBarrieAnalysisArea(lat, lon);

@@ -39,7 +39,7 @@ export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string>
     none: 'No workspace access',
     production: 'Production only',
     planner: 'Planner',
-    'external-planner': 'External agency planner',
+    'external-planner': 'External Agency Planner',
     'transit-app-only': 'Transit App Data only',
     admin: 'Admin access',
     internal: 'Developer/internal',
@@ -179,3 +179,4 @@ export function canAccessWorkspaceFeature(
 export function listUnknownWorkspaceAccessKeys(): string[] {
     return WORKSPACE_ACCESS_FEATURES.filter((feature) => !(feature in FEATURE_DEFINITIONS));
 }
+

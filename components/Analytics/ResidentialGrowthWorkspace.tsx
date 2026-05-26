@@ -9,6 +9,7 @@ import { ArrowLeft, Building2, CheckCircle2, Download, Eye, FileImage, FileSprea
 import { jsPDF } from 'jspdf';
 
 import { MapBase } from '../shared';
+import { getClientMapboxToken } from '../../utils/mapboxToken';
 
 import concentrationCartoonIcon from '../../assets/residential-growth/icons/concentration-cartoon.png';
 
@@ -93,7 +94,7 @@ interface ResidentialGrowthPdfPreviewPage {
 
 const BARRIE_CENTER = { longitude: -79.69, latitude: 44.38 };
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+const MAPBOX_TOKEN = getClientMapboxToken();
 
 
 

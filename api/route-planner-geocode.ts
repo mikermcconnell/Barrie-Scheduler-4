@@ -25,7 +25,7 @@ interface MapboxGeocodingResponse {
 }
 
 function normalizeMapboxToken(token: string | null | undefined): string {
-    return token?.trim() ?? '';
+    return token?.replace(/\\r|\\n|\r|\n/g, '').trim() ?? '';
 }
 
 function getMapboxToken(): string {

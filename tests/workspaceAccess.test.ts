@@ -63,7 +63,7 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsNetworkConnections');
     });
 
-    it('gives external agency planners only Transit App Data', () => {
+    it('gives External Agency Planners only Transit App Data', () => {
         const allowed = getAllowedWorkspaceFeatures('external-planner');
 
         expect(allowed).toEqual(['analyticsTransitApp']);
@@ -86,7 +86,7 @@ describe('workspace access', () => {
     it('uses agency-neutral language for external planner access', async () => {
         const labels = await import('../utils/workspaceAccess');
 
-        expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS['external-planner']).toBe('External agency planner');
+        expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS['external-planner']).toBe('External Agency Planner');
         expect(labels.WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS['external-planner']).not.toMatch(/Ontario Northland/i);
         expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS['transit-app-only']).toBe('Transit App Data only');
     });
@@ -120,3 +120,4 @@ describe('workspace access', () => {
         expect(canAccessWorkspaceFeature('workspaceFixedRoute', productionWithOverride)).toBe(false);
     });
 });
+

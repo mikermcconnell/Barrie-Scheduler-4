@@ -926,7 +926,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     </div>
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-xs text-gray-500">
-                            Recommended for external agencies: External agency planner. The invite link will auto-join users after sign-in.
+                            Recommended for external agencies: External Agency Planner. The invite link will auto-join users after sign-in.
                         </p>
                         <button
                             onClick={handleCreatePartnerTeam}
@@ -1390,3 +1390,4 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         </div>
     );
 };
+

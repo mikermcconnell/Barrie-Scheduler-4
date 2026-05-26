@@ -1,6 +1,7 @@
 import type { RoutePlanner2Scenario, RoutePlanner2SegmentRuntime } from './routePlanner2Types';
 import { buildRoutePlanner2StopSegmentPaths } from './routePlanner2Segments';
 
+import { getClientMapboxToken } from '../mapboxToken';
 export type RoutePlanner2RoadSnapSource = 'mapbox' | 'fallback';
 
 export interface RoutePlanner2RoadSnapResult {
@@ -71,7 +72,7 @@ const COORD_PRECISION = 5;
 const segmentCache = new Map<string, { result: RoutePlanner2RoadSnapResult; expiresAt: number }>();
 
 function getMapboxToken(): string | null {
-    return import.meta.env?.VITE_MAPBOX_TOKEN ?? null;
+    return getClientMapboxToken();
 }
 
 function roundCoord(value: number): number {

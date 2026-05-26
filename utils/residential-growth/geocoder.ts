@@ -1,6 +1,8 @@
 import type { ResidentialGrowthGeocode, ResidentialGrowthGeocodeCache, ResidentialGrowthRecord } from './types';
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+import { getClientMapboxToken } from '../mapboxToken';
+
+const MAPBOX_TOKEN = getClientMapboxToken();
 const BARRIE_BBOX = '-79.85,44.25,-79.55,44.50';
 
 function normalizeAddressKey(address: string): string {

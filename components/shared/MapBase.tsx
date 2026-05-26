@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Map, { NavigationControl, ScaleControl, MapRef } from 'react-map-gl/mapbox';
 import type { MapMouseEvent } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import { getClientMapboxToken } from '../../utils/mapboxToken';
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
+const MAPBOX_TOKEN = getClientMapboxToken();
 
 /** Barrie, ON city center */
 const BARRIE_CENTER = { longitude: -79.69, latitude: 44.38 };

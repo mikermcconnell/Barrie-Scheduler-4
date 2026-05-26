@@ -8,6 +8,50 @@ interface AuthModalProps {
     inviteCode?: string;
 }
 
+const getFriendlyAuthError = (
+    error: unknown,
+    mode: 'signin' | 'signup' | 'reset',
+    hasInvite: boolean,
+): string => {
+    const code = typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code)
+        : '';
+
+    if (mode === 'signin') {
+        if (code === 'auth/too-many-requests') {
+            return 'Too many attempts. Please wait a few minutes, then try again.';
+        }
+        if (code === 'auth/user-disabled') {
+            return 'This account cannot sign in right now. Please contact support.';
+        }
+        return hasInvite
+            ? 'We could not sign you in. Check your email and password, or create an account to use this invite.'
+            : 'We could not sign you in. Check your email and password, then try again.';
+    }
+
+    if (mode === 'signup') {
+        if (code === 'auth/email-already-in-use') {
+            return hasInvite
+                ? 'An account already exists for this email. Sign in instead to use this invite.'
+                : 'An account already exists for this email. Try signing in instead.';
+        }
+        if (code === 'auth/invalid-email') {
+            return 'Enter a valid email address.';
+        }
+        if (code === 'auth/weak-password') {
+            return 'Choose a stronger password with at least 6 characters.';
+        }
+        if (code === 'auth/too-many-requests') {
+            return 'Too many attempts. Please wait a few minutes, then try again.';
+        }
+        return hasInvite
+            ? 'We could not create your account for this invite. Please try again.'
+            : 'We could not create your account. Please try again.';
+    }
+
+    return 'We could not send the reset link. Please check the email address and try again.';
+};
+
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, inviteCode }) => {
     const {
         signIn,
@@ -56,24 +100,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, inviteCod
                 await resetPassword(normalizedEmail);
                 setSuccessMessage('If an account exists for that email, a password reset link will arrive shortly. Check spam or junk if it does not show up.');
             }
-        } catch (err: any) {
-            let message = 'An error occurred';
-            if (err.code === 'auth/user-not-found') {
-                message = 'No account found with this email';
-            } else if (err.code === 'auth/wrong-password') {
-                message = 'Incorrect password';
-            } else if (err.code === 'auth/email-already-in-use') {
-                message = 'An account with this email already exists';
-            } else if (err.code === 'auth/invalid-email') {
-                message = 'Invalid email address';
-            } else if (err.code === 'auth/weak-password') {
-                message = 'Password is too weak';
-            } else if (err.code === 'auth/too-many-requests') {
-                message = 'Too many attempts. Please wait a few minutes and try again.';
-            } else if (err.message) {
-                message = err.message;
-            }
-            setError(message);
+        } catch (err) {
+            console.error('Authentication failed:', err);
+            setError(getFriendlyAuthError(err, mode, Boolean(inviteCode)));
         } finally {
             setLoading(false);
         }
@@ -85,8 +114,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, inviteCod
         try {
             await signInWithGoogle();
             onClose();
-        } catch (err: any) {
-            setError(err.message || 'Failed to sign in with Google');
+        } catch (err) {
+            console.error('Google sign-in failed:', err);
+            setError(inviteCode
+                ? 'We could not sign you in with Google. Please try again, or use email and password to continue with this invite.'
+                : 'We could not sign you in with Google. Please try again.');
         } finally {
             setLoading(false);
         }
@@ -99,8 +131,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, inviteCod
         try {
             await signInWithDevAccess();
             onClose();
-        } catch (err: any) {
-            setError(err.message || 'Failed to sign in with dev access');
+        } catch (err) {
+            console.error('Dev access sign-in failed:', err);
+            setError('Dev access is not available right now.');
         } finally {
             setLoading(false);
         }

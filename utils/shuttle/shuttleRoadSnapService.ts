@@ -1,5 +1,6 @@
 import type { ShuttlePattern } from './shuttleTypes';
 
+import { getClientMapboxToken } from '../mapboxToken';
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const COORD_PRECISION = 5;
 
@@ -20,7 +21,7 @@ function roundCoord(value: number): number {
 }
 
 function getMapboxToken(): string | null {
-    return import.meta.env?.VITE_MAPBOX_TOKEN ?? null;
+    return getClientMapboxToken();
 }
 
 function buildCacheKey(pattern: ShuttlePattern, waypoints: [number, number][]): string {
