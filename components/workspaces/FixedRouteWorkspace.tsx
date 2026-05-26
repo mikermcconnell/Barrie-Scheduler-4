@@ -212,6 +212,7 @@ export const FixedRouteWorkspace: React.FC = () => {
     const [isRestoringResumeTarget, setIsRestoringResumeTarget] = useState(false);
 
     useEffect(() => {
+        if (!user) return;
         if (viewMode === 'dashboard') return;
         if (viewMode === 'editor' && !currentEditorDraftId && !editorInitialContent) return;
         if (viewMode === 'system-editor' && !activeSystemDraft) return;
@@ -248,8 +249,8 @@ export const FixedRouteWorkspace: React.FC = () => {
             label,
             draftId: viewMode === 'editor' ? (currentEditorDraftId || undefined) : undefined,
             systemDraftId: viewMode === 'system-editor' ? (activeSystemDraft?.id || undefined) : undefined,
-        });
-    }, [activeSystemDraft, currentEditorDraftId, currentEditorDraftName, editorInitialContent, viewMode]);
+        }, user.uid);
+    }, [activeSystemDraft, currentEditorDraftId, currentEditorDraftName, editorInitialContent, user, viewMode]);
 
     const fetchDrafts = useCallback(async () => {
         if (!user) return;
@@ -434,7 +435,7 @@ export const FixedRouteWorkspace: React.FC = () => {
         if (!user) return;
         if (isRestoringResumeTarget) return;
 
-        const resumeState = loadFixedRouteResumeState();
+        const resumeState = loadFixedRouteResumeState(user.uid);
         if (!resumeState) return;
 
         if (viewMode === 'editor' && !editorInitialContent && resumeState.draftId) {

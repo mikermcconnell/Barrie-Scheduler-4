@@ -12,7 +12,7 @@ import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 import { isFeatureEnabled } from './utils/features';
-import { loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
+import { clearLegacyFixedRouteResumeState, loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
 import { useWorkspaceAccess } from './hooks/useWorkspaceAccess';
 import { getPendingInviteCode } from './utils/inviteLinks';
 import { ANALYTICS_WORKSPACE_FEATURES } from './utils/workspaceAccess';
@@ -54,7 +54,7 @@ const AppContent: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
   const [showTeamManagement, setShowTeamManagement] = useState(false);
-  const [fixedRouteResume, setFixedRouteResume] = useState(() => loadFixedRouteResumeState());
+  const [fixedRouteResume, setFixedRouteResume] = useState(() => loadFixedRouteResumeState(user?.uid));
   const pendingInviteCode = getPendingInviteCode();
 
   const isViewAvailable = useCallback((view: View): boolean => {
@@ -78,7 +78,7 @@ const AppContent: React.FC = () => {
       const parsedView = parseHashView();
       const nextView = isViewAvailable(parsedView) ? parsedView : 'home';
       setCurrentViewState(nextView);
-      setFixedRouteResume(loadFixedRouteResumeState());
+      setFixedRouteResume(loadFixedRouteResumeState(user?.uid));
       if (nextView === 'home' && window.location.hash) {
         window.location.hash = '';
       }
@@ -86,7 +86,17 @@ const AppContent: React.FC = () => {
     handler();
     window.addEventListener('hashchange', handler);
     return () => window.removeEventListener('hashchange', handler);
-  }, [isViewAvailable]);
+  }, [isViewAvailable, user?.uid]);
+
+  useEffect(() => {
+    if (!user) {
+      clearLegacyFixedRouteResumeState();
+      setFixedRouteResume(null);
+      return;
+    }
+
+    setFixedRouteResume(loadFixedRouteResumeState(user.uid));
+  }, [user]);
 
   useEffect(() => {
     if (!loading && !user && pendingInviteCode) {
@@ -201,7 +211,7 @@ const AppContent: React.FC = () => {
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
             </div>
 
-            {fixedRouteResume && (
+            {user && fixedRouteResume && (
               <div className="max-w-4xl mx-auto mb-8 px-2">
                 <button
                   onClick={handleResumeFixedRoute}

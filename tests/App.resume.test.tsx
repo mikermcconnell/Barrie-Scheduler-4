@@ -3,10 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
+const authState = vi.hoisted(() => ({
+  user: { uid: 'user-1', email: 'planner@example.com' } as { uid: string; email: string } | null,
+}));
+
 vi.mock('../components/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: () => ({
-    user: { uid: 'user-1', email: 'planner@example.com' },
+    user: authState.user,
     loading: false,
     signOut: async (): Promise<void> => undefined,
   }),
@@ -91,6 +95,7 @@ describe('App resume entry', () => {
   let root: Root;
 
   beforeEach(() => {
+    authState.user = { uid: 'user-1', email: 'planner@example.com' };
     localStorage.clear();
     window.location.hash = '';
     container = document.createElement('div');
@@ -108,7 +113,7 @@ describe('App resume entry', () => {
   });
 
   it('shows a resume button on the home dashboard and reopens the last fixed-route location', () => {
-    localStorage.setItem('scheduler4:fixed-route-resume', JSON.stringify({
+    localStorage.setItem('scheduler4:fixed-route-resume:user-1', JSON.stringify({
       hash: '#fixed/drafts',
       label: 'Scheduled Transit · My Drafts',
       updatedAt: '2026-04-10T12:00:00.000Z',
@@ -131,5 +136,27 @@ describe('App resume entry', () => {
     });
 
     expect(window.location.hash).toBe('#fixed/drafts');
+  });
+
+  it('does not show another user resume card when signed out', () => {
+    authState.user = null;
+    localStorage.setItem('scheduler4:fixed-route-resume', JSON.stringify({
+      hash: '#fixed/drafts',
+      label: 'Scheduled Transit · My Drafts',
+      updatedAt: '2026-04-10T12:00:00.000Z',
+    }));
+    localStorage.setItem('scheduler4:fixed-route-resume:user-1', JSON.stringify({
+      hash: '#fixed/drafts',
+      label: 'Scheduled Transit · My Drafts',
+      updatedAt: '2026-04-10T12:00:00.000Z',
+    }));
+
+    flushSync(() => {
+      root.render(<App />);
+    });
+
+    expect(container.textContent).not.toContain('Where you left off');
+    expect(container.textContent).not.toContain('Scheduled Transit · My Drafts');
+    expect(localStorage.getItem('scheduler4:fixed-route-resume')).toBeNull();
   });
 });
