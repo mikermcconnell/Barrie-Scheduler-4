@@ -1,13 +1,13 @@
 import React, { Suspense, useState, useCallback, useEffect } from 'react';
 import { AuthProvider, useAuth } from './components/contexts/AuthContext';
-import { TeamProvider } from './components/contexts/TeamContext';
+import { TeamProvider, useTeam } from './components/contexts/TeamContext';
 import { ToastProvider } from './components/contexts/ToastContext';
 import { AuthModal } from './components/modals/AuthModal';
 import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Modal } from './components/ui/Modal';
 import { TeamManagement } from './components/TeamManagement';
-import { LayoutDashboard, Bus, ArrowRight, Map, Loader2, BarChart2 } from 'lucide-react';
+import { LayoutDashboard, Bus, ArrowRight, Map, Loader2, BarChart2, Smartphone } from 'lucide-react';
 import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazyWithRetry } from './utils/lazyWithRetry';
@@ -15,11 +15,13 @@ import { isFeatureEnabled } from './utils/features';
 import { loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
 import { useWorkspaceAccess } from './hooks/useWorkspaceAccess';
 import { getPendingInviteCode } from './utils/inviteLinks';
+import { ANALYTICS_WORKSPACE_FEATURES } from './utils/workspaceAccess';
 
 const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
 const FixedRouteWorkspace = lazyWithRetry(() => import('./components/workspaces/FixedRouteWorkspace').then(module => ({ default: module.FixedRouteWorkspace })), 'fixed-workspace');
 const OperationsWorkspace = lazyWithRetry(() => import('./components/workspaces/OperationsWorkspace').then(module => ({ default: module.OperationsWorkspace })), 'operations-workspace');
+const AnalyticsDashboard = lazyWithRetry(() => import('./components/Analytics/AnalyticsDashboard').then(module => ({ default: module.AnalyticsDashboard })), 'planning-data-workspace');
 
 const APP_VIEW_FEATURES: Partial<Record<View, Parameters<typeof isFeatureEnabled>[0]>> = {
   ondemand: 'workspaceOndemand',
@@ -28,6 +30,7 @@ const APP_VIEW_FEATURES: Partial<Record<View, Parameters<typeof isFeatureEnabled
 };
 
 const isAppViewEnabled = (view: View): boolean => {
+  if (view === 'planning') return ANALYTICS_WORKSPACE_FEATURES.some(feature => isFeatureEnabled(feature));
   const feature = APP_VIEW_FEATURES[view];
   return feature ? isFeatureEnabled(feature) : true;
 };
@@ -37,13 +40,15 @@ function parseHashView(): View {
   if (hash.startsWith('fixed') && isAppViewEnabled('fixed')) return 'fixed';
   if (hash.startsWith('ondemand') && isAppViewEnabled('ondemand')) return 'ondemand';
   if (hash.startsWith('operations') && isAppViewEnabled('operations')) return 'operations';
+  if (hash.startsWith('planning') && isAppViewEnabled('planning')) return 'planning';
   return 'home';
 }
 
 
 
 const AppContent: React.FC = () => {
-  const { user, loading } = useAuth();
+  const { user, loading, signOut } = useAuth();
+  const { hasTeam } = useTeam();
   const { canAccess, loading: accessLoading } = useWorkspaceAccess();
   const [currentView, setCurrentViewState] = useState<View>(parseHashView);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -53,9 +58,12 @@ const AppContent: React.FC = () => {
   const pendingInviteCode = getPendingInviteCode();
 
   const isViewAvailable = useCallback((view: View): boolean => {
+    if (view === 'planning') return ANALYTICS_WORKSPACE_FEATURES.some(feature => canAccess(feature));
     const feature = APP_VIEW_FEATURES[view];
     return feature ? canAccess(feature) : true;
   }, [canAccess]);
+  const hasAvailableWorkspace = (['ondemand', 'fixed', 'operations', 'planning'] as View[]).some(isViewAvailable);
+  const mustCompleteTeamSetup = Boolean(user && (!hasTeam || !hasAvailableWorkspace));
 
   // Wrap navigation to sync URL hash
   const setCurrentView = useCallback((view: View) => {
@@ -96,6 +104,17 @@ const AppContent: React.FC = () => {
     window.location.hash = fixedRouteResume.hash;
   };
 
+  const handleSetupModalClose = () => {
+    if (mustCompleteTeamSetup) return;
+    setShowTeamManagement(false);
+  };
+
+  const handleSetupSignOut = async () => {
+    await signOut();
+    setShowTeamManagement(false);
+    setCurrentView('home');
+  };
+
   return (
     <div className="flex flex-col h-screen font-sans text-gray-800 bg-[#F7F7F7] overflow-hidden">
 
@@ -111,11 +130,11 @@ const AppContent: React.FC = () => {
         <FileManager
           onClose={() => setShowFileManager(false)}
           onSelectSchedule={(schedule) => {
-            console.log('Selected schedule:', schedule);
+            void schedule;
             setShowFileManager(false);
           }}
           onSelectFile={(file) => {
-            console.log('Selected file:', file);
+            void file;
             setShowFileManager(false);
           }}
         />
@@ -123,15 +142,29 @@ const AppContent: React.FC = () => {
 
       {/* Team Management Modal */}
       <Modal
-        isOpen={showTeamManagement}
-        onClose={() => setShowTeamManagement(false)}
+        isOpen={showTeamManagement || mustCompleteTeamSetup}
+        onClose={handleSetupModalClose}
         size="xl"
         zIndex="high"
+        closeOnBackdropClick={!mustCompleteTeamSetup}
+        closeOnEscape={!mustCompleteTeamSetup}
       >
-        <Modal.Header>Team Management</Modal.Header>
+        <Modal.Header showClose={!mustCompleteTeamSetup}>
+          {mustCompleteTeamSetup ? 'Get Started' : 'Team Management'}
+        </Modal.Header>
         <Modal.Body className="p-4 bg-gray-50">
           <TeamManagement />
         </Modal.Body>
+        {mustCompleteTeamSetup && (
+          <Modal.Footer>
+            <button
+              onClick={handleSetupSignOut}
+              className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50"
+            >
+              Sign out
+            </button>
+          </Modal.Footer>
+        )}
       </Modal>
 
       {/* Global Header */}
@@ -141,13 +174,28 @@ const AppContent: React.FC = () => {
         onShowFileManager={() => setShowFileManager(true)}
         onShowTeamManagement={() => setShowTeamManagement(true)}
         onShowAuthModal={() => setShowAuthModal(true)}
+        canShowFileManager={Boolean(user && hasAvailableWorkspace && !mustCompleteTeamSetup)}
       />
 
 
       <main className={`flex-1 overflow-hidden relative flex flex-col mx-auto w-full px-6 py-8 ${currentView === 'home' ? 'max-w-7xl' : 'max-w-[1920px]'}`}>
 
         {/* Workspace Selector (Home View) */}
-        {currentView === 'home' && (
+        {currentView === 'home' && mustCompleteTeamSetup && (
+          <div className="flex h-full items-center justify-center">
+            <div className="max-w-lg rounded-3xl border border-gray-200 bg-white p-8 text-center shadow-sm">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-brand-green">
+                <LayoutDashboard size={28} />
+              </div>
+              <h2 className="text-2xl font-extrabold text-gray-900">Complete team setup to continue</h2>
+              <p className="mt-3 text-sm font-medium leading-relaxed text-gray-500">
+                Join an existing team or create a new team before any workspaces become available.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {currentView === 'home' && !mustCompleteTeamSetup && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-y-auto h-full">
             <div className="text-center mb-12 mt-8">
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
@@ -240,6 +288,28 @@ const AppContent: React.FC = () => {
                 </button>
               )}
 
+              {/* Planning Data Card */}
+              {isViewAvailable('planning') && (
+                <button
+                  onClick={() => setCurrentView('planning')}
+                  className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-cyan-500 hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <Smartphone size={120} />
+                  </div>
+                  <div className="bg-cyan-100 w-16 h-16 rounded-2xl flex items-center justify-center text-cyan-600 mb-6 group-hover:scale-110 transition-transform">
+                    <Smartphone size={32} />
+                  </div>
+                  <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-cyan-600 transition-colors">Planning Data</h3>
+                  <p className="text-gray-500 font-bold mb-6">
+                    Analyze rider demand, Transit App data, and other planning datasets allowed for your access profile.
+                  </p>
+                  <div className="flex items-center gap-2 text-cyan-600 font-extrabold uppercase tracking-wide text-sm">
+                    Enter Workspace <ArrowRight size={16} />
+                  </div>
+                </button>
+              )}
+
             </div>
 
           </div>
@@ -260,6 +330,11 @@ const AppContent: React.FC = () => {
           {currentView === 'operations' && isViewAvailable('operations') && (
             <ErrorBoundary fallbackTitle="Workspace Error">
               <OperationsWorkspace />
+            </ErrorBoundary>
+          )}
+          {currentView === 'planning' && isViewAvailable('planning') && (
+            <ErrorBoundary fallbackTitle="Workspace Error">
+              <AnalyticsDashboard onClose={() => setCurrentView('home')} />
             </ErrorBoundary>
           )}
         </Suspense>

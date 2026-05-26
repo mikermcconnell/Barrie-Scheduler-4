@@ -34,7 +34,7 @@ firebase/
 │   └── fleetPlan/default                 # Shared fleet-planning workbook metadata + active storage pointer
 │       └── versions/{versionId}          # Fleet Plan version history
 │
-├── teamInvites/{inviteCode}              # Invite lookup -> teamId + teamName
+├── teamInvites/{inviteCode}              # Invite lookup -> teamId + teamName + default join access
 │
 └── migrations/                           # Data migration tracking
 ```
@@ -115,7 +115,7 @@ interface Team {
 
 ```typescript
 type TeamRole = 'owner' | 'admin' | 'member';
-type WorkspaceAccessLevel = 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'admin' | 'internal';
+type WorkspaceAccessLevel = 'none' | 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'admin' | 'internal';
 
 interface TeamMember {
   id: string;
@@ -129,11 +129,11 @@ interface TeamMember {
 }
 ```
 
-`role` controls team permissions and writes. `accessLevel` controls which app workspaces are visible. Use `external-planner` for non-Barrie planning users who need partner planning data, or `transit-app-only` for agencies that should see only Transit App Data. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
+`role` controls team permissions and writes. Team owners and admins can manage team settings and members. `accessLevel` controls which app workspaces are visible. Use `none` for brand-new users or newly created teams that should see only Team Management until access is explicitly granted. Use `external-planner` or `transit-app-only` for external agencies that should see only Transit App Data through the top-level Planning Data view. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
 
 `defaultMemberAccessLevel` and `defaultMemberWorkspaceOverrides` control the access assigned to future members who join with the team's invite code or invite link. The Developer Access Wizard in Team Management can set both the team default and individual member `workspaceOverrides`.
 
-Partner agency onboarding uses invite links in the form `?invite=CODE` or `#/join/CODE`. A signed-out user is prompted to sign in; after authentication, the app joins them to the matching team automatically if they are not already assigned to a team.
+Partner agency onboarding uses invite links in the form `?invite=CODE` or `#/join/CODE`. A signed-out user is prompted to sign in; after authentication, the app joins them to the matching team automatically. Invite lookup documents denormalize `defaultMemberAccessLevel` and optional `defaultMemberWorkspaceOverrides` so new members can receive the correct external profile before they are allowed to read the team document.
 
 ---
 

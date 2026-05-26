@@ -73,6 +73,11 @@ describe('teamService security-sensitive flows', () => {
 
     setDocMock.mockResolvedValue(undefined);
     updateDocMock.mockResolvedValue(undefined);
+    writeBatchMock.mockReturnValue({
+      set: vi.fn(),
+      delete: vi.fn(),
+      commit: vi.fn().mockResolvedValue(undefined),
+    });
     getDocMock.mockResolvedValue({
       exists: () => false,
     });
@@ -94,13 +99,31 @@ describe('teamService security-sensitive flows', () => {
   it('creates a public invite lookup document when creating a team', async () => {
     await createTeam('user-1', 'Ops Team', 'Owner', 'owner@example.com');
 
-    expect(setDocMock).toHaveBeenCalledWith(
+    const batch = writeBatchMock.mock.results[0].value as {
+      set: ReturnType<typeof vi.fn>;
+      commit: ReturnType<typeof vi.fn>;
+    };
+    expect(batch.set).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/generated-team' }),
+      expect.objectContaining({
+        defaultMemberAccessLevel: 'none',
+      })
+    );
+    expect(batch.set).toHaveBeenCalledWith(
       expect.objectContaining({ path: expect.stringMatching(/^teamInvites\//) }),
       expect.objectContaining({
         teamId: 'generated-team',
         teamName: 'Ops Team',
+        defaultMemberAccessLevel: 'none',
       })
     );
+    expect(batch.set).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'users/user-1' }),
+      { teamId: 'generated-team' },
+      { merge: true }
+    );
+    expect(batch.commit).toHaveBeenCalledOnce();
+    expect(setDocMock).not.toHaveBeenCalled();
   });
 
   it('treats a stale user.teamId without a membership doc as no active team', async () => {
@@ -203,6 +226,65 @@ describe('teamService security-sensitive flows', () => {
     getDocMock
       .mockResolvedValueOnce({
         exists: () => true,
+        data: () => ({
+          teamId: 'lane-transit',
+          teamName: 'Lane Transit',
+          defaultMemberAccessLevel: 'external-planner',
+        }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => false,
+      });
+
+    await joinTeamByInviteCode('lane-user', 'LANE01', 'Lane User', 'lane@example.com');
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
+      expect.objectContaining({
+        role: 'member',
+        accessLevel: 'external-planner',
+      })
+    );
+    expect(getDocMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses team default workspace overrides for newly joined members', async () => {
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          teamId: 'lane-transit',
+          teamName: 'Lane Transit',
+          defaultMemberAccessLevel: 'transit-app-only',
+          defaultMemberWorkspaceOverrides: {
+            analyticsTransitApp: true,
+            workspaceFixedRoute: false,
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => false,
+      });
+
+    await joinTeamByInviteCode('lane-user', 'LANE01', 'Lane User', 'lane@example.com');
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
+      expect.objectContaining({
+        accessLevel: 'transit-app-only',
+        workspaceOverrides: {
+          analyticsTransitApp: true,
+          workspaceFixedRoute: false,
+        },
+      })
+    );
+    expect(getDocMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to the team doc defaults for older invite lookup records', async () => {
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
         data: () => ({ teamId: 'lane-transit', teamName: 'Lane Transit' }),
       })
       .mockResolvedValueOnce({
@@ -218,55 +300,20 @@ describe('teamService security-sensitive flows', () => {
     expect(setDocMock).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
       expect.objectContaining({
-        role: 'member',
         accessLevel: 'external-planner',
       })
     );
   });
 
-  it('uses team default workspace overrides for newly joined members', async () => {
-    getDocMock
-      .mockResolvedValueOnce({
-        exists: () => true,
-        data: () => ({ teamId: 'lane-transit', teamName: 'Lane Transit' }),
-      })
-      .mockResolvedValueOnce({
-        exists: () => false,
-      })
-      .mockResolvedValueOnce({
-        exists: () => true,
-        data: () => ({
-          name: 'Lane Transit',
-          defaultMemberAccessLevel: 'transit-app-only',
-          defaultMemberWorkspaceOverrides: {
-            analyticsTransitApp: true,
-            workspaceFixedRoute: false,
-          },
-        }),
-      });
-
-    await joinTeamByInviteCode('lane-user', 'LANE01', 'Lane User', 'lane@example.com');
-
-    expect(setDocMock).toHaveBeenCalledWith(
-      expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
-      expect.objectContaining({
-        accessLevel: 'transit-app-only',
-        workspaceOverrides: {
-          analyticsTransitApp: true,
-          workspaceFixedRoute: false,
-        },
-      })
-    );
-  });
-
-  it('does not give newly created team owners internal workspace access by default', async () => {
+  it('gives newly created team owners no workspace access by default', async () => {
     await createTeam('user-1', 'Lane Transit', 'Owner', 'owner@example.com');
 
-    expect(setDocMock).toHaveBeenCalledWith(
+    const batch = writeBatchMock.mock.results[0].value as { set: ReturnType<typeof vi.fn> };
+    expect(batch.set).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teams/generated-team/members/user-1' }),
       expect.objectContaining({
         role: 'owner',
-        accessLevel: 'planner',
+        accessLevel: 'none',
       })
     );
   });
@@ -277,6 +324,25 @@ describe('teamService security-sensitive flows', () => {
     expect(updateDocMock).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teams/lane-transit' }),
       { defaultMemberAccessLevel: 'external-planner' }
+    );
+  });
+
+  it('mirrors updated team default access to the invite lookup', async () => {
+    getDocMock.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ name: 'Lane Transit', inviteCode: 'LANE01' }),
+    });
+
+    await updateTeamDefaultMemberAccessLevel('lane-transit', 'external-planner');
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teamInvites/LANE01' }),
+      expect.objectContaining({
+        teamId: 'lane-transit',
+        teamName: 'Lane Transit',
+        defaultMemberAccessLevel: 'external-planner',
+      }),
+      { merge: true }
     );
   });
 
@@ -295,6 +361,32 @@ describe('teamService security-sensitive flows', () => {
           workspaceFixedRoute: false,
         },
       }
+    );
+  });
+
+  it('mirrors updated default workspace overrides to the invite lookup', async () => {
+    getDocMock.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ name: 'Lane Transit', inviteCode: 'LANE01' }),
+    });
+
+    await updateTeamDefaultWorkspaceAccess('lane-transit', 'transit-app-only', {
+      analyticsTransitApp: true,
+      workspaceFixedRoute: false,
+    });
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teamInvites/LANE01' }),
+      expect.objectContaining({
+        teamId: 'lane-transit',
+        teamName: 'Lane Transit',
+        defaultMemberAccessLevel: 'transit-app-only',
+        defaultMemberWorkspaceOverrides: {
+          analyticsTransitApp: true,
+          workspaceFixedRoute: false,
+        },
+      }),
+      { merge: true }
     );
   });
 
@@ -363,6 +455,7 @@ describe('teamService security-sensitive flows', () => {
       expect.objectContaining({
         teamId: 'generated-team',
         teamName: 'Lane Transit',
+        defaultMemberAccessLevel: 'external-planner',
       })
     );
     expect(batchCommitMock).toHaveBeenCalledOnce();

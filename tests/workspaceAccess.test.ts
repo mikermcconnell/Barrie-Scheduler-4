@@ -23,6 +23,13 @@ describe('workspace access', () => {
         expect(listUnknownWorkspaceAccessKeys()).toEqual([]);
     });
 
+    it('gives users without a team member record no workspace access', () => {
+        expect(resolveWorkspaceAccessLevel(null)).toBe('none');
+        expect(getAllowedWorkspaceFeatures('none')).toEqual([]);
+        expect(canAccessWorkspaceFeature('workspaceFixedRoute', null)).toBe(false);
+        expect(canAccessWorkspaceFeature('analyticsTransitApp', undefined)).toBe(false);
+    });
+
     it('defaults existing owners and admins to internal access', () => {
         expect(resolveWorkspaceAccessLevel(member({ role: 'owner', accessLevel: undefined }))).toBe('internal');
         expect(resolveWorkspaceAccessLevel(member({ role: 'admin', accessLevel: undefined }))).toBe('internal');
@@ -56,14 +63,14 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsNetworkConnections');
     });
 
-    it('gives external agency planners only the scheduled transit shell and partner planning data', () => {
+    it('gives external agency planners only Transit App Data', () => {
         const allowed = getAllowedWorkspaceFeatures('external-planner');
 
-        expect(allowed).toContain('workspaceFixedRoute');
-        expect(allowed).toContain('analyticsOdMatrix');
+        expect(allowed).toEqual(['analyticsTransitApp']);
+        expect(allowed).not.toContain('workspaceFixedRoute');
+        expect(allowed).not.toContain('analyticsOdMatrix');
         expect(allowed).not.toContain('workspaceOndemand');
         expect(allowed).not.toContain('workspaceOperations');
-        expect(allowed).not.toContain('analyticsTransitApp');
         expect(allowed).not.toContain('analyticsStudentPass');
         expect(allowed).not.toContain('analyticsFleetPlan');
         expect(allowed).not.toContain('operationsLoadProfiles');

@@ -7,6 +7,19 @@ const allFeaturesEnabled = buildFeatureFlags({
 });
 
 describe('workspace access preview', () => {
+    it('shows no app surfaces for the no-access profile', () => {
+        const preview = buildWorkspaceAccessPreview({
+            displayName: 'New user',
+            accessLevel: 'none',
+            flags: allFeaturesEnabled,
+        });
+
+        expect(preview.accessLabel).toBe('No workspace access');
+        expect(preview.homeWorkspaces).toEqual([]);
+        expect(preview.analyticsCards).toEqual([]);
+        expect(preview.operationsTools).toEqual([]);
+    });
+
     it('summarizes exactly what a Transit App only profile will see', () => {
         const preview = buildWorkspaceAccessPreview({
             displayName: 'Lane reviewer',
@@ -16,9 +29,9 @@ describe('workspace access preview', () => {
 
         expect(preview.profileName).toBe('Lane reviewer');
         expect(preview.accessLabel).toBe('Transit App Data only');
-        expect(preview.homeWorkspaces.map(workspace => workspace.label)).toEqual([]);
+        expect(preview.homeWorkspaces.map(workspace => workspace.label)).toEqual(['Planning Data']);
         expect(preview.analyticsCards.map(card => card.label)).toEqual(['Transit App Data']);
-        expect(preview.visibleCount).toBe(1);
+        expect(preview.visibleCount).toBe(2);
         expect(preview.hiddenCount).toBeGreaterThan(1);
     });
 
@@ -27,13 +40,13 @@ describe('workspace access preview', () => {
             displayName: 'Partner planner',
             accessLevel: 'external-planner',
             overrides: {
-                analyticsTransitApp: true,
+                analyticsOdMatrix: true,
                 workspaceFixedRoute: false,
             },
             flags: allFeaturesEnabled,
         });
 
-        expect(preview.homeWorkspaces.map(workspace => workspace.label)).toEqual([]);
+        expect(preview.homeWorkspaces.map(workspace => workspace.label)).toEqual(['Planning Data']);
         expect(preview.analyticsCards.map(card => card.label)).toEqual([
             'Transit App Data',
             'Agency OD Analysis',

@@ -2,7 +2,7 @@ import type { FeatureFlags, FeatureKey } from './features';
 import { FEATURE_DEFINITIONS, featureFlags, isFeatureEnabled } from './features';
 import type { TeamMember, TeamRole } from './masterScheduleTypes';
 
-export type WorkspaceAccessLevel = 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'admin' | 'internal';
+export type WorkspaceAccessLevel = 'none' | 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'admin' | 'internal';
 
 export type WorkspaceAccessFeatureKey =
     | 'workspaceOndemand'
@@ -26,6 +26,7 @@ export type WorkspaceAccessOverrides = Partial<Record<WorkspaceAccessFeatureKey,
 type WorkspaceAccessSubject = Pick<TeamMember, 'role' | 'accessLevel' | 'workspaceOverrides'> | null | undefined;
 
 export const WORKSPACE_ACCESS_LEVELS: WorkspaceAccessLevel[] = [
+    'none',
     'production',
     'planner',
     'external-planner',
@@ -35,6 +36,7 @@ export const WORKSPACE_ACCESS_LEVELS: WorkspaceAccessLevel[] = [
 ];
 
 export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string> = {
+    none: 'No workspace access',
     production: 'Production only',
     planner: 'Planner',
     'external-planner': 'External agency planner',
@@ -44,18 +46,16 @@ export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string>
 };
 
 export const WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS: Record<WorkspaceAccessLevel, string> = {
+    none: 'No app workspaces. Team Management remains available for setup and access changes.',
     production: 'Only production-ready workspaces.',
     planner: 'Production workspaces plus selected planning tools.',
-    'external-planner': 'Limited non-Barrie planner access for partner agency planning data.',
+    'external-planner': 'External agency access limited to Transit App Data.',
     'transit-app-only': 'Only the Transit App Data workspace.',
     admin: 'Planner access plus broader operational tools.',
     internal: 'Everything, including unfinished workspaces.',
 };
 
-export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
-    'workspaceOndemand',
-    'workspaceFixedRoute',
-    'workspaceOperations',
+export const ANALYTICS_WORKSPACE_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsTransitApp',
     'analyticsOdMatrix',
     'analyticsCorridorSpeed',
@@ -66,6 +66,13 @@ export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsNetworkConnections',
     'analyticsRoutePlanner2',
     'analyticsShuttlePlanner',
+];
+
+export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
+    'workspaceOndemand',
+    'workspaceFixedRoute',
+    'workspaceOperations',
+    ...ANALYTICS_WORKSPACE_FEATURES,
     'operationsLoadProfiles',
     'operationsOperatorDwell',
 ];
@@ -86,8 +93,7 @@ const PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
 ];
 
 const EXTERNAL_PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
-    'workspaceFixedRoute',
-    'analyticsOdMatrix',
+    'analyticsTransitApp',
 ];
 
 const TRANSIT_APP_ONLY_WORKSPACES: WorkspaceAccessFeatureKey[] = [
@@ -104,6 +110,7 @@ const ADMIN_WORKSPACES: WorkspaceAccessFeatureKey[] = [
 const INTERNAL_WORKSPACES: WorkspaceAccessFeatureKey[] = [...WORKSPACE_ACCESS_FEATURES];
 
 const WORKSPACE_ACCESS_BY_LEVEL: Record<WorkspaceAccessLevel, ReadonlySet<WorkspaceAccessFeatureKey>> = {
+    none: new Set(),
     production: new Set(PRODUCTION_WORKSPACES),
     planner: new Set(PLANNER_WORKSPACES),
     'external-planner': new Set(EXTERNAL_PLANNER_WORKSPACES),
@@ -121,6 +128,10 @@ export function isWorkspaceAccessFeature(feature: FeatureKey): feature is Worksp
 }
 
 export function resolveWorkspaceAccessLevel(subject: WorkspaceAccessSubject): WorkspaceAccessLevel {
+    if (!subject) {
+        return 'none';
+    }
+
     if (isWorkspaceAccessLevel(subject?.accessLevel)) {
         return subject.accessLevel;
     }

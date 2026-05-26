@@ -36,6 +36,11 @@ The app uses a mixed model:
 Authorization should come from membership documents under `teams/{teamId}/members/{userId}`.
 Do not rely on `users/{userId}.teamId` for authorization.
 
+Team document updates and deletes are limited to team owners/admins and global workspace permission managers.
+Direct team document reads are also allowed during authenticated invite joins so the client can recover default join access for older invite lookup documents. Team collection listing remains limited to global workspace permission managers.
+Users can only create their own team membership through a valid invite lookup or as the initial owner of a team they are creating; knowing a team ID alone is not enough.
+The `none` workspace access profile grants no workspace reads/writes; it is intended for brand-new users and new self-created teams until access is explicitly granted in Team Management.
+
 Cross-team team lookup and permission management should come from Firebase Auth custom claims, not from a user's own team role or workspace access level.
 
 ### Storage
@@ -71,7 +76,7 @@ If you prefer to publish in the Firebase Console, copy from the current local fi
 2. Use **Create partner team**.
 3. Set the team name, optional custom code, and default access level.
 4. Use the Developer Access Wizard to set the exact default workspace access and any user-specific overrides.
-5. Use `transit-app-only` when the agency should see only Transit App Data; use `external-planner` when they need the external planning profile.
+5. Use `external-planner` or `transit-app-only` when the agency should see only Transit App Data.
 6. Copy the generated invite link and send that instead of a bare code.
 7. Confirm each joined user has the expected role, access level, and workspace override set.
 8. Rotate the invite code/link after onboarding.

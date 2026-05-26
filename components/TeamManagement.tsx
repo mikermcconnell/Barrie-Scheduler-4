@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle, Eye } from 'lucide-react';
+import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
 import { useTeam } from './contexts/TeamContext';
 import { useToast } from './contexts/ToastContext';
@@ -43,8 +43,9 @@ import {
     WORKSPACE_ACCESS_LEVEL_LABELS,
     WORKSPACE_ACCESS_LEVELS,
 } from '../utils/workspaceAccess';
-import { buildWorkspaceAccessPreview, type WorkspacePreviewItem } from '../utils/workspaceAccessPreview';
+import { buildWorkspaceAccessPreview } from '../utils/workspaceAccessPreview';
 import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
+import { WorkspaceAccessAppPreview } from './WorkspaceAccessAppPreview';
 
 const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
     workspaceOndemand: 'On Demand',
@@ -91,96 +92,19 @@ function buildWorkspaceOverrides(
     }, {} as WorkspaceAccessOverrides);
 }
 
-type WorkspaceAccessPreview = ReturnType<typeof buildWorkspaceAccessPreview>;
+function isPermissionDeniedError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const code = 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
+    const message = 'message' in error ? String((error as { message?: unknown }).message ?? '') : '';
+    return code.includes('permission-denied') || message.toLowerCase().includes('permission');
+}
 
-const PreviewSection: React.FC<{
-    title: string;
-    items: WorkspacePreviewItem[];
-    emptyMessage: string;
-}> = ({ title, items, emptyMessage }) => (
-    <div className="rounded-lg border border-gray-200 bg-white p-3">
-        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{title}</p>
-        {items.length > 0 ? (
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {items.map(item => (
-                    <div key={item.feature} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                        <p className="text-sm font-semibold text-gray-900">{item.label}</p>
-                        <p className="mt-1 text-xs leading-snug text-gray-500">{item.description}</p>
-                    </div>
-                ))}
-            </div>
-        ) : (
-            <p className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">{emptyMessage}</p>
-        )}
-    </div>
-);
-
-const WorkspaceAccessPreviewPanel: React.FC<{
-    title: string;
-    preview: WorkspaceAccessPreview;
-}> = ({ title, preview }) => {
-    const hiddenPreview = preview.hiddenFeatures.slice(0, 8);
-    const hiddenRemainder = preview.hiddenFeatures.length - hiddenPreview.length;
-
-    return (
-        <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/60 p-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div className="flex items-start gap-2">
-                    <div className="mt-0.5 rounded-lg bg-white p-2 text-blue-600 shadow-sm">
-                        <Eye size={16} />
-                    </div>
-                    <div>
-                        <p className="text-sm font-semibold text-gray-900">{title}</p>
-                        <p className="text-xs text-gray-600">
-                            {preview.profileName} will see <span className="font-semibold">{preview.visibleCount}</span> workspace item{preview.visibleCount === 1 ? '' : 's'} as <span className="font-semibold">{preview.accessLabel}</span>.
-                        </p>
-                    </div>
-                </div>
-                <span className="w-fit rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-blue-700 shadow-sm">
-                    Preview only
-                </span>
-            </div>
-
-            <div className="mt-3 grid gap-3">
-                <PreviewSection
-                    title="Home screen"
-                    items={preview.homeWorkspaces}
-                    emptyMessage="No main workspace cards will appear on the home screen."
-                />
-                <PreviewSection
-                    title="Analytics screen"
-                    items={preview.analyticsCards}
-                    emptyMessage="No analytics cards will appear."
-                />
-                <PreviewSection
-                    title="Operations tools"
-                    items={preview.operationsTools}
-                    emptyMessage="No extra operations tools will appear."
-                />
-            </div>
-
-            {preview.hiddenFeatures.length > 0 && (
-                <div className="mt-3 rounded-lg border border-blue-100 bg-white px-3 py-2">
-                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">
-                        Hidden from this profile
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                        {hiddenPreview.map(label => (
-                            <span key={label} className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-600">
-                                {label}
-                            </span>
-                        ))}
-                        {hiddenRemainder > 0 && (
-                            <span className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-600">
-                                +{hiddenRemainder} more
-                            </span>
-                        )}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};
+function getAccessSaveErrorMessage(error: unknown): string {
+    if (isPermissionDeniedError(error)) {
+        return 'Permission denied while saving access. Try again after refreshing your admin session.';
+    }
+    return 'Failed to save access. Please try again.';
+}
 
 interface TeamManagementProps {
     onClose?: () => void;
@@ -706,15 +630,24 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     };
 
     const handleSaveWizardTeamAccess = async () => {
-        if (!activeTeamId || !canLookupTeams) return;
+        if (!activeTeamId || !canEditActiveTeam) return;
 
         setSavingWizardTeamAccess(true);
         try {
-            await updateTeamDefaultWorkspaceAccess(
+            const saveTeamAccess = () => updateTeamDefaultWorkspaceAccess(
                 activeTeamId,
                 wizardTeamAccessLevel,
                 buildWorkspaceOverrides(wizardTeamAccessLevel, wizardTeamWorkspaceSelection)
             );
+
+            try {
+                await saveTeamAccess();
+            } catch (error) {
+                if (!isPermissionDeniedError(error) || !user) throw error;
+                await user.getIdToken(true);
+                await saveTeamAccess();
+            }
+
             await reloadActiveTeamDetails();
             if (isViewingCurrentTeam) {
                 await refreshTeam();
@@ -722,23 +655,32 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             toast?.success('Team default workspace access saved');
         } catch (error) {
             console.error('Error saving team workspace access:', error);
-            toast?.error('Failed to save team workspace access');
+            toast?.error(getAccessSaveErrorMessage(error));
         } finally {
             setSavingWizardTeamAccess(false);
         }
     };
 
     const handleSaveWizardMemberAccess = async () => {
-        if (!activeTeamId || !selectedWizardMember || !canLookupTeams) return;
+        if (!activeTeamId || !selectedWizardMember || !canManageActiveAccess) return;
 
         setSavingWizardMemberAccess(true);
         try {
-            await updateMemberWorkspaceAccess(
+            const saveMemberAccess = () => updateMemberWorkspaceAccess(
                 activeTeamId,
                 selectedWizardMember.id,
                 wizardMemberAccessLevel,
                 buildWorkspaceOverrides(wizardMemberAccessLevel, wizardMemberWorkspaceSelection)
             );
+
+            try {
+                await saveMemberAccess();
+            } catch (error) {
+                if (!isPermissionDeniedError(error) || !user) throw error;
+                await user.getIdToken(true);
+                await saveMemberAccess();
+            }
+
             await reloadActiveTeamDetails();
             if (isViewingCurrentTeam) {
                 await refreshTeam();
@@ -746,7 +688,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             toast?.success(`Workspace access saved for ${selectedWizardMember.displayName}`);
         } catch (error) {
             console.error('Error saving member workspace access:', error);
-            toast?.error('Failed to save member workspace access');
+            toast?.error(getAccessSaveErrorMessage(error));
         } finally {
             setSavingWizardMemberAccess(false);
         }
@@ -773,7 +715,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
 
                 <p className="text-gray-600 mb-6">
-                    Join a team to access the Master Schedule and collaborate with others.
+                    Join an existing team or create a new team to get started. Workspaces stay hidden until access is assigned in Team Management.
                 </p>
 
                 <div className="space-y-4">
@@ -781,6 +723,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     {!isJoining && (
                         <div className="border border-gray-200 rounded-lg p-6">
                             <h3 className="font-semibold text-gray-900 mb-3">Create New Team</h3>
+                            <p className="mb-3 text-sm text-gray-500">
+                                This creates the team and makes you the owner. You can grant workspace access after setup.
+                            </p>
 
                             {isCreating ? (
                                 <div className="space-y-3">
@@ -1108,8 +1053,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 </label>
                             ))}
                         </div>
-                        <WorkspaceAccessPreviewPanel
-                            title="Preview for future invite users"
+                        <WorkspaceAccessAppPreview
+                            title="Access preview for future invite users"
                             preview={wizardTeamAccessPreview}
                         />
                     </div>
@@ -1170,8 +1115,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 </label>
                             ))}
                         </div>
-                        <WorkspaceAccessPreviewPanel
-                            title="Preview selected user's app"
+                        <WorkspaceAccessAppPreview
+                            title="Access preview for selected user"
                             preview={wizardMemberAccessPreview}
                         />
                     </div>

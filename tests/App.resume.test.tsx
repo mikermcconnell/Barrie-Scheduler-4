@@ -5,11 +5,33 @@ import { flushSync } from 'react-dom';
 
 vi.mock('../components/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  useAuth: (): { user: null; loading: boolean } => ({ user: null, loading: false }),
+  useAuth: () => ({
+    user: { uid: 'user-1', email: 'planner@example.com' },
+    loading: false,
+    signOut: async (): Promise<void> => undefined,
+  }),
 }));
 
 vi.mock('../components/contexts/TeamContext', () => ({
   TeamProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useTeam: () => ({
+    team: { id: 'team-1', name: 'Team 1', inviteCode: 'ABC123' },
+    teamMember: {
+      id: 'user-1',
+      userId: 'user-1',
+      role: 'member',
+      accessLevel: 'planner',
+      joinedAt: new Date(),
+      displayName: 'Planner',
+      email: 'planner@example.com',
+    },
+    teamRole: 'member',
+    accessLevel: 'planner',
+    canManageTeam: false,
+    loading: false,
+    refreshTeam: async (): Promise<void> => undefined,
+    hasTeam: true,
+  }),
 }));
 
 vi.mock('../components/contexts/ToastContext', () => ({

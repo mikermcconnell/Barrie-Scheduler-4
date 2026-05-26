@@ -1,6 +1,7 @@
 import type { FeatureFlags } from './features';
 import { featureFlags } from './features';
 import {
+    ANALYTICS_WORKSPACE_FEATURES,
     canAccessWorkspaceFeature,
     WORKSPACE_ACCESS_LEVEL_LABELS,
     type WorkspaceAccessFeatureKey,
@@ -12,6 +13,7 @@ export type WorkspacePreviewItem = {
     feature: WorkspaceAccessFeatureKey;
     label: string;
     description: string;
+    previewKind?: 'workspace' | 'planning-home' | 'analytics-card' | 'operations-tool';
 };
 
 type WorkspaceAccessPreviewInput = {
@@ -26,69 +28,89 @@ const HOME_WORKSPACES: WorkspacePreviewItem[] = [
         feature: 'workspaceOndemand',
         label: 'Transit On-Demand',
         description: 'On-demand shift planning and coverage analysis.',
+        previewKind: 'workspace',
     },
     {
         feature: 'workspaceFixedRoute',
         label: 'Scheduled Transit',
         description: 'Fixed-route schedule planning, editing, and publishing.',
+        previewKind: 'workspace',
     },
     {
         feature: 'workspaceOperations',
         label: 'Dashboard & Reporting',
         description: 'Operational dashboards, reports, and performance review.',
+        previewKind: 'workspace',
     },
 ];
+
+const PLANNING_DATA_WORKSPACE: WorkspacePreviewItem = {
+    feature: 'analyticsTransitApp',
+    label: 'Planning Data',
+    description: 'Analytics and planning-data tools allowed for this profile.',
+    previewKind: 'planning-home',
+};
 
 const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
     {
         feature: 'analyticsTransitApp',
         label: 'Transit App Data',
         description: 'Transit App demand, trip patterns, and route engagement.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsOdMatrix',
         label: 'Agency OD Analysis',
         description: 'Origin-destination ridership and connectivity analysis.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsCorridorSpeed',
         label: 'Corridor Speed',
         description: 'Observed versus scheduled travel time by corridor.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsCorridorHeadway',
         label: 'Corridor Headway',
         description: 'Combined service headway on shared corridors.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsStudentPass',
         label: 'Student Transit Pass',
         description: 'Student travel flyers and school access review.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsFleetPlan',
         label: 'Fleet Plan',
         description: 'Shared fleet workbook editing and export.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsResidentialGrowth',
         label: 'Residential Growth',
         description: 'Residential permit and occupancy planning data.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsNetworkConnections',
         label: 'Network Connections',
         description: 'Transfer hub and route connection analysis.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsRoutePlanner2',
         label: 'Route Planner',
         description: 'Route concept planning workspace.',
+        previewKind: 'analytics-card',
     },
     {
         feature: 'analyticsShuttlePlanner',
         label: 'Shuttle Planner',
         description: 'Shuttle service planning workspace.',
+        previewKind: 'analytics-card',
     },
 ];
 
@@ -97,11 +119,13 @@ const OPERATIONS_TOOLS: WorkspacePreviewItem[] = [
         feature: 'operationsLoadProfiles',
         label: 'Load Profiles',
         description: 'Passenger load profile analysis.',
+        previewKind: 'operations-tool',
     },
     {
         feature: 'operationsOperatorDwell',
         label: 'Operator Dwell',
         description: 'Operator dwell reporting and review.',
+        previewKind: 'operations-tool',
     },
 ];
 
@@ -121,8 +145,13 @@ function filterVisible(
 }
 
 export function buildWorkspaceAccessPreview(input: WorkspaceAccessPreviewInput) {
-    const homeWorkspaces = filterVisible(HOME_WORKSPACES, input);
     const analyticsCards = filterVisible(ANALYTICS_CARDS, input);
+    const homeWorkspaces = [
+        ...filterVisible(HOME_WORKSPACES, input),
+        ...(analyticsCards.some(item => ANALYTICS_WORKSPACE_FEATURES.includes(item.feature))
+            ? [PLANNING_DATA_WORKSPACE]
+            : []),
+    ];
     const operationsTools = filterVisible(OPERATIONS_TOOLS, input);
     const visibleFeatures = [...homeWorkspaces, ...analyticsCards, ...operationsTools];
     const visibleLabels = new Set(visibleFeatures.map(item => item.label));

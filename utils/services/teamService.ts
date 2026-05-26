@@ -24,10 +24,14 @@ import {
     isWorkspaceAccessLevel,
 } from '../workspaceAccess';
 
+const NEW_TEAM_DEFAULT_ACCESS_LEVEL: WorkspaceAccessLevel = 'none';
+
 interface TeamInviteLookup {
     id: string;
     name: string;
     inviteCode: string;
+    defaultMemberAccessLevel?: WorkspaceAccessLevel;
+    defaultMemberWorkspaceOverrides?: WorkspaceAccessOverrides;
 }
 
 export interface CreatePartnerTeamInput {
@@ -175,38 +179,42 @@ export async function createTeam(
     const teamId = teamDocRef.id;
 
     const inviteCode = await generateUniqueInviteCode();
+    const batch = writeBatch(db);
 
     // Create team document
-    await setDoc(teamDocRef, {
+    batch.set(teamDocRef, {
         name: teamName,
         createdAt: serverTimestamp(),
         createdBy: userId,
         inviteCode,
-        defaultMemberAccessLevel: getDefaultWorkspaceAccessLevelForRole('member')
+        defaultMemberAccessLevel: NEW_TEAM_DEFAULT_ACCESS_LEVEL
     });
 
     // Add creator as owner in members subcollection
     const memberRef = doc(db, 'teams', teamId, 'members', userId);
-    await setDoc(memberRef, {
+    batch.set(memberRef, {
         userId,
         role: 'owner' as TeamRole,
-        accessLevel: getDefaultWorkspaceAccessLevelForRole('member'),
+        accessLevel: NEW_TEAM_DEFAULT_ACCESS_LEVEL,
         joinedAt: serverTimestamp(),
         displayName: userDisplayName,
         email: userEmail
     });
 
     const inviteRef = doc(db, 'teamInvites', inviteCode);
-    await setDoc(inviteRef, {
+    batch.set(inviteRef, {
         teamId,
         teamName: teamName,
         createdBy: userId,
+        defaultMemberAccessLevel: NEW_TEAM_DEFAULT_ACCESS_LEVEL,
         updatedAt: serverTimestamp()
     });
 
     // Update user document with teamId
     const userRef = doc(db, 'users', userId);
-    await setDoc(userRef, { teamId }, { merge: true });
+    batch.set(userRef, { teamId }, { merge: true });
+
+    await batch.commit();
 
     return teamId;
 }
@@ -252,6 +260,10 @@ export async function createPartnerTeam(input: CreatePartnerTeamInput): Promise<
         teamId,
         teamName: normalizedName,
         createdBy: input.createdBy,
+        defaultMemberAccessLevel,
+        ...(input.defaultMemberWorkspaceOverrides
+            ? { defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(input.defaultMemberWorkspaceOverrides) }
+            : {}),
         updatedAt: serverTimestamp()
     });
 
@@ -358,6 +370,10 @@ export async function renameTeam(teamId: string, newName: string): Promise<void>
                 teamId,
                 teamName: newName,
                 createdBy: teamSnap.data().createdBy,
+                defaultMemberAccessLevel: isWorkspaceAccessLevel(teamSnap.data().defaultMemberAccessLevel)
+                    ? teamSnap.data().defaultMemberAccessLevel
+                    : getDefaultWorkspaceAccessLevelForRole('member'),
+                defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides) ?? {},
                 updatedAt: serverTimestamp()
             }, { merge: true });
         }
@@ -432,7 +448,11 @@ export async function findTeamByInviteCode(code: string): Promise<TeamInviteLook
     return {
         id: inviteData.teamId,
         name: inviteData.teamName,
-        inviteCode: normalizedCode
+        inviteCode: normalizedCode,
+        defaultMemberAccessLevel: isWorkspaceAccessLevel(inviteData.defaultMemberAccessLevel)
+            ? inviteData.defaultMemberAccessLevel
+            : undefined,
+        defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(inviteData.defaultMemberWorkspaceOverrides),
     };
 }
 
@@ -477,7 +497,24 @@ export async function joinTeamByInviteCode(
         return teamId;
     }
 
-    const defaultAccess = await getTeamDefaultWorkspaceAccess(teamId);
+    let defaultAccess: {
+        accessLevel: WorkspaceAccessLevel;
+        workspaceOverrides?: WorkspaceAccessOverrides;
+    } = {
+        accessLevel: team.defaultMemberAccessLevel ?? NEW_TEAM_DEFAULT_ACCESS_LEVEL,
+        workspaceOverrides: team.defaultMemberWorkspaceOverrides,
+    };
+
+    // Older invite lookup documents may not have denormalized defaults yet.
+    // Fall back to the team doc when rules allow it, but never fail the join
+    // solely because that private read is unavailable.
+    if (!team.defaultMemberAccessLevel && !team.defaultMemberWorkspaceOverrides) {
+        try {
+            defaultAccess = await getTeamDefaultWorkspaceAccess(teamId);
+        } catch (error) {
+            console.warn('Unable to read team defaults while joining by invite; using no workspace access.', error);
+        }
+    }
 
     // Add as new member
     await setDoc(memberRef, {
@@ -589,7 +626,19 @@ export async function updateTeamDefaultMemberAccessLevel(
     }
 
     const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await getDoc(teamRef);
     await updateDoc(teamRef, { defaultMemberAccessLevel: accessLevel });
+    if (teamSnap.exists()) {
+        const inviteCode = teamSnap.data().inviteCode as string | undefined;
+        if (inviteCode) {
+            await setDoc(doc(db, 'teamInvites', inviteCode), {
+                teamId,
+                teamName: teamSnap.data().name,
+                defaultMemberAccessLevel: accessLevel,
+                updatedAt: serverTimestamp(),
+            }, { merge: true });
+        }
+    }
 }
 
 /**
@@ -606,10 +655,23 @@ export async function updateTeamDefaultWorkspaceAccess(
 
     const teamRef = doc(db, 'teams', teamId);
     const sanitizedOverrides = sanitizeWorkspaceOverrides(workspaceOverrides);
+    const teamSnap = await getDoc(teamRef);
     await updateDoc(teamRef, {
         defaultMemberAccessLevel: accessLevel,
         defaultMemberWorkspaceOverrides: sanitizedOverrides ?? {},
     });
+    if (teamSnap.exists()) {
+        const inviteCode = teamSnap.data().inviteCode as string | undefined;
+        if (inviteCode) {
+            await setDoc(doc(db, 'teamInvites', inviteCode), {
+                teamId,
+                teamName: teamSnap.data().name,
+                defaultMemberAccessLevel: accessLevel,
+                defaultMemberWorkspaceOverrides: sanitizedOverrides ?? {},
+                updatedAt: serverTimestamp(),
+            }, { merge: true });
+        }
+    }
 }
 
 /**
@@ -629,6 +691,10 @@ export async function regenerateInviteCode(teamId: string): Promise<string> {
         teamId,
         teamName: teamSnap.data().name,
         createdBy: teamSnap.data().createdBy,
+        defaultMemberAccessLevel: isWorkspaceAccessLevel(teamSnap.data().defaultMemberAccessLevel)
+            ? teamSnap.data().defaultMemberAccessLevel
+            : getDefaultWorkspaceAccessLevelForRole('member'),
+        defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides) ?? {},
         updatedAt: serverTimestamp()
     });
     if (previousCode && previousCode !== newCode) {
@@ -656,6 +722,10 @@ export async function setInviteCode(teamId: string, inviteCode: string): Promise
         teamId,
         teamName: teamSnap.data().name,
         createdBy: teamSnap.data().createdBy,
+        defaultMemberAccessLevel: isWorkspaceAccessLevel(teamSnap.data().defaultMemberAccessLevel)
+            ? teamSnap.data().defaultMemberAccessLevel
+            : getDefaultWorkspaceAccessLevelForRole('member'),
+        defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides) ?? {},
         updatedAt: serverTimestamp()
     });
     if (previousCode && previousCode !== normalized) {

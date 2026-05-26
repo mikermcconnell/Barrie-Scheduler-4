@@ -33,10 +33,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, inviteCod
         setError('');
         setSuccessMessage('');
         setLoading(true);
+        const normalizedEmail = email.trim();
 
         try {
             if (mode === 'signin') {
-                await signIn(email, password);
+                await signIn(normalizedEmail, password);
                 onClose();
             } else if (mode === 'signup') {
                 if (password !== confirmPassword) {
@@ -49,11 +50,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, inviteCod
                     setLoading(false);
                     return;
                 }
-                await signUp(email, password);
+                await signUp(normalizedEmail, password);
                 onClose();
             } else if (mode === 'reset') {
-                await resetPassword(email);
-                setSuccessMessage('Password reset email sent! Check your inbox.');
+                await resetPassword(normalizedEmail);
+                setSuccessMessage('If an account exists for that email, a password reset link will arrive shortly. Check spam or junk if it does not show up.');
             }
         } catch (err: any) {
             let message = 'An error occurred';
@@ -67,6 +68,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, inviteCod
                 message = 'Invalid email address';
             } else if (err.code === 'auth/weak-password') {
                 message = 'Password is too weak';
+            } else if (err.code === 'auth/too-many-requests') {
+                message = 'Too many attempts. Please wait a few minutes and try again.';
             } else if (err.message) {
                 message = err.message;
             }

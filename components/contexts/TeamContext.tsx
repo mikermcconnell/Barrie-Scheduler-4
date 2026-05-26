@@ -27,7 +27,7 @@ const fallbackTeamContext: TeamContextType = {
     team: null,
     teamMember: null,
     teamRole: null,
-    accessLevel: 'production',
+    accessLevel: 'none',
     canManageTeam: false,
     loading: false,
     refreshTeam: async () => { },
@@ -67,18 +67,16 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
 
             const pendingInviteCode = getPendingInviteCode();
             if (pendingInviteCode) {
-                if (!userTeam) {
-                    try {
-                        await joinTeamByInviteCode(
-                            user.uid,
-                            pendingInviteCode,
-                            user.displayName || user.email?.split('@')[0] || 'User',
-                            user.email || '',
-                        );
-                        userTeam = await getUserTeam(user.uid);
-                    } catch (error) {
-                        console.error('Error joining team from invite link:', error);
-                    }
+                try {
+                    await joinTeamByInviteCode(
+                        user.uid,
+                        pendingInviteCode,
+                        user.displayName || user.email?.split('@')[0] || 'User',
+                        user.email || '',
+                    );
+                    userTeam = await getUserTeam(user.uid);
+                } catch (error) {
+                    console.error('Error joining team from invite link:', error);
                 }
                 clearPendingInviteCodeFromUrl();
             }

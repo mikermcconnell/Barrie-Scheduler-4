@@ -17,6 +17,14 @@ describe('security rules regression checks', () => {
   it('does not leave team documents publicly readable', () => {
     const firestoreRules = readRepoFile('firestore.rules');
     expect(firestoreRules).not.toContain('allow read: if true;');
+    expect(firestoreRules).toMatch(/allow get: if isTeamMember\(teamId\) \|\| isWorkspacePermissionManager\(\) \|\| canReadTeamForInviteJoin\(teamId\);/);
+    expect(firestoreRules).toMatch(/allow list: if isWorkspacePermissionManager\(\);/);
+  });
+
+  it('allows team owners and admins to update team settings', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/match \/teams\/\{teamId\} \{[\s\S]*allow update, delete: if request\.auth != null &&[\s\S]*\(isTeamOwnerOrAdmin\(teamId\) \|\| isWorkspacePermissionManager\(\)\);/);
   });
 
   it('restricts master schedule writes to team managers instead of all team members', () => {
@@ -47,6 +55,9 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).toMatch(/match \/transitAppData\/\{docId\} \{[\s\S]*allow read, write: if canAccessWorkspace\(teamId, 'analyticsTransitApp'\);/);
     expect(firestoreRules).toMatch(/match \/odMatrixData\/\{docId\} \{[\s\S]*allow read, write: if canAccessWorkspace\(teamId, 'analyticsOdMatrix'\);/);
     expect(firestoreRules).toMatch(/accessLevel == 'transit-app-only' &&[\s\S]*feature == 'analyticsTransitApp'/);
+    expect(firestoreRules).toMatch(/accessLevel == 'external-planner' &&[\s\S]*feature == 'analyticsTransitApp'/);
+    expect(firestoreRules).not.toMatch(/accessLevel == 'external-planner' &&[\s\S]*feature in \[[\s\S]*workspaceFixedRoute/);
+    expect(firestoreRules).not.toMatch(/accessLevel == 'none' &&[\s\S]*feature/);
   });
 
   it('keeps old owner and admin member docs working when accessLevel is missing', () => {
@@ -71,5 +82,12 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).toMatch(
       /isWorkspacePermissionManager\(\) &&[\s\S]*affectedKeys\(\)\.hasOnly\(\['accessLevel', 'workspaceOverrides'\]\)/
     );
+  });
+
+  it('requires invite validation for self-creating a team membership', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/canCreateSelfFromInvite\(teamId, memberId\)/);
+    expect(firestoreRules).not.toMatch(/allow create: if request\.auth != null &&[\s\S]*request\.auth\.uid == memberId \|\|/);
   });
 });

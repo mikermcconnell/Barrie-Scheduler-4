@@ -14,7 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { WORKSPACE_ACCESS_LEVEL_LABELS } from '../../utils/workspaceAccess';
 
-export type View = 'home' | 'ondemand' | 'fixed' | 'operations';
+export type View = 'home' | 'ondemand' | 'fixed' | 'operations' | 'planning';
 
 interface HeaderProps {
     currentView: View;
@@ -22,6 +22,7 @@ interface HeaderProps {
     onShowFileManager: () => void;
     onShowTeamManagement: () => void;
     onShowAuthModal: () => void;
+    canShowFileManager?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -30,6 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
     onShowFileManager,
     onShowTeamManagement,
     onShowAuthModal,
+    canShowFileManager = true,
 }) => {
     const { user, signOut } = useAuth();
     const { accessLevel } = useTeam();
@@ -65,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
 
                     {/* Quick Actions */}
                     <div className="flex items-center gap-2 border-r border-gray-200 pr-4 mr-2">
-                        {user && (
+                        {user && canShowFileManager && (
                             <button
                                 onClick={onShowFileManager}
                                 className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-md transition-all border border-transparent hover:border-gray-200 text-sm font-medium"
