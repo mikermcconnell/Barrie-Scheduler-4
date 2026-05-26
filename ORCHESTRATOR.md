@@ -113,6 +113,8 @@ Runtime surfaces are intentionally mixed:
 
 Prefer one shared implementation per server concern when practical. If a canonical `api/` handler already exists, prefer delegating local/dev behavior to it rather than duplicating request logic elsewhere.
 
+Production auth safety: `components/contexts/AuthContext.tsx` blocks Codex-style local dev accounts (`codex.dev.*@example.com`) on non-local hosts and signs them out immediately. Keep dev auto-login restricted to localhost only; do not let `VITE_DEV_AUTH_*` values affect `transitscheduler.ca`.
+
 ## 5) Locked logic and cross-cutting conventions
 
 Read `docs/rules/LOCKED_LOGIC.md` before changing schedule generation, parsing, timing, routing, or block assignment behavior.

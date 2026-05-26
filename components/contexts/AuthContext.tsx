@@ -14,6 +14,25 @@ import { auth, googleProvider } from '../../utils/firebase';
 import { db } from '../../utils/firebase';
 import { getDevAuthConfig } from '../../utils/dev/devAuth';
 
+const LOCAL_AUTH_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+const getCurrentHostname = (): string => (
+    typeof window === 'undefined' ? '' : window.location.hostname.toLowerCase()
+);
+
+export const isBlockedProductionDevEmail = (
+    email: string | null | undefined,
+    hostname = getCurrentHostname(),
+): boolean => {
+    const normalizedEmail = email?.trim().toLowerCase() ?? '';
+    const normalizedHost = hostname.trim().toLowerCase();
+    return (
+        !LOCAL_AUTH_HOSTS.has(normalizedHost) &&
+        normalizedEmail.startsWith('codex.dev.') &&
+        normalizedEmail.endsWith('@example.com')
+    );
+};
+
 interface AuthContextType {
     user: User | null;
     loading: boolean;
@@ -69,6 +88,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
+                if (isBlockedProductionDevEmail(user.email)) {
+                    console.warn('Blocked a local dev test account from using production.');
+                    setIsGlobalAdmin(false);
+                    setUser(null);
+                    setLoading(false);
+                    await firebaseSignOut(auth).catch((error) => {
+                        console.error('Error signing out blocked dev test account:', error);
+                    });
+                    return;
+                }
+
                 // Ensure user document exists in Firestore
                 try {
                     await ensureUserDocument(user);
@@ -100,6 +130,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }, [devAuth.autoLogin, devAuth.email, devAuth.enabled, devAuth.password, loading, user]);
 
     const signIn = async (email: string, password: string) => {
+        if (isBlockedProductionDevEmail(email)) {
+            throw new Error('This local dev test account is not allowed on production.');
+        }
         await signInWithEmailAndPassword(auth, email, password);
     };
 
