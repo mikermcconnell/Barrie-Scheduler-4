@@ -100,6 +100,23 @@ describe('RoutePlanner2GtfsImportModal', () => {
 
     flushSync(() => click(importButton));
     expect(props.onImport).toHaveBeenCalledWith([pattern]);
+    expect(importButton?.disabled).toBe(true);
+  });
+
+  it('clears selected patterns when the drawer closes and reopens', () => {
+    const { view, props } = renderModal();
+    const importButton = findButton(view, 'Import as editable route');
+
+    flushSync(() => click(findPatternButton(view, '8A', 'To Terminal B')));
+    expect(importButton?.disabled).toBe(false);
+
+    flushSync(() => click(findButton(view, 'Cancel')));
+    flushSync(() => {
+      root?.render(<RoutePlanner2GtfsImportModal {...props} open />);
+    });
+
+    expect(props.onClose).toHaveBeenCalled();
+    expect(findButton(view, 'Import as editable route')?.disabled).toBe(true);
   });
 
   it('calls close and retry actions', () => {

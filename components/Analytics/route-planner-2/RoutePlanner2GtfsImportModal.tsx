@@ -125,6 +125,9 @@ export function RoutePlanner2GtfsImportModal({
             return next.size === current.size ? current : next;
         });
     }, [patterns]);
+    useEffect(() => {
+        if (!open) setSelectedPatternIds(new Set());
+    }, [open]);
 
     function togglePattern(patternId: string) {
         setSelectedPatternIds((current) => {
@@ -136,6 +139,17 @@ export function RoutePlanner2GtfsImportModal({
             }
             return next;
         });
+    }
+
+    function closeAndClear() {
+        setSelectedPatternIds(new Set());
+        onClose();
+    }
+
+    function importSelectedPatterns() {
+        if (selectedPatterns.length === 0) return;
+        onImport(selectedPatterns);
+        setSelectedPatternIds(new Set());
     }
 
     function toggleRoutePatterns(routePatterns: RoutePlanner2GtfsImportPattern[]) {
@@ -175,7 +189,7 @@ export function RoutePlanner2GtfsImportModal({
                         <h2 id="rp2-gtfs-import-title" className="mt-1 text-2xl font-black text-slate-900">Import GTFS route</h2>
                         <p className="mt-2 text-sm font-semibold text-slate-600">This creates an editable planning copy. It does not modify GTFS. Select one or more full GTFS routes; each import becomes a route concept in this workspace.</p>
                     </div>
-                    <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" aria-label="Close GTFS import">
+                    <button type="button" onClick={closeAndClear} className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" aria-label="Close GTFS import">
                         <X size={18} />
                     </button>
                 </header>
@@ -287,10 +301,10 @@ export function RoutePlanner2GtfsImportModal({
                             : 'Select one or more GTFS route patterns to import.'}
                     </div>
                     <div className="flex gap-2">
-                        <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700">Cancel</button>
+                        <button type="button" onClick={closeAndClear} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700">Cancel</button>
                         <button
                             type="button"
-                            onClick={() => selectedPatterns.length > 0 && onImport(selectedPatterns)}
+                            onClick={importSelectedPatterns}
                             disabled={selectedPatterns.length === 0}
                             className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
                         >

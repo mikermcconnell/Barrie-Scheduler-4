@@ -31,6 +31,7 @@ Use this priority order:
 Manual overrides stay first because Route Planner 2 is a planning workspace. Automatic evidence can suggest better estimates, but it must not silently override planner-entered segment assumptions.
 Mapbox should fill only gaps where scheduled GTFS evidence is not available for the current route/time selection.
 Planners can switch a route to Mapbox-only runtime. In that mode, scheduled GTFS evidence is ignored for feasibility totals and Mapbox/drawn-route estimates are used when available, then fallback assumptions.
+When GTFS runtime is enabled, the planner's explicit route filter controls matching: **Selected routes** overrides the imported source route, while **All matching** may use every matching scheduled route for that corridor.
 When a drawn segment extends beyond a matched GTFS corridor, use the scheduled GTFS runtime for the covered portion and estimate the uncovered portion from the drawn-route estimate or fallback distance. Label this as partial GTFS coverage rather than presenting the whole segment as fully scheduled evidence.
 When custom stops are not exactly GTFS stops but the drawn line follows a GTFS route shape, interpolate the matched shape overlap and use the proportional scheduled GTFS runtime for the covered portion before falling back to Mapbox.
 
@@ -76,10 +77,10 @@ For v1 route concepts:
 ```text
 one-way route runtime = rounded stop-to-stop segment runtime + intermediate stop dwell allowance
 one-way cycle time = one-way route runtime * 2 + start terminal layover + end terminal layover
-one-way scheduled cycle window with a target bus count = target buses * target frequency
+scheduled cycle window with a target bus count = selected GTFS scheduledCycleWindow, otherwise target buses * target frequency
 closed-loop/out-and-back estimated full runtime = stop-to-stop segment runtime + intermediate dwell for the complete route shape
 closed-loop/out-and-back buses required = ceiling(estimated full runtime / target frequency)
-closed-loop/out-and-back scheduled cycle window = buses required * target frequency
+closed-loop/out-and-back scheduled cycle window = selected GTFS scheduledCycleWindow, otherwise buses required * target frequency
 closed-loop/out-and-back recovery time = scheduled cycle window - estimated full runtime
 closed-loop/out-and-back cycleTimeMinutes = scheduled cycle window
 ```
@@ -90,7 +91,7 @@ Intermediate stop dwell is not terminal recovery. Keep terminal layover/recovery
 Closed-loop runtime includes the final segment from the last stop back to Stop 1.
 Out-and-back runtime includes the reverse stop sequence from the turnaround stop back to Stop 1.
 For closed-loop and out-and-back shapes, `cycleTimeMinutes` in the current model represents the scheduled cycle window needed to operate the full route at the target frequency. One-way routes keep the existing formula above.
-If a route has `targetBuses`, including from a GTFS import with `block_id` data, `cycleTimeMinutes` represents the scheduled cycle window from that bus count and frequency. Recovery then shows the spare time or deficit between that window and the estimated full runtime.
+If a route has `targetBuses`, including from a GTFS import with `block_id` data, `cycleTimeMinutes` represents the scheduled cycle window. GTFS imports should use the selected period's `scheduledCycleWindows` value when available, because actual block cycles can vary by period and may not equal `targetBuses * frequencyMinutes`. Recovery then shows the spare time or deficit between that window and the estimated full runtime.
 
 ## Buses Required
 
@@ -110,7 +111,7 @@ Show “not ready” if cycle time or frequency is missing or invalid.
 For route concepts, recovery is the remaining buffer inside the scheduled cycle window:
 
 ```text
-scheduled cycle window = buses required * target frequency
+scheduled cycle window = selected GTFS scheduledCycleWindow, otherwise buses required * target frequency
 recovery time = scheduled cycle window - estimated full runtime
 recovery percent = recovery time / estimated full runtime
 ```
@@ -142,6 +143,10 @@ Do not reuse fixed-route schedule generator logic for v1 feasibility estimates. 
 
 ## GTFS Import Runtime Bands
 
-Imported GTFS route concepts calculate scheduled segment runtimes from the trips in each time band: AM Peak, Midday, PM Peak, Evening, and Full Day. Each adjacent stop segment uses the median scheduled stop-to-stop runtime for the selected band, with each segment rounded independently before route totals are summed.
+Imported GTFS route concepts calculate scheduled segment runtimes from the trips in each time band: AM Peak, Midday, PM Peak, Evening, and Full Day. Each adjacent stop segment uses the median scheduled stop-to-stop runtime for the selected band, with same-minute adjacent stops kept as at least one minute of segment evidence. Route-level totals must still preserve the median first-stop-to-last-stop elapsed trip runtime for that band, so minute-level GTFS stop interpolation does not inflate operating runtime or understate recovery.
+
+GTFS imports also derive scheduled cycle windows from `block_id` data when possible. For each period, the importer looks at consecutive same-pattern trips in the same block, filters out implausibly long off-service gaps, and uses the typical repeat cycle for that period. This avoids treating an all-day median headway and bus count as the cycle when the route has a shorter normal cycle and a longer peak-only cycle.
+
+When a GTFS pattern starts and ends at the same stop, the pattern is already a complete loop. Feasibility must not double that runtime as if it were a one-way out-and-back route; recovery is the scheduled cycle window minus the loop runtime.
 
 The Runtime day and Runtime period controls in Service assumptions select which evidence band feasibility uses. If a narrow band has no scheduled sample, the planner keeps the imported full-day GTFS runtime instead of dropping to Mapbox/fallback, and the UI labels the actual band in use.

@@ -18,6 +18,7 @@ export type RoutePlanner2WarningSeverity = 'info' | 'warning' | 'blocking';
 export type RoutePlanner2RuntimeRouteFilterMode = 'all-matching' | 'selected';
 export type RoutePlanner2RuntimeSourceMode = 'gtfs' | 'mapbox';
 export type RoutePlanner2RouteFamilyDirectionRole = 'out' | 'back';
+export type RoutePlanner2PlanningPeriod = 'all-day' | 'am-peak' | 'midday' | 'pm-peak' | 'evening';
 
 export interface RoutePlanner2RouteFamilyReference {
     key: string;
@@ -115,7 +116,14 @@ export interface RoutePlanner2ServiceAssumptions {
     endTerminalLayoverMinutes: number;
     intermediateStopDwellSeconds: number;
     dayType?: 'weekday' | 'saturday' | 'sunday';
-    planningPeriod?: 'all-day' | 'am-peak' | 'midday' | 'pm-peak' | 'evening';
+    planningPeriod?: RoutePlanner2PlanningPeriod;
+    scheduledCycleWindows?: Partial<Record<RoutePlanner2PlanningPeriod, RoutePlanner2ScheduledCycleWindow>>;
+}
+
+export interface RoutePlanner2ScheduledCycleWindow {
+    cycleTimeMinutes: number;
+    sampleSize: number;
+    source: 'gtfs-block';
 }
 
 export interface RoutePlanner2FeasibilitySummary {

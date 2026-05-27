@@ -325,6 +325,51 @@ describe('Route Planner 2 feasibility', () => {
     expect(fullDay.segmentSummaries[0]?.evidencePeriod).toBe('full-day');
   });
 
+  it('uses only selected GTFS routes when choosing stored scheduled runtime estimates', () => {
+    const project = validTwoStopProject();
+    const segmentPath = buildRoutePlanner2StopSegmentPaths(project.scenarios[0]!)[0]!;
+    const scenario = {
+      ...project.scenarios[0]!,
+      runtimeRouteFilter: { mode: 'selected' as const, routeShortNames: ['2A'] },
+      runtimeEstimates: [
+        {
+          id: `${segmentPath.id}-8a`,
+          fromStopId: segmentPath.fromStopId,
+          toStopId: segmentPath.toStopId,
+          runtimeMinutes: 20,
+          source: 'scheduled-proxy' as const,
+          confidence: 'high' as const,
+          scheduledRuntimeMinutes: 20,
+          matchedRoutes: ['8A'],
+          evidenceDayType: 'weekday' as const,
+          evidencePeriod: 'full-day' as const,
+          updatedAt: now,
+        },
+        {
+          id: `${segmentPath.id}-2a`,
+          fromStopId: segmentPath.fromStopId,
+          toStopId: segmentPath.toStopId,
+          runtimeMinutes: 12,
+          source: 'scheduled-proxy' as const,
+          confidence: 'high' as const,
+          scheduledRuntimeMinutes: 12,
+          matchedRoutes: ['2A'],
+          evidenceDayType: 'weekday' as const,
+          evidencePeriod: 'full-day' as const,
+          updatedAt: now,
+        },
+      ],
+    };
+
+    const result = deriveRoutePlanner2Feasibility(scenario);
+
+    expect(result.segmentRuntimeMinutes).toBe(12);
+    expect(result.segmentSummaries[0]).toMatchObject({
+      runtimeMinutes: 12,
+      matchedRoutes: ['2A'],
+    });
+  });
+
   it('uses Mapbox estimates instead of scheduled evidence when Mapbox-only runtime is selected', () => {
     const project = validTwoStopProject();
     const segmentPath = buildRoutePlanner2StopSegmentPaths(project.scenarios[0]!)[0]!;

@@ -1,6 +1,7 @@
 import { deriveRoutePlanner2Feasibility } from './routePlanner2Feasibility';
 import type {
     RoutePlanner2FeasibilitySummary,
+    RoutePlanner2PlanningPeriod,
     RoutePlanner2Project,
     RoutePlanner2Scenario,
     RoutePlanner2WarningSeverity,
@@ -189,6 +190,16 @@ function getFamilyConfidence(feasibilities: RoutePlanner2FeasibilitySummary[]): 
     return 'high';
 }
 
+function getScenarioScheduledCycleWindow(scenario: RoutePlanner2Scenario): number | null {
+    const planningPeriod: RoutePlanner2PlanningPeriod = scenario.service.planningPeriod ?? 'all-day';
+    const scheduledCycleWindow = scenario.service.scheduledCycleWindows?.[planningPeriod]
+        ?? scenario.service.scheduledCycleWindows?.['all-day'];
+    const cycleTimeMinutes = scheduledCycleWindow?.cycleTimeMinutes;
+    return typeof cycleTimeMinutes === 'number' && Number.isFinite(cycleTimeMinutes) && cycleTimeMinutes > 0
+        ? cycleTimeMinutes
+        : null;
+}
+
 function summarizeRouteFamily(scenarios: RoutePlanner2Scenario[], key: string): RoutePlanner2RouteFamilySummary {
     const sortedScenarios = [...scenarios].sort((a, b) => getFamilyDirectionOrder(a) - getFamilyDirectionOrder(b));
     const familyName = sortedScenarios[0]?.routeFamily?.name ?? 'Route family';
@@ -211,12 +222,18 @@ function summarizeRouteFamily(scenarios: RoutePlanner2Scenario[], key: string): 
         .map((scenario) => scenario.service.targetBuses)
         .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
     const targetBuses = targetBusValues.length > 0 ? Math.max(...targetBusValues.map((value) => Math.ceil(value))) : null;
+    const scheduledCycleValues = sortedScenarios
+        .map(getScenarioScheduledCycleWindow)
+        .filter((value): value is number => value != null);
+    const scheduledCycleTimeMinutes = targetBuses != null && scheduledCycleValues.length > 0
+        ? Math.max(...scheduledCycleValues)
+        : null;
     const canCalculateCycle = runtimeMinutes != null && frequencyMinutes != null && blockingWarningCount === 0;
     const busesRequired = canCalculateCycle
         ? targetBuses ?? Math.max(1, Math.ceil(runtimeMinutes / frequencyMinutes))
         : null;
     const cycleTimeMinutes = canCalculateCycle && busesRequired != null && frequencyMinutes != null
-        ? busesRequired * frequencyMinutes
+        ? scheduledCycleTimeMinutes ?? busesRequired * frequencyMinutes
         : null;
     const recoveryTimeMinutes = cycleTimeMinutes != null && runtimeMinutes != null
         ? cycleTimeMinutes - runtimeMinutes

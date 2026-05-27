@@ -400,13 +400,15 @@ function sortRouteNames(routes: readonly string[]): string[] {
 }
 
 function getScenarioRuntimeRouteSelection(scenario: RoutePlanner2Scenario): RoutePlanner2RuntimeRouteSelection {
-  const preferredRoute = getScenarioSourceRoute(scenario);
-  if (preferredRoute) return { mode: 'specific', routes: [preferredRoute] };
-
   const filter = scenario.runtimeRouteFilter;
-  if (filter?.mode === 'selected') {
+  if (filter?.mode === 'selected' && filter.routeShortNames.length > 0) {
     return { mode: 'specific', routes: sortRouteNames(filter.routeShortNames) };
   }
+
+  if (filter?.mode === 'all-matching') return { mode: 'all' };
+
+  const preferredRoute = getScenarioSourceRoute(scenario);
+  if (preferredRoute) return { mode: 'specific', routes: [preferredRoute] };
 
   return { mode: 'all' };
 }

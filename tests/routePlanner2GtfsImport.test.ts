@@ -136,6 +136,80 @@ describe('routePlanner2GtfsImport', () => {
     expect(middayFeasibility.segmentSummaries.every((segment) => segment.evidencePeriod === 'midday')).toBe(true);
   });
 
+  it('uses GTFS block cycle windows instead of multiplying all-day headway by buses', () => {
+    const departureMinutes = [360, 395, 430, 465, 490, 525, 560, 595];
+    const cycleFeed: RoutePlanner2GtfsImportFeed = {
+      ...feed,
+      routes: [{ route_id: '12A', route_short_name: '12A', route_long_name: 'Route 12A', route_type: 3 }],
+      trips: departureMinutes.map((_, index) => ({
+        route_id: '12A',
+        service_id: 'weekday',
+        trip_id: `route-12-${index + 1}`,
+        trip_headsign: 'To Downtown',
+        direction_id: 0,
+        block_id: `bus-${(index % 4) + 1}`,
+        shape_id: 'shape-8a-a',
+      })),
+      stopTimes: departureMinutes.flatMap((departure, index) => {
+        const tripId = `route-12-${index + 1}`;
+        const at = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:00`;
+        return [
+          { trip_id: tripId, arrival_time: at(departure), departure_time: at(departure), stop_id: 's1', stop_sequence: 1 },
+          { trip_id: tripId, arrival_time: at(departure + 30), departure_time: at(departure + 30), stop_id: 's2', stop_sequence: 2 },
+          { trip_id: tripId, arrival_time: at(departure + 62), departure_time: at(departure + 62), stop_id: 's3', stop_sequence: 3 },
+        ];
+      }),
+    };
+
+    const pattern = buildRoutePlanner2GtfsImportPatterns(cycleFeed)[0]!;
+    const scenario = createRoutePlanner2ScenarioFromGtfsPattern(pattern, { id: 'scenario-route-12a', now: '2026-05-01T12:00:00.000Z' });
+    const feasibility = deriveRoutePlanner2Feasibility(scenario);
+
+    expect(pattern.medianHeadwayMinutes).toBe(35);
+    expect(pattern.blockCount).toBe(4);
+    expect(pattern.scheduledCycles?.find((cycle) => cycle.period === 'full-day')?.cycleTimeMinutes).toBe(130);
+    expect(scenario.service.scheduledCycleWindows?.['all-day']?.cycleTimeMinutes).toBe(130);
+    expect(feasibility.oneWayRuntimeMinutes).toBe(62);
+    expect(feasibility.cycleTimeMinutes).toBe(130);
+    expect(feasibility.recoveryTimeMinutes).toBe(6);
+  });
+
+  it('treats GTFS loops that return to the first stop as one complete cycle runtime', () => {
+    const departureMinutes = [360, 375, 390, 405, 420, 435];
+    const loopFeed: RoutePlanner2GtfsImportFeed = {
+      ...feed,
+      routes: [{ route_id: '100', route_short_name: '100', route_long_name: 'Red Express', route_type: 3 }],
+      trips: departureMinutes.map((_, index) => ({
+        route_id: '100',
+        service_id: 'weekday',
+        trip_id: `route-100-${index + 1}`,
+        trip_headsign: 'Red Express to Terminal',
+        direction_id: 0,
+        block_id: `bus-${(index % 2) + 1}`,
+        shape_id: 'shape-8a-a',
+      })),
+      stopTimes: departureMinutes.flatMap((departure, index) => {
+        const tripId = `route-100-${index + 1}`;
+        const at = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:00`;
+        return [
+          { trip_id: tripId, arrival_time: at(departure), departure_time: at(departure), stop_id: 's1', stop_sequence: 1 },
+          { trip_id: tripId, arrival_time: at(departure + 5), departure_time: at(departure + 5), stop_id: 's2', stop_sequence: 2 },
+          { trip_id: tripId, arrival_time: at(departure + 12), departure_time: at(departure + 12), stop_id: 's3', stop_sequence: 3 },
+          { trip_id: tripId, arrival_time: at(departure + 15), departure_time: at(departure + 15), stop_id: 's1', stop_sequence: 4 },
+        ];
+      }),
+    };
+
+    const pattern = buildRoutePlanner2GtfsImportPatterns(loopFeed)[0]!;
+    const scenario = createRoutePlanner2ScenarioFromGtfsPattern(pattern, { id: 'scenario-route-100', now: '2026-05-01T12:00:00.000Z' });
+    const feasibility = deriveRoutePlanner2Feasibility(scenario);
+
+    expect(pattern.scheduledCycles?.find((cycle) => cycle.period === 'full-day')?.cycleTimeMinutes).toBe(30);
+    expect(feasibility.oneWayRuntimeMinutes).toBe(15);
+    expect(feasibility.cycleTimeMinutes).toBe(30);
+    expect(feasibility.recoveryTimeMinutes).toBe(15);
+  });
+
   it('adds Barrie merged A/B route-family metadata to GTFS import patterns and scenarios', () => {
     const familyFeed: RoutePlanner2GtfsImportFeed = {
       ...feed,
@@ -203,7 +277,7 @@ describe('routePlanner2GtfsImport', () => {
     expect(pattern.routeFamily).toBeUndefined();
   });
 
-  it('keeps adjacent same-minute GTFS stop times as scheduled evidence with a one-minute minimum', () => {
+  it('keeps adjacent same-minute GTFS stop times as scheduled evidence without inflating route runtime', () => {
     const sameMinuteFeed: RoutePlanner2GtfsImportFeed = {
       ...feed,
       stopTimes: [
@@ -233,8 +307,10 @@ describe('routePlanner2GtfsImport', () => {
     const pattern = buildRoutePlanner2GtfsImportPatterns(sameMinuteFeed)[0]!;
     const scenario = createRoutePlanner2ScenarioFromGtfsPattern(pattern, { id: 'scenario-imported', now: '2026-05-01T12:00:00.000Z' });
 
-    expect(scenario.runtimeEstimates?.filter((estimate) => estimate.evidencePeriod === 'full-day')).toHaveLength(2);
-    expect(scenario.runtimeEstimates?.filter((estimate) => estimate.evidencePeriod === 'full-day').map((estimate) => estimate.runtimeMinutes)).toEqual([1, 5]);
+    const fullDayEstimates = scenario.runtimeEstimates?.filter((estimate) => estimate.evidencePeriod === 'full-day') ?? [];
+    expect(fullDayEstimates).toHaveLength(2);
+    expect(fullDayEstimates.map((estimate) => estimate.runtimeMinutes)).toEqual([1, 4]);
+    expect(fullDayEstimates.reduce((sum, estimate) => sum + (estimate.runtimeMinutes ?? 0), 0)).toBe(5);
     expect(scenario.runtimeEstimates?.every((estimate) => estimate.source === 'scheduled-proxy')).toBe(true);
   });
 

@@ -162,4 +162,93 @@ describe('Route Planner 2 summary', () => {
     expect(summary.selectedRouteFamilySummary?.recoveryLabel).toBe('9 min (11%)');
     expect(summary.selectedRouteFamilySummary?.busesRequiredLabel).toBe('3 buses');
   });
+
+  it('uses scheduled cycle windows for merged route family summaries when GTFS blocks vary by period', () => {
+    function route12Scenario(
+      id: string,
+      routeShortName: '12A' | '12B',
+      directionLabel: 'Out' | 'Back',
+      runtimeMinutes: number,
+    ): RoutePlanner2Scenario {
+      return {
+        id,
+        name: `Route 12 ${directionLabel}`,
+        status: 'draft',
+        routeShape: 'one-way',
+        routeFamily: {
+          key: 'barrie-merged-12',
+          name: 'Route 12',
+          shortName: '12',
+          memberShortName: routeShortName,
+          directionRole: directionLabel === 'Out' ? 'out' : 'back',
+          directionLabel,
+        },
+        source: {
+          type: 'gtfs',
+          routeId: routeShortName,
+          routeShortName,
+          serviceId: 'weekday',
+        },
+        alignment: [],
+        stops: [
+          { id: `${id}-start`, name: 'Start', lat: 44.38, lng: -79.7, sequence: 1, role: 'start-terminal', source: 'barrie-stop' },
+          { id: `${id}-end`, name: 'End', lat: 44.4, lng: -79.65, sequence: 2, role: 'end-terminal', source: 'barrie-stop' },
+        ],
+        service: {
+          firstTripTime: '06:00',
+          lastTripTime: '22:00',
+          frequencyMinutes: 35,
+          targetBuses: 4,
+          startTerminalLayoverMinutes: 0,
+          endTerminalLayoverMinutes: 0,
+          intermediateStopDwellSeconds: 0,
+          dayType: 'weekday',
+          planningPeriod: 'all-day',
+          scheduledCycleWindows: {
+            'all-day': { cycleTimeMinutes: 130, sampleSize: 19, source: 'gtfs-block' },
+            'pm-peak': { cycleTimeMinutes: 140, sampleSize: 12, source: 'gtfs-block' },
+          },
+        },
+        runtimeSourceMode: 'gtfs',
+        runtimeEstimates: [{
+          id: `segment-${id}-full-day`,
+          fromStopId: `${id}-start`,
+          toStopId: `${id}-end`,
+          runtimeMinutes,
+          source: 'scheduled-proxy',
+          confidence: 'high',
+          matchedRoutes: [routeShortName],
+          evidenceDayType: 'weekday',
+          evidencePeriod: 'full-day',
+        }],
+        notes: '',
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+
+    const project: RoutePlanner2Project = {
+      id: 'project-route-12',
+      name: 'Route 12 project',
+      status: 'local-draft',
+      selectedScenarioId: 'scenario-12a',
+      scenarios: [
+        route12Scenario('scenario-12a', '12A', 'Out', 60),
+        route12Scenario('scenario-12b', '12B', 'Back', 64),
+      ],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const summary = summarizeRoutePlanner2Project(project);
+
+    expect(summary.selectedRouteFamilySummary).toMatchObject({
+      key: 'barrie-merged-12-weekday',
+      runtimeMinutes: 124,
+      cycleTimeMinutes: 130,
+      recoveryTimeMinutes: 6,
+      busesRequired: 4,
+      frequencyMinutes: 35,
+    });
+  });
 });

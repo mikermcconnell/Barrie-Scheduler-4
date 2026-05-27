@@ -186,7 +186,12 @@ function cleanRuntimeForCurrentSegments(scenario: RoutePlanner2Scenario): RouteP
     const validSegmentIds = new Set(buildRoutePlanner2StopSegmentPairs(scenario).map(({ fromStop, toStop }) =>
         getRoutePlanner2SegmentId(fromStop.id, toStop.id),
     ));
-    const runtimeEstimates = scenario.runtimeEstimates?.filter((estimate) => validSegmentIds.has(estimate.id));
+    const validSegmentKeys = new Set(buildRoutePlanner2StopSegmentPairs(scenario).map(({ fromStop, toStop }) =>
+        getSegmentKey(fromStop.id, toStop.id),
+    ));
+    const runtimeEstimates = scenario.runtimeEstimates?.filter((estimate) =>
+        validSegmentKeys.has(getSegmentKey(estimate.fromStopId, estimate.toStopId)),
+    );
     const runtimeOverrides = scenario.runtimeOverrides
         ? Object.fromEntries(Object.entries(scenario.runtimeOverrides).filter(([segmentId]) => validSegmentIds.has(segmentId)))
         : undefined;
@@ -197,6 +202,15 @@ function cleanRuntimeForCurrentSegments(scenario: RoutePlanner2Scenario): RouteP
         runtimeOverrides: runtimeOverrides && Object.keys(runtimeOverrides).length > 0 ? runtimeOverrides : undefined,
         feasibility: undefined,
     };
+}
+
+function getTransferredRuntimeEstimateId(
+    fromStopId: string,
+    toStopId: string,
+    estimate: RoutePlanner2SegmentRuntime,
+): string {
+    const segmentId = getRoutePlanner2SegmentId(fromStopId, toStopId);
+    return estimate.evidencePeriod ? `${segmentId}-${estimate.evidencePeriod}` : segmentId;
 }
 
 function createUniqueTransferredStopId(
@@ -1181,12 +1195,27 @@ export function reassignRoutePlanner2StopRange(
                 const toStopId = transferredStopIdBySourceId.get(estimate.toStopId)!;
                 return {
                     ...estimate,
-                    id: getRoutePlanner2SegmentId(fromStopId, toStopId),
+                    id: getTransferredRuntimeEstimateId(fromStopId, toStopId, estimate),
                     fromStopId,
                     toStopId,
                     updatedAt: now,
                 };
             });
+    const transferredRuntimeOverrides = options.reverseOrder
+        ? undefined
+        : Object.fromEntries(buildRoutePlanner2StopSegmentPairs(sourceScenario).flatMap(({ fromStop, toStop }) => {
+            const fromStopId = transferredStopIdBySourceId.get(fromStop.id);
+            const toStopId = transferredStopIdBySourceId.get(toStop.id);
+            if (!fromStopId || !toStopId) return [];
+
+            const override = sourceScenario.runtimeOverrides?.[getRoutePlanner2SegmentId(fromStop.id, toStop.id)];
+            if (!override) return [];
+
+            return [[
+                getRoutePlanner2SegmentId(fromStopId, toStopId),
+                { ...override, updatedAt: now },
+            ]];
+        }));
 
     const targetScenarioWithStops = {
         ...targetScenario,
@@ -1199,6 +1228,12 @@ export function reassignRoutePlanner2StopRange(
             ...(targetScenario.runtimeEstimates ?? []),
             ...transferredRuntimeEstimates,
         ],
+        runtimeOverrides: transferredRuntimeOverrides && Object.keys(transferredRuntimeOverrides).length > 0
+            ? {
+                ...(targetScenario.runtimeOverrides ?? {}),
+                ...transferredRuntimeOverrides,
+            }
+            : targetScenario.runtimeOverrides,
     };
     const updatedTargetScenario = cleanRuntimeForCurrentSegments({
         ...targetScenarioWithStops,

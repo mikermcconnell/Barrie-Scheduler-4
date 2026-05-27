@@ -1,13 +1,25 @@
-import { TIME_PERIODS, type TimePeriod } from '../gtfs/corridorHeadway';
+import type { TimePeriod } from '../gtfs/corridorHeadway';
 import { getRouteColor } from '../config/routeColors';
 import type {
     RoutePlanner2RoutePoint,
     RoutePlanner2RouteFamilyReference,
+    RoutePlanner2PlanningPeriod,
     RoutePlanner2Scenario,
     RoutePlanner2SegmentRuntime,
     RoutePlanner2ServiceAssumptions,
     RoutePlanner2Stop,
 } from './routePlanner2Types';
+
+const BLOCK_CYCLE_OUTLIER_MULTIPLIER = 1.35;
+const BLOCK_CYCLE_OUTLIER_BUFFER_MINUTES = 30;
+// Keep this local to avoid loading the bundled GTFS corridor index just to import patterns.
+const TIME_PERIODS: Array<{ id: TimePeriod; label: string; startMinute: number; endMinute: number }> = [
+    { id: 'am-peak', label: 'AM Peak', startMinute: 420, endMinute: 540 },
+    { id: 'midday', label: 'Midday', startMinute: 540, endMinute: 900 },
+    { id: 'pm-peak', label: 'PM Peak', startMinute: 900, endMinute: 1080 },
+    { id: 'evening', label: 'Evening', startMinute: 1080, endMinute: 1380 },
+    { id: 'full-day', label: 'Full Day', startMinute: 300, endMinute: 1500 },
+];
 
 export interface RoutePlanner2GtfsRoute {
     route_id: string;
@@ -104,6 +116,12 @@ export interface RoutePlanner2GtfsImportPeriodRuntime {
     totalRuntimeMinutes: number;
 }
 
+export interface RoutePlanner2GtfsImportPeriodCycle {
+    period: TimePeriod;
+    sampleSize: number;
+    cycleTimeMinutes: number;
+}
+
 export interface RoutePlanner2GtfsImportPattern {
     id: string;
     routeId: string;
@@ -124,6 +142,7 @@ export interface RoutePlanner2GtfsImportPattern {
     medianHeadwayMinutes?: number;
     blockCount?: number;
     scheduledRuntimes?: RoutePlanner2GtfsImportPeriodRuntime[];
+    scheduledCycles?: RoutePlanner2GtfsImportPeriodCycle[];
     stops: RoutePlanner2GtfsImportStop[];
     shapePoints: RoutePlanner2GtfsShapePoint[];
     feedVersion?: string;
@@ -211,6 +230,21 @@ function median(values: number[]): number | undefined {
     return (left + right) / 2;
 }
 
+function mostCommonTypicalValue(values: number[]): number | undefined {
+    const finiteValues = values.filter((value) => Number.isFinite(value));
+    if (finiteValues.length === 0) return undefined;
+
+    const medianValue = median(finiteValues) ?? finiteValues[0]!;
+    const counts = new Map<number, number>();
+    finiteValues.forEach((value) => counts.set(value, (counts.get(value) ?? 0) + 1));
+    return Array.from(counts.entries())
+        .sort(([valueA, countA], [valueB, countB]) =>
+            countB - countA
+            || Math.abs(valueA - medianValue) - Math.abs(valueB - medianValue)
+            || valueA - valueB,
+        )[0]?.[0];
+}
+
 function deriveMedianHeadwayMinutes(departures: number[]): number | undefined {
     const sortedDepartures = departures.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
     const headways = sortedDepartures
@@ -219,6 +253,28 @@ function deriveMedianHeadwayMinutes(departures: number[]): number | undefined {
         .filter((headway) => headway > 0);
     const medianHeadway = median(headways);
     return medianHeadway == null ? undefined : Math.max(1, Math.round(medianHeadway));
+}
+
+function getMaximumExpectedBlockCycleMinutes(
+    medianHeadwayMinutes: number | undefined,
+    blockCount: number | undefined,
+): number | undefined {
+    if (
+        medianHeadwayMinutes == null
+        || blockCount == null
+        || !Number.isFinite(medianHeadwayMinutes)
+        || !Number.isFinite(blockCount)
+        || medianHeadwayMinutes <= 0
+        || blockCount <= 0
+    ) {
+        return undefined;
+    }
+
+    const proxyCycleMinutes = medianHeadwayMinutes * blockCount;
+    return Math.max(
+        Math.round(proxyCycleMinutes * BLOCK_CYCLE_OUTLIER_MULTIPLIER),
+        Math.round(proxyCycleMinutes + BLOCK_CYCLE_OUTLIER_BUFFER_MINUTES),
+    );
 }
 
 function isDepartureInPeriod(departureMinutes: number, period: TimePeriod): boolean {
@@ -237,6 +293,58 @@ function deriveTripSegmentRuntimeMinutes(stopTimes: RoutePlanner2GtfsStopTime[],
     if (fromMinutes == null || toMinutes == null || toMinutes < fromMinutes) return undefined;
 
     return Math.max(1, Math.round(toMinutes - fromMinutes));
+}
+
+function deriveTripElapsedRuntimeMinutes(stopTimes: RoutePlanner2GtfsStopTime[]): number | undefined {
+    const firstStopTime = stopTimes[0];
+    const lastStopTime = stopTimes[stopTimes.length - 1];
+    if (!firstStopTime || !lastStopTime) return undefined;
+
+    const firstMinutes = parseFiniteGtfsMinutes(firstStopTime.departure_time) ?? parseFiniteGtfsMinutes(firstStopTime.arrival_time);
+    const lastMinutes = parseFiniteGtfsMinutes(lastStopTime.arrival_time) ?? parseFiniteGtfsMinutes(lastStopTime.departure_time);
+    if (firstMinutes == null || lastMinutes == null || lastMinutes < firstMinutes) return undefined;
+
+    return Math.max(1, Math.round(lastMinutes - firstMinutes));
+}
+
+function fitSegmentRuntimeTotal(segmentRuntimeMinutes: number[], targetTotalRuntimeMinutes: number): number[] {
+    const next = segmentRuntimeMinutes.map((runtimeMinutes) => Math.max(1, Math.round(runtimeMinutes)));
+    if (next.length === 0) return next;
+
+    const minimumTotal = next.length;
+    const targetTotal = Math.max(minimumTotal, Math.round(targetTotalRuntimeMinutes));
+    const currentTotal = next.reduce((sum, runtimeMinutes) => sum + runtimeMinutes, 0);
+    let delta = currentTotal - targetTotal;
+
+    while (delta > 0) {
+        const reducibleSegments = next
+            .map((runtimeMinutes, index) => ({ runtimeMinutes, index }))
+            .filter((segment) => segment.runtimeMinutes > 1)
+            .sort((a, b) => b.runtimeMinutes - a.runtimeMinutes || a.index - b.index);
+
+        if (reducibleSegments.length === 0) break;
+
+        for (const segment of reducibleSegments) {
+            if (delta <= 0) break;
+            if (next[segment.index] == null || next[segment.index] <= 1) continue;
+            next[segment.index] -= 1;
+            delta -= 1;
+        }
+    }
+
+    while (delta < 0) {
+        const expandableSegments = next
+            .map((runtimeMinutes, index) => ({ runtimeMinutes, index }))
+            .sort((a, b) => b.runtimeMinutes - a.runtimeMinutes || a.index - b.index);
+
+        for (const segment of expandableSegments) {
+            if (delta >= 0) break;
+            next[segment.index] += 1;
+            delta += 1;
+        }
+    }
+
+    return next;
 }
 
 interface GtfsTripStopTimeSample {
@@ -259,26 +367,92 @@ function buildScheduledRuntimesForTripSamples(
         if (periodTrips.length === 0) return [];
 
         const segmentRuntimeValues = Array.from({ length: stopCount - 1 }, () => [] as number[]);
+        const tripElapsedRuntimeValues: number[] = [];
         periodTrips.forEach((sample) => {
+            const elapsedRuntimeMinutes = deriveTripElapsedRuntimeMinutes(sample.stopTimes);
+            if (elapsedRuntimeMinutes == null) return;
+
             const tripSegmentRuntimes: number[] = [];
             for (let index = 0; index < stopCount - 1; index += 1) {
                 const runtimeMinutes = deriveTripSegmentRuntimeMinutes(sample.stopTimes, index);
                 if (runtimeMinutes == null) return;
                 tripSegmentRuntimes.push(runtimeMinutes);
             }
+            tripElapsedRuntimeValues.push(elapsedRuntimeMinutes);
             tripSegmentRuntimes.forEach((runtimeMinutes, index) => {
                 segmentRuntimeValues[index]?.push(runtimeMinutes);
             });
         });
 
-        if (segmentRuntimeValues.some((values) => values.length === 0)) return [];
-        const segmentRuntimeMinutes = segmentRuntimeValues.map((values) => Math.max(1, Math.round(median(values) ?? 1)));
-        const sampleSize = Math.min(...segmentRuntimeValues.map((values) => values.length));
+        if (tripElapsedRuntimeValues.length === 0 || segmentRuntimeValues.some((values) => values.length === 0)) return [];
+        const medianSegmentRuntimeMinutes = segmentRuntimeValues.map((values) => Math.max(1, Math.round(median(values) ?? 1)));
+        const medianTripElapsedRuntimeMinutes = median(tripElapsedRuntimeValues)
+            ?? medianSegmentRuntimeMinutes.reduce((sum, runtimeMinutes) => sum + runtimeMinutes, 0);
+        // Dense GTFS feeds often repeat the same minute across adjacent local stops.
+        // Keep those stop pairs usable as segment evidence, but preserve the trip's
+        // first-stop-to-last-stop elapsed runtime so route totals and recovery stay realistic.
+        const segmentRuntimeMinutes = fitSegmentRuntimeTotal(medianSegmentRuntimeMinutes, medianTripElapsedRuntimeMinutes);
+        const sampleSize = Math.min(tripElapsedRuntimeValues.length, ...segmentRuntimeValues.map((values) => values.length));
         return [{
             period: period.id,
             sampleSize,
             segmentRuntimeMinutes,
             totalRuntimeMinutes: segmentRuntimeMinutes.reduce((sum, runtimeMinutes) => sum + runtimeMinutes, 0),
+        }];
+    });
+}
+
+function buildScheduledCyclesForTripSamples(
+    tripStopTimes: GtfsTripStopTimeSample[],
+    options: { medianHeadwayMinutes?: number; blockCount?: number } = {},
+): RoutePlanner2GtfsImportPeriodCycle[] {
+    const tripsByBlock = new Map<string, GtfsTripStopTimeSample[]>();
+    const maximumExpectedCycleMinutes = getMaximumExpectedBlockCycleMinutes(
+        options.medianHeadwayMinutes,
+        options.blockCount,
+    );
+
+    tripStopTimes.forEach((sample) => {
+        const blockId = sample.trip.block_id?.trim();
+        if (!blockId || !Number.isFinite(sample.firstDepartureMinutes)) return;
+        const blockTrips = tripsByBlock.get(blockId) ?? [];
+        blockTrips.push(sample);
+        tripsByBlock.set(blockId, blockTrips);
+    });
+
+    const cycleSamples: Array<{ startMinutes: number; cycleTimeMinutes: number }> = [];
+    tripsByBlock.forEach((blockTrips) => {
+        const sortedTrips = [...blockTrips].sort((a, b) => a.firstDepartureMinutes - b.firstDepartureMinutes);
+        sortedTrips.slice(0, -1).forEach((sample, index) => {
+            const nextTrip = sortedTrips[index + 1];
+            if (!nextTrip) return;
+            const cycleTimeMinutes = nextTrip.firstDepartureMinutes - sample.firstDepartureMinutes;
+            if (!Number.isFinite(cycleTimeMinutes) || cycleTimeMinutes <= 0) return;
+            // A long gap in the same block can be a break, deadhead, or off-service span,
+            // not the repeating route cycle. Keep only plausible block-return windows.
+            if (maximumExpectedCycleMinutes != null && cycleTimeMinutes > maximumExpectedCycleMinutes) return;
+            cycleSamples.push({
+                startMinutes: sample.firstDepartureMinutes,
+                cycleTimeMinutes: Math.round(cycleTimeMinutes),
+            });
+        });
+    });
+
+    if (cycleSamples.length === 0) return [];
+
+    return TIME_PERIODS.flatMap((period): RoutePlanner2GtfsImportPeriodCycle[] => {
+        const periodCycles = cycleSamples
+            .filter((sample) => isDepartureInPeriod(sample.startMinutes, period.id))
+            .map((sample) => sample.cycleTimeMinutes);
+        if (periodCycles.length === 0) return [];
+
+        const cycleTimeMinutes = mostCommonTypicalValue(periodCycles);
+        if (cycleTimeMinutes == null) return [];
+
+        return [{
+            period: period.id,
+            sampleSize: periodCycles.length,
+            cycleTimeMinutes,
         }];
     });
 }
@@ -520,6 +694,8 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
         const directionLabel = group.directionId == null ? 'none' : String(group.directionId);
         const id = `${group.route.route_id}|${group.serviceId}|${directionLabel}|${group.shapeId ?? 'no-shape'}|${stops.map((stop) => stop.stopId).join('>')}`;
         const sortedDepartures = group.departureMinutes.sort((a, b) => a - b);
+        const medianHeadwayMinutes = deriveMedianHeadwayMinutes(sortedDepartures);
+        const blockCount = group.blockIds.size > 0 ? group.blockIds.size : undefined;
 
         return {
             id,
@@ -538,9 +714,10 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
             shapePointCount: group.shapeId ? (shapesById.get(group.shapeId)?.length ?? 0) : 0,
             firstDepartureMinutes: sortedDepartures[0],
             lastDepartureMinutes: sortedDepartures[sortedDepartures.length - 1],
-            medianHeadwayMinutes: deriveMedianHeadwayMinutes(sortedDepartures),
-            blockCount: group.blockIds.size > 0 ? group.blockIds.size : undefined,
+            medianHeadwayMinutes,
+            blockCount,
             scheduledRuntimes: buildScheduledRuntimesForTripSamples(group.tripStopTimes, stops.length),
+            scheduledCycles: buildScheduledCyclesForTripSamples(group.tripStopTimes, { medianHeadwayMinutes, blockCount }),
             stops,
             shapePoints,
             feedVersion: feed.feedInfo?.feedVersion,
@@ -557,7 +734,7 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
 }
 
 function buildFallbackFullDayScheduledRuntime(pattern: RoutePlanner2GtfsImportPattern): RoutePlanner2GtfsImportPeriodRuntime[] {
-    const segmentRuntimeMinutes = pattern.stops.slice(0, -1).flatMap((fromStop, index): number[] => {
+    const medianSegmentRuntimeMinutes = pattern.stops.slice(0, -1).flatMap((fromStop, index): number[] => {
         const toStop = pattern.stops[index + 1];
         if (!toStop) return [];
 
@@ -568,7 +745,17 @@ function buildFallbackFullDayScheduledRuntime(pattern: RoutePlanner2GtfsImportPa
         return [Math.max(1, Math.round(toMinutes - fromMinutes))];
     });
 
-    if (segmentRuntimeMinutes.length !== Math.max(0, pattern.stops.length - 1)) return [];
+    if (medianSegmentRuntimeMinutes.length !== Math.max(0, pattern.stops.length - 1)) return [];
+
+    const firstStop = pattern.stops[0];
+    const lastStop = pattern.stops[pattern.stops.length - 1];
+    const firstMinutes = firstStop ? firstStop.departureMinutes ?? firstStop.arrivalMinutes : undefined;
+    const lastMinutes = lastStop ? lastStop.arrivalMinutes ?? lastStop.departureMinutes : undefined;
+    const elapsedRuntimeMinutes = firstMinutes != null && lastMinutes != null && lastMinutes >= firstMinutes
+        ? Math.max(1, Math.round(lastMinutes - firstMinutes))
+        : medianSegmentRuntimeMinutes.reduce((sum, runtimeMinutes) => sum + runtimeMinutes, 0);
+    const segmentRuntimeMinutes = fitSegmentRuntimeTotal(medianSegmentRuntimeMinutes, elapsedRuntimeMinutes);
+
     return [{
         period: 'full-day',
         sampleSize: pattern.tripCount,
@@ -625,10 +812,23 @@ function getGtfsDayType(dayTypeLabel: string): RoutePlanner2ServiceAssumptions['
     return undefined;
 }
 
+function getPlanningPeriodFromGtfsPeriod(period: TimePeriod): RoutePlanner2PlanningPeriod {
+    return period === 'full-day' ? 'all-day' : period;
+}
+
 function buildServiceAssumptionsFromGtfsPattern(pattern: RoutePlanner2GtfsImportPattern): RoutePlanner2ServiceAssumptions {
     const firstTripTime = formatGtfsMinutesAsTime(pattern.firstDepartureMinutes);
     const lastTripTime = formatGtfsMinutesAsTime(pattern.lastDepartureMinutes);
     const targetBuses = pattern.blockCount && pattern.blockCount > 0 ? pattern.blockCount : undefined;
+    const scheduledCycleWindows: NonNullable<RoutePlanner2ServiceAssumptions['scheduledCycleWindows']> = {};
+    pattern.scheduledCycles?.forEach((cycle) => {
+        const planningPeriod = getPlanningPeriodFromGtfsPeriod(cycle.period);
+        scheduledCycleWindows[planningPeriod] = {
+            cycleTimeMinutes: cycle.cycleTimeMinutes,
+            sampleSize: cycle.sampleSize,
+            source: 'gtfs-block',
+        };
+    });
 
     return {
         ...DEFAULT_SERVICE,
@@ -642,6 +842,7 @@ function buildServiceAssumptionsFromGtfsPattern(pattern: RoutePlanner2GtfsImport
         } : {}),
         dayType: getGtfsDayType(pattern.dayTypeLabel),
         planningPeriod: 'all-day',
+        ...(Object.keys(scheduledCycleWindows).length > 0 ? { scheduledCycleWindows } : {}),
     };
 }
 

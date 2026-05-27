@@ -169,12 +169,16 @@ interface RoutePlanner2ServiceAssumptions {
   intermediateStopDwellSeconds: number;
   dayType?: 'weekday' | 'saturday' | 'sunday';
   planningPeriod?: 'all-day' | 'am-peak' | 'midday' | 'pm-peak' | 'evening';
+  scheduledCycleWindows?: Partial<Record<
+    'all-day' | 'am-peak' | 'midday' | 'pm-peak' | 'evening',
+    { cycleTimeMinutes: number; sampleSize: number; source: 'gtfs-block' }
+  >>;
 }
 ```
 
 Terminal layover fields are planning assumptions for v1 concept feasibility. They are not fixed-route schedule recovery rules.
 Intermediate stop dwell is an optional planning allowance added for non-terminal stops only. It stays separate from terminal layover/recovery.
-`targetBuses` is optional. When present, feasibility uses that bus count and the selected frequency as the scheduled cycle window instead of calculating buses from runtime. GTFS imports set it from distinct `block_id` values when the feed provides them.
+`targetBuses` is optional. When present, feasibility uses that bus count instead of calculating buses from runtime. If `scheduledCycleWindows` is present, feasibility uses the selected period's scheduled GTFS block cycle, falling back to all-day. Otherwise, the scheduled cycle window is `targetBuses * frequencyMinutes`. GTFS imports set `targetBuses` from distinct `block_id` values and derive `scheduledCycleWindows` from same-block repeat trips when the feed provides enough block data.
 
 ## Feasibility Summary
 

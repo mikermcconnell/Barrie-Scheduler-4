@@ -19,6 +19,24 @@ const GTFS_RUNTIME_EVIDENCE_SOURCES = new Set<RoutePlanner2SegmentRuntime['sourc
     'scheduled-proxy',
 ]);
 
+function routeNamesOverlap(current: string[] | undefined, selected: string[]): boolean {
+    if (!current || current.length === 0) return false;
+    return current.some((route) => selected.includes(route));
+}
+
+function estimateAllowedByRuntimeRouteFilter(
+    scenario: RoutePlanner2Scenario,
+    estimate: RoutePlanner2SegmentRuntime,
+): boolean {
+    if (!GTFS_RUNTIME_EVIDENCE_SOURCES.has(estimate.source)) return true;
+    if (scenario.runtimeRouteFilter?.mode !== 'selected') return true;
+
+    const selectedRoutes = scenario.runtimeRouteFilter.routeShortNames.filter(Boolean);
+    if (selectedRoutes.length === 0) return true;
+
+    return routeNamesOverlap(estimate.matchedRoutes, selectedRoutes);
+}
+
 function markChanged(project: RoutePlanner2Project, now: string): RoutePlanner2Project {
     return {
         ...project,
@@ -116,6 +134,35 @@ function getExpectedEvidencePeriod(service: RoutePlanner2ServiceAssumptions): Ro
     return service.planningPeriod;
 }
 
+function getScheduledCycleWindowMinutes(service: RoutePlanner2ServiceAssumptions): number | null {
+    const planningPeriod = service.planningPeriod ?? 'all-day';
+    const scheduledCycleWindow = service.scheduledCycleWindows?.[planningPeriod]
+        ?? service.scheduledCycleWindows?.['all-day'];
+    const cycleTimeMinutes = scheduledCycleWindow?.cycleTimeMinutes;
+    return isPositiveNumber(cycleTimeMinutes) ? cycleTimeMinutes : null;
+}
+
+function normalizeStopName(value: string): string {
+    return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function stopsRepresentSamePlace(firstStop: RoutePlanner2Stop | undefined, lastStop: RoutePlanner2Stop | undefined): boolean {
+    if (!firstStop || !lastStop) return false;
+    const firstStopCode = firstStop.stopCode?.trim();
+    const lastStopCode = lastStop.stopCode?.trim();
+    if (firstStopCode && lastStopCode) return firstStopCode === lastStopCode;
+
+    return normalizeStopName(firstStop.name) === normalizeStopName(lastStop.name)
+        && Math.abs(firstStop.lat - lastStop.lat) < 0.00001
+        && Math.abs(firstStop.lng - lastStop.lng) < 0.00001;
+}
+
+function isGtfsSinglePatternLoop(scenario: RoutePlanner2Scenario): boolean {
+    if (scenario.source?.type !== 'gtfs' || scenario.routeShape !== 'one-way') return false;
+    const sortedStops = [...scenario.stops].sort((a, b) => a.sequence - b.sequence);
+    return sortedStops.length >= 2 && stopsRepresentSamePlace(sortedStops[0], sortedStops[sortedStops.length - 1]);
+}
+
 function scoreEstimateForServicePeriod(
     estimate: RoutePlanner2SegmentRuntime,
     service: RoutePlanner2ServiceAssumptions,
@@ -154,7 +201,8 @@ function getCurrentSegmentEstimate(
         && (
             (scenario.runtimeSourceMode ?? 'gtfs') !== 'mapbox'
             || !GTFS_RUNTIME_EVIDENCE_SOURCES.has(item.source)
-        ),
+        )
+        && estimateAllowedByRuntimeRouteFilter(scenario, item),
     );
 
     const rankedCandidates = candidates
@@ -310,24 +358,29 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
     let busThresholdBasisMinutes: number | null = null;
 
     if (!hasBlockingWarnings) {
+        const scheduledCycleWindowMinutes = targetBuses != null ? getScheduledCycleWindowMinutes(service) : null;
         if (scenario.routeShape === 'closed-loop' || scenario.routeShape === 'out-and-back') {
             const fullRouteRuntimeMinutes = oneWayRuntimeMinutes;
             busesRequired = targetBuses ?? Math.max(1, Math.ceil(fullRouteRuntimeMinutes / service.frequencyMinutes));
-            cycleTimeMinutes = busesRequired * service.frequencyMinutes;
+            cycleTimeMinutes = scheduledCycleWindowMinutes ?? busesRequired * service.frequencyMinutes;
             busThresholdBasisMinutes = fullRouteRuntimeMinutes;
             recoveryTimeMinutes = cycleTimeMinutes - fullRouteRuntimeMinutes;
             recoveryPercent = fullRouteRuntimeMinutes > 0
                 ? Math.round((recoveryTimeMinutes / fullRouteRuntimeMinutes) * 100)
                 : null;
         } else {
-            const estimatedFullRuntimeMinutes = oneWayRuntimeMinutes * 2
-                + service.startTerminalLayoverMinutes
-                + service.endTerminalLayoverMinutes;
+            const gtfsSinglePatternLoop = isGtfsSinglePatternLoop(scenario);
+            const estimatedFullRuntimeMinutes = gtfsSinglePatternLoop
+                ? oneWayRuntimeMinutes
+                : oneWayRuntimeMinutes * 2
+                    + service.startTerminalLayoverMinutes
+                    + service.endTerminalLayoverMinutes;
             busesRequired = targetBuses ?? Math.ceil(estimatedFullRuntimeMinutes / service.frequencyMinutes);
-            const scheduledCycleWindowMinutes = busesRequired * service.frequencyMinutes;
-            cycleTimeMinutes = targetBuses != null ? scheduledCycleWindowMinutes : estimatedFullRuntimeMinutes;
+            const calculatedCycleWindowMinutes = busesRequired * service.frequencyMinutes;
+            const activeCycleWindowMinutes = scheduledCycleWindowMinutes ?? calculatedCycleWindowMinutes;
+            cycleTimeMinutes = targetBuses != null ? activeCycleWindowMinutes : estimatedFullRuntimeMinutes;
             busThresholdBasisMinutes = estimatedFullRuntimeMinutes;
-            recoveryTimeMinutes = scheduledCycleWindowMinutes - estimatedFullRuntimeMinutes;
+            recoveryTimeMinutes = activeCycleWindowMinutes - estimatedFullRuntimeMinutes;
             recoveryPercent = estimatedFullRuntimeMinutes > 0
                 ? Math.round((recoveryTimeMinutes / estimatedFullRuntimeMinutes) * 100)
                 : null;
@@ -344,7 +397,9 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
     }
 
     if (busThresholdBasisMinutes != null && busesRequired != null) {
-        const nextBusThreshold = busesRequired * service.frequencyMinutes;
+        const nextBusThreshold = targetBuses != null && cycleTimeMinutes != null
+            ? cycleTimeMinutes
+            : busesRequired * service.frequencyMinutes;
         if (nextBusThreshold - busThresholdBasisMinutes <= 3) {
             warnings.push({
                 id: 'near-bus-threshold',

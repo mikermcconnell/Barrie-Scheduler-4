@@ -499,6 +499,10 @@ describe('deriveRoutePlanner2EvidenceRuntimeEstimates', () => {
     };
     const selectedRouteScenario: RoutePlanner2Scenario = {
       ...scenario,
+      source: {
+        type: 'gtfs',
+        routeShortName: '8A',
+      },
       runtimeRouteFilter: { mode: 'selected', routeShortNames: ['2A'] },
       stops: [
         scenario.stops[0]!,
@@ -520,6 +524,74 @@ describe('deriveRoutePlanner2EvidenceRuntimeEstimates', () => {
       matchedRoutes: ['2A'],
       runtimeRouteBreakdown: [
         { routeShortName: '2A', scheduledRuntimeMinutes: 7 },
+      ],
+      evidenceMethod: 'corridor-path',
+    });
+  });
+
+  it('allows all matching GTFS routes when the all-matching filter is explicitly selected', () => {
+    const corridorGtfsStops: GtfsStopWithCoords[] = [
+      ...gtfsStops,
+      { stop_id: 'gtfs-c', stop_code: '300', stop_name: 'Stop C', lat: 44.4, lon: -79.68 },
+    ];
+    const abStats: CorridorSpeedStats = {
+      ...stats,
+      segmentId: 'North|gtfs-a|gtfs-b',
+      scheduledRuntimeMin: 4,
+      observedRuntimeMin: null,
+      routeBreakdown: [
+        { route: '2A', sampleCount: 0, scheduledRuntimeMin: 3, observedRuntimeMin: null, runtimeDeltaMin: null, runtimeDeltaPct: null, scheduledSpeedKmh: null, observedSpeedKmh: null },
+        { route: '8A', sampleCount: 0, scheduledRuntimeMin: 5, observedRuntimeMin: null, runtimeDeltaMin: null, runtimeDeltaPct: null, scheduledSpeedKmh: null, observedSpeedKmh: null },
+      ],
+    };
+    const bcStats: CorridorSpeedStats = {
+      ...stats,
+      segmentId: 'North|gtfs-b|gtfs-c',
+      scheduledRuntimeMin: 5,
+      observedRuntimeMin: null,
+      routeBreakdown: [
+        { route: '2A', sampleCount: 0, scheduledRuntimeMin: 4, observedRuntimeMin: null, runtimeDeltaMin: null, runtimeDeltaPct: null, scheduledSpeedKmh: null, observedSpeedKmh: null },
+        { route: '8A', sampleCount: 0, scheduledRuntimeMin: 6, observedRuntimeMin: null, runtimeDeltaMin: null, runtimeDeltaPct: null, scheduledSpeedKmh: null, observedSpeedKmh: null },
+      ],
+    };
+    const corridorIndex: CorridorSpeedIndex = {
+      segments: [
+        { ...speedIndex.segments[0]!, id: 'North|gtfs-a|gtfs-b', fromStopId: 'gtfs-a', toStopId: 'gtfs-b', routes: ['2A', '8A'], geometry: [[44.38, -79.7], [44.39, -79.69]], lengthMeters: 1400 },
+        { ...speedIndex.segments[0]!, id: 'North|gtfs-b|gtfs-c', fromStopId: 'gtfs-b', toStopId: 'gtfs-c', routes: ['2A', '8A'], geometry: [[44.39, -79.69], [44.4, -79.68]], lengthMeters: 1400 },
+      ],
+      availableDirections: ['North'],
+      statsBySegmentId: new Map([
+        ['North|gtfs-a|gtfs-b', new Map([['weekday', new Map([['full-day', abStats]])]])],
+        ['North|gtfs-b|gtfs-c', new Map([['weekday', new Map([['full-day', bcStats]])]])],
+      ]),
+    };
+    const allMatchingScenario: RoutePlanner2Scenario = {
+      ...scenario,
+      source: {
+        type: 'gtfs',
+        routeShortName: '8A',
+      },
+      runtimeRouteFilter: { mode: 'all-matching', routeShortNames: [] },
+      stops: [
+        scenario.stops[0]!,
+        { id: 'rp-c', name: 'Stop C', lat: 44.4, lng: -79.68, sequence: 2, role: 'end-terminal', source: 'custom', stopCode: '300' },
+      ],
+    };
+
+    const estimates = deriveRoutePlanner2EvidenceRuntimeEstimates(
+      allMatchingScenario,
+      corridorIndex,
+      'weekday',
+      'full-day',
+      { gtfsStops: corridorGtfsStops, now, runtimeBasis: 'scheduled' },
+    );
+
+    expect(estimates[0]).toMatchObject({
+      runtimeMinutes: 9,
+      matchedRoutes: ['2A', '8A'],
+      runtimeRouteBreakdown: [
+        { routeShortName: '2A', scheduledRuntimeMinutes: 7 },
+        { routeShortName: '8A', scheduledRuntimeMinutes: 11 },
       ],
       evidenceMethod: 'corridor-path',
     });

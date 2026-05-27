@@ -348,6 +348,73 @@ describe('Route Planner 2 authoring', () => {
     });
   });
 
+  it('preserves period-specific runtimes and manual overrides when moving a stop range', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-a', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, role: 'start-terminal', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-2', name: 'A2', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-3', name: 'A3', lat: 44.4, lng: -79.67, role: 'end-terminal', now });
+    project = updateRoutePlanner2SegmentRuntimeEstimates(project, 'route-a', [
+      {
+        id: 'segment-a-2-a-3-full-day',
+        fromStopId: 'a-2',
+        toStopId: 'a-3',
+        runtimeMinutes: 5,
+        source: 'scheduled-proxy',
+        confidence: 'high',
+        evidencePeriod: 'full-day',
+      },
+      {
+        id: 'segment-a-2-a-3-am-peak',
+        fromStopId: 'a-2',
+        toStopId: 'a-3',
+        runtimeMinutes: 7,
+        source: 'scheduled-proxy',
+        confidence: 'high',
+        evidencePeriod: 'am-peak',
+      },
+    ], now);
+    project = setRoutePlanner2SegmentRuntimeOverride(project, 'route-a', 'segment-a-2-a-3', 6, now);
+    project = {
+      ...project,
+      scenarios: [
+        project.scenarios[0]!,
+        {
+          ...project.scenarios[0]!,
+          id: 'route-b',
+          name: 'Route B',
+          stops: [],
+          alignment: [],
+          runtimeEstimates: undefined,
+          runtimeOverrides: undefined,
+        },
+      ],
+    };
+
+    project = reassignRoutePlanner2StopRange(project, {
+      sourceScenarioId: 'route-a',
+      targetScenarioId: 'route-b',
+      fromSequence: 2,
+      toSequence: 3,
+      mode: 'move',
+      now,
+    });
+
+    const source = project.scenarios.find((scenario) => scenario.id === 'route-a')!;
+    const target = project.scenarios.find((scenario) => scenario.id === 'route-b')!;
+    const targetSegmentId = `segment-${target.stops[0]?.id}-${target.stops[1]?.id}`;
+
+    expect(source.runtimeEstimates).toBeUndefined();
+    expect(source.runtimeOverrides).toBeUndefined();
+    expect(target.runtimeEstimates?.map((estimate) => `${estimate.id}:${estimate.evidencePeriod}:${estimate.runtimeMinutes}`)).toEqual([
+      `${targetSegmentId}-full-day:full-day:5`,
+      `${targetSegmentId}-am-peak:am-peak:7`,
+    ]);
+    expect(target.runtimeOverrides?.[targetSegmentId]).toMatchObject({
+      runtimeMinutes: 6,
+      updatedAt: now,
+    });
+  });
+
   it('creates, orders, and moves multiple route line waypoints between stops', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'First', lat: 44.38, lng: -79.69, now });
