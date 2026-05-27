@@ -136,7 +136,7 @@ Required visible states:
 - missing terminal warning
 - unsaved/local-only state if applicable
 
-For network redesign work, the right rail should include a compact **Reassign stops** control that can copy or move a contiguous stop range into another route concept. It should require the planner to choose the target route and insertion position instead of guessing where transferred stops belong.
+For network redesign work, the right rail should include a compact, visible **Reassign stops** control that can copy or move a contiguous stop range into another route concept. It should require the planner to choose the target route and insertion position instead of guessing where transferred stops belong, and it should offer a planner-controlled reverse-order option when a segment needs to flip direction.
 
 ## Right Rail
 

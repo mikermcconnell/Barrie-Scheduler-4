@@ -23,6 +23,7 @@ import {
     type RoutePlanner2SelectableMapItem,
     type RoutePlanner2SelectionPoint,
 } from '../../../utils/route-planner-2/routePlanner2MapSelection';
+import { getContrastingTextColor, getRouteColor } from '../../../utils/config/routeColors';
 import type { RoutePlanner2RoutePoint, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime, RoutePlanner2Stop } from '../../../utils/route-planner-2/routePlanner2Types';
 
 const ROUTE_LINE_LAYER_ID = 'route-planner-2-line';
@@ -41,6 +42,8 @@ const ROUTE_ROAD_NAME_LINE_LABEL_SOURCE_ID = 'route-planner-2-road-name-line-lab
 const ROUTE_ROAD_NAME_LINE_LABEL_LAYER_ID = 'route-planner-2-road-name-line-labels-text';
 const ROUTE_ROAD_NAME_OVERVIEW_LABEL_SOURCE_ID = 'route-planner-2-road-name-overview-labels';
 const ROUTE_ROAD_NAME_OVERVIEW_LABEL_LAYER_ID = 'route-planner-2-road-name-overview-labels-text';
+const DEFAULT_ROUTE_PLANNER_COLOR = '#0891b2';
+const ROUTE_COLOR_FALLBACK = '#6B7280';
 
 interface RoutePlanner2MapCanvasProps {
     scenario: RoutePlanner2Scenario | null | undefined;
@@ -149,7 +152,7 @@ const routeLineLayer: LayerProps = {
     id: ROUTE_LINE_LAYER_ID,
     type: 'line',
     paint: {
-        'line-color': '#0891b2',
+        'line-color': ['get', 'color'],
         'line-width': 5,
         'line-opacity': 0.86,
     },
@@ -163,9 +166,9 @@ const backgroundRouteLineLayer: LayerProps = {
     id: ROUTE_BACKGROUND_ROUTES_LAYER_ID,
     type: 'line',
     paint: {
-        'line-color': '#64748b',
+        'line-color': ['get', 'color'],
         'line-width': 3,
-        'line-opacity': 0.35,
+        'line-opacity': 0.48,
     },
     layout: {
         'line-cap': 'round',
@@ -205,7 +208,7 @@ const highlightedSegmentLineLayer: LayerProps = {
     id: ROUTE_HIGHLIGHTED_SEGMENT_LAYER_ID,
     type: 'line',
     paint: {
-        'line-color': '#0891b2',
+        'line-color': ['get', 'color'],
         'line-width': 10,
         'line-opacity': 0.88,
     },
@@ -230,7 +233,7 @@ const routeDirectionArrowCenterLayer: LayerProps = {
         'text-keep-upright': false,
     },
     paint: {
-        'text-color': '#0e7490',
+        'text-color': ['get', 'color'],
         'text-halo-color': '#ffffff',
         'text-halo-width': 3,
     },
@@ -317,25 +320,28 @@ const roadNameOverviewLabelLayer: LayerProps = {
     },
 };
 
-function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean, isHighlighted: boolean): string {
-    const roleClass = stop.role === 'start-terminal'
-        ? 'bg-emerald-600'
-        : stop.role === 'end-terminal'
-            ? 'bg-rose-600'
-            : stop.role === 'turnaround'
-                ? 'bg-amber-600'
-                : stop.role === 'timed'
-                    ? 'bg-indigo-600'
-                    : 'bg-cyan-600';
-    return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black leading-none text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''}`;
+function normalizeHexColor(value: string | undefined): string | null {
+    const normalized = value?.trim();
+    if (!normalized) return null;
+    const withHash = normalized.startsWith('#') ? normalized : `#${normalized}`;
+    return /^#[0-9A-F]{6}$/i.test(withHash) ? withHash.toUpperCase() : null;
 }
 
-function getStopMarkerColor(stop: RoutePlanner2Stop): string {
-    if (stop.role === 'start-terminal') return '#059669';
-    if (stop.role === 'end-terminal') return '#e11d48';
-    if (stop.role === 'turnaround') return '#d97706';
-    if (stop.role === 'timed') return '#4f46e5';
-    return '#0891b2';
+export function getRoutePlanner2ScenarioColor(scenario: RoutePlanner2Scenario | null | undefined): string {
+    const routeName = scenario?.source?.type === 'gtfs' && scenario.source.routeShortName
+        ? scenario.source.routeShortName
+        : scenario?.name;
+    if (routeName) {
+        const routeColor = getRouteColor(routeName);
+        if (routeColor !== ROUTE_COLOR_FALLBACK) return routeColor;
+    }
+
+    const storedColor = scenario?.source?.type === 'gtfs' ? normalizeHexColor(scenario.source.routeColor) : null;
+    return storedColor ?? DEFAULT_ROUTE_PLANNER_COLOR;
+}
+
+function getStopMarkerClass(isSelected: boolean, isHighlighted: boolean): string {
+    return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black leading-none shadow-lg ${isSelected ? 'scale-110 border-slate-950' : 'border-white'} ${isHighlighted ? 'scale-110 ring-4 ring-cyan-200' : ''}`;
 }
 
 function getExportLabelWidth(label: string): number {
@@ -378,7 +384,8 @@ function RoutePlanner2ExportStopLabel({ label }: { label: string }) {
     );
 }
 
-function RoutePlanner2ExportStopMarker({ stop }: { stop: RoutePlanner2Stop }) {
+function RoutePlanner2ExportStopMarker({ stop, routeColor }: { stop: RoutePlanner2Stop; routeColor: string }) {
+    const textColor = getContrastingTextColor(routeColor);
     return (
         <svg
             data-testid={`rp2-export-stop-marker-${stop.id}`}
@@ -388,7 +395,7 @@ function RoutePlanner2ExportStopMarker({ stop }: { stop: RoutePlanner2Stop }) {
             className="pointer-events-none overflow-visible drop-shadow-lg"
             aria-label={`Stop ${stop.sequence}`}
         >
-            <circle cx="22" cy="22" r="18" fill={getStopMarkerColor(stop)} stroke="#ffffff" strokeWidth="3.5" />
+            <circle cx="22" cy="22" r="18" fill={routeColor} stroke="#ffffff" strokeWidth="3.5" />
             <text
                 x="22"
                 y="22"
@@ -398,7 +405,7 @@ function RoutePlanner2ExportStopMarker({ stop }: { stop: RoutePlanner2Stop }) {
                 fontFamily="Nunito, Arial, sans-serif"
                 fontSize="14"
                 fontWeight="900"
-                fill="#ffffff"
+                fill={textColor === 'white' ? '#ffffff' : '#111827'}
             >
                 {stop.sequence}
             </text>
@@ -593,13 +600,13 @@ type RoutePathPoint =
     | { type: 'stop'; id: string; lat: number; lng: number }
     | { type: 'waypoint'; id: string; lat: number; lng: number };
 
-function buildLineGeoJson(coordinates: [number, number][]) {
+export function buildLineGeoJson(coordinates: [number, number][], color: string = DEFAULT_ROUTE_PLANNER_COLOR) {
     return {
         type: 'FeatureCollection' as const,
         features: coordinates.length >= 2
             ? [{
                 type: 'Feature' as const,
-                properties: {},
+                properties: { color },
                 geometry: {
                     type: 'LineString' as const,
                     coordinates,
@@ -621,6 +628,7 @@ export function buildRoutePlanner2ScenarioOverlayGeoJson(scenarios: RoutePlanner
                     scenarioId: scenario.id,
                     name: scenario.name,
                     index,
+                    color: getRoutePlanner2ScenarioColor(scenario),
                 },
                 geometry: {
                     type: 'LineString' as const,
@@ -834,13 +842,13 @@ function getRoutePlanner2StopLabelEdgePenalty(box: RoutePlanner2StopLabelBox, bo
         + Math.max(0, box.bottom - bounds.height + margin);
 }
 
-function buildHighlightedSegmentGeoJson(segment: RoutePlanner2SegmentGeometry | null) {
+function buildHighlightedSegmentGeoJson(segment: RoutePlanner2SegmentGeometry | null, color: string = DEFAULT_ROUTE_PLANNER_COLOR) {
     return {
         type: 'FeatureCollection' as const,
         features: segment && segment.coordinates.length >= 2
             ? [{
                 type: 'Feature' as const,
-                properties: { id: segment.id },
+                    properties: { id: segment.id, color },
                 geometry: {
                     type: 'LineString' as const,
                     coordinates: segment.coordinates,
@@ -869,6 +877,7 @@ export function buildRoutePlanner2DirectionArrowGeoJson(
     scenario: RoutePlanner2Scenario | null | undefined,
     segmentGeometries: RoutePlanner2SegmentGeometry[],
 ) {
+    const color = getRoutePlanner2ScenarioColor(scenario);
     const fallbackGeometries = scenario
         ? buildRoutePlanner2StopSegmentPaths(scenario).map((segment) => ({
             id: segment.id,
@@ -912,6 +921,7 @@ export function buildRoutePlanner2DirectionArrowGeoJson(
                         id: segment.id,
                         lane,
                         label,
+                        color,
                     },
                     geometry: {
                         type: 'LineString' as const,
@@ -1219,11 +1229,13 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const lineAnchorHandles = useMemo(() => scenario ? getRouteLineAnchorHandles(scenario) : [], [scenario]);
     const selectedStopIdSet = useMemo(() => new Set(selectedStopIds), [selectedStopIds]);
     const selectedWaypointIdSet = useMemo(() => new Set(selectedWaypointIds), [selectedWaypointIds]);
+    const routeColor = useMemo(() => getRoutePlanner2ScenarioColor(scenario), [scenario]);
+    const routeTextColor = useMemo(() => getContrastingTextColor(routeColor), [routeColor]);
     const stopLabelDetailsByStopId = useMemo(
         () => new Map(stopLabelDetails.map((detail) => [detail.stopId, detail])),
         [stopLabelDetails],
     );
-    const lineGeoJson = useMemo(() => buildLineGeoJson(snappedCoordinates.length ? snappedCoordinates : waypoints), [snappedCoordinates, waypoints]);
+    const lineGeoJson = useMemo(() => buildLineGeoJson(snappedCoordinates.length ? snappedCoordinates : waypoints, routeColor), [routeColor, snappedCoordinates, waypoints]);
     const backgroundRouteGeoJson = useMemo(
         () => buildRoutePlanner2ScenarioOverlayGeoJson(backgroundScenarios),
         [backgroundScenarios],
@@ -1274,7 +1286,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         [activeRoadNameLabelDensity, exportRoadLabelBounds, snappedSegmentGeometries],
     );
     const highlightedSegmentGeoJson = useMemo(() => {
-        if (!scenario || !highlightedSegmentId) return buildHighlightedSegmentGeoJson(null);
+        if (!scenario || !highlightedSegmentId) return buildHighlightedSegmentGeoJson(null, routeColor);
         const fallbackGeometries = buildRoutePlanner2StopSegmentPaths(scenario).map((segment) => ({
             id: segment.id,
             fromStopId: segment.fromStopId,
@@ -1283,8 +1295,8 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         }));
         const geometries = snappedSegmentGeometries.length > 0 ? snappedSegmentGeometries : fallbackGeometries;
         const highlightedSegment = geometries.find((geometry) => geometry.id === highlightedSegmentId) ?? null;
-        return buildHighlightedSegmentGeoJson(highlightedSegment);
-    }, [highlightedSegmentId, scenario, snappedSegmentGeometries]);
+        return buildHighlightedSegmentGeoJson(highlightedSegment, routeColor);
+    }, [highlightedSegmentId, routeColor, scenario, snappedSegmentGeometries]);
     const hasRouteLine = lineGeoJson.features.length > 0;
     const hasBackgroundRoutes = backgroundRouteGeoJson.features.length > 0;
     const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
@@ -2128,7 +2140,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             onDragEnd={(event) => finishStopDrag(stop.id, getDragCoordinate(event))}
                         >
                             {isExportCaptureMode ? (
-                                <RoutePlanner2ExportStopMarker stop={stop} />
+                                <RoutePlanner2ExportStopMarker stop={stop} routeColor={routeColor} />
                             ) : (
                                 <button
                                     type="button"
@@ -2138,7 +2150,11 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                                     }}
                                     data-highlighted={isHighlighted ? 'true' : undefined}
                                     data-selected={isBulkSelected ? 'true' : undefined}
-                                    className={`${getStopMarkerClass(stop, selectedStopId === stop.id || isBulkSelected, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''} ${isBulkSelected ? 'ring-4 ring-violet-300' : ''}`}
+                                    className={`${getStopMarkerClass(selectedStopId === stop.id || isBulkSelected, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''} ${isBulkSelected ? 'ring-4 ring-violet-300' : ''}`}
+                                    style={{
+                                        backgroundColor: routeColor,
+                                        color: routeTextColor === 'white' ? '#ffffff' : '#111827',
+                                    }}
                                     aria-label={`Select ${stop.name}`}
                                 >
                                     {stop.sequence}

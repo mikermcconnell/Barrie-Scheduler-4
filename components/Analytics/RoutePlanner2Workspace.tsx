@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ArrowLeft, BoxSelect, ClipboardList, Copy, Database, Eye, FileDown, FileSpreadsheet, FolderOpen, LassoSelect, Layers3, Loader2, MapPin, MapPinned, MousePointer2, PanelRightOpen, PencilRuler, Plus, Redo2, Save, Search, Star, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BoxSelect, ClipboardList, Copy, Database, Eye, FileDown, FileSpreadsheet, FolderOpen, LassoSelect, Layers3, Loader2, MapPin, MapPinned, MousePointer2, PanelRightOpen, PencilRuler, Plus, Redo2, Save, Search, Star, Trash2, Undo2 } from 'lucide-react';
 import {
     addRoutePlanner2LineWaypoint,
     addRoutePlanner2Stop,
@@ -97,6 +97,56 @@ interface RoutePlanner2WorkspaceProps {
 }
 
 const EMPTY_MAP_SELECTION: RoutePlanner2MapSelection = { stopIds: [], waypointIds: [] };
+
+interface RoutePlanner2ConceptGroup {
+    key: string;
+    label: string;
+    scenarios: RoutePlanner2Scenario[];
+}
+
+function getRoutePlanner2ConceptGroupKey(scenario: RoutePlanner2Scenario): string {
+    if (!scenario.routeFamily) return `scenario-${scenario.id}`;
+    const serviceId = scenario.source?.type === 'gtfs' ? scenario.source.serviceId ?? '' : '';
+    return `family-${scenario.routeFamily.key}-${serviceId}`;
+}
+
+function getRoutePlanner2ConceptGroupLabel(scenario: RoutePlanner2Scenario): string {
+    return scenario.routeFamily?.name ?? scenario.name;
+}
+
+function getRoutePlanner2FamilyDirectionOrder(scenario: RoutePlanner2Scenario): number {
+    if (scenario.routeFamily?.directionRole === 'out') return 0;
+    if (scenario.routeFamily?.directionRole === 'back') return 1;
+    return 2;
+}
+
+function getRoutePlanner2ScenarioDirectionLabel(scenario: RoutePlanner2Scenario): string {
+    if (!scenario.routeFamily) return scenario.name;
+    return `${scenario.routeFamily.directionLabel} · ${scenario.routeFamily.memberShortName}`;
+}
+
+function buildRoutePlanner2ConceptGroups(scenarios: RoutePlanner2Scenario[]): RoutePlanner2ConceptGroup[] {
+    const groups = new Map<string, RoutePlanner2ConceptGroup>();
+
+    scenarios.forEach((scenario) => {
+        const key = getRoutePlanner2ConceptGroupKey(scenario);
+        const current = groups.get(key);
+        if (current) {
+            current.scenarios.push(scenario);
+            return;
+        }
+        groups.set(key, {
+            key,
+            label: getRoutePlanner2ConceptGroupLabel(scenario),
+            scenarios: [scenario],
+        });
+    });
+
+    return Array.from(groups.values()).map((group) => ({
+        ...group,
+        scenarios: [...group.scenarios].sort((a, b) => getRoutePlanner2FamilyDirectionOrder(a) - getRoutePlanner2FamilyDirectionOrder(b)),
+    }));
+}
 
 function formatRuntime(minutes: number | null | undefined): string {
     return minutes != null ? `${minutes} min` : 'Not estimated';
@@ -670,6 +720,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [transferToSequence, setTransferToSequence] = useState(1);
     const [transferTargetScenarioId, setTransferTargetScenarioId] = useState('');
     const [transferInsertAfterStopId, setTransferInsertAfterStopId] = useState('__end');
+    const [transferReverseOrder, setTransferReverseOrder] = useState(false);
     const [segmentTransferImpactMessage, setSegmentTransferImpactMessage] = useState<string | null>(null);
     const [runtimeDayType, setRuntimeDayType] = useState<DayType>('weekday');
     const [runtimePeriod, setRuntimePeriod] = useState<TimePeriod>('full-day');
@@ -695,6 +746,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [addressSearchLoading, setAddressSearchLoading] = useState(false);
     const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
     const projectSummary = useMemo(() => summarizeRoutePlanner2Project(project), [project]);
+    const routeConceptGroups = useMemo(() => buildRoutePlanner2ConceptGroups(project.scenarios), [project.scenarios]);
     const selectedScenario = useMemo(
         () => project.scenarios.find((scenario) => scenario.id === project.selectedScenarioId) ?? project.scenarios[0],
         [project.scenarios, project.selectedScenarioId],
@@ -1243,6 +1295,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             toSequence: transferToSequence,
             insertAfterStopId,
             mode,
+            reverseOrder: transferReverseOrder,
             now,
         });
         const nextProject = selectRoutePlanner2Scenario(updated, transferTargetScenarioId);
@@ -1516,6 +1569,97 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         : selectedScenario?.routeShape === 'out-and-back'
             ? 'Out and back'
             : 'One-way';
+    const transferStopCount = selectedScenarioStops.filter((stop) =>
+        stop.sequence >= Math.min(transferFromSequence, transferToSequence)
+        && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
+    ).length;
+    const canApplyStopTransfer = Boolean(selectedScenario && transferTargetScenarioId && transferStopCount > 0);
+    const reassignStopsPanel = (
+        <section className="rounded-2xl border border-cyan-200 bg-cyan-50/60 p-3" data-testid="rp2-reassign-stops-panel">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <div className="flex items-center gap-2">
+                        <ArrowRightLeft size={16} className="text-cyan-700" />
+                        <h3 className="text-sm font-black text-slate-900">Reassign stops</h3>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-slate-600">
+                        Move or copy a contiguous stop range into another route concept.
+                    </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-cyan-700">Planning copy</span>
+            </div>
+            {transferTargetOptions.length === 0 ? (
+                <p className="mt-3 rounded-xl border border-cyan-100 bg-white px-3 py-2 text-sm leading-6 text-slate-600">
+                    Create or import another route concept before reassigning stops.
+                </p>
+            ) : selectedScenarioStops.length === 0 ? (
+                <p className="mt-3 rounded-xl border border-cyan-100 bg-white px-3 py-2 text-sm leading-6 text-slate-600">
+                    Add stops to this route before reassigning them.
+                </p>
+            ) : (
+                <div className="mt-3 space-y-3">
+                    <div className="rounded-xl border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-slate-600">
+                        Source route: <span className="font-bold text-slate-900">{selectedScenario?.name}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-from">
+                            From stop
+                            <select id="rp2-transfer-from" value={transferFromSequence} onChange={(event) => setTransferFromSequence(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                                {selectedScenarioStops.map((stop) => <option key={stop.id} value={stop.sequence}>{stop.sequence}. {stop.name}</option>)}
+                            </select>
+                        </label>
+                        <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-to">
+                            To stop
+                            <select id="rp2-transfer-to" value={transferToSequence} onChange={(event) => setTransferToSequence(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                                {selectedScenarioStops.map((stop) => <option key={stop.id} value={stop.sequence}>{stop.sequence}. {stop.name}</option>)}
+                            </select>
+                        </label>
+                    </div>
+                    <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-target">
+                        Target route
+                        <select id="rp2-transfer-target" value={transferTargetScenarioId} onChange={(event) => { setTransferTargetScenarioId(event.target.value); setTransferInsertAfterStopId('__end'); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                            {transferTargetOptions.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}
+                        </select>
+                    </label>
+                    <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-insert">
+                        Insert position
+                        <select id="rp2-transfer-insert" value={transferInsertAfterStopId} onChange={(event) => setTransferInsertAfterStopId(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                            <option value="__start">At beginning</option>
+                            {transferTargetStops.map((stop) => <option key={stop.id} value={stop.id}>After {stop.sequence}. {stop.name}</option>)}
+                            <option value="__end">At end</option>
+                        </select>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-xl border border-cyan-100 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                        <input
+                            type="checkbox"
+                            checked={transferReverseOrder}
+                            onChange={(event) => setTransferReverseOrder(event.target.checked)}
+                            className="mt-1 size-4 rounded border-slate-300 text-cyan-600"
+                        />
+                        <span>
+                            <span className="block text-slate-900">Reverse stop order</span>
+                            <span className="mt-0.5 block text-xs font-semibold leading-5 text-slate-500">
+                                Use this when the segment needs to flip direction before joining the target route. Existing directional runtimes will be recalculated.
+                            </span>
+                        </span>
+                    </label>
+                    <div className="rounded-xl border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-slate-600">
+                        Selected range: <span className="font-black text-slate-900">{transferStopCount}</span> {transferStopCount === 1 ? 'stop' : 'stops'}
+                        {transferReverseOrder && <span className="font-semibold text-cyan-700"> · reversed on insert</span>}
+                    </div>
+                    {segmentTransferImpactMessage && (
+                        <div data-testid="rp2-segment-transfer-impact" className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-900">
+                            <span className="font-black">Runtime impact:</span> {segmentTransferImpactMessage}
+                        </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => applyStopTransfer('move')} disabled={!canApplyStopTransfer} className="rounded-xl border border-cyan-200 bg-cyan-600 px-3 py-2 text-sm font-black text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">Move stops</button>
+                        <button type="button" onClick={() => applyStopTransfer('copy')} disabled={!canApplyStopTransfer} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">Copy stops</button>
+                    </div>
+                </div>
+            )}
+        </section>
+    );
     return (
         <div className="h-full overflow-hidden bg-slate-100">
             <main
@@ -1616,28 +1760,44 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             </button>
                                         </div>
                                         <div className="mt-2 max-h-44 space-y-1.5 overflow-y-auto pr-1">
-                                            {project.scenarios.map((scenario) => {
-                                                const summary = projectSummary.scenarioSummaries.find((item) => item.scenarioId === scenario.id);
-                                                const isSelected = selectedScenario?.id === scenario.id;
-                                                return (
-                                                    <button
-                                                        key={scenario.id}
-                                                        type="button"
-                                                        onClick={() => setProject((current) => selectRoutePlanner2Scenario(current, scenario.id))}
-                                                        className={`w-full rounded-xl border px-2.5 py-2 text-left ${isSelected ? 'border-cyan-300 bg-white shadow-sm' : 'border-slate-200 bg-white/80 hover:bg-white'}`}
-                                                    >
-                                                        <div className="flex items-center justify-between gap-2">
-                                                            <span className="truncate text-sm font-black text-slate-900">{scenario.name}</span>
-                                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{scenario.status}</span>
+                                            {routeConceptGroups.map((group) => (
+                                                <div key={group.key} className={group.scenarios.length > 1 ? 'rounded-2xl border border-slate-200 bg-white/70 p-1.5' : undefined}>
+                                                    {group.scenarios.length > 1 && (
+                                                        <div className="mb-1 flex items-center justify-between gap-2 px-1">
+                                                            <span className="truncate text-xs font-black uppercase tracking-wide text-slate-500">{group.label}</span>
+                                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600">{group.scenarios.length} directions</span>
                                                         </div>
-                                                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                                                            <span>{scenario.stops.length} stops</span>
-                                                            <span>{summary?.oneWayRuntimeLabel ?? 'Not ready'}</span>
-                                                            <span>{scenario.routeShape === 'closed-loop' ? 'Closed loop' : scenario.routeShape === 'out-and-back' ? 'Out and back' : summary?.readinessLabel ?? 'Not ready'}</span>
-                                                        </div>
-                                                    </button>
-                                                );
-                                            })}
+                                                    )}
+                                                    <div className="space-y-1.5">
+                                                        {group.scenarios.map((scenario) => {
+                                                            const summary = projectSummary.scenarioSummaries.find((item) => item.scenarioId === scenario.id);
+                                                            const isSelected = selectedScenario?.id === scenario.id;
+                                                            const scenarioLabel = group.scenarios.length > 1 ? getRoutePlanner2ScenarioDirectionLabel(scenario) : scenario.name;
+                                                            return (
+                                                                <button
+                                                                    key={scenario.id}
+                                                                    type="button"
+                                                                    onClick={() => setProject((current) => selectRoutePlanner2Scenario(current, scenario.id))}
+                                                                    className={`w-full rounded-xl border px-2.5 py-2 text-left ${isSelected ? 'border-cyan-300 bg-white shadow-sm' : 'border-slate-200 bg-white/80 hover:bg-white'}`}
+                                                                >
+                                                                    <div className="flex items-center justify-between gap-2">
+                                                                        <span className="truncate text-sm font-black text-slate-900">{scenarioLabel}</span>
+                                                                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{scenario.status}</span>
+                                                                    </div>
+                                                                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                                                                        <span>{scenario.stops.length} stops</span>
+                                                                        <span>{summary?.oneWayRuntimeLabel ?? 'Not ready'}</span>
+                                                                        <span>{scenario.routeShape === 'closed-loop' ? 'Closed loop' : scenario.routeShape === 'out-and-back' ? 'Out and back' : summary?.readinessLabel ?? 'Not ready'}</span>
+                                                                    </div>
+                                                                    {group.scenarios.length > 1 && scenario.routeFamily && (
+                                                                        <div className="mt-1 truncate text-[11px] font-semibold text-slate-400">{scenario.name}</div>
+                                                                    )}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                         <button
                                             type="button"
@@ -2274,6 +2434,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <p className="mt-3 text-sm leading-6 text-slate-500">Add stops from the map or address importer to build the order list.</p>
                                         )}
                                     </div>
+                                    {reassignStopsPanel}
                                     <details className="rounded-2xl border border-slate-200 bg-white p-3">
                                         <summary className="cursor-pointer text-sm font-black text-slate-900">Edit route inputs</summary>
                                         <div className="mt-3 space-y-4">
@@ -2315,63 +2476,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             </div>
                                         ) : <p className="text-sm leading-6 text-slate-500">Add a stop from the map canvas, then mark terminal roles here.</p>}
                                             </div>
-                                            <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <h3 className="text-sm font-black text-slate-900">Move segment between routes</h3>
-                                                <p className="mt-1 text-xs leading-5 text-slate-500">Move a contiguous stop segment into another route concept to compare runtime changes.</p>
-                                            </div>
-                                            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-500">Planning copy</span>
-                                        </div>
-                                        {transferTargetOptions.length === 0 ? (
-                                            <p className="mt-3 text-sm leading-6 text-slate-500">Create another route concept before reassigning stops.</p>
-                                        ) : selectedScenarioStops.length === 0 ? (
-                                            <p className="mt-3 text-sm leading-6 text-slate-500">Add stops to this route before reassigning them.</p>
-                                        ) : (
-                                            <div className="mt-3 space-y-3">
-                                                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
-                                                    Source route: <span className="font-bold text-slate-900">{selectedScenario.name}</span>
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-from">
-                                                        From stop
-                                                        <select id="rp2-transfer-from" value={transferFromSequence} onChange={(event) => setTransferFromSequence(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
-                                                            {selectedScenarioStops.map((stop) => <option key={stop.id} value={stop.sequence}>{stop.sequence}. {stop.name}</option>)}
-                                                        </select>
-                                                    </label>
-                                                    <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-to">
-                                                        To stop
-                                                        <select id="rp2-transfer-to" value={transferToSequence} onChange={(event) => setTransferToSequence(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
-                                                            {selectedScenarioStops.map((stop) => <option key={stop.id} value={stop.sequence}>{stop.sequence}. {stop.name}</option>)}
-                                                        </select>
-                                                    </label>
-                                                </div>
-                                                <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-target">
-                                                    Target route
-                                                    <select id="rp2-transfer-target" value={transferTargetScenarioId} onChange={(event) => { setTransferTargetScenarioId(event.target.value); setTransferInsertAfterStopId('__end'); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
-                                                        {transferTargetOptions.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}
-                                                    </select>
-                                                </label>
-                                                <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-insert">
-                                                    Insert position
-                                                    <select id="rp2-transfer-insert" value={transferInsertAfterStopId} onChange={(event) => setTransferInsertAfterStopId(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
-                                                        <option value="__start">At beginning</option>
-                                                        {transferTargetStops.map((stop) => <option key={stop.id} value={stop.id}>After {stop.sequence}. {stop.name}</option>)}
-                                                        <option value="__end">At end</option>
-                                                    </select>
-                                                </label>
-                                                {segmentTransferImpactMessage && (
-                                                    <div data-testid="rp2-segment-transfer-impact" className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-900">
-                                                        <span className="font-black">Runtime impact:</span> {segmentTransferImpactMessage}
-                                                    </div>
-                                                )}
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <button type="button" onClick={() => applyStopTransfer('move')} className="rounded-xl border border-cyan-200 bg-cyan-600 px-3 py-2 text-sm font-black text-white shadow-sm">Move segment</button>
-                                                    <button type="button" onClick={() => applyStopTransfer('copy')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700">Copy segment</button>
-                                                </div>
-                                            </div>
-                                        )}
-                                            </div>
+
                                         </div>
                                     </details>
                                     <div ref={runtimeSourceDetailsRef} data-testid="rp2-runtime-source-details" className="scroll-mt-24">

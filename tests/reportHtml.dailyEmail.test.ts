@@ -7,6 +7,7 @@ import type {
   HourMetrics,
   OTPBreakdown,
   RouteMetrics,
+  StopMetrics,
   SystemMetrics,
 } from '../functions/src/types';
 
@@ -67,6 +68,23 @@ function makeHour(hour: number, boardings: number, overrides: Partial<HourMetric
   };
 }
 
+function makeStop(overrides: Partial<StopMetrics> = {}): StopMetrics {
+  return {
+    stopName: 'Test Stop',
+    stopId: '100',
+    lat: 44.38,
+    lon: -79.69,
+    isTimepoint: true,
+    otp: makeOtp({ total: 10, onTimePercent: 80, earlyPercent: 10, latePercent: 10 }),
+    boardings: 0,
+    alightings: 0,
+    avgLoad: 0,
+    routeCount: 1,
+    routes: ['1'],
+    ...overrides,
+  };
+}
+
 function makeIncident(params: {
   date: string;
   routeId?: string;
@@ -103,6 +121,7 @@ function makeSummary(params: {
   hours?: HourMetrics[];
   incidents?: DwellIncident[];
   dayType?: DailySummary['dayType'];
+  stops?: StopMetrics[];
 }): DailySummary {
   const incidents = params.incidents ?? [];
   const moderateCount = incidents.filter((incident) => incident.severity === 'moderate').length;
@@ -120,7 +139,7 @@ function makeSummary(params: {
       makeHour(7, 90),
       makeHour(8, 60),
     ],
-    byStop: [],
+    byStop: params.stops ?? [],
     byTrip: [],
     loadProfiles: [],
     byOperatorDwell: {
@@ -256,6 +275,68 @@ describe('buildReportHtml dwell reporting', () => {
     expect(stopSection).toContain('Repeated Stop');
     expect(stopSection).not.toContain('One-off Stop');
     expect(stopSection).not.toContain('>0.0<');
+  });
+
+  it('ranks busiest stops by total boardings plus alightings', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      stops: [
+        makeStop({ stopName: 'Boarding Heavy', stopId: '101', boardings: 40, alightings: 0 }),
+        makeStop({ stopName: 'Total Activity Heavy', stopId: '102', boardings: 30, alightings: 50 }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const stopSection = between(html, 'Busiest Stops', 'Lowest OTP Stops');
+
+    expect(stopSection.indexOf('Total Activity Heavy')).toBeLessThan(stopSection.indexOf('Boarding Heavy'));
+  });
+
+  it('merges hub stop routes and escapes external stop labels in busiest stops', () => {
+    const originalOtp = makeOtp({ total: 10, onTimePercent: 80, earlyPercent: 10, latePercent: 10 });
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      stops: [
+        makeStop({
+          stopName: 'Downtown <script>',
+          stopId: '1',
+          boardings: 20,
+          alightings: 10,
+          routeCount: 1,
+          routes: ['2A'],
+          otp: originalOtp,
+        }),
+        makeStop({
+          stopName: 'Downtown Platform 2',
+          stopId: '2',
+          boardings: 15,
+          alightings: 5,
+          routeCount: 1,
+          routes: ['5'],
+          otp: makeOtp({ total: 10, onTimePercent: 100, earlyPercent: 0, latePercent: 0 }),
+        }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const stopSection = between(html, 'Busiest Stops', 'Lowest OTP Stops');
+    const downtownRow = rowForText(stopSection, 'Downtown');
+
+    expect(downtownRow).toContain('>35<');
+    expect(downtownRow).toContain('>15<');
+    expect(downtownRow).toContain('>2<');
+    expect(stopSection).not.toContain('<script>');
+    expect(originalOtp.onTimePercent).toBe(80);
   });
 
   it('merges platform stop IDs into the same hub row in operator dwell by stop', () => {

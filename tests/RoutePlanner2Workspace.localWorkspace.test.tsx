@@ -990,7 +990,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(sourceOverlayButton?.textContent).toContain('Hide source overlay');
   });
 
-  it('moves a stop range into another route concept from the details panel', async () => {
+  it('moves a stop range into another route concept from the visible reassign panel', async () => {
     const view = renderWorkspace();
 
     flushSync(() => {
@@ -1018,6 +1018,8 @@ describe('RoutePlanner2Workspace local workspace', () => {
     const fromSelect = view.querySelector('#rp2-transfer-from') as HTMLSelectElement | null;
     const toSelect = view.querySelector('#rp2-transfer-to') as HTMLSelectElement | null;
     const targetSelect = view.querySelector('#rp2-transfer-target') as HTMLSelectElement | null;
+    expect(view.querySelector('[data-testid="rp2-reassign-stops-panel"]')?.textContent).toContain('Reassign stops');
+    expect(view.textContent).toContain('Reverse stop order');
     expect(fromSelect).not.toBeNull();
     expect(toSelect).not.toBeNull();
     expect(targetSelect?.selectedOptions[0]?.textContent).toContain('Option 2');
@@ -1026,7 +1028,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
       setInputValue(toSelect!, '3');
     });
     flushSync(() => {
-      click(findButton(view, 'Move segment'));
+      click(findButton(view, 'Move stops'));
     });
 
     const impact = view.querySelector('[data-testid="rp2-segment-transfer-impact"]');

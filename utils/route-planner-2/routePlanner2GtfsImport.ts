@@ -1,6 +1,8 @@
 import { TIME_PERIODS, type TimePeriod } from '../gtfs/corridorHeadway';
+import { getRouteColor } from '../config/routeColors';
 import type {
     RoutePlanner2RoutePoint,
+    RoutePlanner2RouteFamilyReference,
     RoutePlanner2Scenario,
     RoutePlanner2SegmentRuntime,
     RoutePlanner2ServiceAssumptions,
@@ -108,6 +110,7 @@ export interface RoutePlanner2GtfsImportPattern {
     routeShortName: string;
     routeLongName?: string;
     routeColor?: string;
+    routeFamily?: RoutePlanner2RouteFamilyReference;
     serviceId: string;
     dayTypeLabel: string;
     directionId?: number;
@@ -136,6 +139,39 @@ const DEFAULT_SERVICE: RoutePlanner2ServiceAssumptions = {
 };
 
 const MIN_SELECTABLE_PATTERN_TRIPS = 6;
+const DEFAULT_ROUTE_COLOR = '#6B7280';
+const BARRIE_MERGED_ROUTE_FAMILIES = new Set(['2', '7', '12']);
+
+export function getRoutePlanner2GtfsRouteFamily(routeShortName: string): RoutePlanner2RouteFamilyReference | undefined {
+    const match = routeShortName.trim().toUpperCase().match(/^(\d+)([AB])$/);
+    if (!match) return undefined;
+
+    const [, shortName, branch] = match;
+    if (!shortName || !branch || !BARRIE_MERGED_ROUTE_FAMILIES.has(shortName)) return undefined;
+
+    const directionRole = branch === 'A' ? 'out' : 'back';
+    const directionLabel = directionRole === 'out' ? 'Out' : 'Back';
+
+    return {
+        key: `barrie-merged-${shortName}`,
+        name: `Route ${shortName}`,
+        shortName,
+        memberShortName: `${shortName}${branch}`,
+        directionRole,
+        directionLabel,
+    };
+}
+
+function normalizeRouteColorHex(value: string | undefined): string | undefined {
+    const normalized = value?.replace(/^#/, '').trim().toUpperCase();
+    return normalized && /^[0-9A-F]{6}$/.test(normalized) ? normalized : undefined;
+}
+
+function getImportRouteColor(routeShortName: string, gtfsRouteColor?: string): string | undefined {
+    const officialColor = getRouteColor(routeShortName);
+    if (officialColor !== DEFAULT_ROUTE_COLOR) return normalizeRouteColorHex(officialColor);
+    return normalizeRouteColorHex(gtfsRouteColor);
+}
 
 function createId(prefix: string): string {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -490,7 +526,8 @@ export function buildRoutePlanner2GtfsImportPatterns(feed: RoutePlanner2GtfsImpo
             routeId: group.route.route_id,
             routeShortName: group.route.route_short_name,
             routeLongName: group.route.route_long_name,
-            routeColor: group.route.route_color,
+            routeColor: getImportRouteColor(group.route.route_short_name, group.route.route_color),
+            routeFamily: getRoutePlanner2GtfsRouteFamily(group.route.route_short_name),
             serviceId: group.serviceId,
             dayTypeLabel: getCalendarLabel(feed, group.serviceId),
             directionId: group.directionId,
@@ -608,6 +645,13 @@ function buildServiceAssumptionsFromGtfsPattern(pattern: RoutePlanner2GtfsImport
     };
 }
 
+function buildScenarioNameFromGtfsPattern(pattern: RoutePlanner2GtfsImportPattern): string {
+    const baseName = pattern.routeFamily
+        ? `${pattern.routeFamily.name} ${pattern.routeFamily.directionLabel}`
+        : `Route ${pattern.routeShortName}`;
+    return pattern.tripHeadsign ? `${baseName} - ${pattern.tripHeadsign}` : baseName;
+}
+
 export function createRoutePlanner2ScenarioFromGtfsPattern(
     pattern: RoutePlanner2GtfsImportPattern,
     options: { id?: string; now?: string } = {},
@@ -630,17 +674,20 @@ export function createRoutePlanner2ScenarioFromGtfsPattern(
     const alignment = buildSegmentWaypoints(pattern.stops, pattern.shapePoints);
     const evidenceDayType = getGtfsDayType(pattern.dayTypeLabel);
     const runtimeEstimates = buildGtfsScheduledRuntimeEstimates(pattern, now, pattern.routeShortName, evidenceDayType);
+    const routeColor = getImportRouteColor(pattern.routeShortName, pattern.routeColor);
 
     return {
         id: options.id ?? createId('scenario-gtfs'),
-        name: pattern.tripHeadsign ? `Route ${pattern.routeShortName} - ${pattern.tripHeadsign}` : `Route ${pattern.routeShortName}`,
+        name: buildScenarioNameFromGtfsPattern(pattern),
         status: 'draft',
         routeShape: 'one-way',
+        routeFamily: pattern.routeFamily,
         source: {
             type: 'gtfs',
             routeId: pattern.routeId,
             routeShortName: pattern.routeShortName,
             routeLongName: pattern.routeLongName,
+            routeColor: routeColor ? `#${routeColor}` : undefined,
             serviceId: pattern.serviceId,
             directionId: pattern.directionId,
             tripHeadsign: pattern.tripHeadsign,

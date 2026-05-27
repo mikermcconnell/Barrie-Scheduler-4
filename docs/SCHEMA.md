@@ -231,7 +231,7 @@ interface RoutePlanner2ProjectMetadata {
 }
 ```
 
-Each editable route concept is stored at `teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}` using the `RoutePlanner2Scenario` shape from `utils/route-planner-2/routePlanner2Types.ts`. Team members and workspace permission managers can read and write these saved route plans.
+Each editable route concept is stored at `teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}` using the `RoutePlanner2Scenario` shape from `utils/route-planner-2/routePlanner2Types.ts`. GTFS-imported Barrie merged A/B routes may include optional `routeFamily` metadata so directions such as 2A and 2B display as one route family while remaining independently editable scenarios. Team members and workspace permission managers can read and write these saved route plans.
 
 ### FleetPlanMetadata (`teams/{teamId}/fleetPlan/default`)
 

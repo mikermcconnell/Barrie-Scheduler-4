@@ -19,6 +19,30 @@ const HUBS: { name: string; stopCodes: string[] }[] = [
   { name: 'Georgian College', stopCodes: ['327', '328', '329', '330', '331', '335'] },
 ];
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function cloneStopMetrics(stop: StopMetrics): StopMetrics {
+  return {
+    ...stop,
+    otp: { ...stop.otp },
+    routes: [...stop.routes],
+    routeBreakdown: stop.routeBreakdown?.map(row => ({
+      ...row,
+      hourlyBoardings: row.hourlyBoardings ? [...row.hourlyBoardings] : undefined,
+      hourlyAlightings: row.hourlyAlightings ? [...row.hourlyAlightings] : undefined,
+    })),
+    hourlyBoardings: stop.hourlyBoardings ? [...stop.hourlyBoardings] : undefined,
+    hourlyAlightings: stop.hourlyAlightings ? [...stop.hourlyAlightings] : undefined,
+  };
+}
+
 function getHubNameForStopId(stopId: string): string | null {
   const normalizedStopId = stopId.trim();
   if (!normalizedStopId) return null;
@@ -39,18 +63,23 @@ function mergeHubStops(stops: StopMetrics[]): StopMetrics[] {
   for (const stop of stops) {
     const hubName = getHubNameForStopId(stop.stopId);
     if (!hubName) {
-      standalone.push(stop);
+      standalone.push(cloneStopMetrics(stop));
       continue;
     }
+
+    const routeSet = hubRouteSets.get(hubName) ?? new Set<string>();
+    stop.routes.forEach(route => {
+      if (route) routeSet.add(route);
+    });
+    hubRouteSets.set(hubName, routeSet);
 
     const existing = merged.get(hubName);
     if (!existing) {
       merged.set(hubName, {
-        ...stop,
+        ...cloneStopMetrics(stop),
         stopName: hubName,
         stopId: '',
       });
-      hubRouteSets.set(hubName, new Set());
     } else {
       existing.boardings += stop.boardings;
       existing.alightings += stop.alightings;
@@ -67,6 +96,12 @@ function mergeHubStops(stops: StopMetrics[]): StopMetrics[] {
       existing.otp.total = totalObs;
       existing.avgLoad = (existing.avgLoad + stop.avgLoad) / 2;
     }
+  }
+
+  for (const [hubName, stop] of merged) {
+    const routes = Array.from(hubRouteSets.get(hubName) ?? []).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    stop.routes = routes;
+    stop.routeCount = routes.length;
   }
 
   return [...merged.values(), ...standalone];
@@ -207,8 +242,9 @@ function apcStatusCellStyle(status: 'ok' | 'review' | 'suspect'): string {
 }
 
 function stopLabel(name: string, id: string): string {
-  if (!id) return name;
-  return `${name} <span style="color:#9ca3af;font-weight:400;">(${id})</span>`;
+  const safeName = escapeHtml(name);
+  if (!id) return safeName;
+  return `${safeName} <span style="color:#9ca3af;font-weight:400;">(${escapeHtml(id)})</span>`;
 }
 
 function sectionHeader(title: string, subtitle?: string): string {
@@ -1013,7 +1049,9 @@ function buildTopStops(stops: StopMetrics[]): string {
 
   const hubMerged = mergeHubStops(stops);
 
-  const busiestStops = [...hubMerged].sort((a, b) => b.boardings - a.boardings).slice(0, 10);
+  const busiestStops = [...hubMerged]
+    .sort((a, b) => (b.boardings + b.alightings) - (a.boardings + a.alightings))
+    .slice(0, 10);
   const worstOtpStops = [...hubMerged]
     .filter(s => s.otp.total >= 10)
     .sort((a, b) => a.otp.onTimePercent - b.otp.onTimePercent)

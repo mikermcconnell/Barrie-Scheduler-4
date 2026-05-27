@@ -67,10 +67,11 @@ When a planner is redesigning service coverage, they can move or copy a contiguo
 3. Choose the first and last stop in the range.
 4. Choose the target route concept.
 5. Choose whether to insert the stops at the beginning, after a target stop, or at the end.
-6. Use **Move segment** to transfer coverage or **Copy segment** to test coverage overlap.
-7. Review the runtime impact message for source and target one-way runtime changes.
+6. Choose **Reverse stop order** when the segment needs to flip direction before joining the target route.
+7. Use **Move stops** to transfer coverage or **Copy stops** to test coverage overlap.
+8. Review the runtime impact message for source and target one-way runtime changes.
 
-Moved stops are removed from the source route and copied into the target route with new local IDs. Line bends and scheduled runtime evidence between stops inside the selected segment move with that segment. Bends that connect to stops outside the selected segment are cleaned up, and stale segment runtimes are cleared where the stop order changes.
+Moved stops are removed from the source route and copied into the target route with new local IDs. Line bends inside the selected segment move with that segment. If the stop order is preserved, scheduled runtime evidence between stops inside the selected segment can move with it. If the stop order is reversed, directional runtime evidence is cleared so the route can recalculate or be reviewed. Bends that connect to stops outside the selected segment are cleaned up, and stale segment runtimes are cleared where the stop order changes.
 
 V1 may store this state locally only. The workflow should still use stable IDs and a structure that can later move to Firebase.
 

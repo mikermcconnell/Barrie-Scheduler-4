@@ -64,6 +64,7 @@ describe('routePlanner2GtfsImport', () => {
     expect(patterns[0]).toMatchObject({
       routeId: '8A',
       routeShortName: '8A',
+      routeColor: '000000',
       serviceId: 'weekday',
       directionId: 0,
       shapeId: 'shape-8a-a',
@@ -98,6 +99,7 @@ describe('routePlanner2GtfsImport', () => {
     const scenario = createRoutePlanner2ScenarioFromGtfsPattern(pattern, { id: 'scenario-imported', now: '2026-05-01T12:00:00.000Z' });
     expect(scenario.name).toBe('Route 8A - To Terminal B');
     expect(scenario.source?.type).toBe('gtfs');
+    expect(scenario.source).toMatchObject({ type: 'gtfs', routeColor: '#000000' });
     expect(scenario.stops.map(stop => stop.name)).toEqual(['Terminal A', 'Main Street', 'Terminal B']);
     expect(scenario.stops[0]?.role).toBe('start-terminal');
     expect(scenario.stops[2]?.role).toBe('end-terminal');
@@ -132,6 +134,73 @@ describe('routePlanner2GtfsImport', () => {
     });
     expect(middayFeasibility.segmentRuntimeMinutes).toBe(22);
     expect(middayFeasibility.segmentSummaries.every((segment) => segment.evidencePeriod === 'midday')).toBe(true);
+  });
+
+  it('adds Barrie merged A/B route-family metadata to GTFS import patterns and scenarios', () => {
+    const familyFeed: RoutePlanner2GtfsImportFeed = {
+      ...feed,
+      routes: [
+        { route_id: '2A', route_short_name: '2A', route_long_name: 'Route 2 North', route_type: 3 },
+        { route_id: '2B', route_short_name: '2B', route_long_name: 'Route 2 South', route_type: 3 },
+      ],
+      trips: feed.trips
+        .filter((trip) => trip.trip_id !== 'partial-1')
+        .flatMap((trip) => [
+          { ...trip, route_id: '2A', trip_id: `${trip.trip_id}-2a`, trip_headsign: 'To Downtown', direction_id: 0, shape_id: 'shape-2a' },
+          { ...trip, route_id: '2B', trip_id: `${trip.trip_id}-2b`, trip_headsign: 'To Park Place', direction_id: 1, shape_id: 'shape-2b' },
+        ]),
+      stopTimes: feed.stopTimes
+        .filter((stopTime) => stopTime.trip_id !== 'partial-1')
+        .flatMap((stopTime) => [
+          { ...stopTime, trip_id: `${stopTime.trip_id}-2a` },
+          { ...stopTime, trip_id: `${stopTime.trip_id}-2b` },
+        ]),
+      shapes: [
+        { shape_id: 'shape-2a', shape_pt_lat: 44.37, shape_pt_lon: -79.70, shape_pt_sequence: 1 },
+        { shape_id: 'shape-2a', shape_pt_lat: 44.39, shape_pt_lon: -79.68, shape_pt_sequence: 2 },
+        { shape_id: 'shape-2b', shape_pt_lat: 44.39, shape_pt_lon: -79.68, shape_pt_sequence: 1 },
+        { shape_id: 'shape-2b', shape_pt_lat: 44.37, shape_pt_lon: -79.70, shape_pt_sequence: 2 },
+      ],
+    };
+
+    const patterns = buildRoutePlanner2GtfsImportPatterns(familyFeed);
+    expect(patterns.map((pattern) => pattern.routeShortName)).toEqual(['2A', '2B']);
+    expect(patterns.map((pattern) => pattern.routeFamily)).toEqual([
+      {
+        key: 'barrie-merged-2',
+        name: 'Route 2',
+        shortName: '2',
+        memberShortName: '2A',
+        directionRole: 'out',
+        directionLabel: 'Out',
+      },
+      {
+        key: 'barrie-merged-2',
+        name: 'Route 2',
+        shortName: '2',
+        memberShortName: '2B',
+        directionRole: 'back',
+        directionLabel: 'Back',
+      },
+    ]);
+
+    const scenario = createRoutePlanner2ScenarioFromGtfsPattern(patterns[0]!, { id: 'scenario-route-2a', now: '2026-05-01T12:00:00.000Z' });
+    expect(scenario.name).toBe('Route 2 Out - To Downtown');
+    expect(scenario.routeFamily).toMatchObject({
+      key: 'barrie-merged-2',
+      name: 'Route 2',
+      memberShortName: '2A',
+      directionRole: 'out',
+      directionLabel: 'Out',
+    });
+    expect(scenario.source).toMatchObject({ type: 'gtfs', routeShortName: '2A' });
+    expect(scenario.runtimeEstimates?.every((estimate) => estimate.matchedRoutes?.includes('2A'))).toBe(true);
+  });
+
+  it('does not family-group Barrie route variants that are not merged routes', () => {
+    const pattern = buildRoutePlanner2GtfsImportPatterns(feed)[0]!;
+    expect(pattern.routeShortName).toBe('8A');
+    expect(pattern.routeFamily).toBeUndefined();
   });
 
   it('keeps adjacent same-minute GTFS stop times as scheduled evidence with a one-minute minimum', () => {

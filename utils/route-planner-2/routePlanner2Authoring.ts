@@ -1093,6 +1093,7 @@ export function reassignRoutePlanner2StopRange(
         toSequence: number;
         insertAfterStopId?: string | null;
         mode: 'copy' | 'move';
+        reverseOrder?: boolean;
         now?: string;
     },
 ): RoutePlanner2Project {
@@ -1120,7 +1121,8 @@ export function reassignRoutePlanner2StopRange(
         ? requestedInsertIndex >= 0 ? requestedInsertIndex + 1 : targetStops.length
         : 0;
     const targetWasEmpty = targetStops.length === 0;
-    const transferredStops = stopsToTransfer.map((stop, index): RoutePlanner2Stop => ({
+    const orderedStopsToTransfer = options.reverseOrder ? [...stopsToTransfer].reverse() : stopsToTransfer;
+    const transferredStops = orderedStopsToTransfer.map((stop, index): RoutePlanner2Stop => ({
         ...stop,
         id: createUniqueTransferredStopId(stop.id, now, index, targetUsedStopIds),
         sequence: normalizedInsertIndex + index + 1,
@@ -1132,11 +1134,12 @@ export function reassignRoutePlanner2StopRange(
                     : 'regular'
             : 'regular',
     }));
-    const transferredStopIdBySourceId = new Map(stopsToTransfer.map((stop, index) => [
+    const transferredStopIdBySourceId = new Map(orderedStopsToTransfer.map((stop, index) => [
         stop.id,
         transferredStops[index]!.id,
     ]));
     const targetUsedPointIds = new Set(targetScenario.alignment.map((point) => point.id));
+    let waypointIndex = 0;
     const transferredAlignment = sourceScenario.alignment
         .filter((point) =>
             Boolean(point.afterStopId)
@@ -1144,28 +1147,46 @@ export function reassignRoutePlanner2StopRange(
             && transferredStopIdBySourceId.has(point.afterStopId!)
             && transferredStopIdBySourceId.has(point.beforeStopId!),
         )
-        .map((point, index): RoutePlanner2RoutePoint => ({
-            ...point,
-            id: createUniqueTransferredWaypointId(point.id, now, index, targetUsedPointIds),
-            afterStopId: transferredStopIdBySourceId.get(point.afterStopId!)!,
-            beforeStopId: transferredStopIdBySourceId.get(point.beforeStopId!)!,
-        }));
-    const transferredRuntimeEstimates = (sourceScenario.runtimeEstimates ?? [])
-        .filter((estimate) =>
-            transferredStopIdBySourceId.has(estimate.fromStopId)
-            && transferredStopIdBySourceId.has(estimate.toStopId),
-        )
-        .map((estimate): RoutePlanner2SegmentRuntime => {
-            const fromStopId = transferredStopIdBySourceId.get(estimate.fromStopId)!;
-            const toStopId = transferredStopIdBySourceId.get(estimate.toStopId)!;
-            return {
-                ...estimate,
-                id: getRoutePlanner2SegmentId(fromStopId, toStopId),
-                fromStopId,
-                toStopId,
-                updatedAt: now,
+        .sort((a, b) => {
+            if (!options.reverseOrder) return a.sequence - b.sequence;
+            const sequenceDelta = b.sequence - a.sequence;
+            if (sequenceDelta !== 0) return sequenceDelta;
+            return (b.segmentSequence ?? 0) - (a.segmentSequence ?? 0);
+        })
+        .map((point): RoutePlanner2RoutePoint => {
+            const afterStopId = options.reverseOrder
+                ? transferredStopIdBySourceId.get(point.beforeStopId!)!
+                : transferredStopIdBySourceId.get(point.afterStopId!)!;
+            const beforeStopId = options.reverseOrder
+                ? transferredStopIdBySourceId.get(point.afterStopId!)!
+                : transferredStopIdBySourceId.get(point.beforeStopId!)!;
+            const transferredPoint = {
+                ...point,
+                id: createUniqueTransferredWaypointId(point.id, now, waypointIndex, targetUsedPointIds),
+                afterStopId,
+                beforeStopId,
             };
+            waypointIndex += 1;
+            return transferredPoint;
         });
+    const transferredRuntimeEstimates = options.reverseOrder
+        ? []
+        : (sourceScenario.runtimeEstimates ?? [])
+            .filter((estimate) =>
+                transferredStopIdBySourceId.has(estimate.fromStopId)
+                && transferredStopIdBySourceId.has(estimate.toStopId),
+            )
+            .map((estimate): RoutePlanner2SegmentRuntime => {
+                const fromStopId = transferredStopIdBySourceId.get(estimate.fromStopId)!;
+                const toStopId = transferredStopIdBySourceId.get(estimate.toStopId)!;
+                return {
+                    ...estimate,
+                    id: getRoutePlanner2SegmentId(fromStopId, toStopId),
+                    fromStopId,
+                    toStopId,
+                    updatedAt: now,
+                };
+            });
 
     const targetScenarioWithStops = {
         ...targetScenario,

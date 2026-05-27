@@ -286,6 +286,68 @@ describe('Route Planner 2 authoring', () => {
     expect(movedWaypoint?.id).not.toBe('bend-a-2-a-3');
   });
 
+  it('can reverse a reassigned stop range and clears directional runtime evidence', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-a', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, role: 'start-terminal', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-2', name: 'A2', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-3', name: 'A3', lat: 44.4, lng: -79.67, role: 'end-terminal', now });
+    project = addRoutePlanner2LineWaypoint(project, 'route-a', {
+      id: 'bend-a-2-a-3',
+      afterStopId: 'a-2',
+      beforeStopId: 'a-3',
+      lat: 44.395,
+      lng: -79.675,
+      now,
+    });
+    project = updateRoutePlanner2SegmentRuntimeEstimates(project, 'route-a', [{
+      id: 'segment-a-2-a-3',
+      fromStopId: 'a-2',
+      toStopId: 'a-3',
+      runtimeMinutes: 5,
+      source: 'scheduled-proxy',
+      confidence: 'high',
+    }], now);
+    project = {
+      ...project,
+      scenarios: [
+        project.scenarios[0]!,
+        {
+          ...project.scenarios[0]!,
+          id: 'route-b',
+          name: 'Route B',
+          stops: [],
+          alignment: [],
+          runtimeEstimates: undefined,
+          runtimeOverrides: undefined,
+        },
+      ],
+    };
+
+    project = reassignRoutePlanner2StopRange(project, {
+      sourceScenarioId: 'route-a',
+      targetScenarioId: 'route-b',
+      fromSequence: 2,
+      toSequence: 3,
+      mode: 'copy',
+      reverseOrder: true,
+      now,
+    });
+
+    const target = project.scenarios.find((scenario) => scenario.id === 'route-b')!;
+    const movedWaypoint = target.alignment[0];
+
+    expect(target.stops.map((stop) => `${stop.sequence}:${stop.name}:${stop.role}`)).toEqual([
+      '1:A3:start-terminal',
+      '2:A2:end-terminal',
+    ]);
+    expect(target.runtimeEstimates).toBeUndefined();
+    expect(movedWaypoint).toMatchObject({
+      afterStopId: target.stops[0]?.id,
+      beforeStopId: target.stops[1]?.id,
+      segmentSequence: 1,
+    });
+  });
+
   it('creates, orders, and moves multiple route line waypoints between stops', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'First', lat: 44.38, lng: -79.69, now });

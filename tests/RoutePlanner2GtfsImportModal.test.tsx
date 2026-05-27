@@ -117,24 +117,27 @@ describe('RoutePlanner2GtfsImportModal', () => {
     const { view } = renderModal({
       patterns: [
         patternFor({ id: 'saturday-10', routeShortName: '10', routeId: '10', dayTypeLabel: 'Saturday', serviceId: 'saturday', tripHeadsign: 'Saturday 10' }),
-        patternFor({ id: 'weekday-2a', routeShortName: '2A', routeId: '2A', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'Weekday 2A' }),
+        patternFor({ id: 'weekday-2a', routeShortName: '2A', routeId: '2A', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'Weekday 2A', routeFamily: { key: 'barrie-merged-2', name: 'Route 2', shortName: '2', memberShortName: '2A', directionRole: 'out', directionLabel: 'Out' } }),
         patternFor({ id: 'sunday-2b', routeShortName: '2B', routeId: '2B', dayTypeLabel: 'Sunday', serviceId: 'sunday', tripHeadsign: 'Sunday 2B' }),
         patternFor({ id: 'weekday-10', routeShortName: '10', routeId: '10', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'Weekday 10' }),
-        patternFor({ id: 'weekday-2b', routeShortName: '2B', routeId: '2B', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'Weekday 2B' }),
+        patternFor({ id: 'weekday-2b', routeShortName: '2B', routeId: '2B', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'Weekday 2B', routeFamily: { key: 'barrie-merged-2', name: 'Route 2', shortName: '2', memberShortName: '2B', directionRole: 'back', directionLabel: 'Back' } }),
       ],
     });
 
     const text = view.textContent ?? '';
     expect(text.indexOf('Weekday')).toBeLessThan(text.indexOf('Saturday'));
     expect(text.indexOf('Saturday')).toBeLessThan(text.indexOf('Sunday'));
-    expect(text.indexOf('Route 2A')).toBeLessThan(text.indexOf('Route 2B'));
-    expect(text.indexOf('Route 2B')).toBeLessThan(text.indexOf('Route 10'));
+    expect(text.indexOf('Route 2')).toBeLessThan(text.indexOf('Route 10'));
+    expect(text).toContain('2 directions');
+    expect(text).toContain('Out · 2A');
+    expect(text).toContain('Back · 2B');
   });
 
-  it('selects multiple routes from the visible route headings', () => {
+  it('selects a route family from the visible route heading', () => {
     const props = {
       patterns: [
-        patternFor({ id: 'weekday-2', routeShortName: '2', routeId: '2', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'To Downtown' }),
+        patternFor({ id: 'weekday-2a', routeShortName: '2A', routeId: '2A', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'To Downtown', routeFamily: { key: 'barrie-merged-2', name: 'Route 2', shortName: '2', memberShortName: '2A', directionRole: 'out', directionLabel: 'Out' } }),
+        patternFor({ id: 'weekday-2b', routeShortName: '2B', routeId: '2B', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'To Park Place', routeFamily: { key: 'barrie-merged-2', name: 'Route 2', shortName: '2', memberShortName: '2B', directionRole: 'back', directionLabel: 'Back' } }),
         patternFor({ id: 'weekday-8a', routeShortName: '8A', routeId: '8A', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'To Park Place' }),
       ],
       onImport: vi.fn(),
@@ -143,7 +146,6 @@ describe('RoutePlanner2GtfsImportModal', () => {
 
     flushSync(() => {
       click(findButton(view, 'Route 2'));
-      click(findButton(view, 'Route 8A'));
     });
 
     expect(view.textContent).toContain('2 routes selected');
@@ -152,5 +154,6 @@ describe('RoutePlanner2GtfsImportModal', () => {
 
     expect(props.onImport).toHaveBeenCalledTimes(1);
     expect(props.onImport.mock.calls[0]?.[0]).toHaveLength(2);
+    expect(props.onImport.mock.calls[0]?.[0].map((selected: RoutePlanner2GtfsImportPattern) => selected.routeShortName)).toEqual(['2A', '2B']);
   });
 });

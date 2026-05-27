@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRoadNameLineLabelGeoJson,
   buildRoadNameOverviewLabelGeoJson,
+  buildLineGeoJson,
   buildRoutePlanner2ScenarioOverlayGeoJson,
   formatRoutePlanner2MapStopLabel,
   formatRoutePlanner2RoadNameLabel,
+  getRoutePlanner2ScenarioColor,
 } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 import type { RoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2Types';
@@ -169,6 +171,23 @@ describe('RoutePlanner2MapCanvas route overlays', () => {
 
     expect(overlays.features).toHaveLength(2);
     expect(overlays.features.map((feature) => feature.properties.scenarioId)).toEqual(['route-a', 'route-b']);
+    expect(overlays.features.map((feature) => feature.properties.color)).toEqual(['#006838', '#000000']);
     expect(overlays.features[0]?.geometry.coordinates).toEqual([[-79.69, 44.38], [-79.68, 44.39]]);
+  });
+
+  it('uses official route colors for GTFS route lines', () => {
+    const base = createRoutePlanner2Project({
+      id: 'project-1',
+      scenarioId: 'selected-route',
+      now: '2026-04-29T12:00:00.000Z',
+    }).scenarios[0]!;
+    const route12: RoutePlanner2Scenario = {
+      ...base,
+      name: 'Route 12B - South GO',
+      source: { type: 'gtfs', routeShortName: '12B', routeColor: '#00AEEF' },
+    };
+
+    expect(getRoutePlanner2ScenarioColor(route12)).toBe('#F8A1BE');
+    expect(buildLineGeoJson([[-79.69, 44.38], [-79.68, 44.39]], getRoutePlanner2ScenarioColor(route12)).features[0]?.properties.color).toBe('#F8A1BE');
   });
 });

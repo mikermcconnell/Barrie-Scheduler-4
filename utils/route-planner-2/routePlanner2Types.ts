@@ -17,6 +17,16 @@ export type RoutePlanner2SegmentConfidence = 'high' | 'medium' | 'low' | 'missin
 export type RoutePlanner2WarningSeverity = 'info' | 'warning' | 'blocking';
 export type RoutePlanner2RuntimeRouteFilterMode = 'all-matching' | 'selected';
 export type RoutePlanner2RuntimeSourceMode = 'gtfs' | 'mapbox';
+export type RoutePlanner2RouteFamilyDirectionRole = 'out' | 'back';
+
+export interface RoutePlanner2RouteFamilyReference {
+    key: string;
+    name: string;
+    shortName: string;
+    memberShortName: string;
+    directionRole?: RoutePlanner2RouteFamilyDirectionRole;
+    directionLabel: string;
+}
 
 export type RoutePlanner2ScenarioSource =
     | { type: 'blank' }
@@ -25,6 +35,7 @@ export type RoutePlanner2ScenarioSource =
         routeId?: string;
         routeShortName?: string;
         routeLongName?: string;
+        routeColor?: string;
         serviceId?: string;
         directionId?: number;
         tripHeadsign?: string;
@@ -49,6 +60,7 @@ export interface RoutePlanner2Scenario {
     name: string;
     status: RoutePlanner2ScenarioStatus;
     routeShape: RoutePlanner2RouteShape;
+    routeFamily?: RoutePlanner2RouteFamilyReference;
     source?: RoutePlanner2ScenarioSource;
     alignment: RoutePlanner2RoutePoint[];
     stops: RoutePlanner2Stop[];

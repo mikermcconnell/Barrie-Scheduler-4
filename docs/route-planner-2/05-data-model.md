@@ -25,6 +25,7 @@ type RoutePlanner2RuntimeSource =
   | 'fallback'
   | 'missing';
 type RoutePlanner2RuntimeSourceMode = 'gtfs' | 'mapbox';
+type RoutePlanner2RouteFamilyDirectionRole = 'out' | 'back';
 ```
 
 ## Project
@@ -67,6 +68,7 @@ interface RoutePlanner2Scenario {
   name: string;
   status: RoutePlanner2ScenarioStatus;
   routeShape: RoutePlanner2RouteShape;
+  routeFamily?: RoutePlanner2RouteFamilyReference;
   source?: RoutePlanner2ScenarioSource;
   alignment: RoutePlanner2RoutePoint[];
   stops: RoutePlanner2Stop[];
@@ -83,6 +85,21 @@ interface RoutePlanner2Scenario {
 ```
 
 `routeShape` defaults to `one-way` for new local draft routes and for older saved local data that does not yet include the field.
+
+## Route Family
+
+```typescript
+interface RoutePlanner2RouteFamilyReference {
+  key: string;
+  name: string;
+  shortName: string;
+  memberShortName: string;
+  directionRole?: RoutePlanner2RouteFamilyDirectionRole;
+  directionLabel: string;
+}
+```
+
+`routeFamily` is optional metadata used when GTFS route variants should be shown as one planner-facing route family while remaining independently editable one-way scenarios. Current Barrie rules group only merged A/B routes 2A+2B, 7A+7B, and 12A+12B. Route variants such as 8A and 8B remain separate route concepts.
 
 ## Route Point
 
