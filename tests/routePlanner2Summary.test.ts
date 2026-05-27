@@ -4,6 +4,7 @@ import { addRoutePlanner2Stop, updateRoutePlanner2StopRole } from '../utils/rout
 import { markRoutePlanner2PreferredScenario } from '../utils/route-planner-2/routePlanner2ProjectController';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 import { summarizeRoutePlanner2Project, summarizeRoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2Summary';
+import type { RoutePlanner2Project, RoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2Types';
 
 describe('Route Planner 2 summary', () => {
   const now = '2026-04-29T12:00:00.000Z';
@@ -66,5 +67,99 @@ describe('Route Planner 2 summary', () => {
     expect(summary.notReadyScenarioCount).toBe(0);
     expect(summary.preferredScenarioSummary?.scenarioName).toBe('Clean Concept A');
     expect(summary.selectedScenarioSummary?.scenarioId).toBe('scenario-1');
+  });
+
+  it('summarizes merged A/B route families as one operating cycle while preserving direction labels', () => {
+    function familyScenario(
+      id: string,
+      routeShortName: '2A' | '2B',
+      directionLabel: 'Out' | 'Back',
+      runtimeMinutes: number,
+    ): RoutePlanner2Scenario {
+      return {
+        id,
+        name: `Route 2 ${directionLabel}`,
+        status: 'draft',
+        routeShape: 'one-way',
+        routeFamily: {
+          key: 'barrie-merged-2',
+          name: 'Route 2',
+          shortName: '2',
+          memberShortName: routeShortName,
+          directionRole: directionLabel === 'Out' ? 'out' : 'back',
+          directionLabel,
+        },
+        source: {
+          type: 'gtfs',
+          routeId: routeShortName,
+          routeShortName,
+          serviceId: 'weekday',
+        },
+        alignment: [],
+        stops: [
+          { id: `${id}-start`, name: 'Start', lat: 44.38, lng: -79.7, sequence: 1, role: 'start-terminal', source: 'barrie-stop' },
+          { id: `${id}-end`, name: 'End', lat: 44.4, lng: -79.65, sequence: 2, role: 'end-terminal', source: 'barrie-stop' },
+        ],
+        service: {
+          firstTripTime: '06:00',
+          lastTripTime: '22:00',
+          frequencyMinutes: 30,
+          targetBuses: 3,
+          startTerminalLayoverMinutes: 0,
+          endTerminalLayoverMinutes: 0,
+          intermediateStopDwellSeconds: 0,
+          dayType: 'weekday',
+          planningPeriod: 'all-day',
+        },
+        runtimeSourceMode: 'gtfs',
+        runtimeEstimates: [{
+          id: `segment-${id}-full-day`,
+          fromStopId: `${id}-start`,
+          toStopId: `${id}-end`,
+          runtimeMinutes,
+          source: 'scheduled-proxy',
+          confidence: 'high',
+          matchedRoutes: [routeShortName],
+          evidenceDayType: 'weekday',
+          evidencePeriod: 'full-day',
+        }],
+        notes: '',
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+
+    const project: RoutePlanner2Project = {
+      id: 'project-family',
+      name: 'Family project',
+      status: 'local-draft',
+      selectedScenarioId: 'scenario-2a',
+      scenarios: [
+        familyScenario('scenario-2a', '2A', 'Out', 42),
+        familyScenario('scenario-2b', '2B', 'Back', 39),
+      ],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const summary = summarizeRoutePlanner2Project(project);
+
+    expect(summary.routeFamilySummaries).toHaveLength(1);
+    expect(summary.selectedRouteFamilySummary).toMatchObject({
+      key: 'barrie-merged-2-weekday',
+      familyName: 'Route 2',
+      directionLabels: ['Out · 2A', 'Back · 2B'],
+      runtimeMinutes: 81,
+      cycleTimeMinutes: 90,
+      recoveryTimeMinutes: 9,
+      recoveryPercent: 11,
+      busesRequired: 3,
+      frequencyMinutes: 30,
+      confidence: 'high',
+    });
+    expect(summary.selectedRouteFamilySummary?.runtimeLabel).toBe('81 min');
+    expect(summary.selectedRouteFamilySummary?.cycleTimeLabel).toBe('90 min');
+    expect(summary.selectedRouteFamilySummary?.recoveryLabel).toBe('9 min (11%)');
+    expect(summary.selectedRouteFamilySummary?.busesRequiredLabel).toBe('3 buses');
   });
 });

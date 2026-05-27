@@ -757,6 +757,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     );
     const selectedScenarioSummary = projectSummary.selectedScenarioSummary;
     const selectedFeasibility = selectedScenarioSummary?.feasibility ?? null;
+    const selectedRouteFamilySummary = projectSummary.selectedRouteFamilySummary;
     const runtimeMatchedRoutes = useMemo(
         () => [...new Set((selectedFeasibility?.segmentSummaries ?? [])
             .flatMap((segment) => segment.matchedRoutes ?? [])
@@ -1520,25 +1521,46 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         }
     }
     const runtimeBandDisclosure = getRuntimeBandDisclosure(selectedFeasibility, runtimeDayType, runtimePeriod);
-    const mapMetricItems = [
-        {
-            label: 'Runtime',
-            value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes),
-            detail: `Data source: ${getRuntimeSourceDetail(selectedFeasibility, runtimeDayType, runtimePeriod)}`,
-            description: runtimeSourceMode === 'gtfs'
-                ? `Runtime source and time band in use: ${runtimeBandDisclosure}. Click to review segment-level source details.`
-                : 'Runtime source: Mapbox only. Click to review segment-level source details.',
-            onClick: openRuntimeSourceDetails,
-        },
-        { label: 'Cycle', value: formatRuntime(selectedFeasibility?.cycleTimeMinutes) },
-        { label: 'Recovery', value: formatRecovery(selectedFeasibility?.recoveryTimeMinutes, selectedFeasibility?.recoveryPercent) },
-        { label: 'Buses', value: formatBuses(selectedFeasibility?.busesRequired) },
-        {
-            label: 'Confidence',
-            value: selectedFeasibility?.confidence ?? 'not-ready',
-            description: confidenceDescription(selectedFeasibility?.confidence),
-        },
-    ];
+    const selectedDirectionLabel = selectedScenario?.routeFamily?.memberShortName ?? 'Route';
+    const mapMetricItems = selectedRouteFamilySummary
+        ? [
+            {
+                label: `${selectedDirectionLabel} runtime`,
+                value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes),
+                detail: `Family runtime: ${selectedRouteFamilySummary.runtimeLabel}`,
+                description: runtimeSourceMode === 'gtfs'
+                    ? `Runtime source and time band in use: ${runtimeBandDisclosure}. Click to review segment-level source details.`
+                    : 'Runtime source: Mapbox only. Click to review segment-level source details.',
+                onClick: openRuntimeSourceDetails,
+            },
+            { label: 'Family cycle', value: selectedRouteFamilySummary.cycleTimeLabel },
+            { label: 'Family recovery', value: selectedRouteFamilySummary.recoveryLabel },
+            { label: 'Family buses', value: selectedRouteFamilySummary.busesRequiredLabel },
+            {
+                label: 'Confidence',
+                value: selectedRouteFamilySummary.confidence,
+                description: confidenceDescription(selectedRouteFamilySummary.confidence),
+            },
+        ]
+        : [
+            {
+                label: 'Runtime',
+                value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes),
+                detail: `Data source: ${getRuntimeSourceDetail(selectedFeasibility, runtimeDayType, runtimePeriod)}`,
+                description: runtimeSourceMode === 'gtfs'
+                    ? `Runtime source and time band in use: ${runtimeBandDisclosure}. Click to review segment-level source details.`
+                    : 'Runtime source: Mapbox only. Click to review segment-level source details.',
+                onClick: openRuntimeSourceDetails,
+            },
+            { label: 'Cycle', value: formatRuntime(selectedFeasibility?.cycleTimeMinutes) },
+            { label: 'Recovery', value: formatRecovery(selectedFeasibility?.recoveryTimeMinutes, selectedFeasibility?.recoveryPercent) },
+            { label: 'Buses', value: formatBuses(selectedFeasibility?.busesRequired) },
+            {
+                label: 'Confidence',
+                value: selectedFeasibility?.confidence ?? 'not-ready',
+                description: confidenceDescription(selectedFeasibility?.confidence),
+            },
+        ];
     const runtimeSourceSummaryItems = getRuntimeSourceSummaryItems(
         selectedFeasibility?.segmentSummaries ?? [],
         runtimeDayType,
@@ -1763,9 +1785,21 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             {routeConceptGroups.map((group) => (
                                                 <div key={group.key} className={group.scenarios.length > 1 ? 'rounded-2xl border border-slate-200 bg-white/70 p-1.5' : undefined}>
                                                     {group.scenarios.length > 1 && (
-                                                        <div className="mb-1 flex items-center justify-between gap-2 px-1">
-                                                            <span className="truncate text-xs font-black uppercase tracking-wide text-slate-500">{group.label}</span>
-                                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600">{group.scenarios.length} directions</span>
+                                                        <div className="mb-1 px-1">
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <span className="truncate text-xs font-black uppercase tracking-wide text-slate-500">{group.label}</span>
+                                                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600">{group.scenarios.length} directions</span>
+                                                            </div>
+                                                            {(() => {
+                                                                const familySummary = projectSummary.routeFamilySummaries.find((summary) =>
+                                                                    group.scenarios.some((scenario) => summary.scenarioIds.includes(scenario.id)),
+                                                                );
+                                                                return familySummary ? (
+                                                                    <div className="mt-1 truncate text-[11px] font-semibold text-slate-500">
+                                                                        {familySummary.runtimeLabel} runtime · {familySummary.cycleTimeLabel} cycle · {familySummary.busesRequiredLabel}
+                                                                    </div>
+                                                                ) : null;
+                                                            })()}
                                                         </div>
                                                     )}
                                                     <div className="space-y-1.5">
@@ -2251,7 +2285,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     </label>
                                     <div className="divide-y divide-slate-100 rounded-2xl bg-slate-50 px-3 text-sm">
                                         <div className="flex items-center justify-between gap-3 py-2">
-                                            <span className="font-bold text-slate-500">Runtime</span>
+                                            <span className="font-bold text-slate-500">{selectedScenario.routeFamily ? `${selectedScenario.routeFamily.memberShortName} runtime` : 'Runtime'}</span>
                                             <span className="text-right font-black text-slate-900">{formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes)}</span>
                                         </div>
                                         <div className="flex items-center justify-between gap-3 py-2">
@@ -2263,6 +2297,40 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <span className="text-right font-black text-slate-900">{formatRuntime(selectedFeasibility?.cycleTimeMinutes)}</span>
                                         </div>
                                     </div>
+                                    {selectedRouteFamilySummary && (
+                                        <div className="rounded-2xl border border-cyan-200 bg-cyan-50/70 p-3" data-testid="rp2-route-family-summary">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <h3 className="text-sm font-black text-slate-900">{selectedRouteFamilySummary.familyName} family</h3>
+                                                    <p className="mt-1 text-xs font-semibold leading-5 text-slate-600">
+                                                        Combined operating view for {selectedRouteFamilySummary.directionLabels.join(' + ')}.
+                                                    </p>
+                                                </div>
+                                                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-cyan-700">Family</span>
+                                            </div>
+                                            <div className="mt-3 divide-y divide-cyan-100 rounded-2xl bg-white px-3 text-sm">
+                                                <div className="flex items-center justify-between gap-3 py-2">
+                                                    <span className="font-bold text-slate-500">Combined runtime</span>
+                                                    <span className="text-right font-black text-slate-900">{selectedRouteFamilySummary.runtimeLabel}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between gap-3 py-2">
+                                                    <span className="font-bold text-slate-500">Cycle window</span>
+                                                    <span className="text-right font-black text-slate-900">{selectedRouteFamilySummary.cycleTimeLabel}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between gap-3 py-2">
+                                                    <span className="font-bold text-slate-500">Recovery</span>
+                                                    <span className="text-right font-black text-slate-900">{selectedRouteFamilySummary.recoveryLabel}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between gap-3 py-2">
+                                                    <span className="font-bold text-slate-500">Buses</span>
+                                                    <span className="text-right font-black text-slate-900">{selectedRouteFamilySummary.busesRequiredLabel}</span>
+                                                </div>
+                                            </div>
+                                            <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+                                                Direction labels, stops, shapes, and segment runtimes stay separate. The family summary adds the directions together for cycle, recovery, and shared bus need.
+                                            </p>
+                                        </div>
+                                    )}
                                     <div className="rounded-2xl border border-slate-200 bg-white p-3" data-testid="rp2-stop-order-panel">
                                         <div className="flex items-center justify-between gap-3">
                                             <div>
@@ -2740,6 +2808,27 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     </tbody>
                                 </table>
                             </div>
+                            {projectSummary.routeFamilySummaries.length > 0 && (
+                                <div className="mt-4 overflow-x-auto rounded-2xl border border-cyan-200">
+                                    <table className="w-full min-w-[560px] text-left text-xs">
+                                        <thead className="bg-cyan-50 text-cyan-800">
+                                            <tr><th className="px-3 py-2 font-bold">Family</th><th className="px-3 py-2 font-bold">Directions</th><th className="px-3 py-2 font-bold">Runtime</th><th className="px-3 py-2 font-bold">Cycle</th><th className="px-3 py-2 font-bold">Recovery</th><th className="px-3 py-2 font-bold">Buses</th></tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-cyan-100 bg-white">
+                                            {projectSummary.routeFamilySummaries.map((summary) => (
+                                                <tr key={summary.key} className={summary.scenarioIds.includes(project.selectedScenarioId) ? 'bg-cyan-50/50' : undefined}>
+                                                    <td className="px-3 py-2 font-semibold text-slate-800">{summary.familyName}</td>
+                                                    <td className="px-3 py-2 text-slate-600">{summary.directionLabels.join(' + ')}</td>
+                                                    <td className="px-3 py-2 text-slate-600">{summary.runtimeLabel}</td>
+                                                    <td className="px-3 py-2 text-slate-600">{summary.cycleTimeLabel}</td>
+                                                    <td className="px-3 py-2 text-slate-600">{summary.recoveryLabel}</td>
+                                                    <td className="px-3 py-2 text-slate-600">{summary.busesRequiredLabel}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                         </details>
                             </>
                         ) : (
