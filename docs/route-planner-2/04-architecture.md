@@ -90,6 +90,7 @@ Responsibilities:
 - fetch or receive parsed GTFS feed data
 - group trips into selectable full-route patterns and filter out partial/short-turn patterns
 - attach route-family metadata for Barrie merged A/B routes such as 2A+2B, 7A+7B, and 12A+12B so planners see one route family with editable Out/Back direction concepts
+- derive family-level runtime, cycle window, recovery, and shared bus need from the imported direction concepts without merging their stop lists or overwriting their 2A/2B-style labels
 - allow multiple selected GTFS patterns to import into the same local workspace as separate route concepts
 - convert GTFS stops into Route Planner 2 stops
 - convert GTFS shapes into editable route-line waypoints

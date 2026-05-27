@@ -101,6 +101,14 @@ interface RoutePlanner2RouteFamilyReference {
 
 `routeFamily` is optional metadata used when GTFS route variants should be shown as one planner-facing route family while remaining independently editable one-way scenarios. Current Barrie rules group only merged A/B routes 2A+2B, 7A+7B, and 12A+12B. Route variants such as 8A and 8B remain separate route concepts.
 
+Family-level feasibility is derived, not stored as route input:
+- combined runtime = sum of each ready direction's one-way runtime
+- family cycle window = shared buses × family frequency
+- shared buses = maximum imported target bus count from the directions, or calculated from combined runtime ÷ frequency when no target is set
+- recovery = family cycle window − combined runtime
+
+The direction scenarios still own their own stops, shapes, segment runtimes, labels, and edits.
+
 ## Route Point
 
 ```typescript
