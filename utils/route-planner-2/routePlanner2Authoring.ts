@@ -701,6 +701,8 @@ export function updateRoutePlanner2StopRole(
             turnaroundStopId: nextTurnaroundStopId,
             stops: scenario.stops.map((stop) => {
                 if (stop.id === stopId) return { ...stop, role };
+                if (role === 'start-terminal' && stop.role === 'start-terminal') return { ...stop, role: 'regular' };
+                if (role === 'end-terminal' && stop.role === 'end-terminal') return { ...stop, role: 'regular' };
                 if (role === 'turnaround' && stop.role === 'turnaround') return { ...stop, role: 'regular' };
                 return stop;
             }),
@@ -1136,6 +1138,15 @@ export function reassignRoutePlanner2StopRange(
         : 0;
     const targetWasEmpty = targetStops.length === 0;
     const orderedStopsToTransfer = options.reverseOrder ? [...stopsToTransfer].reverse() : stopsToTransfer;
+    const targetStopBeforeInsertion = normalizedInsertIndex > 0 ? targetStops[normalizedInsertIndex - 1] : undefined;
+    const targetStopAfterInsertion = normalizedInsertIndex < targetStops.length ? targetStops[normalizedInsertIndex] : undefined;
+    const transferExtendsStartTerminal = !targetWasEmpty
+        && targetScenario.routeShape === 'one-way'
+        && normalizedInsertIndex === 0
+        && targetStopAfterInsertion?.role === 'start-terminal';
+    const transferExtendsEndTerminal = !targetWasEmpty
+        && targetScenario.routeShape === 'one-way'
+        && targetStopBeforeInsertion?.role === 'end-terminal';
     const transferredStops = orderedStopsToTransfer.map((stop, index): RoutePlanner2Stop => ({
         ...stop,
         id: createUniqueTransferredStopId(stop.id, now, index, targetUsedStopIds),
@@ -1146,6 +1157,10 @@ export function reassignRoutePlanner2StopRange(
                 : index === stopsToTransfer.length - 1
                     ? 'end-terminal'
                     : 'regular'
+            : transferExtendsStartTerminal && index === 0
+                ? 'start-terminal'
+                : transferExtendsEndTerminal && index === orderedStopsToTransfer.length - 1
+                    ? 'end-terminal'
             : 'regular',
     }));
     const transferredStopIdBySourceId = new Map(orderedStopsToTransfer.map((stop, index) => [
@@ -1220,9 +1235,17 @@ export function reassignRoutePlanner2StopRange(
     const targetScenarioWithStops = {
         ...targetScenario,
         stops: resequenceStops([
-            ...targetStops.slice(0, normalizedInsertIndex),
+            ...targetStops.slice(0, normalizedInsertIndex).map((stop) =>
+                transferExtendsEndTerminal && stop.role === 'end-terminal'
+                    ? { ...stop, role: 'regular' as const }
+                    : stop,
+            ),
             ...transferredStops,
-            ...targetStops.slice(normalizedInsertIndex),
+            ...targetStops.slice(normalizedInsertIndex).map((stop) =>
+                transferExtendsStartTerminal && stop.role === 'start-terminal'
+                    ? { ...stop, role: 'regular' as const }
+                    : stop,
+            ),
         ]),
         runtimeEstimates: [
             ...(targetScenario.runtimeEstimates ?? []),
@@ -1363,6 +1386,29 @@ export function validateRoutePlanner2Terminals(scenario: RoutePlanner2Scenario):
             message: 'Start terminal must come before the end terminal.',
             action: 'Reorder stops or change terminal roles.',
         });
+    }
+
+    if (scenario.routeShape === 'one-way') {
+        const firstStop = sortedStops[0];
+        const lastStop = sortedStops[sortedStops.length - 1];
+
+        if (startTerminal && firstStop && startTerminal.id !== firstStop.id) {
+            warnings.push({
+                id: 'start-terminal-not-first',
+                severity: 'warning',
+                message: 'Stops exist before the start terminal.',
+                action: 'Move the start terminal to Stop 1 or remove the earlier stops.',
+            });
+        }
+
+        if (endTerminal && lastStop && endTerminal.id !== lastStop.id) {
+            warnings.push({
+                id: 'end-terminal-not-final',
+                severity: 'warning',
+                message: 'Stops exist after the end terminal.',
+                action: 'Move the end terminal to the final stop or remove the trailing stops.',
+            });
+        }
     }
 
     return warnings;

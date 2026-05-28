@@ -131,6 +131,26 @@ function otpPill(value: number): string {
   return `<span style="background:${otpBg(value)};color:${otpColor(value)};padding:2px 8px;border-radius:4px;font-weight:600;font-size:12px;">${pct(value)}</span>`;
 }
 
+function routeOtpCell(otp: RouteMetrics['otp']): string {
+  if (!otp || otp.total <= 0) {
+    return `
+      <div style="display:inline-block;min-width:104px;text-align:right;">
+        <span style="color:#cbd5e1;font-size:12px;font-weight:700;">—</span>
+        <div style="margin-top:4px;font-size:10px;line-height:1.35;color:#94a3b8;white-space:nowrap;">No OTP obs</div>
+      </div>`;
+  }
+
+  return `
+    <div style="display:inline-block;min-width:104px;text-align:right;">
+      ${otpPill(otp.onTimePercent)}
+      <div style="margin-top:4px;font-size:10px;line-height:1.35;color:#64748b;white-space:nowrap;letter-spacing:0.01em;">
+        <span style="font-weight:700;color:#92400e;">${pct(otp.earlyPercent)}</span> early
+        <span style="color:#cbd5e1;padding:0 4px;">•</span>
+        <span style="font-weight:700;color:#991b1b;">${pct(otp.latePercent)}</span> late
+      </div>
+    </div>`;
+}
+
 type EmailIconName = 'bus' | 'performance' | 'ridership' | 'trips' | 'dwell' | 'alert' | 'stable';
 
 const EMAIL_ICON_SYMBOL: Record<EmailIconName, string> = {
@@ -1014,9 +1034,9 @@ function buildRouteScorecard(routes: RouteMetrics[], dwellByRoute: Map<string, n
     const dwellHours = formatDwellHours(dwellByRoute.get(r.routeId) ?? 0);
     return `
       <tr style="background:${bg};">
-        <td style="padding:8px 10px;font-size:12px;font-weight:800;color:#082b63;border-bottom:1px solid #f3f4f6;">${r.routeId}</td>
-        <td style="padding:8px 10px;font-size:12px;color:#1f2a44;border-bottom:1px solid #f3f4f6;">${r.routeName}</td>
-        <td style="padding:8px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${otpPill(r.otp.onTimePercent)}</td>
+        <td style="padding:8px 10px;font-size:12px;font-weight:800;color:#082b63;border-bottom:1px solid #f3f4f6;">${escapeHtml(r.routeId)}</td>
+        <td style="padding:8px 10px;font-size:12px;color:#1f2a44;border-bottom:1px solid #f3f4f6;">${escapeHtml(r.routeName)}</td>
+        <td style="padding:8px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${routeOtpCell(r.otp)}</td>
         <td style="padding:8px 10px;font-size:12px;text-align:right;color:#082b63;border-bottom:1px solid #f3f4f6;">${num(r.ridership)}</td>
         <td style="padding:8px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${dwellHours}</td>
         <td style="padding:8px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;${apcStatusCellStyle(apcStatus)}">
@@ -1028,7 +1048,7 @@ function buildRouteScorecard(routes: RouteMetrics[], dwellByRoute: Map<string, n
   }).join('');
 
   return `
-    ${sectionHeader('Route Scorecard', 'Sorted by BPH (highest to lowest) — APC review at 25% gap, suspect at 50% gap')}
+    ${sectionHeader('Route Scorecard', 'Sorted by BPH (highest to lowest) — OTP shows on-time % with early/late % below')}
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(15,23,42,0.05);">
       <tr style="background:#f9fafb;">
         <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
@@ -1041,7 +1061,7 @@ function buildRouteScorecard(routes: RouteMetrics[], dwellByRoute: Map<string, n
       </tr>
       ${rows}
     </table>
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">Dwell hours reflect moderate/high dwell incidents only. Displayed route dwell values are rounded to 0.1 hours. APC status is based on the daily difference between route boardings and alightings. For review/suspect rows, only the lower of Boards/Alights is highlighted.</div>`;
+    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">Dwell hours reflect moderate/high dwell incidents only. Displayed route dwell values are rounded to 0.1 hours. OTP subline shows the share of observations outside the -3 to +5 minute window. APC status is based on the daily difference between route boardings and alightings. For review/suspect rows, only the lower of Boards/Alights is highlighted.</div>`;
 }
 
 function buildTopStops(stops: StopMetrics[]): string {

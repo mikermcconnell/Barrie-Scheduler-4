@@ -1027,6 +1027,12 @@ describe('RoutePlanner2Workspace local workspace', () => {
     flushSync(() => {
       setInputValue(toSelect!, '3');
     });
+    const preview = view.querySelector('[data-testid="rp2-stop-transfer-preview"]');
+    expect(preview?.textContent).toContain('Transfer preview');
+    expect(preview?.textContent).toContain('Move 2 stops into Option 2');
+    expect(preview?.textContent).toContain('Target runtime');
+    expect(preview?.textContent).toContain('Copy uses the same target preview');
+
     flushSync(() => {
       click(findButton(view, 'Move stops'));
     });

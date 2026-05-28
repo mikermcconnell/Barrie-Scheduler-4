@@ -56,6 +56,7 @@ import {
     deriveRoutePlanner2EvidenceRuntimeEstimates,
     type RoutePlanner2RuntimeEvidenceDiagnostic,
 } from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
+import { buildRoutePlanner2StopTransferPreview } from '../../utils/route-planner-2/routePlanner2TransferPreview';
 import {
     buildRoutePlanner2StopCardDetails,
     buildRoutePlanner2StopVisitRuntimeDetails,
@@ -165,6 +166,24 @@ function formatRuntimeDelta(before: number | null | undefined, after: number | n
     if (before == null || after == null) return 'not estimated';
     const delta = Math.round(after - before);
     return `${delta >= 0 ? '+' : ''}${delta} min`;
+}
+
+function formatRuntimeTransition(before: number | null | undefined, after: number | null | undefined): string {
+    const delta = before != null && after != null ? ` (${formatRuntimeDelta(before, after)})` : '';
+    return `${formatRuntime(before)} -> ${formatRuntime(after)}${delta}`;
+}
+
+function formatTransferCount(count: number, singular: string, plural = `${singular}s`): string {
+    return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function getStopTransferInsertAfterStopId(
+    insertSelection: string,
+    targetStops: Array<{ id: string }>,
+): string | null {
+    if (insertSelection === '__start') return null;
+    if (insertSelection === '__end') return targetStops[targetStops.length - 1]?.id ?? null;
+    return insertSelection || null;
 }
 
 function buildSegmentTransferImpactMessage(
@@ -828,6 +847,42 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => project.scenarios.filter((scenario) => scenario.id !== selectedScenario?.id),
         [project.scenarios, selectedScenario?.id],
     );
+    const transferStopCount = useMemo(
+        () => selectedScenarioStops.filter((stop) =>
+            stop.sequence >= Math.min(transferFromSequence, transferToSequence)
+            && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
+        ).length,
+        [selectedScenarioStops, transferFromSequence, transferToSequence],
+    );
+    const transferInsertAfterStopIdForPreview = useMemo(
+        () => getStopTransferInsertAfterStopId(transferInsertAfterStopId, transferTargetStops),
+        [transferInsertAfterStopId, transferTargetStops],
+    );
+    const stopTransferPreview = useMemo(
+        () => {
+            if (!selectedScenario || !transferTargetScenarioId || transferStopCount === 0) return null;
+            return buildRoutePlanner2StopTransferPreview(project, {
+                sourceScenarioId: selectedScenario.id,
+                targetScenarioId: transferTargetScenarioId,
+                fromSequence: transferFromSequence,
+                toSequence: transferToSequence,
+                insertAfterStopId: transferInsertAfterStopIdForPreview,
+                mode: 'move',
+                reverseOrder: transferReverseOrder,
+                now: 'route-planner-transfer-preview',
+            });
+        },
+        [
+            project,
+            selectedScenario,
+            transferFromSequence,
+            transferInsertAfterStopIdForPreview,
+            transferReverseOrder,
+            transferStopCount,
+            transferTargetScenarioId,
+            transferToSequence,
+        ],
+    );
     const metadataQuery = usePerformanceMetadataQuery(teamId ?? undefined);
     const hasPerformanceData = Boolean(metadataQuery.data);
     const dataQuery = usePerformanceDataQuery(teamId ?? undefined, hasPerformanceData, metadataQuery.data);
@@ -1283,11 +1338,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
         ).length;
         if (transferredStopCount === 0) return;
-        const insertAfterStopId = transferInsertAfterStopId === '__start'
-            ? null
-            : transferInsertAfterStopId === '__end'
-                ? targetStops[targetStops.length - 1]?.id ?? null
-                : transferInsertAfterStopId;
+        const insertAfterStopId = getStopTransferInsertAfterStopId(transferInsertAfterStopId, targetStops);
         const now = new Date().toISOString();
         const updated = reassignRoutePlanner2StopRange(project, {
             sourceScenarioId: selectedScenario.id,
@@ -1591,10 +1642,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         : selectedScenario?.routeShape === 'out-and-back'
             ? 'Out and back'
             : 'One-way';
-    const transferStopCount = selectedScenarioStops.filter((stop) =>
-        stop.sequence >= Math.min(transferFromSequence, transferToSequence)
-        && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
-    ).length;
     const canApplyStopTransfer = Boolean(selectedScenario && transferTargetScenarioId && transferStopCount > 0);
     const reassignStopsPanel = (
         <section className="rounded-2xl border border-cyan-200 bg-cyan-50/60 p-3" data-testid="rp2-reassign-stops-panel">
@@ -1669,6 +1716,77 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         Selected range: <span className="font-black text-slate-900">{transferStopCount}</span> {transferStopCount === 1 ? 'stop' : 'stops'}
                         {transferReverseOrder && <span className="font-semibold text-cyan-700"> · reversed on insert</span>}
                     </div>
+                    {stopTransferPreview && (
+                        <div data-testid="rp2-stop-transfer-preview" className="rounded-xl border border-cyan-100 bg-white p-3 text-xs leading-5 text-slate-600">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <h4 className="text-sm font-black text-slate-900">Transfer preview</h4>
+                                    <p className="mt-1">
+                                        Move {formatTransferCount(stopTransferPreview.transferredStopCount, 'stop')} into <span className="font-bold text-slate-900">{stopTransferPreview.targetScenarioName}</span>.
+                                    </p>
+                                </div>
+                                <span className="shrink-0 rounded-full bg-cyan-50 px-2 py-1 text-[10px] font-black uppercase text-cyan-700">Before apply</span>
+                            </div>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <div className="rounded-lg bg-slate-50 px-2.5 py-2">
+                                    <div className="font-black uppercase tracking-wide text-slate-500">Target runtime</div>
+                                    <div className="mt-0.5 font-bold text-slate-900">
+                                        {formatRuntimeTransition(stopTransferPreview.targetRuntimeBeforeMinutes, stopTransferPreview.targetRuntimeAfterMinutes)}
+                                    </div>
+                                </div>
+                                <div className="rounded-lg bg-slate-50 px-2.5 py-2">
+                                    <div className="font-black uppercase tracking-wide text-slate-500">Source runtime if moved</div>
+                                    <div className="mt-0.5 font-bold text-slate-900">
+                                        {formatRuntimeTransition(stopTransferPreview.sourceRuntimeBeforeMinutes, stopTransferPreview.sourceRuntimeAfterMinutes)}
+                                    </div>
+                                </div>
+                            </div>
+                            {stopTransferPreview.sourceFamilyBefore
+                                && stopTransferPreview.sourceFamilyAfter
+                                && stopTransferPreview.sourceFamilyBefore.key !== stopTransferPreview.targetFamilyBefore?.key
+                                && (
+                                    <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-slate-700">
+                                        <span className="font-black">Source family:</span> runtime {stopTransferPreview.sourceFamilyBefore.runtimeLabel} -&gt; {stopTransferPreview.sourceFamilyAfter.runtimeLabel}; recovery {stopTransferPreview.sourceFamilyBefore.recoveryLabel} -&gt; {stopTransferPreview.sourceFamilyAfter.recoveryLabel}.
+                                    </p>
+                                )}
+                            {stopTransferPreview.targetFamilyBefore && stopTransferPreview.targetFamilyAfter && (
+                                <p className="mt-2 rounded-lg bg-cyan-50 px-2.5 py-2 text-cyan-900">
+                                    <span className="font-black">Target family:</span> runtime {stopTransferPreview.targetFamilyBefore.runtimeLabel} -&gt; {stopTransferPreview.targetFamilyAfter.runtimeLabel}; recovery {stopTransferPreview.targetFamilyBefore.recoveryLabel} -&gt; {stopTransferPreview.targetFamilyAfter.recoveryLabel}.
+                                </p>
+                            )}
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                <span className="rounded-full bg-slate-100 px-2 py-1 font-bold text-slate-700">{formatTransferCount(stopTransferPreview.carriedScheduledSegmentCount, 'scheduled segment')}</span>
+                                <span className="rounded-full bg-slate-100 px-2 py-1 font-bold text-slate-700">{formatTransferCount(stopTransferPreview.carriedRuntimeEstimateCount, 'period runtime')}</span>
+                                <span className="rounded-full bg-slate-100 px-2 py-1 font-bold text-slate-700">{formatTransferCount(stopTransferPreview.carriedManualOverrideCount, 'manual override')}</span>
+                                <span className="rounded-full bg-slate-100 px-2 py-1 font-bold text-slate-700">{formatTransferCount(stopTransferPreview.connectorSegmentCount, 'connector')}</span>
+                                {stopTransferPreview.fallbackConnectorCount > 0 && (
+                                    <span className="rounded-full bg-amber-50 px-2 py-1 font-bold text-amber-700">{formatTransferCount(stopTransferPreview.fallbackConnectorCount, 'fallback connector')}</span>
+                                )}
+                            </div>
+                            {stopTransferPreview.matchedRoutes.length > 0 && (
+                                <p className="mt-2">
+                                    Runtime evidence carried from: <span className="font-bold text-slate-900">{stopTransferPreview.matchedRoutes.join(', ')}</span>
+                                </p>
+                            )}
+                            {stopTransferPreview.droppedDirectionalRuntimeEstimateCount > 0 && (
+                                <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 text-amber-800">
+                                    {formatTransferCount(stopTransferPreview.droppedDirectionalRuntimeEstimateCount, 'directional runtime')} will be dropped because the segment is reversed.
+                                </p>
+                            )}
+                            {stopTransferPreview.warnings.length > 0 && (
+                                <ul className="mt-2 space-y-1">
+                                    {stopTransferPreview.warnings.map((warning) => (
+                                        <li key={warning.id} className="rounded-lg bg-amber-50 px-2.5 py-2 text-amber-800">
+                                            <span className="font-black">Review:</span> {warning.message}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                            <p className="mt-2 text-[11px] font-semibold text-slate-500">
+                                Copy uses the same target preview but leaves the source route unchanged.
+                            </p>
+                        </div>
+                    )}
                     {segmentTransferImpactMessage && (
                         <div data-testid="rp2-segment-transfer-impact" className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-900">
                             <span className="font-black">Runtime impact:</span> {segmentTransferImpactMessage}
@@ -1760,13 +1878,13 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             <aside
                                 data-testid="rp2-action-sidebar"
                                 data-state={actionSidebarExpanded ? 'expanded' : 'collapsed'}
-                                className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 p-2 shadow-xl backdrop-blur transition-all duration-200 ${actionSidebarExpanded ? 'w-72' : 'w-14'}`}
+                                className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 p-2.5 shadow-xl backdrop-blur transition-all duration-200 ${actionSidebarExpanded ? 'w-72' : 'w-16'}`}
                                 aria-label="Route Planner actions"
                             >
                                 <button
                                     type="button"
                                     onClick={() => setIsActionSidebarOpen((current) => !current)}
-                                    className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-2 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                    className="flex min-h-10 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-2 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
                                     aria-expanded={actionSidebarExpanded}
                                     title={actionSidebarExpanded ? 'Collapse actions' : 'Expand actions'}
                                 >
@@ -1849,7 +1967,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         <button
                                             type="button"
                                             onClick={() => setIsActionSidebarOpen(true)}
-                                            className="inline-flex w-full items-center justify-center rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800"
+                                            className="inline-flex min-h-10 w-full items-center justify-center rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800"
                                             title="Route concepts"
                                         >
                                             <Layers3 size={16} /><span className="sr-only">Route concepts</span>
@@ -1860,7 +1978,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                 setProject((current) => addRoutePlanner2Scenario(current));
                                                 setIsActionSidebarOpen(true);
                                             }}
-                                            className="inline-flex w-full items-center justify-center rounded-2xl border border-cyan-200 bg-white px-2.5 py-2 text-xs font-bold text-cyan-800"
+                                            className="inline-flex min-h-10 w-full items-center justify-center rounded-2xl border border-cyan-200 bg-white px-2.5 py-2 text-xs font-bold text-cyan-800"
                                             title="Add route"
                                         >
                                             <Plus size={16} /><span className="sr-only">Add route</span>
@@ -1872,7 +1990,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         type="button"
                                         onClick={undoProjectChange}
                                         disabled={!canUndoProject}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title="Undo last route planner change"
                                     >
                                         <Undo2 size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Undo</span>
@@ -1881,7 +1999,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         type="button"
                                         onClick={redoProjectChange}
                                         disabled={!canRedoProject}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title="Redo last undone route planner change"
                                     >
                                         <Redo2 size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Redo</span>
@@ -1892,7 +2010,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         disabled={!canShowRuntimeSourceOverlay}
                                         data-testid="rp2-runtime-source-overlay-toggle"
                                         aria-pressed={showRuntimeSourceOverlay}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${showRuntimeSourceOverlay ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-700'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${showRuntimeSourceOverlay ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-700'}`}
                                         title={showRuntimeSourceOverlay ? 'Hide source overlay' : 'Show source overlay'}
                                     >
                                         <Eye size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{showRuntimeSourceOverlay ? 'Hide source overlay' : 'Show source overlay'}</span>
@@ -1903,7 +2021,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         disabled={!canShowRoadNameLabels}
                                         data-testid="rp2-road-name-label-toggle"
                                         aria-pressed={showRoadNameLabels}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${showRoadNameLabels ? 'border-blue-300 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-700'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${showRoadNameLabels ? 'border-blue-300 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-700'}`}
                                         title={showRoadNameLabels ? 'Hide road names' : 'Show road names'}
                                     >
                                         <MapPin size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{showRoadNameLabels ? 'Hide road names' : 'Show road names'}</span>
@@ -1913,7 +2031,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         data-testid="rp2-camp-shuttle-label-toggle"
                                         aria-pressed={showCampShuttleLabels}
                                         onClick={() => setShowCampShuttleLabels((current) => !current)}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${
                                             showCampShuttleLabels
                                                 ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
                                                 : 'border-slate-200 bg-white text-slate-700'
@@ -1963,7 +2081,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         }}
                                         data-testid="rp2-selection-menu-toggle"
                                         aria-expanded={isSelectionMenuOpen}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${mapSelectionMode ? 'border-violet-300 bg-violet-50 text-violet-800' : 'border-slate-200 bg-white text-slate-700'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border px-2.5 py-2 text-xs font-bold ${actionSidebarExpanded ? 'justify-start' : 'justify-center'} ${mapSelectionMode ? 'border-violet-300 bg-violet-50 text-violet-800' : 'border-slate-200 bg-white text-slate-700'}`}
                                         title="Select stops and bend anchors"
                                     >
                                         <MousePointer2 size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Select</span>
@@ -2019,7 +2137,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         type="button"
                                         onClick={openLoadPicker}
                                         disabled={!canUseTeamSave || loadState === 'loading'}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:opacity-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 disabled:opacity-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title={canUseTeamSave ? 'Load saved plan' : 'Sign in with a team workspace to load'}
                                     >
                                         <FolderOpen size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{loadState === 'loading' ? 'Loading...' : 'Load'}</span>
@@ -2027,7 +2145,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     <button
                                         type="button"
                                         onClick={() => selectedScenario && setProject((current) => duplicateRoutePlanner2Scenario(current, selectedScenario.id))}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title="Duplicate route"
                                     >
                                         <Copy size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Duplicate</span>
@@ -2035,7 +2153,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     <button
                                         type="button"
                                         onClick={openGtfsImport}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title="Import GTFS"
                                     >
                                         <Database size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Import GTFS</span>
@@ -2046,7 +2164,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             setIsGtfsImportOpen(false);
                                             setIsAddressImportOpen(true);
                                         }}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-bold text-emerald-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-bold text-emerald-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title="Import addresses"
                                     >
                                         <FileSpreadsheet size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Import addresses</span>
@@ -2059,7 +2177,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         }}
                                         data-testid="rp2-export-menu-toggle"
                                         aria-expanded={isExportMenuOpen}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title="Export PDFs"
                                     >
                                         <FileDown size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>Export</span>
@@ -2089,7 +2207,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     <button
                                         type="button"
                                         onClick={toggleRightRail}
-                                        className={`inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
+                                        className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title={visibleRightRailOpen ? 'Hide review' : 'Review route'}
                                     >
                                         <PanelRightOpen size={16} /><span className={actionSidebarExpanded ? undefined : 'sr-only'}>{visibleRightRailOpen ? 'Hide review' : 'Review route'}</span>
@@ -2846,7 +2964,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                 <button
                                     type="button"
                                     onClick={() => setIsRightRailOpen(true)}
-                                    className="inline-flex w-full items-center justify-center rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800"
+                                    className="inline-flex min-h-10 w-full items-center justify-center rounded-2xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-bold text-cyan-800"
                                     title="Review route"
                                 >
                                     <ClipboardList size={16} /><span className="sr-only">Review route</span>
@@ -2855,7 +2973,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     type="button"
                                     onClick={() => void saveCurrentProject()}
                                     disabled={!canUseTeamSave || saveState === 'saving'}
-                                    className="inline-flex w-full items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-bold text-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="inline-flex min-h-10 w-full items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-bold text-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
                                     title={canUseTeamSave ? 'Save this route plan' : 'Sign in with a team workspace to save'}
                                 >
                                     <Save size={16} /><span className="sr-only">Save</span>
@@ -2863,7 +2981,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                 <button
                                     type="button"
                                     onClick={enterDrawFocusMode}
-                                    className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700"
+                                    className="inline-flex min-h-10 w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700"
                                     title="Draw route"
                                 >
                                     <PencilRuler size={16} /><span className="sr-only">Draw route</span>

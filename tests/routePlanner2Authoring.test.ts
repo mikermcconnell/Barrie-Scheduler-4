@@ -164,6 +164,96 @@ describe('Route Planner 2 authoring', () => {
     expect(new Set(target.stops.map((stop) => stop.id)).size).toBe(4);
   });
 
+  it('extends one-way target terminal roles when appending a transferred segment', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-a', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, role: 'start-terminal', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-2', name: 'A2', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-3', name: 'A3', lat: 44.4, lng: -79.67, role: 'end-terminal', now });
+    project = {
+      ...project,
+      scenarios: [
+        project.scenarios[0]!,
+        {
+          ...project.scenarios[0]!,
+          id: 'route-b',
+          name: 'Route B',
+          stops: [
+            { id: 'b-1', name: 'B1', lat: 44.41, lng: -79.66, sequence: 1, role: 'start-terminal' as const, source: 'custom' as const },
+            { id: 'b-2', name: 'B2', lat: 44.42, lng: -79.65, sequence: 2, role: 'end-terminal' as const, source: 'custom' as const },
+          ],
+          alignment: [],
+          runtimeEstimates: undefined,
+          runtimeOverrides: undefined,
+        },
+      ],
+    };
+
+    project = reassignRoutePlanner2StopRange(project, {
+      sourceScenarioId: 'route-a',
+      targetScenarioId: 'route-b',
+      fromSequence: 2,
+      toSequence: 3,
+      insertAfterStopId: 'b-2',
+      mode: 'copy',
+      now,
+    });
+
+    const target = project.scenarios.find((scenario) => scenario.id === 'route-b')!;
+    expect(target.stops.map((stop) => `${stop.sequence}:${stop.name}:${stop.role}`)).toEqual([
+      '1:B1:start-terminal',
+      '2:B2:regular',
+      '3:A2:regular',
+      '4:A3:end-terminal',
+    ]);
+    expect(buildRoutePlanner2StopVisitSequence(target).map((stop) => stop.name)).toEqual(['B1', 'B2', 'A2', 'A3']);
+  });
+
+  it('extends the target end terminal when inserting after an explicit end terminal with trailing stops', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-a', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, role: 'start-terminal', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-2', name: 'A2', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-3', name: 'A3', lat: 44.4, lng: -79.67, role: 'end-terminal', now });
+    project = {
+      ...project,
+      scenarios: [
+        project.scenarios[0]!,
+        {
+          ...project.scenarios[0]!,
+          id: 'route-b',
+          name: 'Route B',
+          stops: [
+            { id: 'b-1', name: 'B1', lat: 44.41, lng: -79.66, sequence: 1, role: 'start-terminal' as const, source: 'custom' as const },
+            { id: 'b-2', name: 'B2', lat: 44.42, lng: -79.65, sequence: 2, role: 'end-terminal' as const, source: 'custom' as const },
+            { id: 'b-3', name: 'Trailing stop', lat: 44.43, lng: -79.64, sequence: 3, role: 'regular' as const, source: 'custom' as const },
+          ],
+          alignment: [],
+          runtimeEstimates: undefined,
+          runtimeOverrides: undefined,
+        },
+      ],
+    };
+
+    project = reassignRoutePlanner2StopRange(project, {
+      sourceScenarioId: 'route-a',
+      targetScenarioId: 'route-b',
+      fromSequence: 2,
+      toSequence: 3,
+      insertAfterStopId: 'b-2',
+      mode: 'copy',
+      now,
+    });
+
+    const target = project.scenarios.find((scenario) => scenario.id === 'route-b')!;
+    expect(target.stops.map((stop) => `${stop.sequence}:${stop.name}:${stop.role}`)).toEqual([
+      '1:B1:start-terminal',
+      '2:B2:regular',
+      '3:A2:regular',
+      '4:A3:end-terminal',
+      '5:Trailing stop:regular',
+    ]);
+    expect(buildRoutePlanner2StopVisitSequence(target).map((stop) => stop.name)).toEqual(['B1', 'B2', 'A2', 'A3']);
+  });
+
   it('moves a contiguous stop range to another route and clears stale runtime evidence', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-a', now });
     project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, role: 'start-terminal', now });
@@ -546,6 +636,29 @@ describe('Route Planner 2 authoring', () => {
     project = updateRoutePlanner2StopRole(project, 'scenario-1', 'stop-2', 'end-terminal', now);
     scenario = project.scenarios[0]!;
     expect(validateRoutePlanner2Terminals(scenario)).toEqual([]);
+  });
+
+  it('bounds a one-way route by its explicit start and end terminals', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-0', name: 'Before start', lat: 44.37, lng: -79.71, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Start', lat: 44.38, lng: -79.7, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Middle', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-3', name: 'End', lat: 44.4, lng: -79.66, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-4', name: 'After end', lat: 44.41, lng: -79.64, now });
+    project = updateRoutePlanner2StopRole(project, 'scenario-1', 'stop-1', 'start-terminal', now);
+    project = updateRoutePlanner2StopRole(project, 'scenario-1', 'stop-3', 'end-terminal', now);
+
+    const scenario = project.scenarios[0]!;
+
+    expect(buildRoutePlanner2StopVisitSequence(scenario).map((stop) => stop.id)).toEqual([
+      'stop-1',
+      'stop-2',
+      'stop-3',
+    ]);
+    expect(validateRoutePlanner2Terminals(scenario).map((warning) => warning.id)).toEqual([
+      'start-terminal-not-first',
+      'end-terminal-not-final',
+    ]);
   });
 
   it('treats bus turnaround as the explicit reversal point for out-and-back routes', () => {

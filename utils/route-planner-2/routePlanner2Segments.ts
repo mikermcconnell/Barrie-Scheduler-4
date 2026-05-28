@@ -75,7 +75,14 @@ export function buildRoutePlanner2StopVisitSequence(scenario: RoutePlanner2Scena
         return [...outboundStops, ...returnStops];
     }
 
-    return stops;
+    const startTerminalIndex = stops.findIndex((stop) => stop.role === 'start-terminal');
+    const routeStartIndex = startTerminalIndex >= 0 ? startTerminalIndex : 0;
+    const endTerminalIndex = stops.findIndex((stop, index) =>
+        index >= routeStartIndex && stop.role === 'end-terminal',
+    );
+    const routeEndIndex = endTerminalIndex >= routeStartIndex ? endTerminalIndex : stops.length - 1;
+
+    return stops.slice(routeStartIndex, routeEndIndex + 1);
 }
 
 export function buildRoutePlanner2StopSegmentPairs(scenario: RoutePlanner2Scenario): RoutePlanner2StopSegmentPair[] {

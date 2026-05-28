@@ -194,6 +194,42 @@ function rowForText(sectionHtml: string, text: string): string {
   return match?.[0] ?? '';
 }
 
+describe('buildReportHtml route scorecard OTP detail', () => {
+  it('keeps OTP in one column and stacks early/late percentages below on-time performance', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      routes: [
+        makeRoute('2', 'Route 2', {
+          otp: makeOtp({
+            total: 50,
+            onTimePercent: 82.2,
+            earlyPercent: 4.4,
+            latePercent: 13.4,
+          }),
+        }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const routeSection = between(html, 'Route Scorecard', 'Boardings by Hour');
+    const routeRow = rowForText(routeSection, 'Route 2');
+
+    expect(routeSection).toContain('OTP shows on-time % with early/late % below');
+    expect(routeSection).not.toMatch(/<th[^>]*>Early/i);
+    expect(routeSection).not.toMatch(/<th[^>]*>Late/i);
+    expect(routeRow).toContain('82.2%');
+    expect(routeRow).toContain('4.4%');
+    expect(routeRow).toContain('13.4%');
+    expect(routeRow).toContain('early');
+    expect(routeRow).toContain('late');
+  });
+});
+
 describe('buildReportHtml dwell reporting', () => {
   it('adds moderate/high dwell hours to the route scorecard and boardings-by-hour table', () => {
     const latestDay = makeSummary({

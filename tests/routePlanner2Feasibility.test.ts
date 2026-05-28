@@ -146,6 +146,18 @@ describe('Route Planner 2 feasibility', () => {
     expect(result.cycleTimeMinutes).toBe((result.oneWayRuntimeMinutes! * 2) + 10);
   });
 
+  it('does not count stops after a one-way end terminal in runtime', () => {
+    let project = validTwoStopProject();
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-3', name: 'After end', lat: 44.41, lng: -79.63, now });
+
+    const result = deriveRoutePlanner2Feasibility(project.scenarios[0]!);
+
+    expect(result.segmentSummaries.map((segment) => `${segment.fromStopId}->${segment.toStopId}`)).toEqual([
+      'stop-1->stop-2',
+    ]);
+    expect(result.warnings.map((warning) => warning.id)).toContain('end-terminal-not-final');
+  });
+
   it('estimates closed loops as one complete loop back to Stop 1', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.7, now });
