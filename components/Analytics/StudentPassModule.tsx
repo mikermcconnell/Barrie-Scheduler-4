@@ -6,7 +6,7 @@ import {
   BARRIE_SCHOOLS,
   minutesToDisplayTime,
 } from '../../utils/transit-app/studentPassUtils';
-import type { SchoolConfig, StudentPassResult, TripOptions, TransferInfo, ZoneStopOption } from '../../utils/transit-app/studentPassUtils';
+import type { SchoolConfig, StudentPassResult, TripOptions, ZoneStopOption } from '../../utils/transit-app/studentPassUtils';
 import {
     enrichStudentPassWalks,
     findTripOptionsRaptor,
@@ -14,7 +14,12 @@ import {
 } from '../../utils/transit-app/studentPassRaptorAdapter';
 import { StudentPassMap } from './StudentPassMap';
 import { StudentPassPanel } from './StudentPassPanel';
-import StudentPassTimeline from './StudentPassTimeline';
+import StudentPassTimeline, {
+    buildMorningSegments,
+    buildAfternoonSegments,
+    resolveColor,
+} from './StudentPassTimeline';
+import type { TimelineSegment } from './StudentPassTimeline';
 import './studentPass.css';
 
 interface StudentPassModuleProps {
@@ -34,113 +39,149 @@ function formatDisplayDate(value: string): string {
     }).format(parseInputDate(value));
 }
 
-function getJourneyTransfers(
-    result: StudentPassResult,
-    mode: 'am' | 'pm'
-): TransferInfo[] {
-    if (mode === 'am') {
-        if (result.morningTransfers?.length) return result.morningTransfers;
-        if (result.morningTransfer) return [result.morningTransfer];
-        if (result.transfers?.length) return result.transfers;
-        if (result.transfer) return [result.transfer];
-        return [];
-    }
-
-    if (result.afternoonTransfers?.length) return result.afternoonTransfers;
-    if (result.afternoonTransfer) return [result.afternoonTransfer];
-    return [];
+function hexToRgb(hex: string): [number, number, number] {
+    const h = hex.replace('#', '');
+    return [
+        parseInt(h.substring(0, 2), 16),
+        parseInt(h.substring(2, 4), 16),
+        parseInt(h.substring(4, 6), 16),
+    ];
 }
 
-function buildMorningSteps(result: StudentPassResult, bellStart: string): string[] {
-    const steps: string[] = [];
-    let stepNumber = 1;
-    const transfers = getJourneyTransfers(result, 'am');
+function getContrastingTextColor(hexColor: string): 'white' | 'black' {
+    const [r, g, b] = hexToRgb(hexColor);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.5 ? 'black' : 'white';
+}
 
-    if (result.walkToStop) {
-        steps.push(
-            `${stepNumber}. Walk ${result.walkToStop.walkMinutes} min (${(result.walkToStop.distanceKm * 1000).toFixed(0)}m) to ${result.walkToStop.label.replace(/^Walk to /, '')}`
-        );
-        stepNumber++;
+async function prepareMapForExport(mapEl: HTMLElement): Promise<void> {
+    mapEl.classList.add('student-pass-export-map');
+    await new Promise(resolve => setTimeout(resolve, 100));
+}
+
+async function captureStudentPassMapCanvas(mapEl: HTMLElement): Promise<HTMLCanvasElement> {
+    const rect = mapEl.getBoundingClientRect();
+    const scale = 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = rect.width * scale;
+    canvas.height = rect.height * scale;
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(scale, scale);
+
+    ctx.fillStyle = '#dfeef8';
+    ctx.fillRect(0, 0, rect.width, rect.height);
+
+    const glCanvas = mapEl.querySelector('canvas.mapboxgl-canvas') as HTMLCanvasElement | null;
+    if (glCanvas) {
+        ctx.drawImage(glCanvas, 0, 0, rect.width, rect.height);
     }
 
-    result.morningLegs.forEach((leg, index) => {
-        steps.push(
-            `${stepNumber}. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)} from ${leg.fromStop}`
-        );
-        stepNumber++;
-        steps.push(
-            `${stepNumber}. Arrive ${leg.toStop} at ${minutesToDisplayTime(leg.arrivalMinutes)}`
-        );
-        stepNumber++;
+    try {
+        const overlayCanvas = await html2canvas(mapEl, {
+            useCORS: true,
+            scale,
+            backgroundColor: null,
+            ignoreElements: (el: Element) => el.tagName === 'CANVAS',
+        });
+        ctx.drawImage(overlayCanvas, 0, 0, rect.width, rect.height);
+    } catch {
+        // HTML overlay capture failed — map canvas alone is fine
+    }
 
-        const transfer = transfers[index];
-        if (transfer) {
-            steps.push(
-                `${stepNumber}. Transfer at ${leg.toStop} (${transfer.waitMinutes} min wait)`
-            );
-            stepNumber++;
+    mapEl.classList.remove('student-pass-export-map');
+    return canvas;
+}
+
+function drawTimelineBar(
+    doc: jsPDF,
+    segments: TimelineSegment[],
+    x: number,
+    y: number,
+    width: number,
+    barHeight: number,
+): number {
+    const totalMinutes = segments.reduce((sum, s) => sum + s.durationMinutes, 0);
+    if (totalMinutes === 0 || segments.length === 0) return y;
+
+    const gap = 1;
+    const totalGaps = (segments.length - 1) * gap;
+    const availableWidth = width - totalGaps;
+    const MIN_WIDTH = 12;
+
+    const rawWidths = segments.map(
+        (s) => Math.max((s.durationMinutes / totalMinutes) * availableWidth, MIN_WIDTH)
+    );
+    const rawTotal = rawWidths.reduce((a, b) => a + b, 0);
+    const scale = availableWidth / rawTotal;
+    const widths = rawWidths.map((w) => w * scale);
+
+    const radius = 2;
+    let curX = x;
+
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const segW = widths[i];
+
+        if (seg.type === 'walk') {
+            doc.setFillColor(100, 116, 139);
+            doc.roundedRect(curX, y, segW, barHeight, radius, radius, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Walk', curX + segW / 2, y + barHeight / 2 - 1, { align: 'center' });
+            doc.setFontSize(6);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`${seg.durationMinutes}m`, curX + segW / 2, y + barHeight / 2 + 3, { align: 'center' });
+        } else if (seg.type === 'ride') {
+            const color = resolveColor(seg.routeColor);
+            const [r, g, b] = hexToRgb(color);
+            doc.setFillColor(r, g, b);
+            doc.roundedRect(curX, y, segW, barHeight, radius, radius, 'F');
+            const textColor = getContrastingTextColor(color);
+            if (textColor === 'white') {
+                doc.setTextColor(255, 255, 255);
+            } else {
+                doc.setTextColor(0, 0, 0);
+            }
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`Rt ${seg.routeShortName}`, curX + segW / 2, y + barHeight / 2 - 1, { align: 'center' });
+            doc.setFontSize(6);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`${seg.durationMinutes}m`, curX + segW / 2, y + barHeight / 2 + 3, { align: 'center' });
+        } else {
+            doc.setFillColor(254, 243, 199);
+            doc.roundedRect(curX, y, segW, barHeight, radius, radius, 'F');
+            doc.setDrawColor(245, 158, 11);
+            doc.setLineWidth(0.5);
+            doc.setLineDashPattern([1, 1], 0);
+            doc.roundedRect(curX, y, segW, barHeight, radius, radius, 'S');
+            doc.setLineDashPattern([], 0);
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(146, 64, 14);
+            doc.text(`${seg.durationMinutes}m`, curX + segW / 2, y + barHeight / 2 + 1, { align: 'center' });
         }
-    });
 
-    if (result.walkToSchool) {
-        steps.push(
-            `${stepNumber}. Walk ${result.walkToSchool.walkMinutes} min (${(result.walkToSchool.distanceKm * 1000).toFixed(0)}m) to school`
-        );
-    } else {
-        steps.push(`${stepNumber}. Walk to school`);
-    }
-    stepNumber++;
-    steps.push(`${stepNumber}. Bell time ${bellStart}`);
-
-    return steps;
-}
-
-function buildAfternoonSteps(result: StudentPassResult, bellEnd: string): string[] {
-    const steps: string[] = [`1. Bell rings at ${bellEnd}`];
-    let stepNumber = 2;
-    const transfers = getJourneyTransfers(result, 'pm');
-
-    if (result.walkFromSchool) {
-        steps.push(
-            `${stepNumber}. Walk ${result.walkFromSchool.walkMinutes} min (${(result.walkFromSchool.distanceKm * 1000).toFixed(0)}m) to ${result.walkFromSchool.label.replace(/^Walk to /, '')}`
-        );
-        stepNumber++;
+        curX += segW + gap;
     }
 
-    result.afternoonLegs.forEach((leg, index) => {
-        steps.push(
-            `${stepNumber}. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)} from ${leg.fromStop}`
-        );
-        stepNumber++;
-        steps.push(
-            `${stepNumber}. Arrive ${leg.toStop} at ${minutesToDisplayTime(leg.arrivalMinutes)}`
-        );
-        stepNumber++;
-
-        const transfer = transfers[index];
-        if (transfer) {
-            steps.push(
-                `${stepNumber}. Transfer at ${leg.toStop} (${transfer.waitMinutes} min wait)`
-            );
-            stepNumber++;
+    curX = x;
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const segW = widths[i];
+        if (seg.type === 'ride' && seg.startMinutes != null) {
+            doc.setFontSize(6);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(100, 116, 139);
+            doc.text(minutesToDisplayTime(seg.startMinutes), curX + 1, y + barHeight + 4);
         }
-    });
-
-    if (result.walkToZone) {
-        steps.push(
-            `${stepNumber}. Walk ${result.walkToZone.walkMinutes} min (${(result.walkToZone.distanceKm * 1000).toFixed(0)}m) home`
-        );
-        stepNumber++;
+        curX += segW + gap;
     }
 
-    if (result.nextAfternoonDepartureMinutes != null) {
-        steps.push(
-            `${stepNumber}. Next bus after school departs at ${minutesToDisplayTime(result.nextAfternoonDepartureMinutes)}`
-        );
-    }
-
-    return steps;
+    return y + barHeight + 6;
 }
+
 
 export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) => {
     const serviceDateInfo = useMemo(() => getStudentPassServiceDateInfo(), []);
@@ -289,132 +330,101 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
         try {
             const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
             const pageW = doc.internal.pageSize.getWidth();
+            const pageH = doc.internal.pageSize.getHeight();
             const margin = 14;
             const contentW = pageW - margin * 2;
 
-            // Title bar
-            doc.setFillColor(31, 41, 55); // gray-900
+            // ── Title Banner ─────────────────────────────────────
+            doc.setFillColor(0, 78, 126);
             doc.rect(0, 0, pageW, 22, 'F');
             doc.setTextColor(255, 255, 255);
             doc.setFontSize(14);
             doc.setFont('helvetica', 'bold');
-            doc.text(selectedSchool.name, margin, 13);
+            doc.text(selectedSchool.name, margin, 11);
             doc.setFontSize(9);
             doc.setFont('helvetica', 'normal');
-            doc.setTextColor(209, 213, 219); // gray-300
-            doc.text('Student Transit Pass', margin, 19);
-            doc.text(formatDisplayDate(serviceDate), pageW - margin, 13, { align: 'right' });
+            doc.setTextColor(214, 237, 250);
+            doc.text('Student Transit Pass', margin, 18);
+            doc.text(formatDisplayDate(serviceDate), pageW - margin, 11, { align: 'right' });
 
-            let y = 30;
+            let y = 28;
 
-            // Try to capture map
+            // ── Map Capture ──────────────────────────────────────
             const mapEl = document.querySelector('.student-pass-map') as HTMLElement | null;
+            const mapH = 120;
             if (mapEl) {
                 try {
-                    const canvas = await html2canvas(mapEl, { useCORS: true, scale: 1.5 });
-                    const imgData = canvas.toDataURL('image/jpeg', 0.85);
-                    const mapH = contentW * 0.55;
-                    doc.addImage(imgData, 'JPEG', margin, y, contentW, mapH);
+                    await prepareMapForExport(mapEl);
+                    const canvas = await captureStudentPassMapCanvas(mapEl);
+                    const imgData = canvas.toDataURL('image/png');
+                    doc.setDrawColor(200, 220, 235);
+                    doc.setLineWidth(0.3);
+                    doc.rect(margin, y, contentW, mapH, 'S');
+                    doc.addImage(imgData, 'PNG', margin, y, contentW, mapH);
                     y += mapH + 6;
                 } catch {
-                    // Map capture failed — continue without it
+                    y += 4;
                 }
             }
 
-            // "In Numbers" section header
-            doc.setFontSize(9);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(31, 41, 55);
-            doc.text('ZONE — IN NUMBERS', margin, y);
-            y += 5;
+            // ── Morning Timeline ─────────────────────────────────
+            const morningSegs = buildMorningSegments(result);
+            const morningTotal = morningSegs.reduce((sum, s) => sum + s.durationMinutes, 0);
 
-            // Stats box background
-            const statsLines: string[] = [];
-            const tripDuration = result.morningLegs.length > 0
-                ? result.morningLegs[result.morningLegs.length - 1].arrivalMinutes - result.morningLegs[0].departureMinutes
-                : 0;
-            statsLines.push(`Service Date: ${formatDisplayDate(serviceDate)}`);
-            if (selectedZoneStop) {
-                statsLines.push(`Selected Stop: ${selectedZoneStop.stopName}`);
-            }
-            statsLines.push(`Trip Time: ${tripDuration} min`);
+            if (morningSegs.length > 0) {
+                doc.setFontSize(8);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(0, 78, 126);
+                doc.text('MORNING JOURNEY', margin, y);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(100, 116, 139);
+                doc.text(`${morningTotal} min`, pageW - margin, y, { align: 'right' });
+                y += 4;
 
-            if (result.walkToStop) {
-                statsLines.push(`Walk to Stop: ${result.walkToStop.walkMinutes} min (${(result.walkToStop.distanceKm * 1000).toFixed(0)}m)`);
-            }
-            if (result.walkToSchool) {
-                statsLines.push(`Walk to School: ${result.walkToSchool.walkMinutes} min (${(result.walkToSchool.distanceKm * 1000).toFixed(0)}m)`);
+                y = drawTimelineBar(doc, morningSegs, margin, y, contentW, 12);
+                y += 4;
             }
 
-            if (!result.isDirect && result.morningLegs.length === 2) {
-                statsLines.push(`Transfer: Rt ${result.morningLegs[0].routeShortName} -> Rt ${result.morningLegs[1].routeShortName} at ${result.morningLegs[0].toStop}`);
-            }
-            if (!result.isDirect && result.transfer) {
-                statsLines.push(`Connection: ${result.transfer.label} (${result.transfer.waitMinutes} min wait)`);
-            }
-            if (result.frequencyPerHour != null && result.frequencyPerHour > 0) {
-                const intervalMin = Math.round(60 / result.frequencyPerHour);
-                statsLines.push(`Bus Frequency: Every ${intervalMin} min`);
-            }
-            const routes = [...new Set([
-                ...result.morningLegs.map((l) => l.routeShortName),
-                ...result.afternoonLegs.map((l) => l.routeShortName),
-            ])].join(', ');
-            statsLines.push(`Routes: ${routes}`);
+            // ── Afternoon Timeline ───────────────────────────────
+            const afternoonSegs = buildAfternoonSegments(result);
+            const afternoonTotal = afternoonSegs.reduce((sum, s) => sum + s.durationMinutes, 0);
 
-            doc.setFillColor(249, 250, 251); // gray-50
-            doc.setDrawColor(229, 231, 235); // gray-200
-            const statsBoxH = statsLines.length * 5 + 6;
-            doc.roundedRect(margin, y, contentW, statsBoxH, 2, 2, 'FD');
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(8);
-            doc.setTextColor(55, 65, 81);
-            statsLines.forEach((line, i) => {
-                doc.text(line, margin + 4, y + 5 + i * 5);
-            });
-            y += statsBoxH + 6;
+            if (afternoonSegs.length > 0) {
+                doc.setFontSize(8);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(0, 78, 126);
+                doc.text('AFTERNOON JOURNEY', margin, y);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(100, 116, 139);
+                doc.text(`${afternoonTotal} min`, pageW - margin, y, { align: 'right' });
+                y += 4;
 
-            // Morning / Afternoon two-column headers
-            const colW = contentW / 2;
-            doc.setFontSize(8);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(29, 78, 216); // blue-700
-            doc.text('MORNING TRIP', margin, y);
-            doc.setTextColor(180, 83, 9); // amber-700
-            doc.text('AFTERNOON TRIP', margin + colW, y);
-            y += 5;
-
-            const morningSteps = buildMorningSteps(result, effectiveBellStart);
-            const afternoonSteps = result.afternoonLegs.length > 0 || result.walkFromSchool || result.walkToZone
-                ? buildAfternoonSteps(result, effectiveBellEnd)
-                : ['1. No return trip found for this stop and date'];
-
-            // Print two columns
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(7.5);
-            const maxRows = Math.max(morningSteps.length, afternoonSteps.length);
-            for (let i = 0; i < maxRows; i++) {
-                const rowY = y + i * 4.5;
-                doc.setTextColor(55, 65, 81);
-                if (morningSteps[i]) doc.text(morningSteps[i], margin, rowY);
-                if (afternoonSteps[i]) doc.text(afternoonSteps[i], margin + colW, rowY);
+                y = drawTimelineBar(doc, afternoonSegs, margin, y, contentW, 12);
             }
 
-            // Footer
-            const footerY = doc.internal.pageSize.getHeight() - 10;
+            // ── Footer ───────────────────────────────────────────
+            const footerY = pageH - 10;
+            doc.setDrawColor(0, 78, 126);
+            doc.setLineWidth(0.3);
+            doc.line(margin, footerY - 4, pageW - margin, footerY - 4);
             doc.setFontSize(7);
-            doc.setTextColor(156, 163, 175); // gray-400
-            const today = new Date().toLocaleDateString('en-CA');
+            doc.setTextColor(94, 127, 150);
             doc.text('Barrie Transit', margin, footerY);
-            doc.text(`${formatDisplayDate(serviceDate)} | Exported ${today}`, pageW - margin, footerY, { align: 'right' });
+            const today = new Date().toLocaleDateString('en-CA');
+            doc.text(
+                `${formatDisplayDate(serviceDate)} | Exported ${today}`,
+                pageW - margin,
+                footerY,
+                { align: 'right' },
+            );
 
-            // Save
+            // ── Save ─────────────────────────────────────────────
             const safeName = selectedSchool.name.replace(/[^a-zA-Z0-9]/g, '-');
             doc.save(`${safeName}-Student-Transit-Pass.pdf`);
         } finally {
             setIsExporting(false);
         }
-    }, [result, selectedSchool, effectiveBellStart, effectiveBellEnd, selectedZoneStop, serviceDate]);
+    }, [result, selectedSchool, serviceDate]);
 
     return (
         <div className={`flex flex-col overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50' : 'h-full'}`}>

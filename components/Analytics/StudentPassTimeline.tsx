@@ -8,7 +8,7 @@ interface StudentPassTimelineProps {
   onJourneyModeChange: (mode: 'am' | 'pm') => void;
 }
 
-interface TimelineSegment {
+export interface TimelineSegment {
   type: 'walk' | 'ride' | 'transfer';
   durationMinutes: number;
   label: string;
@@ -19,7 +19,7 @@ interface TimelineSegment {
   index: number;
 }
 
-function buildMorningSegments(result: StudentPassResult): TimelineSegment[] {
+export function buildMorningSegments(result: StudentPassResult): TimelineSegment[] {
   const segments: TimelineSegment[] = [];
 
   if (result.walkToStop) {
@@ -68,7 +68,7 @@ function buildMorningSegments(result: StudentPassResult): TimelineSegment[] {
   return segments;
 }
 
-function buildAfternoonSegments(result: StudentPassResult): TimelineSegment[] {
+export function buildAfternoonSegments(result: StudentPassResult): TimelineSegment[] {
   const segments: TimelineSegment[] = [];
   const transfers = result.afternoonTransfers?.length
     ? result.afternoonTransfers
@@ -122,7 +122,7 @@ function buildAfternoonSegments(result: StudentPassResult): TimelineSegment[] {
   return segments;
 }
 
-function resolveColor(raw: string | undefined): string {
+export function resolveColor(raw: string | undefined): string {
   if (!raw) return '#3B5BDB';
   return raw.startsWith('#') ? raw : `#${raw}`;
 }
