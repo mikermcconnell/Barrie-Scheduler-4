@@ -228,6 +228,56 @@ describe('buildReportHtml route scorecard OTP detail', () => {
     expect(routeRow).toContain('early');
     expect(routeRow).toContain('late');
   });
+
+  it('only colors route scorecard early and late percentages above alert thresholds', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      routes: [
+        makeRoute('2', 'Route 2', {
+          otp: makeOtp({
+            total: 50,
+            onTimePercent: 87.2,
+            earlyPercent: 2.9,
+            latePercent: 9.9,
+          }),
+        }),
+        makeRoute('7', 'Route 7', {
+          otp: makeOtp({
+            total: 50,
+            onTimePercent: 74.6,
+            earlyPercent: 4.1,
+            latePercent: 11.3,
+          }),
+        }),
+        makeRoute('8A', 'Route 8A', {
+          otp: makeOtp({
+            total: 50,
+            onTimePercent: 63.5,
+            earlyPercent: 9.1,
+            latePercent: 18.8,
+          }),
+        }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const routeSection = between(html, 'Route Scorecard', 'Boardings by Hour');
+    const normalRow = rowForText(routeSection, 'Route 2');
+    const alertRow = rowForText(routeSection, 'Route 7');
+    const darkerAlertRow = rowForText(routeSection, 'Route 8A');
+
+    expect(normalRow).toContain('color:#64748b;">2.9%</span> early');
+    expect(normalRow).toContain('color:#64748b;">9.9%</span> late');
+    expect(alertRow).toContain('color:#92400e;">4.1%</span> early');
+    expect(alertRow).toContain('color:#991b1b;">11.3%</span> late');
+    expect(darkerAlertRow).toContain('color:#78350f;">9.1%</span> early');
+    expect(darkerAlertRow).toContain('color:#7f1d1d;">18.8%</span> late');
+  });
 });
 
 describe('buildReportHtml dwell reporting', () => {

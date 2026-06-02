@@ -764,11 +764,15 @@ describe('RoutePlanner2Workspace local workspace', () => {
     const rightRail = view.querySelector('[data-testid="rp2-right-rail"]');
     const mapCanvas = view.querySelector('[data-testid="rp2-map-canvas"]') as HTMLElement | null;
     const actionSidebar = view.querySelector('[data-testid="rp2-action-sidebar"]');
+    const actionSidebarScroll = view.querySelector('[data-testid="rp2-action-sidebar-scroll"]');
 
     expect(workspaceShell?.getAttribute('data-layout')).toBe('map-first');
     expect(view.textContent).toContain('Route concepts');
     expect(view.querySelector('[data-testid="rp2-left-rail"]')).toBeNull();
     expect(actionSidebar?.getAttribute('data-state')).toBe('collapsed');
+    expect(actionSidebar?.className).toContain('w-20');
+    expect(actionSidebarScroll?.className).toContain('rp2-action-scrollbar');
+    expect(actionSidebarScroll?.className).toContain('pr-2');
     expect(rightRail?.getAttribute('data-state')).toBe('open');
     expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('6rem');
     expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('26.5rem');
@@ -779,6 +783,9 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
 
     expect(actionSidebar?.getAttribute('data-state')).toBe('expanded');
+    expect(actionSidebar?.className).toContain('w-72');
+    expect(actionSidebarScroll?.className).toContain('rp2-action-scrollbar');
+    expect(actionSidebarScroll?.className).toContain('pr-1');
     expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('20rem');
 
     flushSync(() => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     buildObservedKeys,
     hasRouteTimeMatch,
+    hasGtfsCoverage,
     computeMissedTripsForDay,
     getTripsForDayType,
     isBetterServiceCandidate,
@@ -26,7 +27,12 @@ function makeCandidate(matchRatio: number, matched: number, scheduledCount: numb
 }
 
 describe('gtfsScheduleIndex', () => {
-    const feedSaturday = '2026-02-14';
+    const feedSaturday = '2026-05-30';
+
+    it('covers June 2026 service days for daily missed-trip reporting', () => {
+        expect(hasGtfsCoverage('2026-06-01')).toBe(true);
+        expect(getTripsForDayType('2026-06-01', 'weekday').length).toBeGreaterThan(0);
+    });
 
     it('matches GTFS 24+ hour departures against 00:xx observed times', () => {
         const observedMidnight = buildObservedKeys([{ routeId: '7A', terminalDepartureTime: '00:23' }]);

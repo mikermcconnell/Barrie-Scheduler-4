@@ -50,14 +50,11 @@ interface GtfsTrip {
 
 // ─── Ontario Statutory Holidays ─────────────────────────────────────
 // Maps known holidays to the service type Barrie Transit actually runs.
-// Covers the current GTFS period (Dec 2025 – Feb 2026).
+// Covers the current GTFS period (May 2026 – Aug 2026).
 // Update when a new GTFS feed is loaded or a new year begins.
 
 const ONTARIO_HOLIDAYS: Record<string, DayType> = {
-    '2025-12-25': 'sunday',   // Christmas Day
-    '2025-12-26': 'sunday',   // Boxing Day
-    '2026-01-01': 'sunday',   // New Year's Day
-    '2026-02-16': 'sunday',   // Family Day (3rd Monday of Feb)
+    '2026-07-01': 'sunday',   // Canada Day
 };
 
 // ─── Parse raw GTFS text ────────────────────────────────────────────

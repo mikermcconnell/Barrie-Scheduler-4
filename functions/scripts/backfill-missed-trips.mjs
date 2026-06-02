@@ -13,6 +13,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initializeApp } from 'firebase-admin/app';
@@ -21,16 +22,14 @@ import { getStorage } from 'firebase-admin/storage';
 
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
 const DEFAULT_BUCKET = process.env.FIREBASE_STORAGE_BUCKET || 'barrie-scheduler-7844a.firebasestorage.app';
+const DEFAULT_PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || DEFAULT_BUCKET.split('.')[0];
 const MATCH_TOLERANCE_MINS = 15;
 const MIN_DAY_MATCH_RATIO = 0.25;
 const MIN_ROUTE_MATCH_RATIO = 0.1;
 const LATE_CLASSIFICATION_WINDOW_MINS = 60;
 
 const ONTARIO_HOLIDAYS = {
-  '2025-12-25': 'sunday',
-  '2025-12-26': 'sunday',
-  '2026-01-01': 'sunday',
-  '2026-02-16': 'sunday',
+  '2026-07-01': 'sunday',
 };
 
 function printUsage() {
@@ -40,6 +39,8 @@ Backfill missed trips in stored performance summaries.
 Options:
   --teamId <id>     Team ID (default: ${DEFAULT_TEAM_ID})
   --bucket <name>   Firebase Storage bucket (default: ${DEFAULT_BUCKET})
+  --projectId <id>  Google Cloud project ID (default: ${DEFAULT_PROJECT_ID})
+  --date <YYYY-MM-DD> Recompute only one service day
   --dry-run         Preview only (default)
   --apply           Write updated JSON + metadata
   --delete-old      Delete prior storage JSON after successful write (with --apply)
@@ -51,6 +52,8 @@ function parseArgs(argv) {
   const out = {
     teamId: DEFAULT_TEAM_ID,
     bucket: DEFAULT_BUCKET,
+    projectId: DEFAULT_PROJECT_ID,
+    date: null,
     apply: false,
     deleteOld: false,
   };
@@ -63,6 +66,10 @@ function parseArgs(argv) {
       out.teamId = argv[++i];
     } else if (a === '--bucket' && argv[i + 1]) {
       out.bucket = argv[++i];
+    } else if (a === '--projectId' && argv[i + 1]) {
+      out.projectId = argv[++i];
+    } else if (a === '--date' && argv[i + 1]) {
+      out.date = argv[++i];
     } else if (a === '--apply') {
       out.apply = true;
     } else if (a === '--dry-run') {
@@ -75,6 +82,28 @@ function parseArgs(argv) {
   }
 
   return out;
+}
+
+function shouldUseApplicationDefaultCredentials() {
+  return Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.FIREBASE_CONFIG);
+}
+
+function gcloudUserCredential() {
+  return {
+    async getAccessToken() {
+      const accessToken = execFileSync('gcloud', ['auth', 'print-access-token'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      if (!accessToken) {
+        throw new Error('gcloud did not return an access token');
+      }
+      return {
+        access_token: accessToken,
+        expires_in: 3600,
+      };
+    },
+  };
 }
 
 function parseCsvLine(line) {
@@ -507,7 +536,11 @@ async function main() {
   const rootDir = path.resolve(here, '../..');
   const gtfs = loadGtfsState(rootDir);
 
-  initializeApp({ storageBucket: args.bucket });
+  initializeApp({
+    projectId: args.projectId,
+    storageBucket: args.bucket,
+    ...(shouldUseApplicationDefaultCredentials() ? {} : { credential: gcloudUserCredential() }),
+  });
   const db = getFirestore();
   const bucket = getStorage().bucket(args.bucket);
 
@@ -537,8 +570,12 @@ async function main() {
   let notPerformedAfter = 0;
   let lateOver15Before = 0;
   let lateOver15After = 0;
+  let targetedDays = 0;
 
   for (const day of summary.dailySummaries) {
+    if (args.date && day.date !== args.date) continue;
+    targetedDays++;
+
     const before = day.missedTrips ? JSON.stringify(day.missedTrips) : '';
     if (day.missedTrips?.totalMissed) {
       totalBefore += day.missedTrips.totalMissed;
@@ -572,6 +609,8 @@ async function main() {
   console.log(`Team: ${args.teamId}`);
   console.log(`Storage path: ${oldStoragePath}`);
   console.log(`Days scanned: ${summary.dailySummaries.length}`);
+  if (args.date) console.log(`Date filter: ${args.date}`);
+  console.log(`Days targeted: ${targetedDays}`);
   console.log(`Days changed: ${changedDays}`);
   console.log(`Days with missedTrips removed: ${droppedDays}`);
   console.log(`Total missed trips before: ${totalBefore}`);
@@ -604,6 +643,8 @@ async function main() {
     importedAt: FieldValue.serverTimestamp(),
     importedBy: 'missed-trips-backfill',
     storagePath: newStoragePath,
+    overviewStoragePath: newStoragePath,
+    reportStoragePath: newStoragePath,
     dateRange,
     dayCount: summary.dailySummaries.length,
     totalRecords: getTotalRecords(summary),

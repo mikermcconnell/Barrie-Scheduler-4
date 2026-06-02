@@ -1878,7 +1878,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             <aside
                                 data-testid="rp2-action-sidebar"
                                 data-state={actionSidebarExpanded ? 'expanded' : 'collapsed'}
-                                className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 p-2.5 shadow-xl backdrop-blur transition-all duration-200 ${actionSidebarExpanded ? 'w-72' : 'w-16'}`}
+                                className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 p-2.5 shadow-xl backdrop-blur transition-all duration-200 ${actionSidebarExpanded ? 'w-72' : 'w-20'}`}
                                 aria-label="Route Planner actions"
                             >
                                 <button
@@ -1985,7 +1985,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         </button>
                                     </div>
                                 )}
-                                <div className="mt-2 flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
+                                <div
+                                    data-testid="rp2-action-sidebar-scroll"
+                                    className={`mt-2 flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto rp2-action-scrollbar ${actionSidebarExpanded ? 'pr-1' : 'pr-2'}`}
+                                >
                                     <button
                                         type="button"
                                         onClick={undoProjectChange}

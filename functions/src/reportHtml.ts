@@ -131,6 +131,18 @@ function otpPill(value: number): string {
   return `<span style="background:${otpBg(value)};color:${otpColor(value)};padding:2px 8px;border-radius:4px;font-weight:600;font-size:12px;">${pct(value)}</span>`;
 }
 
+function earlyPctColor(value: number): string {
+  if (value > 8) return '#78350f';
+  if (value > 3) return '#92400e';
+  return '#64748b';
+}
+
+function latePctColor(value: number): string {
+  if (value > 15) return '#7f1d1d';
+  if (value > 10) return '#991b1b';
+  return '#64748b';
+}
+
 function routeOtpCell(otp: RouteMetrics['otp']): string {
   if (!otp || otp.total <= 0) {
     return `
@@ -144,9 +156,9 @@ function routeOtpCell(otp: RouteMetrics['otp']): string {
     <div style="display:inline-block;min-width:104px;text-align:right;">
       ${otpPill(otp.onTimePercent)}
       <div style="margin-top:4px;font-size:10px;line-height:1.35;color:#64748b;white-space:nowrap;letter-spacing:0.01em;">
-        <span style="font-weight:700;color:#92400e;">${pct(otp.earlyPercent)}</span> early
+        <span style="font-weight:700;color:${earlyPctColor(otp.earlyPercent)};">${pct(otp.earlyPercent)}</span> early
         <span style="color:#cbd5e1;padding:0 4px;">•</span>
-        <span style="font-weight:700;color:#991b1b;">${pct(otp.latePercent)}</span> late
+        <span style="font-weight:700;color:${latePctColor(otp.latePercent)};">${pct(otp.latePercent)}</span> late
       </div>
     </div>`;
 }
@@ -384,7 +396,7 @@ function buildExecutiveSummary(latestDay: DailySummary): string {
       ? mt.totalMissed === 0
         ? `All ${num(mt.totalScheduled)} scheduled trips operated.`
         : `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips were missed (${mt.missedPct.toFixed(1)}%), affecting Routes ${formatRouteList(mt.byRoute.map(route => route.routeId))}.`
-      : `No missed-trip summary was available in this dataset.`,
+      : `Missed-trip data unavailable.`,
     apcIssueRoutes.length > 0
       ? `APC review flags were triggered on ${apcIssueRoutes.length} route${apcIssueRoutes.length === 1 ? '' : 's'} (${formatRouteList(apcIssueRoutes.map(route => route.routeId))}).`
       : 'No APC review flags were triggered yesterday.',
