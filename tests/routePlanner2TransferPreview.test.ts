@@ -137,6 +137,11 @@ describe('Route Planner 2 stop transfer preview', () => {
     expect(preview?.sourceAccountingRuntimeAfterMinutes).toBe((preview?.sourceRuntimeBeforeMinutes ?? 0) - 6);
     expect(preview?.targetAccountingRuntimeAfterMinutes).toBe((preview?.targetRuntimeBeforeMinutes ?? 0) + 6);
     expect(preview?.targetRuntimeDeltaMinutes).not.toBe(preview?.targetAccountingRuntimeDeltaMinutes);
+    expect(preview?.scheduleImpact.source.runtime.delta).toBe(-6);
+    expect(preview?.scheduleImpact.target.runtime.delta).toBe(6);
+    expect(preview?.scheduleImpact.target.cycleTime.after).toBeGreaterThan(preview?.scheduleImpact.target.cycleTime.before ?? 0);
+    expect(preview?.scheduleImpact.target.recoveryTime.delta).toBeLessThanOrEqual(0);
+    expect(preview?.scheduleImpact.warnings.map((warning) => warning.id)).toContain('target-recovery-reduced');
   });
 
   it('copy mode adds moved runtime to target accounting and leaves source accounting unchanged', () => {
@@ -154,6 +159,8 @@ describe('Route Planner 2 stop transfer preview', () => {
     expect(preview?.sourceAccountingRuntimeDeltaMinutes).toBe(0);
     expect(preview?.targetAccountingRuntimeDeltaMinutes).toBe(6);
     expect(preview?.sourceAccountingRuntimeAfterMinutes).toBe(preview?.sourceRuntimeBeforeMinutes);
+    expect(preview?.scheduleImpact.source.runtime.delta).toBe(0);
+    expect(preview?.scheduleImpact.target.runtime.delta).toBe(6);
   });
 
   it('warns that reversed transfers drop directional runtime evidence', () => {

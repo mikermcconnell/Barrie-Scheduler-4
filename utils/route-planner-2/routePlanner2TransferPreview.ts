@@ -3,6 +3,7 @@ import { deriveRoutePlanner2Feasibility } from './routePlanner2Feasibility';
 import { buildRoutePlanner2StopSegmentPairs, getRoutePlanner2SegmentId, sortRoutePlanner2Stops } from './routePlanner2Segments';
 import { summarizeRoutePlanner2Project, summarizeRoutePlanner2Scenario, type RoutePlanner2RouteFamilySummary } from './routePlanner2Summary';
 import type {
+    RoutePlanner2FeasibilitySummary,
     RoutePlanner2Project,
     RoutePlanner2Scenario,
     RoutePlanner2SegmentRuntime,
@@ -36,11 +37,37 @@ export interface RoutePlanner2StopTransferPreviewWarning {
     action?: string;
 }
 
+export interface RoutePlanner2StopTransferMetricImpact {
+    before: number | null;
+    after: number | null;
+    delta: number | null;
+}
+
+export interface RoutePlanner2StopTransferRouteScheduleImpact {
+    routeName: string;
+    role: 'source' | 'target';
+    runtime: RoutePlanner2StopTransferMetricImpact;
+    cycleTime: RoutePlanner2StopTransferMetricImpact;
+    recoveryTime: RoutePlanner2StopTransferMetricImpact;
+    recoveryPercentBefore: number | null;
+    recoveryPercentAfter: number | null;
+    busesRequired: RoutePlanner2StopTransferMetricImpact;
+}
+
+export interface RoutePlanner2StopTransferScheduleImpact {
+    source: RoutePlanner2StopTransferRouteScheduleImpact;
+    target: RoutePlanner2StopTransferRouteScheduleImpact;
+    warnings: RoutePlanner2StopTransferPreviewWarning[];
+}
+
 export interface RoutePlanner2StopTransferPreview {
     sourceScenarioName: string;
     targetScenarioName: string;
     mode: 'copy' | 'move';
     reverseOrder: boolean;
+    sourceStopRangeLabel: string;
+    transferredStopNames: string[];
+    insertPositionLabel: string;
     transferredStopCount: number;
     carriedRuntimeEstimateCount: number;
     carriedScheduledSegmentCount: number;
@@ -61,6 +88,7 @@ export interface RoutePlanner2StopTransferPreview {
     targetAccountingRuntimeAfterMinutes: number | null;
     sourceAccountingRuntimeDeltaMinutes: number | null;
     targetAccountingRuntimeDeltaMinutes: number | null;
+    scheduleImpact: RoutePlanner2StopTransferScheduleImpact;
     sourceFamilyBefore?: RoutePlanner2RouteFamilySummary;
     sourceFamilyAfter?: RoutePlanner2RouteFamilySummary;
     targetFamilyBefore?: RoutePlanner2RouteFamilySummary;
@@ -81,6 +109,14 @@ function getRuntimeDelta(before: number | null, after: number | null): number | 
     return Math.round(after - before);
 }
 
+function buildMetricImpact(before: number | null, after: number | null): RoutePlanner2StopTransferMetricImpact {
+    return {
+        before,
+        after,
+        delta: getRuntimeDelta(before, after),
+    };
+}
+
 function normalizeStopName(value: string): string {
     return value.trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -94,6 +130,137 @@ function stopsRepresentSamePlace(firstStop: RoutePlanner2Stop | undefined | null
     return normalizeStopName(firstStop.name) === normalizeStopName(secondStop.name)
         && Math.abs(firstStop.lat - secondStop.lat) < 0.00001
         && Math.abs(firstStop.lng - secondStop.lng) < 0.00001;
+}
+
+function isPositiveNumber(value: number | undefined): value is number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function getScheduledCycleWindowMinutes(scenario: RoutePlanner2Scenario): number | null {
+    const planningPeriod = scenario.service.planningPeriod ?? 'all-day';
+    const scheduledCycleWindow = scenario.service.scheduledCycleWindows?.[planningPeriod]
+        ?? scenario.service.scheduledCycleWindows?.['all-day'];
+    const cycleTimeMinutes = scheduledCycleWindow?.cycleTimeMinutes;
+    return isPositiveNumber(cycleTimeMinutes) ? cycleTimeMinutes : null;
+}
+
+function isGtfsSinglePatternLoop(scenario: RoutePlanner2Scenario): boolean {
+    if (scenario.source?.type !== 'gtfs' || scenario.routeShape !== 'one-way') return false;
+    const sortedStops = sortRoutePlanner2Stops(scenario.stops);
+    return sortedStops.length >= 2 && stopsRepresentSamePlace(sortedStops[0], sortedStops[sortedStops.length - 1]);
+}
+
+function deriveAccountingScheduleMetrics(
+    scenario: RoutePlanner2Scenario,
+    oneWayRuntimeMinutes: number | null,
+): Pick<RoutePlanner2FeasibilitySummary, 'cycleTimeMinutes' | 'busesRequired' | 'recoveryTimeMinutes' | 'recoveryPercent'> {
+    if (oneWayRuntimeMinutes == null || !isPositiveNumber(scenario.service.frequencyMinutes)) {
+        return {
+            cycleTimeMinutes: null,
+            busesRequired: null,
+            recoveryTimeMinutes: null,
+            recoveryPercent: null,
+        };
+    }
+
+    const targetBuses = isPositiveNumber(scenario.service.targetBuses)
+        ? Math.max(1, Math.ceil(scenario.service.targetBuses))
+        : null;
+    const scheduledCycleWindowMinutes = targetBuses != null ? getScheduledCycleWindowMinutes(scenario) : null;
+
+    if (scenario.routeShape === 'closed-loop' || scenario.routeShape === 'out-and-back') {
+        const fullRouteRuntimeMinutes = oneWayRuntimeMinutes;
+        const busesRequired = targetBuses ?? Math.max(1, Math.ceil(fullRouteRuntimeMinutes / scenario.service.frequencyMinutes));
+        const cycleTimeMinutes = scheduledCycleWindowMinutes ?? busesRequired * scenario.service.frequencyMinutes;
+        const recoveryTimeMinutes = cycleTimeMinutes - fullRouteRuntimeMinutes;
+        return {
+            cycleTimeMinutes,
+            busesRequired,
+            recoveryTimeMinutes,
+            recoveryPercent: fullRouteRuntimeMinutes > 0
+                ? Math.round((recoveryTimeMinutes / fullRouteRuntimeMinutes) * 100)
+                : null,
+        };
+    }
+
+    const estimatedFullRuntimeMinutes = isGtfsSinglePatternLoop(scenario)
+        ? oneWayRuntimeMinutes
+        : oneWayRuntimeMinutes * 2
+            + scenario.service.startTerminalLayoverMinutes
+            + scenario.service.endTerminalLayoverMinutes;
+    const busesRequired = targetBuses ?? Math.max(1, Math.ceil(estimatedFullRuntimeMinutes / scenario.service.frequencyMinutes));
+    const calculatedCycleWindowMinutes = busesRequired * scenario.service.frequencyMinutes;
+    const activeCycleWindowMinutes = scheduledCycleWindowMinutes ?? calculatedCycleWindowMinutes;
+    const cycleTimeMinutes = targetBuses != null ? activeCycleWindowMinutes : estimatedFullRuntimeMinutes;
+    const recoveryTimeMinutes = activeCycleWindowMinutes - estimatedFullRuntimeMinutes;
+
+    return {
+        cycleTimeMinutes,
+        busesRequired,
+        recoveryTimeMinutes,
+        recoveryPercent: estimatedFullRuntimeMinutes > 0
+            ? Math.round((recoveryTimeMinutes / estimatedFullRuntimeMinutes) * 100)
+            : null,
+    };
+}
+
+function buildRouteScheduleImpact(
+    routeName: string,
+    role: 'source' | 'target',
+    beforeFeasibility: RoutePlanner2FeasibilitySummary,
+    afterScenario: RoutePlanner2Scenario,
+    accountingRuntimeAfterMinutes: number | null,
+): RoutePlanner2StopTransferRouteScheduleImpact {
+    const afterMetrics = deriveAccountingScheduleMetrics(afterScenario, accountingRuntimeAfterMinutes);
+
+    return {
+        routeName,
+        role,
+        runtime: buildMetricImpact(beforeFeasibility.oneWayRuntimeMinutes, accountingRuntimeAfterMinutes),
+        cycleTime: buildMetricImpact(beforeFeasibility.cycleTimeMinutes, afterMetrics.cycleTimeMinutes),
+        recoveryTime: buildMetricImpact(beforeFeasibility.recoveryTimeMinutes, afterMetrics.recoveryTimeMinutes),
+        recoveryPercentBefore: beforeFeasibility.recoveryPercent,
+        recoveryPercentAfter: afterMetrics.recoveryPercent,
+        busesRequired: buildMetricImpact(beforeFeasibility.busesRequired, afterMetrics.busesRequired),
+    };
+}
+
+function buildScheduleImpactWarnings(
+    source: RoutePlanner2StopTransferRouteScheduleImpact,
+    target: RoutePlanner2StopTransferRouteScheduleImpact,
+): RoutePlanner2StopTransferPreviewWarning[] {
+    const warnings: RoutePlanner2StopTransferPreviewWarning[] = [];
+
+    [source, target].forEach((impact) => {
+        const routeLabel = impact.role === 'source' ? 'Source' : 'Target';
+
+        if ((impact.busesRequired.delta ?? 0) > 0) {
+            warnings.push({
+                id: `${impact.role}-bus-increase`,
+                severity: 'warning',
+                message: `${routeLabel} route may require ${impact.busesRequired.delta} additional bus${impact.busesRequired.delta === 1 ? '' : 'es'}.`,
+                action: 'Review frequency, cycle time, and recovery before applying this as a schedule change.',
+            });
+        }
+
+        if (impact.recoveryTime.after != null && impact.recoveryTime.after < 0) {
+            warnings.push({
+                id: `${impact.role}-recovery-deficit`,
+                severity: 'warning',
+                message: `${routeLabel} route has a ${Math.abs(impact.recoveryTime.after)} min recovery deficit after this transfer.`,
+                action: 'Add runtime capacity, adjust frequency, or increase bus count before treating this option as feasible.',
+            });
+        } else if ((impact.recoveryTime.delta ?? 0) < 0) {
+            warnings.push({
+                id: `${impact.role}-recovery-reduced`,
+                severity: 'info',
+                message: `${routeLabel} route recovery decreases by ${Math.abs(impact.recoveryTime.delta ?? 0)} min.`,
+                action: 'Confirm the remaining recovery is operationally acceptable.',
+            });
+        }
+    });
+
+    return warnings;
 }
 
 function getFamilySummaryForScenario(project: RoutePlanner2Project, scenarioId: string): RoutePlanner2RouteFamilySummary | undefined {
@@ -132,6 +299,21 @@ function sumRuntimeMinutes(values: Array<number | null | undefined>): number {
 
 function applyRuntimeDelta(before: number | null, delta: number): number | null {
     return before == null ? null : before + delta;
+}
+
+function getSourceStopRangeLabel(selectedStops: RoutePlanner2Stop[]): string {
+    const firstStop = selectedStops[0];
+    const lastStop = selectedStops[selectedStops.length - 1];
+    if (!firstStop) return 'No stops selected';
+    if (!lastStop || firstStop.id === lastStop.id) return `${firstStop.sequence}. ${firstStop.name}`;
+    return `${firstStop.sequence}. ${firstStop.name} → ${lastStop.sequence}. ${lastStop.name}`;
+}
+
+function getInsertPositionLabel(targetStops: RoutePlanner2Stop[], normalizedInsertIndex: number, targetStopBefore: RoutePlanner2Stop | null): string {
+    if (targetStops.length === 0) return 'Into empty target route';
+    if (normalizedInsertIndex === 0) return 'At beginning';
+    if (normalizedInsertIndex >= targetStops.length) return 'At end';
+    return targetStopBefore ? `After ${targetStopBefore.sequence}. ${targetStopBefore.name}` : 'At beginning';
 }
 
 function getTransferredRuntimeMinutes(
@@ -223,6 +405,20 @@ export function buildRoutePlanner2StopTransferPreview(
     const targetAccountingDeltaMinutes = transferredRuntimeMinutes;
     const sourceAccountingRuntimeAfterMinutes = applyRuntimeDelta(sourceBefore.feasibility.oneWayRuntimeMinutes, sourceAccountingDeltaMinutes);
     const targetAccountingRuntimeAfterMinutes = applyRuntimeDelta(targetBefore.feasibility.oneWayRuntimeMinutes, targetAccountingDeltaMinutes);
+    const sourceScheduleImpact = buildRouteScheduleImpact(
+        sourceScenario.name,
+        'source',
+        sourceBefore.feasibility,
+        sourceAfterScenario,
+        sourceAccountingRuntimeAfterMinutes,
+    );
+    const targetScheduleImpact = buildRouteScheduleImpact(
+        targetScenario.name,
+        'target',
+        targetBefore.feasibility,
+        targetAfterScenario,
+        targetAccountingRuntimeAfterMinutes,
+    );
     const transferredStopPrefixes = getInsertedStopIds(orderedStops, now);
     const targetAfterFeasibility = deriveRoutePlanner2Feasibility(targetAfterScenario);
     const connectorSegments = targetAfterFeasibility.segmentSummaries.filter((segment) => {
@@ -264,6 +460,9 @@ export function buildRoutePlanner2StopTransferPreview(
         targetScenarioName: targetScenario.name,
         mode: options.mode,
         reverseOrder: Boolean(options.reverseOrder),
+        sourceStopRangeLabel: getSourceStopRangeLabel(selectedStops),
+        transferredStopNames: selectedStops.map((stop) => stop.name),
+        insertPositionLabel: getInsertPositionLabel(targetStops, normalizedInsertIndex, targetStopBefore),
         transferredStopCount: selectedStops.length,
         carriedRuntimeEstimateCount: options.reverseOrder ? 0 : runtimeEstimatesInRange.length,
         carriedScheduledSegmentCount: options.reverseOrder ? 0 : scheduledSegmentKeys.size,
@@ -284,6 +483,11 @@ export function buildRoutePlanner2StopTransferPreview(
         targetAccountingRuntimeAfterMinutes,
         sourceAccountingRuntimeDeltaMinutes: getRuntimeDelta(sourceBefore.feasibility.oneWayRuntimeMinutes, sourceAccountingRuntimeAfterMinutes),
         targetAccountingRuntimeDeltaMinutes: getRuntimeDelta(targetBefore.feasibility.oneWayRuntimeMinutes, targetAccountingRuntimeAfterMinutes),
+        scheduleImpact: {
+            source: sourceScheduleImpact,
+            target: targetScheduleImpact,
+            warnings: buildScheduleImpactWarnings(sourceScheduleImpact, targetScheduleImpact),
+        },
         sourceFamilyBefore: getFamilySummaryForScenario(project, sourceScenario.id),
         sourceFamilyAfter: getFamilySummaryForScenario(afterProject, sourceScenario.id),
         targetFamilyBefore: getFamilySummaryForScenario(project, targetScenario.id),

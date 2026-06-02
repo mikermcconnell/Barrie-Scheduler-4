@@ -56,7 +56,11 @@ import {
     deriveRoutePlanner2EvidenceRuntimeEstimates,
     type RoutePlanner2RuntimeEvidenceDiagnostic,
 } from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
-import { buildRoutePlanner2StopTransferPreview, type RoutePlanner2StopTransferPreview } from '../../utils/route-planner-2/routePlanner2TransferPreview';
+import {
+    buildRoutePlanner2StopTransferPreview,
+    type RoutePlanner2StopTransferPreview,
+    type RoutePlanner2StopTransferPreviewOptions,
+} from '../../utils/route-planner-2/routePlanner2TransferPreview';
 import {
     buildRoutePlanner2StopCardDetails,
     buildRoutePlanner2StopVisitRuntimeDetails,
@@ -66,6 +70,7 @@ import {
 import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle, type RoutePlanner2RoadNameLabelDensity } from './route-planner-2/RoutePlanner2MapCanvas';
 import type { RoutePlanner2MapSelection, RoutePlanner2MapSelectionMode } from '../../utils/route-planner-2/routePlanner2MapSelection';
 import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
+import { RoutePlanner2StopTransferImpactModal } from './route-planner-2/RoutePlanner2StopTransferImpactModal';
 import {
     RoutePlanner2AddressImportModal,
 } from './route-planner-2/RoutePlanner2AddressImportModal';
@@ -95,6 +100,12 @@ interface RoutePlanner2WorkspaceProps {
     onBack: () => void;
     userId?: string | null;
     teamId?: string | null;
+}
+
+interface PendingStopTransferReview {
+    mode: 'copy' | 'move';
+    preview: RoutePlanner2StopTransferPreview;
+    options: RoutePlanner2StopTransferPreviewOptions;
 }
 
 const EMPTY_MAP_SELECTION: RoutePlanner2MapSelection = { stopIds: [], waypointIds: [] };
@@ -746,6 +757,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [transferInsertAfterStopId, setTransferInsertAfterStopId] = useState('__end');
     const [transferReverseOrder, setTransferReverseOrder] = useState(false);
     const [segmentTransferImpactMessage, setSegmentTransferImpactMessage] = useState<string | null>(null);
+    const [pendingStopTransferReview, setPendingStopTransferReview] = useState<PendingStopTransferReview | null>(null);
     const [runtimeDayType, setRuntimeDayType] = useState<DayType>('weekday');
     const [runtimePeriod, setRuntimePeriod] = useState<TimePeriod>('full-day');
     const [runtimeAvailableRoutesByScenario, setRuntimeAvailableRoutesByScenario] = useState<Record<string, string[]>>({});
@@ -1335,17 +1347,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (!selectedScenario) return;
         setProject((current) => updateRoutePlanner2LineWaypointCoordinate(current, selectedScenario.id, waypointId, coordinate));
     }
-    function applyStopTransfer(mode: 'copy' | 'move') {
-        if (!selectedScenario || !transferTargetScenarioId) return;
+    function buildStopTransferOptions(mode: 'copy' | 'move', now = new Date().toISOString()): RoutePlanner2StopTransferPreviewOptions | null {
+        if (!selectedScenario || !transferTargetScenarioId) return null;
         const targetStops = transferTargetStops;
         const transferredStopCount = selectedScenarioStops.filter((stop) =>
             stop.sequence >= Math.min(transferFromSequence, transferToSequence)
             && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
         ).length;
-        if (transferredStopCount === 0) return;
+        if (transferredStopCount === 0) return null;
         const insertAfterStopId = getStopTransferInsertAfterStopId(transferInsertAfterStopId, targetStops);
-        const now = new Date().toISOString();
-        const transferPreview = buildRoutePlanner2StopTransferPreview(project, {
+
+        return {
             sourceScenarioId: selectedScenario.id,
             targetScenarioId: transferTargetScenarioId,
             fromSequence: transferFromSequence,
@@ -1354,20 +1366,28 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             mode,
             reverseOrder: transferReverseOrder,
             now,
-        });
-        const updated = reassignRoutePlanner2StopRange(project, {
-            sourceScenarioId: selectedScenario.id,
-            targetScenarioId: transferTargetScenarioId,
-            fromSequence: transferFromSequence,
-            toSequence: transferToSequence,
-            insertAfterStopId,
-            mode,
-            reverseOrder: transferReverseOrder,
-            now,
-        });
-        const nextProject = selectRoutePlanner2Scenario(updated, transferTargetScenarioId);
+        };
+    }
+
+    function openStopTransferReview(mode: 'copy' | 'move') {
+        const options = buildStopTransferOptions(mode);
+        if (!options) return;
+        const preview = buildRoutePlanner2StopTransferPreview(project, options);
+        if (!preview) return;
+        setPendingStopTransferReview({ mode, preview, options });
+    }
+
+    function confirmStopTransfer() {
+        if (!pendingStopTransferReview) return;
+
+        const updated = reassignRoutePlanner2StopRange(project, pendingStopTransferReview.options);
+        const nextProject = selectRoutePlanner2Scenario(updated, pendingStopTransferReview.options.targetScenarioId);
         setProject(nextProject);
-        setSegmentTransferImpactMessage(buildSegmentTransferImpactMessage(transferPreview, mode));
+        setSegmentTransferImpactMessage(buildSegmentTransferImpactMessage(
+            pendingStopTransferReview.preview,
+            pendingStopTransferReview.mode,
+        ));
+        setPendingStopTransferReview(null);
         setSelectedStopId(null);
         setIsRightRailOpen(true);
     }
@@ -1807,8 +1827,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         </div>
                     )}
                     <div className="grid grid-cols-2 gap-2">
-                        <button type="button" onClick={() => applyStopTransfer('move')} disabled={!canApplyStopTransfer} className="rounded-xl border border-cyan-200 bg-cyan-600 px-3 py-2 text-sm font-black text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">Move stops</button>
-                        <button type="button" onClick={() => applyStopTransfer('copy')} disabled={!canApplyStopTransfer} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">Copy stops</button>
+                        <button type="button" onClick={() => openStopTransferReview('move')} disabled={!canApplyStopTransfer} className="rounded-xl border border-cyan-200 bg-cyan-600 px-3 py-2 text-sm font-black text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">Move stops</button>
+                        <button type="button" onClick={() => openStopTransferReview('copy')} disabled={!canApplyStopTransfer} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">Copy stops</button>
                     </div>
                 </div>
             )}
@@ -3090,6 +3110,13 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                 presentation="map-drawer"
                 onClose={() => setIsAddressImportOpen(false)}
                 onImport={importAddressStops}
+            />
+            <RoutePlanner2StopTransferImpactModal
+                open={Boolean(pendingStopTransferReview)}
+                preview={pendingStopTransferReview?.preview ?? null}
+                mode={pendingStopTransferReview?.mode ?? 'move'}
+                onCancel={() => setPendingStopTransferReview(null)}
+                onConfirm={confirmStopTransfer}
             />
         </div>
     );

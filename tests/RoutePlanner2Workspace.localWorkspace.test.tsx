@@ -1037,17 +1037,47 @@ describe('RoutePlanner2Workspace local workspace', () => {
     const preview = view.querySelector('[data-testid="rp2-stop-transfer-preview"]');
     expect(preview?.textContent).toContain('Transfer preview');
     expect(preview?.textContent).toContain('Move 2 stops into Option 2');
-    expect(preview?.textContent).toContain('Target runtime');
+    expect(preview?.textContent).toContain('Target moved runtime');
     expect(preview?.textContent).toContain('Copy uses the same target preview');
 
     flushSync(() => {
       click(findButton(view, 'Move stops'));
     });
 
+    const modal = view.querySelector('[data-testid="rp2-stop-transfer-impact-modal"]');
+    expect(modal?.textContent).toContain('Reassign stops impact');
+    expect(modal?.textContent).toContain('Schedule impact');
+    expect(modal?.textContent).toContain('Runtime shifted');
+    expect(modal?.textContent).toContain('Clean Concept A');
+    expect(modal?.textContent).toContain('Option 2');
+
+    let routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
+      button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
+    );
+    expect(routeCards.some((button) => button.textContent?.includes('Clean Concept A') && button.textContent?.includes('3 stops'))).toBe(true);
+    expect(routeCards.some((button) => button.textContent?.includes('Option 2') && button.textContent?.includes('0 stops'))).toBe(true);
+
+    flushSync(() => {
+      click(findButton(view, 'Cancel'));
+    });
+    expect(view.querySelector('[data-testid="rp2-stop-transfer-impact-modal"]')).toBeNull();
+    routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
+      button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
+    );
+    expect(routeCards.some((button) => button.textContent?.includes('Clean Concept A') && button.textContent?.includes('3 stops'))).toBe(true);
+    expect(routeCards.some((button) => button.textContent?.includes('Option 2') && button.textContent?.includes('0 stops'))).toBe(true);
+
+    flushSync(() => {
+      click(findButton(view, 'Move stops'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Confirm move stops'));
+    });
+
     const impact = view.querySelector('[data-testid="rp2-segment-transfer-impact"]');
     expect(impact?.textContent).toContain('Runtime impact');
     expect(impact?.textContent).toContain('Moved 2 stops from Clean Concept A to Option 2');
-    const routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
+    routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
       button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
     );
     expect(routeCards.some((button) => button.textContent?.includes('Clean Concept A') && button.textContent?.includes('1 stops'))).toBe(true);
