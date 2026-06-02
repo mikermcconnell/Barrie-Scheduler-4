@@ -42,7 +42,7 @@ import {
     createRoutePlanner2ScenarioFromGtfsPattern,
     type RoutePlanner2GtfsImportPattern,
 } from '../../utils/route-planner-2/routePlanner2GtfsImport';
-import { summarizeRoutePlanner2Project, summarizeRoutePlanner2Scenario } from '../../utils/route-planner-2/routePlanner2Summary';
+import { summarizeRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2Summary';
 import {
     listRoutePlanner2SavedProjects,
     loadRoutePlanner2Project,
@@ -56,7 +56,7 @@ import {
     deriveRoutePlanner2EvidenceRuntimeEstimates,
     type RoutePlanner2RuntimeEvidenceDiagnostic,
 } from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
-import { buildRoutePlanner2StopTransferPreview } from '../../utils/route-planner-2/routePlanner2TransferPreview';
+import { buildRoutePlanner2StopTransferPreview, type RoutePlanner2StopTransferPreview } from '../../utils/route-planner-2/routePlanner2TransferPreview';
 import {
     buildRoutePlanner2StopCardDetails,
     buildRoutePlanner2StopVisitRuntimeDetails,
@@ -173,6 +173,15 @@ function formatRuntimeTransition(before: number | null | undefined, after: numbe
     return `${formatRuntime(before)} -> ${formatRuntime(after)}${delta}`;
 }
 
+function formatMovedRuntimeTransition(before: number | null | undefined, after: number | null | undefined): string {
+    const delta = before != null && after != null ? ` (${formatRuntimeDelta(before, after)} moved runtime)` : '';
+    return `${formatRuntime(before)} -> ${formatRuntime(after)}${delta}`;
+}
+
+function runtimeDeltaDiffers(first: number | null | undefined, second: number | null | undefined): boolean {
+    return first != null && second != null && Math.round(first) !== Math.round(second);
+}
+
 function formatTransferCount(count: number, singular: string, plural = `${singular}s`): string {
     return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -187,27 +196,23 @@ function getStopTransferInsertAfterStopId(
 }
 
 function buildSegmentTransferImpactMessage(
-    beforeProject: RoutePlanner2Project,
-    afterProject: RoutePlanner2Project,
-    sourceScenarioId: string,
-    targetScenarioId: string,
-    movedStopCount: number,
+    preview: RoutePlanner2StopTransferPreview | null,
     mode: 'copy' | 'move',
 ): string | null {
-    const sourceBefore = beforeProject.scenarios.find((scenario) => scenario.id === sourceScenarioId);
-    const targetBefore = beforeProject.scenarios.find((scenario) => scenario.id === targetScenarioId);
-    const sourceAfter = afterProject.scenarios.find((scenario) => scenario.id === sourceScenarioId);
-    const targetAfter = afterProject.scenarios.find((scenario) => scenario.id === targetScenarioId);
-    if (!sourceBefore || !targetBefore || !sourceAfter || !targetAfter) return null;
+    if (!preview) return null;
 
-    const sourceBeforeSummary = summarizeRoutePlanner2Scenario(sourceBefore);
-    const sourceAfterSummary = summarizeRoutePlanner2Scenario(sourceAfter);
-    const targetBeforeSummary = summarizeRoutePlanner2Scenario(targetBefore);
-    const targetAfterSummary = summarizeRoutePlanner2Scenario(targetAfter);
     const action = mode === 'move' ? 'Moved' : 'Copied';
-    const stopsLabel = movedStopCount === 1 ? '1 stop' : `${movedStopCount} stops`;
+    const stopsLabel = preview.transferredStopCount === 1 ? '1 stop' : `${preview.transferredStopCount} stops`;
+    const sourceDelta = preview.sourceAccountingRuntimeDeltaMinutes;
+    const targetDelta = preview.targetAccountingRuntimeDeltaMinutes;
+    const sourceRuntimeText = mode === 'move' && sourceDelta != null
+        ? `Source runtime ${sourceDelta >= 0 ? '+' : ''}${sourceDelta} min`
+        : 'Source runtime unchanged';
+    const targetRuntimeText = targetDelta != null
+        ? `target runtime ${targetDelta >= 0 ? '+' : ''}${targetDelta} min`
+        : 'target runtime not estimated';
 
-    return `${action} ${stopsLabel} from ${sourceBefore.name} to ${targetBefore.name}. Source runtime ${formatRuntimeDelta(sourceBeforeSummary.feasibility.oneWayRuntimeMinutes, sourceAfterSummary.feasibility.oneWayRuntimeMinutes)}; target runtime ${formatRuntimeDelta(targetBeforeSummary.feasibility.oneWayRuntimeMinutes, targetAfterSummary.feasibility.oneWayRuntimeMinutes)}.`;
+    return `${action} ${stopsLabel} from ${preview.sourceScenarioName} to ${preview.targetScenarioName}. ${sourceRuntimeText}; ${targetRuntimeText}.`;
 }
 
 function getRoutePlanner2SaveErrorMessage(error: unknown): string {
@@ -1340,6 +1345,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (transferredStopCount === 0) return;
         const insertAfterStopId = getStopTransferInsertAfterStopId(transferInsertAfterStopId, targetStops);
         const now = new Date().toISOString();
+        const transferPreview = buildRoutePlanner2StopTransferPreview(project, {
+            sourceScenarioId: selectedScenario.id,
+            targetScenarioId: transferTargetScenarioId,
+            fromSequence: transferFromSequence,
+            toSequence: transferToSequence,
+            insertAfterStopId,
+            mode,
+            reverseOrder: transferReverseOrder,
+            now,
+        });
         const updated = reassignRoutePlanner2StopRange(project, {
             sourceScenarioId: selectedScenario.id,
             targetScenarioId: transferTargetScenarioId,
@@ -1352,14 +1367,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         });
         const nextProject = selectRoutePlanner2Scenario(updated, transferTargetScenarioId);
         setProject(nextProject);
-        setSegmentTransferImpactMessage(buildSegmentTransferImpactMessage(
-            project,
-            updated,
-            selectedScenario.id,
-            transferTargetScenarioId,
-            transferredStopCount,
-            mode,
-        ));
+        setSegmentTransferImpactMessage(buildSegmentTransferImpactMessage(transferPreview, mode));
         setSelectedStopId(null);
         setIsRightRailOpen(true);
     }
@@ -1729,29 +1737,35 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             </div>
                             <div className="mt-3 grid gap-2 sm:grid-cols-2">
                                 <div className="rounded-lg bg-slate-50 px-2.5 py-2">
-                                    <div className="font-black uppercase tracking-wide text-slate-500">Target runtime</div>
+                                    <div className="font-black uppercase tracking-wide text-slate-500">Target moved runtime</div>
                                     <div className="mt-0.5 font-bold text-slate-900">
-                                        {formatRuntimeTransition(stopTransferPreview.targetRuntimeBeforeMinutes, stopTransferPreview.targetRuntimeAfterMinutes)}
+                                        {formatMovedRuntimeTransition(stopTransferPreview.targetRuntimeBeforeMinutes, stopTransferPreview.targetAccountingRuntimeAfterMinutes)}
                                     </div>
                                 </div>
                                 <div className="rounded-lg bg-slate-50 px-2.5 py-2">
-                                    <div className="font-black uppercase tracking-wide text-slate-500">Source runtime if moved</div>
+                                    <div className="font-black uppercase tracking-wide text-slate-500">Source moved runtime</div>
                                     <div className="mt-0.5 font-bold text-slate-900">
-                                        {formatRuntimeTransition(stopTransferPreview.sourceRuntimeBeforeMinutes, stopTransferPreview.sourceRuntimeAfterMinutes)}
+                                        {formatMovedRuntimeTransition(stopTransferPreview.sourceRuntimeBeforeMinutes, stopTransferPreview.sourceAccountingRuntimeAfterMinutes)}
                                     </div>
                                 </div>
                             </div>
+                            {(runtimeDeltaDiffers(stopTransferPreview.targetRuntimeDeltaMinutes, stopTransferPreview.targetAccountingRuntimeDeltaMinutes)
+                                || runtimeDeltaDiffers(stopTransferPreview.sourceRuntimeDeltaMinutes, stopTransferPreview.sourceAccountingRuntimeDeltaMinutes)) && (
+                                <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-slate-700">
+                                    <span className="font-black">Full route recalculation:</span> source {formatRuntimeTransition(stopTransferPreview.sourceRuntimeBeforeMinutes, stopTransferPreview.sourceRuntimeAfterMinutes)}; target {formatRuntimeTransition(stopTransferPreview.targetRuntimeBeforeMinutes, stopTransferPreview.targetRuntimeAfterMinutes)}. Connector geometry may differ, but the moved runtime is counted equally.
+                                </p>
+                            )}
                             {stopTransferPreview.sourceFamilyBefore
                                 && stopTransferPreview.sourceFamilyAfter
                                 && stopTransferPreview.sourceFamilyBefore.key !== stopTransferPreview.targetFamilyBefore?.key
                                 && (
                                     <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-slate-700">
-                                        <span className="font-black">Source family:</span> runtime {stopTransferPreview.sourceFamilyBefore.runtimeLabel} -&gt; {stopTransferPreview.sourceFamilyAfter.runtimeLabel}; recovery {stopTransferPreview.sourceFamilyBefore.recoveryLabel} -&gt; {stopTransferPreview.sourceFamilyAfter.recoveryLabel}.
+                                        <span className="font-black">Recalculated source family:</span> runtime {stopTransferPreview.sourceFamilyBefore.runtimeLabel} -&gt; {stopTransferPreview.sourceFamilyAfter.runtimeLabel}; recovery {stopTransferPreview.sourceFamilyBefore.recoveryLabel} -&gt; {stopTransferPreview.sourceFamilyAfter.recoveryLabel}.
                                     </p>
                                 )}
                             {stopTransferPreview.targetFamilyBefore && stopTransferPreview.targetFamilyAfter && (
                                 <p className="mt-2 rounded-lg bg-cyan-50 px-2.5 py-2 text-cyan-900">
-                                    <span className="font-black">Target family:</span> runtime {stopTransferPreview.targetFamilyBefore.runtimeLabel} -&gt; {stopTransferPreview.targetFamilyAfter.runtimeLabel}; recovery {stopTransferPreview.targetFamilyBefore.recoveryLabel} -&gt; {stopTransferPreview.targetFamilyAfter.recoveryLabel}.
+                                    <span className="font-black">Recalculated target family:</span> runtime {stopTransferPreview.targetFamilyBefore.runtimeLabel} -&gt; {stopTransferPreview.targetFamilyAfter.runtimeLabel}; recovery {stopTransferPreview.targetFamilyBefore.recoveryLabel} -&gt; {stopTransferPreview.targetFamilyAfter.recoveryLabel}.
                                 </p>
                             )}
                             <div className="mt-3 flex flex-wrap gap-1.5">

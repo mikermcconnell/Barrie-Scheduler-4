@@ -56,6 +56,11 @@ export interface RoutePlanner2StopTransferPreview {
     targetRuntimeAfterMinutes: number | null;
     sourceRuntimeDeltaMinutes: number | null;
     targetRuntimeDeltaMinutes: number | null;
+    transferredRuntimeMinutes: number;
+    sourceAccountingRuntimeAfterMinutes: number | null;
+    targetAccountingRuntimeAfterMinutes: number | null;
+    sourceAccountingRuntimeDeltaMinutes: number | null;
+    targetAccountingRuntimeDeltaMinutes: number | null;
     sourceFamilyBefore?: RoutePlanner2RouteFamilySummary;
     sourceFamilyAfter?: RoutePlanner2RouteFamilySummary;
     targetFamilyBefore?: RoutePlanner2RouteFamilySummary;
@@ -121,6 +126,30 @@ function getTransferredRuntimeEstimates(
     );
 }
 
+function sumRuntimeMinutes(values: Array<number | null | undefined>): number {
+    return values.reduce((sum, value) => sum + (value == null ? 0 : Math.round(value)), 0);
+}
+
+function applyRuntimeDelta(before: number | null, delta: number): number | null {
+    return before == null ? null : before + delta;
+}
+
+function getTransferredRuntimeMinutes(
+    sourceScenario: RoutePlanner2Scenario,
+    transferStopIds: Set<string>,
+): number {
+    const sourceFeasibility = deriveRoutePlanner2Feasibility(sourceScenario);
+    const runtimeByPair = new Map(sourceFeasibility.segmentSummaries.map((segment) => [
+        uniqueSegmentKey(segment),
+        segment.runtimeMinutes,
+    ]));
+
+    return sumRuntimeMinutes(buildRoutePlanner2StopSegmentPairs(sourceScenario).flatMap(({ fromStop, toStop }) => {
+        if (!transferStopIds.has(fromStop.id) || !transferStopIds.has(toStop.id)) return [];
+        return [runtimeByPair.get(`${fromStop.id}->${toStop.id}`)];
+    }));
+}
+
 function getTransferredManualOverrideCount(
     sourceScenario: RoutePlanner2Scenario,
     transferStopIds: Set<string>,
@@ -159,6 +188,7 @@ export function buildRoutePlanner2StopTransferPreview(
     const matchedRoutes = [...new Set(scheduledEstimatesInRange.flatMap((estimate) => estimate.matchedRoutes ?? []))]
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
     const manualOverrideCount = getTransferredManualOverrideCount(sourceScenario, transferStopIds);
+    const transferredRuntimeMinutes = getTransferredRuntimeMinutes(sourceScenario, transferStopIds);
 
     const requestedInsertIndex = options.insertAfterStopId
         ? targetStops.findIndex((stop) => stop.id === options.insertAfterStopId)
@@ -189,6 +219,10 @@ export function buildRoutePlanner2StopTransferPreview(
 
     const sourceAfter = summarizeRoutePlanner2Scenario(sourceAfterScenario);
     const targetAfter = summarizeRoutePlanner2Scenario(targetAfterScenario);
+    const sourceAccountingDeltaMinutes = options.mode === 'move' ? -transferredRuntimeMinutes : 0;
+    const targetAccountingDeltaMinutes = transferredRuntimeMinutes;
+    const sourceAccountingRuntimeAfterMinutes = applyRuntimeDelta(sourceBefore.feasibility.oneWayRuntimeMinutes, sourceAccountingDeltaMinutes);
+    const targetAccountingRuntimeAfterMinutes = applyRuntimeDelta(targetBefore.feasibility.oneWayRuntimeMinutes, targetAccountingDeltaMinutes);
     const transferredStopPrefixes = getInsertedStopIds(orderedStops, now);
     const targetAfterFeasibility = deriveRoutePlanner2Feasibility(targetAfterScenario);
     const connectorSegments = targetAfterFeasibility.segmentSummaries.filter((segment) => {
@@ -245,6 +279,11 @@ export function buildRoutePlanner2StopTransferPreview(
         targetRuntimeAfterMinutes: targetAfter.feasibility.oneWayRuntimeMinutes,
         sourceRuntimeDeltaMinutes: getRuntimeDelta(sourceBefore.feasibility.oneWayRuntimeMinutes, sourceAfter.feasibility.oneWayRuntimeMinutes),
         targetRuntimeDeltaMinutes: getRuntimeDelta(targetBefore.feasibility.oneWayRuntimeMinutes, targetAfter.feasibility.oneWayRuntimeMinutes),
+        transferredRuntimeMinutes,
+        sourceAccountingRuntimeAfterMinutes,
+        targetAccountingRuntimeAfterMinutes,
+        sourceAccountingRuntimeDeltaMinutes: getRuntimeDelta(sourceBefore.feasibility.oneWayRuntimeMinutes, sourceAccountingRuntimeAfterMinutes),
+        targetAccountingRuntimeDeltaMinutes: getRuntimeDelta(targetBefore.feasibility.oneWayRuntimeMinutes, targetAccountingRuntimeAfterMinutes),
         sourceFamilyBefore: getFamilySummaryForScenario(project, sourceScenario.id),
         sourceFamilyAfter: getFamilySummaryForScenario(afterProject, sourceScenario.id),
         targetFamilyBefore: getFamilySummaryForScenario(project, targetScenario.id),
