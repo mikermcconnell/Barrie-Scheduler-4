@@ -119,7 +119,7 @@ The full stop order belongs in the review rail as a scrollable panel, not as an 
 
 Map overlay ownership:
 - top-left: draw guidance and address search
-- top-right: focus toggles and transient progress only
+- top-right: focus toggles, transient progress, and the Segment switch action
 - bottom-left: keep clear unless a future non-duplicative map control is needed
 - bottom-right: route metric strip
 
@@ -136,7 +136,11 @@ Required visible states:
 - missing terminal warning
 - unsaved/local-only state if applicable
 
-For network redesign work, the right rail should include a compact, visible **Reassign stops** control that can copy or move a contiguous stop range into another route concept. It should require the planner to choose the target route and insertion position instead of guessing where transferred stops belong, and it should offer a planner-controlled reverse-order option when a segment needs to flip direction. The right rail should show a compact preview, then **Move stops** or **Copy stops** must open a schedule-impact modal before applying the change. The modal should summarize the clean runtime shifted from source to target, before/after runtime, cycle time, recovery, bus requirement, schedule-risk warnings, carried scheduled/manual runtime evidence, connector gaps, duplicate join-stop warnings, and evidence dropped because of reversed direction. Connector recalculation may be shown as diagnostic detail, but the headline shifted runtime should remain equal between the source and target.
+For network redesign work, the map top-right should include a compact, visible **Segment switch** action. It opens a modal that can copy or move a contiguous stop range into another route concept. It should require the planner to choose the target route and insertion position instead of guessing where transferred stops belong, and it should offer a planner-controlled reverse-order option when a segment needs to flip direction. The modal should show a compact preview with source/target before-and-after cards for runtime, cycle time, recovery, and bus requirement. The map should highlight the selected source stops and target insertion point while the modal is open.
+
+**Move stops** or **Copy stops** must open a schedule-impact modal before applying the change. The impact modal should summarize the clean runtime shifted from source to target, before/after runtime, cycle time, recovery, bus requirement, schedule-risk warnings, carried scheduled/manual runtime evidence, connector gaps, duplicate join-stop warnings, and evidence dropped because of reversed direction. Connector recalculation may be shown as diagnostic detail, but the headline shifted runtime should remain equal between the source and target.
+
+When a matching opposite direction can be identified, the impact modal should offer **Also apply matching opposite direction** before confirmation. Route 8 is a special A/B cross-direction case: 8A NB pairs with 8B SB, 8B SB pairs with 8A NB, 8B NB pairs with 8A SB, and 8A SB pairs with 8B NB. After apply, show a short undo toast so the planner can safely reverse the switch without hunting for the global undo button.
 
 ## Right Rail
 

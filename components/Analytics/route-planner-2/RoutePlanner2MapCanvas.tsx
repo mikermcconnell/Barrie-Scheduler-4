@@ -48,6 +48,7 @@ const ROUTE_COLOR_FALLBACK = '#6B7280';
 interface RoutePlanner2MapCanvasProps {
     scenario: RoutePlanner2Scenario | null | undefined;
     backgroundScenarios?: RoutePlanner2Scenario[];
+    transferPreviewMarkers?: RoutePlanner2TransferPreviewMarker[];
     selectedStopId: string | null;
     highlightedStopId?: string | null;
     highlightedWaypointId?: string | null;
@@ -100,6 +101,14 @@ interface RoutePlanner2SegmentGeometry {
     toStopId: string;
     coordinates: [number, number][];
     roadLabels?: RoutePlanner2RoadLabelGeometry[];
+}
+
+export interface RoutePlanner2TransferPreviewMarker {
+    id: string;
+    lat: number;
+    lng: number;
+    label: string;
+    tone: 'source' | 'target';
 }
 
 interface RoutePlanner2RoadLabelBounds {
@@ -1178,6 +1187,7 @@ function clickedRouteLine(event: MapMouseEvent): boolean {
 export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, RoutePlanner2MapCanvasProps>(function RoutePlanner2MapCanvas({
     scenario,
     backgroundScenarios = [],
+    transferPreviewMarkers = [],
     selectedStopId,
     highlightedStopId,
     highlightedWaypointId,
@@ -1915,6 +1925,20 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             <Layer {...activeDirectionArrowReturnLayer} />
                         </Source>
                     )}
+                    {mapLoaded && !isExportCaptureMode && transferPreviewMarkers.map((marker) => (
+                        <Marker key={marker.id} longitude={marker.lng} latitude={marker.lat} anchor="bottom">
+                            <div
+                                data-testid="rp2-transfer-preview-marker"
+                                className={`pointer-events-none mb-1 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide shadow-lg ${
+                                    marker.tone === 'target'
+                                        ? 'border-cyan-200 bg-cyan-600 text-white'
+                                        : 'border-violet-200 bg-violet-600 text-white'
+                                }`}
+                            >
+                                {marker.label}
+                            </div>
+                        </Marker>
+                    ))}
                     {mapLoaded && showRuntimeSourceOverlay && runtimeSourceOverlaySegments.map((segment) => (
                         <Marker
                             key={`runtime-source-${segment.id}`}

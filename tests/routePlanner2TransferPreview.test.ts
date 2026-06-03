@@ -10,6 +10,10 @@ import {
 import { updateRoutePlanner2Service } from '../utils/route-planner-2/routePlanner2Feasibility';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 import { summarizeRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2Summary';
+import {
+  buildRoutePlanner2OppositeStopTransferSuggestion,
+  findRoutePlanner2OppositeScenario,
+} from '../utils/route-planner-2/routePlanner2OppositeTransfer';
 import { buildRoutePlanner2StopTransferPreview } from '../utils/route-planner-2/routePlanner2TransferPreview';
 import type { RoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2Types';
 
@@ -62,6 +66,29 @@ describe('Route Planner 2 stop transfer preview', () => {
           runtimeOverrides: undefined,
         },
       ],
+    };
+  }
+
+  function makeScenario(id: string, name: string, routeShortName: string, tripHeadsign: string, stopCodes: string[]): RoutePlanner2Scenario {
+    return {
+      ...createRoutePlanner2Project({ id: `project-${id}`, scenarioId: id, now }).scenarios[0]!,
+      id,
+      name,
+      source: {
+        type: 'gtfs',
+        routeShortName,
+        tripHeadsign,
+      },
+      stops: stopCodes.map((stopCode, index) => ({
+        id: `${id}-stop-${stopCode}`,
+        name: `Stop ${stopCode}`,
+        stopCode,
+        lat: 44.38 + index * 0.01,
+        lng: -79.69 + index * 0.01,
+        sequence: index + 1,
+        role: index === 0 ? 'start-terminal' as const : index === stopCodes.length - 1 ? 'end-terminal' as const : 'regular' as const,
+        source: 'barrie-stop' as const,
+      })),
     };
   }
 
@@ -146,6 +173,55 @@ describe('Route Planner 2 stop transfer preview', () => {
     expect(preview?.scheduleImpact.target.cycleTime.after).toBeGreaterThan(preview?.scheduleImpact.target.cycleTime.before ?? 0);
     expect(preview?.scheduleImpact.target.recoveryTime.delta).toBeLessThanOrEqual(0);
     expect(preview?.scheduleImpact.warnings.map((warning) => warning.id)).toContain('target-recovery-reduced');
+  });
+
+  it('finds Route 8 opposite directions by crossing A/B branches and NB/SB direction', () => {
+    const route8aNb = makeScenario('8a-nb', 'Route 8A NB', '8A', 'NB to Downtown', ['1', '2']);
+    const route8bSb = makeScenario('8b-sb', 'Route 8B SB', '8B', 'SB to Barrie South GO', ['2', '1']);
+    const route8bNb = makeScenario('8b-nb', 'Route 8B NB', '8B', 'NB to Downtown', ['3', '4']);
+    const route8aSb = makeScenario('8a-sb', 'Route 8A SB', '8A', 'SB to Barrie South GO', ['4', '3']);
+    const scenarios = [route8aNb, route8bSb, route8bNb, route8aSb];
+
+    expect(findRoutePlanner2OppositeScenario(scenarios, route8aNb)?.id).toBe('8b-sb');
+    expect(findRoutePlanner2OppositeScenario(scenarios, route8bSb)?.id).toBe('8a-nb');
+    expect(findRoutePlanner2OppositeScenario(scenarios, route8bNb)?.id).toBe('8a-sb');
+    expect(findRoutePlanner2OppositeScenario(scenarios, route8aSb)?.id).toBe('8b-nb');
+  });
+
+  it('builds a matching opposite switch suggestion for a Route 8 segment transfer', () => {
+    const route8aNb = makeScenario('8a-nb', 'Route 8A NB', '8A', 'NB to Downtown', ['1', '2', '3']);
+    const route8bSb = makeScenario('8b-sb', 'Route 8B SB', '8B', 'SB to Barrie South GO', ['3', '2', '1']);
+    const route12Out: RoutePlanner2Scenario = {
+      ...makeScenario('12-out', 'Route 12 Out', '12A', 'Out', ['10', '11']),
+      routeFamily: { key: 'barrie-merged-12', name: 'Route 12', shortName: '12', memberShortName: '12A', directionRole: 'out', directionLabel: 'Out' },
+    };
+    const route12Back: RoutePlanner2Scenario = {
+      ...makeScenario('12-back', 'Route 12 Back', '12B', 'Back', ['11', '10']),
+      routeFamily: { key: 'barrie-merged-12', name: 'Route 12', shortName: '12', memberShortName: '12B', directionRole: 'back', directionLabel: 'Back' },
+    };
+    const project = {
+      ...createRoutePlanner2Project({ id: 'project-route-8-opposite', scenarioId: '8a-nb', now }),
+      scenarios: [route8aNb, route8bSb, route12Out, route12Back],
+    };
+
+    const suggestion = buildRoutePlanner2OppositeStopTransferSuggestion(project, {
+      sourceScenarioId: '8a-nb',
+      targetScenarioId: '12-out',
+      fromSequence: 2,
+      toSequence: 3,
+      insertAfterStopId: '12-out-stop-10',
+      mode: 'move',
+      now,
+    });
+
+    expect(suggestion?.options).toMatchObject({
+      sourceScenarioId: '8b-sb',
+      targetScenarioId: '12-back',
+      fromSequence: 1,
+      toSequence: 2,
+      insertAfterStopId: '12-back-stop-11',
+    });
+    expect(suggestion?.matchedStopCount).toBe(2);
   });
 
   it('copy mode adds moved runtime to target accounting and leaves source accounting unchanged', () => {

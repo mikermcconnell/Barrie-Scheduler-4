@@ -997,7 +997,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(sourceOverlayButton?.textContent).toContain('Hide source overlay');
   });
 
-  it('moves a stop range into another route concept from the visible reassign panel', async () => {
+  it('moves a stop range into another route concept from the segment switch modal', async () => {
     const view = renderWorkspace();
 
     flushSync(() => {
@@ -1022,10 +1022,19 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(view.querySelector('[data-testid="rp2-reassign-stops-panel"]')).toBeNull();
+    const rightRail = view.querySelector('[data-testid="rp2-right-rail"]') as HTMLElement | null;
+    expect(rightRail?.textContent).not.toContain('Segment switch');
+
+    flushSync(() => {
+      click(findButton(view, 'Segment switch'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     const fromSelect = view.querySelector('#rp2-transfer-from') as HTMLSelectElement | null;
     const toSelect = view.querySelector('#rp2-transfer-to') as HTMLSelectElement | null;
     const targetSelect = view.querySelector('#rp2-transfer-target') as HTMLSelectElement | null;
-    expect(view.querySelector('[data-testid="rp2-reassign-stops-panel"]')?.textContent).toContain('Reassign stops');
+    expect(view.querySelector('[data-testid="rp2-reassign-stops-panel"]')?.textContent).toContain('Segment switch');
     expect(view.textContent).toContain('Reverse stop order');
     expect(fromSelect).not.toBeNull();
     expect(toSelect).not.toBeNull();
@@ -1039,6 +1048,8 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(preview?.textContent).toContain('Move 2 stops into Option 2');
     expect(preview?.textContent).toContain('Target moved runtime');
     expect(preview?.textContent).toContain('Copy uses the same target preview');
+    expect(view.querySelector('[data-testid="rp2-stop-transfer-impact-cards"]')?.textContent).toContain('Cycle');
+    expect(view.querySelector('[data-testid="rp2-stop-transfer-impact-cards"]')?.textContent).toContain('Recovery');
 
     flushSync(() => {
       click(findButton(view, 'Move stops'));
@@ -1077,11 +1088,22 @@ describe('RoutePlanner2Workspace local workspace', () => {
     const impact = view.querySelector('[data-testid="rp2-segment-transfer-impact"]');
     expect(impact?.textContent).toContain('Runtime impact');
     expect(impact?.textContent).toContain('Moved 2 stops from Clean Concept A to Option 2');
+    const undoToast = view.querySelector('[data-testid="rp2-transfer-undo-toast"]');
+    expect(undoToast?.textContent).toContain('Segment switch applied');
     routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
       button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
     );
     expect(routeCards.some((button) => button.textContent?.includes('Clean Concept A') && button.textContent?.includes('1 stops'))).toBe(true);
     expect(routeCards.some((button) => button.textContent?.includes('Option 2') && button.textContent?.includes('2 stops'))).toBe(true);
+
+    flushSync(() => {
+      click(undoToast?.querySelector('button'));
+    });
+    routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
+      button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
+    );
+    expect(routeCards.some((button) => button.textContent?.includes('Clean Concept A') && button.textContent?.includes('3 stops'))).toBe(true);
+    expect(routeCards.some((button) => button.textContent?.includes('Option 2') && button.textContent?.includes('0 stops'))).toBe(true);
   });
 
   it('deletes a stop from the review rail stop order list', () => {

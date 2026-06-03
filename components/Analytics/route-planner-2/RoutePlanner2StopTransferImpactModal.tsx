@@ -11,6 +11,9 @@ interface RoutePlanner2StopTransferImpactModalProps {
   open: boolean;
   preview: RoutePlanner2StopTransferPreview | null;
   mode: 'copy' | 'move';
+  oppositePreview?: RoutePlanner2StopTransferPreview | null;
+  applyOpposite?: boolean;
+  onApplyOppositeChange?: (applyOpposite: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -81,6 +84,9 @@ export function RoutePlanner2StopTransferImpactModal({
   open,
   preview,
   mode,
+  oppositePreview = null,
+  applyOpposite = false,
+  onApplyOppositeChange,
   onCancel,
   onConfirm,
 }: RoutePlanner2StopTransferImpactModalProps) {
@@ -149,6 +155,27 @@ export function RoutePlanner2StopTransferImpactModal({
             <RouteImpactRow impact={preview.scheduleImpact.source} />
             <RouteImpactRow impact={preview.scheduleImpact.target} />
           </div>
+
+          {oppositePreview ? (
+            <label className="mt-5 flex items-start gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-950">
+              <input
+                type="checkbox"
+                checked={applyOpposite}
+                onChange={(event) => onApplyOppositeChange?.(event.target.checked)}
+                className="mt-1 size-4 rounded border-violet-300 text-violet-600"
+              />
+              <span>
+                <span className="block font-black">Also apply matching opposite direction</span>
+                <span className="mt-1 block text-xs font-semibold leading-5">
+                  {oppositePreview.sourceScenarioName} → {oppositePreview.targetScenarioName}, {oppositePreview.transferredStopCount} {oppositePreview.transferredStopCount === 1 ? 'stop' : 'stops'}, {formatMinutes(oppositePreview.transferredRuntimeMinutes)} shifted.
+                </span>
+              </span>
+            </label>
+          ) : (
+            <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <span className="font-black text-slate-900">Opposite direction:</span> no complete matching opposite segment was found for this switch.
+            </div>
+          )}
 
           {hasWarnings ? (
             <div className="mt-5 space-y-2">

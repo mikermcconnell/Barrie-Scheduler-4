@@ -1,6 +1,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Clock3, Eye, EyeOff, GitCompare, Loader2, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, Clock3, GitCompare, Loader2, RefreshCw, X } from 'lucide-react';
 import { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import { ScheduleEditor } from '../../ScheduleEditor';
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
@@ -98,7 +98,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
         status: 'idle',
         baseline: null,
     });
-    const [showMasterDeltas, setShowMasterDeltas] = useState(true);
+    const [isMasterCompareModalOpen, setIsMasterCompareModalOpen] = useState(false);
     const [lastHeadwayRegularization, setLastHeadwayRegularization] = useState<HeadwayRegularizationSummary | null>(null);
     const [headwayTargetOverride, setHeadwayTargetOverride] = useState<number | null>(null);
     const [isHeadwayModalOpen, setIsHeadwayModalOpen] = useState(false);
@@ -141,7 +141,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
 
     const resolvedRouteIdentity = routeIdentity ?? approvedRuntimeContract?.routeIdentity;
     const resolvedRouteLabel = routeLabel
-        ?? (approvedRuntimeContract ? `Route ${approvedRuntimeContract.routeNumber} · ${approvedRuntimeContract.dayType}` : resolvedRouteIdentity)
+        ?? (approvedRuntimeContract ? `Route ${approvedRuntimeContract.routeNumber} - ${approvedRuntimeContract.dayType}` : resolvedRouteIdentity)
         ?? 'this route/day';
     const compareScopeReady = !!teamId && !!resolvedRouteIdentity;
     const isCompareCurrent = (
@@ -209,7 +209,6 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                 return;
             }
 
-            setShowMasterDeltas(true);
             setMasterCompare({
                 status: 'ready',
                 baseline,
@@ -217,6 +216,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                 loadedEditorSessionKey: editorSessionKey,
                 loadedAt: new Date(),
             });
+            setIsMasterCompareModalOpen(true);
         } catch (error) {
             if (compareRequestTokenRef.current !== requestToken) return;
             console.error('Failed to load Step 4 master comparison:', error);
@@ -230,10 +230,6 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
             });
         }
     }, [editorSessionKey, resolvedRouteIdentity, teamId]);
-
-    const scheduleEditorCompareProps = isCompareCurrent
-        ? { masterBaseline: showMasterDeltas ? masterCompare.baseline : null }
-        : {};
 
     const buildTargetHeadway = Number.isFinite(targetHeadway || NaN) && (targetHeadway || 0) > 0
         ? Math.round(targetHeadway as number)
@@ -431,11 +427,11 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                     {isCompareCurrent && (
                         <button
                             type="button"
-                            onClick={() => setShowMasterDeltas(value => !value)}
+                            onClick={() => setIsMasterCompareModalOpen(true)}
                             className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                         >
-                            {showMasterDeltas ? <EyeOff size={14} /> : <Eye size={14} />}
-                            {showMasterDeltas ? 'Hide deltas' : 'Show deltas'}
+                            <GitCompare size={14} />
+                            Open schedule comparison
                         </button>
                     )}
                     <button
@@ -585,6 +581,80 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                     </div>
                 </div>
             )}
+            {isMasterCompareModalOpen && isCompareCurrent && masterCompare.baseline && (
+                <div className="fixed inset-0 z-[210] flex items-center justify-center bg-slate-950/50 px-3 py-4">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="master-compare-title"
+                        className="flex h-[92vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl"
+                    >
+                        <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-gray-200 bg-white px-5 py-4">
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <GitCompare size={18} className="text-indigo-600" />
+                                    <h2 id="master-compare-title" className="text-lg font-extrabold text-gray-900">
+                                        Compare to master
+                                    </h2>
+                                </div>
+                                <p className="mt-1 text-sm text-gray-600">
+                                    Read-only schedule view for {resolvedRouteLabel}. Timepoint cells show deltas from the published master.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsMasterCompareModalOpen(false)}
+                                className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                                aria-label="Close master comparison popup"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {compareSummary && (
+                            <div className="flex flex-shrink-0 flex-wrap gap-2 border-b border-gray-100 bg-gray-50 px-5 py-3">
+                                {[
+                                    ['Matched', compareSummary.matched, 'border-slate-200 bg-white text-slate-700'],
+                                    ['Retimed', compareSummary.retimed, 'border-indigo-200 bg-indigo-50 text-indigo-800'],
+                                    ['New', compareSummary.new, 'border-green-200 bg-green-50 text-green-800'],
+                                    ['Removed', compareSummary.removed, 'border-red-200 bg-red-50 text-red-800'],
+                                    ['Review', compareSummary.review, 'border-amber-200 bg-amber-50 text-amber-900'],
+                                ].map(([label, count, className]) => (
+                                    <span
+                                        key={label}
+                                        className={`rounded-full border px-2.5 py-1 text-xs font-bold ${className}`}
+                                    >
+                                        {label} {count}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="min-h-0 flex-1 bg-gray-50">
+                            <ScheduleEditor
+                                schedules={schedules}
+                                useAuthoritativeTimepoints={true}
+                                initialTimepointOnly={true}
+                                condensedTimepointView={true}
+                                readOnly={true}
+                                embedded={true}
+                                hideSidebar={true}
+                                initialShowDeltas={true}
+                                draftName={`${projectName} - Master comparison`}
+                                autoSaveStatus="saved"
+                                lastSaved={null}
+                                bands={resolvedStep4Bands}
+                                analysis={resolvedStep4Analysis}
+                                segmentNames={resolvedStep4SegmentNames}
+                                targetCycleTime={targetCycleTime}
+                                targetHeadway={headwayTargetMinutes ?? undefined}
+                                masterBaseline={masterCompare.baseline}
+                                compareBaselineLabel="Published master"
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
             <div className="flex-grow min-h-0 overflow-hidden">
                 <ScheduleEditor
                     schedules={schedules}
@@ -615,7 +685,6 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                     connectionScopeSchedules={connectionScopeSchedules}
                     compactStep4
                     reviewToolsSlot={reviewToolsSlot}
-                    {...scheduleEditorCompareProps}
                 />
             </div>
         </div>

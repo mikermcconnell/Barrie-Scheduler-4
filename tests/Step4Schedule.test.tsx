@@ -9,7 +9,12 @@ const getMasterScheduleMock = vi.fn();
 vi.mock('../components/ScheduleEditor', () => ({
     ScheduleEditor: (props: any) => {
         scheduleEditorSpy(props);
-        return <div data-testid="schedule-editor-proxy">schedule editor{props.reviewToolsSlot}</div>;
+        return (
+            <div data-testid={props.readOnly ? 'compare-schedule-editor-proxy' : 'schedule-editor-proxy'}>
+                {props.readOnly ? 'read-only compare schedule editor' : 'schedule editor'}
+                {props.reviewToolsSlot}
+            </div>
+        );
     },
 }));
 
@@ -77,7 +82,7 @@ describe('Step4Schedule', () => {
         getMasterScheduleMock.mockReset();
     });
 
-    it('loads a published master comparison on demand and passes the baseline to the editor', async () => {
+    it('loads a published master comparison on demand and opens a read-only schedule/delta popup', async () => {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -132,13 +137,28 @@ describe('Step4Schedule', () => {
         await flushAsyncUpdates();
 
         expect(getMasterScheduleMock).toHaveBeenCalledWith('team-1', '10-Weekday');
-        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toEqual([masterTable]);
+        expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Compare to master');
+        expect(container.querySelector('[role="dialog"]')?.textContent).toContain('read-only compare schedule editor');
+        const compareEditorProps = scheduleEditorSpy.mock.calls
+            .map(call => call[0])
+            .find(props => props.readOnly === true);
+        expect(compareEditorProps).toMatchObject({
+            schedules: [currentTable],
+            masterBaseline: [masterTable],
+            readOnly: true,
+            embedded: true,
+            hideSidebar: true,
+            useAuthoritativeTimepoints: true,
+            initialTimepointOnly: true,
+            condensedTimepointView: true,
+        });
+        expect(compareEditorProps?.initialShowDeltas).toBe(true);
         expect(container.textContent).toContain('Matched');
         expect(container.textContent).toContain('New');
         expect(container.textContent).toContain('Removed');
     });
 
-    it('can hide loaded master deltas without discarding the comparison summary', async () => {
+    it('can reopen and close the loaded master comparison popup without adding deltas to the main editor', async () => {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -180,19 +200,36 @@ describe('Step4Schedule', () => {
         });
         await flushAsyncUpdates();
 
-        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toEqual([masterTable]);
+        expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+        expect(scheduleEditorSpy.mock.calls[0]?.[0].masterBaseline).toBeUndefined();
 
-        const hideButton = Array.from(container.querySelectorAll('button')).find(button => (
-            button.textContent?.includes('Hide deltas')
+        const closeButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.getAttribute('aria-label') === 'Close master comparison popup'
         )) as HTMLButtonElement | undefined;
-        expect(hideButton).toBeTruthy();
+        expect(closeButton).toBeTruthy();
 
         flushSync(() => {
-            hideButton?.click();
+            closeButton?.click();
         });
 
-        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toBeNull();
+        expect(container.querySelector('[role="dialog"]')).toBeNull();
         expect(container.textContent).toContain('Matched');
+
+        const openButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.includes('Open schedule comparison')
+        )) as HTMLButtonElement | undefined;
+        expect(openButton).toBeTruthy();
+
+        flushSync(() => {
+            openButton?.click();
+        });
+
+        expect(container.querySelector('[role="dialog"]')?.textContent).toContain('read-only compare schedule editor');
+        const reopenedCompareEditorProps = scheduleEditorSpy.mock.calls
+            .map(call => call[0])
+            .filter(props => props.readOnly === true)
+            .at(-1);
+        expect(reopenedCompareEditorProps?.masterBaseline).toEqual([masterTable]);
     });
 
     it('shows an unavailable state when no published master exists', async () => {
