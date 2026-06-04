@@ -1005,7 +1005,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         const beforeStop = insertAfterIndex >= 0 ? transferTargetStops[insertAfterIndex] : null;
         const afterStop = transferTargetStops[insertAfterIndex + 1] ?? null;
 
-        return [
+        const markers: Array<RoutePlanner2TransferPreviewMarker | null> = [
             beforeStop
                 ? {
                     id: `target-insert-after-${beforeStop.id}`,
@@ -1033,7 +1033,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                     tone: 'target' as const,
                 }
                 : null,
-        ].filter((marker): marker is RoutePlanner2TransferPreviewMarker => Boolean(marker));
+        ];
+
+        return markers.filter((marker): marker is RoutePlanner2TransferPreviewMarker => Boolean(marker));
     }, [isStopTransferModalOpen, transferInsertAfterStopId, transferTargetScenario, transferTargetStops]);
     const metadataQuery = usePerformanceMetadataQuery(teamId ?? undefined);
     const hasPerformanceData = Boolean(metadataQuery.data);

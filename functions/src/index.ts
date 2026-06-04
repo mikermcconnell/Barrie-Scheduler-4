@@ -11,6 +11,7 @@ import {
   processResidentialGrowthIfComplete,
 } from './residentialGrowth';
 import { aggregateDailySummaries } from './aggregator';
+import { computeMissedTripsForDay } from './gtfsScheduleIndex';
 import {
   PerformanceDataSummary,
   PerformanceMetadata,
@@ -376,6 +377,23 @@ function buildPerformanceSummary(
     },
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
+}
+
+function enrichDailySummariesWithMissedTrips(
+  dailySummaries: PerformanceDataSummary['dailySummaries'],
+): PerformanceDataSummary['dailySummaries'] {
+  return dailySummaries.map(day => {
+    const missedTrips = computeMissedTripsForDay(day.date, day.dayType, day.byTrip);
+    if (!missedTrips) {
+      const dayWithoutMissedTrips = { ...day };
+      delete dayWithoutMissedTrips.missedTrips;
+      return dayWithoutMissedTrips;
+    }
+    return {
+      ...day,
+      missedTrips,
+    };
+  });
 }
 
 function buildPerformanceOverviewSummary(summary: PerformanceDataSummary): PerformanceDataSummary {
@@ -972,7 +990,7 @@ export const ingestPerformanceData = onRequest(
       console.log(`Parsed ${records.length} records with ${warnings.length} warnings`);
 
       // --- Aggregate ---
-      const newSummaries = aggregateDailySummaries(records);
+      const newSummaries = enrichDailySummariesWithMissedTrips(aggregateDailySummaries(records));
       const newDates = newSummaries.map(s => s.date);
       console.log(`Aggregated ${newSummaries.length} day(s): ${newDates.join(', ')}`);
 
@@ -1024,7 +1042,7 @@ export const ingestPerformanceData = onRequest(
         return;
       }
 
-      const mergedSummaries = mergeDailySummaries(existingSummaries, newSummaries);
+      const mergedSummaries = enrichDailySummariesWithMissedTrips(mergeDailySummaries(existingSummaries, newSummaries));
       const preFilterCount = new Set([...existingSummaries.map(s => s.date), ...newSummaries.map(s => s.date)]).size;
       const pruned = preFilterCount - mergedSummaries.length;
       if (pruned > 0) {
@@ -1290,7 +1308,7 @@ export const rebuildPerformanceHistory = onRequest(
           const [content] = await getBucket().file(run.rawStoragePath).download();
           const csvText = content.toString('utf8');
           const parsed = parseSTREETSCSV(csvText);
-          const summaries = aggregateDailySummaries(parsed.records)
+          const summaries = enrichDailySummariesWithMissedTrips(aggregateDailySummaries(parsed.records))
             .filter(summary => summary.date >= startDate && summary.date <= endDate);
 
           for (const summary of summaries) {
