@@ -92,10 +92,12 @@ Responsibilities:
 - attach route-family metadata for Barrie merged A/B routes such as 2A+2B, 7A+7B, and 12A+12B so planners see one route family with editable Out/Back direction concepts
 - derive family-level runtime, cycle window, recovery, and shared bus need from the imported direction concepts without merging their stop lists or overwriting their 2A/2B-style labels
 - allow multiple selected GTFS patterns to import into the same local workspace as separate route concepts
+- allow bulk weekday, Saturday, or Sunday import actions that pass every full-route pattern for that day type through the same import adapter
 - convert GTFS stops into Route Planner 2 stops
 - convert GTFS shapes into editable route-line waypoints
 - convert GTFS `stop_times` into scheduled segment runtime evidence when adjacent stop times are available
 - attach source metadata so imported concepts are clearly labelled
+- cache parsed import patterns in browser storage for seven days; manual refresh bypasses the cache and reloads the feed through `/api/gtfs`
 
 Rules:
 - do not create fixed-route schedule drafts

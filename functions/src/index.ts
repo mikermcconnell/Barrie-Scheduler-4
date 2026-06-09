@@ -31,6 +31,39 @@ const MAPBOX_TOKEN = defineSecret('MAPBOX_TOKEN');
 
 // Team ID for Barrie Transit — passed as query param or defaults to this
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
+
+type HeaderCarrier = {
+  headers: Record<string, string | string[] | undefined>;
+};
+
+async function isAuthorizedPerformanceIngestRequest(
+  req: HeaderCarrier,
+  teamId: string,
+): Promise<boolean> {
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey && apiKey === INGEST_API_KEY.value()) {
+    return true;
+  }
+
+  const authHeader = req.headers.authorization;
+  if (Array.isArray(authHeader)) {
+    return false;
+  }
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return false;
+  }
+
+  try {
+    const idToken = authHeader.slice('Bearer '.length).trim();
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    const memberSnap = await getDb()
+      .doc(`teams/${teamId}/members/${decoded.uid}`)
+      .get();
+    return memberSnap.exists;
+  } catch {
+    return false;
+  }
+}
 const MAX_RETENTION_DAYS = 380;
 const DEFAULT_REBUILD_WINDOW_DAYS = 30;
 const ROUTE_PLANNER_GEOCODE_RATE_LIMIT_PER_HOUR = 300;
@@ -932,6 +965,13 @@ export const ingestPerformanceData = onRequest(
     timeoutSeconds: 300,
     maxInstances: 1,
     region: 'us-central1',
+    cors: [
+      'https://transitscheduler.ca',
+      'https://www.transitscheduler.ca',
+      'http://localhost:3000',
+      'http://localhost:3008',
+      'http://localhost:5173',
+    ],
   },
   async (req, res) => {
     // --- Auth check ---
@@ -940,9 +980,9 @@ export const ingestPerformanceData = onRequest(
       return;
     }
 
-    const apiKey = req.headers['x-api-key'] as string | undefined;
-    if (!apiKey || apiKey !== INGEST_API_KEY.value()) {
-      res.status(401).json({ error: 'Invalid or missing API key' });
+    const teamId = (req.query.teamId as string) || DEFAULT_TEAM_ID;
+    if (!await isAuthorizedPerformanceIngestRequest(req, teamId)) {
+      res.status(401).json({ error: 'Invalid or missing ingest authorization' });
       return;
     }
 
@@ -971,8 +1011,6 @@ export const ingestPerformanceData = onRequest(
       res.status(400).json({ error: 'No CSV data received or data too short' });
       return;
     }
-
-    const teamId = (req.query.teamId as string) || DEFAULT_TEAM_ID;
 
     try {
       // --- Parse CSV ---

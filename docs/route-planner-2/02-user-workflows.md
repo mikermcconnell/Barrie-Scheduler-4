@@ -21,7 +21,7 @@ A planner can start from an existing GTFS route instead of a blank concept.
 
 1. Open Route Planner 2.
 2. Click **Import GTFS route**.
-3. Select one or more full-route patterns. Partial/short-turn patterns are filtered out.
+3. Select one or more full-route patterns, or use **Import all weekday**, **Import all Saturday**, or **Import all Sunday** to bring in every full-route pattern for that schedule at once. Partial/short-turn patterns are filtered out.
 4. Import them as new editable route concepts in the same workspace.
 5. Review each imported route line, stop sequence, terminal roles, and scheduled segment runtimes.
    Imported GTFS routes default to GTFS route runtime, so the first runtime estimate comes from scheduled GTFS stop times rather than Mapbox/fallback assumptions. Scheduled runtimes are grouped by time band when enough trips exist, and the Runtime period selector controls which band is used.
@@ -31,6 +31,8 @@ A planner can start from an existing GTFS route instead of a blank concept.
 8. Review or edit service assumptions and feasibility.
 
 Imported GTFS routes are local planning copies. Editing them does not change the GTFS feed or create a fixed-route schedule draft.
+
+The GTFS import drawer caches parsed route patterns in the browser for seven days so reopening the importer does not reload the full feed each time. **Refresh** bypasses the cache and reloads the feed through the GTFS proxy.
 
 ## Imported Address List Workflow
 
@@ -63,16 +65,16 @@ Required v1 actions:
 When a planner is redesigning service coverage, they can move or copy a contiguous segment between route concepts.
 
 1. Open the source route concept.
-2. Use **Move segment between routes** in the details panel.
-3. Choose the first and last stop in the range.
-4. Choose the target route concept.
-5. Choose whether to insert the stops at the beginning, after a target stop, or at the end.
-6. Choose **Reverse stop order** when the segment needs to flip direction before joining the target route.
-7. Review the transfer preview before applying it. The preview should show source and target runtime changes, family-level impact when applicable, runtime evidence that will carry forward, connector gaps, duplicate join stops, and reversed-direction evidence that will be dropped.
+2. Use **Segment switch** on the map to enter segment switch mode.
+3. Click the first stop in the segment on the map.
+4. Click the last stop in the segment on the map. The selected stop range stays highlighted.
+5. Choose the target route concept and insertion point from the map-side controls.
+6. Use **Apply same switch to paired direction** when the source and target routes are both part of route families, for example applying a 2A → 7A switch to 2B → 7B at the same time.
+7. Review the map-side impact drawer before applying it. The review should show source and target runtime changes, family-level impact when applicable, runtime evidence that will carry forward, connector gaps, duplicate join stops, and whether a paired-direction switch will also be applied.
 8. Use **Move stops** to transfer coverage or **Copy stops** to test coverage overlap.
 9. Review the runtime impact message for source and target one-way runtime changes.
 
-Moved stops are removed from the source route and copied into the target route with new local IDs. Line bends inside the selected segment move with that segment. If the stop order is preserved, scheduled runtime evidence between stops inside the selected segment can move with it. If the stop order is reversed, directional runtime evidence is cleared so the route can recalculate or be reviewed. Bends that connect to stops outside the selected segment are cleaned up, and stale segment runtimes are cleared where the stop order changes.
+Moved stops are removed from the source route and copied into the target route with new local IDs. Line bends inside the selected segment move with that segment. Scheduled runtime evidence between stops inside the selected segment can move with it when stop order is preserved. When the app finds matching opposite-family routes and matching stops, the planner can apply the same switch to the paired direction in the same review flow. Bends that connect to stops outside the selected segment are cleaned up, and stale segment runtimes are cleared where the stop order changes.
 When a preserved segment is appended after a one-way route's current end terminal, or prepended before its current start terminal, the target terminal role should extend to the new outer stop so the transferred section is included in feasibility calculations.
 
 V1 may store this state locally only. The workflow should still use stable IDs and a structure that can later move to Firebase.

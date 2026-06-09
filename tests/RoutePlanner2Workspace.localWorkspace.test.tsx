@@ -97,12 +97,13 @@ vi.mock('html2canvas', () => ({
   })),
 }));
 
-import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Workspace';
+import { RoutePlanner2Workspace, getNextRoutePlanner2SegmentSwitchSourceSelection } from '../components/Analytics/RoutePlanner2Workspace';
 import { buildCorridorSpeedIndex, buildCorridorSpeedMapIndex } from '../utils/gtfs/corridorSpeed';
 import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop } from '../utils/route-planner-2/routePlanner2Authoring';
 import { exportRoutePlanner2MapPdf } from '../utils/route-planner-2/routePlanner2MapExport';
 import { exportRoutePlanner2OperatorDirectionsPdf } from '../utils/route-planner-2/routePlanner2OperatorExport';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
+import type { RoutePlanner2Project, RoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2Types';
 
 function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const prototype = input instanceof HTMLTextAreaElement
@@ -134,6 +135,132 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement | n
 
 function addMapStop(view: HTMLElement) {
   click(findButton(view, 'Add Stop 1') ?? findButton(view, 'Add next stop') ?? findButton(view, 'Add Stop'));
+}
+
+const familyProjectNow = '2026-05-12T12:00:00.000Z';
+
+function makeFamilyScenario(params: {
+  id: string;
+  name: string;
+  familyKey: string;
+  familyName: string;
+  shortName: string;
+  memberShortName: string;
+  directionRole: 'out' | 'back';
+  directionLabel: string;
+  stops: Array<{ code: string; name: string; lat: number; lng: number }>;
+}): RoutePlanner2Scenario {
+  return {
+    id: params.id,
+    name: params.name,
+    status: 'draft',
+    routeShape: 'one-way',
+    routeFamily: {
+      key: params.familyKey,
+      name: params.familyName,
+      shortName: params.shortName,
+      memberShortName: params.memberShortName,
+      directionRole: params.directionRole,
+      directionLabel: params.directionLabel,
+    },
+    source: { type: 'gtfs', routeShortName: params.memberShortName, serviceId: 'weekday' },
+    stops: params.stops.map((stop, index) => ({
+      id: `${params.id}-stop-${stop.code}`,
+      stopCode: stop.code,
+      name: stop.name,
+      lat: stop.lat,
+      lng: stop.lng,
+      sequence: index + 1,
+      role: index === 0 ? 'start-terminal' : index === params.stops.length - 1 ? 'end-terminal' : 'regular',
+      source: 'custom',
+    })),
+    alignment: [],
+    service: {
+      firstTripTime: '06:00',
+      lastTripTime: '22:00',
+      frequencyMinutes: 30,
+      targetBuses: 2,
+      startTerminalLayoverMinutes: 0,
+      endTerminalLayoverMinutes: 0,
+      intermediateStopDwellSeconds: 0,
+      dayType: 'weekday',
+      planningPeriod: 'all-day',
+    },
+    notes: '',
+    createdAt: familyProjectNow,
+    updatedAt: familyProjectNow,
+  };
+}
+
+function buildFamilySwitchProject(): RoutePlanner2Project {
+  return {
+    id: 'family-switch-project',
+    name: 'Family switch project',
+    status: 'local-saved',
+    selectedScenarioId: 'route-2a',
+    scenarios: [
+      makeFamilyScenario({
+        id: 'route-2a',
+        name: 'Route 2A',
+        familyKey: 'barrie-merged-2',
+        familyName: 'Route 2',
+        shortName: '2',
+        memberShortName: '2A',
+        directionRole: 'out',
+        directionLabel: 'Out',
+        stops: [
+          { code: 'A', name: 'Park Place', lat: 44.34, lng: -79.7 },
+          { code: 'B', name: 'Downtown', lat: 44.38, lng: -79.69 },
+          { code: 'C', name: 'Georgian', lat: 44.41, lng: -79.67 },
+        ],
+      }),
+      makeFamilyScenario({
+        id: 'route-2b',
+        name: 'Route 2B',
+        familyKey: 'barrie-merged-2',
+        familyName: 'Route 2',
+        shortName: '2',
+        memberShortName: '2B',
+        directionRole: 'back',
+        directionLabel: 'Back',
+        stops: [
+          { code: 'C', name: 'Georgian', lat: 44.41, lng: -79.67 },
+          { code: 'B', name: 'Downtown', lat: 44.38, lng: -79.69 },
+          { code: 'A', name: 'Park Place', lat: 44.34, lng: -79.7 },
+        ],
+      }),
+      makeFamilyScenario({
+        id: 'route-7a',
+        name: 'Route 7A',
+        familyKey: 'barrie-merged-7',
+        familyName: 'Route 7',
+        shortName: '7',
+        memberShortName: '7A',
+        directionRole: 'out',
+        directionLabel: 'Out',
+        stops: [
+          { code: 'X', name: 'Allandale', lat: 44.36, lng: -79.68 },
+          { code: 'Y', name: 'RVH', lat: 44.42, lng: -79.64 },
+        ],
+      }),
+      makeFamilyScenario({
+        id: 'route-7b',
+        name: 'Route 7B',
+        familyKey: 'barrie-merged-7',
+        familyName: 'Route 7',
+        shortName: '7',
+        memberShortName: '7B',
+        directionRole: 'back',
+        directionLabel: 'Back',
+        stops: [
+          { code: 'Y', name: 'RVH', lat: 44.42, lng: -79.64 },
+          { code: 'X', name: 'Allandale', lat: 44.36, lng: -79.68 },
+        ],
+      }),
+    ],
+    createdAt: familyProjectNow,
+    updatedAt: familyProjectNow,
+  };
 }
 
 async function waitForExportCall(timeoutMs = 1200) {
@@ -997,7 +1124,89 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(sourceOverlayButton?.textContent).toContain('Hide source overlay');
   });
 
-  it('moves a stop range into another route concept from the segment switch modal', async () => {
+  it('keeps source segment start and end map clicks independent', async () => {
+    expect(getNextRoutePlanner2SegmentSwitchSourceSelection({
+      step: 'select-source-start',
+      fromSequence: 1,
+      toSequence: 1,
+      startSelected: false,
+      endSelected: false,
+    }, 2, true)).toEqual({
+      step: 'select-source-end',
+      fromSequence: 2,
+      toSequence: 1,
+      startSelected: true,
+      endSelected: false,
+    });
+
+    expect(getNextRoutePlanner2SegmentSwitchSourceSelection({
+      step: 'select-source-end',
+      fromSequence: 2,
+      toSequence: 1,
+      startSelected: true,
+      endSelected: false,
+    }, 3, true)).toEqual({
+      step: 'select-insertion',
+      fromSequence: 2,
+      toSequence: 3,
+      startSelected: true,
+      endSelected: true,
+    });
+
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      click(findButton(view, 'Add route'));
+    });
+    flushSync(() => {
+      click(Array.from(view.querySelectorAll('button')).find((button) => button.textContent?.includes('Clean Concept A')));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Segment switch'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const fromSelect = view.querySelector('#rp2-transfer-from') as HTMLSelectElement | null;
+    const toSelect = view.querySelector('#rp2-transfer-to') as HTMLSelectElement | null;
+    expect(fromSelect).not.toBeNull();
+    expect(toSelect).not.toBeNull();
+
+    flushSync(() => {
+      setInputValue(fromSelect!, '2');
+    });
+
+    const statusAfterStart = view.querySelector('[data-testid="rp2-segment-switch-mode-status"]');
+    expect(fromSelect?.value).toBe('2');
+    expect(toSelect?.value).toBe('1');
+    expect(statusAfterStart?.textContent).toContain('Start stop2. Stop 2');
+    expect(statusAfterStart?.textContent).toContain('End stopPick on map');
+    expect(statusAfterStart?.textContent).toContain('Click the last stop');
+    expect(findButton(view, 'Move stops')?.disabled).toBe(true);
+    expect(view.querySelector('[data-testid="rp2-stop-transfer-preview"]')).toBeNull();
+
+    flushSync(() => {
+      setInputValue(toSelect!, '3');
+    });
+
+    expect(fromSelect?.value).toBe('2');
+    expect(toSelect?.value).toBe('3');
+    expect(view.querySelector('[data-testid="rp2-segment-switch-mode-status"]')?.textContent).toContain('Source segment selected');
+    expect(findButton(view, 'Move stops')?.disabled).toBe(false);
+    expect(view.querySelector('[data-testid="rp2-stop-transfer-preview"]')?.textContent).toContain('Move 2 stops into Option 2');
+  });
+
+  it('moves a stop range into another route concept from map-based segment switch mode', async () => {
     const view = renderWorkspace();
 
     flushSync(() => {
@@ -1031,18 +1240,30 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(view.querySelector('[data-testid="rp2-segment-switch-drawer"]')?.textContent).toContain('Segment switch mode');
+    expect(view.querySelector('[data-testid="rp2-segment-switch-mode-status"]')?.textContent).toContain('Click the first stop');
+
     const fromSelect = view.querySelector('#rp2-transfer-from') as HTMLSelectElement | null;
     const toSelect = view.querySelector('#rp2-transfer-to') as HTMLSelectElement | null;
     const targetSelect = view.querySelector('#rp2-transfer-target') as HTMLSelectElement | null;
-    expect(view.querySelector('[data-testid="rp2-reassign-stops-panel"]')?.textContent).toContain('Segment switch');
-    expect(view.textContent).toContain('Reverse stop order');
+    expect(view.querySelector('[data-testid="rp2-reassign-stops-panel"]')?.textContent).toContain('Map segment switch');
+    expect(view.textContent).not.toContain('Reverse stop order');
+    expect(view.textContent).toContain('No paired direction match found');
     expect(fromSelect).not.toBeNull();
     expect(toSelect).not.toBeNull();
     expect(targetSelect?.selectedOptions[0]?.textContent).toContain('Option 2');
+    expect(findButton(view, 'Move stops')?.disabled).toBe(true);
+    expect(view.textContent).toContain('pick at least two stops');
 
+    flushSync(() => {
+      setInputValue(fromSelect!, '2');
+    });
     flushSync(() => {
       setInputValue(toSelect!, '3');
     });
+    expect(fromSelect?.value).toBe('2');
+    expect(toSelect?.value).toBe('3');
+
     const preview = view.querySelector('[data-testid="rp2-stop-transfer-preview"]');
     expect(preview?.textContent).toContain('Transfer preview');
     expect(preview?.textContent).toContain('Move 2 stops into Option 2');
@@ -1055,12 +1276,13 @@ describe('RoutePlanner2Workspace local workspace', () => {
       click(findButton(view, 'Move stops'));
     });
 
-    const modal = view.querySelector('[data-testid="rp2-stop-transfer-impact-modal"]');
-    expect(modal?.textContent).toContain('Reassign stops impact');
-    expect(modal?.textContent).toContain('Schedule impact');
-    expect(modal?.textContent).toContain('Runtime shifted');
-    expect(modal?.textContent).toContain('Clean Concept A');
-    expect(modal?.textContent).toContain('Option 2');
+    const reviewPanel = view.querySelector('[data-testid="rp2-stop-transfer-impact-panel"]');
+    expect(reviewPanel?.textContent).toContain('Segment switch review');
+    expect(reviewPanel?.textContent).toContain('Schedule impact');
+    expect(reviewPanel?.textContent).toContain('Runtime shifted');
+    expect(reviewPanel?.textContent).toContain('Clean Concept A');
+    expect(reviewPanel?.textContent).toContain('Option 2');
+    expect(view.querySelector('[data-testid="rp2-stop-transfer-impact-modal"]')).toBeNull();
 
     let routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
       button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
@@ -1069,9 +1291,9 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(routeCards.some((button) => button.textContent?.includes('Option 2') && button.textContent?.includes('0 stops'))).toBe(true);
 
     flushSync(() => {
-      click(findButton(view, 'Cancel'));
+      click(findButton(view, 'Back'));
     });
-    expect(view.querySelector('[data-testid="rp2-stop-transfer-impact-modal"]')).toBeNull();
+    expect(view.querySelector('[data-testid="rp2-stop-transfer-impact-panel"]')).toBeNull();
     routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
       button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
     );
@@ -1104,6 +1326,72 @@ describe('RoutePlanner2Workspace local workspace', () => {
     );
     expect(routeCards.some((button) => button.textContent?.includes('Clean Concept A') && button.textContent?.includes('3 stops'))).toBe(true);
     expect(routeCards.some((button) => button.textContent?.includes('Option 2') && button.textContent?.includes('0 stops'))).toBe(true);
+  });
+
+  it('can apply a family segment switch to the paired direction from the main segment switch panel', async () => {
+    projectPersistenceMocks.listRoutePlanner2SavedProjects.mockResolvedValueOnce([
+      {
+        id: 'family-switch-project',
+        name: 'Family switch project',
+        updatedAt: familyProjectNow,
+        scenarioCount: 4,
+      },
+    ]);
+    projectPersistenceMocks.loadRoutePlanner2Project.mockResolvedValueOnce(buildFamilySwitchProject());
+
+    const view = renderWorkspace();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Load'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Family switch project'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(view.textContent).toContain('Route 2A');
+
+    flushSync(() => {
+      click(findButton(view, 'Segment switch'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const targetSelect = view.querySelector('#rp2-transfer-target') as HTMLSelectElement | null;
+    const toSelect = view.querySelector('#rp2-transfer-to') as HTMLSelectElement | null;
+    expect(targetSelect).not.toBeNull();
+    expect(toSelect).not.toBeNull();
+
+    flushSync(() => {
+      setInputValue(targetSelect!, 'route-7a');
+    });
+    flushSync(() => {
+      setInputValue(toSelect!, '3');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(view.textContent).not.toContain('Reverse stop order');
+    expect(view.textContent).toContain('Paired direction will also update');
+    expect(view.textContent).toContain('Route 2B → Route 7B');
+
+    flushSync(() => {
+      click(findButton(view, 'Move stops'));
+    });
+
+    const reviewPanel = view.querySelector('[data-testid="rp2-stop-transfer-impact-panel"]');
+    expect(reviewPanel?.textContent).toContain('Also apply matching opposite direction');
+    expect(view.querySelector('[data-testid="rp2-stop-transfer-impact-modal"]')).toBeNull();
+
+    flushSync(() => {
+      click(findButton(view, 'Confirm move stops'));
+    });
+
+    const undoToast = view.querySelector('[data-testid="rp2-transfer-undo-toast"]');
+    expect(undoToast?.textContent).toContain('Segment switch applied in both directions');
   });
 
   it('deletes a stop from the review rail stop order list', () => {

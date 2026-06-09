@@ -20,12 +20,49 @@ import {
     PERFORMANCE_SCHEMA_VERSION,
 } from '../../utils/performanceDataTypes';
 import { compareDateStrings } from '../../utils/performanceDateUtils';
+import { auth } from '../../utils/firebase';
 
 interface PerformanceImportProps {
     teamId: string;
     userId: string;
     onImportComplete: () => void;
     onCancel: () => void;
+}
+
+const DEFAULT_INGEST_URL = 'https://us-central1-barrie-scheduler-7844a.cloudfunctions.net/ingestPerformanceData';
+
+function getIngestUrl(teamId: string): string {
+    const baseUrl = (import.meta.env.VITE_PERFORMANCE_INGEST_URL || DEFAULT_INGEST_URL).trim();
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}`;
+}
+
+async function uploadCsvViaServer(teamId: string, file: File): Promise<void> {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+        throw new Error('You need to sign in again before importing STREETS data.');
+    }
+
+    const token = await currentUser.getIdToken();
+    const response = await fetch(getIngestUrl(teamId), {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'text/csv',
+        },
+        body: await file.text(),
+    });
+
+    if (!response.ok) {
+        let message = `Server import failed (${response.status}).`;
+        try {
+            const payload = await response.json() as { error?: string; message?: string };
+            message = payload.message || payload.error || message;
+        } catch {
+            // Keep the status-based message if the response is not JSON.
+        }
+        throw new Error(message);
+    }
 }
 
 export const PerformanceImport: React.FC<PerformanceImportProps> = ({
@@ -113,9 +150,27 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
         if (!selectedFile || !preview) return;
         setPhase('processing');
         setProgress(30);
-        setProgressText('Preparing full dataset...');
+        setProgressText('Preparing import...');
 
         try {
+            const ext = selectedFile.name.split('.').pop()?.toLowerCase();
+            if (ext === 'csv') {
+                setProgress(45);
+                setProgressText('Uploading CSV to server import...');
+                await uploadCsvViaServer(teamId, selectedFile);
+                setProgress(90);
+                setProgressText('Refreshing dashboard data...');
+                await Promise.all([
+                    queryClient.invalidateQueries({ queryKey: ['performanceMetadata', teamId] }),
+                    queryClient.invalidateQueries({ queryKey: ['performanceOverview', teamId] }),
+                    queryClient.invalidateQueries({ queryKey: ['performanceData', teamId] }),
+                ]);
+                setProgress(100);
+                onImportComplete();
+                return;
+            }
+
+            setProgressText('Preparing full dataset...');
             let records: STREETSRecord[];
             if (!previewRecords) {
                 const parsed = await parseSTREETSFile(selectedFile, (p) => {
@@ -163,6 +218,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
             await savePerformanceData(teamId, userId, summary);
             await Promise.all([
                 queryClient.invalidateQueries({ queryKey: ['performanceMetadata', teamId] }),
+                queryClient.invalidateQueries({ queryKey: ['performanceOverview', teamId] }),
                 queryClient.invalidateQueries({ queryKey: ['performanceData', teamId] }),
             ]);
 

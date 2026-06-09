@@ -75,7 +75,6 @@ import {
 import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle, type RoutePlanner2RoadNameLabelDensity, type RoutePlanner2TransferPreviewMarker } from './route-planner-2/RoutePlanner2MapCanvas';
 import type { RoutePlanner2MapSelection, RoutePlanner2MapSelectionMode } from '../../utils/route-planner-2/routePlanner2MapSelection';
 import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
-import { RoutePlanner2StopTransferImpactModal } from './route-planner-2/RoutePlanner2StopTransferImpactModal';
 import {
     RoutePlanner2AddressImportModal,
 } from './route-planner-2/RoutePlanner2AddressImportModal';
@@ -114,6 +113,43 @@ interface PendingStopTransferReview {
     oppositeSuggestion: RoutePlanner2OppositeStopTransferSuggestion | null;
     oppositePreview: RoutePlanner2StopTransferPreview | null;
     applyOpposite: boolean;
+}
+
+type SegmentSwitchStep = 'idle' | 'select-source-start' | 'select-source-end' | 'select-target' | 'select-insertion' | 'review';
+
+interface SegmentSwitchSourceSelectionState {
+    step: SegmentSwitchStep;
+    fromSequence: number;
+    toSequence: number;
+    startSelected: boolean;
+    endSelected: boolean;
+}
+
+export function getNextRoutePlanner2SegmentSwitchSourceSelection(
+    state: SegmentSwitchSourceSelectionState,
+    stopSequence: number,
+    hasTargetScenario: boolean,
+): SegmentSwitchSourceSelectionState {
+    if (state.step === 'select-source-start') {
+        return {
+            ...state,
+            step: 'select-source-end',
+            fromSequence: stopSequence,
+            startSelected: true,
+        };
+    }
+
+    if (state.step === 'select-source-end') {
+        return {
+            ...state,
+            step: hasTargetScenario ? 'select-insertion' : 'select-target',
+            toSequence: stopSequence,
+            startSelected: true,
+            endSelected: true,
+        };
+    }
+
+    return state;
 }
 
 const EMPTY_MAP_SELECTION: RoutePlanner2MapSelection = { stopIds: [], waypointIds: [] };
@@ -805,17 +841,20 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [mapSelection, setMapSelection] = useState<RoutePlanner2MapSelection>(EMPTY_MAP_SELECTION);
     const [isGtfsImportOpen, setIsGtfsImportOpen] = useState(false);
     const [isAddressImportOpen, setIsAddressImportOpen] = useState(false);
-    const [isStopTransferModalOpen, setIsStopTransferModalOpen] = useState(false);
+    const [segmentSwitchStep, setSegmentSwitchStep] = useState<SegmentSwitchStep>('idle');
     const [gtfsPatterns, setGtfsPatterns] = useState<RoutePlanner2GtfsImportPattern[]>([]);
     const [gtfsLoading, setGtfsLoading] = useState(false);
     const [gtfsError, setGtfsError] = useState<string | null>(null);
     const [transferFromSequence, setTransferFromSequence] = useState(1);
     const [transferToSequence, setTransferToSequence] = useState(1);
+    const [transferSourceStartSelected, setTransferSourceStartSelected] = useState(false);
+    const [transferSourceEndSelected, setTransferSourceEndSelected] = useState(false);
     const [transferTargetScenarioId, setTransferTargetScenarioId] = useState('');
     const [transferInsertAfterStopId, setTransferInsertAfterStopId] = useState('__end');
-    const [transferReverseOrder, setTransferReverseOrder] = useState(false);
+    const [transferApplyOppositeDirection, setTransferApplyOppositeDirection] = useState(true);
     const [segmentTransferImpactMessage, setSegmentTransferImpactMessage] = useState<string | null>(null);
     const [pendingStopTransferReview, setPendingStopTransferReview] = useState<PendingStopTransferReview | null>(null);
+    const segmentSwitchModeActive = segmentSwitchStep !== 'idle' || Boolean(pendingStopTransferReview);
     const [lastTransferUndoMessage, setLastTransferUndoMessage] = useState<string | null>(null);
     const [runtimeDayType, setRuntimeDayType] = useState<DayType>('weekday');
     const [runtimePeriod, setRuntimePeriod] = useState<TimePeriod>('full-day');
@@ -923,6 +962,21 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => project.scenarios.filter((scenario) => scenario.id !== selectedScenario?.id),
         [project.scenarios, selectedScenario?.id],
     );
+    useEffect(() => {
+        if (transferTargetOptions.some((scenario) => scenario.id === transferTargetScenarioId)) return;
+        setTransferTargetScenarioId(transferTargetOptions[0]?.id ?? '');
+        setTransferInsertAfterStopId('__end');
+    }, [transferTargetOptions, transferTargetScenarioId]);
+    useEffect(() => {
+        if (selectedScenarioStops.length === 0) return;
+        const sequenceSet = new Set(selectedScenarioStops.map((stop) => stop.sequence));
+        if (!sequenceSet.has(transferFromSequence)) {
+            setTransferFromSequence(selectedScenarioStops[0]?.sequence ?? 1);
+        }
+        if (!sequenceSet.has(transferToSequence)) {
+            setTransferToSequence(selectedScenarioStops[0]?.sequence ?? 1);
+        }
+    }, [selectedScenarioStops, transferFromSequence, transferToSequence]);
     const transferStopCount = useMemo(
         () => selectedScenarioStops.filter((stop) =>
             stop.sequence >= Math.min(transferFromSequence, transferToSequence)
@@ -930,13 +984,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         ).length,
         [selectedScenarioStops, transferFromSequence, transferToSequence],
     );
+    const sourceSegmentSelectionReady = transferSourceStartSelected && transferSourceEndSelected;
+    const displayedTransferStopCount = sourceSegmentSelectionReady
+        ? transferStopCount
+        : Number(transferSourceStartSelected) + Number(transferSourceEndSelected);
     const transferInsertAfterStopIdForPreview = useMemo(
         () => getStopTransferInsertAfterStopId(transferInsertAfterStopId, transferTargetStops),
         [transferInsertAfterStopId, transferTargetStops],
     );
     const stopTransferPreview = useMemo(
         () => {
-            if (!selectedScenario || !transferTargetScenarioId || transferStopCount === 0) return null;
+            if (!selectedScenario || !transferTargetScenarioId || !sourceSegmentSelectionReady || transferStopCount < 2) return null;
             return buildRoutePlanner2StopTransferPreview(project, {
                 sourceScenarioId: selectedScenario.id,
                 targetScenarioId: transferTargetScenarioId,
@@ -944,23 +1002,22 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                 toSequence: transferToSequence,
                 insertAfterStopId: transferInsertAfterStopIdForPreview,
                 mode: 'move',
-                reverseOrder: transferReverseOrder,
                 now: 'route-planner-transfer-preview',
             });
         },
         [
             project,
             selectedScenario,
+            sourceSegmentSelectionReady,
             transferFromSequence,
             transferInsertAfterStopIdForPreview,
-            transferReverseOrder,
             transferStopCount,
             transferTargetScenarioId,
             transferToSequence,
         ],
     );
     const stopTransferOppositeSuggestion = useMemo(() => {
-        if (!selectedScenario || !transferTargetScenarioId || transferStopCount === 0) return null;
+        if (!selectedScenario || !transferTargetScenarioId || !sourceSegmentSelectionReady || transferStopCount < 2) return null;
         return buildRoutePlanner2OppositeStopTransferSuggestion(project, {
             sourceScenarioId: selectedScenario.id,
             targetScenarioId: transferTargetScenarioId,
@@ -968,36 +1025,69 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             toSequence: transferToSequence,
             insertAfterStopId: transferInsertAfterStopIdForPreview,
             mode: 'move',
-            reverseOrder: transferReverseOrder,
             now: 'route-planner-transfer-preview-opposite',
         });
     }, [
         project,
         selectedScenario,
+        sourceSegmentSelectionReady,
         transferFromSequence,
         transferInsertAfterStopIdForPreview,
-        transferReverseOrder,
         transferStopCount,
         transferTargetScenarioId,
         transferToSequence,
     ]);
+    const stopTransferOppositePreview = useMemo(
+        () => stopTransferOppositeSuggestion
+            ? buildRoutePlanner2StopTransferPreview(project, stopTransferOppositeSuggestion.options)
+            : null,
+        [project, stopTransferOppositeSuggestion],
+    );
+    useEffect(() => {
+        setTransferApplyOppositeDirection(Boolean(stopTransferOppositePreview));
+    }, [
+        selectedScenario?.id,
+        stopTransferOppositePreview,
+        transferFromSequence,
+        transferInsertAfterStopIdForPreview,
+        transferTargetScenarioId,
+        transferToSequence,
+    ]);
     const stopTransferPreviewStopIds = useMemo(
-        () => selectedScenarioStops
-            .filter((stop) =>
-                stop.sequence >= Math.min(transferFromSequence, transferToSequence)
-                && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
-            )
-            .map((stop) => stop.id),
-        [selectedScenarioStops, transferFromSequence, transferToSequence],
+        () => {
+            if (!sourceSegmentSelectionReady) {
+                return selectedScenarioStops
+                    .filter((stop) =>
+                        (transferSourceStartSelected && stop.sequence === transferFromSequence)
+                        || (transferSourceEndSelected && stop.sequence === transferToSequence),
+                    )
+                    .map((stop) => stop.id);
+            }
+
+            return selectedScenarioStops
+                .filter((stop) =>
+                    stop.sequence >= Math.min(transferFromSequence, transferToSequence)
+                    && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
+                )
+                .map((stop) => stop.id);
+        },
+        [
+            selectedScenarioStops,
+            sourceSegmentSelectionReady,
+            transferFromSequence,
+            transferSourceEndSelected,
+            transferSourceStartSelected,
+            transferToSequence,
+        ],
     );
     const mapSelectedStopIds = useMemo(
-        () => isStopTransferModalOpen
+        () => segmentSwitchModeActive
             ? [...new Set([...mapSelection.stopIds, ...stopTransferPreviewStopIds])]
             : mapSelection.stopIds,
-        [isStopTransferModalOpen, mapSelection.stopIds, stopTransferPreviewStopIds],
+        [mapSelection.stopIds, segmentSwitchModeActive, stopTransferPreviewStopIds],
     );
     const transferPreviewMarkers = useMemo<RoutePlanner2TransferPreviewMarker[]>(() => {
-        if (!isStopTransferModalOpen || !transferTargetScenario || transferTargetStops.length === 0) return [];
+        if (!segmentSwitchModeActive || !transferTargetScenario || transferTargetStops.length === 0) return [];
         const insertAfterStopId = getStopTransferInsertAfterStopId(transferInsertAfterStopId, transferTargetStops);
         const insertAfterIndex = insertAfterStopId
             ? transferTargetStops.findIndex((stop) => stop.id === insertAfterStopId)
@@ -1036,7 +1126,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         ];
 
         return markers.filter((marker): marker is RoutePlanner2TransferPreviewMarker => Boolean(marker));
-    }, [isStopTransferModalOpen, transferInsertAfterStopId, transferTargetScenario, transferTargetStops]);
+    }, [segmentSwitchModeActive, transferInsertAfterStopId, transferTargetScenario, transferTargetStops]);
     const metadataQuery = usePerformanceMetadataQuery(teamId ?? undefined);
     const hasPerformanceData = Boolean(metadataQuery.data);
     const dataQuery = usePerformanceDataQuery(teamId ?? undefined, hasPerformanceData, metadataQuery.data);
@@ -1050,6 +1140,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setSelectedAddress(null);
         setAddressSearchError(null);
         setMapSelection(EMPTY_MAP_SELECTION);
+        setTransferSourceStartSelected(false);
+        setTransferSourceEndSelected(false);
     }, [selectedScenario?.id]);
     useEffect(() => {
         if (!lastTransferUndoMessage) return undefined;
@@ -1489,14 +1581,71 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (!selectedScenario) return;
         setProject((current) => updateRoutePlanner2LineWaypointCoordinate(current, selectedScenario.id, waypointId, coordinate));
     }
+    function startSegmentSwitchMode() {
+        setIsGtfsImportOpen(false);
+        setIsAddressImportOpen(false);
+        setIsDrawFocusMode(false);
+        setPendingStopTransferReview(null);
+        setMapSelection(EMPTY_MAP_SELECTION);
+        setMapSelectionMode(null);
+        setHoveredMapItem(null);
+        if (!transferTargetScenarioId && transferTargetOptions[0]) {
+            setTransferTargetScenarioId(transferTargetOptions[0].id);
+            setTransferInsertAfterStopId('__end');
+        }
+        if (selectedScenarioStops[0]) {
+            setTransferFromSequence(selectedScenarioStops[0].sequence);
+            setTransferToSequence(selectedScenarioStops[0].sequence);
+        }
+        setTransferSourceStartSelected(false);
+        setTransferSourceEndSelected(false);
+        setSegmentSwitchStep('select-source-start');
+    }
+    function cancelSegmentSwitchMode() {
+        setSegmentSwitchStep('idle');
+        setPendingStopTransferReview(null);
+        setMapSelection(EMPTY_MAP_SELECTION);
+        setHoveredMapItem(null);
+        setTransferSourceStartSelected(false);
+        setTransferSourceEndSelected(false);
+    }
+    function selectSegmentSwitchStop(stopId: string) {
+        const stop = selectedScenarioStops.find((candidate) => candidate.id === stopId);
+        if (!stop) return;
+        setSelectedStopId(stopId);
+        const nextSelection = getNextRoutePlanner2SegmentSwitchSourceSelection(
+            {
+                step: segmentSwitchStep,
+                fromSequence: transferFromSequence,
+                toSequence: transferToSequence,
+                startSelected: transferSourceStartSelected,
+                endSelected: transferSourceEndSelected,
+            },
+            stop.sequence,
+            Boolean(transferTargetScenarioId),
+        );
+
+        setTransferFromSequence(nextSelection.fromSequence);
+        setTransferToSequence(nextSelection.toSequence);
+        setTransferSourceStartSelected(nextSelection.startSelected);
+        setTransferSourceEndSelected(nextSelection.endSelected);
+        setSegmentSwitchStep(nextSelection.step);
+    }
+    function selectRoutePlannerStop(stopId: string) {
+        if (segmentSwitchStep !== 'idle' && !pendingStopTransferReview) {
+            selectSegmentSwitchStop(stopId);
+            return;
+        }
+        setSelectedStopId(stopId);
+    }
     function buildStopTransferOptions(mode: 'copy' | 'move', now = new Date().toISOString()): RoutePlanner2StopTransferPreviewOptions | null {
-        if (!selectedScenario || !transferTargetScenarioId) return null;
+        if (!selectedScenario || !transferTargetScenarioId || !sourceSegmentSelectionReady) return null;
         const targetStops = transferTargetStops;
         const transferredStopCount = selectedScenarioStops.filter((stop) =>
             stop.sequence >= Math.min(transferFromSequence, transferToSequence)
             && stop.sequence <= Math.max(transferFromSequence, transferToSequence),
         ).length;
-        if (transferredStopCount === 0) return null;
+        if (transferredStopCount < 2) return null;
         const insertAfterStopId = getStopTransferInsertAfterStopId(transferInsertAfterStopId, targetStops);
 
         return {
@@ -1506,7 +1655,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             toSequence: transferToSequence,
             insertAfterStopId,
             mode,
-            reverseOrder: transferReverseOrder,
             now,
         };
     }
@@ -1520,14 +1668,14 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         const oppositePreview = oppositeSuggestion
             ? buildRoutePlanner2StopTransferPreview(project, oppositeSuggestion.options)
             : null;
-        setIsStopTransferModalOpen(false);
+        setSegmentSwitchStep('review');
         setPendingStopTransferReview({
             mode,
             preview,
             options,
             oppositeSuggestion,
             oppositePreview,
-            applyOpposite: Boolean(oppositeSuggestion && oppositePreview),
+            applyOpposite: transferApplyOppositeDirection && Boolean(oppositeSuggestion && oppositePreview),
         });
     }
 
@@ -1558,13 +1706,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             ? 'Segment switch applied in both directions.'
             : 'Segment switch applied.');
         setPendingStopTransferReview(null);
+        setSegmentSwitchStep('idle');
+        setTransferSourceStartSelected(false);
+        setTransferSourceEndSelected(false);
         setSelectedStopId(null);
         setIsRightRailOpen(true);
     }
 
     function cancelStopTransferReview() {
         setPendingStopTransferReview(null);
-        setIsStopTransferModalOpen(true);
+        setSegmentSwitchStep('select-insertion');
     }
 
     function updatePendingStopTransferApplyOpposite(applyOpposite: boolean) {
@@ -1641,11 +1792,11 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (!selectedScenarioId || estimates.length === 0) return;
         setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenarioId, estimates), { trackHistory: false });
     }, [selectedScenarioId, setProject]);
-    async function loadGtfsPatterns() {
+    async function loadGtfsPatterns(options: { forceRefresh?: boolean } = {}) {
         setGtfsLoading(true);
         setGtfsError(null);
         try {
-            const patterns = await loadRoutePlanner2GtfsImportPatterns();
+            const patterns = await loadRoutePlanner2GtfsImportPatterns({ forceRefresh: options.forceRefresh });
             setGtfsPatterns(patterns);
         } catch (error) {
             setGtfsError(error instanceof Error ? error.message : 'GTFS routes could not be loaded.');
@@ -1831,7 +1982,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         runtimeDayType,
         runtimePeriod,
     );
-    const showRightRail = !isDrawFocusMode;
+    const showRightRail = !isDrawFocusMode && !segmentSwitchModeActive;
     const visibleRightRailOpen = isRightRailOpen && showRightRail;
     const rightRailState = visibleRightRailOpen ? 'open' : 'closed';
     const focusMode = isDrawFocusMode ? 'draw' : 'standard';
@@ -1840,7 +1991,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const importDrawerOpen = isGtfsImportOpen || isAddressImportOpen;
     const mapOverlayInsets = {
         left: showActionSidebar ? actionSidebarExpanded ? '20rem' : '6rem' : '2rem',
-        right: importDrawerOpen ? '31.5rem' : showRightRail ? visibleRightRailOpen ? '26.5rem' : '6rem' : '8rem',
+        right: importDrawerOpen || segmentSwitchModeActive ? '31.5rem' : showRightRail ? visibleRightRailOpen ? '26.5rem' : '6rem' : '8rem',
         top: isDrawFocusMode ? '1.5rem' : '6rem',
     };
     const canUseTeamSave = Boolean(teamId && userId);
@@ -1856,20 +2007,33 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         : selectedScenario?.routeShape === 'out-and-back'
             ? 'Out and back'
             : 'One-way';
-    const canApplyStopTransfer = Boolean(selectedScenario && transferTargetScenarioId && transferStopCount > 0);
+    const canApplyStopTransfer = Boolean(selectedScenario && transferTargetScenarioId && sourceSegmentSelectionReady && transferStopCount >= 2);
+    const transferFromStop = selectedScenarioStops.find((stop) => stop.sequence === transferFromSequence) ?? null;
+    const transferToStop = selectedScenarioStops.find((stop) => stop.sequence === transferToSequence) ?? null;
+    const segmentSwitchStepLabel: Record<SegmentSwitchStep, string> = {
+        idle: 'Not active',
+        'select-source-start': '1 · Pick start',
+        'select-source-end': '2 · Pick end',
+        'select-target': '3 · Target route',
+        'select-insertion': '4 · Insert point',
+        review: '5 · Review',
+    };
+    const pendingStopTransferWarnings = pendingStopTransferReview
+        ? [...pendingStopTransferReview.preview.scheduleImpact.warnings, ...pendingStopTransferReview.preview.warnings]
+        : [];
     const reassignStopsPanel = (
         <section className="rounded-2xl border border-cyan-200 bg-cyan-50/60 p-3" data-testid="rp2-reassign-stops-panel">
             <div className="flex items-start justify-between gap-3">
                 <div>
                     <div className="flex items-center gap-2">
                         <ArrowRightLeft size={16} className="text-cyan-700" />
-                        <h3 className="text-sm font-black text-slate-900">Segment switch</h3>
+                        <h3 className="text-sm font-black text-slate-900">Map segment switch</h3>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-600">
-                        Move or copy a contiguous stop range into another route concept.
+                        Click the start and end stops on the map, then move or copy that route segment.
                     </p>
                 </div>
-                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-cyan-700">Planning copy</span>
+                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-cyan-700">{segmentSwitchStepLabel[segmentSwitchStep]}</span>
             </div>
             {transferTargetOptions.length === 0 ? (
                 <p className="mt-3 rounded-xl border border-cyan-100 bg-white px-3 py-2 text-sm leading-6 text-slate-600">
@@ -1884,51 +2048,98 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                     <div className="rounded-xl border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-slate-600">
                         Source route: <span className="font-bold text-slate-900">{selectedScenario?.name}</span>
                     </div>
+                    <div className="rounded-xl border border-cyan-100 bg-white p-3 text-xs leading-5 text-slate-600" data-testid="rp2-segment-switch-mode-status">
+                        <div className="font-black text-slate-900">
+                            {!transferSourceStartSelected
+                                ? 'Click the first stop in the segment.'
+                                : !transferSourceEndSelected
+                                    ? 'Click the last stop in the segment.'
+                                    : 'Source segment selected.'}
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <button
+                                type="button"
+                                onClick={() => setSegmentSwitchStep('select-source-start')}
+                                className={`rounded-xl border px-3 py-2 text-left ${segmentSwitchStep === 'select-source-start' ? 'border-cyan-300 bg-cyan-50 text-cyan-900' : 'border-slate-200 bg-white text-slate-700'}`}
+                            >
+                                <span className="block text-[10px] font-black uppercase tracking-wide">Start stop</span>
+                                <span className="block font-black">{transferSourceStartSelected && transferFromStop ? `${transferFromStop.sequence}. ${transferFromStop.name}` : 'Pick on map'}</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setSegmentSwitchStep('select-source-end')}
+                                className={`rounded-xl border px-3 py-2 text-left ${segmentSwitchStep === 'select-source-end' ? 'border-cyan-300 bg-cyan-50 text-cyan-900' : 'border-slate-200 bg-white text-slate-700'}`}
+                            >
+                                <span className="block text-[10px] font-black uppercase tracking-wide">End stop</span>
+                                <span className="block font-black">{transferSourceEndSelected && transferToStop ? `${transferToStop.sequence}. ${transferToStop.name}` : 'Pick on map'}</span>
+                            </button>
+                        </div>
+                    </div>
                     <div className="grid grid-cols-2 gap-3">
                         <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-from">
-                            From stop
-                            <select id="rp2-transfer-from" value={transferFromSequence} onChange={(event) => setTransferFromSequence(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                            Start fallback
+                            <select id="rp2-transfer-from" value={transferFromSequence} onChange={(event) => { setTransferFromSequence(Number(event.target.value)); setTransferSourceStartSelected(true); setSegmentSwitchStep('select-source-end'); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
                                 {selectedScenarioStops.map((stop) => <option key={stop.id} value={stop.sequence}>{stop.sequence}. {stop.name}</option>)}
                             </select>
                         </label>
                         <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-to">
-                            To stop
-                            <select id="rp2-transfer-to" value={transferToSequence} onChange={(event) => setTransferToSequence(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                            End fallback
+                            <select id="rp2-transfer-to" value={transferToSequence} onChange={(event) => { setTransferToSequence(Number(event.target.value)); setTransferSourceStartSelected(true); setTransferSourceEndSelected(true); setSegmentSwitchStep(transferTargetScenarioId ? 'select-insertion' : 'select-target'); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
                                 {selectedScenarioStops.map((stop) => <option key={stop.id} value={stop.sequence}>{stop.sequence}. {stop.name}</option>)}
                             </select>
                         </label>
                     </div>
                     <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-target">
                         Target route
-                        <select id="rp2-transfer-target" value={transferTargetScenarioId} onChange={(event) => { setTransferTargetScenarioId(event.target.value); setTransferInsertAfterStopId('__end'); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                        <select id="rp2-transfer-target" value={transferTargetScenarioId} onChange={(event) => { setTransferTargetScenarioId(event.target.value); setTransferInsertAfterStopId('__end'); setSegmentSwitchStep('select-insertion'); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
                             {transferTargetOptions.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}
                         </select>
                     </label>
                     <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-insert">
                         Insert position
-                        <select id="rp2-transfer-insert" value={transferInsertAfterStopId} onChange={(event) => setTransferInsertAfterStopId(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                        <select id="rp2-transfer-insert" value={transferInsertAfterStopId} onChange={(event) => { setTransferInsertAfterStopId(event.target.value); setSegmentSwitchStep('select-insertion'); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
                             <option value="__start">At beginning</option>
                             {transferTargetStops.map((stop) => <option key={stop.id} value={stop.id}>After {stop.sequence}. {stop.name}</option>)}
                             <option value="__end">At end</option>
                         </select>
                     </label>
-                    <label className="flex items-start gap-3 rounded-xl border border-cyan-100 bg-white px-3 py-2 text-sm font-bold text-slate-700">
-                        <input
-                            type="checkbox"
-                            checked={transferReverseOrder}
-                            onChange={(event) => setTransferReverseOrder(event.target.checked)}
-                            className="mt-1 size-4 rounded border-slate-300 text-cyan-600"
-                        />
-                        <span>
-                            <span className="block text-slate-900">Reverse stop order</span>
-                            <span className="mt-0.5 block text-xs font-semibold leading-5 text-slate-500">
-                                Use this when the segment needs to flip direction before joining the target route. Existing directional runtimes will be recalculated.
-                            </span>
+                    <button
+                        type="button"
+                        disabled={!stopTransferOppositePreview}
+                        aria-pressed={Boolean(stopTransferOppositePreview && transferApplyOppositeDirection)}
+                        onClick={() => {
+                            if (!stopTransferOppositePreview) return;
+                            setTransferApplyOppositeDirection((current) => !current);
+                        }}
+                        className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed ${
+                            stopTransferOppositePreview
+                                ? transferApplyOppositeDirection
+                                    ? 'border-violet-200 bg-violet-50 text-violet-950 hover:bg-violet-100'
+                                    : 'border-slate-200 bg-white text-slate-700 hover:border-violet-200 hover:bg-violet-50'
+                                : 'border-slate-200 bg-slate-50 text-slate-500 opacity-80'
+                        }`}
+                    >
+                        <span className="block font-black text-slate-900">
+                            {stopTransferOppositePreview
+                                ? transferApplyOppositeDirection
+                                    ? 'Paired direction will also update'
+                                    : 'Apply same switch to paired direction'
+                                : 'No paired direction match found'}
                         </span>
-                    </label>
+                        <span className="mt-0.5 block text-xs font-semibold leading-5">
+                            {stopTransferOppositeSuggestion && stopTransferOppositePreview
+                                ? `${stopTransferOppositeSuggestion.sourceScenarioName} → ${stopTransferOppositeSuggestion.targetScenarioName}, ${stopTransferOppositePreview.transferredStopCount} ${stopTransferOppositePreview.transferredStopCount === 1 ? 'stop' : 'stops'} matched.`
+                                : 'A paired route such as 2B needs matching stops before this switch can be applied in both directions.'}
+                        </span>
+                    </button>
                     <div className="rounded-xl border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-slate-600">
-                        Selected range: <span className="font-black text-slate-900">{transferStopCount}</span> {transferStopCount === 1 ? 'stop' : 'stops'}
-                        {transferReverseOrder && <span className="font-semibold text-cyan-700"> · reversed on insert</span>}
+                        Selected range: <span className="font-black text-slate-900">{displayedTransferStopCount}</span> {displayedTransferStopCount === 1 ? 'stop' : 'stops'}
+                        {(!sourceSegmentSelectionReady || transferStopCount < 2) && (
+                            <span className="font-semibold text-amber-700"> · pick at least two stops to switch a segment</span>
+                        )}
+                        {stopTransferOppositePreview && transferApplyOppositeDirection && (
+                            <span className="font-semibold text-violet-700"> · paired direction included</span>
+                        )}
                     </div>
                     {stopTransferPreview && (
                         <div data-testid="rp2-stop-transfer-preview" className="rounded-xl border border-cyan-100 bg-white p-3 text-xs leading-5 text-slate-600">
@@ -1965,9 +2176,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     <span className="font-black">Full route recalculation:</span> source {formatRuntimeTransition(stopTransferPreview.sourceRuntimeBeforeMinutes, stopTransferPreview.sourceRuntimeAfterMinutes)}; target {formatRuntimeTransition(stopTransferPreview.targetRuntimeBeforeMinutes, stopTransferPreview.targetRuntimeAfterMinutes)}. Connector geometry may differ, but the moved runtime is counted equally.
                                 </p>
                             )}
-                            {stopTransferOppositeSuggestion && (
+                            {stopTransferOppositeSuggestion && stopTransferOppositePreview && (
                                 <div data-testid="rp2-opposite-transfer-suggestion" className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-2 text-violet-900">
-                                    <span className="font-black">Opposite direction found:</span> {stopTransferOppositeSuggestion.sourceScenarioName} → {stopTransferOppositeSuggestion.targetScenarioName}. The impact review can apply this matching switch at the same time.
+                                    <span className="font-black">Paired direction:</span> {transferApplyOppositeDirection ? 'included' : 'not included'} — {stopTransferOppositeSuggestion.sourceScenarioName} → {stopTransferOppositeSuggestion.targetScenarioName}.
                                 </div>
                             )}
                             {stopTransferPreview.sourceFamilyBefore
@@ -2019,11 +2230,118 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                     <div className="grid grid-cols-2 gap-2">
                         <button type="button" onClick={() => openStopTransferReview('move')} disabled={!canApplyStopTransfer} className="rounded-xl border border-cyan-200 bg-cyan-600 px-3 py-2 text-sm font-black text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">Move stops</button>
                         <button type="button" onClick={() => openStopTransferReview('copy')} disabled={!canApplyStopTransfer} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">Copy stops</button>
+                        <button type="button" onClick={cancelSegmentSwitchMode} className="col-span-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-600 hover:bg-slate-50">Exit segment switch</button>
                     </div>
                 </div>
             )}
         </section>
     );
+    const stopTransferReviewPanel = pendingStopTransferReview ? (
+        <section className="rounded-2xl border border-cyan-200 bg-white p-4 shadow-sm" data-testid="rp2-stop-transfer-impact-panel">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-cyan-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-700">
+                        <ArrowRightLeft size={14} />
+                        Segment switch review
+                    </div>
+                    <h3 className="mt-3 text-lg font-black leading-6 text-slate-950">
+                        {pendingStopTransferReview.mode === 'move' ? 'Move' : 'Copy'} {pendingStopTransferReview.preview.transferredStopCount} {pendingStopTransferReview.preview.transferredStopCount === 1 ? 'stop' : 'stops'} from {pendingStopTransferReview.preview.sourceScenarioName} to {pendingStopTransferReview.preview.targetScenarioName}
+                    </h3>
+                    <p className="mt-1 text-sm font-semibold leading-6 text-slate-600">
+                        Runtime shifted: <span className="font-black text-slate-950">{formatRuntime(pendingStopTransferReview.preview.transferredRuntimeMinutes)}</span>
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={cancelStopTransferReview}
+                    className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    aria-label="Close segment switch review"
+                >
+                    <X size={17} />
+                </button>
+            </div>
+
+            <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="font-black uppercase tracking-wide text-slate-500">Stop range</div>
+                    <div className="mt-1 font-black text-slate-900">{pendingStopTransferReview.preview.sourceStopRangeLabel}</div>
+                    <div className="mt-1 font-semibold text-slate-500">{pendingStopTransferReview.preview.transferredStopNames.join(', ')}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="font-black uppercase tracking-wide text-slate-500">Insertion</div>
+                    <div className="mt-1 font-black text-slate-900">{pendingStopTransferReview.preview.insertPositionLabel}</div>
+                    <div className="mt-1 font-semibold text-slate-500">Stop order preserved.</div>
+                </div>
+            </div>
+
+            <h4 className="mt-4 text-sm font-black text-slate-950">Schedule impact</h4>
+            <div className="mt-2 grid gap-3" data-testid="rp2-stop-transfer-review-impact-cards">
+                <SegmentSwitchImpactCard impact={pendingStopTransferReview.preview.scheduleImpact.source} />
+                <SegmentSwitchImpactCard impact={pendingStopTransferReview.preview.scheduleImpact.target} />
+            </div>
+
+            {pendingStopTransferReview.oppositePreview ? (
+                <label className="mt-4 flex items-start gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-950">
+                    <input
+                        type="checkbox"
+                        checked={pendingStopTransferReview.applyOpposite}
+                        onChange={(event) => updatePendingStopTransferApplyOpposite(event.target.checked)}
+                        className="mt-1 size-4 rounded border-violet-300 text-violet-600"
+                    />
+                    <span>
+                        <span className="block font-black">Also apply matching opposite direction</span>
+                        <span className="mt-1 block text-xs font-semibold leading-5">
+                            {pendingStopTransferReview.oppositePreview.sourceScenarioName} → {pendingStopTransferReview.oppositePreview.targetScenarioName}, {pendingStopTransferReview.oppositePreview.transferredStopCount} {pendingStopTransferReview.oppositePreview.transferredStopCount === 1 ? 'stop' : 'stops'} matched.
+                        </span>
+                    </span>
+                </label>
+            ) : (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    <span className="font-black text-slate-900">Opposite direction:</span> no complete matching opposite segment was found.
+                </div>
+            )}
+
+            {pendingStopTransferWarnings.length > 0 ? (
+                <div className="mt-4 space-y-2">
+                    <h4 className="text-sm font-black text-slate-950">Planner review</h4>
+                    {pendingStopTransferWarnings.map((warning) => (
+                        <div key={warning.id} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                            <div className="font-black">{warning.message}</div>
+                            {warning.action && <div className="mt-0.5 text-xs font-semibold opacity-80">{warning.action}</div>}
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                    <span className="font-black">No schedule risk flags detected.</span> Review the impact, then apply if it matches the planning intent.
+                </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap gap-1.5 text-xs font-bold">
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">{pendingStopTransferReview.preview.carriedScheduledSegmentCount} scheduled segment{pendingStopTransferReview.preview.carriedScheduledSegmentCount === 1 ? '' : 's'}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">{pendingStopTransferReview.preview.carriedRuntimeEstimateCount} period runtime{pendingStopTransferReview.preview.carriedRuntimeEstimateCount === 1 ? '' : 's'}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">{pendingStopTransferReview.preview.connectorSegmentCount} connector{pendingStopTransferReview.preview.connectorSegmentCount === 1 ? '' : 's'}</span>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-200 pt-4">
+                <button
+                    type="button"
+                    onClick={cancelStopTransferReview}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 hover:bg-slate-50"
+                >
+                    Back
+                </button>
+                <button
+                    type="button"
+                    onClick={confirmStopTransfer}
+                    data-testid="rp2-confirm-stop-transfer"
+                    className="rounded-xl border border-cyan-700 bg-cyan-600 px-3 py-2 text-sm font-black text-white shadow-sm hover:bg-cyan-700"
+                >
+                    Confirm {pendingStopTransferReview.mode === 'move' ? 'move stops' : 'copy stops'}
+                </button>
+            </div>
+        </section>
+    ) : null;
     return (
         <div className="h-full overflow-hidden bg-slate-100">
             <main
@@ -2045,7 +2363,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         selectedStopIds={mapSelectedStopIds}
                         selectedWaypointIds={mapSelection.waypointIds}
                         onSelectionChange={setMapSelection}
-                        onSelectStop={setSelectedStopId}
+                        onSelectStop={selectRoutePlannerStop}
                         onAddStop={addStop}
                         onDeleteStop={deleteStop}
                         onMoveStop={moveStop}
@@ -2451,12 +2769,12 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             <div className="flex gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => setIsStopTransferModalOpen(true)}
+                                    onClick={segmentSwitchModeActive ? cancelSegmentSwitchMode : startSegmentSwitchMode}
                                     data-testid="rp2-open-segment-switch"
-                                    className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white/95 px-3 py-2 text-xs font-black text-cyan-800 shadow-lg backdrop-blur hover:bg-cyan-50"
+                                    className={`pointer-events-auto inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-black shadow-lg backdrop-blur ${segmentSwitchModeActive ? 'border-slate-300 bg-slate-900/90 text-white hover:bg-slate-800' : 'border-cyan-200 bg-white/95 text-cyan-800 hover:bg-cyan-50'}`}
                                 >
                                     <ArrowRightLeft size={15} />
-                                    Segment switch
+                                    {segmentSwitchModeActive ? 'Exit segment switch' : 'Segment switch'}
                                 </button>
                             {isDrawFocusMode && (
                                 <button
@@ -2487,6 +2805,33 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             )}
                         </div>
                     </div>
+                    {segmentSwitchModeActive && (
+                        <aside
+                            data-testid="rp2-segment-switch-drawer"
+                            className="pointer-events-auto absolute bottom-4 right-3 top-24 z-30 flex w-[min(92vw,30rem)] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur"
+                        >
+                            <header className="mb-3 flex items-start justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
+                                <div>
+                                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">Route segment tools</div>
+                                    <h2 className="mt-0.5 text-base font-black text-slate-950">Segment switch mode</h2>
+                                    <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+                                        Work directly from the map. Selected source stops stay highlighted while you choose the target route and review the impact.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={cancelSegmentSwitchMode}
+                                    className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                    aria-label="Exit segment switch mode"
+                                >
+                                    <X size={17} />
+                                </button>
+                            </header>
+                            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                                {stopTransferReviewPanel ?? reassignStopsPanel}
+                            </div>
+                        </aside>
+                    )}
                     <aside
                         data-testid="rp2-right-rail"
                         data-state={rightRailState}
@@ -3313,40 +3658,6 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                     </section>
                 </div>
             )}
-            {isStopTransferModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-                    <section
-                        role="dialog"
-                        aria-modal="true"
-                        aria-labelledby="rp2-segment-switch-title"
-                        className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
-                    >
-                        <header className="flex items-start justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
-                            <div>
-                                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">
-                                    <ArrowRightLeft size={14} />
-                                    Route segment tools
-                                </div>
-                                <h2 id="rp2-segment-switch-title" className="mt-1 text-lg font-black text-slate-950">Segment switch</h2>
-                                <p className="mt-1 text-sm leading-6 text-slate-600">
-                                    Choose the stop range, target route, insert position, and direction before reviewing schedule impact.
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => setIsStopTransferModalOpen(false)}
-                                className="inline-flex size-10 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                                aria-label="Close segment switch"
-                            >
-                                <X size={18} />
-                            </button>
-                        </header>
-                        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-5">
-                            {reassignStopsPanel}
-                        </div>
-                    </section>
-                </div>
-            )}
             <RoutePlanner2GtfsImportModal
                 open={isGtfsImportOpen}
                 presentation="map-drawer"
@@ -3355,23 +3666,13 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                 error={gtfsError}
                 onClose={() => setIsGtfsImportOpen(false)}
                 onImport={importGtfsPatterns}
-                onRetry={loadGtfsPatterns}
+                onRetry={() => void loadGtfsPatterns({ forceRefresh: true })}
             />
             <RoutePlanner2AddressImportModal
                 open={isAddressImportOpen}
                 presentation="map-drawer"
                 onClose={() => setIsAddressImportOpen(false)}
                 onImport={importAddressStops}
-            />
-            <RoutePlanner2StopTransferImpactModal
-                open={Boolean(pendingStopTransferReview)}
-                preview={pendingStopTransferReview?.preview ?? null}
-                mode={pendingStopTransferReview?.mode ?? 'move'}
-                oppositePreview={pendingStopTransferReview?.oppositePreview ?? null}
-                applyOpposite={pendingStopTransferReview?.applyOpposite ?? false}
-                onApplyOppositeChange={updatePendingStopTransferApplyOpposite}
-                onCancel={cancelStopTransferReview}
-                onConfirm={confirmStopTransfer}
             />
         </div>
     );

@@ -6,6 +6,7 @@ import {
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import { StopActivityMap } from './StopActivityMap';
+import { TodPickupSection } from './TodPickupSection';
 import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
 import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
@@ -226,6 +227,8 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
             <ChartCard title="Stop Activity Map" subtitle="Circle size and color reflect total boardings + alightings">
                 <StopActivityMap stops={stopActivity} />
             </ChartCard>
+
+            <TodPickupSection />
 
             {/* Daily Ridership Trend */}
             <ChartCard title="Daily Ridership" subtitle="Total boardings per day">

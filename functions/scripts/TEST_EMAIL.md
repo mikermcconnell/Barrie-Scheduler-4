@@ -14,9 +14,9 @@ https://testdailyreport-ieeja7khcq-uc.a.run.app?to=YOUR_EMAIL
 curl "https://testdailyreport-ieeja7khcq-uc.a.run.app?to=your.name@example.com"
 ```
 
-## Stale-data alert test
+## No-data report test
 
-After deploy, use the new endpoint:
+Use this endpoint to preview the email sent when the scheduled report has no new STREETS data:
 
 ```
 https://teststalereportalert-ieeja7khcq-uc.a.run.app?to=YOUR_EMAIL
@@ -32,7 +32,7 @@ curl "https://teststalereportalert-ieeja7khcq-uc.a.run.app?to=your.name@example.
 
 - Use a mailbox you control.
 - The normal report test uses the current latest day from Firebase Storage.
-- The stale alert test sends the IT/Admin-style stale-data warning email.
+- The no-data test sends the short manager-facing fallback email.
 - Email is delivered via the Firebase Trigger Email extension (Firestore `mail` collection).
 - Scheduled production report runs daily at 07:00 AM Toronto time to `REPORT_RECIPIENTS`.
-- Scheduled stale-data alerts go only to `REPORT_ALERT_RECIPIENTS` and use a different subject line that does **not** include `Barrie Transit Performance`.
+- If no new STREETS data is available, the scheduled report sends a short no-data message to `REPORT_RECIPIENTS`.

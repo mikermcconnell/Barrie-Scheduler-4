@@ -23,6 +23,7 @@ firebase/
 │   ├── routeConnectionConfigs/{routeIdentity} # Per-route connection settings
 │   ├── transitAppData/{docId}            # Transit App analytics datasets
 │   ├── performanceData/{docId}           # STREETS / ops performance datasets
+│   ├── todPickupData/{docId}             # Monthly Transit On Demand pickup map datasets
 │   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
 │   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
 │   ├── odMatrixData/{docId}              # Origin-destination datasets
@@ -58,6 +59,7 @@ storage/
     ├── routeMaps/{safeName}
     ├── transitAppData/{allPaths}
     ├── performanceData/{allPaths}
+    ├── todPickupData/{timestamp}.json
     ├── performanceData/{timestamp}-overview.json
     ├── performanceData/{timestamp}-report.json
     ├── performanceImports/raw/{timestamp}.csv
@@ -72,6 +74,8 @@ storage/
 - `reportStoragePath`: report-focused snapshot used by the daily email
 
 Daily performance summaries may include `byOperatorDwell.totalReportableDwellMinutes`, an optional moderate/high-only dwell total used by compact report snapshots when older incident arrays are trimmed.
+
+`teams/{teamId}/todPickupData/metadata` stores the active Transit On Demand pickup-map import pointer. Full monthly TOD pickup datasets live in Storage as aggregated JSON at `teams/{teamId}/todPickupData/{timestamp}.json`. Uploading a CSV for a month replaces that month only; other months remain in the same stored summary. The stored payload is aggregated by stop ID when present, otherwise by pickup name plus rounded coordinates, or by coordinates alone. Raw request rows, rider-identifying fields, and address columns are not persisted. Imports are bounded to CSV files under 5 MB and 25,000 rows.
 
 ---
 

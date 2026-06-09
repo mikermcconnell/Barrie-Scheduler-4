@@ -45,6 +45,7 @@ describe('OperationsWorkspace performance shell', () => {
   let root: Root;
 
   beforeEach(() => {
+    window.location.hash = '';
     performanceDashboardRenderSpy.mockClear();
     performanceDashboardPropsSpy.mockClear();
     reportsWorkspaceRenderSpy.mockClear();
@@ -60,38 +61,39 @@ describe('OperationsWorkspace performance shell', () => {
     container.remove();
   });
 
-  it('shows the landing dashboard without mounting the heavy workspaces up front', () => {
+  it('opens the operations dashboard directly from the operations workspace', () => {
     flushSync(() => {
       root.render(<OperationsWorkspace />);
     });
 
-    expect(container.textContent).toContain('Dashboard & Reporting');
-    expect(container.textContent).toContain('Operations Dashboard');
-    expect(container.textContent).toContain('STREETS Reports');
-    expect(performanceDashboardRenderSpy).not.toHaveBeenCalled();
-    expect(reportsWorkspaceRenderSpy).not.toHaveBeenCalled();
-  });
-
-  it('opens the operations dashboard directly when the card is clicked', async () => {
-    flushSync(() => {
-      root.render(<OperationsWorkspace />);
-    });
-
-    const operationsCard = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.includes('Operations Dashboard') && button.textContent?.includes('OTP, ridership, and load profiles'),
-    ) as HTMLButtonElement | undefined;
-
-    expect(operationsCard).toBeTruthy();
-
-    operationsCard?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
+    expect(container.textContent).toContain('Mock Performance Dashboard');
     expect(performanceDashboardRenderSpy).toHaveBeenCalled();
-    expect(performanceDashboardPropsSpy).toHaveBeenCalled();
-    expect(performanceDashboardPropsSpy.mock.calls[0][0]).toEqual(
+    expect(performanceDashboardPropsSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         autoOpen: true,
       }),
     );
+    expect(reportsWorkspaceRenderSpy).not.toHaveBeenCalled();
+  });
+
+  it('opens STREETS reports from a direct reports hash and returns to the dashboard', async () => {
+    window.location.hash = 'operations/perf-reports';
+
+    flushSync(() => {
+      root.render(<OperationsWorkspace />);
+    });
+
+    expect(container.textContent).toContain('Mock STREETS Reports');
+    expect(reportsWorkspaceRenderSpy).toHaveBeenCalled();
+
+    const backButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Back from Reports'),
+    ) as HTMLButtonElement | undefined;
+
+    backButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(container.textContent).toContain('Mock Performance Dashboard');
+    expect(performanceDashboardRenderSpy).toHaveBeenCalled();
   });
 });

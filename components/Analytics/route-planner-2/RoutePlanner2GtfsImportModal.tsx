@@ -19,6 +19,7 @@ function getPatternSubtitle(pattern: RoutePlanner2GtfsImportPattern): string {
 }
 
 const DAY_GROUPS = ['Weekday', 'Saturday', 'Sunday'] as const;
+type DayGroupLabel = typeof DAY_GROUPS[number];
 
 function getDayGroupLabel(pattern: RoutePlanner2GtfsImportPattern): string {
     const label = `${pattern.dayTypeLabel || ''} ${pattern.serviceId || ''}`.toLowerCase();
@@ -62,6 +63,16 @@ function getPatternDirectionLabel(pattern: RoutePlanner2GtfsImportPattern): stri
     return pattern.routeFamily
         ? `${pattern.routeFamily.directionLabel} · ${pattern.routeFamily.memberShortName}`
         : getPatternSubtitle(pattern);
+}
+
+function getDayImportLabel(dayLabel: DayGroupLabel): string {
+    return dayLabel === 'Weekday' ? 'weekday' : dayLabel;
+}
+
+function getRouteCountLabel(routeCount: number, patternCount: number): string {
+    const routeText = `${routeCount} route${routeCount === 1 ? '' : 's'}`;
+    if (routeCount === patternCount) return routeText;
+    return `${routeText} · ${patternCount} direction${patternCount === 1 ? '' : 's'}`;
 }
 
 export function RoutePlanner2GtfsImportModal({
@@ -116,6 +127,14 @@ export function RoutePlanner2GtfsImportModal({
                     })),
             }));
     }, [sortedPatterns]);
+    const dayImportActions = useMemo(() => DAY_GROUPS.map((dayLabel) => {
+        const dayPatterns = sortedPatterns.filter((pattern) => getDayGroupLabel(pattern) === dayLabel);
+        return {
+            dayLabel,
+            patterns: dayPatterns,
+            routeCount: new Set(dayPatterns.map(getRouteGroupKey)).size,
+        };
+    }), [sortedPatterns]);
     const selectedPatterns = sortedPatterns.filter((pattern) => selectedPatternIds.has(pattern.id));
 
     useEffect(() => {
@@ -149,6 +168,12 @@ export function RoutePlanner2GtfsImportModal({
     function importSelectedPatterns() {
         if (selectedPatterns.length === 0) return;
         onImport(selectedPatterns);
+        setSelectedPatternIds(new Set());
+    }
+
+    function importDayPatterns(dayPatterns: RoutePlanner2GtfsImportPattern[]) {
+        if (dayPatterns.length === 0) return;
+        onImport(dayPatterns);
         setSelectedPatternIds(new Set());
     }
 
@@ -189,9 +214,20 @@ export function RoutePlanner2GtfsImportModal({
                         <h2 id="rp2-gtfs-import-title" className="mt-1 text-2xl font-black text-slate-900">Import GTFS route</h2>
                         <p className="mt-2 text-sm font-semibold text-slate-600">This creates an editable planning copy. It does not modify GTFS. Select one or more full GTFS routes; each import becomes a route concept in this workspace.</p>
                     </div>
-                    <button type="button" onClick={closeAndClear} className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" aria-label="Close GTFS import">
-                        <X size={18} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={onRetry}
+                            disabled={loading}
+                            className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black text-cyan-800 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
+                            Refresh
+                        </button>
+                        <button type="button" onClick={closeAndClear} className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" aria-label="Close GTFS import">
+                            <X size={18} />
+                        </button>
+                    </div>
                 </header>
 
                 <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-6">
@@ -219,6 +255,33 @@ export function RoutePlanner2GtfsImportModal({
 
                     {!loading && !error && sortedPatterns.length > 0 && (
                         <div className="space-y-7">
+                            <section className="rounded-3xl border border-cyan-100 bg-white p-4 shadow-sm" data-testid="rp2-gtfs-bulk-import">
+                                <div className="text-sm font-black text-slate-900">Import a full schedule</div>
+                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                    Bring in every full-route pattern for one day type at once.
+                                </p>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    {dayImportActions.map((action) => {
+                                        const hasPatterns = action.patterns.length > 0;
+                                        return (
+                                            <button
+                                                key={action.dayLabel}
+                                                type="button"
+                                                onClick={() => importDayPatterns(action.patterns)}
+                                                disabled={!hasPatterns}
+                                                className={`min-w-[7.5rem] flex-1 rounded-2xl border px-3 py-2 text-left transition ${hasPatterns
+                                                    ? 'border-cyan-200 bg-cyan-50 text-cyan-900 hover:bg-cyan-100'
+                                                    : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'}`}
+                                            >
+                                                <span className="block text-xs font-black">Import all {getDayImportLabel(action.dayLabel)}</span>
+                                                <span className="mt-1 block text-[11px] font-bold">
+                                                    {hasPatterns ? getRouteCountLabel(action.routeCount, action.patterns.length) : 'No routes'}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </section>
                             {groupedPatterns.map((dayGroup) => (
                                 <section key={dayGroup.dayLabel} aria-labelledby={`rp2-gtfs-day-${dayGroup.dayLabel}`}>
                                     <h3 id={`rp2-gtfs-day-${dayGroup.dayLabel}`} className="text-xs font-black uppercase tracking-[0.2em] text-cyan-700">

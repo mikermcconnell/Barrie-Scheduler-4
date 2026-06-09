@@ -67,6 +67,10 @@ GTFS and address import workflows should open as map-integrated side drawers
 instead of page-centred modals so the planner keeps geographic context while
 importing.
 
+The GTFS import drawer should provide bulk day-type actions for importing all
+weekday, Saturday, or Sunday full-route patterns, while still allowing individual
+route-family or direction selection.
+
 Draw-route guidance, address search, add-stop action, and route type controls
 belong in the right-side review panel, not as a large floating card on top of
 the map.
@@ -136,11 +140,11 @@ Required visible states:
 - missing terminal warning
 - unsaved/local-only state if applicable
 
-For network redesign work, the map top-right should include a compact, visible **Segment switch** action. It opens a modal that can copy or move a contiguous stop range into another route concept. It should require the planner to choose the target route and insertion position instead of guessing where transferred stops belong, and it should offer a planner-controlled reverse-order option when a segment needs to flip direction. The modal should show a compact preview with source/target before-and-after cards for runtime, cycle time, recovery, and bus requirement. The map should highlight the selected source stops and target insertion point while the modal is open.
+For network redesign work, the map top-right should include a compact, visible **Segment switch** action. It enters a guided map mode instead of opening a popup. The planner clicks a source start stop and source end stop on the map, then uses the map-side drawer to choose the target route and insertion position. The drawer should offer **Apply same switch to paired direction** when matching route-family directions are available, such as applying 2A → 7A to 2B → 7B at the same time. The drawer should show a compact preview with source/target before-and-after cards for runtime, cycle time, recovery, and bus requirement. The map should highlight the selected source stops and target insertion point while segment switch mode is active.
 
-**Move stops** or **Copy stops** must open a schedule-impact modal before applying the change. The impact modal should summarize the clean runtime shifted from source to target, before/after runtime, cycle time, recovery, bus requirement, schedule-risk warnings, carried scheduled/manual runtime evidence, connector gaps, duplicate join-stop warnings, and evidence dropped because of reversed direction. Connector recalculation may be shown as diagnostic detail, but the headline shifted runtime should remain equal between the source and target.
+**Move stops** or **Copy stops** must open a map-side schedule-impact review before applying the change. The review drawer should summarize the clean runtime shifted from source to target, before/after runtime, cycle time, recovery, bus requirement, schedule-risk warnings, carried scheduled/manual runtime evidence, connector gaps, duplicate join-stop warnings, and paired-direction impact when applicable. Connector recalculation may be shown as diagnostic detail, but the headline shifted runtime should remain equal between the source and target.
 
-When a matching opposite direction can be identified, the impact modal should offer **Also apply matching opposite direction** before confirmation. Route 8 is a special A/B cross-direction case: 8A NB pairs with 8B SB, 8B SB pairs with 8A NB, 8B NB pairs with 8A SB, and 8A SB pairs with 8B NB. After apply, show a short undo toast so the planner can safely reverse the switch without hunting for the global undo button.
+When a matching opposite direction can be identified, the review drawer should offer **Also apply matching opposite direction** before confirmation. Route 8 is a special A/B cross-direction case: 8A NB pairs with 8B SB, 8B SB pairs with 8A NB, 8B NB pairs with 8A SB, and 8A SB pairs with 8B NB. After apply, show a short undo toast so the planner can safely reverse the switch without hunting for the global undo button.
 
 ## Right Rail
 

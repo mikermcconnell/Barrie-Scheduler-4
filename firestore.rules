@@ -92,6 +92,12 @@ service cloud.firestore {
         allow read, write: if isTeamMember(teamId);
       }
 
+      // Transit On Demand pickup map data
+      match /todPickupData/{docId} {
+        allow read: if canAccessWorkspace(teamId, 'workspaceOperations');
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
+      }
+
       // Monthly performance snapshots
       match /performanceSnapshots/{docId} {
         allow read, write: if isTeamMember(teamId);

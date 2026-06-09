@@ -103,6 +103,30 @@ describe('RoutePlanner2GtfsImportModal', () => {
     expect(importButton?.disabled).toBe(true);
   });
 
+  it('imports all patterns for one day type from the bulk import buttons', () => {
+    const props = {
+      patterns: [
+        patternFor({ id: 'saturday-8a', routeShortName: '8A', routeId: '8A', dayTypeLabel: 'Saturday', serviceId: 'saturday', tripHeadsign: 'Saturday 8A' }),
+        patternFor({ id: 'weekday-8b', routeShortName: '8B', routeId: '8B', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'Weekday 8B' }),
+        patternFor({ id: 'weekday-8a', routeShortName: '8A', routeId: '8A', dayTypeLabel: 'Weekday', serviceId: 'weekday', tripHeadsign: 'Weekday 8A' }),
+      ],
+      onImport: vi.fn(),
+    };
+    const { view } = renderModal(props);
+
+    expect(view.textContent).toContain('Import a full schedule');
+    expect(findButton(view, 'Import all weekday')?.disabled).toBe(false);
+    expect(findButton(view, 'Import all Saturday')?.disabled).toBe(false);
+    expect(findButton(view, 'Import all Sunday')?.disabled).toBe(true);
+
+    flushSync(() => click(findButton(view, 'Import all weekday')));
+
+    const imported = props.onImport.mock.calls[0]?.[0] as RoutePlanner2GtfsImportPattern[];
+    expect(props.onImport).toHaveBeenCalledTimes(1);
+    expect(imported).toHaveLength(2);
+    expect(imported.map((selected) => selected.id).sort()).toEqual(['weekday-8a', 'weekday-8b']);
+  });
+
   it('clears selected patterns when the drawer closes and reopens', () => {
     const { view, props } = renderModal();
     const importButton = findButton(view, 'Import as editable route');
@@ -141,9 +165,9 @@ describe('RoutePlanner2GtfsImportModal', () => {
       ],
     });
 
+    const dayHeadings = Array.from(view.querySelectorAll('h3')).map((heading) => heading.textContent);
+    expect(dayHeadings).toEqual(['Weekday', 'Saturday', 'Sunday']);
     const text = view.textContent ?? '';
-    expect(text.indexOf('Weekday')).toBeLessThan(text.indexOf('Saturday'));
-    expect(text.indexOf('Saturday')).toBeLessThan(text.indexOf('Sunday'));
     expect(text.indexOf('Route 2')).toBeLessThan(text.indexOf('Route 10'));
     expect(text).toContain('2 directions');
     expect(text).toContain('Out · 2A');
