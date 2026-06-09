@@ -24,60 +24,6 @@ service firebase.storage {
         );
     }
 
-    function memberAccessLevel(teamId) {
-      let member = firestore.get(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid));
-      return member.data.accessLevel is string
-        ? member.data.accessLevel
-        : ((member.data.role == 'owner' || member.data.role == 'admin') ? 'internal' : 'planner');
-    }
-
-    function memberWorkspaceOverride(teamId, feature) {
-      return firestore.get(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.workspaceOverrides[feature];
-    }
-
-    function workspaceAllowedByProfile(accessLevel, feature) {
-      return accessLevel == 'internal' ||
-        (accessLevel == 'admin' &&
-          (feature in [
-            'workspaceFixedRoute',
-            'workspaceOperations',
-            'workspaceOndemand',
-            'analyticsTransitApp',
-            'analyticsOdMatrix',
-            'analyticsStudentPass',
-            'analyticsFleetPlan',
-            'analyticsResidentialGrowth',
-            'analyticsRoutePlanner2',
-            'operationsLoadProfiles',
-            'operationsOperatorDwell'
-          ])) ||
-        (accessLevel == 'planner' &&
-          (feature in [
-            'workspaceFixedRoute',
-            'workspaceOperations',
-            'workspaceOndemand',
-            'analyticsTransitApp',
-            'analyticsStudentPass',
-            'analyticsFleetPlan',
-            'analyticsResidentialGrowth',
-            'analyticsRoutePlanner2'
-          ])) ||
-        (accessLevel == 'production' &&
-          (feature in ['workspaceFixedRoute', 'workspaceOperations'])) ||
-        (accessLevel == 'external-planner' &&
-          feature == 'analyticsTransitApp') ||
-        (accessLevel == 'transit-app-only' &&
-          feature == 'analyticsTransitApp');
-    }
-
-    function canAccessWorkspace(teamId, feature) {
-      return isWorkspacePermissionManager() ||
-        (isTeamMember(teamId) &&
-          (memberWorkspaceOverride(teamId, feature) == true ||
-            (memberWorkspaceOverride(teamId, feature) != false &&
-              workspaceAllowedByProfile(memberAccessLevel(teamId), feature))));
-    }
-
     // Users can only access their own files
     match /users/{userId}/{allPaths=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -107,7 +53,7 @@ service firebase.storage {
 
     // Team Transit On Demand pickup map data
     match /teams/{teamId}/todPickupData/{allPaths=**} {
-      allow read: if canAccessWorkspace(teamId, 'workspaceOperations');
+      allow read: if isTeamMember(teamId);
       allow write: if isTeamManager(teamId) || isWorkspacePermissionManager();
     }
 

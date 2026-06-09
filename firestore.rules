@@ -94,7 +94,7 @@ service cloud.firestore {
 
       // Transit On Demand pickup map data
       match /todPickupData/{docId} {
-        allow read: if canAccessWorkspace(teamId, 'workspaceOperations');
+        allow read: if isTeamMember(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
       }
 
