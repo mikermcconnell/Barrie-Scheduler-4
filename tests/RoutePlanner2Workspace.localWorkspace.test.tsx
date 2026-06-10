@@ -97,7 +97,11 @@ vi.mock('html2canvas', () => ({
   })),
 }));
 
-import { RoutePlanner2Workspace, getNextRoutePlanner2SegmentSwitchSourceSelection } from '../components/Analytics/RoutePlanner2Workspace';
+import {
+  RoutePlanner2Workspace,
+  getNextRoutePlanner2SegmentSwitchSourceSelection,
+  isRoutePlanner2PairedDirectionScenario,
+} from '../components/Analytics/RoutePlanner2Workspace';
 import { buildCorridorSpeedIndex, buildCorridorSpeedMapIndex } from '../utils/gtfs/corridorSpeed';
 import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop } from '../utils/route-planner-2/routePlanner2Authoring';
 import { exportRoutePlanner2MapPdf } from '../utils/route-planner-2/routePlanner2MapExport';
@@ -270,6 +274,54 @@ async function waitForExportCall(timeoutMs = 1200) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
+
+describe('Route Planner 2 background route filtering', () => {
+  it('treats generated Out and Back scenarios as paired directions', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-out', now: familyProjectNow });
+    project = {
+      ...project,
+      scenarios: [
+        { ...project.scenarios[0]!, id: 'route-out', name: 'Sagewood Route Out' },
+        { ...project.scenarios[0]!, id: 'route-back', name: 'Sagewood Route Back' },
+      ],
+    };
+
+    expect(isRoutePlanner2PairedDirectionScenario(project.scenarios[1]!, project.scenarios[0]!)).toBe(true);
+  });
+
+  it('treats route-family out and back scenarios as paired directions', () => {
+    const outScenario = makeFamilyScenario({
+      id: 'route-7a',
+      name: 'Route 7A',
+      familyKey: 'barrie-merged-7',
+      familyName: 'Route 7',
+      shortName: '7',
+      memberShortName: '7A',
+      directionRole: 'out',
+      directionLabel: 'Out',
+      stops: [
+        { code: 'X', name: 'Allandale', lat: 44.36, lng: -79.68 },
+        { code: 'Y', name: 'RVH', lat: 44.42, lng: -79.64 },
+      ],
+    });
+    const backScenario = makeFamilyScenario({
+      id: 'route-7b',
+      name: 'Route 7B',
+      familyKey: 'barrie-merged-7',
+      familyName: 'Route 7',
+      shortName: '7',
+      memberShortName: '7B',
+      directionRole: 'back',
+      directionLabel: 'Back',
+      stops: [
+        { code: 'Y', name: 'RVH', lat: 44.42, lng: -79.64 },
+        { code: 'X', name: 'Allandale', lat: 44.36, lng: -79.68 },
+      ],
+    });
+
+    expect(isRoutePlanner2PairedDirectionScenario(outScenario, backScenario)).toBe(true);
+  });
+});
 
 describe('RoutePlanner2Workspace local workspace', () => {
   let container: HTMLDivElement | null = null;

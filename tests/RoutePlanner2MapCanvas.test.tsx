@@ -4,6 +4,7 @@ import {
   buildRoadNameLineLabelGeoJson,
   buildRoadNameOverviewLabelGeoJson,
   buildLineGeoJson,
+  buildRoutePlanner2SegmentLineGeoJson,
   buildRoutePlanner2ScenarioOverlayGeoJson,
   formatRoutePlanner2MapStopLabel,
   formatRoutePlanner2RoadNameLabel,
@@ -189,5 +190,38 @@ describe('RoutePlanner2MapCanvas route overlays', () => {
 
     expect(getRoutePlanner2ScenarioColor(route12)).toBe('#F8A1BE');
     expect(buildLineGeoJson([[-79.69, 44.38], [-79.68, 44.39]], getRoutePlanner2ScenarioColor(route12)).features[0]?.properties.color).toBe('#F8A1BE');
+  });
+
+  it('renders snapped road segments as separate route-line features to avoid straight connector chords', () => {
+    const geoJson = buildRoutePlanner2SegmentLineGeoJson([
+      {
+        id: 'a-to-b',
+        fromStopId: 'a',
+        toStopId: 'b',
+        coordinates: [
+          [-79.70, 44.38],
+          [-79.69, 44.39],
+        ],
+      },
+      {
+        id: 'b-to-c',
+        fromStopId: 'b',
+        toStopId: 'c',
+        coordinates: [
+          [-79.65, 44.42],
+          [-79.64, 44.43],
+        ],
+      },
+    ], '#0891b2');
+
+    expect(geoJson.features).toHaveLength(2);
+    expect(geoJson.features[0]?.geometry.coordinates).toEqual([
+      [-79.70, 44.38],
+      [-79.69, 44.39],
+    ]);
+    expect(geoJson.features[1]?.geometry.coordinates).toEqual([
+      [-79.65, 44.42],
+      [-79.64, 44.43],
+    ]);
   });
 });

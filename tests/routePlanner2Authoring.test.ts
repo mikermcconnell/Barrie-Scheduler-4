@@ -71,13 +71,13 @@ describe('Route Planner 2 authoring', () => {
     project = addRoutePlanner2Stops(project, 'scenario-1', {
       now,
       stops: [
-        { id: 'import-1', name: 'North Address', lat: 44.43, lng: -79.76, notes: 'Imported from address file.', address: '10 North Street, Barrie, ON L4M 1A1', riderCount: 3, sourceRows: [2, 5, 9] },
+        { id: 'import-1', name: 'North Address', lat: 44.43, lng: -79.76, role: 'start-terminal', notes: 'Imported from address file.', address: '10 North Street, Barrie, ON L4M 1A1', riderCount: 3, sourceRows: [2, 5, 9] },
         { id: 'import-2', name: 'East Address', lat: 44.42, lng: -79.7, notes: 'Imported from address file.' },
       ],
     });
 
     expect(project.scenarios[0]?.stops.map((stop) => `${stop.sequence}:${stop.name}:${stop.role}:${stop.source}`)).toEqual([
-      '1:North Address:regular:custom',
+      '1:North Address:start-terminal:custom',
       '2:East Address:regular:custom',
     ]);
     expect(project.scenarios[0]?.stops[0]?.notes).toContain('Imported from address file');
@@ -86,6 +86,51 @@ describe('Route Planner 2 authoring', () => {
       riderCount: 3,
       sourceRows: [2, 5, 9],
     });
+  });
+
+  it('adds a single address stop after the requested existing stop', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'First', lat: 44.38, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Second', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', {
+      id: 'address-stop',
+      name: 'Inserted address',
+      address: '100 Mapleview Drive East, Barrie, ON',
+      lat: 44.37,
+      lng: -79.67,
+      insertAfterStopId: 'stop-1',
+      now,
+    });
+
+    expect(project.scenarios[0]?.stops.map((stop) => `${stop.sequence}:${stop.id}:${stop.name}`)).toEqual([
+      '1:stop-1:First',
+      '2:address-stop:Inserted address',
+      '3:stop-2:Second',
+    ]);
+    expect(project.scenarios[0]?.stops.find((stop) => stop.id === 'address-stop')?.address).toBe('100 Mapleview Drive East, Barrie, ON');
+  });
+
+  it('adds a single address stop at the beginning of the route', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'First', lat: 44.38, lng: -79.69, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Second', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', {
+      id: 'address-stop',
+      name: 'Inserted address',
+      address: '100 Mapleview Drive East, Barrie, ON',
+      lat: 44.37,
+      lng: -79.67,
+      insertAtBeginning: true,
+      now,
+    });
+
+    expect(project.scenarios[0]?.stops.map((stop) => `${stop.sequence}:${stop.id}:${stop.name}`)).toEqual([
+      '1:address-stop:Inserted address',
+      '2:stop-1:First',
+      '3:stop-2:Second',
+    ]);
   });
 
   it('renames, marks roles, moves, and deletes stops while preserving order', () => {

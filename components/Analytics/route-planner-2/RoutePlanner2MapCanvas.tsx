@@ -625,6 +625,30 @@ export function buildLineGeoJson(coordinates: [number, number][], color: string 
     };
 }
 
+export function buildRoutePlanner2SegmentLineGeoJson(
+    segmentGeometries: RoutePlanner2SegmentGeometry[],
+    color: string = DEFAULT_ROUTE_PLANNER_COLOR,
+) {
+    return {
+        type: 'FeatureCollection' as const,
+        features: segmentGeometries
+            .filter((segment) => segment.coordinates.length >= 2)
+            .map((segment) => ({
+                type: 'Feature' as const,
+                properties: {
+                    id: segment.id,
+                    fromStopId: segment.fromStopId,
+                    toStopId: segment.toStopId,
+                    color,
+                },
+                geometry: {
+                    type: 'LineString' as const,
+                    coordinates: segment.coordinates,
+                },
+            })),
+    };
+}
+
 export function buildRoutePlanner2ScenarioOverlayGeoJson(scenarios: RoutePlanner2Scenario[]) {
     return {
         type: 'FeatureCollection' as const,
@@ -1245,7 +1269,12 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         () => new Map(stopLabelDetails.map((detail) => [detail.stopId, detail])),
         [stopLabelDetails],
     );
-    const lineGeoJson = useMemo(() => buildLineGeoJson(snappedCoordinates.length ? snappedCoordinates : waypoints, routeColor), [routeColor, snappedCoordinates, waypoints]);
+    const lineGeoJson = useMemo(
+        () => snappedSegmentGeometries.length > 0
+            ? buildRoutePlanner2SegmentLineGeoJson(snappedSegmentGeometries, routeColor)
+            : buildLineGeoJson(waypoints, routeColor),
+        [routeColor, snappedSegmentGeometries, waypoints],
+    );
     const backgroundRouteGeoJson = useMemo(
         () => buildRoutePlanner2ScenarioOverlayGeoJson(backgroundScenarios),
         [backgroundScenarios],

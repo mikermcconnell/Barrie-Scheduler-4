@@ -181,6 +181,44 @@ function getRoutePlanner2ScenarioDirectionLabel(scenario: RoutePlanner2Scenario)
     return `${scenario.routeFamily.directionLabel} · ${scenario.routeFamily.memberShortName}`;
 }
 
+function getGeneratedDirectionParts(name: string): { baseName: string; role: 'out' | 'back' } | null {
+    const match = name.trim().match(/^(.*?)\s+(Out|Back)$/i);
+    if (!match?.[1] || !match[2]) return null;
+
+    return {
+        baseName: match[1].trim().toLocaleLowerCase(),
+        role: match[2].toLocaleLowerCase() === 'out' ? 'out' : 'back',
+    };
+}
+
+export function isRoutePlanner2PairedDirectionScenario(
+    selectedScenario: RoutePlanner2Scenario | null | undefined,
+    candidateScenario: RoutePlanner2Scenario,
+): boolean {
+    if (!selectedScenario || selectedScenario.id === candidateScenario.id) return false;
+
+    const selectedFamily = selectedScenario.routeFamily;
+    const candidateFamily = candidateScenario.routeFamily;
+    if (
+        selectedFamily?.key
+        && candidateFamily?.key === selectedFamily.key
+        && selectedFamily.directionRole
+        && candidateFamily.directionRole
+        && selectedFamily.directionRole !== candidateFamily.directionRole
+    ) {
+        return true;
+    }
+
+    const selectedGeneratedDirection = getGeneratedDirectionParts(selectedScenario.name);
+    const candidateGeneratedDirection = getGeneratedDirectionParts(candidateScenario.name);
+    return Boolean(
+        selectedGeneratedDirection
+        && candidateGeneratedDirection
+        && selectedGeneratedDirection.baseName === candidateGeneratedDirection.baseName
+        && selectedGeneratedDirection.role !== candidateGeneratedDirection.role,
+    );
+}
+
 function buildRoutePlanner2ConceptGroups(scenarios: RoutePlanner2Scenario[]): RoutePlanner2ConceptGroup[] {
     const groups = new Map<string, RoutePlanner2ConceptGroup>();
 
@@ -877,6 +915,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [addressQuery, setAddressQuery] = useState('');
     const [addressSuggestions, setAddressSuggestions] = useState<RoutePlanner2AddressSuggestion[]>([]);
     const [selectedAddress, setSelectedAddress] = useState<RoutePlanner2AddressSuggestion | null>(null);
+    const [addressInsertAfterStopId, setAddressInsertAfterStopId] = useState('__end');
     const [addressSearchLoading, setAddressSearchLoading] = useState(false);
     const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
     const projectSummary = useMemo(() => summarizeRoutePlanner2Project(project), [project]);
@@ -886,8 +925,11 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         [project.scenarios, project.selectedScenarioId],
     );
     const backgroundScenarios = useMemo(
-        () => project.scenarios.filter((scenario) => scenario.id !== selectedScenario?.id),
-        [project.scenarios, selectedScenario?.id],
+        () => project.scenarios.filter((scenario) =>
+            scenario.id !== selectedScenario?.id
+            && !isRoutePlanner2PairedDirectionScenario(selectedScenario, scenario),
+        ),
+        [project.scenarios, selectedScenario],
     );
     const selectedScenarioSummary = projectSummary.selectedScenarioSummary;
     const selectedFeasibility = selectedScenarioSummary?.feasibility ?? null;
@@ -967,6 +1009,11 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setTransferTargetScenarioId(transferTargetOptions[0]?.id ?? '');
         setTransferInsertAfterStopId('__end');
     }, [transferTargetOptions, transferTargetScenarioId]);
+    useEffect(() => {
+        if (addressInsertAfterStopId === '__beginning' || addressInsertAfterStopId === '__end') return;
+        if (selectedScenarioStops.some((stop) => stop.id === addressInsertAfterStopId)) return;
+        setAddressInsertAfterStopId('__end');
+    }, [addressInsertAfterStopId, selectedScenarioStops]);
     useEffect(() => {
         if (selectedScenarioStops.length === 0) return;
         const sequenceSet = new Set(selectedScenarioStops.map((stop) => stop.sequence));
@@ -1373,6 +1420,23 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         }));
         setSelectedStopId(stopId);
     }
+    function addAddressStopAtSelectedPosition(coordinate: { lat: number; lng: number; name?: string }) {
+        if (!selectedScenario) return;
+        const stopNumber = selectedScenario.stops.length + 1;
+        const stopId = `stop-${Date.now()}-${stopNumber}`;
+        const insertAfterStopId = addressInsertAfterStopId === '__beginning' || addressInsertAfterStopId === '__end'
+            ? undefined
+            : addressInsertAfterStopId;
+        setProject((current) => addRoutePlanner2Stop(current, selectedScenario.id, {
+            id: stopId,
+            name: coordinate.name ?? `Stop ${stopNumber}`,
+            ...coordinate,
+            ...(addressInsertAfterStopId === '__beginning' ? { insertAtBeginning: true } : {}),
+            ...(insertAfterStopId ? { insertAfterStopId } : {}),
+        }));
+        setSelectedStopId(stopId);
+        setAddressInsertAfterStopId('__end');
+    }
     function selectAddressSuggestion(suggestion: RoutePlanner2AddressSuggestion) {
         setSelectedAddress(suggestion);
         setAddressQuery(suggestion.label);
@@ -1386,7 +1450,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         const suggestion = selectedAddress ?? addressSuggestions[0];
         if (!suggestion) return;
 
-        addStop({
+        addAddressStopAtSelectedPosition({
             lat: suggestion.lat,
             lng: suggestion.lng,
             name: suggestion.name,
@@ -1830,20 +1894,33 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setIsDrawFocusMode(false);
         setIsGtfsImportOpen(false);
     }
-    function importAddressStops(stops: RoutePlanner2GeocodedAddressStop[]) {
-        if (!selectedScenario || stops.length === 0) return;
-        const batchId = Date.now();
-        const importedStops = stops.map((stop, index) => ({
-            id: `stop-address-${batchId}-${index + 1}`,
+      function importAddressStops(stops: RoutePlanner2GeocodedAddressStop[]) {
+          if (!selectedScenario || stops.length === 0) return;
+          if (
+              selectedScenario.stops.length > 0
+              && typeof window !== 'undefined'
+              && !window.confirm('Replace the current route stops with this optimized address import?')
+          ) {
+              return;
+          }
+          const batchId = Date.now();
+          const importedStops = stops.map((stop, index) => ({
+              id: `stop-address-${batchId}-${index + 1}`,
             name: stop.name,
             address: stop.address,
-            riderCount: stop.occurrenceCount,
-            sourceRows: stop.sourceRows,
-            lat: stop.lat,
-            lng: stop.lng,
-            notes: stop.notes,
-        }));
-        setProject((current) => addRoutePlanner2Stops(current, selectedScenario.id, { stops: importedStops }));
+              riderCount: stop.occurrenceCount,
+              sourceRows: stop.sourceRows,
+              lat: stop.lat,
+              lng: stop.lng,
+              role: stop.role,
+              notes: stop.notes,
+          }));
+        setProject((current) => {
+            const baseProject = selectedScenario.stops.length > 0
+                ? clearRoutePlanner2Stops(current, selectedScenario.id)
+                : current;
+            return addRoutePlanner2Stops(baseProject, selectedScenario.id, { stops: importedStops });
+        });
         setSelectedStopId(importedStops[0]?.id ?? null);
         setIsRightRailOpen(true);
         setIsDrawFocusMode(false);
@@ -2937,6 +3014,25 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             </button>
                                         ))}
                                     </div>
+                                )}
+                                {selectedScenarioStops.length > 0 && (
+                                    <label className="mt-2 block text-[10px] font-black uppercase tracking-wide text-slate-500" htmlFor="rp2-address-insert-position">
+                                        Add stop position
+                                        <select
+                                            id="rp2-address-insert-position"
+                                            value={addressInsertAfterStopId}
+                                            onChange={(event) => setAddressInsertAfterStopId(event.target.value)}
+                                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                                        >
+                                            <option value="__beginning">Beginning of route</option>
+                                            {selectedScenarioStops.slice(0, -1).map((stop, index) => (
+                                                <option key={stop.id} value={stop.id}>
+                                                    {`Between ${stop.sequence}. ${stop.name} and ${selectedScenarioStops[index + 1]?.sequence}. ${selectedScenarioStops[index + 1]?.name}`}
+                                                </option>
+                                            ))}
+                                            <option value="__end">End of route</option>
+                                        </select>
+                                    </label>
                                 )}
                                 {addressSearchError && (
                                     <p className="mt-2 text-xs font-semibold text-amber-700">{addressSearchError}</p>

@@ -309,6 +309,8 @@ export function addRoutePlanner2Stop(
         source?: RoutePlanner2Stop['source'];
         stopCode?: string;
         notes?: string;
+        insertAtBeginning?: boolean;
+        insertAfterStopId?: string;
         now?: string;
     },
 ): RoutePlanner2Project {
@@ -347,10 +349,35 @@ export function addRoutePlanner2Stop(
             };
         }
 
-        return {
+        if (!options.insertAtBeginning && !options.insertAfterStopId) {
+            return {
+                ...scenario,
+                stops: [...scenario.stops, stop],
+                feasibility: undefined,
+            };
+        }
+
+        const sortedStops = sortRoutePlanner2Stops(scenario.stops);
+        const requestedInsertIndex = options.insertAfterStopId
+            ? sortedStops.findIndex((existingStop) => existingStop.id === options.insertAfterStopId)
+            : -1;
+        const insertIndex = options.insertAtBeginning
+            ? 0
+            : requestedInsertIndex >= 0 ? requestedInsertIndex + 1 : sortedStops.length;
+        const stops = resequenceStops([
+            ...sortedStops.slice(0, insertIndex),
+            stop,
+            ...sortedStops.slice(insertIndex),
+        ]);
+        const nextScenario: RoutePlanner2Scenario = {
             ...scenario,
-            stops: [...scenario.stops, stop],
+            stops,
             feasibility: undefined,
+        };
+
+        return {
+            ...nextScenario,
+            alignment: resequenceScenarioAlignment(nextScenario, scenario.alignment),
         };
     }, now);
 }
@@ -364,12 +391,13 @@ export function addRoutePlanner2Stops(
             name?: string;
             address?: string;
             riderCount?: number;
-            sourceRows?: number[];
-            lat: number;
-            lng: number;
-            notes?: string;
-            source?: RoutePlanner2Stop['source'];
-            stopCode?: string;
+              sourceRows?: number[];
+              lat: number;
+              lng: number;
+              role?: RoutePlanner2StopRole;
+              notes?: string;
+              source?: RoutePlanner2Stop['source'];
+              stopCode?: string;
         }>;
         now?: string;
     },
@@ -387,11 +415,11 @@ export function addRoutePlanner2Stops(
             address: stop.address,
             riderCount: stop.riderCount,
             sourceRows: stop.sourceRows,
-            lat: stop.lat,
-            lng: stop.lng,
-            sequence: existingStops.length + index + 1,
-            role: 'regular',
-            source: stop.source ?? 'custom',
+              lat: stop.lat,
+              lng: stop.lng,
+              sequence: existingStops.length + index + 1,
+            role: stop.role ?? 'regular',
+              source: stop.source ?? 'custom',
             stopCode: stop.stopCode,
             notes: stop.notes,
         }));
@@ -1165,7 +1193,7 @@ export function reassignRoutePlanner2StopRange(
         && normalizedInsertIndex === 0;
     const transferExtendsEndTerminal = !targetWasEmpty
         && targetScenario.routeShape === 'one-way'
-        && normalizedInsertIndex >= targetStops.length;
+        && (normalizedInsertIndex >= targetStops.length || targetStopBeforeInsertion?.role === 'end-terminal');
     const transferredStops = orderedStopsToTransfer.map((stop, index): RoutePlanner2Stop => ({
         ...stop,
         id: createUniqueTransferredStopId(stop.id, now, index, targetUsedStopIds),
@@ -1251,7 +1279,7 @@ export function reassignRoutePlanner2StopRange(
             ]];
         }));
 
-    const targetScenarioWithStops = normalizeOneWayEndpointTerminalRoles({
+    const targetScenarioWithStopsBeforeRoleNormalization: RoutePlanner2Scenario = {
         ...targetScenario,
         stops: resequenceStops([
             ...targetStops.slice(0, normalizedInsertIndex).map((stop) =>
@@ -1276,7 +1304,10 @@ export function reassignRoutePlanner2StopRange(
                 ...transferredRuntimeOverrides,
             }
             : targetScenario.runtimeOverrides,
-    });
+    };
+    const targetScenarioWithStops = transferExtendsEndTerminal && Boolean(targetStopAfterInsertion)
+        ? targetScenarioWithStopsBeforeRoleNormalization
+        : normalizeOneWayEndpointTerminalRoles(targetScenarioWithStopsBeforeRoleNormalization);
     const updatedTargetScenario = cleanRuntimeForCurrentSegments({
         ...targetScenarioWithStops,
         alignment: resequenceScenarioAlignment(targetScenarioWithStops, [

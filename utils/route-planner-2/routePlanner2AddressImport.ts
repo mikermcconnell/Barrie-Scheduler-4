@@ -6,6 +6,7 @@ import {
     type RoutePlanner2AddressSearchDiagnostic,
     type RoutePlanner2AddressSuggestion,
 } from './routePlanner2AddressSearch';
+import type { RoutePlanner2StopRole } from './routePlanner2Types';
 
 const CANADIAN_POSTAL_CODE = /\b([A-Z]\d[A-Z])[\s-]?(\d[A-Z]\d)\b/i;
 const CITY_PROVINCE_POSTAL = /\b([A-Z][A-Za-z .'-]+),?\s+(ON|ONTARIO)\s+([A-Z]\d[A-Z])[\s-]?(\d[A-Z]\d)\b/i;
@@ -43,6 +44,7 @@ export interface RoutePlanner2GeocodedAddressStop {
     occurrenceCount: number;
     notes: string;
     sourceRows: number[];
+    role?: RoutePlanner2StopRole;
 }
 
 export interface RoutePlanner2UnresolvedAddress {
