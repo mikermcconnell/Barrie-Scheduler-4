@@ -12,6 +12,7 @@ import {
     searchRoutePlanner2Addresses,
     type RoutePlanner2AddressSuggestion,
 } from '../../../utils/route-planner-2/routePlanner2AddressSearch';
+import { ROUTE_PLANNER_2_POPULAR_BARRIE_PLACES } from '../../../utils/route-planner-2/routePlanner2PopularPlaces';
 import {
     optimizeRoutePlanner2StopsApproximately,
     optimizeRoutePlanner2StopsByRoadTime,
@@ -47,6 +48,13 @@ interface TerminalSelection {
 }
 
 const LARGE_OPTIMIZATION_WARNING_STOP_COUNT = 16;
+const QUICK_TERMINAL_PLACE_IDS = [
+    'popular-place-sadlon-arena',
+    'popular-place-peggy-hill-team-community-centre',
+    'popular-place-barrie-community-sports-complex',
+];
+const QUICK_TERMINAL_PLACES = ROUTE_PLANNER_2_POPULAR_BARRIE_PLACES
+    .filter((place) => QUICK_TERMINAL_PLACE_IDS.includes(place.id));
 
 export function RoutePlanner2AddressImportModal({
     open,
@@ -341,6 +349,25 @@ export function RoutePlanner2AddressImportModal({
                     </button>
                 </div>
                 <p className="mt-2 text-xs font-semibold text-slate-500">{helper}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                    {QUICK_TERMINAL_PLACES.map((place) => {
+                        const selected = terminal.selected?.id === place.id;
+                        return (
+                            <button
+                                key={`${key}-${place.id}`}
+                                type="button"
+                                onClick={() => selectTerminal(key, place)}
+                                className={`rounded-full border px-3 py-1.5 text-xs font-black transition ${
+                                    selected
+                                        ? 'border-cyan-400 bg-cyan-100 text-cyan-950'
+                                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-900'
+                                }`}
+                            >
+                                {place.name}
+                            </button>
+                        );
+                    })}
+                </div>
                 {terminal.selected && (
                     <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-900">
                         Selected: {terminal.selected.label}
