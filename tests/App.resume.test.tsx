@@ -73,19 +73,22 @@ vi.mock('../components/layout/Header', () => ({
 }));
 
 vi.mock('../utils/lazyWithRetry', () => ({
-  lazyWithRetry: (loader: () => Promise<{ default: React.ComponentType }>) => React.lazy(loader),
-}));
-
-vi.mock('../components/workspaces/OnDemandWorkspace', () => ({
-  OnDemandWorkspace: (): React.ReactElement => React.createElement('div', null, 'Mock OnDemand Workspace'),
-}));
-
-vi.mock('../components/workspaces/FixedRouteWorkspace', () => ({
-  FixedRouteWorkspace: (): React.ReactElement => React.createElement('div', null, 'Mock Fixed Route Workspace'),
-}));
-
-vi.mock('../components/workspaces/OperationsWorkspace', () => ({
-  OperationsWorkspace: (): React.ReactElement => React.createElement('div', null, 'Mock Operations Workspace'),
+  lazyWithRetry: (_loader: () => Promise<{ default: React.ComponentType }>, label: string) => {
+    if (label === 'planning-data-workspace') {
+      return ({ initialView }: { initialView?: string }): React.ReactElement =>
+        React.createElement('div', null, `Mock Planning Data Workspace: ${initialView ?? 'none'}`);
+    }
+    if (label === 'fixed-workspace') {
+      return (): React.ReactElement => React.createElement('div', null, 'Mock Fixed Route Workspace');
+    }
+    if (label === 'ondemand-workspace') {
+      return (): React.ReactElement => React.createElement('div', null, 'Mock OnDemand Workspace');
+    }
+    if (label === 'operations-workspace') {
+      return (): React.ReactElement => React.createElement('div', null, 'Mock Operations Workspace');
+    }
+    return (): null => null;
+  },
 }));
 
 import App from '../App';
@@ -136,6 +139,30 @@ describe('App resume entry', () => {
     });
 
     expect(window.location.hash).toBe('#fixed/drafts');
+  });
+
+  it('reopens Route Planner directly from a planning resume hash', () => {
+    localStorage.setItem('scheduler4:fixed-route-resume:user-1', JSON.stringify({
+      hash: '#planning/route-planner-2',
+      label: 'Planning Data · Route Planner',
+      updatedAt: '2026-04-10T12:00:00.000Z',
+    }));
+
+    flushSync(() => {
+      root.render(<App />);
+    });
+
+    const resumeButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Resume'),
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      resumeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    expect(window.location.hash).toBe('#planning/route-planner-2');
+    expect(container.textContent).toContain('Mock Planning Data Workspace: route-planner-2');
   });
 
   it('does not show another user resume card when signed out', () => {

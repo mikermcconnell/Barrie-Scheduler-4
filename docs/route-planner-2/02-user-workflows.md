@@ -38,12 +38,15 @@ The GTFS import drawer caches parsed route patterns in the browser for seven day
 
 A planner can import Excel/CSV address lists as custom stops.
 
-1. Upload the address file.
-2. The importer extracts street, city, province, and postal code rows, merges duplicate addresses, and geocodes each unique address.
-3. Mapped addresses are previewed in geographic order before being added to the route.
-4. Addresses that cannot be matched confidently stay in **Needs manual review**.
-5. Each review item shows safe diagnostics: query used, geocoder source, response status, result count, top Mapbox label, and why the top result was rejected.
-6. The planner edits the address and retries the match before adding it.
+1. Choose fixed bus start and bus end locations.
+2. Upload the address file.
+3. The importer extracts street, city, province, and postal code rows, merges duplicate addresses, and geocodes each unique address.
+4. Mapped addresses are previewed in fixed-endpoint road-time order before being added to the route.
+5. If exact road-time ordering is unavailable, the import stops and asks the planner to fix the setup rather than silently using map-distance fallback.
+6. Large stop sets that require heuristic ordering, or any order that appears to backtrack across the route corridor, are clearly flagged for planner review before adding.
+7. Addresses that cannot be matched confidently stay in **Needs manual review**.
+8. Each review item shows safe diagnostics: query used, geocoder source, response status, result count, top Mapbox label, and why the top result was rejected.
+9. The planner edits the address and retries the match before adding it.
 
 Diagnostics must never expose Mapbox token values.
 

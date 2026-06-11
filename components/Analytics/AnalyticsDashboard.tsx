@@ -19,6 +19,10 @@ import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import type { FeatureKey } from '../../utils/features';
 import { isFeatureUnderConstruction } from '../../utils/features';
+import {
+    buildAnalyticsWorkspaceHash,
+    type AnalyticsWorkspaceView,
+} from '../../utils/workspaces/analyticsWorkspaceRouting';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
@@ -148,25 +152,11 @@ const AnalyticsCard: React.FC<AnalyticsCardProps> = ({ color, icon, title, descr
 
 interface AnalyticsDashboardProps {
     onClose: () => void;
-    initialView?: AnalyticsView;
+    initialView?: AnalyticsWorkspaceView;
+    routePrefix?: string;
 }
 
-type AnalyticsView =
-    | 'dashboard'
-    | 'import'
-    | 'transit-data'
-    | 'od-import'
-    | 'od-fix-coords'
-    | 'od-workspace'
-    | 'headway-map'
-    | 'corridor-speed'
-    | 'student-pass'
-    | 'fleet-plan-import'
-    | 'fleet-plan-workspace'
-    | 'residential-growth'
-    | 'route-planner-2'
-    | 'network-connections'
-    | 'shuttle-planner';
+type AnalyticsView = AnalyticsWorkspaceView;
 
 const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     import: 'analyticsTransitApp',
@@ -207,7 +197,7 @@ const AnalyticsPanelLoading: React.FC<{ label?: string }> = ({ label = 'Loading 
     </div>
 );
 
-export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose, initialView = 'dashboard' }) => {
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose, initialView = 'dashboard', routePrefix }) => {
     const { team } = useTeam();
     const { user } = useAuth();
     const toast = useToast();
@@ -448,6 +438,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
 
         setView(initialView);
     }, [accessLoading, canAccessAnalyticsView, handleFleetPlanClick, handleTransitAppClick, initialView, loading]);
+
+    useEffect(() => {
+        if (!routePrefix || loading || accessLoading || !initialViewHandledRef.current) return;
+
+        const nextHash = buildAnalyticsWorkspaceHash(routePrefix, view);
+        if (window.location.hash !== nextHash) {
+            window.location.hash = nextHash;
+        }
+    }, [accessLoading, loading, routePrefix, view]);
 
     // No team guard: show direct team setup instead of a dead-end message.
     if (!team) {

@@ -14,7 +14,6 @@ import {
 } from '../../../utils/route-planner-2/routePlanner2AddressSearch';
 import { ROUTE_PLANNER_2_POPULAR_BARRIE_PLACES } from '../../../utils/route-planner-2/routePlanner2PopularPlaces';
 import {
-    optimizeRoutePlanner2StopsApproximately,
     optimizeRoutePlanner2StopsByRoadTime,
     type RoutePlanner2RoadTimeOptimizationResult,
 } from '../../../utils/route-planner-2/routePlanner2StopOptimization';
@@ -34,7 +33,7 @@ interface ImportPreview {
     mappedStops: RoutePlanner2GeocodedAddressStop[];
     unresolved: RoutePlanner2UnresolvedAddress[];
     optimization?: RoutePlanner2RoadTimeOptimizationResult<RoutePlanner2GeocodedAddressStop>;
-    optimizationWarning?: string;
+    optimizationWarnings?: string[];
 }
 
 type TerminalKey = 'start' | 'end';
@@ -155,23 +154,8 @@ export function RoutePlanner2AddressImportModal({
         mappedStops: RoutePlanner2GeocodedAddressStop[],
     ): Promise<{
         optimization: RoutePlanner2RoadTimeOptimizationResult<RoutePlanner2GeocodedAddressStop>;
-        fallbackWarning?: string;
     }> {
-        try {
-            return { optimization: await optimizeStopsBetweenSelectedTerminals(mappedStops) };
-        } catch {
-            if (!terminals.start.selected || !terminals.end.selected) {
-                throw new Error('Choose both the bus start and bus end before optimizing the address stops.');
-            }
-            return {
-                optimization: optimizeRoutePlanner2StopsApproximately(
-                    buildTerminalStop('start', terminals.start.selected),
-                    mappedStops.filter((stop) => stop.role !== 'start-terminal' && stop.role !== 'end-terminal'),
-                    buildTerminalStop('end', terminals.end.selected),
-                ),
-                fallbackWarning: 'Road travel times were not available, so this preview uses an approximate map-distance order. You can still add it and adjust the stop order manually.',
-            };
-        }
+        return { optimization: await optimizeStopsBetweenSelectedTerminals(mappedStops) };
     }
 
     async function handleFile(file: File) {
@@ -201,11 +185,13 @@ export function RoutePlanner2AddressImportModal({
             const geocoded = await geocodeRoutePlanner2ParsedAddresses(parsed.addresses, {
                 onProgress: ({ completed, total }) => setGeocodeProgress({ completed, total }),
             });
-            const { optimization, fallbackWarning } = await optimizeStopsForPreview(geocoded.mappedStops);
-            const optimizationWarning = fallbackWarning
-                ?? (geocoded.mappedStops.length >= LARGE_OPTIMIZATION_WARNING_STOP_COUNT
-                    ? `This import required ${optimization.pairCount} Mapbox road-time checks, so ordering may take longer for similar files.`
-                    : undefined);
+            const { optimization } = await optimizeStopsForPreview(geocoded.mappedStops);
+            const optimizationWarnings = [
+                ...(optimization.warnings ?? []),
+                ...(geocoded.mappedStops.length >= LARGE_OPTIMIZATION_WARNING_STOP_COUNT
+                    ? [`This import required ${optimization.pairCount} Mapbox road-time checks, so ordering may take longer for similar files.`]
+                    : []),
+            ];
             setReviewInputs(Object.fromEntries(
                 geocoded.unresolved.map((item) => [item.candidate.id, item.candidate.address]),
             ));
@@ -217,7 +203,7 @@ export function RoutePlanner2AddressImportModal({
                 mappedStops: optimization.orderedStops,
                 unresolved: geocoded.unresolved,
                 optimization,
-                optimizationWarning,
+                optimizationWarnings,
             });
         } catch (error) {
             setError(error instanceof Error ? error.message : 'Address file could not be imported.');
@@ -284,17 +270,20 @@ export function RoutePlanner2AddressImportModal({
             const intermediateStops = preview.mappedStops.filter((stop) => (
                 stop.role !== 'start-terminal' && stop.role !== 'end-terminal'
             ));
-            const { optimization, fallbackWarning } = await optimizeStopsForPreview([...intermediateStops, fixedStop]);
+            const { optimization } = await optimizeStopsForPreview([...intermediateStops, fixedStop]);
+            const optimizationWarnings = [
+                ...(optimization.warnings ?? []),
+                ...(optimization.orderedStops.length - 2 >= LARGE_OPTIMIZATION_WARNING_STOP_COUNT
+                    ? [`This import required ${optimization.pairCount} Mapbox road-time checks, so ordering may take longer for similar files.`]
+                    : []),
+            ];
             setPreview((current) => current
                 ? {
                     ...current,
                     mappedStops: optimization.orderedStops,
                     unresolved: current.unresolved.filter((unresolved) => unresolved.candidate.id !== item.candidate.id),
                     optimization,
-                    optimizationWarning: fallbackWarning
-                        ?? (optimization.orderedStops.length - 2 >= LARGE_OPTIMIZATION_WARNING_STOP_COUNT
-                        ? `This import required ${optimization.pairCount} Mapbox road-time checks, so ordering may take longer for similar files.`
-                            : current.optimizationWarning),
+                    optimizationWarnings: optimizationWarnings.length > 0 ? optimizationWarnings : current.optimizationWarnings,
                 }
                 : current);
             setEditingReviewId(null);
@@ -499,7 +488,11 @@ export function RoutePlanner2AddressImportModal({
                             {preview.mappedStops.length > 0 && (
                                 <div className="rounded-2xl border border-emerald-200 bg-white p-4">
                                     <h3 className="flex items-center gap-2 text-sm font-black text-emerald-900">
-                                        <MapPin size={16} /> Stops ready to add in optimized road-time order
+                                        <MapPin size={16} /> {
+                                            preview.optimization?.method === 'road-time-heuristic'
+                                                ? 'Heuristic stop order — planner review required'
+                                                : 'Stops ready to add in exact road-time order'
+                                        }
                                     </h3>
                                     {preview.optimization && (
                                         <p className="mt-2 text-xs font-bold text-emerald-800">
@@ -515,9 +508,11 @@ export function RoutePlanner2AddressImportModal({
                                                     : ''}
                                         </p>
                                     )}
-                                    {preview.optimizationWarning && (
-                                        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
-                                            {preview.optimizationWarning}
+                                    {preview.optimizationWarnings && preview.optimizationWarnings.length > 0 && (
+                                        <div className="mt-3 space-y-1 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+                                            {preview.optimizationWarnings.map((warning) => (
+                                                <div key={warning}>{warning}</div>
+                                            ))}
                                         </div>
                                     )}
                                     <div className="mt-3 max-h-60 space-y-2 overflow-y-auto pr-1">

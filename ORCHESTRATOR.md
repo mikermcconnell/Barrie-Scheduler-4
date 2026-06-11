@@ -34,7 +34,7 @@ Top-level app shells in `App.tsx`:
 - Operations
 - Planning Data
 
-The app uses hash-based navigation rather than a router library. The top-level shell lives in `App.tsx`, with `index.tsx` as the mount point.
+The app uses hash-based navigation rather than a router library. The top-level shell lives in `App.tsx`, with `index.tsx` as the mount point. Planning Data nested workspaces use `utils/workspaces/analyticsWorkspaceRouting.ts` for deep links such as `#planning/route-planner-2` and, when opened inside Scheduled Transit, `#fixed/analytics/route-planner-2`.
 
 Workspace visibility is controlled by `utils/workspaceAccess.ts` and `hooks/useWorkspaceAccess.ts`. Existing global feature flags still control build-wide availability; workspace access profiles (`none`, `production`, `planner`, `external-planner`, `transit-app-only`, `admin`, `internal`) control what each team member sees, with optional `workspaceOverrides` for exact allow/block changes. Signed-in users with no team member record or `none` access are held in a blocking Team Management setup flow; new self-created teams default the owner and future members to `none` until access is explicitly granted. `App.tsx` exposes Planning Data as a top-level view when the user has at least one analytics workspace, so Transit App-only external users can enter the app without Scheduled Transit access.
 

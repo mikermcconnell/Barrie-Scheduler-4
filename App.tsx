@@ -16,6 +16,7 @@ import { clearLegacyFixedRouteResumeState, loadFixedRouteResumeState } from './u
 import { useWorkspaceAccess } from './hooks/useWorkspaceAccess';
 import { getPendingInviteCode } from './utils/inviteLinks';
 import { ANALYTICS_WORKSPACE_FEATURES } from './utils/workspaceAccess';
+import { parseAnalyticsWorkspaceViewFromHash } from './utils/workspaces/analyticsWorkspaceRouting';
 
 const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
@@ -344,7 +345,11 @@ const AppContent: React.FC = () => {
           )}
           {currentView === 'planning' && isViewAvailable('planning') && (
             <ErrorBoundary fallbackTitle="Workspace Error">
-              <AnalyticsDashboard onClose={() => setCurrentView('home')} />
+              <AnalyticsDashboard
+                initialView={parseAnalyticsWorkspaceViewFromHash(window.location.hash, 'planning')}
+                routePrefix="planning"
+                onClose={() => setCurrentView('home')}
+              />
             </ErrorBoundary>
           )}
         </Suspense>

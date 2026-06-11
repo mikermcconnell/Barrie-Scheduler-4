@@ -36,6 +36,12 @@ import {
     loadFixedRouteResumeState,
     saveFixedRouteResumeState,
 } from '../../utils/workspaces/fixedRouteResumeState';
+import {
+    buildAnalyticsWorkspaceHash,
+    getAnalyticsWorkspaceViewLabel,
+    parseAnalyticsWorkspaceViewFromHash,
+    type AnalyticsWorkspaceView,
+} from '../../utils/workspaces/analyticsWorkspaceRouting';
 import { consumeNetworkConnectionEditorHandoff } from '../../utils/network-connections/networkConnectionHandoff';
 import { isFeatureEnabled } from '../../utils/features';
 import { useAuth } from '../contexts/AuthContext';
@@ -78,7 +84,7 @@ const PerformanceImport = lazyWithRetry(
 );
 
 type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import';
-type AnalyticsLaunchView = 'dashboard' | 'transit-data' | 'fleet-plan-workspace' | 'student-pass';
+type AnalyticsLaunchView = AnalyticsWorkspaceView;
 
 const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<typeof isFeatureEnabled>[0]>> = {
     editor: 'fixedEditor',
@@ -163,7 +169,9 @@ export const FixedRouteWorkspace: React.FC = () => {
     const toast = useToast();
     const [viewMode, setViewModeState] = useState<FixedRouteViewMode>(parseHashViewMode);
     const [showGTFSImport, setShowGTFSImport] = useState(false);
-    const [analyticsInitialView, setAnalyticsInitialView] = useState<AnalyticsLaunchView>('dashboard');
+    const [analyticsInitialView, setAnalyticsInitialView] = useState<AnalyticsLaunchView>(() =>
+        parseAnalyticsWorkspaceViewFromHash(window.location.hash, 'fixed/analytics')
+    );
 
     // Wrap navigation to sync URL hash
     const setViewMode = useCallback((mode: FixedRouteViewMode) => {
@@ -236,7 +244,9 @@ export const FixedRouteWorkspace: React.FC = () => {
                 case 'reports':
                     return 'Scheduled Transit · Timetable Publisher';
                 case 'analytics':
-                    return 'Scheduled Transit · Planning Data';
+                    return `Scheduled Transit · ${getAnalyticsWorkspaceViewLabel(
+                        parseAnalyticsWorkspaceViewFromHash(window.location.hash, 'fixed/analytics')
+                    )}`;
                 case 'performance-import':
                     return 'Scheduled Transit · Re-import STREETS Data';
                 default:
@@ -507,6 +517,11 @@ export const FixedRouteWorkspace: React.FC = () => {
 
     const handleOpenPlanning = (initialView: AnalyticsLaunchView = 'dashboard') => {
         setAnalyticsInitialView(initialView);
+        if (initialView !== 'dashboard') {
+            setViewModeState('analytics');
+            window.location.hash = buildAnalyticsWorkspaceHash('fixed/analytics', initialView);
+            return;
+        }
         setViewMode('analytics');
     };
 
@@ -1040,6 +1055,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                             <AnalyticsDashboard
                                 key={analyticsInitialView}
                                 initialView={analyticsInitialView}
+                                routePrefix="fixed/analytics"
                                 onClose={() => setViewMode('dashboard')}
                             />
                         </Suspense>
