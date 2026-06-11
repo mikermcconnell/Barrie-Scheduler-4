@@ -35,6 +35,7 @@ import {
 } from '../../utils/route-planner-2/routePlanner2ProjectController';
 import { createRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2ProjectFactory';
 import { exportRoutePlanner2OperatorDirectionsPdf } from '../../utils/route-planner-2/routePlanner2OperatorExport';
+import type { RoutePlanner2OperatorSegmentMapPage } from '../../utils/route-planner-2/routePlanner2OperatorExport';
 import { buildRoutePlanner2MapBookSections, exportRoutePlanner2MapPdf } from '../../utils/route-planner-2/routePlanner2MapExport';
 import type { RoutePlanner2MapBookPage } from '../../utils/route-planner-2/routePlanner2MapExport';
 import { loadRoutePlanner2GtfsImportPatterns } from '../../utils/route-planner-2/routePlanner2GtfsClient';
@@ -84,6 +85,7 @@ import {
     type RoutePlanner2AddressSuggestion,
 } from '../../utils/route-planner-2/routePlanner2AddressSearch';
 import {
+    buildRoutePlanner2StopSegmentPaths,
     buildRoutePlanner2StopSegmentPairs,
     buildRoutePlanner2StopVisitSequence,
     getRoutePlanner2LineWaypointsForSegment,
@@ -1954,9 +1956,42 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf) return;
         setIsExportingOperatorPdf(true);
         try {
+            const mapImage = await mapCanvasRef.current?.captureMapImage({
+                padding: 96,
+                showStopLabels: false,
+            });
+            const segmentMapPages: RoutePlanner2OperatorSegmentMapPage[] = [];
+            const segmentPaths = buildRoutePlanner2StopSegmentPaths(selectedScenario);
+            const segmentPairs = buildRoutePlanner2StopSegmentPairs(selectedScenario);
+
+            for (const [index, segmentPath] of segmentPaths.entries()) {
+                const segmentPair = segmentPairs[index];
+                const fromStop = segmentPair?.fromStop;
+                const toStop = segmentPair?.toStop;
+                if (!fromStop || !toStop) continue;
+
+                const segmentMapImage = await mapCanvasRef.current?.captureMapImage({
+                    fitCoordinates: segmentPath.coordinates,
+                    padding: 56,
+                    showStopLabels: true,
+                });
+                if (!segmentMapImage) {
+                    throw new Error('A route segment map could not be captured. Please wait for the map to finish loading and try again.');
+                }
+
+                segmentMapPages.push({
+                    segmentNumber: index + 1,
+                    title: `Segment ${index + 1}: ${fromStop.sequence}. ${fromStop.name} to ${toStop.sequence}. ${toStop.name}`,
+                    subtitle: `Stop ${fromStop.sequence} to Stop ${toStop.sequence} - operator travel path`,
+                    mapImage: segmentMapImage,
+                });
+            }
+
             await exportRoutePlanner2OperatorDirectionsPdf(selectedScenario, {
                 projectName: project.name,
                 feasibility: selectedFeasibility,
+                mapImage,
+                segmentMapPages,
             });
         } finally {
             setIsExportingOperatorPdf(false);

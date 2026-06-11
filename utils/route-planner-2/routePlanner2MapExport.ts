@@ -94,6 +94,15 @@ export interface RoutePlanner2MapExportSummaryItem {
     value: string;
 }
 
+export interface RoutePlanner2MapPdfPageRenderOptions {
+    title: string;
+    generatedAt: string;
+    mapImage: RoutePlanner2MapExportImage;
+    subtitle?: string;
+    summaryItems?: RoutePlanner2MapExportSummaryItem[];
+    footerText?: string;
+}
+
 interface ExportOptions {
     projectName: string;
     routeLabel?: string;
@@ -222,6 +231,64 @@ function drawHeader(
     }
 
     drawLegend(doc, box.x, box.y + (summaryItems.length > 0 ? 39.5 : 24));
+}
+
+export function drawRoutePlanner2MapPdfPage(
+    doc: JsPdfInstance,
+    options: RoutePlanner2MapPdfPageRenderOptions,
+): void {
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 10;
+    const headerHeight = 18;
+    const summaryHeight = options.summaryItems?.length ? 15 : 0;
+    const legendHeight = 8;
+    const footerHeight = 8;
+    const mapY = margin + headerHeight + summaryHeight + legendHeight + 2;
+    const headerBox = {
+        x: margin,
+        y: 7,
+        width: pageWidth - (margin * 2),
+        height: mapY - 10,
+    };
+    const imageBox = {
+        x: margin,
+        y: mapY,
+        width: pageWidth - (margin * 2),
+        height: pageHeight - mapY - footerHeight - 3,
+    };
+    const pageImageAspect = options.mapImage.width > 0 && options.mapImage.height > 0
+        ? options.mapImage.width / options.mapImage.height
+        : 16 / 9;
+    const fittedHeight = Math.min(imageBox.height, imageBox.width / pageImageAspect);
+    const fittedWidth = Math.min(imageBox.width, fittedHeight * pageImageAspect);
+    const imageX = imageBox.x + ((imageBox.width - fittedWidth) / 2);
+    const imageY = imageBox.y + ((imageBox.height - fittedHeight) / 2);
+
+    doc.setFillColor(31, 85, 139);
+    doc.rect(0, 0, 3.5, pageHeight, 'F');
+
+    drawHeader(doc, options.title, options.generatedAt, options.summaryItems?.slice(0, 5) ?? [], headerBox);
+
+    if (options.subtitle) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.setTextColor(71, 85, 105);
+        drawMiddleText(doc, options.subtitle, pageWidth - margin, mapY - 4.5, { align: 'right' });
+    }
+
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.6);
+    doc.roundedRect(imageX, imageY, fittedWidth, fittedHeight, 2.4, 2.4, 'FD');
+    doc.addImage(options.mapImage.dataUrl, 'PNG', imageX, imageY, fittedWidth, fittedHeight);
+
+    if (options.footerText) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(80, 80, 80);
+        doc.text(options.footerText, margin, pageHeight - 4.5);
+    }
 }
 
 function getPrimaryAddressLine(stop: RoutePlanner2Stop): string {
@@ -364,29 +431,6 @@ export async function exportRoutePlanner2MapPdf(
     const routeLabel = options.routeLabel?.trim() || scenario.name;
     const title = `${options.projectName} - ${routeLabel}`;
     const generatedAt = formatDate(options.now ?? new Date());
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 10;
-    const headerHeight = 18;
-    const summaryHeight = options.summaryItems?.length ? 15 : 0;
-    const legendHeight = 8;
-    const footerHeight = 8;
-    const mapY = margin + headerHeight + summaryHeight + legendHeight + 2;
-    const headerBox = {
-        x: margin,
-        y: 7,
-        width: pageWidth - (margin * 2),
-        height: mapY - 10,
-    };
-    const imageBox = {
-        x: margin,
-        y: mapY,
-        width: pageWidth - (margin * 2),
-        height: pageHeight - mapY - footerHeight - 3,
-    };
-    const imageAspect = options.mapImage.width > 0 && options.mapImage.height > 0
-        ? options.mapImage.width / options.mapImage.height
-        : 16 / 9;
     const pages: RoutePlanner2MapBookPage[] = [
         {
             title: `${title} · Overview`,
@@ -408,43 +452,17 @@ export async function exportRoutePlanner2MapPdf(
     pages.forEach((page, index) => {
         if (index > 0) doc.addPage();
 
-        const pageImageAspect = page.mapImage.width > 0 && page.mapImage.height > 0
-            ? page.mapImage.width / page.mapImage.height
-            : imageAspect;
-        const fittedHeight = Math.min(imageBox.height, imageBox.width / pageImageAspect);
-        const fittedWidth = Math.min(imageBox.width, fittedHeight * pageImageAspect);
-        const imageX = imageBox.x + ((imageBox.width - fittedWidth) / 2);
-        const imageY = imageBox.y + ((imageBox.height - fittedHeight) / 2);
         const pageTitle = index === 0 ? title : `${title} · ${page.title}`;
-
-        doc.setFillColor(31, 85, 139);
-        doc.rect(0, 0, 3.5, pageHeight, 'F');
-
-        drawHeader(doc, pageTitle, generatedAt, index === 0 ? summaryItems : [], headerBox);
-
-        if (page.subtitle) {
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(7);
-            doc.setTextColor(71, 85, 105);
-            drawMiddleText(doc, page.subtitle, pageWidth - margin, mapY - 4.5, { align: 'right' });
-        }
-
-        doc.setFillColor(255, 255, 255);
-        doc.setDrawColor(203, 213, 225);
-        doc.setLineWidth(0.6);
-        doc.roundedRect(imageX, imageY, fittedWidth, fittedHeight, 2.4, 2.4, 'FD');
-        doc.addImage(page.mapImage.dataUrl, 'PNG', imageX, imageY, fittedWidth, fittedHeight);
-
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7);
-        doc.setTextColor(80, 80, 80);
-        doc.text(
-            index === 0
+        drawRoutePlanner2MapPdfPage(doc, {
+            title: pageTitle,
+            generatedAt,
+            subtitle: page.subtitle,
+            mapImage: page.mapImage,
+            summaryItems: index === 0 ? summaryItems : [],
+            footerText: index === 0
                 ? 'Planning map - verify route and stop placement before issuing.'
                 : `Detail page ${index} of ${pages.length - 1} - verify turns, road labels, and stop placement.`,
-            margin,
-            pageHeight - 4.5,
-        );
+        });
     });
 
     doc.save(`${sanitizeFilePart(title)}-map.pdf`);

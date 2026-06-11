@@ -153,9 +153,12 @@ When a route has at least two stops, the planner can export an operator-facing
 turn-by-turn PDF. The export should be clean enough for field review and should
 include:
 - route name, project name, generated date, and route type
-- stop sequence
+- first-page operator route card with a route-map overview when the map can be captured
+- Map PDF-style overview and focused stop-to-stop segment maps placed before each matching direction segment
+- stop checklist with stop number, stop name, role, next stop, and runtime to the next stop
 - runtime, cycle, recovery, buses, and confidence
-- segment-by-segment directions
+- segment-by-segment directions grouped by route phase such as outbound, loop return, or return to start
+- bold operator action labels such as LEFT, RIGHT, STRAIGHT, TURNAROUND, ARRIVE, and CONTINUE
 - a visible planning note reminding staff to confirm stop placement, safe turns,
   road restrictions, construction, and supervisor approval before issuing
 

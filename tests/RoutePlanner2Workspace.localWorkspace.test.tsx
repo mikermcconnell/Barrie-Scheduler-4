@@ -267,10 +267,18 @@ function buildFamilySwitchProject(): RoutePlanner2Project {
   };
 }
 
-async function waitForExportCall(timeoutMs = 1200) {
+async function waitForMapExportCall(timeoutMs = 1200) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (vi.mocked(exportRoutePlanner2MapPdf).mock.calls.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForOperatorExportCall(timeoutMs = 1200) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (vi.mocked(exportRoutePlanner2OperatorDirectionsPdf).mock.calls.length > 0) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
@@ -406,11 +414,30 @@ describe('RoutePlanner2Workspace local workspace', () => {
     flushSync(() => {
       click(findButton(view, 'Operator PDF'));
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitForOperatorExportCall();
 
     expect(exportRoutePlanner2OperatorDirectionsPdf).toHaveBeenCalledWith(
       expect.objectContaining({ stops: expect.arrayContaining([expect.objectContaining({ name: 'Stop 1' })]) }),
-      expect.objectContaining({ projectName: expect.any(String) }),
+      expect.objectContaining({
+        projectName: expect.any(String),
+        mapImage: expect.objectContaining({
+          dataUrl: 'data:image/png;base64,mock-route-map',
+          width: 1200,
+          height: 800,
+        }),
+        segmentMapPages: [
+          expect.objectContaining({
+            segmentNumber: 1,
+            title: expect.stringContaining('Segment 1: 1. Stop 1 to 2.'),
+            subtitle: 'Stop 1 to Stop 2 - operator travel path',
+            mapImage: expect.objectContaining({
+              dataUrl: 'data:image/png;base64,mock-route-map',
+              width: 1200,
+              height: 800,
+            }),
+          }),
+        ],
+      }),
     );
   });
 
@@ -429,7 +456,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     flushSync(() => {
       click(mapPdfButton);
     });
-    await waitForExportCall();
+    await waitForMapExportCall();
 
     expect(exportRoutePlanner2MapPdf).toHaveBeenCalledWith(
       expect.objectContaining({ stops: expect.arrayContaining([expect.objectContaining({ name: 'Stop 1' })]) }),

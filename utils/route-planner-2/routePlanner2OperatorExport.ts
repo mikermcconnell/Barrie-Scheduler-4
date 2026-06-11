@@ -1,5 +1,7 @@
 import { buildRoutePlanner2StopSegmentPaths, buildRoutePlanner2StopVisitSequence } from './routePlanner2Segments';
-import type { RoutePlanner2FeasibilitySummary, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime } from './routePlanner2Types';
+import { drawRoutePlanner2MapPdfPage } from './routePlanner2MapExport';
+import type { RoutePlanner2MapBookPage, RoutePlanner2MapExportImage, RoutePlanner2MapExportSummaryItem } from './routePlanner2MapExport';
+import type { RoutePlanner2FeasibilitySummary, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime, RoutePlanner2Stop } from './routePlanner2Types';
 
 import { getClientMapboxToken } from '../mapboxToken';
 type JsPdfInstance = {
@@ -9,11 +11,13 @@ type JsPdfInstance = {
     setTextColor: (...args: [number, number, number] | [string]) => void;
     setFont: (fontName: string, fontStyle?: string) => void;
     setFontSize: (size: number) => void;
+    setLineWidth: (width: number) => void;
     rect: (x: number, y: number, width: number, height: number, style?: string) => void;
     roundedRect: (x: number, y: number, width: number, height: number, rx: number, ry: number, style?: string) => void;
     line: (x1: number, y1: number, x2: number, y2: number) => void;
     text: (text: string | string[], x: number, y: number, options?: Record<string, unknown>) => void;
     splitTextToSize: (text: string, maxWidth: number) => string[];
+    addImage: (imageData: string, format: string, x: number, y: number, width: number, height: number) => void;
     addPage: () => void;
     save: (fileName: string) => void;
     internal: {
@@ -52,13 +56,34 @@ interface MapboxDirectionsResponse {
 
 export interface RoutePlanner2OperatorDirectionStep {
     instruction: string;
+    actionLabel: RoutePlanner2OperatorActionLabel;
     distanceMeters?: number;
     durationSeconds?: number;
     streetName?: string;
 }
 
+export type RoutePlanner2OperatorActionLabel =
+    | 'LEFT'
+    | 'RIGHT'
+    | 'STRAIGHT'
+    | 'TURNAROUND'
+    | 'ARRIVE'
+    | 'DEPART'
+    | 'CONTINUE';
+
+export interface RoutePlanner2OperatorStopChecklistEntry {
+    visitNumber: number;
+    stopNumber: number;
+    stopName: string;
+    roleLabel: string;
+    nextStopName?: string;
+    runtimeToNextMinutes: number | null;
+    distanceToNextKm?: number;
+}
+
 export interface RoutePlanner2OperatorDirectionSegment {
     segmentNumber: number;
+    phaseLabel: string;
     fromStopName: string;
     toStopName: string;
     runtimeMinutes: number | null;
@@ -68,17 +93,26 @@ export interface RoutePlanner2OperatorDirectionSegment {
 }
 
 export interface RoutePlanner2OperatorDirectionPlan {
+    routeCardTitle: string;
     routeName: string;
     routeShapeLabel: string;
     generatedAt: string;
     stopSequenceLabel: string;
     directionSourceLabel: string;
+    stopChecklist: RoutePlanner2OperatorStopChecklistEntry[];
+    fieldReviewWarnings: string[];
     segments: RoutePlanner2OperatorDirectionSegment[];
+}
+
+export interface RoutePlanner2OperatorSegmentMapPage extends RoutePlanner2MapBookPage {
+    segmentNumber: number;
 }
 
 interface ExportOptions {
     projectName: string;
     feasibility: RoutePlanner2FeasibilitySummary | null;
+    mapImage?: RoutePlanner2MapExportImage;
+    segmentMapPages?: RoutePlanner2OperatorSegmentMapPage[];
     token?: string | null;
     fetchImpl?: typeof fetch;
     now?: Date;
@@ -113,10 +147,78 @@ function formatBuses(value: number | null | undefined): string {
     return value == null ? 'Not ready' : String(value);
 }
 
+function formatRuntimeMinutes(value: number | null | undefined): string {
+    return value == null ? 'Runtime not ready' : `${value} min`;
+}
+
+function formatDistanceMeters(value: number | null | undefined): string {
+    if (value == null) return '';
+    if (value >= 1000) return `${(value / 1000).toFixed(1)} km`;
+    return `${Math.round(value)} m`;
+}
+
 function shapeLabel(scenario: RoutePlanner2Scenario): string {
     if (scenario.routeShape === 'closed-loop') return 'Closed loop';
     if (scenario.routeShape === 'out-and-back') return 'Out and back';
     return 'One-way';
+}
+
+function stopRoleLabel(stop: RoutePlanner2Stop): string {
+    switch (stop.role) {
+        case 'start-terminal':
+            return 'Start terminal';
+        case 'end-terminal':
+            return 'End terminal';
+        case 'turnaround':
+            return 'Turnaround';
+        case 'timed':
+            return 'Timed stop';
+        default:
+            return 'Regular stop';
+    }
+}
+
+function stopVisitRoleLabel(
+    scenario: RoutePlanner2Scenario,
+    stop: RoutePlanner2Stop,
+    visitIndex: number,
+    stopVisits: RoutePlanner2Stop[],
+): string {
+    const isFinalRepeatOfFirst = visitIndex === stopVisits.length - 1
+        && stopVisits.length > 1
+        && stop.id === stopVisits[0]?.id;
+
+    if (scenario.routeShape === 'closed-loop' && isFinalRepeatOfFirst) return 'Loop completion';
+    if (scenario.routeShape === 'out-and-back' && isFinalRepeatOfFirst) return `${stopRoleLabel(stop)} / finish`;
+    return stopRoleLabel(stop);
+}
+
+function deriveOperatorActionLabel(instruction: string): RoutePlanner2OperatorActionLabel {
+    const normalized = instruction.toLowerCase();
+    if (normalized.includes('u-turn') || normalized.includes('turnaround') || normalized.includes('turn around')) return 'TURNAROUND';
+    if (normalized.includes('turn left') || normalized.includes('slight left') || normalized.includes('bear left')) return 'LEFT';
+    if (normalized.includes('turn right') || normalized.includes('slight right') || normalized.includes('bear right')) return 'RIGHT';
+    if (normalized.includes('arrive')) return 'ARRIVE';
+    if (normalized.includes('depart')) return 'DEPART';
+    if (normalized.includes('continue') || normalized.includes('straight') || normalized.includes('head ')) return 'STRAIGHT';
+    return 'CONTINUE';
+}
+
+function getSegmentPhaseLabel(
+    scenario: RoutePlanner2Scenario,
+    fromStop: RoutePlanner2Stop,
+    toStop: RoutePlanner2Stop,
+): string {
+    if (scenario.routeShape === 'closed-loop') {
+        const startStopId = scenario.stops.find((stop) => stop.role === 'start-terminal')?.id ?? scenario.stops[0]?.id;
+        return toStop.id === startStopId ? 'Loop return to start' : 'Loop';
+    }
+
+    if (scenario.routeShape === 'out-and-back') {
+        return toStop.sequence > fromStop.sequence ? 'Outbound to turnaround' : 'Return to start';
+    }
+
+    return 'Outbound';
 }
 
 function sanitizeFilePart(value: string): string {
@@ -160,6 +262,7 @@ async function getMapboxSteps(
                 if (!instruction) return null;
                 return {
                     instruction,
+                    actionLabel: deriveOperatorActionLabel(instruction),
                     distanceMeters: step.distance,
                     durationSeconds: step.duration,
                     streetName: step.name,
@@ -176,6 +279,50 @@ async function getMapboxSteps(
     } catch {
         return null;
     }
+}
+
+function buildStopChecklist(
+    scenario: RoutePlanner2Scenario,
+    feasibility: RoutePlanner2FeasibilitySummary | null,
+): RoutePlanner2OperatorStopChecklistEntry[] {
+    const stopVisits = buildRoutePlanner2StopVisitSequence(scenario);
+
+    return stopVisits.map((stop, index): RoutePlanner2OperatorStopChecklistEntry => {
+        const nextStop = stopVisits[index + 1];
+        const segmentRuntime = nextStop ? getSegmentRuntime(feasibility, stop.id, nextStop.id) : null;
+
+        return {
+            visitNumber: index + 1,
+            stopNumber: stop.sequence,
+            stopName: stop.name,
+            roleLabel: stopVisitRoleLabel(scenario, stop, index, stopVisits),
+            nextStopName: nextStop?.name,
+            runtimeToNextMinutes: segmentRuntime?.runtimeMinutes ?? null,
+            distanceToNextKm: segmentRuntime?.distanceKm,
+        };
+    });
+}
+
+function buildFieldReviewWarnings(
+    scenario: RoutePlanner2Scenario,
+    segments: RoutePlanner2OperatorDirectionSegment[],
+): string[] {
+    const warnings: string[] = [];
+
+    if (segments.some((segment) => segment.source === 'planning-alignment')) {
+        warnings.push('Planning alignment fallback: exact turn-by-turn directions are not confirmed.');
+    }
+
+    if (scenario.routeShape === 'out-and-back') {
+        warnings.push('Confirm the turnaround is bus-safe and approved before issuing to operators.');
+    }
+
+    if (segments.some((segment) => segment.runtimeMinutes == null)) {
+        warnings.push('Some segment runtimes are not ready; use field judgement and supervisor guidance.');
+    }
+
+    warnings.push('Confirm stop placement, safe turns, road restrictions, construction, and supervisor approval.');
+    return warnings;
 }
 
 export async function buildRoutePlanner2OperatorDirectionPlan(
@@ -203,6 +350,7 @@ export async function buildRoutePlanner2OperatorDirectionPlan(
 
         segments.push({
             segmentNumber: index + 1,
+            phaseLabel: getSegmentPhaseLabel(scenario, fromStop, toStop),
             fromStopName: `${fromStop.sequence}. ${fromStop.name}`,
             toStopName: `${toStop.sequence}. ${toStop.name}`,
             runtimeMinutes: segmentRuntime?.runtimeMinutes ?? null,
@@ -212,12 +360,14 @@ export async function buildRoutePlanner2OperatorDirectionPlan(
                 ? mapboxResult.steps
                 : [{
                     instruction: `Proceed from ${fromStop.name} to ${toStop.name} using the approved route alignment shown in Route Planner 2.`,
+                    actionLabel: 'CONTINUE',
                     distanceMeters: segmentRuntime?.distanceKm == null ? undefined : segmentRuntime.distanceKm * 1000,
                 }],
         });
     }
 
     return {
+        routeCardTitle: 'Operator route card',
         routeName: scenario.name,
         routeShapeLabel: shapeLabel(scenario),
         generatedAt,
@@ -225,6 +375,8 @@ export async function buildRoutePlanner2OperatorDirectionPlan(
         directionSourceLabel: hasMapboxDirections
             ? 'Mapbox turn-by-turn directions'
             : 'Planning alignment fallback - verify turns before issuing',
+        stopChecklist: buildStopChecklist(scenario, options.feasibility),
+        fieldReviewWarnings: buildFieldReviewWarnings(scenario, segments),
         segments,
     };
 }
@@ -279,6 +431,107 @@ function drawMetricCard(doc: JsPdfInstance, label: string, value: string, x: num
     doc.text(value, x + 4, y + 15);
 }
 
+function drawStopChecklist(
+    doc: JsPdfInstance,
+    stops: RoutePlanner2OperatorStopChecklistEntry[],
+    x: number,
+    y: number,
+    width: number,
+): number {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Stop checklist', x, y);
+    y += 6;
+
+    const rowHeight = 9;
+    const headerHeight = 8;
+    doc.setFillColor(15, 23, 42);
+    doc.roundedRect(x, y, width, headerHeight, 2, 2, 'F');
+    doc.setFontSize(7);
+    doc.setTextColor(255, 255, 255);
+    doc.text('#', x + 3, y + 5.2);
+    doc.text('Stop / role', x + 14, y + 5.2);
+    doc.text('Next', x + width - 74, y + 5.2);
+    doc.text('Time', x + width - 18, y + 5.2, { align: 'right' });
+    y += headerHeight;
+
+    stops.forEach((stop, index) => {
+        y = ensurePageSpace(doc, y, rowHeight + 4);
+        const fill = index % 2 === 0 ? 248 : 255;
+        doc.setFillColor(fill, fill === 248 ? 250 : 255, fill === 248 ? 252 : 255);
+        doc.rect(x, y, width, rowHeight, 'F');
+        doc.setDrawColor(226, 232, 240);
+        doc.line(x, y + rowHeight, x + width, y + rowHeight);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(8, 145, 178);
+        doc.text(String(stop.visitNumber), x + 4, y + 5.8);
+
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${stop.stopNumber}. ${stop.stopName}`, x + 14, y + 4.3);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.8);
+        doc.setTextColor(100, 116, 139);
+        doc.text(stop.roleLabel, x + 14, y + 7.5);
+
+        doc.setFontSize(7.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text(stop.nextStopName ?? 'End of route', x + width - 74, y + 5.8);
+        doc.setFont('helvetica', 'bold');
+        doc.text(formatRuntimeMinutes(stop.runtimeToNextMinutes), x + width - 4, y + 5.8, { align: 'right' });
+        y += rowHeight;
+    });
+
+    return y + 6;
+}
+
+function drawFieldReviewWarnings(
+    doc: JsPdfInstance,
+    warnings: string[],
+    x: number,
+    y: number,
+    width: number,
+): number {
+    if (!warnings.length) return y;
+
+    doc.setFillColor(255, 251, 235);
+    doc.setDrawColor(253, 230, 138);
+    const boxHeight = 12 + warnings.length * 5;
+    doc.roundedRect(x, y, width, boxHeight, 3, 3, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(146, 64, 14);
+    doc.text('FIELD REVIEW FLAGS', x + 4, y + 6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(120, 53, 15);
+    warnings.forEach((warning, index) => {
+        doc.text(`- ${warning}`, x + 4, y + 12 + index * 5);
+    });
+    return y + boxHeight + 8;
+}
+
+function buildOperatorMapSummaryItems(
+    plan: RoutePlanner2OperatorDirectionPlan,
+    feasibility: RoutePlanner2FeasibilitySummary | null,
+): RoutePlanner2MapExportSummaryItem[] {
+    return [
+        { label: 'Stops', value: String(plan.stopChecklist.length) },
+        { label: 'Runtime', value: formatMetric(feasibility?.oneWayRuntimeMinutes) },
+        { label: 'Recovery', value: formatRecovery(feasibility) },
+        { label: 'Buses', value: formatBuses(feasibility?.busesRequired) },
+        { label: 'Confidence', value: feasibility?.confidence ?? 'not-ready' },
+    ];
+}
+
+function buildSegmentMapPageLookup(
+    segmentMapPages: RoutePlanner2OperatorSegmentMapPage[] | undefined,
+): Map<number, RoutePlanner2OperatorSegmentMapPage> {
+    return new Map((segmentMapPages ?? []).map((page) => [page.segmentNumber, page]));
+}
+
 export async function exportRoutePlanner2OperatorDirectionsPdf(
     scenario: RoutePlanner2Scenario,
     options: ExportOptions,
@@ -305,7 +558,7 @@ export async function exportRoutePlanner2OperatorDirectionsPdf(
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(18);
     doc.setTextColor(255, 255, 255);
-    doc.text('Operator Turn-by-Turn', margin, 13);
+    doc.text('Operator Route Card', margin, 13);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.text(`${scenario.name} | ${options.projectName}`, margin, 22);
@@ -315,53 +568,62 @@ export async function exportRoutePlanner2OperatorDirectionsPdf(
     doc.text(plan.directionSourceLabel, pageWidth - margin, 22, { align: 'right' });
 
     let y = 40;
-    const metricWidth = (contentWidth - 30) / 6;
+    const metricWidth = (contentWidth - 24) / 5;
     drawMetricCard(doc, 'Route type', plan.routeShapeLabel, margin, y, metricWidth);
-    drawMetricCard(doc, 'Runtime', formatMetric(feasibility?.oneWayRuntimeMinutes), margin + (metricWidth + 6) * 1, y, metricWidth);
-    drawMetricCard(doc, 'Cycle', formatMetric(feasibility?.cycleTimeMinutes), margin + (metricWidth + 6) * 2, y, metricWidth);
-    drawMetricCard(doc, 'Recovery', formatRecovery(feasibility), margin + (metricWidth + 6) * 3, y, metricWidth);
-    drawMetricCard(doc, 'Buses', formatBuses(feasibility?.busesRequired), margin + (metricWidth + 6) * 4, y, metricWidth);
-    drawMetricCard(doc, 'Confidence', feasibility?.confidence ?? 'not-ready', margin + (metricWidth + 6) * 5, y, metricWidth);
+    drawMetricCard(doc, 'Stops', String(plan.stopChecklist.length), margin + (metricWidth + 6) * 1, y, metricWidth);
+    drawMetricCard(doc, 'Runtime', formatMetric(feasibility?.oneWayRuntimeMinutes), margin + (metricWidth + 6) * 2, y, metricWidth);
+    drawMetricCard(doc, 'Direction source', plan.segments.some((segment) => segment.source === 'mapbox-turn-by-turn') ? 'Turn-by-turn' : 'Planning', margin + (metricWidth + 6) * 3, y, metricWidth);
+    drawMetricCard(doc, 'Confidence', feasibility?.confidence ?? 'not-ready', margin + (metricWidth + 6) * 4, y, metricWidth);
 
     y += 30;
-    doc.setFillColor(236, 253, 245);
-    doc.setDrawColor(167, 243, 208);
-    doc.roundedRect(margin, y, contentWidth, 18, 3, 3, 'FD');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(6, 95, 70);
-    doc.text('STOP SEQUENCE', margin + 4, y + 7);
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    drawWrappedText(doc, plan.stopSequenceLabel, margin + 38, y + 7, contentWidth - 44, 4.2);
+    y = ensurePageSpace(doc, y, 42);
+    y = drawStopChecklist(doc, plan.stopChecklist, margin, y, contentWidth);
+    y = ensurePageSpace(doc, y, 30);
+    y = drawFieldReviewWarnings(doc, plan.fieldReviewWarnings, margin, y, contentWidth);
 
-    y += 28;
-    doc.setFillColor(255, 251, 235);
-    doc.setDrawColor(253, 230, 138);
-    doc.roundedRect(margin, y, contentWidth, 20, 3, 3, 'FD');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(146, 64, 14);
-    doc.text('Operator note', margin + 4, y + 7);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(120, 53, 15);
-    drawWrappedText(
-        doc,
-        'Draft planning directions. Confirm stop locations, safe turning movements, road restrictions, construction, and supervisor approval before issuing to operators.',
-        margin + 4,
-        y + 14,
-        contentWidth - 8,
-        4.2,
-    );
+    const mapSummaryItems = buildOperatorMapSummaryItems(plan, feasibility);
+    if (options.mapImage) {
+        doc.addPage();
+        drawRoutePlanner2MapPdfPage(doc, {
+            title: `${options.projectName} - ${scenario.name} - Operator overview`,
+            generatedAt: plan.generatedAt,
+            subtitle: 'Full route overview for field review',
+            mapImage: options.mapImage,
+            summaryItems: mapSummaryItems,
+        });
+    }
 
-    y += 32;
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.setTextColor(15, 23, 42);
-    doc.text('Turn-by-turn directions', margin, y);
-    y += 8;
+    const segmentMapPageByNumber = buildSegmentMapPageLookup(options.segmentMapPages);
+    let hasDirectionsHeading = false;
 
     plan.segments.forEach((segment) => {
+        const segmentMapPage = segmentMapPageByNumber.get(segment.segmentNumber);
+
+        if (segmentMapPage) {
+            doc.addPage();
+            drawRoutePlanner2MapPdfPage(doc, {
+                title: `${scenario.name} - ${segmentMapPage.title}`,
+                generatedAt: plan.generatedAt,
+                subtitle: segmentMapPage.subtitle,
+                mapImage: segmentMapPage.mapImage,
+                summaryItems: [],
+            });
+            doc.addPage();
+            y = 18;
+        } else if (!hasDirectionsHeading) {
+            doc.addPage();
+            y = 18;
+        }
+
+        if (!hasDirectionsHeading) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(13);
+            doc.setTextColor(15, 23, 42);
+            doc.text('Turn-by-turn directions', margin, y);
+            y += 8;
+            hasDirectionsHeading = true;
+        }
+
         const estimatedHeight = 20 + (segment.steps.length * 11);
         y = ensurePageSpace(doc, y, estimatedHeight);
 
@@ -371,7 +633,7 @@ export async function exportRoutePlanner2OperatorDirectionsPdf(
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(10);
         doc.setTextColor(15, 23, 42);
-        doc.text(`Segment ${segment.segmentNumber}: ${segment.fromStopName} to ${segment.toStopName}`, margin + 4, y + 6);
+        doc.text(`${segment.phaseLabel} · Segment ${segment.segmentNumber}: ${segment.fromStopName} to ${segment.toStopName}`, margin + 4, y + 6);
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(8);
         doc.setTextColor(71, 85, 105);
@@ -386,19 +648,19 @@ export async function exportRoutePlanner2OperatorDirectionsPdf(
         segment.steps.forEach((step, stepIndex) => {
             y = ensurePageSpace(doc, y, 12);
             doc.setFillColor(8, 145, 178);
-            doc.roundedRect(margin, y - 3.2, 7, 7, 2, 2, 'F');
+            doc.roundedRect(margin, y - 3.2, 18, 7, 2, 2, 'F');
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(8);
+            doc.setFontSize(7.2);
             doc.setTextColor(255, 255, 255);
-            doc.text(String(stepIndex + 1), margin + 3.5, y + 1.8, { align: 'center' });
+            doc.text(step.actionLabel, margin + 9, y + 1.8, { align: 'center' });
 
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(9);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(9.5);
             doc.setTextColor(15, 23, 42);
             const distanceText = typeof step.distanceMeters === 'number'
-                ? ` (${Math.round(step.distanceMeters)} m)`
+                ? ` (${formatDistanceMeters(step.distanceMeters)})`
                 : '';
-            const nextY = drawWrappedText(doc, `${step.instruction}${distanceText}`, margin + 11, y + 1.5, contentWidth - 14, 4.4);
+            const nextY = drawWrappedText(doc, `${stepIndex + 1}. ${step.instruction}${distanceText}`, margin + 22, y + 1.5, contentWidth - 25, 4.4);
             y = nextY + 2;
         });
 
