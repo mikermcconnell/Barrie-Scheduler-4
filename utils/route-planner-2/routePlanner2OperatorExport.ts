@@ -536,10 +536,39 @@ function drawFittedMapImage(
     const imageY = y + ((height - fittedHeight) / 2);
 
     doc.setFillColor(255, 255, 255);
-    doc.setDrawColor(203, 213, 225);
-    doc.setLineWidth(0.5);
-    doc.roundedRect(x, y, width, height, 3, 3, 'FD');
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.35);
+    doc.roundedRect(x, y, width, height, 2.2, 2.2, 'FD');
     doc.addImage(mapImage.dataUrl, 'PNG', imageX, imageY, fittedWidth, fittedHeight);
+}
+
+function stripStopSequencePrefix(value: string): string {
+    return value.replace(/^\s*\d+\.\s*/, '').trim();
+}
+
+function formatSegmentDistance(segment: RoutePlanner2OperatorDirectionSegment): string {
+    return segment.distanceKm == null ? 'Distance not ready' : `${segment.distanceKm.toFixed(2)} km`;
+}
+
+function drawSegmentSummaryChip(
+    doc: JsPdfInstance,
+    label: string,
+    value: string,
+    x: number,
+    y: number,
+    width: number,
+): void {
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(x, y, width, 12, 2.2, 2.2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(5.8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(label.toUpperCase(), x + 3, y + 4.4);
+    doc.setFontSize(7.2);
+    doc.setTextColor(15, 23, 42);
+    doc.text(value, x + 3, y + 9);
 }
 
 function drawSegmentDirectionsPanel(
@@ -550,56 +579,67 @@ function drawSegmentDirectionsPanel(
     width: number,
     height: number,
 ): void {
-    doc.setFillColor(248, 250, 252);
-    doc.setDrawColor(203, 213, 225);
-    doc.setLineWidth(0.45);
-    doc.roundedRect(x, y, width, height, 3, 3, 'FD');
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.35);
+    doc.roundedRect(x, y, width, height, 2.6, 2.6, 'FD');
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10.5);
+    doc.setFontSize(10);
     doc.setTextColor(15, 23, 42);
-    doc.text('Turn-by-turn', x + 5, y + 8);
+    doc.text('Turn-by-turn', x + 5, y + 7.5);
 
     const segmentMeta = [
         segment.runtimeMinutes == null ? 'Runtime not ready' : `${segment.runtimeMinutes} min`,
-        segment.distanceKm == null ? null : `${segment.distanceKm.toFixed(2)} km`,
+        formatSegmentDistance(segment),
         segment.source === 'mapbox-turn-by-turn' ? 'Turn-by-turn' : 'Planning alignment',
     ].filter(Boolean).join(' | ');
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.2);
+    doc.setFontSize(6.7);
     doc.setTextColor(71, 85, 105);
-    doc.text(segmentMeta, x + 5, y + 14);
+    doc.text(segmentMeta, x + 5, y + 13);
 
-    let stepY = y + 24;
-    const maxY = y + height - 8;
-    const textX = x + 27;
-    const textWidth = width - 33;
+    doc.setDrawColor(226, 232, 240);
+    doc.line(x + 5, y + 17, x + width - 5, y + 17);
+
+    let stepY = y + 25;
+    const maxY = y + height - 7;
+    const textX = x + 30;
+    const textWidth = width - 36;
 
     for (const [stepIndex, step] of segment.steps.entries()) {
         const distanceText = typeof step.distanceMeters === 'number'
             ? ` (${formatDistanceMeters(step.distanceMeters)})`
             : '';
         const lines = doc.splitTextToSize(`${stepIndex + 1}. ${step.instruction}${distanceText}`, textWidth);
-        const stepHeight = Math.max(8.5, lines.length * 4 + 3);
+        const stepHeight = Math.max(10.5, lines.length * 3.8 + 4);
 
         if (stepY + stepHeight > maxY) {
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(7.2);
+            doc.setFontSize(6.8);
             doc.setTextColor(146, 64, 14);
             doc.text(`+ ${segment.steps.length - stepIndex} more step(s) - review before operating`, x + 5, maxY);
             return;
         }
 
+        if (stepIndex % 2 === 0) {
+            doc.setFillColor(248, 250, 252);
+        } else {
+            doc.setFillColor(255, 255, 255);
+        }
+        doc.rect(x + 4, stepY - 5.2, width - 8, stepHeight, 'F');
+        doc.setDrawColor(241, 245, 249);
+        doc.line(x + 4, stepY + stepHeight - 5.2, x + width - 4, stepY + stepHeight - 5.2);
         doc.setFillColor(8, 145, 178);
-        doc.roundedRect(x + 5, stepY - 3.4, 18, 7, 2, 2, 'F');
+        doc.roundedRect(x + 7, stepY - 2.8, 18, 6.6, 1.8, 1.8, 'F');
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(step.actionLabel.length > 8 ? 5.2 : 6.2);
         doc.setTextColor(255, 255, 255);
-        doc.text(step.actionLabel, x + 14, stepY + 1.5, { align: 'center' });
+        doc.text(step.actionLabel, x + 16, stepY + 1.7, { align: 'center' });
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8.2);
+        doc.setFontSize(7.8);
         doc.setTextColor(15, 23, 42);
         doc.text(lines, textX, stepY + 1.2);
         stepY += stepHeight;
@@ -615,42 +655,76 @@ function drawSegmentMapAndDirectionsPage(
 ): void {
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 12;
-    const gap = 8;
-    const headerY = 11;
-    const contentY = 34;
-    const contentHeight = pageHeight - contentY - 20;
-    const title = `Segment ${segment.segmentNumber}: ${segment.fromStopName} to ${segment.toStopName}`;
+    const margin = 14;
+    const gap = 7;
+    const headerY = 12;
+    const summaryY = 30;
+    const contentY = 49;
+    const footerSafeArea = 18;
+    const availableHeight = pageHeight - contentY - footerSafeArea;
+    const fromStopLabel = stripStopSequencePrefix(segment.fromStopName);
+    const toStopLabel = stripStopSequencePrefix(segment.toStopName);
+    const title = `Segment ${segment.segmentNumber}`;
+    const subtitle = `${segment.fromStopName} to ${segment.toStopName}`;
 
     doc.addPage();
     doc.setFillColor(31, 85, 139);
-    doc.rect(0, 0, 3.5, pageHeight, 'F');
+    doc.rect(0, 0, 3, pageHeight, 'F');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(15);
+    doc.setFontSize(16);
     doc.setTextColor(15, 23, 42);
     doc.text(title, margin, headerY);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    doc.setFontSize(8.2);
     doc.setTextColor(71, 85, 105);
-    doc.text(`${scenarioName} | ${segment.phaseLabel}`, margin, headerY + 7);
+    doc.text(subtitle, margin, headerY + 7);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
     doc.text(plan.generatedAt, pageWidth - margin, headerY, { align: 'right' });
-    if (segmentMapPage?.subtitle) {
-        doc.text(segmentMapPage.subtitle, pageWidth - margin, headerY + 7, { align: 'right' });
-    }
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${scenarioName} | ${segment.phaseLabel}`, pageWidth - margin, headerY + 7, { align: 'right' });
+
+    const chipGap = 5;
+    const chipWidth = (pageWidth - (margin * 2) - (chipGap * 3)) / 4;
+    drawSegmentSummaryChip(doc, 'From', fromStopLabel, margin, summaryY, chipWidth);
+    drawSegmentSummaryChip(doc, 'To', toStopLabel, margin + (chipWidth + chipGap), summaryY, chipWidth);
+    drawSegmentSummaryChip(doc, 'Runtime', segment.runtimeMinutes == null ? 'Not ready' : `${segment.runtimeMinutes} min`, margin + (chipWidth + chipGap) * 2, summaryY, chipWidth);
+    drawSegmentSummaryChip(doc, 'Distance', formatSegmentDistance(segment), margin + (chipWidth + chipGap) * 3, summaryY, chipWidth);
 
     if (segmentMapPage) {
-        const mapWidth = 166;
+        const mapWidth = 170;
         const directionsWidth = pageWidth - (margin * 2) - gap - mapWidth;
+        const mapAspect = segmentMapPage.mapImage.width > 0 && segmentMapPage.mapImage.height > 0
+            ? segmentMapPage.mapImage.width / segmentMapPage.mapImage.height
+            : 16 / 9;
+        const mapImageHeight = Math.min(availableHeight - 18, Math.max(96, mapWidth / mapAspect));
+        const stepEstimateHeight = 29 + segment.steps.reduce((total, step) => {
+            const distanceText = typeof step.distanceMeters === 'number'
+                ? ` (${formatDistanceMeters(step.distanceMeters)})`
+                : '';
+            const estimatedLineCount = Math.max(1, Math.ceil((`${step.instruction}${distanceText}`.length + 4) / 52));
+            return total + Math.max(10.5, estimatedLineCount * 3.8 + 4);
+        }, 0);
+        const cardHeight = Math.min(availableHeight, Math.max(mapImageHeight + 18, stepEstimateHeight, 118));
+
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.35);
+        doc.roundedRect(margin, contentY, mapWidth, cardHeight, 2.6, 2.6, 'FD');
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
+        doc.setFontSize(10);
         doc.setTextColor(15, 23, 42);
-        doc.text('Segment map', margin, contentY - 4);
-        drawFittedMapImage(doc, segmentMapPage.mapImage, margin, contentY, mapWidth, contentHeight);
-        drawSegmentDirectionsPanel(doc, segment, margin + mapWidth + gap, contentY, directionsWidth, contentHeight);
+        doc.text('Segment map', margin + 5, contentY + 7.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.7);
+        doc.setTextColor(71, 85, 105);
+        doc.text(segmentMapPage.subtitle ?? 'Operator travel path', margin + 5, contentY + 13);
+        drawFittedMapImage(doc, segmentMapPage.mapImage, margin + 5, contentY + 18, mapWidth - 10, cardHeight - 24);
+        drawSegmentDirectionsPanel(doc, segment, margin + mapWidth + gap, contentY, directionsWidth, cardHeight);
         return;
     }
 
-    drawSegmentDirectionsPanel(doc, segment, margin, contentY, pageWidth - (margin * 2), contentHeight);
+    drawSegmentDirectionsPanel(doc, segment, margin, contentY, pageWidth - (margin * 2), availableHeight);
 }
 
 export async function exportRoutePlanner2OperatorDirectionsPdf(

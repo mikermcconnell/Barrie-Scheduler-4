@@ -507,7 +507,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(roadNameToggle?.textContent).toContain('Hide road names');
   });
 
-  it('shows camp shuttle stop labels only when the map toggle is enabled', () => {
+  it('defaults camp shuttle stop labels on and lets planners hide them', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
@@ -516,15 +516,21 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
 
     const mapCanvas = view.querySelector('[data-testid="rp2-map-canvas"]');
-    expect(mapCanvas?.getAttribute('data-camp-shuttle-labels')).toBe('off');
-    expect(view.querySelector('[data-testid^="rp2-map-stop-label-"]')).toBeNull();
+    expect(mapCanvas?.getAttribute('data-camp-shuttle-labels')).toBe('on');
 
     const campToggle = view.querySelector('[data-testid="rp2-camp-shuttle-label-toggle"]') as HTMLButtonElement | null;
     const actionSidebar = view.querySelector('[data-testid="rp2-action-sidebar"]');
     expect(campToggle).not.toBeNull();
     expect(actionSidebar?.contains(campToggle)).toBe(true);
-    expect(campToggle?.getAttribute('aria-pressed')).toBe('false');
+    expect(campToggle?.getAttribute('aria-pressed')).toBe('true');
     expect(campToggle?.textContent).toContain('Camp Shuttle');
+
+    flushSync(() => {
+      click(campToggle);
+    });
+
+    expect(campToggle?.getAttribute('aria-pressed')).toBe('false');
+    expect(mapCanvas?.getAttribute('data-camp-shuttle-labels')).toBe('off');
 
     flushSync(() => {
       click(campToggle);
@@ -532,14 +538,6 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
     expect(campToggle?.getAttribute('aria-pressed')).toBe('true');
     expect(mapCanvas?.getAttribute('data-camp-shuttle-labels')).toBe('on');
-
-    flushSync(() => {
-      click(campToggle);
-    });
-
-    expect(campToggle?.getAttribute('aria-pressed')).toBe('false');
-    expect(mapCanvas?.getAttribute('data-camp-shuttle-labels')).toBe('off');
-    expect(view.querySelector('[data-testid^="rp2-map-stop-label-"]')).toBeNull();
   });
 
   it('saves the current route plan to the team workspace', async () => {
