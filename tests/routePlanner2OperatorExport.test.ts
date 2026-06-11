@@ -148,7 +148,7 @@ describe('Route Planner 2 operator export', () => {
     expect(plan.segments[0]?.steps.map((step) => step.actionLabel)).toEqual(['LEFT', 'STRAIGHT']);
   });
 
-  it('exports an overview map and a focused map page before segment directions', async () => {
+  it('exports an overview map and combines each segment map with its directions on one page', async () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Terminal', lat: 44.38, lng: -79.7, now });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Mall', lat: 44.39, lng: -79.68, now });
@@ -178,6 +178,7 @@ describe('Route Planner 2 operator export', () => {
       }],
     });
 
+    expect(pdfMocks.doc.addPage).toHaveBeenCalledTimes(2);
     expect(pdfMocks.doc.addImage).toHaveBeenCalledTimes(2);
     expect(pdfMocks.doc.addImage).toHaveBeenNthCalledWith(
       1,
@@ -197,12 +198,14 @@ describe('Route Planner 2 operator export', () => {
       expect.any(Number),
       expect.any(Number),
     );
-    expect(pdfMocks.doc.text).toHaveBeenCalledWith(
-      'Clean Concept A - Segment 1: 1. Terminal to 2. Mall',
-      expect.any(Number),
-      expect.any(Number),
-      expect.objectContaining({ baseline: 'middle' }),
+    expect(pdfMocks.doc.text).toHaveBeenCalledWith('Segment map', expect.any(Number), expect.any(Number));
+    expect(pdfMocks.doc.text).toHaveBeenCalledWith('Turn-by-turn', expect.any(Number), expect.any(Number));
+
+    const segmentMapImageCallOrder = pdfMocks.doc.addImage.mock.invocationCallOrder[1];
+    const turnByTurnTextCallOrder = pdfMocks.doc.text.mock.calls.findIndex((call) => call[0] === 'Turn-by-turn');
+    expect(turnByTurnTextCallOrder).toBeGreaterThanOrEqual(0);
+    expect(segmentMapImageCallOrder).toBeLessThan(
+      pdfMocks.doc.text.mock.invocationCallOrder[turnByTurnTextCallOrder],
     );
-    expect(pdfMocks.doc.text).toHaveBeenCalledWith('Turn-by-turn directions', expect.any(Number), expect.any(Number));
   });
 });

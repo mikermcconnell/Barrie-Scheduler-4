@@ -2581,25 +2581,41 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                             const isSelected = selectedScenario?.id === scenario.id;
                                                             const scenarioLabel = group.scenarios.length > 1 ? getRoutePlanner2ScenarioDirectionLabel(scenario) : scenario.name;
                                                             return (
-                                                                <button
+                                                                <div
                                                                     key={scenario.id}
-                                                                    type="button"
-                                                                    onClick={() => setProject((current) => selectRoutePlanner2Scenario(current, scenario.id))}
-                                                                    className={`w-full rounded-xl border px-2.5 py-2 text-left ${isSelected ? 'border-cyan-300 bg-white shadow-sm' : 'border-slate-200 bg-white/80 hover:bg-white'}`}
+                                                                    className={`rounded-xl border ${isSelected ? 'border-cyan-300 bg-white shadow-sm' : 'border-slate-200 bg-white/80'}`}
                                                                 >
-                                                                    <div className="flex items-center justify-between gap-2">
-                                                                        <span className="truncate text-sm font-black text-slate-900">{scenarioLabel}</span>
-                                                                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{scenario.status}</span>
-                                                                    </div>
-                                                                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                                                                        <span>{scenario.stops.length} stops</span>
-                                                                        <span>{summary?.oneWayRuntimeLabel ?? 'Not ready'}</span>
-                                                                        <span>{scenario.routeShape === 'closed-loop' ? 'Closed loop' : scenario.routeShape === 'out-and-back' ? 'Out and back' : summary?.readinessLabel ?? 'Not ready'}</span>
-                                                                    </div>
-                                                                    {group.scenarios.length > 1 && scenario.routeFamily && (
-                                                                        <div className="mt-1 truncate text-[11px] font-semibold text-slate-400">{scenario.name}</div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setProject((current) => selectRoutePlanner2Scenario(current, scenario.id))}
+                                                                        className="w-full rounded-xl px-2.5 py-2 text-left hover:bg-white"
+                                                                    >
+                                                                        <div className="flex items-center justify-between gap-2">
+                                                                            <span className="truncate text-sm font-black text-slate-900">{scenarioLabel}</span>
+                                                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{scenario.status}</span>
+                                                                        </div>
+                                                                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                                                                            <span>{scenario.stops.length} stops</span>
+                                                                            <span>{summary?.oneWayRuntimeLabel ?? 'Not ready'}</span>
+                                                                            <span>{scenario.routeShape === 'closed-loop' ? 'Closed loop' : scenario.routeShape === 'out-and-back' ? 'Out and back' : summary?.readinessLabel ?? 'Not ready'}</span>
+                                                                        </div>
+                                                                        {group.scenarios.length > 1 && scenario.routeFamily && (
+                                                                            <div className="mt-1 truncate text-[11px] font-semibold text-slate-400">{scenario.name}</div>
+                                                                        )}
+                                                                    </button>
+                                                                    {isSelected && (
+                                                                        <label className="mx-2.5 mb-2 block text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                                                            Concept name
+                                                                            <input
+                                                                                data-testid="rp2-route-concept-name-input"
+                                                                                aria-label="Route concept name"
+                                                                                value={scenario.name}
+                                                                                onChange={(event) => setProject((current) => renameRoutePlanner2Scenario(current, scenario.id, event.target.value))}
+                                                                                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-bold normal-case tracking-normal text-slate-900 outline-none focus:border-cyan-300 focus:bg-white focus:ring-2 focus:ring-cyan-100"
+                                                                            />
+                                                                        </label>
                                                                     )}
-                                                                </button>
+                                                                </div>
                                                             );
                                                         })}
                                                     </div>

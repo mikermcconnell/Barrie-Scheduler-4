@@ -381,19 +381,6 @@ export async function buildRoutePlanner2OperatorDirectionPlan(
     };
 }
 
-function drawWrappedText(
-    doc: JsPdfInstance,
-    text: string,
-    x: number,
-    y: number,
-    maxWidth: number,
-    lineHeight = 4.8,
-): number {
-    const lines = doc.splitTextToSize(text, maxWidth);
-    doc.text(lines, x, y);
-    return y + (lines.length * lineHeight);
-}
-
 function addFooter(doc: JsPdfInstance, projectName: string): void {
     const pageCount = doc.internal.getNumberOfPages();
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -532,6 +519,140 @@ function buildSegmentMapPageLookup(
     return new Map((segmentMapPages ?? []).map((page) => [page.segmentNumber, page]));
 }
 
+function drawFittedMapImage(
+    doc: JsPdfInstance,
+    mapImage: RoutePlanner2MapExportImage,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+): void {
+    const imageAspect = mapImage.width > 0 && mapImage.height > 0
+        ? mapImage.width / mapImage.height
+        : 16 / 9;
+    const fittedHeight = Math.min(height, width / imageAspect);
+    const fittedWidth = Math.min(width, fittedHeight * imageAspect);
+    const imageX = x + ((width - fittedWidth) / 2);
+    const imageY = y + ((height - fittedHeight) / 2);
+
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(x, y, width, height, 3, 3, 'FD');
+    doc.addImage(mapImage.dataUrl, 'PNG', imageX, imageY, fittedWidth, fittedHeight);
+}
+
+function drawSegmentDirectionsPanel(
+    doc: JsPdfInstance,
+    segment: RoutePlanner2OperatorDirectionSegment,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+): void {
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.45);
+    doc.roundedRect(x, y, width, height, 3, 3, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Turn-by-turn', x + 5, y + 8);
+
+    const segmentMeta = [
+        segment.runtimeMinutes == null ? 'Runtime not ready' : `${segment.runtimeMinutes} min`,
+        segment.distanceKm == null ? null : `${segment.distanceKm.toFixed(2)} km`,
+        segment.source === 'mapbox-turn-by-turn' ? 'Turn-by-turn' : 'Planning alignment',
+    ].filter(Boolean).join(' | ');
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.2);
+    doc.setTextColor(71, 85, 105);
+    doc.text(segmentMeta, x + 5, y + 14);
+
+    let stepY = y + 24;
+    const maxY = y + height - 8;
+    const textX = x + 27;
+    const textWidth = width - 33;
+
+    for (const [stepIndex, step] of segment.steps.entries()) {
+        const distanceText = typeof step.distanceMeters === 'number'
+            ? ` (${formatDistanceMeters(step.distanceMeters)})`
+            : '';
+        const lines = doc.splitTextToSize(`${stepIndex + 1}. ${step.instruction}${distanceText}`, textWidth);
+        const stepHeight = Math.max(8.5, lines.length * 4 + 3);
+
+        if (stepY + stepHeight > maxY) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(7.2);
+            doc.setTextColor(146, 64, 14);
+            doc.text(`+ ${segment.steps.length - stepIndex} more step(s) - review before operating`, x + 5, maxY);
+            return;
+        }
+
+        doc.setFillColor(8, 145, 178);
+        doc.roundedRect(x + 5, stepY - 3.4, 18, 7, 2, 2, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(step.actionLabel.length > 8 ? 5.2 : 6.2);
+        doc.setTextColor(255, 255, 255);
+        doc.text(step.actionLabel, x + 14, stepY + 1.5, { align: 'center' });
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8.2);
+        doc.setTextColor(15, 23, 42);
+        doc.text(lines, textX, stepY + 1.2);
+        stepY += stepHeight;
+    }
+}
+
+function drawSegmentMapAndDirectionsPage(
+    doc: JsPdfInstance,
+    scenarioName: string,
+    plan: RoutePlanner2OperatorDirectionPlan,
+    segment: RoutePlanner2OperatorDirectionSegment,
+    segmentMapPage: RoutePlanner2OperatorSegmentMapPage | undefined,
+): void {
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 12;
+    const gap = 8;
+    const headerY = 11;
+    const contentY = 34;
+    const contentHeight = pageHeight - contentY - 20;
+    const title = `Segment ${segment.segmentNumber}: ${segment.fromStopName} to ${segment.toStopName}`;
+
+    doc.addPage();
+    doc.setFillColor(31, 85, 139);
+    doc.rect(0, 0, 3.5, pageHeight, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.setTextColor(15, 23, 42);
+    doc.text(title, margin, headerY);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`${scenarioName} | ${segment.phaseLabel}`, margin, headerY + 7);
+    doc.text(plan.generatedAt, pageWidth - margin, headerY, { align: 'right' });
+    if (segmentMapPage?.subtitle) {
+        doc.text(segmentMapPage.subtitle, pageWidth - margin, headerY + 7, { align: 'right' });
+    }
+
+    if (segmentMapPage) {
+        const mapWidth = 166;
+        const directionsWidth = pageWidth - (margin * 2) - gap - mapWidth;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text('Segment map', margin, contentY - 4);
+        drawFittedMapImage(doc, segmentMapPage.mapImage, margin, contentY, mapWidth, contentHeight);
+        drawSegmentDirectionsPanel(doc, segment, margin + mapWidth + gap, contentY, directionsWidth, contentHeight);
+        return;
+    }
+
+    drawSegmentDirectionsPanel(doc, segment, margin, contentY, pageWidth - (margin * 2), contentHeight);
+}
+
 export async function exportRoutePlanner2OperatorDirectionsPdf(
     scenario: RoutePlanner2Scenario,
     options: ExportOptions,
@@ -594,77 +715,10 @@ export async function exportRoutePlanner2OperatorDirectionsPdf(
     }
 
     const segmentMapPageByNumber = buildSegmentMapPageLookup(options.segmentMapPages);
-    let hasDirectionsHeading = false;
 
     plan.segments.forEach((segment) => {
         const segmentMapPage = segmentMapPageByNumber.get(segment.segmentNumber);
-
-        if (segmentMapPage) {
-            doc.addPage();
-            drawRoutePlanner2MapPdfPage(doc, {
-                title: `${scenario.name} - ${segmentMapPage.title}`,
-                generatedAt: plan.generatedAt,
-                subtitle: segmentMapPage.subtitle,
-                mapImage: segmentMapPage.mapImage,
-                summaryItems: [],
-            });
-            doc.addPage();
-            y = 18;
-        } else if (!hasDirectionsHeading) {
-            doc.addPage();
-            y = 18;
-        }
-
-        if (!hasDirectionsHeading) {
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(13);
-            doc.setTextColor(15, 23, 42);
-            doc.text('Turn-by-turn directions', margin, y);
-            y += 8;
-            hasDirectionsHeading = true;
-        }
-
-        const estimatedHeight = 20 + (segment.steps.length * 11);
-        y = ensurePageSpace(doc, y, estimatedHeight);
-
-        doc.setFillColor(248, 250, 252);
-        doc.setDrawColor(203, 213, 225);
-        doc.roundedRect(margin, y, contentWidth, 14, 3, 3, 'FD');
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(10);
-        doc.setTextColor(15, 23, 42);
-        doc.text(`${segment.phaseLabel} · Segment ${segment.segmentNumber}: ${segment.fromStopName} to ${segment.toStopName}`, margin + 4, y + 6);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8);
-        doc.setTextColor(71, 85, 105);
-        const segmentMeta = [
-            segment.runtimeMinutes == null ? 'Runtime not ready' : `${segment.runtimeMinutes} min`,
-            segment.distanceKm == null ? null : `${segment.distanceKm.toFixed(2)} km`,
-            segment.source === 'mapbox-turn-by-turn' ? 'Turn-by-turn' : 'Planning alignment',
-        ].filter(Boolean).join(' | ');
-        doc.text(segmentMeta, pageWidth - margin - 4, y + 6, { align: 'right' });
-        y += 19;
-
-        segment.steps.forEach((step, stepIndex) => {
-            y = ensurePageSpace(doc, y, 12);
-            doc.setFillColor(8, 145, 178);
-            doc.roundedRect(margin, y - 3.2, 18, 7, 2, 2, 'F');
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(7.2);
-            doc.setTextColor(255, 255, 255);
-            doc.text(step.actionLabel, margin + 9, y + 1.8, { align: 'center' });
-
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(9.5);
-            doc.setTextColor(15, 23, 42);
-            const distanceText = typeof step.distanceMeters === 'number'
-                ? ` (${formatDistanceMeters(step.distanceMeters)})`
-                : '';
-            const nextY = drawWrappedText(doc, `${stepIndex + 1}. ${step.instruction}${distanceText}`, margin + 22, y + 1.5, contentWidth - 25, 4.4);
-            y = nextY + 2;
-        });
-
-        y += 4;
+        drawSegmentMapAndDirectionsPage(doc, scenario.name, plan, segment, segmentMapPage);
     });
 
     addFooter(doc, options.projectName);

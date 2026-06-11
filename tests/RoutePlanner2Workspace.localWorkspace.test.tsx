@@ -888,6 +888,26 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Downtown Loop Option');
   });
 
+  it('edits the selected route concept name from the concept list', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Actions'));
+    });
+
+    const conceptNameInput = view.querySelector('[data-testid="rp2-route-concept-name-input"]') as HTMLInputElement | null;
+    expect(conceptNameInput).not.toBeNull();
+
+    flushSync(() => {
+      setInputValue(conceptNameInput!, 'North Barrie Shuttle');
+    });
+
+    const routeNameInput = view.querySelector('#rp2-scenario-name') as HTMLInputElement | null;
+    expect(conceptNameInput?.value).toBe('North Barrie Shuttle');
+    expect(routeNameInput?.value).toBe('North Barrie Shuttle');
+    expect(view.textContent).toContain('North Barrie Shuttle');
+  });
+
   it('marks the selected route as preferred', () => {
     const view = renderWorkspace();
 
