@@ -63,13 +63,25 @@ describe('security rules regression checks', () => {
   it('keeps old owner and admin member docs working when accessLevel is missing', () => {
     const firestoreRules = readRepoFile('firestore.rules');
 
-    expect(firestoreRules).toMatch(/member\.data\.accessLevel is string[\s\S]*member\.data\.role == 'owner' \|\| member\.data\.role == 'admin'[\s\S]*'internal'[\s\S]*'planner'/);
+    expect(firestoreRules).toMatch(/let accessLevel = member\.data\.get\('accessLevel', null\);/);
+    expect(firestoreRules).toMatch(/member\.data\.get\('role', 'member'\) == 'owner'[\s\S]*member\.data\.get\('role', 'member'\) == 'admin'[\s\S]*'internal'[\s\S]*'planner'/);
+  });
+
+  it('reads optional workspace overrides safely in Firestore rules', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/\.get\('workspaceOverrides', \{\}\)[\s\S]*\.get\(feature, null\)/);
+    expect(firestoreRules).not.toMatch(/\.data\.workspaceOverrides\[feature\]/);
   });
 
   it('requires a Firebase custom claim for global workspace permission management', () => {
     const firestoreRules = readRepoFile('firestore.rules');
+    const storageRules = readRepoFile('storage.rules');
 
-    expect(firestoreRules).toMatch(/function isWorkspacePermissionManager\(\) \{[\s\S]*request\.auth\.token\.schedulerAdmin == true/);
+    expect(firestoreRules).toMatch(/function isWorkspacePermissionManager\(\) \{[\s\S]*request\.auth\.token\.get\('schedulerAdmin', false\) == true/);
+    expect(storageRules).toMatch(/function isWorkspacePermissionManager\(\) \{[\s\S]*request\.auth\.token\.get\('schedulerAdmin', false\) == true/);
+    expect(firestoreRules).not.toMatch(/request\.auth\.token\.(schedulerAdmin|admin|globalAdmin) == true/);
+    expect(storageRules).not.toMatch(/request\.auth\.token\.(schedulerAdmin|admin|globalAdmin) == true/);
     expect(firestoreRules).not.toMatch(/currentUserAccessLevel\(\) == 'admin'/);
     expect(firestoreRules).not.toMatch(/currentUserAccessLevel\(\) == 'internal'/);
     expect(firestoreRules).not.toMatch(/currentUserTeamRole\(\) == 'owner'/);

@@ -18,9 +18,9 @@ service firebase.storage {
     function isWorkspacePermissionManager() {
       return request.auth != null &&
         (
-          request.auth.token.schedulerAdmin == true ||
-          request.auth.token.admin == true ||
-          request.auth.token.globalAdmin == true
+          request.auth.token.get('schedulerAdmin', false) == true ||
+          request.auth.token.get('admin', false) == true ||
+          request.auth.token.get('globalAdmin', false) == true
         );
     }
 

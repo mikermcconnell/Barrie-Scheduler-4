@@ -204,13 +204,26 @@ service cloud.firestore {
 
     function memberAccessLevel(teamId) {
       let member = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
-      return member.data.accessLevel is string
-             ? member.data.accessLevel
-             : ((member.data.role == 'owner' || member.data.role == 'admin') ? 'internal' : 'planner');
+      let accessLevel = member.data.get('accessLevel', null);
+      return accessLevel == 'none' ||
+             accessLevel == 'production' ||
+             accessLevel == 'planner' ||
+             accessLevel == 'external-planner' ||
+             accessLevel == 'transit-app-only' ||
+             accessLevel == 'admin' ||
+             accessLevel == 'internal'
+             ? accessLevel
+             : ((member.data.get('role', 'member') == 'owner' ||
+                 member.data.get('role', 'member') == 'admin')
+                ? 'internal'
+                : 'planner');
     }
 
     function memberWorkspaceOverride(teamId, feature) {
-      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.workspaceOverrides[feature];
+      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
+             .data
+             .get('workspaceOverrides', {})
+             .get(feature, null);
     }
 
     function workspaceAllowedByProfile(accessLevel, feature) {
@@ -258,9 +271,9 @@ service cloud.firestore {
 
     function isWorkspacePermissionManager() {
       return request.auth != null &&
-             (request.auth.token.schedulerAdmin == true ||
-              request.auth.token.admin == true ||
-              request.auth.token.globalAdmin == true);
+             (request.auth.token.get('schedulerAdmin', false) == true ||
+              request.auth.token.get('admin', false) == true ||
+              request.auth.token.get('globalAdmin', false) == true);
     }
   }
 }
