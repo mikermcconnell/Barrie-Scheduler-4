@@ -507,6 +507,46 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(roadNameToggle?.textContent).toContain('Hide road names');
   });
 
+  it('updates road-name label density when planners choose More, Normal, or Fewer', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+      addMapStop(view);
+      click(findButton(view, 'Actions'));
+    });
+
+    const mapCanvas = view.querySelector('[data-testid="rp2-map-canvas"]');
+    const densityControls = view.querySelector('[data-testid="rp2-road-name-density-controls"]') as HTMLElement | null;
+    const findDensityButton = (label: string) => Array.from(densityControls?.querySelectorAll('button') ?? [])
+      .find((button) => button.textContent?.trim() === label) as HTMLButtonElement | undefined;
+
+    const fewerButton = findDensityButton('fewer');
+    const normalButton = findDensityButton('normal');
+    const moreButton = findDensityButton('more');
+
+    expect(mapCanvas?.getAttribute('data-road-name-label-density')).toBe('normal');
+    expect(normalButton?.getAttribute('aria-pressed')).toBe('true');
+
+    flushSync(() => {
+      click(moreButton);
+    });
+    expect(mapCanvas?.getAttribute('data-road-name-label-density')).toBe('more');
+    expect(moreButton?.getAttribute('aria-pressed')).toBe('true');
+
+    flushSync(() => {
+      click(fewerButton);
+    });
+    expect(mapCanvas?.getAttribute('data-road-name-label-density')).toBe('fewer');
+    expect(fewerButton?.getAttribute('aria-pressed')).toBe('true');
+
+    flushSync(() => {
+      click(normalButton);
+    });
+    expect(mapCanvas?.getAttribute('data-road-name-label-density')).toBe('normal');
+    expect(normalButton?.getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('defaults camp shuttle stop labels on and lets planners hide them', () => {
     const view = renderWorkspace();
 

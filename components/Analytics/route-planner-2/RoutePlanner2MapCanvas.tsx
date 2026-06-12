@@ -100,6 +100,7 @@ interface RoutePlanner2SegmentGeometry {
     fromStopId: string;
     toStopId: string;
     coordinates: [number, number][];
+    source?: 'mapbox' | 'fallback';
     roadLabels?: RoutePlanner2RoadLabelGeometry[];
 }
 
@@ -649,6 +650,16 @@ export function buildRoutePlanner2SegmentLineGeoJson(
     };
 }
 
+export function buildRoutePlanner2RoadOnlySegmentLineGeoJson(
+    segmentGeometries: RoutePlanner2SegmentGeometry[],
+    color: string = DEFAULT_ROUTE_PLANNER_COLOR,
+) {
+    return buildRoutePlanner2SegmentLineGeoJson(
+        segmentGeometries.filter((segment) => segment.source !== 'fallback'),
+        color,
+    );
+}
+
 export function buildRoutePlanner2ScenarioOverlayGeoJson(scenarios: RoutePlanner2Scenario[]) {
     return {
         type: 'FeatureCollection' as const,
@@ -909,6 +920,7 @@ function shouldReverseTwoWayArrowGeometry(
 export function buildRoutePlanner2DirectionArrowGeoJson(
     scenario: RoutePlanner2Scenario | null | undefined,
     segmentGeometries: RoutePlanner2SegmentGeometry[],
+    options: { allowFallback?: boolean } = {},
 ) {
     const color = getRoutePlanner2ScenarioColor(scenario);
     const fallbackGeometries = scenario
@@ -919,7 +931,11 @@ export function buildRoutePlanner2DirectionArrowGeoJson(
             coordinates: segment.coordinates,
         }))
         : [];
-    const geometries = segmentGeometries.length > 0 ? segmentGeometries : fallbackGeometries;
+    const geometries = segmentGeometries.length > 0
+        ? segmentGeometries
+        : options.allowFallback === false
+            ? []
+            : fallbackGeometries;
     const pairCounts = geometries.reduce<Record<string, number>>((counts, segment) => {
         const key = getDirectionPairKey(segment.fromStopId, segment.toStopId);
         return { ...counts, [key]: (counts[key] ?? 0) + 1 };
@@ -1210,7 +1226,7 @@ function clickedRouteLine(event: MapMouseEvent): boolean {
 
 export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, RoutePlanner2MapCanvasProps>(function RoutePlanner2MapCanvas({
     scenario,
-    backgroundScenarios = [],
+    backgroundScenarios: _backgroundScenarios = [],
     transferPreviewMarkers = [],
     selectedStopId,
     highlightedStopId,
@@ -1269,19 +1285,25 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         () => new Map(stopLabelDetails.map((detail) => [detail.stopId, detail])),
         [stopLabelDetails],
     );
+    const roadOnlySegmentGeometries = useMemo(
+        () => snappedSegmentGeometries.filter((segment) => segment.source !== 'fallback'),
+        [snappedSegmentGeometries],
+    );
+    const roadOnlyCoordinates = useMemo(
+        () => stitchSegmentGeometryCoordinates(roadOnlySegmentGeometries),
+        [roadOnlySegmentGeometries],
+    );
     const lineGeoJson = useMemo(
-        () => snappedSegmentGeometries.length > 0
-            ? buildRoutePlanner2SegmentLineGeoJson(snappedSegmentGeometries, routeColor)
-            : buildLineGeoJson(waypoints, routeColor),
-        [routeColor, snappedSegmentGeometries, waypoints],
+        () => buildRoutePlanner2RoadOnlySegmentLineGeoJson(roadOnlySegmentGeometries, routeColor),
+        [roadOnlySegmentGeometries, routeColor],
     );
     const backgroundRouteGeoJson = useMemo(
-        () => buildRoutePlanner2ScenarioOverlayGeoJson(backgroundScenarios),
-        [backgroundScenarios],
+        () => buildRoutePlanner2ScenarioOverlayGeoJson([]),
+        [],
     );
     const directionArrowGeoJson = useMemo(
-        () => buildRoutePlanner2DirectionArrowGeoJson(scenario, snappedSegmentGeometries),
-        [scenario, snappedSegmentGeometries],
+        () => buildRoutePlanner2DirectionArrowGeoJson(scenario, roadOnlySegmentGeometries, { allowFallback: false }),
+        [scenario, roadOnlySegmentGeometries],
     );
     const activeSegmentRuntimes = useMemo(() => {
         if (segmentRuntimes.length > 0) return segmentRuntimes;
@@ -1291,8 +1313,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const runtimeSourceOverlaySegments = useMemo(() => {
         if (!scenario) return [];
 
-        const fallbackGeometries = buildRoutePlanner2StopSegmentPaths(scenario);
-        const geometries = snappedSegmentGeometries.length > 0 ? snappedSegmentGeometries : fallbackGeometries;
+        const geometries = roadOnlySegmentGeometries;
 
         return geometries.map((geometry) => {
             const runtime = getRuntimeSourceOverlayRuntime(activeSegmentRuntimes, geometry);
@@ -1310,7 +1331,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                 coordinates: geometry.coordinates,
             };
         });
-    }, [activeSegmentRuntimes, scenario, snappedSegmentGeometries]);
+    }, [activeSegmentRuntimes, roadOnlySegmentGeometries, scenario]);
     const runtimeSourceGeoJson = useMemo(
         () => buildRuntimeSourceGeoJson(runtimeSourceOverlaySegments),
         [runtimeSourceOverlaySegments],
@@ -1326,16 +1347,9 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     );
     const highlightedSegmentGeoJson = useMemo(() => {
         if (!scenario || !highlightedSegmentId) return buildHighlightedSegmentGeoJson(null, routeColor);
-        const fallbackGeometries = buildRoutePlanner2StopSegmentPaths(scenario).map((segment) => ({
-            id: segment.id,
-            fromStopId: segment.fromStopId,
-            toStopId: segment.toStopId,
-            coordinates: segment.coordinates,
-        }));
-        const geometries = snappedSegmentGeometries.length > 0 ? snappedSegmentGeometries : fallbackGeometries;
-        const highlightedSegment = geometries.find((geometry) => geometry.id === highlightedSegmentId) ?? null;
+        const highlightedSegment = roadOnlySegmentGeometries.find((geometry) => geometry.id === highlightedSegmentId) ?? null;
         return buildHighlightedSegmentGeoJson(highlightedSegment, routeColor);
-    }, [highlightedSegmentId, routeColor, scenario, snappedSegmentGeometries]);
+    }, [highlightedSegmentId, roadOnlySegmentGeometries, routeColor, scenario]);
     const hasRouteLine = lineGeoJson.features.length > 0;
     const hasBackgroundRoutes = backgroundRouteGeoJson.features.length > 0;
     const hasRuntimeSourceOverlay = runtimeSourceGeoJson.features.length > 0;
@@ -1379,7 +1393,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             'line-width': isExportCaptureMode ? 7 : 5,
             'line-opacity': isExportCaptureMode ? 0.95 : 0.86,
         },
-    }), [isExportCaptureMode, roadNameLabelDensity]);
+    }), [isExportCaptureMode]);
     const activeDirectionArrowCenterLayer = useMemo<LayerProps>(() => ({
         ...routeDirectionArrowCenterLayer,
         layout: {
@@ -1416,7 +1430,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             ...roadNameLineLabelLayer.paint,
             'text-halo-width': isExportCaptureMode ? 3.4 : 2.8,
         },
-    }), [isExportCaptureMode]);
+    }), [isExportCaptureMode, roadNameLabelDensity]);
     const activeRoadNameOverviewLabelLayer = useMemo<LayerProps>(() => ({
         ...roadNameOverviewLabelLayer,
         maxzoom: isExportCaptureMode ? 0 : roadNameOverviewLabelLayer.maxzoom,
@@ -1447,7 +1461,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         const exportCoordinates = options.fitCoordinates?.length
             ? options.fitCoordinates
             : [
-                ...(snappedCoordinates.length ? snappedCoordinates : waypoints),
+                ...(roadOnlyCoordinates.length ? roadOnlyCoordinates : snappedCoordinates.length ? snappedCoordinates : waypoints),
                 ...(scenario?.stops.map((stop): [number, number] => [stop.lng, stop.lat]) ?? []),
             ];
 
@@ -1491,7 +1505,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             setExportCaptureShowStopLabels(true);
             setExportRoadLabelBounds(null);
         }
-    }, [scenario?.stops, snappedCoordinates, waypoints]);
+    }, [roadOnlyCoordinates, scenario?.stops, snappedCoordinates, waypoints]);
 
     useImperativeHandle(ref, () => ({ captureMapImage }), [captureMapImage]);
     const pendingRuntime = useMemo(() => {
@@ -1884,6 +1898,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         <section
             data-testid="rp2-map-canvas"
             data-camp-shuttle-labels={stopLabelDetails.length > 0 ? 'on' : 'off'}
+            data-road-name-label-density={roadNameLabelDensity}
             ref={captureContainerRef}
             style={overlayStyle}
             onPointerDown={handleSelectionPointerDown}

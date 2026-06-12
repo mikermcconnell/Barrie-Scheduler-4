@@ -24,6 +24,7 @@ export interface RoutePlanner2ScenarioRoadSnapResult extends RoutePlanner2RoadSn
         fromStopId: string;
         toStopId: string;
         coordinates: [number, number][];
+        source: RoutePlanner2RoadSnapSource;
         roadLabels?: RoutePlanner2RoadLabelGeometry[];
     }>;
 }
@@ -313,6 +314,7 @@ export function buildRoutePlanner2FallbackRoadSnapResult(scenario: RoutePlanner2
         fromStopId: segment.fromStopId,
         toStopId: segment.toStopId,
         coordinates: segment.coordinates,
+        source: 'fallback' as const,
     }));
     const coordinates = segments.length > 0
         ? stitchSegmentCoordinates(segmentGeometries.map((segment) => segment.coordinates))
@@ -352,6 +354,7 @@ export async function snapRoutePlanner2ScenarioToRoad(
                 fromStopId: segment.fromStopId,
                 toStopId: segment.toStopId,
                 coordinates: result.coordinates,
+                source: result.source,
                 roadLabels: result.roadLabels,
             };
             completedSegments += 1;

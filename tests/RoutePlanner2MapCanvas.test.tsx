@@ -4,6 +4,7 @@ import {
   buildRoadNameLineLabelGeoJson,
   buildRoadNameOverviewLabelGeoJson,
   buildLineGeoJson,
+  buildRoutePlanner2RoadOnlySegmentLineGeoJson,
   buildRoutePlanner2SegmentLineGeoJson,
   buildRoutePlanner2ScenarioOverlayGeoJson,
   formatRoutePlanner2MapStopLabel,
@@ -107,25 +108,33 @@ describe('RoutePlanner2MapCanvas road labels', () => {
     expect(lineLabels.features[0]?.geometry.coordinates).toEqual([[-79.66, 44.4], [-79.655, 44.405]]);
   });
 
-  it('limits low-density road labels to the strongest readable labels', () => {
+  it('applies each road label density limit accurately', () => {
     const denseSegments = [{
       id: 'segment-dense',
       fromStopId: 'stop-1',
       toStopId: 'stop-2',
       coordinates: [[-79.7, 44.38], [-79.6, 44.45]] as [number, number][],
-      roadLabels: Array.from({ length: 8 }, (_, index) => ({
+      roadLabels: Array.from({ length: 30 }, (_, index) => ({
         name: `Local Street ${index + 1}`,
         coordinates: [
-          [-79.7 + (index * 0.01), 44.38],
-          [-79.695 + (index * 0.01), 44.385],
+          [-79.7 + (index * 0.003), 44.38],
+          [-79.698 + (index * 0.003), 44.382],
         ] as [number, number][],
       })),
     }];
 
-    const lineLabels = buildRoadNameLineLabelGeoJson(denseSegments, null, 'fewer');
+    const densityCounts = (['fewer', 'normal', 'more'] as const).map((density) => ({
+      density,
+      lineCount: buildRoadNameLineLabelGeoJson(denseSegments, null, density).features.length,
+      overviewCount: buildRoadNameOverviewLabelGeoJson(denseSegments, null, density).features.length,
+    }));
 
-    expect(lineLabels.features).toHaveLength(6);
-    expect(lineLabels.features.map((feature) => feature.properties.label)).toEqual([
+    expect(densityCounts).toEqual([
+      { density: 'fewer', lineCount: 6, overviewCount: 6 },
+      { density: 'normal', lineCount: 12, overviewCount: 12 },
+      { density: 'more', lineCount: 24, overviewCount: 24 },
+    ]);
+    expect(buildRoadNameLineLabelGeoJson(denseSegments, null, 'fewer').features.map((feature) => feature.properties.label)).toEqual([
       'Local St 1',
       'Local St 2',
       'Local St 3',
@@ -174,6 +183,28 @@ describe('RoutePlanner2MapCanvas route overlays', () => {
     expect(overlays.features.map((feature) => feature.properties.scenarioId)).toEqual(['route-a', 'route-b']);
     expect(overlays.features.map((feature) => feature.properties.color)).toEqual(['#006838', '#000000']);
     expect(overlays.features[0]?.geometry.coordinates).toEqual([[-79.69, 44.38], [-79.68, 44.39]]);
+  });
+
+  it('hides fallback direct segments when drawing road-only route lines', () => {
+    const routeLine = buildRoutePlanner2RoadOnlySegmentLineGeoJson([
+      {
+        id: 'road-segment',
+        fromStopId: 'stop-1',
+        toStopId: 'stop-2',
+        coordinates: [[-79.69, 44.38], [-79.68, 44.39], [-79.67, 44.4]],
+        source: 'mapbox',
+      },
+      {
+        id: 'direct-segment',
+        fromStopId: 'stop-2',
+        toStopId: 'stop-3',
+        coordinates: [[-79.67, 44.4], [-79.66, 44.41]],
+        source: 'fallback',
+      },
+    ]);
+
+    expect(routeLine.features).toHaveLength(1);
+    expect(routeLine.features[0]?.properties.id).toBe('road-segment');
   });
 
   it('uses official route colors for GTFS route lines', () => {

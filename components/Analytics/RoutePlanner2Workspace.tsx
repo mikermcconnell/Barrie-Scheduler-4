@@ -2768,6 +2768,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                     <button
                                                         key={density}
                                                         type="button"
+                                                        aria-pressed={roadNameLabelDensity === density}
                                                         onClick={() => setRoadNameLabelDensity(density)}
                                                         className={`rounded-xl border px-2 py-1 text-[10px] font-black capitalize ${roadNameLabelDensity === density ? 'border-blue-300 bg-white text-blue-800 shadow-sm' : 'border-transparent bg-blue-100 text-blue-700'}`}
                                                     >
