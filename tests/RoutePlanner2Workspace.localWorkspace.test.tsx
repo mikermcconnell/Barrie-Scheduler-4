@@ -561,6 +561,30 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Saved to the team workspace.');
   });
 
+  it('saves the current route plan as a new team workspace copy', async () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Save As'));
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(projectPersistenceMocks.saveRoutePlanner2Project).toHaveBeenCalledWith(
+      'team-1',
+      'user-1',
+      expect.objectContaining({
+        name: 'Untitled Route Study copy',
+        status: 'local-draft',
+        scenarios: expect.any(Array),
+      }),
+    );
+    const savedProject = projectPersistenceMocks.saveRoutePlanner2Project.mock.calls[0]?.[2] as RoutePlanner2Project;
+    expect(savedProject.id).toMatch(/^project-/);
+    expect(view.textContent).toContain('Saved as a new route plan.');
+  });
+
   it('shows a specific message when route plan save is denied', async () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     projectPersistenceMocks.saveRoutePlanner2Project.mockRejectedValueOnce({ code: 'permission-denied' });
@@ -871,6 +895,24 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
 
     expect(view.textContent).toContain('Option 2');
+  });
+
+  it('copies an existing route concept inside the current route plan', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Actions'));
+    });
+
+    const copyButton = view.querySelector('[data-testid^="rp2-copy-route-concept-"]');
+    expect(copyButton).not.toBeNull();
+
+    flushSync(() => {
+      click(copyButton);
+    });
+
+    expect(view.textContent).toContain('Clean Concept A copy');
+    expect(view.textContent).toContain('Clean Concept A');
   });
 
   it('edits the selected route name', () => {

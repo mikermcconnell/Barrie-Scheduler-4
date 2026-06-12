@@ -13,8 +13,20 @@ function scenarioExists(project: RoutePlanner2Project, scenarioId: string): bool
     return project.scenarios.some((scenario) => scenario.id === scenarioId);
 }
 
+function createEntityId(prefix: string): string {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+        return `${prefix}-${crypto.randomUUID()}`;
+    }
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function createScenarioId(): string {
-    return `scenario-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    return createEntityId('scenario');
+}
+
+function createCopyName(name: string): string {
+    const trimmedName = name.trim();
+    return `${trimmedName || 'Untitled'} copy`;
 }
 
 function baseDirectionName(name: string): string {
@@ -78,6 +90,26 @@ export function renameRoutePlanner2Project(
     return markChanged({ ...project, name: trimmedName }, now);
 }
 
+export function createRoutePlanner2ProjectCopy(
+    project: RoutePlanner2Project,
+    options: { id?: string; name?: string; now?: string } = {},
+): RoutePlanner2Project {
+    const now = options.now ?? new Date().toISOString();
+    return {
+        ...project,
+        id: options.id ?? createEntityId('project'),
+        name: options.name ?? createCopyName(project.name),
+        status: 'local-draft',
+        createdAt: now,
+        updatedAt: now,
+        scenarios: project.scenarios.map((scenario) => ({
+            ...scenario,
+            createdAt: now,
+            updatedAt: now,
+        })),
+    };
+}
+
 export function addRoutePlanner2Scenario(
     project: RoutePlanner2Project,
     options: { id?: string; name?: string; now?: string } = {},
@@ -124,21 +156,70 @@ export function duplicateRoutePlanner2Scenario(
     if (!source) return project;
 
     const now = options.now ?? new Date().toISOString();
+    const stopIdMap = new Map(source.stops.map((stop) => [stop.id, createEntityId('stop')]));
+    const runtimeIdMap = new Map((source.runtimeEstimates ?? []).map((segment) => [segment.id, createEntityId('segment-runtime')]));
+    const remapStopId = (stopId: string): string => stopIdMap.get(stopId) ?? stopId;
+    const remapOptionalStopId = (stopId?: string): string | undefined => stopId ? remapStopId(stopId) : undefined;
+    const remapRuntimeId = (runtimeId: string): string => runtimeIdMap.get(runtimeId) ?? runtimeId;
     const copy: RoutePlanner2Scenario = {
         ...source,
-        id: options.id ?? `scenario-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: `${source.name} copy`,
+        id: options.id ?? createScenarioId(),
+        name: createCopyName(source.name),
         status: 'draft',
+        routeFamily: undefined,
         createdAt: now,
         updatedAt: now,
-        alignment: source.alignment.map((point) => ({ ...point })),
-        stops: source.stops.map((stop) => ({ ...stop })),
+        turnaroundStopId: remapOptionalStopId(source.turnaroundStopId),
+        alignment: source.alignment.map((point) => ({
+            ...point,
+            id: createEntityId('route-point'),
+            afterStopId: remapOptionalStopId(point.afterStopId),
+            beforeStopId: remapOptionalStopId(point.beforeStopId),
+        })),
+        stops: source.stops.map((stop) => ({
+            ...stop,
+            id: remapStopId(stop.id),
+            sourceRows: stop.sourceRows ? [...stop.sourceRows] : undefined,
+        })),
         service: { ...source.service },
+        runtimeRouteFilter: source.runtimeRouteFilter
+            ? { ...source.runtimeRouteFilter, routeShortNames: [...source.runtimeRouteFilter.routeShortNames] }
+            : undefined,
+        runtimeEstimates: source.runtimeEstimates?.map((segment) => ({
+            ...segment,
+            id: remapRuntimeId(segment.id),
+            fromStopId: remapStopId(segment.fromStopId),
+            toStopId: remapStopId(segment.toStopId),
+            matchedRoutes: segment.matchedRoutes ? [...segment.matchedRoutes] : undefined,
+            matchedGtfsPathStopIds: segment.matchedGtfsPathStopIds ? [...segment.matchedGtfsPathStopIds] : undefined,
+            runtimeRouteBreakdown: segment.runtimeRouteBreakdown?.map((route) => ({ ...route })),
+            updatedAt: now,
+        })),
+        runtimeOverrides: source.runtimeOverrides
+            ? Object.fromEntries(
+                Object.entries(source.runtimeOverrides).map(([runtimeId, override]) => [
+                    remapRuntimeId(runtimeId),
+                    { ...override, updatedAt: now },
+                ]),
+            )
+            : undefined,
         feasibility: source.feasibility
             ? {
                 ...source.feasibility,
-                segmentSummaries: source.feasibility.segmentSummaries.map((segment) => ({ ...segment })),
-                warnings: source.feasibility.warnings.map((warning) => ({ ...warning })),
+                segmentSummaries: source.feasibility.segmentSummaries.map((segment) => ({
+                    ...segment,
+                    id: remapRuntimeId(segment.id),
+                    fromStopId: remapStopId(segment.fromStopId),
+                    toStopId: remapStopId(segment.toStopId),
+                    matchedRoutes: segment.matchedRoutes ? [...segment.matchedRoutes] : undefined,
+                    matchedGtfsPathStopIds: segment.matchedGtfsPathStopIds ? [...segment.matchedGtfsPathStopIds] : undefined,
+                    runtimeRouteBreakdown: segment.runtimeRouteBreakdown?.map((route) => ({ ...route })),
+                    updatedAt: now,
+                })),
+                warnings: source.feasibility.warnings.map((warning) => ({
+                    ...warning,
+                    id: createEntityId('warning'),
+                })),
             }
             : undefined,
     };
