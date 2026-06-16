@@ -6,12 +6,17 @@ import {
     minutesToSlotsCeil,
 } from '../demandConstants';
 
-// Helper to parse time "HH:MM" or "HH:MM AM/PM" to the active TOD slot index
-const parseTimeToSlot = (timeStr: string): number => {
-    if (!timeStr) return 0;
+// Helper to parse time "HH:MM", "HH:MM AM/PM", or Excel numeric time to the active TOD slot index
+const parseTimeToSlot = (timeValue: CellValue): number => {
+    if (timeValue === null || timeValue === undefined || timeValue === '') return 0;
+
+    if (typeof timeValue === 'number') {
+        const fractionalDay = timeValue >= 1 ? timeValue - Math.floor(timeValue) : timeValue;
+        return minutesToSlot(Math.round(fractionalDay * 24 * 60));
+    }
 
     // Normalize
-    const cleanTime = timeStr.trim().toLowerCase();
+    const cleanTime = String(timeValue).trim().toLowerCase();
 
     // Handle "24:00" or "0:00"
     if (cleanTime === '0:00' || cleanTime === '24:00') return 0; // Midnight start
@@ -242,11 +247,8 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
         const busNum = cellToString(busNumRow[c]) || `Shift ${c}`;
 
         // Parse Times
-        const startStr = cellToString(startRow[c]);
-        const endStr = cellToString(endRow[c]);
-
-        const startSlot = parseTimeToSlot(startStr);
-        let endSlot = parseTimeToSlot(endStr);
+        const startSlot = parseTimeToSlot(startRow[c]);
+        let endSlot = parseTimeToSlot(endRow[c]);
 
         // Handle overnight (end < start)
         if (endSlot < startSlot) endSlot += TIME_SLOTS_PER_DAY; // Add 24 hours
@@ -255,14 +257,16 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
         let breakStartSlot = 0;
         let breakDurationSlots = 0;
 
-        const breakStartStr = cellToString(breakStartRow[c]);
-        const breakEndStr = cellToString(breakEndRow[c]);
+        const breakStartValue = breakStartRow[c];
+        const breakEndValue = breakEndRow[c];
+        const breakStartStr = cellToString(breakStartValue);
+        const breakEndStr = cellToString(breakEndValue);
 
         if (breakStartStr && breakEndStr &&
             !breakStartStr.match(/^n\/b$/i) &&
             !breakEndStr.match(/^n\/b$/i)) {
-            const bStart = parseTimeToSlot(breakStartStr);
-            let bEnd = parseTimeToSlot(breakEndStr);
+            const bStart = parseTimeToSlot(breakStartValue);
+            let bEnd = parseTimeToSlot(breakEndValue);
 
             if (bEnd < bStart) bEnd += TIME_SLOTS_PER_DAY; // Overnight break?
 
