@@ -40,6 +40,7 @@ interface FileManagerProps {
     onSetDefaultSchedule?: (id: string | null) => void;
     onSetDefaultFile?: (id: string | null) => void;
     isSelectingFile?: boolean;
+    autoSelectUploadedFile?: boolean;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -88,6 +89,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
     onSetDefaultSchedule,
     onSetDefaultFile,
     isSelectingFile = false,
+    autoSelectUploadedFile = false,
 }) => {
     const { user } = useAuth();
     const [activeTab, setActiveTab] = useState<Tab>('schedules');
@@ -144,6 +146,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
         try {
             const savedFile = await uploadFile(user.uid, file, fileType);
             setFiles(prev => [savedFile, ...prev]);
+            if (autoSelectUploadedFile && onSelectFile) {
+                onSelectFile(savedFile);
+            }
         } catch (err: unknown) {
             setError(getFileManagerErrorMessage(err, 'upload'));
         } finally {

@@ -42,6 +42,9 @@ const ROUTE_ROAD_NAME_LINE_LABEL_SOURCE_ID = 'route-planner-2-road-name-line-lab
 const ROUTE_ROAD_NAME_LINE_LABEL_LAYER_ID = 'route-planner-2-road-name-line-labels-text';
 const ROUTE_ROAD_NAME_OVERVIEW_LABEL_SOURCE_ID = 'route-planner-2-road-name-overview-labels';
 const ROUTE_ROAD_NAME_OVERVIEW_LABEL_LAYER_ID = 'route-planner-2-road-name-overview-labels-text';
+const ROUTE_STOP_MARKERS_SOURCE_ID = 'route-planner-2-stop-markers';
+const ROUTE_STOP_MARKERS_CIRCLE_LAYER_ID = 'route-planner-2-stop-markers-circle';
+const ROUTE_STOP_MARKERS_TEXT_LAYER_ID = 'route-planner-2-stop-markers-text';
 const DEFAULT_ROUTE_PLANNER_COLOR = '#0891b2';
 const ROUTE_COLOR_FALLBACK = '#6B7280';
 
@@ -133,6 +136,10 @@ const ROAD_NAME_LABEL_DENSITY_LIMITS: Record<RoutePlanner2RoadNameLabelDensity, 
     normal: 12,
     more: 24,
 };
+const INTERACTIVE_STOP_LABEL_LIMIT = 120;
+const INTERACTIVE_STOP_MARKER_LIMIT = 300;
+const DENSE_ROUTE_EDITABLE_MARKER_LIMIT = 24;
+const ROAD_SNAP_SEGMENT_LIMIT = 350;
 
 const ROAD_NAME_LABEL_LINE_SPACING: Record<RoutePlanner2RoadNameLabelDensity, number> = {
     fewer: 150,
@@ -330,6 +337,33 @@ const roadNameOverviewLabelLayer: LayerProps = {
     },
 };
 
+const stopMarkerCircleLayer: LayerProps = {
+    id: ROUTE_STOP_MARKERS_CIRCLE_LAYER_ID,
+    type: 'circle',
+    paint: {
+        'circle-radius': ['case', ['get', 'selected'], 13, ['get', 'highlighted'], 12, 10],
+        'circle-color': ['get', 'routeColor'],
+        'circle-stroke-color': ['case', ['get', 'selected'], '#0f172a', '#ffffff'],
+        'circle-stroke-width': ['case', ['get', 'selected'], 3, 2],
+        'circle-opacity': 0.95,
+    },
+};
+
+const stopMarkerTextLayer: LayerProps = {
+    id: ROUTE_STOP_MARKERS_TEXT_LAYER_ID,
+    type: 'symbol',
+    layout: {
+        'text-field': ['get', 'sequenceLabel'],
+        'text-size': 10,
+        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+    },
+    paint: {
+        'text-color': ['get', 'textColor'],
+    },
+};
+
 function normalizeHexColor(value: string | undefined): string | null {
     const normalized = value?.trim();
     if (!normalized) return null;
@@ -434,6 +468,79 @@ export interface RoutePlanner2MapStopLabelDetail {
 
 interface RoutePlanner2MapStopLabelOptions {
     includePlaceLabel?: boolean;
+}
+
+interface SelectRoutePlanner2InteractiveStopsOptions {
+    limit?: number;
+    selectedStopId?: string | null;
+    highlightedStopId?: string | null;
+    selectedStopIds?: Iterable<string>;
+    stopLabelDetailsByStopId?: Map<string, RoutePlanner2MapStopLabelDetail>;
+}
+
+export function selectRoutePlanner2InteractiveStops(
+    stops: RoutePlanner2Stop[],
+    options: SelectRoutePlanner2InteractiveStopsOptions = {},
+): RoutePlanner2Stop[] {
+    const limit = options.limit ?? stops.length;
+    if (limit <= 0 || stops.length === 0) return [];
+    if (stops.length <= limit) return stops;
+
+    const selectedStopIds = new Set(options.selectedStopIds ?? []);
+    const stopPriority = (stop: RoutePlanner2Stop) =>
+        (stop.id === options.selectedStopId ? 4 : 0)
+        + (stop.id === options.highlightedStopId ? 4 : 0)
+        + (selectedStopIds.has(stop.id) ? 3 : 0);
+
+    return stops
+        .slice()
+        .sort((first, second) => {
+            const firstPriority = stopPriority(first);
+            const secondPriority = stopPriority(second);
+            if (firstPriority !== secondPriority) return secondPriority - firstPriority;
+
+            const firstCampers = options.stopLabelDetailsByStopId?.get(first.id)?.kidsAtStop ?? 0;
+            const secondCampers = options.stopLabelDetailsByStopId?.get(second.id)?.kidsAtStop ?? 0;
+            if (firstCampers !== secondCampers) return secondCampers - firstCampers;
+
+            return first.sequence - second.sequence;
+        })
+        .slice(0, limit);
+}
+
+export function selectRoutePlanner2EditableMarkerStops(
+    stops: RoutePlanner2Stop[],
+    options: {
+        selectedStopId?: string | null;
+        highlightedStopId?: string | null;
+        selectedStopIds?: Iterable<string>;
+        activeStopId?: string | null;
+        limit?: number;
+    } = {},
+): RoutePlanner2Stop[] {
+    const selectedStopIds = new Set(options.selectedStopIds ?? []);
+    const importantStopIds = new Set<string>();
+    if (options.selectedStopId) importantStopIds.add(options.selectedStopId);
+    if (options.highlightedStopId) importantStopIds.add(options.highlightedStopId);
+    if (options.activeStopId) importantStopIds.add(options.activeStopId);
+    selectedStopIds.forEach((stopId) => importantStopIds.add(stopId));
+
+    if (importantStopIds.size === 0) return [];
+
+    const priorityForStop = (stop: RoutePlanner2Stop) =>
+        (stop.id === options.selectedStopId ? 4 : 0)
+        + (stop.id === options.activeStopId ? 4 : 0)
+        + (stop.id === options.highlightedStopId ? 3 : 0)
+        + (selectedStopIds.has(stop.id) ? 2 : 0);
+
+    const limit = options.limit ?? stops.length;
+    return stops
+        .filter((stop) => importantStopIds.has(stop.id))
+        .sort((first, second) => {
+            const priorityDelta = priorityForStop(second) - priorityForStop(first);
+            return priorityDelta || first.sequence - second.sequence;
+        })
+        .slice(0, Math.max(0, limit));
 }
 
 type RoutePlanner2StopLabelAnchor = 'top' | 'bottom' | 'left' | 'right';
@@ -623,6 +730,41 @@ export function buildLineGeoJson(coordinates: [number, number][], color: string 
                 },
             }]
             : [],
+    };
+}
+
+export function buildRoutePlanner2StopMarkerGeoJson(
+    stops: RoutePlanner2Stop[],
+    options: {
+        routeColor?: string;
+        textColor?: string;
+        selectedStopId?: string | null;
+        highlightedStopId?: string | null;
+        selectedStopIds?: Iterable<string>;
+    } = {},
+) {
+    const selectedStopIds = new Set(options.selectedStopIds ?? []);
+    const routeColor = options.routeColor ?? DEFAULT_ROUTE_PLANNER_COLOR;
+    const textColor = options.textColor ?? '#ffffff';
+
+    return {
+        type: 'FeatureCollection' as const,
+        features: stops.map((stop) => ({
+            type: 'Feature' as const,
+            geometry: {
+                type: 'Point' as const,
+                coordinates: [stop.lng, stop.lat] as [number, number],
+            },
+            properties: {
+                stopId: stop.id,
+                sequence: stop.sequence,
+                sequenceLabel: String(stop.sequence),
+                routeColor,
+                textColor,
+                selected: stop.id === options.selectedStopId || selectedStopIds.has(stop.id),
+                highlighted: stop.id === options.highlightedStopId,
+            },
+        })),
     };
 }
 
@@ -1224,6 +1366,16 @@ function clickedRouteLine(event: MapMouseEvent): boolean {
     return features.some((feature) => feature.layer?.id === ROUTE_LINE_HIT_LAYER_ID || feature.layer?.id === ROUTE_LINE_LAYER_ID);
 }
 
+function clickedStopMarkerId(event: MapMouseEvent): string | null {
+    const features = 'features' in event && Array.isArray(event.features) ? event.features : [];
+    const stopFeature = features.find((feature) =>
+        feature.layer?.id === ROUTE_STOP_MARKERS_CIRCLE_LAYER_ID
+        || feature.layer?.id === ROUTE_STOP_MARKERS_TEXT_LAYER_ID,
+    );
+    const stopId = stopFeature?.properties?.stopId;
+    return typeof stopId === 'string' && stopId.length > 0 ? stopId : null;
+}
+
 export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, RoutePlanner2MapCanvasProps>(function RoutePlanner2MapCanvas({
     scenario,
     backgroundScenarios: _backgroundScenarios = [],
@@ -1269,7 +1421,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     const [exportRoadLabelBounds, setExportRoadLabelBounds] = useState<RoutePlanner2RoadLabelBounds | null>(null);
     const [mouseMapCoordinate, setMouseMapCoordinate] = useState<{ lat: number; lng: number } | null>(null);
     const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(null);
-    const [, setMapViewVersion] = useState(0);
+    const [mapViewVersion, setMapViewVersion] = useState(0);
     const mapRef = useRef<MapRef | null>(null);
     const captureContainerRef = useRef<HTMLElement | null>(null);
     const suppressMapClickUntilRef = useRef(0);
@@ -1285,6 +1437,64 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         () => new Map(stopLabelDetails.map((detail) => [detail.stopId, detail])),
         [stopLabelDetails],
     );
+    const shouldUseLayerStopMarkers = Boolean(
+        !isExportCaptureMode
+        && mapLoaded
+        && scenario
+        && scenario.stops.length > INTERACTIVE_STOP_MARKER_LIMIT,
+    );
+    const visibleStopMarkerStops = useMemo(() => {
+        if (!scenario?.stops.length || !mapLoaded) return [];
+        if (isExportCaptureMode || !shouldUseLayerStopMarkers) return scenario.stops;
+
+        return selectRoutePlanner2EditableMarkerStops(scenario.stops, {
+            limit: DENSE_ROUTE_EDITABLE_MARKER_LIMIT,
+            selectedStopId,
+            highlightedStopId,
+            selectedStopIds: selectedStopIdSet,
+            activeStopId: activeDragPreview?.type === 'stop' ? activeDragPreview.id : null,
+        });
+    }, [
+        activeDragPreview,
+        highlightedStopId,
+        isExportCaptureMode,
+        mapLoaded,
+        scenario?.stops,
+        selectedStopId,
+        selectedStopIdSet,
+        shouldUseLayerStopMarkers,
+    ]);
+    const stopMarkerGeoJson = useMemo(
+        () => buildRoutePlanner2StopMarkerGeoJson(scenario?.stops ?? [], {
+            routeColor,
+            textColor: routeTextColor === 'white' ? '#ffffff' : '#111827',
+            selectedStopId,
+            highlightedStopId,
+            selectedStopIds: selectedStopIdSet,
+        }),
+        [highlightedStopId, routeColor, routeTextColor, scenario?.stops, selectedStopId, selectedStopIdSet],
+    );
+    const visibleStopLabelStops = useMemo(() => {
+        if (!scenario?.stops.length || !mapLoaded || (isExportCaptureMode && !exportCaptureShowStopLabels)) return [];
+        if (isExportCaptureMode) return scenario.stops;
+
+        return selectRoutePlanner2InteractiveStops(scenario.stops, {
+            limit: INTERACTIVE_STOP_LABEL_LIMIT,
+            selectedStopId,
+            highlightedStopId,
+            selectedStopIds: selectedStopIdSet,
+            stopLabelDetailsByStopId,
+        });
+    }, [
+        exportCaptureShowStopLabels,
+        highlightedStopId,
+        isExportCaptureMode,
+        mapLoaded,
+        scenario?.stops,
+        selectedStopId,
+        selectedStopIdSet,
+        stopLabelDetailsByStopId,
+    ]);
     const roadOnlySegmentGeometries = useMemo(
         () => snappedSegmentGeometries.filter((segment) => segment.source !== 'fallback'),
         [snappedSegmentGeometries],
@@ -1613,6 +1823,20 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             ? { totalSegments: fallbackResult.segmentGeometries.length, completedSegments: 0 }
             : null);
 
+        if (fallbackResult.segmentGeometries.length > ROAD_SNAP_SEGMENT_LIMIT) {
+            console.info('Route Planner 2 skipped automatic road snapping for a large route', {
+                scenarioId: scenario.id,
+                scenarioName: scenario.name,
+                stops: scenario.stops.length,
+                segments: fallbackResult.segmentGeometries.length,
+                limit: ROAD_SNAP_SEGMENT_LIMIT,
+            });
+            setRoadBuildProgress(fallbackResult.segmentGeometries.length > 0
+                ? { totalSegments: fallbackResult.segmentGeometries.length, completedSegments: fallbackResult.segmentGeometries.length }
+                : null);
+            return () => controller.abort();
+        }
+
         snapRoutePlanner2ScenarioToRoad(scenario, {
             concurrency: 3,
             signal: controller.signal,
@@ -1749,6 +1973,12 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         if (!scenario) return;
         const coordinate = { lat: event.lngLat.lat, lng: event.lngLat.lng };
 
+        const clickedStopId = clickedStopMarkerId(event);
+        if (clickedStopId) {
+            onSelectStop(clickedStopId);
+            return;
+        }
+
         if (clickedRouteLine(event) && scenario.stops.length >= 2) {
             const segment = getClosestRouteSegment(scenario, coordinate);
             if (segment) {
@@ -1817,9 +2047,9 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             : fallback;
     }
 
-    const stopLabelPlacementsByStopId = (() => {
+    const stopLabelPlacementsByStopId = useMemo(() => {
         const placements = new Map<string, RoutePlanner2StopLabelPlacement>();
-        if (!scenario?.stops.length) return placements;
+        if (!visibleStopLabelStops.length) return placements;
 
         const map = mapRef.current?.getMap();
         const bounds = map
@@ -1827,7 +2057,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             : null;
         const placedBoxes: RoutePlanner2StopLabelBox[] = [];
 
-        scenario.stops
+        visibleStopLabelStops
             .slice()
             .sort((first, second) => first.sequence - second.sequence)
             .forEach((stop) => {
@@ -1861,7 +2091,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             });
 
         return placements;
-    })();
+    }, [activeDragPreview, mapViewVersion, stopLabelDetailsByStopId, visibleStopLabelStops]);
 
     function startMarkerDrag(type: ActiveDragPreview['type'], id: string, coordinate: { lat: number; lng: number }) {
         suppressMapClickUntilRef.current = Date.now() + 500;
@@ -1927,7 +2157,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                     showScale={!isExportCaptureMode}
                     mapRef={mapRef}
                     onLoad={() => setMapLoaded(true)}
-                    interactiveLayerIds={[ROUTE_LINE_HIT_LAYER_ID]}
+                    interactiveLayerIds={[ROUTE_LINE_HIT_LAYER_ID, ROUTE_STOP_MARKERS_CIRCLE_LAYER_ID, ROUTE_STOP_MARKERS_TEXT_LAYER_ID]}
                     onMouseMove={handleMapMouseMove}
                     onClick={handleMapClick}
                 >
@@ -1967,6 +2197,12 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             <Layer {...activeDirectionArrowCenterLayer} />
                             <Layer {...activeDirectionArrowOutboundLayer} />
                             <Layer {...activeDirectionArrowReturnLayer} />
+                        </Source>
+                    )}
+                    {shouldUseLayerStopMarkers && (
+                        <Source id={ROUTE_STOP_MARKERS_SOURCE_ID} type="geojson" data={stopMarkerGeoJson}>
+                            <Layer {...stopMarkerCircleLayer} />
+                            <Layer {...stopMarkerTextLayer} />
                         </Source>
                     )}
                     {mapLoaded && !isExportCaptureMode && transferPreviewMarkers.map((marker) => (
@@ -2147,7 +2383,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             </div>
                         </Marker>
                     )}
-                    {mapLoaded && (!isExportCaptureMode || exportCaptureShowStopLabels) && scenario?.stops.map((stop) => {
+                    {visibleStopLabelStops.map((stop) => {
                         const coordinate = getPreviewCoordinate('stop', stop.id, stop);
                         const label = formatRoutePlanner2MapStopLabel(
                             stopLabelDetailsByStopId.get(stop.id),
@@ -2188,7 +2424,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             </Marker>
                         );
                     })}
-                    {mapLoaded && scenario?.stops.map((stop) => {
+                    {visibleStopMarkerStops.map((stop) => {
                         const coordinate = getPreviewCoordinate('stop', stop.id, stop);
                         const isDragging = activeDragPreview?.type === 'stop' && activeDragPreview.id === stop.id;
                         const isHighlighted = highlightedStopId === stop.id;

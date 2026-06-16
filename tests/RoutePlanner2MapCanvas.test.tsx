@@ -7,9 +7,12 @@ import {
   buildRoutePlanner2RoadOnlySegmentLineGeoJson,
   buildRoutePlanner2SegmentLineGeoJson,
   buildRoutePlanner2ScenarioOverlayGeoJson,
+  buildRoutePlanner2StopMarkerGeoJson,
   formatRoutePlanner2MapStopLabel,
   formatRoutePlanner2RoadNameLabel,
   getRoutePlanner2ScenarioColor,
+  selectRoutePlanner2EditableMarkerStops,
+  selectRoutePlanner2InteractiveStops,
 } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 import type { RoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2Types';
@@ -45,6 +48,80 @@ describe('RoutePlanner2MapCanvas stop labels', () => {
       kidsAtStop: 1,
       travelTimeLabel: 'Not estimated',
     })).toBe('1 camper');
+  });
+
+  it('caps interactive stop labels while keeping selected and high-camper stops first', () => {
+    const stops = Array.from({ length: 10 }, (_, index) => ({
+      id: `stop-${index + 1}`,
+      name: `Stop ${index + 1}`,
+      lat: 44.38 + (index * 0.001),
+      lng: -79.69,
+      sequence: index + 1,
+      role: 'passenger-stop' as const,
+      source: 'custom' as const,
+    }));
+    const details = new Map(stops.map((stop) => [stop.id, {
+      stopId: stop.id,
+      kidsAtStop: stop.id === 'stop-8' ? 12 : 1,
+      travelTimeLabel: 'Not estimated',
+    }]));
+
+    const selected = selectRoutePlanner2InteractiveStops(stops, {
+      limit: 3,
+      selectedStopId: 'stop-9',
+      highlightedStopId: 'stop-7',
+      stopLabelDetailsByStopId: details,
+    });
+
+    expect(selected.map((stop) => stop.id)).toEqual(['stop-7', 'stop-9', 'stop-8']);
+  });
+
+  it('builds a lightweight stop marker layer for large routes', () => {
+    const stop = {
+      id: 'stop-1',
+      name: 'Stop 1',
+      lat: 44.38,
+      lng: -79.69,
+      sequence: 1,
+      role: 'passenger-stop' as const,
+      source: 'custom' as const,
+    };
+
+    const geoJson = buildRoutePlanner2StopMarkerGeoJson([stop], {
+      routeColor: '#0891b2',
+      textColor: '#ffffff',
+      selectedStopId: 'stop-1',
+    });
+
+    expect(geoJson.features).toHaveLength(1);
+    expect(geoJson.features[0]?.geometry.coordinates).toEqual([-79.69, 44.38]);
+    expect(geoJson.features[0]?.properties).toMatchObject({
+      stopId: 'stop-1',
+      sequenceLabel: '1',
+      selected: true,
+    });
+  });
+
+  it('keeps dense-route draggable markers limited to selected or active stops', () => {
+    const stops = Array.from({ length: 10 }, (_, index) => ({
+      id: `stop-${index + 1}`,
+      name: `Stop ${index + 1}`,
+      lat: 44.38 + (index * 0.001),
+      lng: -79.69,
+      sequence: index + 1,
+      role: 'passenger-stop' as const,
+      source: 'custom' as const,
+    }));
+
+    const editableStops = selectRoutePlanner2EditableMarkerStops(stops, {
+      selectedStopId: 'stop-9',
+      highlightedStopId: 'stop-2',
+      activeStopId: 'stop-4',
+      selectedStopIds: ['stop-7', 'stop-8'],
+      limit: 3,
+    });
+
+    expect(editableStops.map((stop) => stop.id)).toEqual(['stop-4', 'stop-9', 'stop-2']);
   });
 });
 

@@ -45,6 +45,7 @@ export const FileUpload: React.FC<Props> = ({
     if (disabled) return;
     if (e.target.files && e.target.files.length > 0) {
       onFileUpload(Array.from(e.target.files));
+      e.target.value = '';
     }
   };
 

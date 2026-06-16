@@ -1054,19 +1054,52 @@ export const OnDemandWorkspace: React.FC = () => {
         setActiveTab('editor');
     };
 
+    const classifyOnDemandUpload = (file: File): 'master' | 'rideco' | null => {
+        const lowerName = file.name.toLowerCase();
+        if (
+            lowerName.includes('schedule master') ||
+            (lowerName.includes('master') && (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || lowerName.endsWith('.csv')))
+        ) {
+            return 'master';
+        }
+        if (
+            lowerName.includes('rideco') ||
+            lowerName.includes('template') ||
+            lowerName.includes('shift')
+        ) {
+            return 'rideco';
+        }
+        return null;
+    };
+
     const handleFileUpload = (files: File[]) => {
         if (isWorkspaceBusy) return;
+        const classifiedFiles = files.map(file => ({
+            file,
+            uploadType: classifyOnDemandUpload(file),
+        }));
+        const ignoredFiles = classifiedFiles
+            .filter(item => !item.uploadType)
+            .map(item => item.file.name);
+
         setUploadedFiles(prev => {
             const newFiles = { ...prev };
-            files.forEach(file => {
-                if (file.name.includes('Schedule Master') || file.name.includes('Master')) {
+            classifiedFiles.forEach(({ file, uploadType }) => {
+                if (uploadType === 'master') {
                     newFiles.master = file;
-                } else if (file.name.includes('RideCo') || file.name.includes('Template')) {
+                } else if (uploadType === 'rideco') {
                     newFiles.rideco = file;
                 }
             });
             return newFiles;
         });
+
+        if (ignoredFiles.length > 0) {
+            toast.warning(
+                'File not recognized',
+                `Skipped ${ignoredFiles.join(', ')}. Use a Master Schedule or RideCo/MVT shift file.`
+            );
+        }
     };
 
     const processFiles = async () => {
@@ -1094,7 +1127,10 @@ export const OnDemandWorkspace: React.FC = () => {
             if (masterContent || ridecoContent) {
                 captureUndoSnapshot('file import');
             }
-            setCachedFiles({ master: masterContent, rideco: ridecoContent });
+            setCachedFiles(prev => ({
+                master: masterContent ?? prev.master,
+                rideco: ridecoContent ?? prev.rideco,
+            }));
 
             if (masterContent) {
                 const newSchedules = parseMasterContent(masterContent);
@@ -1163,7 +1199,8 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     };
 
-    // Auto-process when both files are uploaded
+    // Auto-process uploaded files. A single RideCo or Master file should load immediately;
+    // users should not have to find a separate Process Files button after choosing a file.
     // Note: We use a ref to avoid stale closure issues with processFiles
     const processFilesRef = React.useRef(processFiles);
     processFilesRef.current = processFiles;
@@ -1172,12 +1209,12 @@ export const OnDemandWorkspace: React.FC = () => {
     const pendingProcessRef = React.useRef(false);
 
     React.useEffect(() => {
-        if (uploadedFiles.master && uploadedFiles.rideco) {
+        if (uploadedFiles.master || uploadedFiles.rideco) {
             if (!isWorkspaceBusy) {
                 processFilesRef.current();
                 pendingProcessRef.current = false;
             } else {
-                // Mark as pending if currently animating
+                // Mark as pending if currently animating/processing
                 pendingProcessRef.current = true;
             }
         }
@@ -1185,7 +1222,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
     // Process pending files when animation ends
     React.useEffect(() => {
-        if (!isWorkspaceBusy && pendingProcessRef.current && uploadedFiles.master && uploadedFiles.rideco) {
+        if (!isWorkspaceBusy && pendingProcessRef.current && (uploadedFiles.master || uploadedFiles.rideco)) {
             processFilesRef.current();
             pendingProcessRef.current = false;
         }
@@ -1515,6 +1552,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     onSetDefaultSchedule={handleSetDefaultSchedule}
                     onSetDefaultFile={handleSetDefaultFile}
                     isSelectingFile={isLoadingFromCloud}
+                    autoSelectUploadedFile={true}
                 />
             )}
 

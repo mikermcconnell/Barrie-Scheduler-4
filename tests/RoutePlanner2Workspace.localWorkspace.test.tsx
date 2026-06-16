@@ -11,6 +11,7 @@ const projectPersistenceMocks = vi.hoisted(() => ({
     status: 'local-saved',
     updatedAt: '2026-05-12T12:00:00.000Z',
   })),
+  deleteRoutePlanner2SavedProject: vi.fn(async () => undefined),
 }));
 
 vi.mock('../utils/route-planner-2/routePlanner2GtfsClient', () => ({
@@ -99,6 +100,7 @@ vi.mock('html2canvas', () => ({
 
 import {
   RoutePlanner2Workspace,
+  getRoutePlanner2VirtualWindow,
   getNextRoutePlanner2SegmentSwitchSourceSelection,
   isRoutePlanner2PairedDirectionScenario,
 } from '../components/Analytics/RoutePlanner2Workspace';
@@ -331,6 +333,34 @@ describe('Route Planner 2 background route filtering', () => {
   });
 });
 
+describe('RoutePlanner2Workspace virtual stop order', () => {
+  it('windows large stop-order lists without hiding the full route', () => {
+    const topWindow = getRoutePlanner2VirtualWindow(1000, 0, {
+      rowHeight: 100,
+      viewportHeight: 300,
+      overscan: 2,
+    });
+    const scrolledWindow = getRoutePlanner2VirtualWindow(1000, 4500, {
+      rowHeight: 100,
+      viewportHeight: 300,
+      overscan: 2,
+    });
+
+    expect(topWindow).toEqual({
+      startIndex: 0,
+      endIndex: 5,
+      topPadding: 0,
+      bottomPadding: 99500,
+      totalHeight: 100000,
+    });
+    expect(scrolledWindow.startIndex).toBe(43);
+    expect(scrolledWindow.endIndex).toBe(50);
+    expect(scrolledWindow.topPadding).toBe(4300);
+    expect(scrolledWindow.bottomPadding).toBe(95000);
+    expect(scrolledWindow.totalHeight).toBe(100000);
+  });
+});
+
 describe('RoutePlanner2Workspace local workspace', () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
@@ -339,6 +369,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     projectPersistenceMocks.listRoutePlanner2SavedProjects.mockClear();
     projectPersistenceMocks.loadRoutePlanner2Project.mockClear();
     projectPersistenceMocks.saveRoutePlanner2Project.mockClear();
+    projectPersistenceMocks.deleteRoutePlanner2SavedProject.mockClear();
 
     if (root) {
       flushSync(() => {
@@ -716,6 +747,105 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(projectPersistenceMocks.loadRoutePlanner2Project).toHaveBeenCalledWith('team-1', 'saved-project-1');
     expect(view.textContent).toContain('Loaded saved route plan.');
     expect(view.textContent).not.toContain('Load route plan');
+  });
+
+  it('deletes a saved route plan from the picker', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    projectPersistenceMocks.listRoutePlanner2SavedProjects
+      .mockResolvedValueOnce([
+        {
+          id: 'saved-project-1',
+          name: 'Downtown shuttle',
+          status: 'local-saved',
+          selectedScenarioId: 'scenario-1',
+          scenarioOrder: ['scenario-1'],
+          scenarioCount: 1,
+          createdAt: '2026-05-01T12:00:00.000Z',
+          updatedAt: '2026-05-12T12:00:00.000Z',
+          updatedBy: 'user-1',
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    const view = renderWorkspace();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Load'));
+    });
+    const deleteButton = view.querySelector('[data-testid="rp2-delete-saved-route-plan-saved-project-1"]');
+
+    flushSync(() => {
+      click(deleteButton);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(confirmSpy).toHaveBeenCalledWith('Delete saved route plan "Downtown shuttle"? This cannot be undone.');
+    expect(projectPersistenceMocks.deleteRoutePlanner2SavedProject).toHaveBeenCalledWith('team-1', 'saved-project-1');
+    expect(view.textContent).toContain('Deleted saved route plan.');
+    expect(view.textContent).toContain('No saved route plans yet.');
+
+    confirmSpy.mockRestore();
+  });
+
+  it('turns an open deleted route plan into an unsaved copy', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const savedProject = {
+      ...createRoutePlanner2Project({ id: 'saved-project-1', scenarioId: 'scenario-1', now: '2026-05-12T12:00:00.000Z' }),
+      name: 'Downtown shuttle',
+      status: 'local-saved' as const,
+    };
+    projectPersistenceMocks.listRoutePlanner2SavedProjects
+      .mockResolvedValueOnce([
+        {
+          id: 'saved-project-1',
+          name: 'Downtown shuttle',
+          status: 'local-saved',
+          selectedScenarioId: 'scenario-1',
+          scenarioOrder: ['scenario-1'],
+          scenarioCount: 1,
+          createdAt: '2026-05-01T12:00:00.000Z',
+          updatedAt: '2026-05-12T12:00:00.000Z',
+          updatedBy: 'user-1',
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    projectPersistenceMocks.loadRoutePlanner2Project.mockResolvedValueOnce(savedProject);
+    const view = renderWorkspace();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Load'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Downtown shuttle'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Load'));
+    });
+    flushSync(() => {
+      click(view.querySelector('[data-testid="rp2-delete-saved-route-plan-saved-project-1"]'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(projectPersistenceMocks.deleteRoutePlanner2SavedProject).toHaveBeenCalledWith('team-1', 'saved-project-1');
+    expect(view.textContent).toContain('Deleted saved route plan. The open copy is now unsaved.');
+
+    flushSync(() => {
+      click(findButton(view, 'Save'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const resavedProject = projectPersistenceMocks.saveRoutePlanner2Project.mock.calls.at(-1)?.[2] as RoutePlanner2Project;
+    expect(resavedProject.id).not.toBe('saved-project-1');
+    expect(resavedProject.name).toBe('Downtown shuttle');
+
+    confirmSpy.mockRestore();
   });
 
   it('shows route bend anchors in the right-side stop order', async () => {
@@ -1298,7 +1428,11 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
 
     expect(view.querySelector('[data-testid="rp2-right-rail"]')?.getAttribute('data-state')).toBe('open');
+    const virtualStopList = view.querySelector('[data-testid="rp2-stop-order-virtual-list"]');
+    expect(virtualStopList?.getAttribute('data-total-items')).toBe('11');
+    expect(virtualStopList?.getAttribute('data-rendered-items')).toBe('11');
     expect(view.querySelector('[data-testid="rp2-stop-order-panel"]')?.textContent).toContain('10Stop 10');
+    expect(view.querySelector('[data-testid="rp2-stop-order-panel"]')?.textContent).not.toContain('more items are hidden');
   });
 
   it('puts the runtime source overlay control in the action sidebar', () => {

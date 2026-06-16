@@ -50,6 +50,7 @@ import {
     listRoutePlanner2SavedProjects,
     loadRoutePlanner2Project,
     saveRoutePlanner2Project,
+    deleteRoutePlanner2SavedProject,
     type RoutePlanner2SavedProjectSummary,
 } from '../../utils/route-planner-2/routePlanner2ProjectPersistence';
 import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
@@ -740,6 +741,10 @@ function updateScenarioRuntimeRouteFilter(
 }
 
 const ROUTE_PLANNER_UNDO_HISTORY_LIMIT = 75;
+const STOP_ORDER_VIRTUAL_ROW_HEIGHT = 132;
+const STOP_ORDER_VIRTUAL_VIEWPORT_HEIGHT = 288;
+const STOP_ORDER_VIRTUAL_OVERSCAN = 5;
+const STOP_ORDER_VIRTUALIZE_THRESHOLD = 150;
 
 interface RoutePlanner2ProjectHistory {
     past: RoutePlanner2Project[];
@@ -814,6 +819,48 @@ type RoutePlanner2StopOrderItem =
     | { type: 'stop'; key: string; stop: RoutePlanner2Scenario['stops'][number] }
     | { type: 'bend'; key: string; bend: RoutePlanner2RoutePoint; fromStopName: string; toStopName: string; bendNumber: number };
 
+export interface RoutePlanner2VirtualWindow {
+    startIndex: number;
+    endIndex: number;
+    topPadding: number;
+    bottomPadding: number;
+    totalHeight: number;
+}
+
+export function getRoutePlanner2VirtualWindow(
+    itemCount: number,
+    scrollTop: number,
+    options: {
+        rowHeight?: number;
+        viewportHeight?: number;
+        overscan?: number;
+    } = {},
+): RoutePlanner2VirtualWindow {
+    const rowHeight = options.rowHeight ?? STOP_ORDER_VIRTUAL_ROW_HEIGHT;
+    const viewportHeight = options.viewportHeight ?? STOP_ORDER_VIRTUAL_VIEWPORT_HEIGHT;
+    const overscan = options.overscan ?? STOP_ORDER_VIRTUAL_OVERSCAN;
+    const safeItemCount = Math.max(0, itemCount);
+
+    if (safeItemCount === 0 || rowHeight <= 0 || viewportHeight <= 0) {
+        return { startIndex: 0, endIndex: 0, topPadding: 0, bottomPadding: 0, totalHeight: 0 };
+    }
+
+    const firstVisibleIndex = Math.floor(Math.max(0, scrollTop) / rowHeight);
+    const visibleCount = Math.ceil(viewportHeight / rowHeight);
+    const startIndex = Math.max(0, firstVisibleIndex - overscan);
+    const endIndex = Math.min(safeItemCount, firstVisibleIndex + visibleCount + overscan);
+    const topPadding = startIndex * rowHeight;
+    const bottomPadding = Math.max(0, (safeItemCount - endIndex) * rowHeight);
+
+    return {
+        startIndex,
+        endIndex,
+        topPadding,
+        bottomPadding,
+        totalHeight: safeItemCount * rowHeight,
+    };
+}
+
 function buildStopOrderItems(scenario: RoutePlanner2Scenario | null | undefined): RoutePlanner2StopOrderItem[] {
     if (!scenario) return [];
     const visits = buildRoutePlanner2StopVisitSequence(scenario);
@@ -847,6 +894,36 @@ function buildStopOrderItems(scenario: RoutePlanner2Scenario | null | undefined)
     });
 
     return items;
+}
+
+function summarizeRoutePlanner2LoadedProject(project: RoutePlanner2Project, elapsedMs: number) {
+    const scenarioSummaries = project.scenarios.map((scenario) => ({
+        id: scenario.id,
+        name: scenario.name,
+        stops: scenario.stops.length,
+        waypoints: scenario.alignment.length,
+        runtimeEstimates: scenario.runtimeEstimates?.length ?? 0,
+        runtimeOverrides: Object.keys(scenario.runtimeOverrides ?? {}).length,
+    }));
+    const totals = scenarioSummaries.reduce(
+        (summary, scenario) => ({
+            stops: summary.stops + scenario.stops,
+            waypoints: summary.waypoints + scenario.waypoints,
+            runtimeEstimates: summary.runtimeEstimates + scenario.runtimeEstimates,
+            runtimeOverrides: summary.runtimeOverrides + scenario.runtimeOverrides,
+        }),
+        { stops: 0, waypoints: 0, runtimeEstimates: 0, runtimeOverrides: 0 },
+    );
+
+    return {
+        projectId: project.id,
+        projectName: project.name,
+        elapsedMs: Math.round(elapsedMs),
+        scenarioCount: project.scenarios.length,
+        selectedScenarioId: project.selectedScenarioId,
+        totals,
+        scenarios: scenarioSummaries,
+    };
 }
 
 export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ onBack, userId, teamId }) => {
@@ -905,7 +982,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [selectedSavedProjectId, setSelectedSavedProjectId] = useState('');
     const [isLoadingSavedProjects, setIsLoadingSavedProjects] = useState(false);
     const [savedProjectsLoadFailed, setSavedProjectsLoadFailed] = useState(false);
+    const [deletingSavedProjectId, setDeletingSavedProjectId] = useState<string | null>(null);
     const [isLoadPickerOpen, setIsLoadPickerOpen] = useState(false);
+    const [stopOrderScrollTop, setStopOrderScrollTop] = useState(0);
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -995,6 +1074,22 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         [selectedScenarioStops, stopCardDetailsByStopId],
     );
     const stopOrderItems = useMemo(() => buildStopOrderItems(selectedScenario), [selectedScenario]);
+    const stopOrderVirtualWindow = useMemo(() => {
+        if (stopOrderItems.length <= STOP_ORDER_VIRTUALIZE_THRESHOLD) {
+            return {
+                startIndex: 0,
+                endIndex: stopOrderItems.length,
+                topPadding: 0,
+                bottomPadding: 0,
+                totalHeight: stopOrderItems.length * STOP_ORDER_VIRTUAL_ROW_HEIGHT,
+            };
+        }
+        return getRoutePlanner2VirtualWindow(stopOrderItems.length, stopOrderScrollTop);
+    }, [stopOrderItems.length, stopOrderScrollTop]);
+    const visibleStopOrderItems = useMemo(
+        () => stopOrderItems.slice(stopOrderVirtualWindow.startIndex, stopOrderVirtualWindow.endIndex),
+        [stopOrderItems, stopOrderVirtualWindow.endIndex, stopOrderVirtualWindow.startIndex],
+    );
     const selectedScenarioFirstStopSequence = selectedScenarioStops[0]?.sequence ?? 1;
     const transferTargetScenario = useMemo(
         () => project.scenarios.find((scenario) => scenario.id === transferTargetScenarioId) ?? null,
@@ -1193,6 +1288,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setMapSelection(EMPTY_MAP_SELECTION);
         setTransferSourceStartSelected(false);
         setTransferSourceEndSelected(false);
+        setStopOrderScrollTop(0);
     }, [selectedScenario?.id]);
     useEffect(() => {
         if (!lastTransferUndoMessage) return undefined;
@@ -1410,6 +1506,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     }
     async function loadSavedProject(projectId: string) {
         if (!teamId || !projectId) return;
+        const loadStartedAt = performance.now();
         setLoadState('loading');
         setSaveMessage(null);
         try {
@@ -1422,6 +1519,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             }
             const loadedScenario = loadedProject.scenarios.find((scenario) => scenario.id === loadedProject.selectedScenarioId)
                 ?? loadedProject.scenarios[0];
+            console.info(
+                'Route Planner 2 saved project loaded',
+                summarizeRoutePlanner2LoadedProject(loadedProject, performance.now() - loadStartedAt),
+            );
             resetProjectHistory(loadedProject);
             setSelectedStopId(loadedScenario?.stops[0]?.id ?? null);
             setSelectedSavedProjectId(loadedProject.id);
@@ -1433,6 +1534,44 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             console.error('Failed to load Route Planner project', error);
             setLoadState('error');
             setSaveMessage('Load failed. Please try again.');
+        }
+    }
+    async function deleteSavedProject(projectToDelete: RoutePlanner2SavedProjectSummary) {
+        if (!teamId) {
+            setSaveState('error');
+            setSaveMessage('Sign in with a team workspace to delete saved route plans.');
+            return;
+        }
+
+        const confirmed = window.confirm(`Delete saved route plan "${projectToDelete.name}"? This cannot be undone.`);
+        if (!confirmed) return;
+
+        setDeletingSavedProjectId(projectToDelete.id);
+        setSaveMessage(null);
+        try {
+            await deleteRoutePlanner2SavedProject(teamId, projectToDelete.id);
+            setSavedProjects((current) => current.filter((savedProject) => savedProject.id !== projectToDelete.id));
+
+            if (selectedSavedProjectId === projectToDelete.id) {
+                setSelectedSavedProjectId('');
+            }
+
+            if (project.id === projectToDelete.id) {
+                const unsavedCopy = createRoutePlanner2ProjectCopy(project, { name: project.name });
+                resetProjectHistory(unsavedCopy);
+                setSaveState('idle');
+                setSaveMessage('Deleted saved route plan. The open copy is now unsaved.');
+            } else {
+                setSaveMessage('Deleted saved route plan.');
+            }
+
+            await refreshSavedProjects();
+        } catch (error) {
+            console.error('Failed to delete Route Planner project', error);
+            setSaveState('error');
+            setSaveMessage('Delete failed. Please try again.');
+        } finally {
+            setDeletingSavedProjectId(null);
         }
     }
     function addStop(coordinate: { lat: number; lng: number; name?: string } = getNextAuthoringCoordinate()) {
@@ -3289,8 +3428,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             </div>
                                         </div>
                                         {stopOrderItems.length > 0 ? (
-                                            <ol className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-                                                {stopOrderItems.map((item) => item.type === 'stop' ? (
+                                            <ol
+                                                className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1"
+                                                data-testid="rp2-stop-order-virtual-list"
+                                                data-total-items={stopOrderItems.length}
+                                                data-rendered-items={visibleStopOrderItems.length}
+                                                onScroll={(event) => setStopOrderScrollTop(event.currentTarget.scrollTop)}
+                                            >
+                                                {stopOrderVirtualWindow.topPadding > 0 && (
+                                                    <li aria-hidden="true" style={{ height: stopOrderVirtualWindow.topPadding }} />
+                                                )}
+                                                {visibleStopOrderItems.map((item) => item.type === 'stop' ? (
                                                     <li
                                                         key={item.key}
                                                         data-testid={`rp2-stop-order-item-${item.stop.id}`}
@@ -3448,6 +3596,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                         </div>
                                                     </li>
                                                 ))}
+                                                {stopOrderVirtualWindow.bottomPadding > 0 && (
+                                                    <li aria-hidden="true" style={{ height: stopOrderVirtualWindow.bottomPadding }} />
+                                                )}
                                             </ol>
                                         ) : (
                                             <p className="mt-3 text-sm leading-6 text-slate-500">Add stops from the map or address importer to build the order list.</p>
@@ -3866,23 +4017,38 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             ) : (
                                 <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
                                     {savedProjects.map((savedProject) => (
-                                        <button
+                                        <div
                                             key={savedProject.id}
-                                            type="button"
-                                            onClick={() => void loadSavedProject(savedProject.id)}
-                                            disabled={loadState === 'loading'}
-                                            className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-cyan-200 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition hover:border-cyan-200"
                                         >
                                             <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void loadSavedProject(savedProject.id)}
+                                                    disabled={loadState === 'loading' || deletingSavedProjectId === savedProject.id}
+                                                    className="min-w-0 flex-1 rounded-xl px-1 py-1 text-left transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                >
                                                     <div className="truncate text-sm font-black text-slate-950">{savedProject.name}</div>
                                                     <div className="mt-1 text-xs font-semibold text-slate-500">{formatSavedProjectLabel(savedProject)}</div>
+                                                </button>
+                                                <div className="flex shrink-0 items-center gap-2">
+                                                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">
+                                                        {savedProject.scenarioCount === 1 ? '1 route' : `${savedProject.scenarioCount} routes`}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        data-testid={`rp2-delete-saved-route-plan-${savedProject.id}`}
+                                                        onClick={() => void deleteSavedProject(savedProject)}
+                                                        disabled={deletingSavedProjectId === savedProject.id || loadState === 'loading'}
+                                                        className="inline-flex size-8 items-center justify-center rounded-xl border border-red-200 bg-white text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                        aria-label={`Delete saved route plan ${savedProject.name}`}
+                                                        title={`Delete saved route plan ${savedProject.name}`}
+                                                    >
+                                                        {deletingSavedProjectId === savedProject.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                                                    </button>
                                                 </div>
-                                                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">
-                                                    {savedProject.scenarioCount === 1 ? '1 route' : `${savedProject.scenarioCount} routes`}
-                                                </span>
                                             </div>
-                                        </button>
+                                        </div>
                                     ))}
                                 </div>
                             )}

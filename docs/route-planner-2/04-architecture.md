@@ -61,6 +61,7 @@ Responsibilities:
 - terminal and timed-stop roles
 - Mapbox display and click-to-author interactions
 - road-snapped display geometry using Mapbox Directions when a token is available, with straight-line fallback
+- large-route rendering safeguards: cap interactive stop labels, use Mapbox stop marker layers for dense routes, virtualize the stop-order rail, keep only selected/high-priority stops as draggable HTML markers, and skip automatic road snapping when segment counts are too high for interactive loading
 - copy/move contiguous stop ranges between route concepts for service redesign work
 - bus-safe out-and-back routes: choosing Out and back automatically marks the far end stop as the bus turnaround before the return path is treated as valid
 
@@ -179,6 +180,7 @@ teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}
 ```
 
 `utils/route-planner-2/routePlanner2ProjectPersistence.ts` owns Firebase access. The workspace calls that service instead of importing Firestore directly. Firestore rules allow team members and workspace permission managers to read/write saved route plans. Large geometry or analysis artifacts can move to Firebase Storage later if the Firestore document sizes become a concern.
+Deleting a saved route plan must go through the same persistence service so the project document and its `scenarios` subcollection are removed together.
 
 ## Integration Rules
 

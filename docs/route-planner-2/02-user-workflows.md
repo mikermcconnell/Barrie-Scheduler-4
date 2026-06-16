@@ -56,6 +56,7 @@ A project is the planning container. A route is one route option inside that pro
 
 Required v1 actions:
 - rename project
+- delete a saved project file from the team workspace
 - create route
 - rename route
 - duplicate route
