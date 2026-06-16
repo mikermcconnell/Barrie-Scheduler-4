@@ -66,7 +66,7 @@ describe('routePlanner2AddressSearch', () => {
     expect(results[0]).toMatchObject({
       id: 'popular-place-sadlon-arena',
       name: 'Sadlon Arena',
-      label: 'Sadlon Arena · 555 Bayview Drive, Barrie',
+      label: 'Sadlon Arena · 555 Bayview Dr, Barrie, ON L4N 8Y2',
     });
     expect(fetcher).not.toHaveBeenCalled();
   });

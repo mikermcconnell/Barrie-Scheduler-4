@@ -19,6 +19,7 @@ import {
     updateRoutePlanner2RuntimeSourceMode,
     updateRoutePlanner2SegmentRuntimeEstimates,
     updateRoutePlanner2StopCoordinate,
+    updateRoutePlanner2StopRiderCount,
     updateRoutePlanner2StopRole,
 } from '../../utils/route-planner-2/routePlanner2Authoring';
 import { updateRoutePlanner2Service } from '../../utils/route-planner-2/routePlanner2Feasibility';
@@ -1536,6 +1537,12 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     function renameSelectedStop(name: string) {
         if (!selectedScenario || !selectedStop) return;
         setProject((current) => renameRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id, name));
+    }
+    function updateStopKids(stopId: string, value: string) {
+        if (!selectedScenario) return;
+        const trimmedValue = value.trim();
+        const riderCount = trimmedValue === '' ? undefined : Number(trimmedValue);
+        setProject((current) => updateRoutePlanner2StopRiderCount(current, selectedScenario.id, stopId, riderCount));
     }
     function updateRouteShape(routeShape: RoutePlanner2RouteShape, turnaroundStopId?: string) {
         if (!selectedScenario) return;
@@ -3318,10 +3325,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                                 </span>
                                                                 <span className="mt-2 grid grid-cols-2 gap-1 pl-8">
                                                                     <span className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
-                                                                        Kids {stopDetail?.kidsAtStop ?? 0}
+                                                                        Campers {stopDetail?.kidsAtStop ?? 0}
                                                                     </span>
                                                                     <span className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
-                                                                        Kids total {stopDetail?.runningKidsTotal ?? 0}
+                                                                        Campers total {stopDetail?.runningKidsTotal ?? 0}
                                                                     </span>
                                                                 </span>
                                                                 <span className="mt-2 grid gap-1 pl-8 sm:grid-cols-2">
@@ -3346,8 +3353,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                                         )}
                                                                     </span>
                                                                 )}
-                                                            </button>
-                                                            <button
+                                                             </button>
+                                                             <button
                                                                 type="button"
                                                                 onClick={() => deleteStop(item.stop.id)}
                                                                 className="flex size-8 shrink-0 items-center justify-center rounded-full border border-red-200 bg-white text-red-600 hover:bg-red-50"
@@ -3356,8 +3363,23 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                             >
                                                                 <Trash2 size={14} />
                                                             </button>
-                                                        </div>
-                                                        {runtimeDetail && canEditRunningTime && (
+                                                         </div>
+                                                         <label className="mt-2 block pl-8 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                                             Campers at stop
+                                                             <input
+                                                                 type="number"
+                                                                 min="0"
+                                                                 step="1"
+                                                                 value={item.stop.riderCount ?? ''}
+                                                                 placeholder={String(stopDetail?.kidsAtStop ?? 0)}
+                                                                 onChange={(event) => updateStopKids(item.stop.id, event.target.value)}
+                                                                 onMouseDown={(event) => event.stopPropagation()}
+                                                                 onClick={(event) => event.stopPropagation()}
+                                                                 className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-sm font-black text-slate-900"
+                                                                 aria-label={`Campers count for ${item.stop.name}`}
+                                                             />
+                                                         </label>
+                                                         {runtimeDetail && canEditRunningTime && (
                                                             <div className="mt-2 grid grid-cols-[1fr_auto] items-end gap-2 pl-8">
                                                                 <label className="text-[10px] font-black uppercase tracking-wide text-slate-500">
                                                                     Edit running time

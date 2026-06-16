@@ -56,7 +56,7 @@ describe('Route Planner 2 map export', () => {
     });
   });
 
-  it('builds a map-first export plan with kids callouts and route road labels', async () => {
+  it('builds a map-first export plan with camper callouts and route road labels', async () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', {
       id: 'stop-1',
@@ -111,7 +111,7 @@ describe('Route Planner 2 map export', () => {
     });
 
     expect(plan.title).toBe('Camp Access - July 14 to July 18 - Route 1 Morning');
-    expect(plan.stopCallouts.map((callout) => callout.label)).toContain('304 Johnson Street - 2 Kids');
+    expect(plan.stopCallouts.map((callout) => callout.label)).toContain('304 Johnson Street - 2 Campers');
     expect(plan.stopCallouts.find((callout) => callout.stopId === 'stop-1')?.badge).toBe('Start');
     expect(plan.stopCallouts.find((callout) => callout.stopId === 'stop-2')?.badge).toBe('End');
     expect(plan.roadLabels.map((label) => label.name)).toEqual(['Mapleview Drive', 'Yonge Street']);

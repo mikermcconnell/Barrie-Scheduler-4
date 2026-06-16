@@ -1188,7 +1188,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(stopNameInput?.value).toBe('Stop 1');
   });
 
-  it('shows kids, kids total, and running time on stop cards', () => {
+  it('shows campers, campers total, and running time on stop cards', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
@@ -1197,10 +1197,30 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
     const stopCard = view.querySelector('[data-testid^="rp2-stop-order-item-"]');
 
-    expect(stopCard?.textContent).toContain('Kids 0');
-    expect(stopCard?.textContent).toContain('Kids total 0');
+    expect(stopCard?.textContent).toContain('Campers 0');
+    expect(stopCard?.textContent).toContain('Campers total 0');
     expect(stopCard?.textContent).toContain('From previous Start');
     expect(stopCard?.textContent).toContain('Running time 0 min');
+  });
+
+  it('lets planners edit campers directly from the stop order', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+
+    const kidsInput = view.querySelector('input[aria-label="Campers count for Stop 1"]') as HTMLInputElement | null;
+    expect(kidsInput).not.toBeNull();
+
+    flushSync(() => {
+      setInputValue(kidsInput!, '6');
+    });
+
+    const stopCard = kidsInput!.closest('li');
+    expect(stopCard?.textContent).toContain('Campers 6');
+    expect(stopCard?.textContent).toContain('Campers total 6');
+    expect(kidsInput?.value).toBe('6');
   });
 
   it('lets planners edit running time directly from the stop order', () => {

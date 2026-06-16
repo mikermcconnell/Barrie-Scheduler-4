@@ -295,14 +295,14 @@ function getPrimaryAddressLine(stop: RoutePlanner2Stop): string {
     return (stop.address?.split(',')[0] ?? stop.name).trim();
 }
 
-function formatKids(count: number | undefined): string | null {
+function formatCampers(count: number | undefined): string | null {
     if (!Number.isFinite(count) || !count || count <= 0) return null;
-    return `${count} ${count === 1 ? 'Kid' : 'Kids'}`;
+    return `${count} ${count === 1 ? 'Camper' : 'Campers'}`;
 }
 
 function formatStopCalloutLabel(stop: RoutePlanner2Stop): string {
-    const kids = formatKids(getRoutePlanner2KidsAtStop(stop));
-    return kids ? `${getPrimaryAddressLine(stop)} - ${kids}` : getPrimaryAddressLine(stop);
+    const campers = formatCampers(getRoutePlanner2KidsAtStop(stop));
+    return campers ? `${getPrimaryAddressLine(stop)} - ${campers}` : getPrimaryAddressLine(stop);
 }
 
 function getStopBadge(stop: RoutePlanner2Stop): 'Start' | 'End' | undefined {

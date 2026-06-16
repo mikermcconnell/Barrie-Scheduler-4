@@ -54,8 +54,13 @@ function toPositiveWholeNumber(value: unknown): number | null {
     return typeof count === 'number' && Number.isFinite(count) && count > 0 ? Math.round(count) : null;
 }
 
+function toNonNegativeWholeNumber(value: unknown): number | null {
+    const count = typeof value === 'string' ? Number(value) : value;
+    return typeof count === 'number' && Number.isFinite(count) && count >= 0 ? Math.max(0, Math.round(count)) : null;
+}
+
 export function getRoutePlanner2KidsAtStop(stop: RoutePlanner2Stop): number {
-    const riderCount = toPositiveWholeNumber(stop.riderCount);
+    const riderCount = toNonNegativeWholeNumber(stop.riderCount);
     if (riderCount != null) return riderCount;
 
     const sourceRowCount = Array.isArray(stop.sourceRows)

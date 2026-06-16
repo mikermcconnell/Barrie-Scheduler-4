@@ -116,7 +116,7 @@ The output updates from these assumptions.
 
 The stop order cards should show the first-trip arrival time at each stop using
 the current segment runtimes and intermediate dwell allowance. Imported address
-stops should also show kids picked up at that stop and the running total through
+stops should also show campers picked up at that stop and the running total through
 the route.
 
 ## Comparison Workflow
@@ -173,7 +173,7 @@ review. The export should show the route line, numbered stops, start/end
 markers, and route road-name labels derived from Mapbox direction steps when
 available. The full-route overview page should keep the numbered stops but hide
 stop text labels so the route remains readable; close-up detail pages should
-keep the stop/address labels and imported kids counts.
+keep the stop/address labels and imported camper counts.
 
 Implementation gotcha: keep this export screenshot-first for the map itself.
 Capture the app map as an image and place it into the PDF; do not redraw the map

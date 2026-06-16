@@ -535,6 +535,27 @@ export function renameRoutePlanner2Stop(
     }, now);
 }
 
+export function updateRoutePlanner2StopRiderCount(
+    project: RoutePlanner2Project,
+    scenarioId: string,
+    stopId: string,
+    riderCount: number | undefined,
+    now = new Date().toISOString(),
+): RoutePlanner2Project {
+    const normalizedRiderCount = typeof riderCount === 'number' && Number.isFinite(riderCount)
+        ? Math.max(0, Math.round(riderCount))
+        : undefined;
+
+    return updateScenario(project, scenarioId, (scenario) => {
+        if (!scenario.stops.some((stop) => stop.id === stopId)) return scenario;
+
+        return {
+            ...scenario,
+            stops: scenario.stops.map((stop) => stop.id === stopId ? { ...stop, riderCount: normalizedRiderCount } : stop),
+        };
+    }, now);
+}
+
 export function updateRoutePlanner2RuntimeSourceMode(
     project: RoutePlanner2Project,
     scenarioId: string,

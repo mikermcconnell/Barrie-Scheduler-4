@@ -17,6 +17,7 @@ import {
   updateRoutePlanner2LineWaypointCoordinate,
   updateRoutePlanner2RouteShape,
   updateRoutePlanner2StopCoordinate,
+  updateRoutePlanner2StopRiderCount,
   updateRoutePlanner2StopRole,
   validateRoutePlanner2Terminals,
 } from '../utils/route-planner-2/routePlanner2Authoring';
@@ -86,6 +87,19 @@ describe('Route Planner 2 authoring', () => {
       riderCount: 3,
       sourceRows: [2, 5, 9],
     });
+  });
+
+  it('updates a stop camper count as a non-negative whole number', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'First', lat: 44.38, lng: -79.69, now });
+    project = updateRoutePlanner2StopRiderCount(project, 'scenario-1', 'stop-1', 2.7, now);
+
+    expect(project.scenarios[0]?.stops[0]?.riderCount).toBe(3);
+
+    project = updateRoutePlanner2StopRiderCount(project, 'scenario-1', 'stop-1', -4, now);
+
+    expect(project.scenarios[0]?.stops[0]?.riderCount).toBe(0);
   });
 
   it('adds a single address stop after the requested existing stop', () => {

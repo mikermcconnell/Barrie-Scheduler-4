@@ -826,7 +826,7 @@ export function formatRoutePlanner2MapStopLabel(
 ): string | null {
     if (!detail) return null;
     const placeLabel = options.includePlaceLabel ? formatRoutePlanner2StopAddressLabel(detail) : null;
-    const kidsLabel = `${detail.kidsAtStop} ${detail.kidsAtStop === 1 ? 'kid' : 'kids'}`;
+    const kidsLabel = `${detail.kidsAtStop} ${detail.kidsAtStop === 1 ? 'camper' : 'campers'}`;
     const departureLabel = detail.departureLabel && detail.departureLabel !== 'Not set'
         ? `Dep ${detail.departureLabel}`
         : null;

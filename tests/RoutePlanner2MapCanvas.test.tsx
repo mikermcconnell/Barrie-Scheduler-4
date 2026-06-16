@@ -25,10 +25,10 @@ describe('RoutePlanner2MapCanvas stop labels', () => {
       departureLabel: '8:21 AM',
     }, {
       includePlaceLabel: true,
-    })).toBe('37 Johnson Street\nDep 8:21 AM · 6 min · 2 kids');
+    })).toBe('37 Johnson Street\nDep 8:21 AM · 6 min · 2 campers');
   });
 
-  it('falls back to kids count when travel time is not estimated', () => {
+  it('falls back to camper count when travel time is not estimated', () => {
     expect(formatRoutePlanner2MapStopLabel({
       stopId: 'stop-1',
       stopName: 'Johnson School',
@@ -36,7 +36,7 @@ describe('RoutePlanner2MapCanvas stop labels', () => {
       travelTimeLabel: 'Not estimated',
     }, {
       includePlaceLabel: true,
-    })).toBe('Johnson School\n1 kid');
+    })).toBe('Johnson School\n1 camper');
   });
 
   it('keeps the previous metric-only label when no address or stop name is available', () => {
@@ -44,7 +44,7 @@ describe('RoutePlanner2MapCanvas stop labels', () => {
       stopId: 'stop-1',
       kidsAtStop: 1,
       travelTimeLabel: 'Not estimated',
-    })).toBe('1 kid');
+    })).toBe('1 camper');
   });
 });
 

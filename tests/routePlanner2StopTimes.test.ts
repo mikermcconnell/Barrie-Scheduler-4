@@ -8,7 +8,7 @@ import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanne
 describe('Route Planner 2 stop card details', () => {
   const now = '2026-05-15T12:00:00.000Z';
 
-  it('shows kids by stop, running kids total, travel times, and arrival times from first trip time', () => {
+  it('shows campers by stop, running camper total, travel times, and arrival times from first trip time', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', {
       id: 'stop-1',
@@ -57,7 +57,7 @@ describe('Route Planner 2 stop card details', () => {
     ]);
   });
 
-  it('falls back to source rows and numeric rider strings for kid counts', () => {
+  it('falls back to source rows and numeric rider strings for camper counts', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
     project = addRoutePlanner2Stop(project, 'scenario-1', {
       id: 'stop-1',
