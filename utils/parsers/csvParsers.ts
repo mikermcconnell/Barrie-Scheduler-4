@@ -369,14 +369,16 @@ const parseRideCoRowsWithReport = (
     // cover/instruction rows or workbook tabs. Detect the rows by labels first.
     const ROW_SHIFT_NUM = findRideCoShiftHeaderRowIndex(lines);
     const tableSearchStart = ROW_SHIFT_NUM >= 0 ? ROW_SHIFT_NUM + 1 : 0;
-    const ROW_DAY = findRideCoRowIndex(lines, ['Day', 'Day Type'], 10, tableSearchStart);
-    const ROW_ZONE = findRideCoRowIndex(lines, ['Driver (optional)', 'Driver', 'Zone', 'Zone Area'], 13, tableSearchStart);
-    const ROW_BUS_NUM = findRideCoRowIndex(lines, ['Shift Label', 'Bus #', 'Bus Number'], 14, tableSearchStart);
-    const ROW_START = findRideCoRowIndex(lines, ['Service Start Time', 'Start Time'], 15, tableSearchStart);
-    const ROW_END = findRideCoRowIndex(lines, ['Service End Time', 'End Time'], 16, tableSearchStart);
-    const ROW_BREAK_START = findRideCoRowIndex(lines, ['Break 1 Window Start Time', 'Break Start'], 17, tableSearchStart);
-    const ROW_BREAK_END = findRideCoRowIndex(lines, ['Break 1 Window End Time', 'Break End'], 18, tableSearchStart);
-    const ROW_BREAK_DURATION = findRideCoRowIndex(lines, ['Break 1 Duration (min)', 'Break Duration'], 19, tableSearchStart);
+    const relativeFallbackRow = (oldFixedIndex: number) =>
+        ROW_SHIFT_NUM >= 0 ? ROW_SHIFT_NUM + (oldFixedIndex - 9) : oldFixedIndex;
+    const ROW_DAY = findRideCoRowIndex(lines, ['Day', 'Day Type'], relativeFallbackRow(10), tableSearchStart);
+    const ROW_ZONE = findRideCoRowIndex(lines, ['Driver (optional)', 'Driver', 'Zone', 'Zone Area'], relativeFallbackRow(13), tableSearchStart);
+    const ROW_BUS_NUM = findRideCoRowIndex(lines, ['Shift Label', 'Bus #', 'Bus Number'], relativeFallbackRow(14), tableSearchStart);
+    const ROW_START = findRideCoRowIndex(lines, ['Service Start Time', 'Start Time'], relativeFallbackRow(15), tableSearchStart);
+    const ROW_END = findRideCoRowIndex(lines, ['Service End Time', 'End Time'], relativeFallbackRow(16), tableSearchStart);
+    const ROW_BREAK_START = findRideCoRowIndex(lines, ['Break 1 Window Start Time', 'Break Start'], relativeFallbackRow(17), tableSearchStart);
+    const ROW_BREAK_END = findRideCoRowIndex(lines, ['Break 1 Window End Time', 'Break End'], relativeFallbackRow(18), tableSearchStart);
+    const ROW_BREAK_DURATION = findRideCoRowIndex(lines, ['Break 1 Duration (min)', 'Break Duration'], relativeFallbackRow(19), tableSearchStart);
 
     report.detectedRows = {
         shiftHeader: ROW_SHIFT_NUM >= 0 ? ROW_SHIFT_NUM + 1 : undefined,
