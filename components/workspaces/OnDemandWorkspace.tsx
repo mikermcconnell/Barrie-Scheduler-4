@@ -12,7 +12,13 @@ import { OptimizationReviewModal } from '../modals/OptimizationReviewModal';
 import { FocusPromptModal } from '../modals/FocusPromptModal';
 import { FileManager } from '../FileManager';
 import { useAuth } from '../contexts/AuthContext';
-import { parseScheduleMaster, parseRideCo } from '../../utils/parsers/csvParsers';
+import {
+    parseScheduleMaster,
+    parseRideCoWithReport,
+    parseRideCoSheetsWithReport,
+    type RideCoImportReport,
+    type RideCoParseResult,
+} from '../../utils/parsers/csvParsers';
 import { parseMasterSchedule, convertMasterRouteTablesToRequirements } from '../../utils/parsers/masterScheduleParser';
 import * as XLSX from 'xlsx';
 import {
@@ -250,6 +256,16 @@ interface WorkspaceUndoSnapshot {
     optimizationSettings: OptimizationSettings;
 }
 
+interface RideCoImportPreview {
+    fileName: string;
+    content: string | ArrayBuffer;
+    shifts: Shift[];
+    report: RideCoImportReport;
+    dayForShiftFiltering: DayType;
+    loadedFile?: SavedFile;
+    undoAlreadyCaptured: boolean;
+}
+
 const cloneRequirements = (source: Requirement[]): Requirement[] =>
     source.map(requirement => ({ ...requirement }));
 
@@ -286,6 +302,22 @@ const getCloudFileLoadMessage = (error: unknown): string => {
     return 'The selected cloud file could not be loaded.';
 };
 
+const buildRideCoImportFailureMessage = (report: RideCoImportReport): string => {
+    if (report.missingRequiredRows.length > 0) {
+        return `Missing ${report.missingRequiredRows.join(', ')}.`;
+    }
+    if (report.skippedColumns.length > 0) {
+        return `${report.skippedColumns.length} shift column${report.skippedColumns.length === 1 ? '' : 's'} were skipped. ${report.skippedColumns[0].reason}`;
+    }
+    return report.warnings[0] || 'No usable shift columns were found.';
+};
+
+const getRideCoReportSourceLabel = (report: RideCoImportReport): string => (
+    [report.sourceName, report.sheetName ? `sheet "${report.sheetName}"` : null]
+        .filter(Boolean)
+        .join(' · ') || 'RideCo import'
+);
+
 export const OnDemandWorkspace: React.FC = () => {
     const { user } = useAuth();
     const toast = useToast();
@@ -309,6 +341,7 @@ export const OnDemandWorkspace: React.FC = () => {
     const [uploadedFiles, setUploadedFiles] = useState<{ master: File | null, rideco: File | null }>({ master: null, rideco: null });
     // Cache file content to enable "Reset to Upload"
     const [cachedFiles, setCachedFiles] = useState<{ master: string | ArrayBuffer | null, rideco: string | ArrayBuffer | null }>({ master: null, rideco: null });
+    const [rideCoImportPreview, setRideCoImportPreview] = useState<RideCoImportPreview | null>(null);
 
     // Cloud File Manager State
     const [showFileManager, setShowFileManager] = useState(false);
@@ -565,16 +598,38 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     // Helper to parse RideCo content (string or ArrayBuffer)
-    const parseRideCoContent = (content: string | ArrayBuffer, fallbackDayType: DayType): Shift[] => {
+    const parseRideCoContentWithImportReport = (
+        content: string | ArrayBuffer,
+        fallbackDayType: DayType,
+        fileName?: string,
+    ): RideCoParseResult => {
         if (typeof content === 'string') {
-            return normalizeRideCoImport(parseRideCo(content), fallbackDayType);
+            const result = parseRideCoWithReport(content, { sourceName: fileName });
+            return {
+                shifts: normalizeRideCoImport(result.shifts, fallbackDayType),
+                report: result.report,
+            };
         } else {
             const workbook = XLSX.read(content, { type: 'array' });
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            const data = XLSX.utils.sheet_to_json<(string | number)[]>(firstSheet, { header: 1, defval: '' });
-            return normalizeRideCoImport(parseRideCo(data as string[][]), fallbackDayType);
+            const sheets = workbook.SheetNames.map(sheetName =>
+                ({
+                    name: sheetName,
+                    rows: XLSX.utils.sheet_to_json<(string | number)[]>(
+                        workbook.Sheets[sheetName],
+                        { header: 1, defval: '' }
+                    ),
+                })
+            );
+            const result = parseRideCoSheetsWithReport(sheets, { sourceName: fileName });
+            return {
+                shifts: normalizeRideCoImport(result.shifts, fallbackDayType),
+                report: result.report,
+            };
         }
     };
+
+    const parseRideCoContent = (content: string | ArrayBuffer, fallbackDayType: DayType): Shift[] =>
+        parseRideCoContentWithImportReport(content, fallbackDayType).shifts;
 
     // Helper to parse Master Schedule content (string or ArrayBuffer)
     const parseMasterContent = (content: string | ArrayBuffer): Record<string, Requirement[]> => {
@@ -616,6 +671,7 @@ export const OnDemandWorkspace: React.FC = () => {
         setCurrentDraftId(snapshot.currentDraftId);
         setLoadedCloudFiles({ ...snapshot.loadedCloudFiles });
         setOptimizationSettings(cloneOptimizationSettings(snapshot.optimizationSettings));
+        setRideCoImportPreview(null);
         setReviewModalData(null);
         setEditingShiftId(null);
         setNewlyAddedShiftId(null);
@@ -1056,16 +1112,25 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const classifyOnDemandUpload = (file: File): 'master' | 'rideco' | null => {
         const lowerName = file.name.toLowerCase();
+        const isSpreadsheet = /\.(csv|xlsx|xls)$/i.test(lowerName);
         if (
-            lowerName.includes('schedule master') ||
-            (lowerName.includes('master') && (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || lowerName.endsWith('.csv')))
+            isSpreadsheet &&
+            (
+                lowerName.includes('schedule master') ||
+                (lowerName.includes('schedule') && lowerName.includes('master')) ||
+                lowerName.includes('master')
+            )
         ) {
             return 'master';
         }
         if (
-            lowerName.includes('rideco') ||
-            lowerName.includes('template') ||
-            lowerName.includes('shift')
+            isSpreadsheet &&
+            (
+                lowerName.includes('rideco') ||
+                lowerName.includes('mvt') ||
+                lowerName.includes('template') ||
+                lowerName.includes('shift')
+            )
         ) {
             return 'rideco';
         }
@@ -1074,6 +1139,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const handleFileUpload = (files: File[]) => {
         if (isWorkspaceBusy) return;
+        setRideCoImportPreview(null);
         const classifiedFiles = files.map(file => ({
             file,
             uploadType: classifyOnDemandUpload(file),
@@ -1124,13 +1190,13 @@ export const OnDemandWorkspace: React.FC = () => {
             const ridecoContent = await readFile(filesToProcess.rideco);
             let dayForShiftFiltering = selectedDayType;
 
-            if (masterContent || ridecoContent) {
+            if (masterContent) {
                 captureUndoSnapshot('file import');
+                setCachedFiles(prev => ({
+                    ...prev,
+                    master: masterContent,
+                }));
             }
-            setCachedFiles(prev => ({
-                master: masterContent ?? prev.master,
-                rideco: ridecoContent ?? prev.rideco,
-            }));
 
             if (masterContent) {
                 const newSchedules = parseMasterContent(masterContent);
@@ -1145,11 +1211,24 @@ export const OnDemandWorkspace: React.FC = () => {
             }
 
             if (ridecoContent) {
-                const newShifts = parseRideCoContent(ridecoContent, dayForShiftFiltering);
-                setAllShifts(newShifts);
-                setShifts(filterShiftsByDay(newShifts, dayForShiftFiltering));
-                if (newShifts.length === 0) {
-                    toast.warning('No shifts loaded', 'The RideCo file did not contain any usable shifts.');
+                const result = parseRideCoContentWithImportReport(
+                    ridecoContent,
+                    dayForShiftFiltering,
+                    filesToProcess.rideco?.name,
+                );
+
+                if (result.shifts.length > 0) {
+                    setRideCoImportPreview({
+                        fileName: filesToProcess.rideco?.name || 'RideCo shift file',
+                        content: ridecoContent,
+                        shifts: result.shifts,
+                        report: result.report,
+                        dayForShiftFiltering,
+                        undoAlreadyCaptured: Boolean(masterContent),
+                    });
+                    toast.info('RideCo import ready', `Review ${result.shifts.length} detected shifts before applying.`);
+                } else {
+                    toast.warning('No shifts loaded', buildRideCoImportFailureMessage(result.report));
                 }
             } else if (masterContent) {
                 setShifts(filterShiftsByDay(allShifts, dayForShiftFiltering));
@@ -1160,6 +1239,32 @@ export const OnDemandWorkspace: React.FC = () => {
         } finally {
             setIsProcessingFiles(false);
         }
+    };
+
+    const handleApplyRideCoImportPreview = () => {
+        if (!rideCoImportPreview) return;
+
+        if (!rideCoImportPreview.undoAlreadyCaptured) {
+            captureUndoSnapshot('RideCo import');
+        }
+
+        setCachedFiles(prev => ({
+            ...prev,
+            rideco: rideCoImportPreview.content,
+        }));
+        setAllShifts(rideCoImportPreview.shifts);
+        setShifts(filterShiftsByDay(rideCoImportPreview.shifts, rideCoImportPreview.dayForShiftFiltering));
+        if (rideCoImportPreview.loadedFile) {
+            setLoadedCloudFiles(prev => ({ ...prev, rideco: rideCoImportPreview.loadedFile! }));
+        }
+        setIsOptimized(false);
+        setRideCoImportPreview(null);
+        toast.success('RideCo import applied', `${rideCoImportPreview.shifts.length} shifts loaded.`);
+    };
+
+    const handleCancelRideCoImportPreview = () => {
+        setRideCoImportPreview(null);
+        toast.info('RideCo import cancelled', 'Existing shifts were left unchanged.');
     };
 
     // Reset to original uploaded files
@@ -1326,7 +1431,7 @@ export const OnDemandWorkspace: React.FC = () => {
             // Determine file type - if 'other', try to detect from filename
             let fileType = file.type;
             if (fileType === 'other' || fileType === 'barrie_tod') {
-                if (lowerName.includes('rideco') || lowerName.includes('shift') || lowerName.includes('template')) {
+                if (lowerName.includes('rideco') || lowerName.includes('mvt') || lowerName.includes('shift') || lowerName.includes('template')) {
                     fileType = 'rideco';
                 } else if (lowerName.includes('master') || lowerName.includes('schedule')) {
                     fileType = 'schedule_master';
@@ -1337,6 +1442,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 // Parse as master schedule
                 console.log('Parsing as Master Schedule...');
                 captureUndoSnapshot('cloud file load');
+                setRideCoImportPreview(null);
                 setCachedFiles(prev => ({ ...prev, master: content }));
                 const newSchedules = parseMasterContent(content);
                 console.log('Parsed schedules:', Object.keys(newSchedules));
@@ -1352,16 +1458,22 @@ export const OnDemandWorkspace: React.FC = () => {
             } else if (fileType === 'rideco') {
                 // Parse as RideCo shifts
                 console.log('Parsing as RideCo shifts...');
-                captureUndoSnapshot('cloud file load');
-                setCachedFiles(prev => ({ ...prev, rideco: content }));
                 const currentDay = selectedDayType || 'Weekday';
-                const newShifts = parseRideCoContent(content, currentDay);
-                console.log('Parsed shifts count:', newShifts.length);
-                setAllShifts(newShifts);
-                setLoadedCloudFiles(prev => ({ ...prev, rideco: file }));
-                setShifts(filterShiftsByDay(newShifts, currentDay));
-                if (newShifts.length === 0) {
-                    toast.warning('No shifts found', 'Make sure the selected file is a valid RideCo shift template.');
+                const result = parseRideCoContentWithImportReport(content, currentDay, file.name);
+                console.log('Parsed shifts count:', result.shifts.length);
+                if (result.shifts.length > 0) {
+                    setRideCoImportPreview({
+                        fileName: file.name,
+                        content,
+                        shifts: result.shifts,
+                        report: result.report,
+                        dayForShiftFiltering: currentDay,
+                        loadedFile: file,
+                        undoAlreadyCaptured: false,
+                    });
+                    toast.info('RideCo import ready', `Review ${result.shifts.length} detected shifts before applying.`);
+                } else {
+                    toast.warning('No shifts found', buildRideCoImportFailureMessage(result.report));
                 }
             } else {
                 // Unknown type - let user know
@@ -1381,6 +1493,7 @@ export const OnDemandWorkspace: React.FC = () => {
     // Handle loading a saved draft/schedule
     const handleScheduleSelect = (schedule: SavedSchedule) => {
         captureUndoSnapshot('schedule load');
+        setRideCoImportPreview(null);
         const resolvedScheduleState = resolveOnDemandScheduleState(schedule, selectedDayType);
         const loadedOptimizationSettings = resolvedScheduleState.optimizationSettings
             ? normalizeOnDemandOptimizationSettings(
@@ -2008,6 +2121,77 @@ export const OnDemandWorkspace: React.FC = () => {
                 </div>
             )}
 
+            {rideCoImportPreview && (
+                <div className="mb-8 bg-amber-50 border-2 border-amber-200 rounded-3xl p-6 shadow-sm">
+                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                        <div>
+                            <div className="flex items-center gap-2 text-amber-800">
+                                <TriangleAlert size={20} />
+                                <h3 className="text-lg font-extrabold">Review RideCo import before applying</h3>
+                            </div>
+                            <p className="text-sm font-semibold text-amber-700 mt-1">
+                                {getRideCoReportSourceLabel(rideCoImportPreview.report)} · {rideCoImportPreview.shifts.length} shift{rideCoImportPreview.shifts.length === 1 ? '' : 's'} detected.
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={handleCancelRideCoImportPreview}
+                                className="px-4 py-2 rounded-xl font-bold text-amber-700 bg-white border border-amber-200 hover:bg-amber-100"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleApplyRideCoImportPreview}
+                                className="px-5 py-2 rounded-xl font-bold text-white bg-green-600 hover:bg-green-700 shadow-sm flex items-center gap-2"
+                            >
+                                <Check size={16} />
+                                Apply import
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {VALID_DAY_TYPES.map(day => (
+                            <div key={day} className="bg-white border border-amber-100 rounded-2xl px-4 py-3">
+                                <div className="text-xs font-bold uppercase tracking-wide text-gray-400">{day}</div>
+                                <div className="text-2xl font-extrabold text-gray-800">
+                                    {rideCoImportPreview.report.countsByDay[day]}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {(rideCoImportPreview.report.skippedColumns.length > 0 || rideCoImportPreview.report.warnings.length > 0) && (
+                        <div className="mt-4 bg-white border border-amber-100 rounded-2xl p-4 text-sm text-gray-700">
+                            {rideCoImportPreview.report.skippedColumns.length > 0 && (
+                                <div>
+                                    <div className="font-extrabold text-gray-800">
+                                        Skipped {rideCoImportPreview.report.skippedColumns.length} column{rideCoImportPreview.report.skippedColumns.length === 1 ? '' : 's'}
+                                    </div>
+                                    <ul className="mt-2 space-y-1">
+                                        {rideCoImportPreview.report.skippedColumns.slice(0, 5).map(column => (
+                                            <li key={`${column.columnLabel}-${column.reason}`}>
+                                                <span className="font-bold">{column.columnLabel}</span> {column.shiftHeader}: {column.reason}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                            {rideCoImportPreview.report.warnings.length > 0 && (
+                                <div className={rideCoImportPreview.report.skippedColumns.length > 0 ? 'mt-4' : ''}>
+                                    <div className="font-extrabold text-gray-800">Warnings</div>
+                                    <ul className="mt-2 space-y-1">
+                                        {rideCoImportPreview.report.warnings.slice(0, 5).map((warning, index) => (
+                                            <li key={`${warning}-${index}`}>{warning}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Real-time Visualization (Always Visible) */}
             <div className="mb-8">
                 <GapChart
@@ -2066,8 +2250,8 @@ export const OnDemandWorkspace: React.FC = () => {
                             <FileUpload
                                 onFileUpload={handleFileUpload}
                                 title="Drop Schedule Files Here"
-                                subtitle="Supports Master Schedule (.xlsx) & RideCo/MVT (.csv)"
-                                accept=".xlsx, .csv"
+                                subtitle="Supports Master Schedule (.xlsx) & RideCo/MVT (.csv, .xlsx)"
+                                accept=".xlsx,.xls,.csv"
                                 allowMultiple={true}
                                 disabled={isWorkspaceBusy}
                             />

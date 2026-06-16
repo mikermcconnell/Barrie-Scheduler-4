@@ -309,6 +309,7 @@ function buildSegmentRuntimeEstimate(
 
 export function buildRoutePlanner2FallbackRoadSnapResult(scenario: RoutePlanner2Scenario): RoutePlanner2ScenarioRoadSnapResult {
     const segments = buildRoutePlanner2StopSegmentPaths(scenario);
+    const now = new Date().toISOString();
     const segmentGeometries = segments.map((segment) => ({
         id: segment.id,
         fromStopId: segment.fromStopId,
@@ -316,6 +317,11 @@ export function buildRoutePlanner2FallbackRoadSnapResult(scenario: RoutePlanner2
         coordinates: segment.coordinates,
         source: 'fallback' as const,
     }));
+    const segmentEstimates = segments.map((segment) => buildSegmentRuntimeEstimate(segment, {
+        coordinates: segment.coordinates,
+        source: 'fallback',
+        distanceMeters: distanceMetersForPath(segment.coordinates),
+    }, now));
     const coordinates = segments.length > 0
         ? stitchSegmentCoordinates(segmentGeometries.map((segment) => segment.coordinates))
         : [...scenario.alignment]
@@ -326,7 +332,7 @@ export function buildRoutePlanner2FallbackRoadSnapResult(scenario: RoutePlanner2
         coordinates,
         source: 'fallback',
         distanceMeters: distanceMetersForPath(coordinates),
-        segmentEstimates: [],
+        segmentEstimates,
         segmentGeometries,
     };
 }

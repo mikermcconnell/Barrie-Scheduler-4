@@ -170,90 +170,311 @@ export const parseScheduleMaster = (csvText: string): Record<string, Requirement
 type CellValue = string | number | null | undefined;
 type RowData = CellValue[];
 
+const normalizeHeaderCell = (cell: CellValue): string =>
+    cellToString(cell).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const parseCsvRows = (csvText: string): RowData[] => {
+    const rows: RowData[] = [];
+    let row: string[] = [];
+    let cell = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < csvText.length; i++) {
+        const char = csvText[i];
+        const nextChar = csvText[i + 1];
+
+        if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+                cell += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+
+        if (char === ',' && !inQuotes) {
+            row.push(cell);
+            cell = '';
+            continue;
+        }
+
+        if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && nextChar === '\n') {
+                i++;
+            }
+            row.push(cell);
+            rows.push(row);
+            row = [];
+            cell = '';
+            continue;
+        }
+
+        cell += char;
+    }
+
+    if (cell.length > 0 || row.length > 0) {
+        row.push(cell);
+        rows.push(row);
+    }
+
+    return rows;
+};
+
+const findRideCoRowIndex = (
+    lines: RowData[],
+    labels: string[],
+    fallbackIndex?: number,
+    startIndex = 0,
+): number => {
+    const normalizedLabels = labels.map(label => label.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const searchLines = lines.slice(startIndex);
+
+    const exactMatch = searchLines.findIndex(row => {
+        const cellsToScan = row.slice(0, 3).map(normalizeHeaderCell);
+        return cellsToScan.some(cell => normalizedLabels.includes(cell));
+    });
+
+    if (exactMatch !== -1) {
+        return exactMatch + startIndex;
+    }
+
+    const looseMatch = searchLines.findIndex(row => {
+        const cellsToScan = row.slice(0, 3).map(normalizeHeaderCell);
+        return cellsToScan.some(cell =>
+            cell.length > 0 &&
+            normalizedLabels.some(label => cell.includes(label) || label.includes(cell))
+        );
+    });
+
+    if (looseMatch !== -1) {
+        return looseMatch + startIndex;
+    }
+
+    return fallbackIndex ?? -1;
+};
+
+const findRideCoShiftHeaderRowIndex = (lines: RowData[], fallbackIndex = -1): number => {
+    const rowIndex = lines.findIndex(row =>
+        row.some(cell => /^shift\d+$/i.test(normalizeHeaderCell(cell)))
+    );
+
+    return rowIndex !== -1 ? rowIndex : fallbackIndex;
+};
+
 // Helper to safely convert cell value to string
 const cellToString = (cell: CellValue): string => {
     if (cell === null || cell === undefined) return '';
     return String(cell).trim();
 };
 
-export const parseRideCo = (input: string | RowData[]): Shift[] => {
-    let lines: RowData[];
+export interface RideCoSkippedColumn {
+    columnIndex: number;
+    columnLabel: string;
+    shiftHeader: string;
+    reason: string;
+}
 
-    if (typeof input === 'string') {
-        lines = input.split(/\r?\n/).map(l => l.split(','));
-    } else {
-        lines = input;
+export interface RideCoImportReport {
+    sourceName?: string;
+    sheetName?: string;
+    shiftCount: number;
+    countsByDay: Record<'Weekday' | 'Saturday' | 'Sunday', number>;
+    scannedColumnCount: number;
+    skippedColumns: RideCoSkippedColumn[];
+    warnings: string[];
+    missingRequiredRows: string[];
+    detectedRows: Record<string, number | undefined>;
+}
+
+export interface RideCoParseResult {
+    shifts: Shift[];
+    report: RideCoImportReport;
+}
+
+const createEmptyRideCoReport = (
+    sourceName?: string,
+    sheetName?: string,
+): RideCoImportReport => ({
+    sourceName,
+    sheetName,
+    shiftCount: 0,
+    countsByDay: {
+        Weekday: 0,
+        Saturday: 0,
+        Sunday: 0,
+    },
+    scannedColumnCount: 0,
+    skippedColumns: [],
+    warnings: [],
+    missingRequiredRows: [],
+    detectedRows: {},
+});
+
+const excelColumnLabel = (columnIndex: number): string => {
+    let dividend = columnIndex + 1;
+    let label = '';
+
+    while (dividend > 0) {
+        const modulo = (dividend - 1) % 26;
+        label = String.fromCharCode(65 + modulo) + label;
+        dividend = Math.floor((dividend - modulo) / 26);
     }
 
+    return label;
+};
+
+const hasCellValue = (cell: CellValue): boolean => cellToString(cell).length > 0;
+
+const addRideCoSkippedColumn = (
+    report: RideCoImportReport,
+    columnIndex: number,
+    shiftHeader: string,
+    reason: string,
+) => {
+    report.skippedColumns.push({
+        columnIndex,
+        columnLabel: excelColumnLabel(columnIndex),
+        shiftHeader: shiftHeader || `Column ${excelColumnLabel(columnIndex)}`,
+        reason,
+    });
+};
+
+const applyRideCoShiftCounts = (report: RideCoImportReport, shifts: Shift[]) => {
+    report.shiftCount = shifts.length;
+    report.countsByDay = shifts.reduce<RideCoImportReport['countsByDay']>((counts, shift) => {
+        const dayType = shift.dayType ?? 'Weekday';
+        counts[dayType] += 1;
+        return counts;
+    }, {
+        Weekday: 0,
+        Saturday: 0,
+        Sunday: 0,
+    });
+};
+
+const normalizeRideCoInput = (input: string | RowData[]): RowData[] => (
+    typeof input === 'string' ? parseCsvRows(input) : input
+);
+
+const parseRideCoRowsWithReport = (
+    lines: RowData[],
+    sourceName?: string,
+    sheetName?: string,
+): RideCoParseResult => {
     const shifts: Shift[] = [];
+    const report = createEmptyRideCoReport(sourceName, sheetName);
 
-    // User specified fixed row structure (0-indexed):
-    // Row 10 (Index 9): Shift Number (Header)
-    // Row 11 (Index 10): Weekday
-    // Row 14 (Index 13): Zone Area (Driver/Zone)
-    // Row 15 (Index 14): Bus Number (Shift Label)
-    // Row 16 (Index 15): Service Start Time
-    // Row 17 (Index 16): Service End Time
-    // Row 18 (Index 17): Break Start Time
-    // Row 19 (Index 18): Break End Time
+    // User specified fixed row structure (0-indexed), but real templates may include
+    // cover/instruction rows or workbook tabs. Detect the rows by labels first.
+    const ROW_SHIFT_NUM = findRideCoShiftHeaderRowIndex(lines);
+    const tableSearchStart = ROW_SHIFT_NUM >= 0 ? ROW_SHIFT_NUM + 1 : 0;
+    const ROW_DAY = findRideCoRowIndex(lines, ['Day', 'Day Type'], 10, tableSearchStart);
+    const ROW_ZONE = findRideCoRowIndex(lines, ['Driver (optional)', 'Driver', 'Zone', 'Zone Area'], 13, tableSearchStart);
+    const ROW_BUS_NUM = findRideCoRowIndex(lines, ['Shift Label', 'Bus #', 'Bus Number'], 14, tableSearchStart);
+    const ROW_START = findRideCoRowIndex(lines, ['Service Start Time', 'Start Time'], 15, tableSearchStart);
+    const ROW_END = findRideCoRowIndex(lines, ['Service End Time', 'End Time'], 16, tableSearchStart);
+    const ROW_BREAK_START = findRideCoRowIndex(lines, ['Break 1 Window Start Time', 'Break Start'], 17, tableSearchStart);
+    const ROW_BREAK_END = findRideCoRowIndex(lines, ['Break 1 Window End Time', 'Break End'], 18, tableSearchStart);
+    const ROW_BREAK_DURATION = findRideCoRowIndex(lines, ['Break 1 Duration (min)', 'Break Duration'], 19, tableSearchStart);
 
-    const ROW_SHIFT_NUM = 9;
-    const ROW_DAY = 10;
-    const ROW_ZONE = 13;
-    const ROW_BUS_NUM = 14;
-    const ROW_START = 15;
-    const ROW_END = 16;
-    const ROW_BREAK_START = 17;
-    const ROW_BREAK_END = 18;
-    const ROW_BREAK_DURATION = 19;
+    report.detectedRows = {
+        shiftHeader: ROW_SHIFT_NUM >= 0 ? ROW_SHIFT_NUM + 1 : undefined,
+        day: ROW_DAY >= 0 ? ROW_DAY + 1 : undefined,
+        zone: ROW_ZONE >= 0 ? ROW_ZONE + 1 : undefined,
+        shiftLabel: ROW_BUS_NUM >= 0 ? ROW_BUS_NUM + 1 : undefined,
+        serviceStart: ROW_START >= 0 ? ROW_START + 1 : undefined,
+        serviceEnd: ROW_END >= 0 ? ROW_END + 1 : undefined,
+        breakStart: ROW_BREAK_START >= 0 ? ROW_BREAK_START + 1 : undefined,
+        breakEnd: ROW_BREAK_END >= 0 ? ROW_BREAK_END + 1 : undefined,
+        breakDuration: ROW_BREAK_DURATION >= 0 ? ROW_BREAK_DURATION + 1 : undefined,
+    };
 
-    if (lines.length <= ROW_BREAK_DURATION) {
-        console.error("RideCo file is too short");
-        return [];
+    if (ROW_SHIFT_NUM < 0 || !lines[ROW_SHIFT_NUM]) {
+        report.missingRequiredRows.push('Shift header row');
+    }
+    if (ROW_START < 0 || !lines[ROW_START]) {
+        report.missingRequiredRows.push('Service Start Time row');
+    }
+    if (ROW_END < 0 || !lines[ROW_END]) {
+        report.missingRequiredRows.push('Service End Time row');
+    }
+
+    if (report.missingRequiredRows.length > 0) {
+        report.warnings.push(`Missing required RideCo row(s): ${report.missingRequiredRows.join(', ')}.`);
+        return { shifts, report };
     }
 
     const shiftNumRow = lines[ROW_SHIFT_NUM];
-    const dayRow = lines[ROW_DAY];
-    const zoneRow = lines[ROW_ZONE];
-    const busNumRow = lines[ROW_BUS_NUM];
+    const dayRow = lines[ROW_DAY] || [];
+    const zoneRow = lines[ROW_ZONE] || [];
+    const busNumRow = lines[ROW_BUS_NUM] || [];
     const startRow = lines[ROW_START];
     const endRow = lines[ROW_END];
-    const breakStartRow = lines[ROW_BREAK_START];
-    const breakEndRow = lines[ROW_BREAK_END];
+    const breakStartRow = lines[ROW_BREAK_START] || [];
+    const breakEndRow = lines[ROW_BREAK_END] || [];
     const breakDurationRow = lines[ROW_BREAK_DURATION] || [];
 
-    // Determine start column. Look for "Shift1" or "Shift 1" in Row 10 (Index 9)
-    // Or just assume it starts at column 2 (Index 2) as per previous observation,
-    // but let's try to find "Shift1" to be safe, or default to 2.
     let startColIndex = 2;
-    const shift1Index = shiftNumRow.findIndex(cell => cellToString(cell).toLowerCase().replace(/\s/g, '') === 'shift1');
+    const shift1Index = shiftNumRow.findIndex(cell => /^shift1$/i.test(normalizeHeaderCell(cell)));
     if (shift1Index !== -1) {
         startColIndex = shift1Index;
     }
 
-    const numCols = shiftNumRow.length;
+    const numCols = Math.max(
+        shiftNumRow.length,
+        dayRow.length,
+        zoneRow.length,
+        busNumRow.length,
+        startRow.length,
+        endRow.length,
+        breakStartRow.length,
+        breakEndRow.length,
+        breakDurationRow.length,
+    );
+    report.scannedColumnCount = Math.max(0, numCols - startColIndex);
 
     for (let c = startColIndex; c < numCols; c++) {
-        // Basic validation: must have a start and end time
-        if (!startRow[c] || !endRow[c]) continue;
+        const shiftHeader = cellToString(shiftNumRow[c]) || `Column ${excelColumnLabel(c)}`;
+        const columnHasAnyShiftData = [
+            shiftNumRow[c],
+            dayRow[c],
+            zoneRow[c],
+            busNumRow[c],
+            startRow[c],
+            endRow[c],
+            breakStartRow[c],
+            breakEndRow[c],
+            breakDurationRow[c],
+        ].some(hasCellValue);
 
-        // Parse Zone from Row 14
+        if (!hasCellValue(startRow[c]) && !hasCellValue(endRow[c])) {
+            if (columnHasAnyShiftData) {
+                addRideCoSkippedColumn(report, c, shiftHeader, 'Missing service start and end time.');
+            }
+            continue;
+        }
+
+        if (!hasCellValue(startRow[c]) || !hasCellValue(endRow[c])) {
+            addRideCoSkippedColumn(report, c, shiftHeader, 'Missing service start or end time.');
+            continue;
+        }
+
+        const startSlot = parseTimeToSlot(startRow[c]);
+        let endSlot = parseTimeToSlot(endRow[c]);
+        if (!Number.isFinite(startSlot) || !Number.isFinite(endSlot)) {
+            addRideCoSkippedColumn(report, c, shiftHeader, 'Invalid service start or end time.');
+            continue;
+        }
+
+        if (endSlot < startSlot) endSlot += TIME_SLOTS_PER_DAY;
+
         const zoneRaw = cellToString(zoneRow[c]);
         let zone = Zone.FLOATER;
         if (zoneRaw.toLowerCase().includes('north')) zone = Zone.NORTH;
         else if (zoneRaw.toLowerCase().includes('south')) zone = Zone.SOUTH;
 
-        // Parse Bus Number / Label from Row 15
         const busNum = cellToString(busNumRow[c]) || `Shift ${c}`;
-
-        // Parse Times
-        const startSlot = parseTimeToSlot(startRow[c]);
-        let endSlot = parseTimeToSlot(endRow[c]);
-
-        // Handle overnight (end < start)
-        if (endSlot < startSlot) endSlot += TIME_SLOTS_PER_DAY; // Add 24 hours
-
-        // Parse Break
         let breakStartSlot = 0;
         let breakDurationSlots = 0;
 
@@ -268,90 +489,109 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
             const bStart = parseTimeToSlot(breakStartValue);
             let bEnd = parseTimeToSlot(breakEndValue);
 
-            if (bEnd < bStart) bEnd += TIME_SLOTS_PER_DAY; // Overnight break?
-
-            // Adjust break start if it looks like it's before shift start (overnight shift case)
-            if (bStart < startSlot && endSlot > TIME_SLOTS_PER_DAY) {
-                // This is tricky without dates. Assuming break is within shift.
-                // If shift is 18:00 - 02:00 (72 - 104), and break is 22:00 (88), it works.
-                // If shift crosses midnight and the break parses before the start, add a day.
-                // Let's use the logic: if break start < shift start, add 24h
-                // But only if shift crosses midnight.
-            }
-            if (bStart < startSlot && endSlot >= TIME_SLOTS_PER_DAY) {
-                // Break is likely next day
-                // But wait, parseTimeToSlot handles 0-24h.
-                // Example: break at 02:00 parses earlier than a 22:00 start, so add one day.
-                // What if shift is 08:00 to 16:00. Break at 12:00. 32 to 64. Break 48. 48 > 32. OK.
-                // So if bStart < startSlot, assume next day.
-                // EXCEPT if shift didn't cross midnight? No, start < end usually.
-                // If start > end, we added one planning day to end.
-                // So if bStart < startSlot, it's probably next day.
-                // UNLESS it's a data error.
-                // Let's trust the "N/B" check first.
-                // If bStart < startSlot, add one planning day.
-            }
-
-            let finalBreakStart = bStart;
-            if (finalBreakStart < startSlot) finalBreakStart += TIME_SLOTS_PER_DAY;
-
-            breakStartSlot = finalBreakStart;
-
-            // Try to use explicit duration first
-            const explicitDurationStr = cellToString(breakDurationRow[c]);
-            if (explicitDurationStr) {
-                const minutes = parseFloat(explicitDurationStr);
-                if (!isNaN(minutes) && minutes > 0) {
-                    breakDurationSlots = minutesToSlotsCeil(minutes);
-                } else {
-                    // Fallback to window
-                    breakDurationSlots = bEnd - bStart;
-                }
-            } else {
-                breakDurationSlots = bEnd - bStart;
-            }
-
-            // Handle wrap around calculation and validate
-            if (breakDurationSlots < 0) breakDurationSlots += TIME_SLOTS_PER_DAY;
-            // If still negative or unreasonably large (> 4 hours), treat as no break
-            if (breakDurationSlots < 0 || breakDurationSlots > hoursToSlots(4)) {
-                console.warn(`Invalid break duration (${breakDurationSlots} slots) for shift ${c}, resetting to 0`);
+            if (!Number.isFinite(bStart) || !Number.isFinite(bEnd)) {
+                report.warnings.push(`${shiftHeader}: invalid break start or end time; imported without a break.`);
                 breakDurationSlots = 0;
                 breakStartSlot = startSlot;
+            } else {
+                if (bEnd < bStart) bEnd += TIME_SLOTS_PER_DAY;
+
+                let finalBreakStart = bStart;
+                if (finalBreakStart < startSlot) finalBreakStart += TIME_SLOTS_PER_DAY;
+
+                breakStartSlot = finalBreakStart;
+
+                const explicitDurationStr = cellToString(breakDurationRow[c]);
+                if (explicitDurationStr) {
+                    const minutes = parseFloat(explicitDurationStr);
+                    if (!isNaN(minutes) && minutes > 0) {
+                        breakDurationSlots = minutesToSlotsCeil(minutes);
+                    } else {
+                        breakDurationSlots = bEnd - bStart;
+                    }
+                } else {
+                    breakDurationSlots = bEnd - bStart;
+                }
+
+                if (breakDurationSlots < 0) breakDurationSlots += TIME_SLOTS_PER_DAY;
+                if (breakDurationSlots < 0 || breakDurationSlots > hoursToSlots(4)) {
+                    report.warnings.push(`${shiftHeader}: invalid break duration; imported without a break.`);
+                    breakDurationSlots = 0;
+                    breakStartSlot = startSlot;
+                }
             }
-        } else {
-            // No break or N/B
+        } else if (
+            (breakStartStr && !breakStartStr.match(/^n\/b$/i)) ||
+            (breakEndStr && !breakEndStr.match(/^n\/b$/i))
+        ) {
+            report.warnings.push(`${shiftHeader}: partial break window; imported without a break.`);
             breakDurationSlots = 0;
-            breakStartSlot = startSlot; // Just to be safe
+            breakStartSlot = startSlot;
+        } else {
+            breakDurationSlots = 0;
+            breakStartSlot = startSlot;
         }
 
-        shifts.push({
-            id: `imported-${c}-${Math.random().toString(36).substring(2, 7)}`,
-            driverName: zoneRaw && !zoneRaw.includes('Floater') && !zoneRaw.includes('North') && !zoneRaw.includes('South') ? zoneRaw : busNum, // Use Zone field as name if it looks like a name, otherwise Bus Num
-            // Actually user said Row 14 is "zone area". Row 15 is "bus number".
-            // Let's use Bus Number as the primary identifier/name for now as it's unique per shift usually.
-            // Or maybe combine them?
-            // Let's use Bus Number as driverName for now.
-            // Wait, Row 14 data in example was "Floater", "North", "South".
-            // So Row 14 is definitely Zone.
-            // Row 15 data was "Bus 01", "Bus 02".
-            // So Driver Name should probably be "Bus 01" (as a placeholder for the vehicle/shift).
-            zone: zone,
-            startSlot,
-            endSlot,
-            breakStartSlot,
-            breakDurationSlots
-        });
-
-        // Parse Day Type
         const dayRaw = cellToString(dayRow[c]).toLowerCase();
-        let dayType: 'Weekday' | 'Saturday' | 'Sunday' = 'Weekday'; // Default
+        let dayType: 'Weekday' | 'Saturday' | 'Sunday' = 'Weekday';
         if (dayRaw.includes('sat')) dayType = 'Saturday';
         else if (dayRaw.includes('sun')) dayType = 'Sunday';
         else if (dayRaw.includes('weekday')) dayType = 'Weekday';
 
-        shifts[shifts.length - 1].dayType = dayType;
+        shifts.push({
+            id: `imported-${c}-${Math.random().toString(36).substring(2, 7)}`,
+            driverName: zoneRaw && !zoneRaw.includes('Floater') && !zoneRaw.includes('North') && !zoneRaw.includes('South') ? zoneRaw : busNum,
+            zone,
+            startSlot,
+            endSlot,
+            breakStartSlot,
+            breakDurationSlots,
+            dayType,
+        });
     }
 
-    return shifts;
+    applyRideCoShiftCounts(report, shifts);
+
+    if (shifts.length === 0 && report.skippedColumns.length === 0) {
+        report.warnings.push('No populated RideCo shift columns were found.');
+    }
+
+    return { shifts, report };
+};
+
+export const parseRideCoWithReport = (
+    input: string | RowData[],
+    options: { sourceName?: string; sheetName?: string } = {},
+): RideCoParseResult => parseRideCoRowsWithReport(
+    normalizeRideCoInput(input),
+    options.sourceName,
+    options.sheetName,
+);
+
+export const parseRideCo = (input: string | RowData[]): Shift[] => parseRideCoWithReport(input).shifts;
+
+export const parseRideCoSheetsWithReport = (
+    sheets: Array<RowData[] | { name?: string; rows: RowData[] }>,
+    options: { sourceName?: string } = {},
+): RideCoParseResult => {
+    let bestResult: RideCoParseResult = {
+        shifts: [],
+        report: createEmptyRideCoReport(options.sourceName),
+    };
+
+    for (const sheet of sheets) {
+        const sheetRows = Array.isArray(sheet) ? sheet : sheet.rows;
+        const sheetName = Array.isArray(sheet) ? undefined : sheet.name;
+        const parsed = parseRideCoRowsWithReport(sheetRows, options.sourceName, sheetName);
+        if (parsed.shifts.length > bestResult.shifts.length) {
+            bestResult = parsed;
+        }
+    }
+
+    return bestResult;
+};
+
+export const parseRideCoSheets = (sheets: RowData[][]): Shift[] => {
+    const bestResult = parseRideCoSheetsWithReport(sheets);
+    return bestResult.shifts;
 };

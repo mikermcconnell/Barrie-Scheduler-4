@@ -838,15 +838,19 @@ export function getRoutePlanner2VirtualWindow(
 ): RoutePlanner2VirtualWindow {
     const rowHeight = options.rowHeight ?? STOP_ORDER_VIRTUAL_ROW_HEIGHT;
     const viewportHeight = options.viewportHeight ?? STOP_ORDER_VIRTUAL_VIEWPORT_HEIGHT;
-    const overscan = options.overscan ?? STOP_ORDER_VIRTUAL_OVERSCAN;
+    const overscan = Math.max(0, Math.floor(options.overscan ?? STOP_ORDER_VIRTUAL_OVERSCAN));
     const safeItemCount = Math.max(0, itemCount);
 
     if (safeItemCount === 0 || rowHeight <= 0 || viewportHeight <= 0) {
         return { startIndex: 0, endIndex: 0, topPadding: 0, bottomPadding: 0, totalHeight: 0 };
     }
 
-    const firstVisibleIndex = Math.floor(Math.max(0, scrollTop) / rowHeight);
     const visibleCount = Math.ceil(viewportHeight / rowHeight);
+    const maxFirstVisibleIndex = Math.max(0, safeItemCount - visibleCount);
+    const firstVisibleIndex = Math.min(
+        Math.floor(Math.max(0, scrollTop) / rowHeight),
+        maxFirstVisibleIndex,
+    );
     const startIndex = Math.max(0, firstVisibleIndex - overscan);
     const endIndex = Math.min(safeItemCount, firstVisibleIndex + visibleCount + overscan);
     const topPadding = startIndex * rowHeight;

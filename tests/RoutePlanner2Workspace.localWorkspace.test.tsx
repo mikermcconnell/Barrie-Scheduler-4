@@ -345,6 +345,11 @@ describe('RoutePlanner2Workspace virtual stop order', () => {
       viewportHeight: 300,
       overscan: 2,
     });
+    const clampedWindow = getRoutePlanner2VirtualWindow(10, 999999, {
+      rowHeight: 100,
+      viewportHeight: 300,
+      overscan: 2,
+    });
 
     expect(topWindow).toEqual({
       startIndex: 0,
@@ -358,6 +363,13 @@ describe('RoutePlanner2Workspace virtual stop order', () => {
     expect(scrolledWindow.topPadding).toBe(4300);
     expect(scrolledWindow.bottomPadding).toBe(95000);
     expect(scrolledWindow.totalHeight).toBe(100000);
+    expect(clampedWindow).toEqual({
+      startIndex: 5,
+      endIndex: 10,
+      topPadding: 500,
+      bottomPadding: 0,
+      totalHeight: 1000,
+    });
   });
 });
 

@@ -139,6 +139,8 @@ const ROAD_NAME_LABEL_DENSITY_LIMITS: Record<RoutePlanner2RoadNameLabelDensity, 
 const INTERACTIVE_STOP_LABEL_LIMIT = 120;
 const INTERACTIVE_STOP_MARKER_LIMIT = 300;
 const DENSE_ROUTE_EDITABLE_MARKER_LIMIT = 24;
+const EXPORT_STOP_LABEL_LIMIT = 60;
+const EXPORT_DETAIL_STOP_LABEL_LIMIT = 48;
 const ROAD_SNAP_SEGMENT_LIMIT = 350;
 
 const ROAD_NAME_LABEL_LINE_SPACING: Record<RoutePlanner2RoadNameLabelDensity, number> = {
@@ -541,6 +543,52 @@ export function selectRoutePlanner2EditableMarkerStops(
             return priorityDelta || first.sequence - second.sequence;
         })
         .slice(0, Math.max(0, limit));
+}
+
+function expandRoutePlanner2Bounds(
+    bounds: RoutePlanner2RoadLabelBounds,
+    paddingRatio = 0.15,
+    minPaddingDegrees = 0.0025,
+): RoutePlanner2RoadLabelBounds {
+    const lngPadding = Math.max((bounds.maxLng - bounds.minLng) * paddingRatio, minPaddingDegrees);
+    const latPadding = Math.max((bounds.maxLat - bounds.minLat) * paddingRatio, minPaddingDegrees);
+    return {
+        minLng: bounds.minLng - lngPadding,
+        minLat: bounds.minLat - latPadding,
+        maxLng: bounds.maxLng + lngPadding,
+        maxLat: bounds.maxLat + latPadding,
+    };
+}
+
+export function selectRoutePlanner2ExportStopLabelStops(
+    stops: RoutePlanner2Stop[],
+    options: {
+        bounds?: RoutePlanner2RoadLabelBounds | null;
+        limit?: number;
+        selectedStopId?: string | null;
+        highlightedStopId?: string | null;
+        selectedStopIds?: Iterable<string>;
+        stopLabelDetailsByStopId?: Map<string, RoutePlanner2MapStopLabelDetail>;
+    } = {},
+): RoutePlanner2Stop[] {
+    if (stops.length === 0) return [];
+
+    const boundedStops = options.bounds
+        ? stops.filter((stop) => coordinateWithinBounds([stop.lng, stop.lat], expandRoutePlanner2Bounds(options.bounds!)))
+        : stops;
+    const candidates = options.bounds ? boundedStops : stops;
+    const limit = Math.max(0, options.limit ?? EXPORT_STOP_LABEL_LIMIT);
+
+    if (limit === 0 || candidates.length === 0) return [];
+    if (candidates.length <= limit) return candidates;
+
+    return selectRoutePlanner2InteractiveStops(candidates, {
+        limit,
+        selectedStopId: options.selectedStopId,
+        highlightedStopId: options.highlightedStopId,
+        selectedStopIds: options.selectedStopIds,
+        stopLabelDetailsByStopId: options.stopLabelDetailsByStopId,
+    });
 }
 
 type RoutePlanner2StopLabelAnchor = 'top' | 'bottom' | 'left' | 'right';
@@ -1438,14 +1486,14 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         [stopLabelDetails],
     );
     const shouldUseLayerStopMarkers = Boolean(
-        !isExportCaptureMode
-        && mapLoaded
+        mapLoaded
         && scenario
         && scenario.stops.length > INTERACTIVE_STOP_MARKER_LIMIT,
     );
     const visibleStopMarkerStops = useMemo(() => {
         if (!scenario?.stops.length || !mapLoaded) return [];
-        if (isExportCaptureMode || !shouldUseLayerStopMarkers) return scenario.stops;
+        if (!shouldUseLayerStopMarkers) return scenario.stops;
+        if (isExportCaptureMode) return [];
 
         return selectRoutePlanner2EditableMarkerStops(scenario.stops, {
             limit: DENSE_ROUTE_EDITABLE_MARKER_LIMIT,
@@ -1476,7 +1524,16 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     );
     const visibleStopLabelStops = useMemo(() => {
         if (!scenario?.stops.length || !mapLoaded || (isExportCaptureMode && !exportCaptureShowStopLabels)) return [];
-        if (isExportCaptureMode) return scenario.stops;
+        if (isExportCaptureMode) {
+            return selectRoutePlanner2ExportStopLabelStops(scenario.stops, {
+                bounds: exportRoadLabelBounds,
+                limit: exportRoadLabelBounds ? EXPORT_DETAIL_STOP_LABEL_LIMIT : EXPORT_STOP_LABEL_LIMIT,
+                selectedStopId,
+                highlightedStopId,
+                selectedStopIds: selectedStopIdSet,
+                stopLabelDetailsByStopId,
+            });
+        }
 
         return selectRoutePlanner2InteractiveStops(scenario.stops, {
             limit: INTERACTIVE_STOP_LABEL_LIMIT,
@@ -1487,6 +1544,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         });
     }, [
         exportCaptureShowStopLabels,
+        exportRoadLabelBounds,
         highlightedStopId,
         isExportCaptureMode,
         mapLoaded,
@@ -1834,6 +1892,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             setRoadBuildProgress(fallbackResult.segmentGeometries.length > 0
                 ? { totalSegments: fallbackResult.segmentGeometries.length, completedSegments: fallbackResult.segmentGeometries.length }
                 : null);
+            onSegmentRuntimeEstimates(fallbackResult.segmentEstimates);
             return () => controller.abort();
         }
 

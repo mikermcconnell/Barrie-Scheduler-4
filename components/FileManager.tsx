@@ -47,6 +47,47 @@ type ViewMode = 'grid' | 'list';
 type Tab = 'files' | 'schedules';
 type FileFilter = 'all' | 'schedule_master' | 'rideco' | 'barrie_tod' | 'other';
 
+const detectSavedFileType = (fileName: string): SavedFile['type'] => {
+    const lowerName = fileName.toLowerCase();
+    const isSpreadsheet = /\.(csv|xlsx|xls)$/i.test(lowerName);
+
+    if (
+        isSpreadsheet &&
+        (
+            lowerName.includes('schedule master') ||
+            (lowerName.includes('schedule') && lowerName.includes('master'))
+        )
+    ) {
+        return 'schedule_master';
+    }
+
+    if (
+        isSpreadsheet &&
+        (
+            lowerName.includes('rideco') ||
+            lowerName.includes('mvt') ||
+            lowerName.includes('template') ||
+            lowerName.includes('shift')
+        )
+    ) {
+        return 'rideco';
+    }
+
+    if (
+        isSpreadsheet &&
+        (
+            lowerName.includes('barrie') ||
+            lowerName.includes('tod') ||
+            lowerName.includes('on demand') ||
+            lowerName.includes('on-demand')
+        )
+    ) {
+        return 'barrie_tod';
+    }
+
+    return 'other';
+};
+
 const getFileManagerErrorMessage = (error: unknown, action: 'load' | 'upload' | 'delete') => {
     if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
         if (error.code === 'storage/quota-exceeded') {
@@ -131,16 +172,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
         if (!user || !e.target.files?.length || isSelectingFile) return;
         const file = e.target.files[0];
 
-        // Determine file type from name
-        let fileType: SavedFile['type'] = 'other';
-        const lowerName = file.name.toLowerCase();
-        if (lowerName.includes('schedule') && lowerName.includes('master')) {
-            fileType = 'schedule_master';
-        } else if (lowerName.includes('rideco') || lowerName.includes('template') && lowerName.includes('shift')) {
-            fileType = 'rideco';
-        } else if (lowerName.includes('barrie') || lowerName.includes('tod') || lowerName.includes('on demand') || lowerName.includes('on-demand')) {
-            fileType = 'barrie_tod';
-        }
+        const fileType = detectSavedFileType(file.name);
 
         setUploading(true);
         try {

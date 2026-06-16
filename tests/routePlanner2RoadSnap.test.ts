@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop } from '../utils/route-planner-2/routePlanner2Authoring';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
-import { snapRoutePlanner2ScenarioToRoad, snapRoutePlanner2WaypointsToRoad } from '../utils/route-planner-2/routePlanner2RoadSnap';
+import {
+  buildRoutePlanner2FallbackRoadSnapResult,
+  snapRoutePlanner2ScenarioToRoad,
+  snapRoutePlanner2WaypointsToRoad,
+} from '../utils/route-planner-2/routePlanner2RoadSnap';
 
 describe('Route Planner 2 road snap', () => {
   it('falls back to straight coordinates when no Mapbox token is available', async () => {
@@ -105,6 +109,26 @@ describe('Route Planner 2 road snap', () => {
       distanceKm: 1.2,
     });
     expect(result.segmentEstimates[0]?.pathFingerprint).toContain('-79.7,44.38|-79.69,44.385|-79.68,44.39');
+  });
+
+  it('returns fallback segment runtime estimates without Mapbox snapping', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-04-29T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Start', lat: 44.38, lng: -79.7 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Middle', lat: 44.39, lng: -79.68 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-3', name: 'End', lat: 44.4, lng: -79.66 });
+
+    const result = buildRoutePlanner2FallbackRoadSnapResult(project.scenarios[0]!);
+
+    expect(result.segmentEstimates).toHaveLength(2);
+    expect(result.segmentEstimates[0]).toMatchObject({
+      fromStopId: 'stop-1',
+      toStopId: 'stop-2',
+      source: 'fallback',
+      confidence: 'low',
+      fallbackReason: 'Mapbox travel time was unavailable; using distance and default speed.',
+    });
+    expect(result.segmentEstimates[0]?.runtimeMinutes).toBeGreaterThan(0);
+    expect(result.segmentEstimates[0]?.distanceKm).toBeGreaterThan(0);
   });
 
   it('limits scenario road snapping concurrency and reports progress', async () => {

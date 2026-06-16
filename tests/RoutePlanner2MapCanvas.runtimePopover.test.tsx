@@ -82,9 +82,8 @@ vi.mock('../components/shared', () => ({
 vi.mock('../utils/route-planner-2/routePlanner2RoadSnap', () => ({
   buildRoutePlanner2FallbackRoadSnapResult: (scenario: {
     stops: Array<{ id: string; lat: number; lng: number }>;
-  }) => ({
-    coordinates: scenario.stops.map((stop) => [stop.lng, stop.lat]),
-    segmentGeometries: scenario.stops.slice(0, -1).map((stop, index) => {
+  }) => {
+    const segmentGeometries = scenario.stops.slice(0, -1).map((stop, index) => {
       const nextStop = scenario.stops[index + 1]!;
       return {
         id: `segment-${stop.id}-${nextStop.id}`,
@@ -96,9 +95,21 @@ vi.mock('../utils/route-planner-2/routePlanner2RoadSnap', () => ({
           coordinates: [[stop.lng, stop.lat], [nextStop.lng, nextStop.lat]],
         }],
       };
-    }),
-    segmentEstimates: [] as unknown[],
-  }),
+    });
+
+    return {
+      coordinates: scenario.stops.map((stop) => [stop.lng, stop.lat]),
+      segmentGeometries,
+      segmentEstimates: segmentGeometries.map((segment) => ({
+        id: segment.id,
+        fromStopId: segment.fromStopId,
+        toStopId: segment.toStopId,
+        runtimeMinutes: 5,
+        source: 'fallback',
+        confidence: 'low',
+      })),
+    };
+  },
   snapRoutePlanner2ScenarioToRoad: vi.fn(async (scenario: {
     stops: Array<{ id: string; lat: number; lng: number }>;
   }) => ({
@@ -127,6 +138,7 @@ vi.mock('../utils/route-planner-2/routePlanner2AddressSearch', () => ({
 import { RoutePlanner2MapCanvas, type RoutePlanner2MapCanvasHandle } from '../components/Analytics/route-planner-2/RoutePlanner2MapCanvas';
 import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop, updateRoutePlanner2RouteShape } from '../utils/route-planner-2/routePlanner2Authoring';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
+import { snapRoutePlanner2ScenarioToRoad } from '../utils/route-planner-2/routePlanner2RoadSnap';
 
 function click(element: Element | null | undefined) {
   element?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -151,6 +163,7 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
     root = null;
     container = null;
     html2canvasMock.mockClear();
+    vi.mocked(snapRoutePlanner2ScenarioToRoad).mockClear();
   });
 
   it('lets planners save a manual runtime override from a clicked map segment', async () => {
@@ -303,6 +316,55 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
       lat: 44.386,
       lng: -79.686,
     }));
+  });
+
+  it('keeps fallback runtime estimates when large routes skip automatic road snapping', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    for (let index = 0; index < 352; index += 1) {
+      project = addRoutePlanner2Stop(project, 'scenario-1', {
+        id: `stop-${index + 1}`,
+        name: `Stop ${index + 1}`,
+        lat: 44.38 + (index * 0.0001),
+        lng: -79.69 + (index * 0.0001),
+      });
+    }
+    const onSegmentRuntimeEstimates = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={onSegmentRuntimeEstimates}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(snapRoutePlanner2ScenarioToRoad).not.toHaveBeenCalled();
+    expect(onSegmentRuntimeEstimates).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fromStopId: 'stop-1',
+          toStopId: 'stop-2',
+          source: 'fallback',
+        }),
+      ]),
+    );
+    expect(onSegmentRuntimeEstimates.mock.calls[0]?.[0]).toHaveLength(351);
   });
 
   it('uses 2 to add a bend at the current mouse position on the nearest segment', async () => {
@@ -668,6 +730,129 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
     const capture = await mapRef.current?.captureMapImage({ showStopLabels: false });
 
     expect(capture?.dataUrl).toBe('data:image/png;base64,mock-overview-capture');
+  });
+
+  it('uses map layers instead of hundreds of DOM stop markers during dense export capture', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    for (let index = 0; index < 305; index += 1) {
+      project = addRoutePlanner2Stop(project, 'scenario-1', {
+        id: `stop-${index + 1}`,
+        name: `Stop ${index + 1}`,
+        lat: 44.38 + (index * 0.0001),
+        lng: -79.69 + (index * 0.0001),
+      });
+    }
+    const mapRef = React.createRef<RoutePlanner2MapCanvasHandle>();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          ref={mapRef}
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    html2canvasMock.mockImplementationOnce(async () => {
+      const markerSource = container?.querySelector('[data-testid="mock-source-route-planner-2-stop-markers"]');
+      expect(markerSource?.getAttribute('data-feature-count')).toBe('305');
+      expect(container?.querySelector('[data-testid^="rp2-export-stop-marker-"]')).toBeNull();
+      return {
+        width: 1850,
+        height: 1000,
+        getContext: vi.fn(),
+        toDataURL: vi.fn(() => 'data:image/png;base64,mock-dense-capture'),
+      };
+    });
+
+    const capture = await mapRef.current?.captureMapImage({ showStopLabels: false });
+
+    expect(capture?.dataUrl).toBe('data:image/png;base64,mock-dense-capture');
+  });
+
+  it('limits export stop labels to the fitted detail map area', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    for (let index = 0; index < 80; index += 1) {
+      project = addRoutePlanner2Stop(project, 'scenario-1', {
+        id: `stop-${index + 1}`,
+        name: `Stop ${index + 1}`,
+        lat: 44.38 + (index * 0.01),
+        lng: -79.69 + (index * 0.01),
+      });
+    }
+    const stopLabelDetails = project.scenarios[0]!.stops.map((stop) => ({
+      stopId: stop.id,
+      stopName: stop.name,
+      kidsAtStop: 1,
+      travelTimeLabel: `${stop.sequence} min`,
+    }));
+    const mapRef = React.createRef<RoutePlanner2MapCanvasHandle>();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          ref={mapRef}
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          stopLabelDetails={stopLabelDetails}
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    html2canvasMock.mockImplementationOnce(async () => {
+      const labels = container?.querySelectorAll('[data-testid="rp2-export-stop-label"]') ?? [];
+      expect(labels.length).toBeGreaterThan(0);
+      expect(labels.length).toBeLessThanOrEqual(4);
+      expect(container?.textContent).toContain('Stop 1');
+      expect(container?.textContent).not.toContain('Stop 20');
+      return {
+        width: 1850,
+        height: 1000,
+        getContext: vi.fn(),
+        toDataURL: vi.fn(() => 'data:image/png;base64,mock-detail-capture'),
+      };
+    });
+
+    const capture = await mapRef.current?.captureMapImage({
+      showStopLabels: true,
+      fitCoordinates: [
+        [-79.69, 44.38],
+        [-79.67, 44.4],
+      ],
+    });
+
+    expect(capture?.dataUrl).toBe('data:image/png;base64,mock-detail-capture');
   });
 
   it('does not add a stop from a blank map click when no popover is open', async () => {
