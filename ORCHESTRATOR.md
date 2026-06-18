@@ -54,6 +54,8 @@ TOD slot math is centralized in `utils/demandConstants.ts` through the active sl
 
 TOD shift rules use a max of 5 consecutive driving hours before lunch is required for non-straight shifts; the old fixed 45-minute / 4th-to-6th-hour break rule should not be reintroduced. New manual drivers can be placeholders until a shift time is set, and changeoff penalties are skipped for configured on-site handoff locations.
 
+On-Demand imports accept Master requirements and RideCo/MVT shifts independently; a single uploaded or file-manager-selected file auto-processes. RideCo/MVT parsing lives in `utils/parsers/csvParsers.ts` and supports CSV/workbook sheets, Excel numeric times, shift-header-relative row fallback, overnight service, day-type counts, skipped-column diagnostics, and a review/apply step before shifts replace the active draft.
+
 ### Fixed Route
 Owns the core fixed-route workflow:
 - CSV/runtime import

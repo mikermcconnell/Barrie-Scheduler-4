@@ -33,6 +33,8 @@ Recommended coverage:
 - GTFS pattern to editable route scenario conversion, including scheduled runtime evidence
 - imported stop ordering and terminal role assignment
 - imported shape simplification and waypoint ownership
+- large-route virtualization/windowing and label-selection limits
+- fallback road-snap segment estimates when Mapbox snapping is skipped or unavailable
 
 ## Component Tests
 
@@ -75,7 +77,7 @@ Before calling v1 work complete:
 - runtime confidence is visible
 - warnings are actionable
 - comparison table is understandable
-- UI does not imply Firebase save/export works before it does
+- save/load UI reflects team-scoped persistence state clearly
 - importing one or more GTFS routes creates new route concepts with line, all stops, and scheduled segment runtime evidence
 - imported stops can still be moved, renamed, reordered, and deleted
 - imported route line can still be edited with bend anchors
@@ -84,3 +86,4 @@ Before calling v1 work complete:
 - stop ranges can be copied or moved into another route concept at a chosen insertion position
 - map PDF exports show centered text in stop labels, header KPI cards, and the
   legend; no label text should sit on the lower edge of its pill/card
+- large camp/address-import routes stay responsive: stop labels are capped, the stop-order rail virtualizes, and fallback segment runtimes appear even when automatic road snapping is skipped

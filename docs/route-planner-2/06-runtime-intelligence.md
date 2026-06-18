@@ -36,6 +36,7 @@ When a drawn segment extends beyond a matched GTFS corridor, use the scheduled G
 When custom stops are not exactly GTFS stops but the drawn line follows a GTFS route shape, interpolate the matched shape overlap and use the proportional scheduled GTFS runtime for the covered portion before falling back to Mapbox.
 
 For imported address routes, route creation should not wait on every Mapbox segment. Render the draft route immediately, then calculate Mapbox road path and segment runtimes in a bounded background queue with visible progress.
+When a route is too large for automatic road snapping, keep the fallback alignment and still emit per-segment fallback runtime estimates so feasibility and stop cards remain usable. Do not leave large routes in a no-runtime state just because Mapbox snapping was intentionally skipped.
 
 ## Segment-Level Disclosure
 

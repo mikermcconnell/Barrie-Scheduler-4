@@ -31,6 +31,7 @@ In scope:
 - runtime, cycle time, bus requirement, and warning outputs
 - simple route metrics comparison
 - on-screen planning summary
+- screenshot-first map PDF export and operator turn-by-turn PDF export for field review
 - importing one or more full GTFS bus routes as editable local route concept templates
 - importing Excel/CSV address lists as custom stops, with duplicate addresses merged and unresolved geocodes held for review
 - team-scoped save/load of route planner projects

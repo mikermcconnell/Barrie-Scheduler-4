@@ -14,7 +14,7 @@ Its most mature and operationally critical workflow is fixed-route schedule buil
 
 Primary app shells today:
 - **Scheduled Transit** - fixed-route schedule generation, editing, optimization, publishing, and timetable/report outputs
-- **Transit On-Demand** - demand-responsive planning and shift optimization
+- **Transit On-Demand** - demand-responsive requirements import, RideCo/MVT shift import review, planning, and shift optimization
 - **Dashboard & Reporting** - STREETS-backed performance dashboards and operational reporting
 
 Adjacent planning-data workspaces include Route Planner 2, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, and related exploratory tools.
@@ -82,6 +82,14 @@ Version history preserved. Rollback possible.
 Define targets (GO Train, college bells) → Run optimizer → Review adjustments → Accept/reject
 ```
 AI-assisted but planner-controlled.
+
+## Transit On-Demand Workflow
+
+```
+Upload Master requirements and/or RideCo/MVT shifts → Review detected shifts and warnings → Apply import → Optimize/refine → Save/export
+```
+
+RideCo/MVT imports are planner-reviewed before they replace the active shifts. The parser supports workbook sheets, Excel numeric time cells, overnight service, day-type counts, and skipped-column warnings so planners can spot partial or malformed shift columns.
 
 ---
 
