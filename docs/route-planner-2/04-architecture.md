@@ -10,6 +10,10 @@ Current shell:
 - `components/Analytics/RoutePlanner2Workspace.tsx`
 - `components/Analytics/route-planner-2/RoutePlanner2MapCanvas.tsx`
 - `utils/route-planner-2/routePlanner2RoadSnap.ts`
+- `utils/route-planner-2/routePlanner2Authoring.ts`
+- `utils/route-planner-2/routePlanner2MapExport.ts`
+- `utils/route-planner-2/routePlanner2OperatorExport.ts`
+- `utils/route-planner-2/routePlanner2StopTimes.ts`
 
 Expected future folders:
 - `components/Analytics/route-planner-2/`
@@ -61,7 +65,8 @@ Responsibilities:
 - terminal and timed-stop roles
 - Mapbox display and click-to-author interactions
 - road-snapped display geometry using Mapbox Directions when a token is available, with straight-line fallback
-- large-route rendering safeguards: cap interactive stop labels, use Mapbox stop marker layers for dense routes, virtualize the stop-order rail, keep only selected/high-priority stops as draggable HTML markers, and skip automatic road snapping when segment counts are too high for interactive loading
+- staged road-snapping/runtime estimates: render fallback geometry immediately, then fill Mapbox segment geometry/runtime in a bounded background queue
+- large-route rendering safeguards: cap interactive/export stop labels, use Mapbox stop marker layers for dense routes, virtualize the stop-order rail, keep only selected/high-priority stops as draggable HTML markers, and skip automatic road snapping when segment counts are too high for interactive loading
 - copy/move contiguous stop ranges between route concepts for service redesign work
 - bus-safe out-and-back routes: choosing Out and back automatically marks the far end stop as the bus turnaround before the return path is treated as valid
 

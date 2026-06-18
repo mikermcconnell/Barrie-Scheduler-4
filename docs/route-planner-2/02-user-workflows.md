@@ -81,7 +81,7 @@ When a planner is redesigning service coverage, they can move or copy a contiguo
 Moved stops are removed from the source route and copied into the target route with new local IDs. Line bends inside the selected segment move with that segment. Scheduled runtime evidence between stops inside the selected segment can move with it when stop order is preserved. When the app finds matching opposite-family routes and matching stops, the planner can apply the same switch to the paired direction in the same review flow. Bends that connect to stops outside the selected segment are cleaned up, and stale segment runtimes are cleared where the stop order changes.
 When a preserved segment is appended after a one-way route's current end terminal, or prepended before its current start terminal, the target terminal role should extend to the new outer stop so the transferred section is included in feasibility calculations.
 
-V1 may store this state locally only. The workflow should still use stable IDs and a structure that can later move to Firebase.
+Segment-transfer edits live in the local project until the planner saves. Saving persists the resulting route concepts through the team-scoped Route Planner 2 project service.
 
 Preferred route should be project-level state. Do not create competing “preferred” flags on multiple routes.
 
@@ -89,10 +89,11 @@ Preferred route should be project-level state. Do not create competing “prefer
 
 The planner should be able to:
 - add route points to form an alignment
-- add stops
+- move the pointer over the map and press `1` to add a stop at that location
 - add stops from cached popular Barrie places such as Sadlon Arena, Peggy Hill Team Community Centre, and Barrie Community Sports Complex when Mapbox does not return POI-name suggestions
 - reorder stops
 - remove stops
+- click a route segment and press `2`, or use the segment popover, to add a bend without adding an unintended stop
 - mark stop roles: regular stop, timed stop, start terminal, end terminal, bus turnaround
 - choose a route shape: one-way, closed loop, or out-and-back
 - see warnings when terminal roles are missing or invalid
@@ -175,6 +176,7 @@ markers, and route road-name labels derived from Mapbox direction steps when
 available. The full-route overview page should keep the numbered stops but hide
 stop text labels so the route remains readable; close-up detail pages should
 keep the stop/address labels and imported camper counts.
+For very large routes, export labels are capped and chosen by visible bounds/importance so map capture stays readable and does not render hundreds of HTML overlays.
 
 Implementation gotcha: keep this export screenshot-first for the map itself.
 Capture the app map as an image and place it into the PDF; do not redraw the map

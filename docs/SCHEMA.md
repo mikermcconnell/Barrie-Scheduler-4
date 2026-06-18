@@ -319,6 +319,8 @@ interface SavedSchedule {
 
 `shiftData` entries may include optional `handoffFromShiftId` and `handoffToShiftId` fields so TOD drafts can persist explicit driver-to-driver handoff links alongside the core shift timing fields. These links are intended to be reciprocal same-day North/South service-shift references; invalid or one-way links are treated as handoff issues during validation.
 
+RideCo/MVT import reports are review-time UI state, not saved schedule schema. Uploaded Master and RideCo files can be stored through the existing `users/{userId}/files/{fileId}` file-manager path; saved schedules persist only the normalized requirements, shifts, and optimization settings.
+
 ---
 
 ## Master Schedules (Published)
@@ -847,3 +849,5 @@ Routes like 2A+2B share a downtown terminus:
 | CycleRouteConfig | `utils/config/routeDirectionConfig.ts` |
 | TimeBand, RuntimeData | `utils/ai/runtimeAnalysis.ts` |
 | HubConfig, PlatformAnalysis | `utils/platform/platformConfig.ts`, `utils/platform/platformAnalysis.ts` |
+| Shift, Requirement, TOD day/zone types | `utils/demandTypes.ts` |
+| RideCo/MVT parser result and import report types | `utils/parsers/csvParsers.ts` |

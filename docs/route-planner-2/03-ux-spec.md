@@ -58,10 +58,8 @@ The left action sidebar should be collapsible:
 - actions: undo, redo, source overlay, road-name labels, save, load, duplicate, import GTFS, import addresses, operator PDF, camp focus, review route
 - operator turn-by-turn PDF export
 - Camp Focus action for the seasonal camp shuttle concept review
-- disabled or future-labelled save/export if not implemented
+- save/load should reflect team-scoped persistence state clearly
 - a compact route review toggle
-
-Avoid implying Firebase persistence exists in v1.
 
 GTFS and address import workflows should open as map-integrated side drawers
 instead of page-centred modals so the planner keeps geographic context while
@@ -120,6 +118,7 @@ V1 interactions:
 - undo and redo planner edits from the sidebar or keyboard shortcuts (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Y`, `Ctrl/Cmd+Shift+Z`)
 
 The full stop order belongs in the review rail as a scrollable panel, not as an expandable map overlay or duplicate map tray. This prevents imported routes with many stops from covering route controls or metrics.
+When the stop order is large, the review rail should virtualize rows instead of rendering every stop and bend at once. The map should use Mapbox symbol/circle layers for dense stop sets and keep only selected or high-priority stops as draggable HTML markers.
 
 Map overlay ownership:
 - top-left: draw guidance and address search
@@ -128,6 +127,12 @@ Map overlay ownership:
 - bottom-right: route metric strip
 
 New map UI should use those zones instead of adding free-floating overlays.
+
+Large-route behavior:
+- cap interactive stop labels so dense camp or address-import routes remain usable
+- cap export labels separately for overview/detail captures
+- skip automatic Mapbox road snapping when the segment count is too high, while keeping fallback geometry and fallback segment runtime estimates visible
+- keep road-name labels as Mapbox symbols with halos, not permanent HTML overlays
 
 Route type controls:
 - Show **Closed loop** once there are at least 3 stops. It adds the final segment from the last stop back to Stop 1.

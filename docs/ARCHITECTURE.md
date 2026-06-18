@@ -1,6 +1,6 @@
 # Architecture
 
-> Last reviewed: April 20, 2026
+> Last reviewed: June 18, 2026
 > Load order: start with `AGENTS.md`, then `docs/CONTEXT_INDEX.md`, before using this file as agent context.
 
 ## Overview
@@ -66,6 +66,12 @@ Demand-responsive planning and optimization lives primarily in:
 - `components/workspaces/OnDemandWorkspace.tsx`
 - root on-demand utilities such as `utils/onDemand*.ts`
 - supporting UI such as `components/ShiftEditor.tsx` and related modals
+
+Current import flow:
+- Master service requirements and RideCo/MVT shift files can be loaded from direct upload or the file manager.
+- A single Master or RideCo file auto-processes; planners no longer need both files before loading data.
+- RideCo parsing lives in `utils/parsers/csvParsers.ts` and supports CSV plus workbook sheets, Excel numeric time values, label-based row detection, overnight shifts, skipped-column warnings, and import reports.
+- RideCo imports open a planner review/apply step before replacing the active shift list.
 
 ### 3) Operations
 
@@ -248,6 +254,8 @@ Representative coverage areas in `tests/`:
 - **Performance** → aggregation/import sync tests
 - **Transit App / analytics** → aggregator, parser, scoring, and pipeline tests
 - **Workspace/UI flows** → selected tests for Add Trip, Extend Trip, resume, connections, and performance import behavior
+- **On-Demand imports** → `rideCoParser.test.ts` covers RideCo/MVT row detection, Excel numeric times, workbook-sheet selection, and skipped-column reports
+- **Route Planner 2** → route authoring, road snapping, map export, stop-time labels, and workspace local-state tests cover the current map-first workflow
 
 Do not assume every large UI surface has deep coverage. For fragile planner-facing workflows, manual verification is still important.
 
