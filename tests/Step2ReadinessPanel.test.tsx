@@ -129,7 +129,7 @@ describe('Step2ReadinessPanel', () => {
 
         expect(container?.textContent).toContain('blocked');
         expect(container?.textContent).toContain('Show route readiness details');
-        expect(container?.textContent).not.toContain('Missing one direction for bidirectional planning.');
+        expect(container?.textContent).toContain('Missing one direction for bidirectional planning.');
     });
 
     it('shows a ready readiness state with the expected matching summary', () => {

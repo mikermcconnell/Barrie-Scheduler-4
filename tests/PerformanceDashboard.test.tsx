@@ -134,7 +134,7 @@ describe('PerformanceDashboard', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(usePerformanceDataQueryMock).toHaveBeenCalledWith('team-1', true, metadata);
+    expect(usePerformanceDataQueryMock).toHaveBeenCalledWith('team-1', true, metadata, 'all');
     expect(usePerformanceOverviewQueryMock).toHaveBeenCalledWith('team-1', true, metadata);
     expect(container.textContent).toContain('Mock Performance Workspace');
     expect(container.textContent).toContain('Full Details Ready');

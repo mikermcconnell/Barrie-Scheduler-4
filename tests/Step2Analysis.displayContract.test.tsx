@@ -13,6 +13,7 @@ vi.mock('recharts', () => ({
     Tooltip: (): null => null,
     ResponsiveContainer: ({ children }: { children?: React.ReactNode }): React.ReactElement => <div>{children}</div>,
     Cell: (): null => null,
+    LabelList: (): null => null,
 }));
 
 describe('Step2Analysis display and planner actions', () => {

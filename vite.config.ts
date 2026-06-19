@@ -427,6 +427,18 @@ export default defineConfig(({ mode }) => {
       setupFiles: [],
       include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx', 'tests/**/*.spec.ts', 'tests/**/*.spec.tsx'],
       exclude: ['**/node_modules/**', '**/dist/**', '.worktrees/**'],
+      coverage: {
+        exclude: [
+          '**/node_modules/**',
+          '**/dist/**',
+          '.worktrees/**',
+          'coverage/**',
+          '**/*.css',
+          '**/*.json',
+          'gtfs/**',
+          'data/**',
+        ],
+      },
     },
     resolve: {
       alias: {

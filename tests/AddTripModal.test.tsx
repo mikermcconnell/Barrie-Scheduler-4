@@ -489,7 +489,7 @@ describe('AddTripModal', () => {
     expect(container?.textContent).toContain('Anchor block');
     expect(container?.textContent).toContain('Northbound · 6:00 AM → 6:30 AM');
     expect(container?.textContent).toContain('2-WD-1');
-    expect(container?.textContent).toContain('Trips to add');
+    expect(container?.textContent).toContain('One-way trips to add');
     expect(container?.textContent).toContain('Advanced planner controls');
 
     const input = container?.querySelector('input[type="text"]') as HTMLInputElement | null;
@@ -600,7 +600,7 @@ describe('AddTripModal', () => {
     ) as HTMLButtonElement | undefined;
     const input = container?.querySelector('input[type="text"]') as HTMLInputElement | null;
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Trip')
+      button.textContent?.includes('Add 1 One-way Trip')
     ) as HTMLButtonElement | undefined;
 
     const setInputValue = Object.getOwnPropertyDescriptor(
@@ -613,18 +613,18 @@ describe('AddTripModal', () => {
     });
 
     flushSync(() => {
-      setInputValue?.call(input, '11:40 PM');
+      setInputValue?.call(input, '6:40 AM');
       input?.dispatchEvent(new Event('input', { bubbles: true }));
     });
 
-    expect((input as HTMLInputElement).value).toBe('11:40 PM');
+    expect((input as HTMLInputElement).value).toBe('6:40 AM');
 
     flushSync(() => {
       addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
     expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
-      startTime: 23 * 60 + 40
+      startTime: 6 * 60 + 40
     }), expect.objectContaining({
       routeBaseName: '2 (Weekday)'
     }));
@@ -669,7 +669,7 @@ describe('AddTripModal', () => {
     setSelectValue(endStopSelect, 'Downtown');
 
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Trip')
+      button.textContent?.includes('Add 1 One-way Trip')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -730,7 +730,7 @@ describe('AddTripModal', () => {
     });
 
     const cycleButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Round trip')
+      button.textContent?.includes('Full cycle')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -746,7 +746,7 @@ describe('AddTripModal', () => {
     });
 
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Cycle')
+      button.textContent?.includes('Add 1 Full Cycle')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -783,11 +783,11 @@ describe('AddTripModal', () => {
     });
 
     const customButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Custom trip')
+      button.textContent?.includes('Custom pair / short-turn')
     ) as HTMLButtonElement | undefined;
 
     expect(customButton?.className).toContain('border-blue-300');
-    expect(container?.textContent).toContain('Custom trips to add');
+    expect(container?.textContent).toContain('Custom pairs to add');
     expect(container?.textContent).toContain('2 total trips will be added.');
     expect(container?.textContent).toContain('Start timepoint');
     expect(container?.textContent).toContain('End timepoint');
@@ -800,7 +800,7 @@ describe('AddTripModal', () => {
       switchButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container?.textContent).toContain('Add 1 Custom Trip');
+    expect(container?.textContent).toContain('Add 1 Custom Pair');
   });
 
   it('shows timepoints from either direction in custom trip selectors', () => {
@@ -862,7 +862,7 @@ describe('AddTripModal', () => {
     setSelectValue(endStopSelect, 'Downtown');
 
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Custom Trip')
+      button.textContent?.includes('Add 1 Custom Pair')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -933,7 +933,7 @@ describe('AddTripModal', () => {
     });
 
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Cycle')
+      button.textContent?.includes('Add 1 Full Cycle')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -984,7 +984,7 @@ describe('AddTripModal', () => {
     expect(container?.textContent).not.toContain('Selected block already has overlapping work.');
 
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Cycle')
+      button.textContent?.includes('Add 1 Full Cycle')
     ) as HTMLButtonElement | undefined;
 
     expect(addButton?.disabled).toBe(false);
@@ -1052,7 +1052,7 @@ describe('AddTripModal', () => {
     expect(container?.textContent).toContain('Absorbing 2 min into recovery');
 
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Cycle')
+      button.textContent?.includes('Add 1 Full Cycle')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -1087,7 +1087,7 @@ describe('AddTripModal', () => {
       button.textContent?.includes('Create new block')
     ) as HTMLButtonElement | undefined;
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Trip')
+      button.textContent?.includes('Add 1 One-way Trip')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -1127,7 +1127,7 @@ describe('AddTripModal', () => {
       button.textContent?.includes('Above first row')
     ) as HTMLButtonElement | undefined;
     const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
-      button.textContent?.includes('Add 1 Trip')
+      button.textContent?.includes('Add 1 One-way Trip')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {

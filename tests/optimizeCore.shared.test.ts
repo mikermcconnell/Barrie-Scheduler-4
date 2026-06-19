@@ -97,6 +97,6 @@ describe('shared optimize core', () => {
     const firstCall = (getGenerativeModelMock.mock.calls as unknown as Array<[any]>)[0];
     expect(firstCall).toBeDefined();
     const [config] = firstCall!;
-    expect(config.systemInstruction).toContain('Breaks: 60min (12 slots) if actual drive time > 7.5h.');
+    expect(config.systemInstruction).toContain('Use 60min (12 slots) as the default lunch length');
   });
 });

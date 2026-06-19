@@ -37,7 +37,7 @@ describe('Step2RuntimeReviewHeader', () => {
         });
 
         expect(container.textContent).toContain('Runtime Analysis');
-        expect(container.textContent).toContain('full out-and-back chain');
+        expect(container.textContent).toContain('Segment columns run left to right in bus travel order.');
 
         const buttons = Array.from(container.querySelectorAll('button'));
         const p80Button = buttons.find(button => button.textContent?.includes('80th Percentile'));

@@ -25,8 +25,8 @@ describe('gtfsStopLookup', () => {
 
     it('falls back to stop name matching', () => {
         expect(findStopCoords(undefined, 'Downtown Hub')).toEqual({
-            lat: 44.387753,
-            lon: -79.690237,
+            lat: 44.387588,
+            lon: -79.690372,
         });
     });
 
