@@ -61,6 +61,14 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).not.toMatch(/accessLevel == 'none' &&[\s\S]*feature/);
   });
 
+  it('allows Parking workspace users to import and maintain Parking data', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+    const storageRules = readRepoFile('storage.rules');
+
+    expect(firestoreRules).toMatch(/match \/parking\/\{docId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'workspaceParking'\);[\s\S]*allow create, update, delete: if canAccessWorkspace\(teamId, 'workspaceParking'\);[\s\S]*match \/months\/\{monthId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'workspaceParking'\);[\s\S]*allow create, update, delete: if canAccessWorkspace\(teamId, 'workspaceParking'\);/);
+    expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/parking\/\{allPaths=\*\*\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'workspaceParking'\);[\s\S]*allow write: if canAccessWorkspace\(teamId, 'workspaceParking'\);/);
+  });
+
   it('keeps old owner and admin member docs working when accessLevel is missing', () => {
     const firestoreRules = readRepoFile('firestore.rules');
 

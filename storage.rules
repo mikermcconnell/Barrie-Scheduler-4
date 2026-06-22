@@ -99,7 +99,7 @@ service firebase.storage {
     // Team shared parking-code usage data
     match /teams/{teamId}/parking/{allPaths=**} {
       allow read: if canAccessWorkspace(teamId, 'workspaceParking');
-      allow write: if isTeamManager(teamId) || isWorkspacePermissionManager();
+      allow write: if canAccessWorkspace(teamId, 'workspaceParking');
     }
 
     // Team OD matrix data (origin-destination summaries)

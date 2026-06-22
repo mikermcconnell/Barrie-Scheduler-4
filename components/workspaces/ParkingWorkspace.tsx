@@ -35,6 +35,7 @@ import {
   type ParkingSummary,
   type ParkingUnmappedCodeFamily,
 } from '../../utils/parking/parkingTypes';
+import { canAccessWorkspaceFeature } from '../../utils/workspaceAccess';
 
 const money = (value: number | null | undefined) => `$${(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const pct = (value: number | null | undefined) => (typeof value === 'number' ? `${value.toFixed(1)}%` : 'New');
@@ -319,7 +320,7 @@ const DepartmentChip: React.FC<{ department: string; codeFamilyKey?: string; com
 
 export const ParkingWorkspace: React.FC = () => {
   const { user } = useAuth();
-  const { team, canManageTeam } = useTeam();
+  const { team, teamMember, canManageTeam } = useTeam();
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -351,6 +352,7 @@ export const ParkingWorkspace: React.FC = () => {
     [reviewMonths, selectedYear],
   );
   const selectedMonthDataset = monthsForSelectedYear.find(month => month.month === selectedMonth) ?? null;
+  const canEditParking = canManageTeam || canAccessWorkspaceFeature('workspaceParking', teamMember);
   const annualSummaryRows = useMemo(() => buildAnnualSummaryRows(reviewMonths, selectedYear), [reviewMonths, selectedYear]);
   const annualTotalValue = annualSummaryRows.reduce((sum, row) => sum + row.total, 0);
   const annualTopDepartment = annualSummaryRows[0]?.department ?? '—';
@@ -569,7 +571,7 @@ export const ParkingWorkspace: React.FC = () => {
                 <Download size={16} /> Export Excel
               </button>
               <button
-                disabled={!canManageTeam || saving}
+                disabled={!canEditParking || saving}
                 onClick={() => void saveSettingsOnly()}
                 className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
               >
@@ -591,9 +593,9 @@ export const ParkingWorkspace: React.FC = () => {
                   <h3 className="text-lg font-extrabold text-gray-950">Import HotSpot month</h3>
                   <p className="mt-1 text-sm text-gray-500">One workbook must contain one month only. Saving replaces that month.</p>
                 </div>
-                <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white ${canManageTeam ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
+                <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
                   <Upload size={16} /> Upload .xlsx
-                  <input type="file" accept=".xlsx,.xls" disabled={!canManageTeam || saving} onChange={handleFileChange} className="hidden" />
+                  <input type="file" accept=".xlsx,.xls" disabled={!canEditParking || saving} onChange={handleFileChange} className="hidden" />
                 </label>
               </div>
 
@@ -639,7 +641,7 @@ export const ParkingWorkspace: React.FC = () => {
                         </p>
                       </div>
                     </div>
-                    <button disabled={saving || !canManageTeam} onClick={() => void importPreview()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                    <button disabled={saving || !canEditParking} onClick={() => void importPreview()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
                       {saving ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Save import
                     </button>
                   </div>
@@ -869,13 +871,13 @@ export const ParkingWorkspace: React.FC = () => {
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Indicator thresholds</h3></div>
               <div className="space-y-3 text-sm">
-                <SettingNumber label="High plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateMonthlyValueDollars: value } }))} />
-                <SettingNumber label="High frequency use" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateActiveDaysPerMonth: value } }))} />
-                <SettingNumber label="Long duration hours" value={settings.flagRules.longSessionHours} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionHours: value } }))} />
-                <SettingNumber label="Long duration count" value={settings.flagRules.longSessionCount} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionCount: value } }))} />
-                <SettingNumber label="Consistent location days" value={settings.flagRules.sameLocationDays} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, sameLocationDays: value } }))} />
-                <SettingNumber label="High department usage" value={settings.flagRules.departmentMonthlyValueDollars} suffix="$" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentMonthlyValueDollars: value } }))} />
-                <SettingNumber label="Department increase" value={settings.flagRules.departmentIncreasePercent} suffix="%" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentIncreasePercent: value } }))} />
+                <SettingNumber label="High plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateMonthlyValueDollars: value } }))} />
+                <SettingNumber label="High frequency use" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateActiveDaysPerMonth: value } }))} />
+                <SettingNumber label="Long duration hours" value={settings.flagRules.longSessionHours} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionHours: value } }))} />
+                <SettingNumber label="Long duration count" value={settings.flagRules.longSessionCount} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionCount: value } }))} />
+                <SettingNumber label="Consistent location days" value={settings.flagRules.sameLocationDays} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, sameLocationDays: value } }))} />
+                <SettingNumber label="High department usage" value={settings.flagRules.departmentMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentMonthlyValueDollars: value } }))} />
+                <SettingNumber label="Department increase" value={settings.flagRules.departmentIncreasePercent} suffix="%" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentIncreasePercent: value } }))} />
               </div>
             </section>
 
@@ -888,7 +890,7 @@ export const ParkingWorkspace: React.FC = () => {
                     <p className="mt-1 text-xs font-semibold text-gray-400">Enter the short form once. RS covers RS2025, RS2026, and future RS codes.</p>
                   </div>
                 </div>
-                <button disabled={!canManageTeam} onClick={addCodeFamily} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Add</button>
+                <button disabled={!canEditParking} onClick={addCodeFamily} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Add</button>
               </div>
               <div className="grid grid-cols-[58px_minmax(0,1fr)_92px_34px] gap-2 px-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">
                 <span>Short</span>
@@ -903,19 +905,19 @@ export const ParkingWorkspace: React.FC = () => {
                   return (
                     <div key={`${mapping.familyKey}-${index}`} className="grid grid-cols-[58px_minmax(0,1fr)_92px_34px] items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 p-2">
                       <CompactTextInput
-                        disabled={!canManageTeam}
+                        disabled={!canEditParking}
                         value={mapping.familyKey}
                         onChange={value => updateCodeFamilyDirectory(index, { familyKey: value })}
                         placeholder="RS"
                       />
                       <CompactTextInput
-                        disabled={!canManageTeam}
+                        disabled={!canEditParking}
                         value={mapping.department}
                         onChange={value => updateCodeFamilyDirectory(index, { department: value })}
                         placeholder="Department"
                       />
                       <CompactTextInput
-                        disabled={!canManageTeam}
+                        disabled={!canEditParking}
                         value={years.join(', ')}
                         onChange={value => updateCodeFamilyDirectory(index, { activeYears: parseYearsInput(value) })}
                         placeholder="2026"
@@ -936,12 +938,12 @@ export const ParkingWorkspace: React.FC = () => {
             </section>
 
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center justify-between gap-2"><h3 className="font-extrabold text-gray-950">Spot locations</h3><button disabled={!canManageTeam} onClick={addSpotLocation} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Add</button></div>
+              <div className="mb-4 flex items-center justify-between gap-2"><h3 className="font-extrabold text-gray-950">Spot locations</h3><button disabled={!canEditParking} onClick={addSpotLocation} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Add</button></div>
               <div className="space-y-3">
                 {settings.spotLocations.map((location, index) => (
                   <div key={`${location.spotId}-${index}`} className="grid grid-cols-2 gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3">
-                    <TextInput disabled={!canManageTeam} value={location.spotId} onChange={value => setSettings(current => ({ ...current, spotLocations: current.spotLocations.map((entry, i) => i === index ? { ...entry, spotId: value } : entry) }))} placeholder="Spot ID" />
-                    <TextInput disabled={!canManageTeam} value={location.locationName} onChange={value => setSettings(current => ({ ...current, spotLocations: current.spotLocations.map((entry, i) => i === index ? { ...entry, locationName: value } : entry) }))} placeholder="Location" />
+                    <TextInput disabled={!canEditParking} value={location.spotId} onChange={value => setSettings(current => ({ ...current, spotLocations: current.spotLocations.map((entry, i) => i === index ? { ...entry, spotId: value } : entry) }))} placeholder="Spot ID" />
+                    <TextInput disabled={!canEditParking} value={location.locationName} onChange={value => setSettings(current => ({ ...current, spotLocations: current.spotLocations.map((entry, i) => i === index ? { ...entry, locationName: value } : entry) }))} placeholder="Location" />
                   </div>
                 ))}
                 {settings.spotLocations.length === 0 ? <p className="text-sm text-gray-400">Optional. Raw spot IDs are used until mapped.</p> : null}
