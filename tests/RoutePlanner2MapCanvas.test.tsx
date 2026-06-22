@@ -57,7 +57,7 @@ describe('RoutePlanner2MapCanvas stop labels', () => {
       lat: 44.38 + (index * 0.001),
       lng: -79.69,
       sequence: index + 1,
-      role: 'passenger-stop' as const,
+      role: 'regular' as const,
       source: 'custom' as const,
     }));
     const details = new Map(stops.map((stop) => [stop.id, {
@@ -83,7 +83,7 @@ describe('RoutePlanner2MapCanvas stop labels', () => {
       lat: 44.38,
       lng: -79.69,
       sequence: 1,
-      role: 'passenger-stop' as const,
+      role: 'regular' as const,
       source: 'custom' as const,
     };
 
@@ -109,7 +109,7 @@ describe('RoutePlanner2MapCanvas stop labels', () => {
       lat: 44.38 + (index * 0.001),
       lng: -79.69,
       sequence: index + 1,
-      role: 'passenger-stop' as const,
+      role: 'regular' as const,
       source: 'custom' as const,
     }));
 

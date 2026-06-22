@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ParkingSettings } from '../utils/parking/parkingTypes';
+import type { ParkingSettings, ParkingSummary } from '../utils/parking/parkingTypes';
 
 const firestoreMock = vi.hoisted(() => ({
   doc: vi.fn((_db: unknown, ...parts: string[]) => ({ path: parts.join('/') })),
@@ -175,7 +175,7 @@ describe('parking Firebase service', () => {
   it('loads Parking settings and stored summaries from Firebase metadata', async () => {
     const { getParkingData, getParkingSettings } = await import('../utils/parking/parkingService');
     const importedDate = new Date('2026-06-15T12:00:00.000Z');
-    const storedSummary = {
+    const storedSummary: ParkingSummary = {
       schemaVersion: 1,
       months: [],
       departmentSummaries: [],

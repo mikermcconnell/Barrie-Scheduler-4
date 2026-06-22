@@ -831,7 +831,7 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     html2canvasMock.mockImplementationOnce(async () => {
-      const labels = container?.querySelectorAll('[data-testid="rp2-export-stop-label"]') ?? [];
+      const labels = container?.querySelectorAll('[data-testid="rp2-export-stop-label"]') ?? ([] as Element[]);
       expect(labels.length).toBeGreaterThan(0);
       expect(labels.length).toBeLessThanOrEqual(4);
       expect(container?.textContent).toContain('Stop 1');
