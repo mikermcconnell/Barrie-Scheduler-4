@@ -26,6 +26,8 @@ firebase/
 │   ├── todPickupData/{docId}             # Monthly Transit On Demand pickup map datasets
 │   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
 │   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
+│   ├── parking/default                   # Shared parking-code settings + active storage pointer
+│   │   └── months/{month}                # Monthly parking import metadata
 │   ├── odMatrixData/{docId}              # Origin-destination datasets
 │   │   └── imports/{importId}            # OD import history
 │   ├── residentialGrowth/{docId}         # Monthly issued/occupied residential growth datasets
@@ -63,6 +65,7 @@ storage/
     ├── performanceData/{timestamp}-overview.json
     ├── performanceData/{timestamp}-report.json
     ├── performanceImports/raw/{timestamp}.csv
+    ├── parking/{month}_{timestamp}.json
     ├── odMatrixData/{allPaths}
     ├── residentialGrowth/{allPaths}
     └── fleetPlan/v{versionNumber}_{timestamp}.json
@@ -76,6 +79,8 @@ storage/
 Daily performance summaries may include `byOperatorDwell.totalReportableDwellMinutes`, an optional moderate/high-only dwell total used by compact report snapshots when older incident arrays are trimmed.
 
 `teams/{teamId}/todPickupData/metadata` stores the active Transit On Demand pickup-map import pointer. Full monthly TOD pickup datasets live in Storage as aggregated JSON at `teams/{teamId}/todPickupData/{timestamp}.json`. Uploading a CSV for a month replaces that month only; other months remain in the same stored summary. The stored payload is aggregated by stop ID when present, otherwise by pickup name plus rounded coordinates, or by coordinates alone. Raw request rows, rider-identifying fields, and address columns are not persisted. Imports are bounded to CSV files under 5 MB and 25,000 rows. TOD pickup map data and import metadata are readable by team members; writes are restricted to team owners/admins or workspace permission managers.
+
+`teams/{teamId}/parking/default` stores the active Parking workspace settings and the Storage pointer for the current normalized parking usage payload. Code-family mappings connect annual HotSpot discount codes such as `RS2025` and `RS2026` to a department. Spot-location mappings optionally label spot IDs/tap tokens. Monthly imports replace the matching month and preserve other months in the stored summary. Parking data contains license plates and is intended for Parking, admin, or internal workspace access; writes are restricted to team owners/admins or workspace permission managers.
 
 ---
 
@@ -119,7 +124,7 @@ interface Team {
 
 ```typescript
 type TeamRole = 'owner' | 'admin' | 'member';
-type WorkspaceAccessLevel = 'none' | 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'admin' | 'internal';
+type WorkspaceAccessLevel = 'none' | 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'parking' | 'admin' | 'internal';
 
 interface TeamMember {
   id: string;
@@ -133,7 +138,7 @@ interface TeamMember {
 }
 ```
 
-`role` controls team permissions and writes. Team owners and admins can manage team settings and members. `accessLevel` controls which app workspaces are visible. Use `none` for brand-new users or newly created teams that should see only Team Management until access is explicitly granted. Use `external-planner` or `transit-app-only` for external agencies that should see only Transit App Data through the top-level Planning Data view. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
+`role` controls team permissions and writes. Team owners and admins can manage team settings and members. `accessLevel` controls which app workspaces are visible. Use `none` for brand-new users or newly created teams that should see only Team Management until access is explicitly granted. Use `parking` for staff who should see only the Parking workspace by default. Use `external-planner` or `transit-app-only` for external agencies that should see only Transit App Data through the top-level Planning Data view. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
 
 `defaultMemberAccessLevel` and `defaultMemberWorkspaceOverrides` control the access assigned to future members who join with the team's invite code or invite link. The Developer Access Wizard in Team Management can set both the team default and individual member `workspaceOverrides`.
 
@@ -851,3 +856,4 @@ Routes like 2A+2B share a downtown terminus:
 | HubConfig, PlatformAnalysis | `utils/platform/platformConfig.ts`, `utils/platform/platformAnalysis.ts` |
 | Shift, Requirement, TOD day/zone types | `utils/demandTypes.ts` |
 | RideCo/MVT parser result and import report types | `utils/parsers/csvParsers.ts` |
+| Parking import, settings, summaries, and flags | `utils/parking/parkingTypes.ts` |

@@ -85,6 +85,27 @@ describe('routePlanner2StopOptimization', () => {
     )).rejects.toThrow('Road-time optimization needs Mapbox travel time');
   });
 
+  it('uses zero travel time for co-located geocoded stops instead of failing Mapbox validation', async () => {
+    const start = stop('start', 'Start', 44.39, -79.70);
+    const firstUnit = stop('first-unit', '1009-49 Coulter ST', 44.400757, -79.706446);
+    const secondUnit = stop('second-unit', '1407-49 Coulter St', 44.400757, -79.706446);
+    const end = stop('end', 'End', 44.41, -79.69);
+    const fetchImpl = fetcherWithDurations({});
+
+    const result = await optimizeRoutePlanner2StopsByRoadTime(start, [firstUnit, secondUnit], end, {
+      token: 'test-token',
+      fetchImpl,
+    });
+    const callUrls = vi.mocked(fetchImpl).mock.calls.map((call) => String(call[0]));
+
+    expect(result.method).toBe('exact-road-time');
+    expect(result.orderedStops[0]?.id).toBe('start');
+    expect(result.orderedStops.at(-1)?.id).toBe('end');
+    expect(new Set(result.orderedStops.slice(1, -1).map((item) => item.id))).toEqual(new Set(['first-unit', 'second-unit']));
+    expect(result.totalDurationSeconds).toBeLessThan(9999 * 3);
+    expect(callUrls.some((url) => url.includes('-79.706446,44.400757;-79.706446,44.400757'))).toBe(false);
+  });
+
   it('uses the configured Mapbox token when no token override is provided', async () => {
     vi.stubEnv('VITE_MAPBOX_TOKEN', 'env-mapbox-token');
     const fetchImpl = fetcherWithDurations({

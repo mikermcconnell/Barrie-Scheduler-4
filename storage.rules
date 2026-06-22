@@ -24,6 +24,45 @@ service firebase.storage {
         );
     }
 
+    function memberAccessLevel(teamId) {
+      let member = firestore.get(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid));
+      let accessLevel = member.data.get('accessLevel', null);
+      return accessLevel == 'none' ||
+             accessLevel == 'production' ||
+             accessLevel == 'planner' ||
+             accessLevel == 'external-planner' ||
+             accessLevel == 'transit-app-only' ||
+             accessLevel == 'parking' ||
+             accessLevel == 'admin' ||
+             accessLevel == 'internal'
+             ? accessLevel
+             : ((member.data.get('role', 'member') == 'owner' ||
+                 member.data.get('role', 'member') == 'admin')
+                ? 'internal'
+                : 'planner');
+    }
+
+    function memberWorkspaceOverride(teamId, feature) {
+      return firestore.get(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid))
+        .data
+        .get('workspaceOverrides', {})
+        .get(feature, null);
+    }
+
+    function workspaceAllowedByProfile(accessLevel, feature) {
+      return accessLevel == 'internal' ||
+             (accessLevel == 'admin' && feature == 'workspaceParking') ||
+             (accessLevel == 'parking' && feature == 'workspaceParking');
+    }
+
+    function canAccessWorkspace(teamId, feature) {
+      return isWorkspacePermissionManager() ||
+             (isTeamMember(teamId) &&
+              (memberWorkspaceOverride(teamId, feature) == true ||
+               (memberWorkspaceOverride(teamId, feature) != false &&
+                workspaceAllowedByProfile(memberAccessLevel(teamId), feature))));
+    }
+
     // Users can only access their own files
     match /users/{userId}/{allPaths=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -54,6 +93,12 @@ service firebase.storage {
     // Team Transit On Demand pickup map data
     match /teams/{teamId}/todPickupData/{allPaths=**} {
       allow read: if isTeamMember(teamId);
+      allow write: if isTeamManager(teamId) || isWorkspacePermissionManager();
+    }
+
+    // Team shared parking-code usage data
+    match /teams/{teamId}/parking/{allPaths=**} {
+      allow read: if canAccessWorkspace(teamId, 'workspaceParking');
       allow write: if isTeamManager(teamId) || isWorkspacePermissionManager();
     }
 

@@ -9,6 +9,7 @@ describe('feature flags', () => {
     expect(flags.analyticsRoutePlanner2).toBe(true);
     expect(flags.analyticsNetworkConnections).toBe(true);
     expect(flags.fixedAnalytics).toBe(true);
+    expect(flags.workspaceParking).toBe(true);
   });
 
   it('keeps demo-tagged features visible in demo mode', () => {

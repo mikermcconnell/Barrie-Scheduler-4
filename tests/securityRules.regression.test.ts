@@ -56,6 +56,7 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).toMatch(/match \/odMatrixData\/\{docId\} \{[\s\S]*allow read, write: if canAccessWorkspace\(teamId, 'analyticsOdMatrix'\);/);
     expect(firestoreRules).toMatch(/accessLevel == 'transit-app-only' &&[\s\S]*feature == 'analyticsTransitApp'/);
     expect(firestoreRules).toMatch(/accessLevel == 'external-planner' &&[\s\S]*feature == 'analyticsTransitApp'/);
+    expect(firestoreRules).toMatch(/accessLevel == 'parking' &&[\s\S]*feature == 'workspaceParking'/);
     expect(firestoreRules).not.toMatch(/accessLevel == 'external-planner' &&[\s\S]*feature in \[[\s\S]*workspaceFixedRoute/);
     expect(firestoreRules).not.toMatch(/accessLevel == 'none' &&[\s\S]*feature/);
   });

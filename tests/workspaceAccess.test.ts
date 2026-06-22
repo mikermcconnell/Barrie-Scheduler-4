@@ -44,6 +44,7 @@ describe('workspace access', () => {
 
         expect(allowed).toContain('workspaceFixedRoute');
         expect(allowed).toContain('workspaceOperations');
+        expect(allowed).not.toContain('workspaceParking');
         expect(allowed).not.toContain('workspaceOndemand');
         expect(allowed).not.toContain('analyticsRoutePlanner2');
     });
@@ -58,6 +59,7 @@ describe('workspace access', () => {
         expect(allowed).toContain('analyticsRoutePlanner2');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
+        expect(allowed).not.toContain('workspaceParking');
         expect(allowed).not.toContain('analyticsCorridorSpeed');
         expect(allowed).not.toContain('analyticsCorridorHeadway');
         expect(allowed).not.toContain('analyticsNetworkConnections');
@@ -83,12 +85,23 @@ describe('workspace access', () => {
         expect(allowed).toEqual(['analyticsTransitApp']);
     });
 
+    it('gives Parking staff only the Parking workspace by default', () => {
+        const allowed = getAllowedWorkspaceFeatures('parking');
+
+        expect(allowed).toEqual(['workspaceParking']);
+        expect(allowed).not.toContain('workspaceFixedRoute');
+        expect(allowed).not.toContain('workspaceOperations');
+        expect(allowed).not.toContain('workspaceOndemand');
+        expect(allowed).not.toContain('analyticsTransitApp');
+    });
+
     it('uses agency-neutral language for external planner access', async () => {
         const labels = await import('../utils/workspaceAccess');
 
         expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS['external-planner']).toBe('External Agency Planner');
         expect(labels.WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS['external-planner']).not.toMatch(/Ontario Northland/i);
         expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS['transit-app-only']).toBe('Transit App Data only');
+        expect(labels.WORKSPACE_ACCESS_LEVEL_LABELS.parking).toBe('Parking');
     });
 
     it('keeps developer-only workspaces out of admin access', () => {
@@ -97,6 +110,7 @@ describe('workspace access', () => {
         expect(allowed).toContain('analyticsRoutePlanner2');
         expect(allowed).toContain('operationsLoadProfiles');
         expect(allowed).toContain('operationsOperatorDwell');
+        expect(allowed).toContain('workspaceParking');
         expect(allowed).not.toContain('analyticsCorridorSpeed');
         expect(allowed).not.toContain('analyticsCorridorHeadway');
         expect(allowed).not.toContain('analyticsNetworkConnections');
@@ -108,6 +122,7 @@ describe('workspace access', () => {
 
         expect(canAccessWorkspaceFeature('workspaceOndemand', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRoutePlanner2', internal)).toBe(true);
+        expect(canAccessWorkspaceFeature('workspaceParking', internal)).toBe(true);
     });
 
     it('applies explicit workspace overrides after profile defaults', () => {

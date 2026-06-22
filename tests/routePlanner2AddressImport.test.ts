@@ -28,7 +28,7 @@ describe('routePlanner2AddressImport', () => {
     expect(result.addresses).toHaveLength(2);
     expect(result.duplicateCount).toBe(1);
     expect(result.addresses[0]).toMatchObject({
-      streetLine: '3-3 Gunn Street',
+      streetLine: '3 Gunn Street',
       city: 'Barrie',
       province: 'ON',
       postalCode: 'L4M 2H2',
@@ -75,6 +75,51 @@ describe('routePlanner2AddressImport', () => {
       address: '37 Johnson St, Barrie, ON L4M 5C3',
       sourceRows: [12],
     });
+  });
+
+  it('merges different unit-style addresses at the same apartment building into one base stop', () => {
+    const result = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['Camper A\n1009-49 Coulter ST\nBarrie, ON L4N 6L9'],
+      ['Camper B\n1407-49 Coulter St\nBarrie, ON L4N 6L9'],
+      ['Camper C\n12-49 Coulter Street\nBarrie, ON L4N 6L9'],
+    ]));
+
+    expect(result.addresses).toHaveLength(1);
+    expect(result.duplicateCount).toBe(2);
+    expect(result.addresses[0]).toMatchObject({
+      streetLine: '49 Coulter ST',
+      address: '49 Coulter ST, Barrie, ON L4N 6L9',
+      occurrenceCount: 3,
+      sourceRows: [1, 2, 3],
+    });
+  });
+
+  it('merges the same base building even when source unit postal codes differ', () => {
+    const result = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['Camper A\n1009-49 Coulter ST\nBarrie, ON L4N 6L9'],
+      ['Camper B\n1407-49 Coulter St\nBarrie, ON L4N 7N2'],
+    ]));
+
+    expect(result.addresses).toHaveLength(1);
+    expect(result.duplicateCount).toBe(1);
+    expect(result.addresses[0]).toMatchObject({
+      streetLine: '49 Coulter ST',
+      occurrenceCount: 2,
+      sourceRows: [1, 2],
+    });
+  });
+
+  it('does not collapse small increasing civic ranges as unit numbers', () => {
+    const result = parseRoutePlanner2AddressWorkbook(workbookBuffer([
+      ['10-12 Main St\nBarrie, ON L4M 1A1'],
+      ['12-49 Coulter St\nBarrie, ON L4N 6L9'],
+    ]));
+
+    expect(result.addresses).toHaveLength(2);
+    expect(result.addresses.map((address) => address.streetLine)).toEqual([
+      '10-12 Main St',
+      '49 Coulter St',
+    ]);
   });
 
   it('orders mapped stops geographically with a deterministic nearest-neighbour path', () => {
@@ -227,12 +272,11 @@ describe('routePlanner2AddressImport', () => {
     expect(result.unresolved).toHaveLength(0);
     expect(result.mappedStops).toHaveLength(1);
     expect(result.mappedStops[0]).toMatchObject({
-      name: '4-3 Gunn Street',
-      address: '4-3 Gunn Street, Barrie, ON L4M 2H2',
+      name: '3 Gunn Street',
+      address: '3 Gunn Street, Barrie, ON L4M 2H2',
       lat: 44.40,
       lng: -79.70,
     });
-    expect(result.mappedStops[0]?.notes).toContain('geocoded as base address "3 Gunn Street"');
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
@@ -262,17 +306,17 @@ describe('routePlanner2AddressImport', () => {
 
     expect(result.unresolved).toHaveLength(0);
     expect(result.mappedStops[0]).toMatchObject({
-      name: '1012-37 Johnson St',
-      address: '1012-37 Johnson St, Barrie, ON L4M 5C3',
+      name: '37 Johnson St',
+      address: '37 Johnson St, Barrie, ON L4M 5C3',
       lat: 44.41,
       lng: -79.66,
     });
-    expect(result.mappedStops[0]?.notes).toContain('geocoded as base address "37 Johnson St"');
   });
 
   it('geocodes range-style addresses using civic endpoints', async () => {
     const parsed = parseRoutePlanner2AddressWorkbook(workbookBuffer([
       ['309-339 Essa Rd BARRIE $0.00 $0.00\nBarrie, ON L4N 7K1'],
+      ['37-41 Johnson St\nBarrie, ON L4M 5C3'],
     ]));
 
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
@@ -284,6 +328,8 @@ describe('routePlanner2AddressImport', () => {
         json: async () => ({
           features: query.includes('339 Essa Rd')
             ? [{ id: 'essa', text: '339 Essa Road', place_name: '339 Essa Road, Barrie, Ontario, Canada', center: [-79.71, 44.36] }]
+            : query.includes('41 Johnson St')
+              ? [{ id: 'johnson', text: '41 Johnson Street', place_name: '41 Johnson Street, Barrie, Ontario, Canada', center: [-79.66, 44.41] }]
             : [],
         }),
       };
@@ -295,12 +341,21 @@ describe('routePlanner2AddressImport', () => {
     });
 
     expect(result.unresolved).toHaveLength(0);
-    expect(result.mappedStops[0]).toMatchObject({
+    const stopByName = new Map(result.mappedStops.map((stop) => [stop.name, stop]));
+
+    expect(stopByName.get('309-339 Essa Rd')).toMatchObject({
       name: '309-339 Essa Rd',
       address: '309-339 Essa Rd, Barrie, ON L4N 7K1',
       lat: 44.36,
       lng: -79.71,
     });
-    expect(result.mappedStops[0]?.notes).toContain('Range-style address "309-339 Essa Rd"');
+    expect(stopByName.get('309-339 Essa Rd')?.notes).toContain('Range-style address "309-339 Essa Rd"');
+    expect(stopByName.get('37-41 Johnson St')).toMatchObject({
+      name: '37-41 Johnson St',
+      address: '37-41 Johnson St, Barrie, ON L4M 5C3',
+      lat: 44.41,
+      lng: -79.66,
+    });
+    expect(stopByName.get('37-41 Johnson St')?.notes).toContain('Range-style address "37-41 Johnson St"');
   });
 });

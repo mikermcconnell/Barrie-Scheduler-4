@@ -2,12 +2,21 @@ import type { FeatureFlags, FeatureKey } from './features';
 import { FEATURE_DEFINITIONS, featureFlags, isFeatureEnabled } from './features';
 import type { TeamMember, TeamRole } from './masterScheduleTypes';
 
-export type WorkspaceAccessLevel = 'none' | 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'admin' | 'internal';
+export type WorkspaceAccessLevel =
+    | 'none'
+    | 'production'
+    | 'planner'
+    | 'external-planner'
+    | 'transit-app-only'
+    | 'parking'
+    | 'admin'
+    | 'internal';
 
 export type WorkspaceAccessFeatureKey =
     | 'workspaceOndemand'
     | 'workspaceFixedRoute'
     | 'workspaceOperations'
+    | 'workspaceParking'
     | 'analyticsTransitApp'
     | 'analyticsOdMatrix'
     | 'analyticsCorridorSpeed'
@@ -31,6 +40,7 @@ export const WORKSPACE_ACCESS_LEVELS: WorkspaceAccessLevel[] = [
     'planner',
     'external-planner',
     'transit-app-only',
+    'parking',
     'admin',
     'internal',
 ];
@@ -41,6 +51,7 @@ export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string>
     planner: 'Planner',
     'external-planner': 'External Agency Planner',
     'transit-app-only': 'Transit App Data only',
+    parking: 'Parking',
     admin: 'Admin access',
     internal: 'Developer/internal',
 };
@@ -51,6 +62,7 @@ export const WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS: Record<WorkspaceAccessLevel, s
     planner: 'Production workspaces plus selected planning tools.',
     'external-planner': 'External agency access limited to Transit App Data.',
     'transit-app-only': 'Only the Transit App Data workspace.',
+    parking: 'Only the Parking workspace.',
     admin: 'Planner access plus broader operational tools.',
     internal: 'Everything, including unfinished workspaces.',
 };
@@ -72,6 +84,7 @@ export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
     'workspaceOndemand',
     'workspaceFixedRoute',
     'workspaceOperations',
+    'workspaceParking',
     ...ANALYTICS_WORKSPACE_FEATURES,
     'operationsLoadProfiles',
     'operationsOperatorDwell',
@@ -100,8 +113,13 @@ const TRANSIT_APP_ONLY_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     'analyticsTransitApp',
 ];
 
+const PARKING_WORKSPACES: WorkspaceAccessFeatureKey[] = [
+    'workspaceParking',
+];
+
 const ADMIN_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     ...PLANNER_WORKSPACES,
+    'workspaceParking',
     'analyticsOdMatrix',
     'operationsLoadProfiles',
     'operationsOperatorDwell',
@@ -115,6 +133,7 @@ const WORKSPACE_ACCESS_BY_LEVEL: Record<WorkspaceAccessLevel, ReadonlySet<Worksp
     planner: new Set(PLANNER_WORKSPACES),
     'external-planner': new Set(EXTERNAL_PLANNER_WORKSPACES),
     'transit-app-only': new Set(TRANSIT_APP_ONLY_WORKSPACES),
+    parking: new Set(PARKING_WORKSPACES),
     admin: new Set(ADMIN_WORKSPACES),
     internal: new Set(INTERNAL_WORKSPACES),
 };

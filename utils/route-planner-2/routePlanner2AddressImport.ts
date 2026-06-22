@@ -134,8 +134,8 @@ function normalizePostalCode(value: string): string {
     return match ? `${match[1].toUpperCase()} ${match[2].toUpperCase()}` : value.toUpperCase();
 }
 
-function normalizeAddressKey(streetLine: string, city: string, province: string, postalCode: string): string {
-    return `${streetLine} ${city} ${province} ${postalCode}`
+function normalizeAddressKey(streetLine: string, city: string, province: string): string {
+    return `${streetLine} ${city} ${province}`
         .toUpperCase()
         .replace(/\bONTARIO\b/g, 'ON')
         .replace(/\bSTREET\b/g, 'ST')
@@ -150,6 +150,10 @@ function normalizeAddressKey(streetLine: string, city: string, province: string,
         .replace(/\bPARKWAY\b/g, 'PKWY')
         .replace(/[^A-Z0-9]+/g, ' ')
         .trim();
+}
+
+function getRoutePlanningStreetLine(streetLine: string): string {
+    return getUnitStreetParts(streetLine)?.baseStreetLine ?? streetLine;
 }
 
 function getUnitStreetParts(streetLine: string): UnitStreetParts | null {
@@ -169,10 +173,13 @@ function getUnitStreetParts(streetLine: string): UnitStreetParts | null {
     const civicNumber = Number.parseInt(baseStreetLine, 10);
     if (!Number.isFinite(unitNumber) || !Number.isFinite(civicNumber)) return null;
 
-    // Treat small leading numbers, and larger high-rise style values like
-    // "1012-37 Johnson St", as unit/suite prefixes. Avoid normal civic ranges
-    // such as "309-339 Essa Rd", where both numbers are similar street numbers.
-    if ((unitNumber <= 99 || unitNumber > civicNumber) && civicNumber <= 9999) {
+    // Treat compact forms such as "4-3 Gunn Street", "12-49 Coulter St",
+    // and high-rise values like "1012-37 Johnson St" as unit/suite prefixes.
+    // Avoid normal increasing civic ranges such as "10-12 Main St",
+    // "37-41 Johnson St", or "309-339 Essa Rd".
+    const isLikelyIncreasingCivicRange = unitNumber < civicNumber
+        && ((civicNumber - unitNumber) <= 10 || unitNumber % 2 === civicNumber % 2);
+    if (!isLikelyIncreasingCivicRange && (unitNumber <= 20 || unitNumber >= civicNumber) && civicNumber <= 9999) {
         return { unit, baseStreetLine };
     }
 
@@ -286,13 +293,14 @@ export function parseRoutePlanner2AddressText(
     const extracted = extractAddressFromText(text);
     if (!extracted) return null;
 
-    const normalizedKey = normalizeAddressKey(extracted.streetLine, extracted.city, extracted.province, extracted.postalCode);
-    const address = `${extracted.streetLine}, ${extracted.city}, ${extracted.province} ${extracted.postalCode}`;
+    const streetLine = getRoutePlanningStreetLine(extracted.streetLine);
+    const normalizedKey = normalizeAddressKey(streetLine, extracted.city, extracted.province);
+    const address = `${streetLine}, ${extracted.city}, ${extracted.province} ${extracted.postalCode}`;
 
     return {
         id: options.id ?? 'address-manual-review',
         address,
-        streetLine: extracted.streetLine,
+        streetLine,
         city: extracted.city,
         province: extracted.province,
         postalCode: extracted.postalCode,
@@ -314,8 +322,9 @@ function pushExtractedAddress(
     sourceCell: string,
     countOccurrence = true,
 ): void {
-    const normalizedKey = normalizeAddressKey(extracted.streetLine, extracted.city, extracted.province, extracted.postalCode);
-    const address = `${extracted.streetLine}, ${extracted.city}, ${extracted.province} ${extracted.postalCode}`;
+    const streetLine = getRoutePlanningStreetLine(extracted.streetLine);
+    const normalizedKey = normalizeAddressKey(streetLine, extracted.city, extracted.province);
+    const address = `${streetLine}, ${extracted.city}, ${extracted.province} ${extracted.postalCode}`;
     const current = byKey.get(normalizedKey);
 
     if (current) {
@@ -333,7 +342,7 @@ function pushExtractedAddress(
     byKey.set(normalizedKey, {
         id: `address-${byKey.size + 1}`,
         address,
-        streetLine: extracted.streetLine,
+        streetLine,
         city: extracted.city,
         province: extracted.province,
         postalCode: extracted.postalCode,

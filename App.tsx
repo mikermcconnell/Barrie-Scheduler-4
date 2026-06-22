@@ -7,7 +7,7 @@ import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Modal } from './components/ui/Modal';
 import { TeamManagement } from './components/TeamManagement';
-import { LayoutDashboard, Bus, ArrowRight, Map, Loader2, BarChart2, Smartphone } from 'lucide-react';
+import { LayoutDashboard, Bus, ArrowRight, Map, Loader2, BarChart2, Smartphone, Car } from 'lucide-react';
 import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazyWithRetry } from './utils/lazyWithRetry';
@@ -22,12 +22,14 @@ const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
 const FixedRouteWorkspace = lazyWithRetry(() => import('./components/workspaces/FixedRouteWorkspace').then(module => ({ default: module.FixedRouteWorkspace })), 'fixed-workspace');
 const OperationsWorkspace = lazyWithRetry(() => import('./components/workspaces/OperationsWorkspace').then(module => ({ default: module.OperationsWorkspace })), 'operations-workspace');
+const ParkingWorkspace = lazyWithRetry(() => import('./components/workspaces/ParkingWorkspace').then(module => ({ default: module.ParkingWorkspace })), 'parking-workspace');
 const AnalyticsDashboard = lazyWithRetry(() => import('./components/Analytics/AnalyticsDashboard').then(module => ({ default: module.AnalyticsDashboard })), 'planning-data-workspace');
 
 const APP_VIEW_FEATURES: Partial<Record<View, Parameters<typeof isFeatureEnabled>[0]>> = {
   ondemand: 'workspaceOndemand',
   fixed: 'workspaceFixedRoute',
   operations: 'workspaceOperations',
+  parking: 'workspaceParking',
 };
 
 const isAppViewEnabled = (view: View): boolean => {
@@ -41,6 +43,7 @@ function parseHashView(): View {
   if (hash.startsWith('fixed') && isAppViewEnabled('fixed')) return 'fixed';
   if (hash.startsWith('ondemand') && isAppViewEnabled('ondemand')) return 'ondemand';
   if (hash.startsWith('operations') && isAppViewEnabled('operations')) return 'operations';
+  if (hash.startsWith('parking') && isAppViewEnabled('parking')) return 'parking';
   if (hash.startsWith('planning') && isAppViewEnabled('planning')) return 'planning';
   return 'home';
 }
@@ -63,7 +66,7 @@ const AppContent: React.FC = () => {
     const feature = APP_VIEW_FEATURES[view];
     return feature ? canAccess(feature) : true;
   }, [canAccess]);
-  const hasAvailableWorkspace = (['ondemand', 'fixed', 'operations', 'planning'] as View[]).some(isViewAvailable);
+  const hasAvailableWorkspace = (['ondemand', 'fixed', 'operations', 'parking', 'planning'] as View[]).some(isViewAvailable);
   const mustCompleteTeamSetup = Boolean(user && (!hasTeam || !hasAvailableWorkspace));
 
   // Wrap navigation to sync URL hash
@@ -299,6 +302,28 @@ const AppContent: React.FC = () => {
                 </button>
               )}
 
+              {/* Parking Card */}
+              {isViewAvailable('parking') && (
+                <button
+                  onClick={() => setCurrentView('parking')}
+                  className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-emerald-500 hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <Car size={120} />
+                  </div>
+                  <div className="bg-emerald-100 w-16 h-16 rounded-2xl flex items-center justify-center text-emerald-600 mb-6 group-hover:scale-110 transition-transform">
+                    <Car size={32} />
+                  </div>
+                  <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-emerald-600 transition-colors">Parking</h3>
+                  <p className="text-gray-500 font-bold mb-6">
+                    Import HotSpot shared-code usage, review department totals, and flag plate-level parking patterns.
+                  </p>
+                  <div className="flex items-center gap-2 text-emerald-600 font-extrabold uppercase tracking-wide text-sm">
+                    Enter Workspace <ArrowRight size={16} />
+                  </div>
+                </button>
+              )}
+
               {/* Planning Data Card */}
               {isViewAvailable('planning') && (
                 <button
@@ -341,6 +366,11 @@ const AppContent: React.FC = () => {
           {currentView === 'operations' && isViewAvailable('operations') && (
             <ErrorBoundary fallbackTitle="Workspace Error">
               <OperationsWorkspace />
+            </ErrorBoundary>
+          )}
+          {currentView === 'parking' && isViewAvailable('parking') && (
+            <ErrorBoundary fallbackTitle="Workspace Error">
+              <ParkingWorkspace />
             </ErrorBoundary>
           )}
           {currentView === 'planning' && isViewAvailable('planning') && (

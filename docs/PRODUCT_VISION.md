@@ -16,6 +16,7 @@ Primary app shells today:
 - **Scheduled Transit** - fixed-route schedule generation, editing, optimization, publishing, and timetable/report outputs
 - **Transit On-Demand** - demand-responsive requirements import, RideCo/MVT shift import review, planning, and shift optimization
 - **Dashboard & Reporting** - STREETS-backed performance dashboards and operational reporting
+- **Parking** - shared department parking-code import, monthly usage summaries, and plate-level pattern review
 
 Adjacent planning-data workspaces include Route Planner 2, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, and related exploratory tools.
 

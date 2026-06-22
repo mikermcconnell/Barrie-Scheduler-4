@@ -14,7 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { WORKSPACE_ACCESS_LEVEL_LABELS } from '../../utils/workspaceAccess';
 
-export type View = 'home' | 'ondemand' | 'fixed' | 'operations' | 'planning';
+export type View = 'home' | 'ondemand' | 'fixed' | 'operations' | 'parking' | 'planning';
 
 interface HeaderProps {
     currentView: View;

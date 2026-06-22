@@ -274,9 +274,11 @@ describe('NewScheduleWizard compare to master', () => {
 
         expect(container?.querySelector('#toggle-master-compare')).toBeNull();
         expect(headerSpy.mock.calls.at(-1)?.[0].onToggleMasterCompare).toBeUndefined();
-        expect('masterBaseline' in step4Spy.mock.calls.at(-1)?.[0]).toBe(false);
-        expect(step4Spy.mock.calls.at(-1)?.[0].routeIdentity).toBe('10-Weekday');
-        expect(step4Spy.mock.calls.at(-1)?.[0].routeLabel).toBe('Route 10 · Weekday');
+        const latestStep4Props = step4Spy.mock.calls.at(-1)?.[0];
+        expect(latestStep4Props).toBeTruthy();
+        expect('masterBaseline' in latestStep4Props!).toBe(false);
+        expect(latestStep4Props?.routeIdentity).toBe('10-Weekday');
+        expect(latestStep4Props?.routeLabel).toBe('Route 10 · Weekday');
         expect(toast.error).not.toHaveBeenCalled();
     });
 

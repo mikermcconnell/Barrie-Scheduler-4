@@ -7,6 +7,7 @@ export const FEATURE_DEFINITIONS = {
     workspaceOndemand: { defaultEnabled: true, hideInDemoMode: false },
     workspaceFixedRoute: { defaultEnabled: true, hideInDemoMode: false },
     workspaceOperations: { defaultEnabled: true, hideInDemoMode: false },
+    workspaceParking: { defaultEnabled: true, hideInDemoMode: false },
 
     fixedNewSchedule: { defaultEnabled: true, hideInDemoMode: false },
     fixedMasterSchedule: { defaultEnabled: true, hideInDemoMode: false },

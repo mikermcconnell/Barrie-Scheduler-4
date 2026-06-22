@@ -117,6 +117,7 @@ Owns Excel/CSV address extraction, duplicate merging, geocoding, manual-review d
 Responsibilities:
 - parse messy workbook cells into unique civic addresses
 - normalize unit-style and range-style addresses into Mapbox-friendly query variants
+- collapse apartment unit-style addresses such as `1009-49 Coulter St` and `1407-49 Coulter St` into one base building stop while preserving normal civic ranges such as `37-41 Johnson St`
 - geocode address variants with bounded concurrency
 - prefer the server-backed `/api/route-planner-geocode` endpoint in production, with client-side Mapbox fallback where the endpoint is unavailable
 - keep unresolved addresses in manual review with diagnostics that explain query, source, status, result count, top result, and confidence rejection reason

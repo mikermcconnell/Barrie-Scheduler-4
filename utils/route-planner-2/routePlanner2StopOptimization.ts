@@ -44,6 +44,10 @@ function coordinate(stop: RoutePlanner2OptimizationStop): [number, number] {
     return [stop.lng, stop.lat];
 }
 
+function stopsShareRoadLocation(from: RoutePlanner2OptimizationStop, to: RoutePlanner2OptimizationStop): boolean {
+    return Math.abs(from.lng - to.lng) < 0.000001 && Math.abs(from.lat - to.lat) < 0.000001;
+}
+
 function distanceMetersBetween(from: RoutePlanner2OptimizationStop, to: RoutePlanner2OptimizationStop): number {
     const radiusMeters = 6371000;
     const toRadians = (degrees: number) => degrees * Math.PI / 180;
@@ -108,6 +112,15 @@ async function buildRoadTimeMatrix<T extends RoutePlanner2OptimizationStop>(
         async (pair) => {
             const from = stops[pair.fromIndex]!;
             const to = stops[pair.toIndex]!;
+            if (stopsShareRoadLocation(from, to)) {
+                completed += 1;
+                options.onProgress?.({ completed, total: pairs.length });
+                return {
+                    ...pair,
+                    durationSeconds: 0,
+                };
+            }
+
             const snapOptions: Parameters<typeof snapRoutePlanner2WaypointsToRoad>[1] = {
                 fetchImpl: options.fetchImpl,
             };

@@ -40,7 +40,7 @@ A planner can import Excel/CSV address lists as custom stops.
 
 1. Choose fixed bus start and bus end locations.
 2. Upload the address file.
-3. The importer extracts street, city, province, and postal code rows, merges duplicate addresses, and geocodes each unique address.
+3. The importer extracts street, city, province, and postal code rows, merges duplicate addresses, collapses apartment unit-style addresses to the base building stop, and geocodes each unique route-planning address. Civic ranges such as `37-41 Johnson St` remain ranges.
 4. Mapped addresses are previewed in fixed-endpoint road-time order before being added to the route.
 5. If exact road-time ordering is unavailable, the import stops and asks the planner to fix the setup rather than silently using map-distance fallback.
 6. Large stop sets that require heuristic ordering, or any order that appears to backtrack across the route corridor, are clearly flagged for planner review before adding.

@@ -51,6 +51,7 @@ const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
     workspaceOndemand: 'On Demand',
     workspaceFixedRoute: 'Scheduled Transit',
     workspaceOperations: 'Operations',
+    workspaceParking: 'Parking',
     analyticsTransitApp: 'Transit App Data',
     analyticsOdMatrix: 'OD Matrix',
     analyticsCorridorSpeed: 'Corridor Speed',

@@ -98,6 +98,17 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
       }
 
+      // Shared department parking code usage
+      match /parking/{docId} {
+        allow read: if canAccessWorkspace(teamId, 'workspaceParking');
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
+
+        match /months/{monthId} {
+          allow read: if canAccessWorkspace(teamId, 'workspaceParking');
+          allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
+        }
+      }
+
       // Monthly performance snapshots
       match /performanceSnapshots/{docId} {
         allow read, write: if isTeamMember(teamId);
@@ -210,6 +221,7 @@ service cloud.firestore {
              accessLevel == 'planner' ||
              accessLevel == 'external-planner' ||
              accessLevel == 'transit-app-only' ||
+             accessLevel == 'parking' ||
              accessLevel == 'admin' ||
              accessLevel == 'internal'
              ? accessLevel
@@ -232,6 +244,7 @@ service cloud.firestore {
               (feature in [
                 'workspaceFixedRoute',
                 'workspaceOperations',
+                'workspaceParking',
                 'workspaceOndemand',
                 'analyticsTransitApp',
                 'analyticsOdMatrix',
@@ -258,7 +271,9 @@ service cloud.firestore {
              (accessLevel == 'external-planner' &&
               feature == 'analyticsTransitApp') ||
              (accessLevel == 'transit-app-only' &&
-              feature == 'analyticsTransitApp');
+              feature == 'analyticsTransitApp') ||
+             (accessLevel == 'parking' &&
+              feature == 'workspaceParking');
     }
 
     function canAccessWorkspace(teamId, feature) {
