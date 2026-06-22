@@ -41,11 +41,11 @@ const pct = (value: number | null | undefined) => (typeof value === 'number' ? `
 
 const FLAG_LABELS: Record<string, string> = {
   missing_plate: 'Missing plate',
-  high_frequency: 'High frequency',
-  high_value: 'High value',
-  long_duration: 'Long duration',
-  same_location: 'Same location',
-  consecutive_weekdays: 'Consecutive weekdays',
+  high_frequency: 'High frequency use',
+  high_value: 'High plate value',
+  long_duration: 'Long durations',
+  same_location: 'Consistent location use',
+  consecutive_weekdays: 'Repeated weekday use',
   unusual_timing: 'Unusual timing',
   multiple_daily_sessions: 'Multiple daily sessions',
 };
@@ -753,11 +753,11 @@ export const ParkingWorkspace: React.FC = () => {
             </section>
 
             <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-extrabold text-gray-950">Plate-level pattern flags</h3>
+              <h3 className="text-lg font-extrabold text-gray-950">Flagged plate indicators</h3>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
                   <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
-                    <tr><th className="py-2 pr-4">Month</th><th className="py-2 pr-4">Plate</th><th className="py-2 pr-4">Department</th><th className="py-2 pr-4">Value</th><th className="py-2 pr-4">Days</th><th className="py-2 pr-4">Top location</th><th className="py-2 pr-4">Flags</th></tr>
+                    <tr><th className="py-2 pr-4">Month</th><th className="py-2 pr-4">Plate</th><th className="py-2 pr-4">Department</th><th className="py-2 pr-4">Value</th><th className="py-2 pr-4">Days</th><th className="py-2 pr-4">Top location</th><th className="py-2 pr-4">Indicators</th></tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {monthlyFlaggedPlates.slice(0, 120).map(pattern => (
@@ -771,7 +771,7 @@ export const ParkingWorkspace: React.FC = () => {
                         <td className="py-3 pr-4"><div className="flex flex-wrap gap-1">{pattern.flags.map(flag => <Badge key={flag} tone="amber">{FLAG_LABELS[flag] || flag}</Badge>)}</div></td>
                       </tr>
                     ))}
-                    {monthlyFlaggedPlates.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-gray-400">No plate flags for the selected month and thresholds.</td></tr> : null}
+                    {monthlyFlaggedPlates.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-gray-400">No flagged plate indicators for the selected month and thresholds.</td></tr> : null}
                   </tbody>
                 </table>
               </div>
@@ -792,7 +792,7 @@ export const ParkingWorkspace: React.FC = () => {
                         <td className="py-3 pr-4 font-bold text-gray-900">{money(row.totalValue)}</td>
                         <td className="py-3 pr-4 text-gray-600">{money(row.changeValue ?? 0)} · {pct(row.changePercent)}</td>
                         <td className="py-3 pr-4 text-gray-600">{row.sessionCount}</td>
-                        <td className="py-3 pr-4">{row.isHighUsage ? <Badge tone="amber">High usage</Badge> : <span className="text-gray-300">—</span>}</td>
+                        <td className="py-3 pr-4">{row.isHighUsage ? <Badge tone="amber">High department usage</Badge> : <span className="text-gray-300">—</span>}</td>
                       </tr>
                     ))}
                     {monthlyDepartmentRows.length === 0 ? <tr><td colSpan={6} className="py-8 text-center text-gray-400">No department summary for the selected month.</td></tr> : null}
@@ -867,15 +867,15 @@ export const ParkingWorkspace: React.FC = () => {
             </section>
 
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Flag thresholds</h3></div>
+              <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Indicator thresholds</h3></div>
               <div className="space-y-3 text-sm">
-                <SettingNumber label="Plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateMonthlyValueDollars: value } }))} />
-                <SettingNumber label="Active days/month" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateActiveDaysPerMonth: value } }))} />
-                <SettingNumber label="Long session hours" value={settings.flagRules.longSessionHours} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionHours: value } }))} />
-                <SettingNumber label="Long session count" value={settings.flagRules.longSessionCount} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionCount: value } }))} />
-                <SettingNumber label="Same spot days" value={settings.flagRules.sameLocationDays} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, sameLocationDays: value } }))} />
-                <SettingNumber label="Dept value" value={settings.flagRules.departmentMonthlyValueDollars} suffix="$" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentMonthlyValueDollars: value } }))} />
-                <SettingNumber label="Dept increase" value={settings.flagRules.departmentIncreasePercent} suffix="%" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentIncreasePercent: value } }))} />
+                <SettingNumber label="High plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateMonthlyValueDollars: value } }))} />
+                <SettingNumber label="High frequency use" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateActiveDaysPerMonth: value } }))} />
+                <SettingNumber label="Long duration hours" value={settings.flagRules.longSessionHours} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionHours: value } }))} />
+                <SettingNumber label="Long duration count" value={settings.flagRules.longSessionCount} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionCount: value } }))} />
+                <SettingNumber label="Consistent location days" value={settings.flagRules.sameLocationDays} disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, sameLocationDays: value } }))} />
+                <SettingNumber label="High department usage" value={settings.flagRules.departmentMonthlyValueDollars} suffix="$" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentMonthlyValueDollars: value } }))} />
+                <SettingNumber label="Department increase" value={settings.flagRules.departmentIncreasePercent} suffix="%" disabled={!canManageTeam} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentIncreasePercent: value } }))} />
               </div>
             </section>
 
