@@ -30,6 +30,7 @@ import {
   DEFAULT_PARKING_SETTINGS,
   type ParkingCodeFamilyMapping,
   type ParkingMonthlyDataset,
+  type ParkingPlatePattern,
   type ParkingRawRow,
   type ParkingSettings,
   type ParkingSummary,
@@ -144,6 +145,92 @@ function minutesToDuration(minutes: number): string {
 function minutesToTime(minutes: number): string {
   const safe = ((minutes % 1440) + 1440) % 1440;
   return `${String(Math.floor(safe / 60)).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`;
+}
+
+function hourToTime(hour: number): string {
+  return `${String(Math.floor(hour)).padStart(2, '0')}:00`;
+}
+
+function getPlatePatternKey(pattern: ParkingPlatePattern): string {
+  return `${pattern.month}-${pattern.displayPlate}-${pattern.department}`;
+}
+
+function getUnusualTimingReason(row: ParkingRawRow, settings: ParkingSettings): string {
+  const reasons: string[] = [];
+  if (row.isWeekend) reasons.push('weekend');
+  if (row.startMinutes < settings.flagRules.workdayStartHour * 60) reasons.push(`before ${hourToTime(settings.flagRules.workdayStartHour)}`);
+  if (row.endMinutes > settings.flagRules.workdayEndHour * 60) reasons.push(`after ${hourToTime(settings.flagRules.workdayEndHour)}`);
+  return reasons.join(', ');
+}
+
+function buildFlagEvidence(pattern: ParkingPlatePattern, settings: ParkingSettings, rows: ParkingRawRow[]): Array<{
+  label: string;
+  detail: string;
+  evidence: string[];
+}> {
+  return pattern.flags.map(flag => {
+    if (flag === 'high_value') {
+      return {
+        label: FLAG_LABELS[flag],
+        detail: `${money(pattern.totalValue)} monthly plate value is at or above the ${money(settings.flagRules.plateMonthlyValueDollars)} threshold.`,
+        evidence: [`${money(pattern.totalValue)} ≥ ${money(settings.flagRules.plateMonthlyValueDollars)}`],
+      };
+    }
+    if (flag === 'high_frequency') {
+      return {
+        label: FLAG_LABELS[flag],
+        detail: `${pattern.activeDays} active parking day${pattern.activeDays === 1 ? '' : 's'} this month.`,
+        evidence: [`${pattern.activeDays} days ≥ ${settings.flagRules.plateActiveDaysPerMonth} threshold`],
+      };
+    }
+    if (flag === 'consecutive_weekdays') {
+      return {
+        label: FLAG_LABELS[flag],
+        detail: `Longest repeated weekday run is ${pattern.maxConsecutiveWeekdays} day${pattern.maxConsecutiveWeekdays === 1 ? '' : 's'}.`,
+        evidence: [`${pattern.maxConsecutiveWeekdays} weekdays ≥ ${settings.flagRules.consecutiveWeekdays} threshold`],
+      };
+    }
+    if (flag === 'long_duration') {
+      const longRows = rows.filter(row => row.durationMinutes >= settings.flagRules.longSessionHours * 60);
+      return {
+        label: FLAG_LABELS[flag],
+        detail: `${pattern.longSessionCount} long session${pattern.longSessionCount === 1 ? '' : 's'} at or above ${settings.flagRules.longSessionHours} hours.`,
+        evidence: longRows.slice(0, 3).map(row => `${row.startDate} ${minutesToTime(row.startMinutes)} · ${minutesToDuration(row.durationMinutes)}`),
+      };
+    }
+    if (flag === 'same_location') {
+      return {
+        label: FLAG_LABELS[flag],
+        detail: `${pattern.topLocationDays} day${pattern.topLocationDays === 1 ? '' : 's'} at ${pattern.topLocationName || pattern.topSpotId}.`,
+        evidence: [`${pattern.topLocationDays} days ≥ ${settings.flagRules.sameLocationDays} threshold`, `Top location: ${pattern.topLocationName || pattern.topSpotId}`],
+      };
+    }
+    if (flag === 'unusual_timing') {
+      const unusualRows = rows.filter(row => row.isWeekend || row.startMinutes < settings.flagRules.workdayStartHour * 60 || row.endMinutes > settings.flagRules.workdayEndHour * 60);
+      return {
+        label: FLAG_LABELS[flag],
+        detail: `${pattern.unusualTimingCount} session${pattern.unusualTimingCount === 1 ? '' : 's'} outside ${hourToTime(settings.flagRules.workdayStartHour)}–${hourToTime(settings.flagRules.workdayEndHour)} or on a weekend.`,
+        evidence: unusualRows.slice(0, 3).map(row => `${row.startDate} ${minutesToTime(row.startMinutes)}–${minutesToTime(row.endMinutes)} · ${getUnusualTimingReason(row, settings)}`),
+      };
+    }
+    if (flag === 'multiple_daily_sessions') {
+      const counts = new Map<string, number>();
+      rows.forEach(row => counts.set(row.startDate, (counts.get(row.startDate) || 0) + 1));
+      return {
+        label: FLAG_LABELS[flag],
+        detail: `${pattern.multipleDailySessionDays} day${pattern.multipleDailySessionDays === 1 ? '' : 's'} had multiple bookings for this plate.`,
+        evidence: [...counts.entries()]
+          .filter(([, count]) => count >= settings.flagRules.multipleDailySessions)
+          .slice(0, 3)
+          .map(([date, count]) => `${date}: ${count} sessions`),
+      };
+    }
+    return {
+      label: FLAG_LABELS[flag] || flag,
+      detail: 'This plate matched a review rule.',
+      evidence: [],
+    };
+  });
 }
 
 function TextInput({ value, onChange, placeholder, disabled = false }: {
@@ -336,6 +423,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [annualExpanded, setAnnualExpanded] = useState(false);
   const [annualFullscreen, setAnnualFullscreen] = useState(false);
+  const [expandedPlateKey, setExpandedPlateKey] = useState('');
 
   const displaySummary = useMemo(() => buildDisplaySummary(summary, settings), [settings, summary]);
   const reviewMonths = useMemo(() => {
@@ -427,6 +515,10 @@ export const ParkingWorkspace: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [annualFullscreen]);
+
+  useEffect(() => {
+    setExpandedPlateKey('');
+  }, [selectedMonth]);
 
   const parseFile = useCallback(async (file: File, nextSettings = settings) => {
     if (!user) return;
@@ -759,21 +851,76 @@ export const ParkingWorkspace: React.FC = () => {
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
                   <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
-                    <tr><th className="py-2 pr-4">Month</th><th className="py-2 pr-4">Plate</th><th className="py-2 pr-4">Department</th><th className="py-2 pr-4">Value</th><th className="py-2 pr-4">Days</th><th className="py-2 pr-4">Top location</th><th className="py-2 pr-4">Indicators</th></tr>
+                    <tr><th className="py-2 pr-4">Month</th><th className="py-2 pr-4">Plate</th><th className="py-2 pr-4">Department</th><th className="py-2 pr-4">Value</th><th className="py-2 pr-4">Days</th><th className="py-2 pr-4">Top location</th><th className="py-2 pr-4">Indicators</th><th className="py-2 pr-4">Why</th></tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {monthlyFlaggedPlates.slice(0, 120).map(pattern => (
-                      <tr key={`${pattern.month}-${pattern.displayPlate}-${pattern.department}`}>
-                        <td className="py-3 pr-4 font-bold text-gray-700">{pattern.month}</td>
-                        <td className="py-3 pr-4 font-extrabold text-gray-950">{pattern.displayPlate}</td>
-                        <td className="py-3 pr-4"><DepartmentChip department={pattern.department} compact /></td>
-                        <td className="py-3 pr-4 font-bold text-gray-900">{money(pattern.totalValue)}</td>
-                        <td className="py-3 pr-4 text-gray-600">{pattern.activeDays}</td>
-                        <td className="py-3 pr-4 text-gray-600">{pattern.topLocationName || pattern.topSpotId}</td>
-                        <td className="py-3 pr-4"><div className="flex flex-wrap gap-1">{pattern.flags.map(flag => <Badge key={flag} tone="amber">{FLAG_LABELS[flag] || flag}</Badge>)}</div></td>
-                      </tr>
-                    ))}
-                    {monthlyFlaggedPlates.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-gray-400">No flagged plate indicators for the selected month and thresholds.</td></tr> : null}
+                    {monthlyFlaggedPlates.slice(0, 120).map(pattern => {
+                      const patternKey = getPlatePatternKey(pattern);
+                      const isExpanded = expandedPlateKey === patternKey;
+                      const plateRows = rawTransactionRows.filter(row => (
+                        row.startMonth === pattern.month &&
+                        (row.plate || '(missing)') === (pattern.plate || pattern.displayPlate)
+                      ));
+                      const evidence = buildFlagEvidence(pattern, settings, plateRows);
+                      return (
+                        <React.Fragment key={patternKey}>
+                          <tr className={isExpanded ? 'bg-amber-50/40' : undefined}>
+                            <td className="py-3 pr-4 font-bold text-gray-700">{pattern.month}</td>
+                            <td className="py-3 pr-4 font-extrabold text-gray-950">{pattern.displayPlate}</td>
+                            <td className="py-3 pr-4"><DepartmentChip department={pattern.department} compact /></td>
+                            <td className="py-3 pr-4 font-bold text-gray-900">{money(pattern.totalValue)}</td>
+                            <td className="py-3 pr-4 text-gray-600">{pattern.activeDays}</td>
+                            <td className="py-3 pr-4 text-gray-600">{pattern.topLocationName || pattern.topSpotId}</td>
+                            <td className="py-3 pr-4"><div className="flex flex-wrap gap-1">{pattern.flags.map(flag => <Badge key={flag} tone="amber">{FLAG_LABELS[flag] || flag}</Badge>)}</div></td>
+                            <td className="py-3 pr-4">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedPlateKey(current => current === patternKey ? '' : patternKey)}
+                                className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-extrabold text-amber-700 hover:bg-amber-100"
+                              >
+                                {isExpanded ? 'Hide why' : 'View why'}
+                              </button>
+                            </td>
+                          </tr>
+                          {isExpanded ? (
+                            <tr>
+                              <td colSpan={8} className="bg-amber-50/30 px-4 py-4">
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  {evidence.map(item => (
+                                    <div key={item.label} className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
+                                      <div className="text-sm font-extrabold text-gray-950">{item.label}</div>
+                                      <p className="mt-1 text-sm font-medium text-gray-600">{item.detail}</p>
+                                      {item.evidence.length > 0 ? (
+                                        <div className="mt-3 flex flex-wrap gap-1.5">
+                                          {item.evidence.map(detail => (
+                                            <span key={detail} className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-bold text-gray-600">{detail}</span>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="mt-3 rounded-2xl border border-gray-100 bg-white p-4">
+                                  <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Transactions reviewed</div>
+                                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                    {plateRows.slice(0, 6).map(row => (
+                                      <div key={row.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-gray-600">
+                                        <span className="font-extrabold text-gray-900">{row.startDate}</span>
+                                        <span>{minutesToTime(row.startMinutes)}–{minutesToTime(row.endMinutes)}</span>
+                                        <span>{minutesToDuration(row.durationMinutes)}</span>
+                                        <span>{money(row.discountAmount)}</span>
+                                        <span>{row.locationName || row.spotId}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                        </React.Fragment>
+                      );
+                    })}
+                    {monthlyFlaggedPlates.length === 0 ? <tr><td colSpan={8} className="py-8 text-center text-gray-400">No flagged plate indicators for the selected month and thresholds.</td></tr> : null}
                   </tbody>
                 </table>
               </div>
