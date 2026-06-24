@@ -1,5 +1,7 @@
 export const PARKING_SCHEMA_VERSION = 1;
 
+export type ParkingYearCodeFormat = 'yyyy' | 'yy';
+
 export type ParkingFlagCode =
   | 'missing_plate'
   | 'high_frequency'
@@ -15,6 +17,8 @@ export interface ParkingCodeFamilyMapping {
   department: string;
   codes: string[];
   activeYears?: number[];
+  yearCodeFormat?: ParkingYearCodeFormat;
+  codeOverrides?: Record<string, string[]>;
   colorHex?: string;
   archived?: boolean;
   description?: string;

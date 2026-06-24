@@ -8,6 +8,11 @@ import {
   type ParkingUnmappedCodeFamily,
 } from './parkingTypes';
 import { buildParkingMonthAnalysis, mergeParkingSettings } from './parkingAggregation';
+import {
+  getParkingAllKnownCodesForMapping,
+  getParkingCodeFamilyKey,
+  normalizeParkingCode,
+} from './parkingCodeRules';
 
 const REQUIRED_HEADERS = [
   'licenceplate',
@@ -27,18 +32,7 @@ function normalizeText(value: unknown): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 
-export function normalizeParkingCode(value: unknown): string {
-  return normalizeText(value).toUpperCase();
-}
-
-export function getParkingCodeFamilyKey(code: string): string {
-  const normalized = normalizeParkingCode(code);
-  if (!normalized) return '';
-  const fourDigitYear = normalized.replace(/20\d{2}$/, '');
-  if (fourDigitYear && fourDigitYear !== normalized) return fourDigitYear;
-  const twoDigitYear = normalized.replace(/\d{2}$/, '');
-  return twoDigitYear || normalized;
-}
+export { getParkingCodeFamilyKey, normalizeParkingCode } from './parkingCodeRules';
 
 function parseMoney(value: unknown): number {
   const parsed = Number(String(value ?? '').replace(/[^0-9.-]/g, ''));
@@ -85,11 +79,11 @@ function buildMappingLookup(settings: ParkingSettings): Map<string, string> {
     if (familyKey && mapping.department.trim()) {
       map.set(familyKey, mapping.department.trim());
     }
-    for (const code of mapping.codes || []) {
+    for (const code of getParkingAllKnownCodesForMapping(mapping)) {
       const exact = normalizeParkingCode(code);
       if (exact && mapping.department.trim()) {
         map.set(exact, mapping.department.trim());
-        map.set(getParkingCodeFamilyKey(exact), mapping.department.trim());
+        if (!familyKey) map.set(getParkingCodeFamilyKey(exact), mapping.department.trim());
       }
     }
   }

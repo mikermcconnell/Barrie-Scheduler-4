@@ -8,17 +8,33 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  Palette,
+  Plus,
   Save,
+  Search,
   Settings,
   SlidersHorizontal,
+  Trash2,
   Upload,
+  Wand2,
   X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 import { exportParkingWorkbook } from '../../utils/parking/parkingExport';
-import { getParkingCodeFamilyKey, parseParkingFile } from '../../utils/parking/parkingParser';
+import { parseParkingFile } from '../../utils/parking/parkingParser';
+import {
+  buildParkingGeneratedCode,
+  getParkingActiveYears,
+  getParkingCodeFamilyKey,
+  getParkingCodeOverridesForYear,
+  getParkingCodesForYear,
+  inferParkingYearCodeFormat,
+  normalizeParkingCode,
+  parseParkingActiveYearsFromCodes,
+  parseParkingCodesInput,
+} from '../../utils/parking/parkingCodeRules';
 import {
   getParkingData,
   getParkingSettings,
@@ -35,6 +51,7 @@ import {
   type ParkingSettings,
   type ParkingSummary,
   type ParkingUnmappedCodeFamily,
+  type ParkingYearCodeFormat,
 } from '../../utils/parking/parkingTypes';
 import { canAccessWorkspaceFeature } from '../../utils/workspaceAccess';
 
@@ -99,41 +116,43 @@ function readableTextColor(hex: string): string {
   return (red * 299 + green * 587 + blue * 114) / 1000 > 150 ? '#111827' : '#FFFFFF';
 }
 
-function getDepartmentColor(codeFamilyKey?: string, department?: string) {
+function getCodeFamilyColor(codeFamilyKey?: string, department?: string, mappings: ParkingCodeFamilyMapping[] = []) {
   const key = (codeFamilyKey || '').trim().toUpperCase();
-  return DEPARTMENT_COLORS.find(color => color.familyKey === key)
+  const mapped = mappings.find(mapping => {
+    const familyKey = getParkingCodeFamilyKey(mapping.familyKey);
+    return familyKey === key
+      || (mapping.codes || []).some(code => getParkingCodeFamilyKey(code) === key || normalizeParkingCode(code) === key)
+      || normalizeText(mapping.department) === normalizeText(department);
+  });
+  const fallback = DEPARTMENT_COLORS.find(color => color.familyKey === key)
     || DEPARTMENT_COLORS.find(color => normalizeText(color.department) === normalizeText(department))
     || { familyKey: key || 'OTHER', code: key || 'OTHER', department: department || 'Unmapped', hex: '#E5E7EB' };
+
+  const years = mapped ? getParkingActiveYears(mapped) : [];
+  const code = mapped && years[0]
+    ? getParkingCodesForYear(mapped, years[0])[0] || fallback.code
+    : fallback.code;
+  return {
+    familyKey: mapped?.familyKey || fallback.familyKey,
+    code,
+    department: mapped?.department || department || fallback.department,
+    hex: mapped?.colorHex || fallback.hex,
+  };
 }
 
-function parseActiveYearsFromCodes(codes: string[] | undefined): number[] {
-  return [...new Set((codes || []).map(code => {
-    const normalized = code.trim().toUpperCase();
-    const fourDigit = normalized.match(/20\d{2}$/)?.[0];
-    if (fourDigit) return Number(fourDigit);
-    const twoDigit = normalized.match(/(\d{2})$/)?.[1];
-    return twoDigit ? Number(`20${twoDigit}`) : null;
-  }).filter((year): year is number => year != null && year >= 2000 && year <= 2099))].sort((a, b) => a - b);
-}
-
-function getActiveYears(mapping: ParkingCodeFamilyMapping): number[] {
-  if (Array.isArray(mapping.activeYears) && mapping.activeYears.length > 0) {
-    return [...new Set(mapping.activeYears.filter(year => Number.isFinite(year)))].sort((a, b) => a - b);
-  }
-  return parseActiveYearsFromCodes(mapping.codes);
-}
-
-function parseYearsInput(value: string): number[] {
-  return [...new Set(value.split(/[,;\s]+/).map(part => {
-    const parsed = Number(part.trim());
-    if (!Number.isFinite(parsed)) return null;
-    return parsed < 100 ? 2000 + parsed : parsed;
-  }).filter((year): year is number => year != null && year >= 2000 && year <= 2099))].sort((a, b) => a - b);
-}
-
-function buildCodesForYears(familyKey: string, years: number[]): string[] {
-  const key = familyKey.trim().toUpperCase();
-  return key && years.length > 0 ? years.map(year => `${key}${year}`) : [];
+function getDepartmentRowsForLegend(settings: ParkingSettings) {
+  return settings.codeFamilies
+    .filter(mapping => !mapping.archived)
+    .map(mapping => {
+      const color = getCodeFamilyColor(mapping.familyKey, mapping.department, settings.codeFamilies);
+      const previewYear = getParkingActiveYears(mapping)[0] || new Date().getFullYear();
+      return {
+        familyKey: mapping.familyKey,
+        code: getParkingCodesForYear(mapping, previewYear)[0] || mapping.familyKey,
+        department: mapping.department || 'Unnamed department',
+        hex: color.hex,
+      };
+    });
 }
 
 function minutesToDuration(minutes: number): string {
@@ -356,7 +375,7 @@ function buildAnnualSummaryRows(months: ParkingMonthlyDataset[], year: string): 
   ));
 }
 
-const AnnualSummaryTable: React.FC<{ rows: AnnualSummaryRow[]; stickyHeader?: boolean }> = ({ rows, stickyHeader = false }) => (
+const AnnualSummaryTable: React.FC<{ rows: AnnualSummaryRow[]; codeFamilies: ParkingCodeFamilyMapping[]; stickyHeader?: boolean }> = ({ rows, codeFamilies, stickyHeader = false }) => (
   <table className="min-w-[1100px] w-full text-left text-sm">
     <thead className={`${stickyHeader ? 'sticky top-0 z-10' : ''} bg-gray-50 text-xs font-extrabold uppercase tracking-wide text-gray-400`}>
       <tr>
@@ -369,7 +388,7 @@ const AnnualSummaryTable: React.FC<{ rows: AnnualSummaryRow[]; stickyHeader?: bo
     </thead>
     <tbody className="divide-y divide-gray-100">
       {rows.map(row => {
-        const color = getDepartmentColor(row.codeFamilyKey, row.department);
+        const color = getCodeFamilyColor(row.codeFamilyKey, row.department, codeFamilies);
         return (
           <tr key={`${row.codeFamilyKey}-${row.department}`} className="hover:bg-gray-50">
             <td
@@ -392,8 +411,8 @@ const AnnualSummaryTable: React.FC<{ rows: AnnualSummaryRow[]; stickyHeader?: bo
   </table>
 );
 
-const DepartmentChip: React.FC<{ department: string; codeFamilyKey?: string; compact?: boolean }> = ({ department, codeFamilyKey, compact = false }) => {
-  const color = getDepartmentColor(codeFamilyKey, department);
+const DepartmentChip: React.FC<{ department: string; codeFamilyKey?: string; codeFamilies?: ParkingCodeFamilyMapping[]; compact?: boolean }> = ({ department, codeFamilyKey, codeFamilies = [], compact = false }) => {
+  const color = getCodeFamilyColor(codeFamilyKey, department, codeFamilies);
   return (
     <span
       className={`inline-flex max-w-full items-center rounded-full font-extrabold ${compact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs'}`}
@@ -424,6 +443,9 @@ export const ParkingWorkspace: React.FC = () => {
   const [annualExpanded, setAnnualExpanded] = useState(false);
   const [annualFullscreen, setAnnualFullscreen] = useState(false);
   const [expandedPlateKey, setExpandedPlateKey] = useState('');
+  const [departmentManagerOpen, setDepartmentManagerOpen] = useState(false);
+  const [departmentSearch, setDepartmentSearch] = useState('');
+  const [departmentCodeYear, setDepartmentCodeYear] = useState(new Date().getFullYear());
 
   const displaySummary = useMemo(() => buildDisplaySummary(summary, settings), [settings, summary]);
   const reviewMonths = useMemo(() => {
@@ -465,6 +487,27 @@ export const ParkingWorkspace: React.FC = () => {
     ));
   }, [selectedMonthDataset]);
   const selectedMonthTotalValue = selectedMonthDataset?.totalValue ?? 0;
+  const departmentLegendRows = useMemo(() => getDepartmentRowsForLegend(settings), [settings]);
+  const filteredCodeFamilies = useMemo(() => {
+    const query = normalizeText(departmentSearch);
+    return settings.codeFamilies
+      .map((mapping, index) => ({ mapping, index }))
+      .filter(({ mapping }) => !query
+        || normalizeText(mapping.department).includes(query)
+        || normalizeText(mapping.familyKey).includes(query)
+        || (mapping.codes || []).some(code => normalizeText(code).includes(query)));
+  }, [departmentSearch, settings.codeFamilies]);
+  const departmentManagerWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    const seen = new Set<string>();
+    for (const mapping of settings.codeFamilies) {
+      const key = getParkingCodeFamilyKey(mapping.familyKey);
+      if (!key || !mapping.department.trim()) warnings.push('Every department needs a short code and name.');
+      if (key && seen.has(key)) warnings.push(`Duplicate short code: ${key}`);
+      if (key) seen.add(key);
+    }
+    return [...new Set(warnings)];
+  }, [settings.codeFamilies]);
 
   const load = useCallback(async () => {
     if (!team) return;
@@ -517,6 +560,15 @@ export const ParkingWorkspace: React.FC = () => {
   }, [annualFullscreen]);
 
   useEffect(() => {
+    if (!departmentManagerOpen) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDepartmentManagerOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [departmentManagerOpen]);
+
+  useEffect(() => {
     setExpandedPlateKey('');
   }, [selectedMonth]);
 
@@ -549,7 +601,8 @@ export const ParkingWorkspace: React.FC = () => {
     const newMappings: ParkingCodeFamilyMapping[] = unmapped.map(code => ({
       familyKey: code.familyKey,
       codes: code.codes,
-      activeYears: parseActiveYearsFromCodes(code.codes),
+      activeYears: parseParkingActiveYearsFromCodes(code.codes),
+      yearCodeFormat: code.codes.some(value => /20\d{2}$/.test(value)) ? 'yyyy' : 'yy',
       department: (mappingDrafts[code.familyKey] || '').trim(),
       description: code.descriptions.join('; '),
     }));
@@ -604,7 +657,17 @@ export const ParkingWorkspace: React.FC = () => {
 
   const addCodeFamily = () => setSettings(current => ({
     ...current,
-    codeFamilies: [...current.codeFamilies, { familyKey: '', codes: [], activeYears: [new Date().getFullYear()], department: '' }],
+    codeFamilies: [
+      ...current.codeFamilies,
+      {
+        familyKey: '',
+        codes: [],
+        activeYears: [departmentCodeYear || new Date().getFullYear()],
+        yearCodeFormat: 'yyyy',
+        department: '',
+        colorHex: '#0F9ED5',
+      },
+    ],
   }));
 
   const updateCodeFamilyDirectory = (index: number, patch: Partial<ParkingCodeFamilyMapping>) => setSettings(current => ({
@@ -613,14 +676,33 @@ export const ParkingWorkspace: React.FC = () => {
       if (i !== index) return mapping;
       const next = { ...mapping, ...patch };
       const familyKey = (next.familyKey || '').trim().toUpperCase();
-      const activeYears = getActiveYears(next);
+      const activeYears = getParkingActiveYears(next);
+      const yearCodeFormat = inferParkingYearCodeFormat(next);
       return {
         ...next,
         familyKey,
         activeYears,
-        codes: buildCodesForYears(familyKey, activeYears),
+        yearCodeFormat,
+        codes: activeYears.map(year => buildParkingGeneratedCode(familyKey, year, yearCodeFormat)).filter(Boolean),
       };
     }),
+  }));
+
+  const updateCodeFamilyOverridesForYear = (index: number, year: number, codesText: string) => setSettings(current => ({
+    ...current,
+    codeFamilies: current.codeFamilies.map((mapping, i) => {
+      if (i !== index) return mapping;
+      const codeOverrides = { ...(mapping.codeOverrides || {}) };
+      const codes = parseParkingCodesInput(codesText);
+      if (codes.length > 0) codeOverrides[String(year)] = codes;
+      else delete codeOverrides[String(year)];
+      return { ...mapping, codeOverrides };
+    }),
+  }));
+
+  const deleteCodeFamily = (index: number) => setSettings(current => ({
+    ...current,
+    codeFamilies: current.codeFamilies.filter((_, i) => i !== index),
   }));
 
   const addSpotLocation = () => setSettings(current => ({
@@ -661,6 +743,13 @@ export const ParkingWorkspace: React.FC = () => {
                 className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
               >
                 <Download size={16} /> Export Excel
+              </button>
+              <button
+                disabled={!canEditParking}
+                onClick={() => setDepartmentManagerOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+              >
+                <Palette size={16} /> Manage departments
               </button>
               <button
                 disabled={!canEditParking || saving}
@@ -841,7 +930,7 @@ export const ParkingWorkspace: React.FC = () => {
                 </div>
               ) : (
                 <div className="max-h-[520px] overflow-auto">
-                  <AnnualSummaryTable rows={annualSummaryRows} stickyHeader />
+                  <AnnualSummaryTable rows={annualSummaryRows} codeFamilies={settings.codeFamilies} stickyHeader />
                 </div>
               )}
             </section>
@@ -867,7 +956,7 @@ export const ParkingWorkspace: React.FC = () => {
                           <tr className={isExpanded ? 'bg-amber-50/40' : undefined}>
                             <td className="py-3 pr-4 font-bold text-gray-700">{pattern.month}</td>
                             <td className="py-3 pr-4 font-extrabold text-gray-950">{pattern.displayPlate}</td>
-                            <td className="py-3 pr-4"><DepartmentChip department={pattern.department} compact /></td>
+                            <td className="py-3 pr-4"><DepartmentChip department={pattern.department} codeFamilies={settings.codeFamilies} compact /></td>
                             <td className="py-3 pr-4 font-bold text-gray-900">{money(pattern.totalValue)}</td>
                             <td className="py-3 pr-4 text-gray-600">{pattern.activeDays}</td>
                             <td className="py-3 pr-4 text-gray-600">{pattern.topLocationName || pattern.topSpotId}</td>
@@ -937,7 +1026,7 @@ export const ParkingWorkspace: React.FC = () => {
                     {monthlyDepartmentRows.slice(0, 80).map(row => (
                       <tr key={`${row.month}-${row.department}-${row.codeFamilyKey}`}>
                         <td className="py-3 pr-4 font-bold text-gray-700">{row.month}</td>
-                        <td className="py-3 pr-4"><DepartmentChip department={row.department} codeFamilyKey={row.codeFamilyKey} /></td>
+                        <td className="py-3 pr-4"><DepartmentChip department={row.department} codeFamilyKey={row.codeFamilyKey} codeFamilies={settings.codeFamilies} /></td>
                         <td className="py-3 pr-4 font-bold text-gray-900">{money(row.totalValue)}</td>
                         <td className="py-3 pr-4 text-gray-600">{money(row.changeValue ?? 0)} · {pct(row.changePercent)}</td>
                         <td className="py-3 pr-4 text-gray-600">{row.sessionCount}</td>
@@ -976,13 +1065,13 @@ export const ParkingWorkspace: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {rawTransactionRows.slice(0, 500).map(row => {
-                      const color = getDepartmentColor(row.codeFamilyKey, row.department);
+                      const color = getCodeFamilyColor(row.codeFamilyKey, row.department, settings.codeFamilies);
                       return (
                         <tr key={row.id} className="hover:bg-gray-50" style={{ borderLeft: `5px solid ${color.hex}` }}>
                           <td className="px-3 py-2 font-bold text-gray-700">{row.startDate}</td>
                           <td className="px-3 py-2 text-gray-600">{minutesToTime(row.startMinutes)}</td>
                           <td className="px-3 py-2 font-extrabold text-gray-950">{row.plate || '(missing)'}</td>
-                          <td className="px-3 py-2"><DepartmentChip department={row.department || 'Unmapped'} codeFamilyKey={row.codeFamilyKey} compact /></td>
+                          <td className="px-3 py-2"><DepartmentChip department={row.department || 'Unmapped'} codeFamilyKey={row.codeFamilyKey} codeFamilies={settings.codeFamilies} compact /></td>
                           <td className="px-3 py-2 text-gray-600">{row.discountCode}</td>
                           <td className="px-3 py-2 text-gray-600">{row.locationName || row.spotId}</td>
                           <td className="px-3 py-2 text-gray-600">{minutesToDuration(row.durationMinutes)}</td>
@@ -1005,7 +1094,7 @@ export const ParkingWorkspace: React.FC = () => {
               <h3 className="font-extrabold text-gray-950">Department color legend</h3>
               <p className="mt-1 text-xs font-semibold text-gray-400">Matches the department colors used in the Excel assessment.</p>
               <div className="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
-                {DEPARTMENT_COLORS.map(color => (
+                {departmentLegendRows.map(color => (
                   <div key={color.familyKey} className="flex items-center gap-2 text-xs">
                     <span className="h-4 w-4 shrink-0 rounded" style={{ backgroundColor: color.hex }} />
                     <span className="w-14 shrink-0 font-extrabold text-gray-700">{color.code}</span>
@@ -1034,54 +1123,29 @@ export const ParkingWorkspace: React.FC = () => {
                   <Settings size={18} className="mt-0.5 text-blue-600" />
                   <div>
                     <h3 className="font-extrabold text-gray-950">Department directory</h3>
-                    <p className="mt-1 text-xs font-semibold text-gray-400">Enter the short form once. RS covers RS2025, RS2026, and future RS codes.</p>
+                    <p className="mt-1 text-xs font-semibold text-gray-400">Names, colors, and yearly code rules live in one friendly editor.</p>
                   </div>
                 </div>
-                <button disabled={!canEditParking} onClick={addCodeFamily} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Add</button>
+                <button disabled={!canEditParking} onClick={() => setDepartmentManagerOpen(true)} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Open</button>
               </div>
-              <div className="grid grid-cols-[58px_minmax(0,1fr)_92px_34px] gap-2 px-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">
-                <span>Short</span>
-                <span>Department</span>
-                <span>Years</span>
-                <span>Color</span>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-blue-500">Departments</div>
+                  <div className="mt-1 text-2xl font-extrabold text-blue-950">{settings.codeFamilies.length}</div>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-emerald-500">Code year</div>
+                  <div className="mt-1 text-2xl font-extrabold text-emerald-950">{departmentCodeYear}</div>
+                </div>
               </div>
-              <div className="mt-2 max-h-96 space-y-2 overflow-y-auto pr-1">
-                {settings.codeFamilies.map((mapping, index) => {
-                  const years = getActiveYears(mapping);
-                  const color = getDepartmentColor(mapping.familyKey, mapping.department);
-                  return (
-                    <div key={`${mapping.familyKey}-${index}`} className="grid grid-cols-[58px_minmax(0,1fr)_92px_34px] items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 p-2">
-                      <CompactTextInput
-                        disabled={!canEditParking}
-                        value={mapping.familyKey}
-                        onChange={value => updateCodeFamilyDirectory(index, { familyKey: value })}
-                        placeholder="RS"
-                      />
-                      <CompactTextInput
-                        disabled={!canEditParking}
-                        value={mapping.department}
-                        onChange={value => updateCodeFamilyDirectory(index, { department: value })}
-                        placeholder="Department"
-                      />
-                      <CompactTextInput
-                        disabled={!canEditParking}
-                        value={years.join(', ')}
-                        onChange={value => updateCodeFamilyDirectory(index, { activeYears: parseYearsInput(value) })}
-                        placeholder="2026"
-                      />
-                      <span
-                        className="h-8 w-8 rounded-lg border border-white shadow-sm"
-                        style={{ backgroundColor: mapping.colorHex || color.hex }}
-                        title={`${mapping.familyKey || 'Code'} color`}
-                      />
-                    </div>
-                  );
-                })}
-                {settings.codeFamilies.length === 0 ? <p className="text-sm text-gray-400">Upload a file to discover departments.</p> : null}
-              </div>
-              <p className="mt-2 text-xs font-semibold text-gray-400">
-                {settings.codeFamilies.length} departments. Yearly discount codes are generated automatically from the short form.
-              </p>
+              <button
+                type="button"
+                disabled={!canEditParking}
+                onClick={() => setDepartmentManagerOpen(true)}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-extrabold text-white transition hover:bg-blue-700 disabled:bg-gray-300"
+              >
+                <Wand2 size={16} /> Manage names, colors, and codes
+              </button>
             </section>
 
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -1106,6 +1170,194 @@ export const ParkingWorkspace: React.FC = () => {
           </aside>
         </div>
 
+        {departmentManagerOpen ? (
+          <div className="fixed inset-0 z-50 bg-gray-950/40 p-3 md:p-6" role="dialog" aria-modal="true" aria-label="Manage departments">
+            <div className="mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-3xl border-2 border-gray-200 bg-gray-50 shadow-2xl">
+              <div className="border-b border-gray-200 bg-white p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-blue-700">
+                      <Wand2 size={14} /> Department code manager
+                    </div>
+                    <h2 className="mt-3 text-2xl font-extrabold text-gray-950">Pick a year and edit each department</h2>
+                    <p className="mt-1 max-w-3xl text-sm font-medium text-gray-500">
+                      Change the year below and the code shown on every department updates automatically.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={saving || !canEditParking}
+                      onClick={() => void saveSettingsOnly()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-extrabold text-white hover:bg-emerald-700 disabled:bg-gray-300"
+                    >
+                      {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save settings
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDepartmentManagerOpen(false)}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gray-950 px-4 py-2 text-sm font-extrabold text-white hover:bg-gray-800"
+                    >
+                      <X size={16} /> Close
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_170px] lg:items-center">
+                  <label className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
+                    <Search size={16} className="text-gray-400" />
+                    <input
+                      value={departmentSearch}
+                      onChange={event => setDepartmentSearch(event.target.value)}
+                      placeholder="Search department, short code, or saved code"
+                      className="w-full text-sm font-semibold text-gray-700 outline-none"
+                    />
+                  </label>
+                  <label className="rounded-2xl border-2 border-blue-100 bg-blue-50 px-4 py-2">
+                    <span className="block text-[10px] font-extrabold uppercase tracking-wide text-blue-500">Show codes for year</span>
+                    <input
+                      type="number"
+                      min={2000}
+                      max={2099}
+                      value={departmentCodeYear}
+                      onChange={event => setDepartmentCodeYear(Number(event.target.value) || new Date().getFullYear())}
+                      className="mt-0.5 w-full bg-transparent text-2xl font-extrabold text-blue-950 outline-none"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!canEditParking}
+                    onClick={addCodeFamily}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-extrabold text-white hover:bg-blue-700 disabled:bg-gray-300"
+                  >
+                    <Plus size={16} /> Add department
+                  </button>
+                </div>
+
+                {departmentManagerWarnings.length > 0 ? (
+                  <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">
+                    {departmentManagerWarnings.map(warning => <div key={warning}>{warning}</div>)}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto p-5">
+                <div className="mb-4 rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
+                  <div className="text-sm font-extrabold text-emerald-950">Simple rule</div>
+                  <p className="mt-1 text-sm font-medium text-emerald-700">
+                    Enter the short code once. Pick whether the department uses the full year or short year. The code preview updates when you change the year.
+                  </p>
+                </div>
+
+                <div className="grid gap-3">
+                  {filteredCodeFamilies.map(({ mapping, index }) => {
+                    const format = inferParkingYearCodeFormat(mapping);
+                    const color = getCodeFamilyColor(mapping.familyKey, mapping.department, settings.codeFamilies);
+                    const fullYearCode = buildParkingGeneratedCode(mapping.familyKey, departmentCodeYear, 'yyyy');
+                    const shortYearCode = buildParkingGeneratedCode(mapping.familyKey, departmentCodeYear, 'yy');
+                    const generated = buildParkingGeneratedCode(mapping.familyKey, departmentCodeYear, format);
+                    const overrides = getParkingCodeOverridesForYear(mapping, departmentCodeYear);
+                    const finalCodes = getParkingCodesForYear(mapping, departmentCodeYear);
+                    return (
+                      <div key={`${mapping.familyKey}-${index}`} className="rounded-3xl border-2 border-gray-200 bg-white p-4 shadow-sm">
+                        <div className="grid gap-4 xl:grid-cols-[minmax(260px,1fr)_150px_210px_180px_90px] xl:items-end">
+                          <div>
+                            <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Department</div>
+                            <TextInput disabled={!canEditParking} value={mapping.department} onChange={value => updateCodeFamilyDirectory(index, { department: value })} placeholder="Department name" />
+                          </div>
+
+                          <div>
+                            <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Short code</div>
+                            <CompactTextInput disabled={!canEditParking} value={mapping.familyKey} onChange={value => updateCodeFamilyDirectory(index, { familyKey: value })} placeholder="AB" />
+                          </div>
+
+                          <div>
+                            <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Code style</div>
+                            <div className="grid grid-cols-2 gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+                              {[
+                                { value: 'yyyy' as ParkingYearCodeFormat, label: fullYearCode || 'AB2026' },
+                                { value: 'yy' as ParkingYearCodeFormat, label: shortYearCode || 'AB26' },
+                              ].map(option => (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  disabled={!canEditParking}
+                                  onClick={() => updateCodeFamilyDirectory(index, { yearCodeFormat: option.value })}
+                                  className={`rounded-lg px-2 py-2 text-xs font-extrabold transition ${format === option.value ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-800 disabled:text-gray-300'}`}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Preview for {departmentCodeYear}</div>
+                            <div
+                              className="flex min-h-10 items-center justify-center rounded-xl px-3 py-2 text-lg font-extrabold shadow-sm"
+                              style={{ backgroundColor: color.hex, color: readableTextColor(color.hex) }}
+                            >
+                              {generated || 'Add short code'}
+                            </div>
+                          </div>
+
+                          <div className="flex items-end gap-2">
+                            <label className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50" title="Department color">
+                              <input
+                                type="color"
+                                disabled={!canEditParking}
+                                value={mapping.colorHex || color.hex}
+                                onChange={event => updateCodeFamilyDirectory(index, { colorHex: event.target.value })}
+                                className="h-7 w-7 cursor-pointer rounded border-0 bg-transparent p-0"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              disabled={!canEditParking}
+                              onClick={() => deleteCodeFamily(index)}
+                              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 hover:bg-red-100 disabled:text-gray-300"
+                              title="Delete department"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <details className="mt-3 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2">
+                          <summary className="cursor-pointer text-xs font-extrabold text-gray-500">Advanced: extra matching codes</summary>
+                          <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(240px,1fr)_minmax(220px,1fr)] lg:items-end">
+                            <div>
+                              <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Also match these codes in {departmentCodeYear}</div>
+                              <TextInput
+                                disabled={!canEditParking}
+                                value={overrides.join(', ')}
+                                onChange={value => updateCodeFamilyOverridesForYear(index, departmentCodeYear, value)}
+                                placeholder="Only for exceptions, comma separated"
+                              />
+                            </div>
+                            <div>
+                              <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Final matched codes</div>
+                              <div className="flex min-h-10 flex-wrap items-center gap-1 rounded-xl border border-gray-100 bg-white px-2 py-1.5">
+                                {finalCodes.map(code => <span key={code} className="rounded-full bg-gray-100 px-2 py-1 text-xs font-extrabold text-gray-700">{code}</span>)}
+                                {finalCodes.length === 0 ? <span className="text-xs font-bold text-gray-400">No codes yet</span> : null}
+                              </div>
+                            </div>
+                          </div>
+                        </details>
+                      </div>
+                    );
+                  })}
+                  {filteredCodeFamilies.length === 0 ? (
+                    <div className="rounded-3xl border border-gray-200 bg-white p-8 text-center text-sm font-semibold text-gray-400">
+                      No departments match your search.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {annualFullscreen ? (
           <div className="fixed inset-0 z-50 bg-white p-4 md:p-6" role="dialog" aria-modal="true" aria-label="Annual department summary full screen">
             <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 md:flex-row md:items-center md:justify-between">
@@ -1124,7 +1376,7 @@ export const ParkingWorkspace: React.FC = () => {
               </button>
             </div>
             <div className="mt-4 h-[calc(100vh-120px)] overflow-auto rounded-2xl border border-gray-200">
-              <AnnualSummaryTable rows={annualSummaryRows} stickyHeader />
+              <AnnualSummaryTable rows={annualSummaryRows} codeFamilies={settings.codeFamilies} stickyHeader />
             </div>
           </div>
         ) : null}

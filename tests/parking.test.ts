@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { describe, expect, it, vi } from 'vitest';
 import { buildParkingReplacementSummary, getLatestParkingMonth } from '../utils/parking/parkingAggregation';
+import { getParkingCodeOverridesForYear, getParkingCodesForYear } from '../utils/parking/parkingCodeRules';
 import { createParkingExportWorkbook, exportParkingWorkbook } from '../utils/parking/parkingExport';
 import { getParkingCodeFamilyKey, parseParkingDurationMinutes, parseParkingFile, parseParkingWorkbook } from '../utils/parking/parkingParser';
 import {
@@ -145,6 +146,38 @@ describe('parking parser and aggregation', () => {
       codeFamilyKey: 'IF',
       department: 'Infrastructure',
     });
+  });
+
+  it('supports two-digit yearly codes and manual yearly overrides', () => {
+    const result = parseParkingWorkbook(workbookBuffer(hotSpotRows([
+      ['SHORT1', '2026-06-10 09:00:00 EDT', '7100', '1h0m', 'Spot', 'BFES26', 'Fire', '5.00 $'],
+      ['ALT1', '2026-06-10 10:00:00 EDT', '7100', '1h0m', 'Spot', 'EC2026', 'Economic', '5.00 $'],
+    ])), {
+      fileName: 'HotSpot.xlsx',
+      importedBy: 'user-1',
+      settings: {
+        ...settings,
+        codeFamilies: [
+          ...settings.codeFamilies,
+          { familyKey: 'BFES', codes: ['BFES25', 'BFES26'], activeYears: [2025, 2026], yearCodeFormat: 'yy', department: 'Barrie Fire' },
+          { familyKey: 'ECD', codes: ['ECD2026'], activeYears: [2026], yearCodeFormat: 'yyyy', codeOverrides: { 2026: ['EC2026'] }, department: 'Economic and Creative Development' },
+        ],
+      },
+    });
+
+    expect(result.unmappedCodeFamilies).toEqual([]);
+    expect(result.dataset.rows.find(row => row.plate === 'SHORT1')).toMatchObject({
+      discountCode: 'BFES26',
+      codeFamilyKey: 'BFES',
+      department: 'Barrie Fire',
+    });
+    expect(result.dataset.rows.find(row => row.plate === 'ALT1')).toMatchObject({
+      discountCode: 'EC2026',
+      codeFamilyKey: 'EC',
+      department: 'Economic and Creative Development',
+    });
+    expect(getParkingCodesForYear({ familyKey: 'BFES', codes: [], activeYears: [2026], yearCodeFormat: 'yy', department: 'Barrie Fire' }, 2026)).toEqual(['BFES26']);
+    expect(getParkingCodeOverridesForYear({ familyKey: 'ECD', codes: [], activeYears: [2026], yearCodeFormat: 'yyyy', codeOverrides: { 2026: ['EC2026'] }, department: 'Economic' }, 2026)).toEqual(['EC2026']);
   });
 
   it('uses seeded default department mappings when no Parking settings exist yet', () => {
