@@ -20,7 +20,7 @@ import {
     deleteObject,
 } from 'firebase/storage';
 import { db, storage } from './firebase';
-import type { PerformanceDataSummary, PerformanceMetadata } from './performanceDataTypes';
+import { PERFORMANCE_SCHEMA_VERSION, type PerformanceDataSummary, type PerformanceMetadata } from './performanceDataTypes';
 import { aggregateMonthlySnapshots } from './performanceDataAggregator';
 import { buildPerformanceOverviewSummary, buildPerformanceReportSummary } from './performanceOverviewSummary';
 import { saveMonthlySnapshots } from './performanceSnapshotService';
@@ -46,6 +46,105 @@ function getReportStoragePath(teamId: string, timestamp: string) {
 
 function getRouteStoragePath(teamId: string, timestamp: string, routeId: string) {
     return `teams/${teamId}/performanceData/${timestamp}-route-${encodeURIComponent(routeId)}.json`;
+}
+
+function getMonthlyStoragePath(teamId: string, timestamp: string, month: string) {
+    return `teams/${teamId}/performanceData/months/${timestamp}-${month}.json`;
+}
+
+function getRouteMonthlyStoragePath(teamId: string, timestamp: string, routeId: string, month: string) {
+    return `teams/${teamId}/performanceData/months/${timestamp}-route-${encodeURIComponent(routeId)}-${month}.json`;
+}
+
+function getSummaryMonth(day: { date?: string }): string {
+    return typeof day.date === 'string' ? day.date.slice(0, 7) : 'unknown';
+}
+
+function buildSummaryFromDays(
+    base: PerformanceDataSummary,
+    dailySummaries: PerformanceDataSummary['dailySummaries'],
+    metadataPatch: Partial<PerformanceMetadata> = {},
+): PerformanceDataSummary {
+    const sortedDays = [...dailySummaries].sort((a, b) => a.date.localeCompare(b.date));
+    const dates = sortedDays.map(day => day.date);
+    return {
+        ...base,
+        dailySummaries: sortedDays,
+        metadata: {
+            ...base.metadata,
+            dateRange: dates.length > 0
+                ? { start: dates[0], end: dates[dates.length - 1] }
+                : base.metadata.dateRange,
+            dayCount: sortedDays.length,
+            totalRecords: sortedDays.reduce((sum, day) => sum + (day.dataQuality?.totalRecords || 0), 0),
+            ...metadataPatch,
+        },
+    };
+}
+
+function buildMonthlySummaries(summary: PerformanceDataSummary): Map<string, PerformanceDataSummary> {
+    const byMonth = new Map<string, PerformanceDataSummary['dailySummaries']>();
+    for (const day of summary.dailySummaries) {
+        const month = getSummaryMonth(day);
+        byMonth.set(month, [...(byMonth.get(month) || []), day]);
+    }
+
+    const result = new Map<string, PerformanceDataSummary>();
+    for (const [month, days] of byMonth) {
+        result.set(month, buildSummaryFromDays(summary, days));
+    }
+    return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readStringRecord(value: unknown): Record<string, string> | undefined {
+    if (!isRecord(value)) return undefined;
+    return Object.fromEntries(
+        Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && !!entry[1])
+    );
+}
+
+function readNestedStringRecord(value: unknown): Record<string, Record<string, string>> | undefined {
+    if (!isRecord(value)) return undefined;
+    const entries = Object.entries(value)
+        .map(([key, nested]) => [key, readStringRecord(nested)] as const)
+        .filter((entry): entry is readonly [string, Record<string, string>] => !!entry[1] && Object.keys(entry[1]).length > 0);
+    return Object.fromEntries(entries);
+}
+
+async function downloadStorageJson<T>(storagePath: string): Promise<T | null> {
+    const url = await getDownloadURL(ref(storage, storagePath));
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return await response.json() as T;
+}
+
+async function loadMonthlyPerformanceSummary(
+    metadata: PerformanceMetadata,
+    routeId?: string | null,
+): Promise<PerformanceDataSummary | null> {
+    const selectedRoutePaths = routeId && routeId !== 'all'
+        ? metadata.routeMonthlyStoragePaths?.[routeId]
+        : undefined;
+    const paths = selectedRoutePaths || metadata.monthlyStoragePaths;
+    if (!paths || Object.keys(paths).length === 0) return null;
+
+    const months = Object.keys(paths).sort();
+    const monthSummaries = await Promise.all(
+        months.map(month => downloadStorageJson<PerformanceDataSummary>(paths[month]))
+    );
+    const dailySummaries = monthSummaries.flatMap(summary => summary?.dailySummaries || []);
+    if (dailySummaries.length === 0) return null;
+
+    const base = monthSummaries.find((summary): summary is PerformanceDataSummary => !!summary) || {
+        dailySummaries: [],
+        metadata,
+        schemaVersion: PERFORMANCE_SCHEMA_VERSION,
+    };
+    return buildSummaryFromDays(base, dailySummaries, metadata);
 }
 
 export function buildStorageJsonUploadData(value: unknown): Blob | Uint8Array {
@@ -85,10 +184,13 @@ export function mergePerformanceSummaryMetadata(
             totalRecords: metadata.totalRecords || summary.metadata.totalRecords,
             runtimeLogicVersion: metadata.runtimeLogicVersion ?? summary.metadata.runtimeLogicVersion,
             cleanHistoryStartDate: metadata.cleanHistoryStartDate ?? summary.metadata.cleanHistoryStartDate,
+            storageMode: metadata.storageMode || summary.metadata.storageMode,
             storagePath: metadata.storagePath || summary.metadata.storagePath,
             overviewStoragePath: metadata.overviewStoragePath || summary.metadata.overviewStoragePath,
             reportStoragePath: metadata.reportStoragePath || summary.metadata.reportStoragePath,
             routeStoragePaths: metadata.routeStoragePaths || summary.metadata.routeStoragePaths,
+            monthlyStoragePaths: metadata.monthlyStoragePaths || summary.metadata.monthlyStoragePaths,
+            routeMonthlyStoragePaths: metadata.routeMonthlyStoragePaths || summary.metadata.routeMonthlyStoragePaths,
         },
     };
 }
@@ -105,10 +207,13 @@ export function mergePerformanceOverviewMetadata(
             importedBy: metadata.importedBy || summary.metadata.importedBy,
             runtimeLogicVersion: metadata.runtimeLogicVersion ?? summary.metadata.runtimeLogicVersion,
             cleanHistoryStartDate: metadata.cleanHistoryStartDate ?? summary.metadata.cleanHistoryStartDate,
+            storageMode: metadata.storageMode || summary.metadata.storageMode,
             storagePath: metadata.storagePath || summary.metadata.storagePath,
             overviewStoragePath: metadata.overviewStoragePath || summary.metadata.overviewStoragePath,
             reportStoragePath: metadata.reportStoragePath || summary.metadata.reportStoragePath,
             routeStoragePaths: metadata.routeStoragePaths || summary.metadata.routeStoragePaths,
+            monthlyStoragePaths: metadata.monthlyStoragePaths || summary.metadata.monthlyStoragePaths,
+            routeMonthlyStoragePaths: metadata.routeMonthlyStoragePaths || summary.metadata.routeMonthlyStoragePaths,
         },
     };
 }
@@ -121,31 +226,26 @@ export async function savePerformanceData(
     summary: PerformanceDataSummary
 ): Promise<void> {
     const timestamp = Date.now().toString();
-    const storagePath = getStoragePath(teamId, timestamp);
     const overviewStoragePath = getOverviewStoragePath(teamId, timestamp);
     const reportStoragePath = getReportStoragePath(teamId, timestamp);
     const metadataRef = getMetadataRef(teamId);
 
-    // Merge with existing data — new days replace old, existing days are kept
+    // Merge with existing data — new days replace old, existing days are kept.
     let merged = summary;
     const existing = await getDoc(metadataRef);
-    const oldPath: string | null = existing.exists() ? existing.data().storagePath || null : null;
-    const oldOverviewPath: string | null = existing.exists() ? existing.data().overviewStoragePath || null : null;
-    const oldReportPath: string | null = existing.exists() ? existing.data().reportStoragePath || null : null;
-    const oldRouteStoragePaths: Record<string, string> = existing.exists()
-        && existing.data().routeStoragePaths
-        && typeof existing.data().routeStoragePaths === 'object'
-        ? existing.data().routeStoragePaths
-        : {};
-    if (oldPath) {
-        try {
-            const oldRef = ref(storage, oldPath);
-            const oldUrl = await getDownloadURL(oldRef);
-            const oldResponse = await fetch(oldUrl);
-            if (oldResponse.ok) {
-                const oldSummary: PerformanceDataSummary = await oldResponse.json();
+    const existingMetadata = existing.exists() ? await getPerformanceMetadata(teamId) : null;
+    const oldPath = existingMetadata?.storagePath || null;
+    const oldOverviewPath = existingMetadata?.overviewStoragePath || null;
+    const oldReportPath = existingMetadata?.reportStoragePath || null;
+    const oldRouteStoragePaths = existingMetadata?.routeStoragePaths || {};
+    const oldMonthlyStoragePaths = existingMetadata?.monthlyStoragePaths || {};
+    const oldRouteMonthlyStoragePaths = existingMetadata?.routeMonthlyStoragePaths || {};
 
-                // Snapshot old data before overwriting — best-effort
+    if (existingMetadata) {
+        try {
+            const oldSummary = await getPerformanceData(teamId, existingMetadata);
+            if (oldSummary) {
+                // Snapshot old data before overwriting — best-effort.
                 try {
                     const snapshots = aggregateMonthlySnapshots(oldSummary.dailySummaries);
                     if (snapshots.length > 0) {
@@ -155,7 +255,6 @@ export async function savePerformanceData(
                     console.error('Snapshot archive failed (non-blocking):', snapshotErr);
                 }
 
-                // Merge: new days replace old, keep days not in the new import
                 const newDates = new Set(summary.dailySummaries.map(d => d.date));
                 const kept = oldSummary.dailySummaries.filter(d => !newDates.has(d.date));
                 const allDays = [...kept, ...summary.dailySummaries]
@@ -181,43 +280,54 @@ export async function savePerformanceData(
             }
         } catch (fetchErr) {
             console.error('Could not fetch existing data for merge:', fetchErr);
-            // Fall through — save new data only
+            // Fall through — save new data only.
         }
     }
 
     const overviewSummary = buildPerformanceOverviewSummary(merged);
     const reportSummary = buildPerformanceReportSummary(merged);
-    const routeStoragePaths: Record<string, string> = {};
+    const monthlyStoragePaths: Record<string, string> = {};
+    const routeMonthlyStoragePaths: Record<string, Record<string, string>> = {};
+    const monthlySummaries = buildMonthlySummaries(merged);
 
-    // Upload merged summary JSON to Storage
-    const storageRef = ref(storage, storagePath);
-    await uploadBytes(storageRef, buildStorageJsonUploadData(merged), {
-        contentType: 'application/json',
-    });
+    // Upload monthly chunks instead of one giant all-history JSON.
+    await Promise.all([...monthlySummaries.entries()].map(async ([month, monthSummary]) => {
+        const monthPath = getMonthlyStoragePath(teamId, timestamp, month);
+        await uploadBytes(ref(storage, monthPath), buildStorageJsonUploadData(monthSummary), {
+            contentType: 'application/json',
+        });
+        monthlyStoragePaths[month] = monthPath;
+    }));
+
     await uploadBytes(ref(storage, overviewStoragePath), buildStorageJsonUploadData(overviewSummary), {
         contentType: 'application/json',
     });
     await uploadBytes(ref(storage, reportStoragePath), buildStorageJsonUploadData(reportSummary), {
         contentType: 'application/json',
     });
+
     await Promise.all(getAvailablePerformanceRoutes(merged).map(async route => {
-        const routePath = getRouteStoragePath(teamId, timestamp, route.routeId);
         const routeSummary = filterPerformanceSummaryByRoute(merged, route.routeId);
         if (!routeSummary) return;
-        await uploadBytes(ref(storage, routePath), buildStorageJsonUploadData(routeSummary), {
-            contentType: 'application/json',
-        });
-        routeStoragePaths[route.routeId] = routePath;
+        const routeMonthlySummaries = buildMonthlySummaries(routeSummary);
+        routeMonthlyStoragePaths[route.routeId] = {};
+        await Promise.all([...routeMonthlySummaries.entries()].map(async ([month, monthSummary]) => {
+            const routeMonthPath = getRouteMonthlyStoragePath(teamId, timestamp, route.routeId, month);
+            await uploadBytes(ref(storage, routeMonthPath), buildStorageJsonUploadData(monthSummary), {
+                contentType: 'application/json',
+            });
+            routeMonthlyStoragePaths[route.routeId][month] = routeMonthPath;
+        }));
     }));
 
-    // Save metadata to Firestore
     await setDoc(metadataRef, {
         importedAt: serverTimestamp(),
         importedBy: userId,
-        storagePath,
+        storageMode: 'monthly',
         overviewStoragePath,
         reportStoragePath,
-        routeStoragePaths,
+        monthlyStoragePaths,
+        routeMonthlyStoragePaths,
         dateRange: merged.metadata.dateRange,
         dayCount: merged.metadata.dayCount,
         totalRecords: merged.metadata.totalRecords,
@@ -225,34 +335,31 @@ export async function savePerformanceData(
         cleanHistoryStartDate: merged.metadata.cleanHistoryStartDate ?? null,
     });
 
-    // Clean up old storage file only after new data + metadata are committed.
-    if (oldPath && oldPath !== storagePath) {
-        try {
-            await deleteObject(ref(storage, oldPath));
-        } catch {
-            // Old file may already be gone — ignore
-        }
+    // Clean up old storage files only after new data + metadata are committed.
+    const cleanupPaths = new Set<string>();
+    const migratingFromMonolithic = !!oldPath && Object.keys(oldMonthlyStoragePaths).length === 0;
+    if (oldPath && !migratingFromMonolithic) cleanupPaths.add(oldPath);
+    if (oldOverviewPath && oldOverviewPath !== overviewStoragePath) cleanupPaths.add(oldOverviewPath);
+    if (oldReportPath && oldReportPath !== reportStoragePath) cleanupPaths.add(oldReportPath);
+    if (!migratingFromMonolithic) {
+        Object.values(oldRouteStoragePaths).forEach(path => path && cleanupPaths.add(path));
     }
-    if (oldOverviewPath && oldOverviewPath !== overviewStoragePath) {
+    Object.values(oldMonthlyStoragePaths).forEach(path => path && cleanupPaths.add(path));
+    Object.values(oldRouteMonthlyStoragePaths).flatMap(months => Object.values(months)).forEach(path => path && cleanupPaths.add(path));
+
+    const newPaths = new Set<string>([
+        overviewStoragePath,
+        reportStoragePath,
+        ...Object.values(monthlyStoragePaths),
+        ...Object.values(routeMonthlyStoragePaths).flatMap(months => Object.values(months)),
+    ]);
+
+    await Promise.all([...cleanupPaths].map(async path => {
+        if (newPaths.has(path)) return;
         try {
-            await deleteObject(ref(storage, oldOverviewPath));
+            await deleteObject(ref(storage, path));
         } catch {
-            // Old overview file may already be gone — ignore
-        }
-    }
-    if (oldReportPath && oldReportPath !== reportStoragePath) {
-        try {
-            await deleteObject(ref(storage, oldReportPath));
-        } catch {
-            // Old report file may already be gone — ignore
-        }
-    }
-    await Promise.all(Object.values(oldRouteStoragePaths).map(async oldRoutePath => {
-        if (!oldRoutePath || Object.values(routeStoragePaths).includes(oldRoutePath)) return;
-        try {
-            await deleteObject(ref(storage, oldRoutePath));
-        } catch {
-            // Old route file may already be gone — ignore
+            // Old file may already be gone — ignore.
         }
     }));
 }
@@ -273,12 +380,13 @@ export async function getPerformanceMetadata(teamId: string): Promise<Performanc
             totalRecords: data.totalRecords || 0,
             runtimeLogicVersion: typeof data.runtimeLogicVersion === 'number' ? data.runtimeLogicVersion : undefined,
             cleanHistoryStartDate: typeof data.cleanHistoryStartDate === 'string' ? data.cleanHistoryStartDate : undefined,
+            storageMode: data.storageMode === 'monthly' ? 'monthly' : (data.storageMode === 'monolithic' ? 'monolithic' : undefined),
             storagePath: data.storagePath || '',
             overviewStoragePath: data.overviewStoragePath || '',
             reportStoragePath: data.reportStoragePath || '',
-            routeStoragePaths: data.routeStoragePaths && typeof data.routeStoragePaths === 'object'
-                ? data.routeStoragePaths
-                : undefined,
+            routeStoragePaths: readStringRecord(data.routeStoragePaths),
+            monthlyStoragePaths: readStringRecord(data.monthlyStoragePaths),
+            routeMonthlyStoragePaths: readNestedStringRecord(data.routeMonthlyStoragePaths),
         };
     } catch (error) {
         console.error('Error getting performance metadata:', error);
@@ -293,7 +401,19 @@ export async function getPerformanceData(
 ): Promise<PerformanceDataSummary | null> {
     try {
         const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
-        if (!metadata?.storagePath) return null;
+        if (!metadata) return null;
+
+        const monthlySummary = metadata.monthlyStoragePaths
+            ? await loadMonthlyPerformanceSummary(metadata, routeId)
+            : null;
+        if (monthlySummary) {
+            return filterPerformanceSummaryByRoute(
+                mergePerformanceSummaryMetadata(monthlySummary, metadata),
+                routeId,
+            );
+        }
+
+        if (!metadata.storagePath) return null;
 
         const selectedRoutePath = routeId && routeId !== 'all'
             ? metadata.routeStoragePaths?.[routeId]
@@ -366,6 +486,8 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
             && typeof docSnap.data().routeStoragePaths === 'object'
             ? docSnap.data().routeStoragePaths
             : {};
+        const monthlyStoragePaths = readStringRecord(docSnap.data().monthlyStoragePaths) || {};
+        const routeMonthlyStoragePaths = readNestedStringRecord(docSnap.data().routeMonthlyStoragePaths) || {};
         if (storagePath) {
             try {
                 await deleteObject(ref(storage, storagePath));
@@ -391,6 +513,22 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
             if (!routeStoragePath) return;
             try {
                 await deleteObject(ref(storage, routeStoragePath));
+            } catch {
+                // File may already be gone
+            }
+        }));
+        await Promise.all(Object.values(monthlyStoragePaths).map(async monthlyStoragePath => {
+            if (!monthlyStoragePath) return;
+            try {
+                await deleteObject(ref(storage, monthlyStoragePath));
+            } catch {
+                // File may already be gone
+            }
+        }));
+        await Promise.all(Object.values(routeMonthlyStoragePaths).flatMap(months => Object.values(months)).map(async routeMonthlyStoragePath => {
+            if (!routeMonthlyStoragePath) return;
+            try {
+                await deleteObject(ref(storage, routeMonthlyStoragePath));
             } catch {
                 // File may already be gone
             }

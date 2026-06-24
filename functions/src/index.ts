@@ -118,6 +118,9 @@ interface ExistingPerformanceSummaryLoad {
   storagePath: string | null;
   overviewStoragePath: string | null;
   reportStoragePath: string | null;
+  routeStoragePaths?: Record<string, string>;
+  monthlyStoragePaths?: Record<string, string>;
+  routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
   metadata: Partial<PerformanceMetadata> | null;
   readError?: Error;
 }
@@ -287,6 +290,14 @@ function buildPerformanceDataStoragePath(teamId: string, timestamp: string, suff
   return `teams/${teamId}/performanceData/${timestamp}${suffix}.json`;
 }
 
+function buildPerformanceMonthlyStoragePath(teamId: string, timestamp: string, month: string) {
+  return `teams/${teamId}/performanceData/months/${timestamp}-${month}.json`;
+}
+
+function buildPerformanceRouteMonthlyStoragePath(teamId: string, timestamp: string, routeId: string, month: string) {
+  return `teams/${teamId}/performanceData/months/${timestamp}-route-${encodeURIComponent(routeId)}-${month}.json`;
+}
+
 function buildRawPerformanceImportStoragePath(teamId: string, timestamp: string) {
   return `teams/${teamId}/performanceImports/raw/${timestamp}.csv`;
 }
@@ -300,6 +311,25 @@ function getRetentionCutoffDateString(retentionDays = MAX_RETENTION_DAYS): strin
 function getTotalRecords(summary: PerformanceDataSummary): number {
   if (typeof summary?.metadata?.totalRecords === 'number') return summary.metadata.totalRecords;
   return (summary?.dailySummaries || []).reduce((acc, d) => acc + (d?.dataQuality?.totalRecords || 0), 0);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && !!entry[1]),
+  );
+}
+
+function readNestedStringRecord(value: unknown): Record<string, Record<string, string>> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value)
+    .map(([key, nested]) => [key, readStringRecord(nested)] as const)
+    .filter((entry): entry is readonly [string, Record<string, string>] => !!entry[1] && Object.keys(entry[1]).length > 0);
+  return Object.fromEntries(entries);
 }
 
 const REPORT_DAY_COUNT = 56;
@@ -410,6 +440,44 @@ function buildPerformanceSummary(
     },
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
+}
+
+function buildPerformanceSummaryFromBase(
+  base: PerformanceDataSummary,
+  dailySummaries: PerformanceDataSummary['dailySummaries'],
+  metadataPatch: Partial<PerformanceMetadata> = {},
+): PerformanceDataSummary {
+  const sortedSummaries = [...dailySummaries].sort((a, b) => a.date.localeCompare(b.date));
+  const allDates = sortedSummaries.map(s => s.date);
+  const totalRecords = sortedSummaries.reduce((acc, s) => acc + (s.dataQuality?.totalRecords || 0), 0);
+
+  return {
+    ...base,
+    dailySummaries: sortedSummaries,
+    metadata: {
+      ...base.metadata,
+      dateRange: allDates.length > 0
+        ? { start: allDates[0], end: allDates[allDates.length - 1] }
+        : base.metadata.dateRange,
+      dayCount: sortedSummaries.length,
+      totalRecords,
+      ...metadataPatch,
+    },
+  };
+}
+
+function buildMonthlyPerformanceSummaries(summary: PerformanceDataSummary): Map<string, PerformanceDataSummary> {
+  const byMonth = new Map<string, PerformanceDataSummary['dailySummaries']>();
+  for (const day of summary.dailySummaries) {
+    const month = day.date.slice(0, 7);
+    byMonth.set(month, [...(byMonth.get(month) || []), day]);
+  }
+
+  const result = new Map<string, PerformanceDataSummary>();
+  for (const [month, days] of byMonth) {
+    result.set(month, buildPerformanceSummaryFromBase(summary, days));
+  }
+  return result;
 }
 
 function enrichDailySummariesWithMissedTrips(
@@ -602,6 +670,9 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
   const storagePath = typeof meta.storagePath === 'string' ? meta.storagePath : null;
   const overviewStoragePath = typeof meta.overviewStoragePath === 'string' ? meta.overviewStoragePath : null;
   const reportStoragePath = typeof meta.reportStoragePath === 'string' ? meta.reportStoragePath : null;
+  const routeStoragePaths = readStringRecord(meta.routeStoragePaths);
+  const monthlyStoragePaths = readStringRecord(meta.monthlyStoragePaths);
+  const routeMonthlyStoragePaths = readNestedStringRecord(meta.routeMonthlyStoragePaths);
   const metadata: Partial<PerformanceMetadata> = {
     importedAt: meta.importedAt?.toDate?.()?.toISOString?.(),
     importedBy: typeof meta.importedBy === 'string' ? meta.importedBy : undefined,
@@ -610,25 +681,70 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
     totalRecords: typeof meta.totalRecords === 'number' ? meta.totalRecords : undefined,
     runtimeLogicVersion: typeof meta.runtimeLogicVersion === 'number' ? meta.runtimeLogicVersion : undefined,
     cleanHistoryStartDate: normalizeDateString(meta.cleanHistoryStartDate) ?? undefined,
+    storageMode: meta.storageMode === 'monthly' ? 'monthly' : (meta.storageMode === 'monolithic' ? 'monolithic' : undefined),
     storagePath: storagePath ?? undefined,
     overviewStoragePath: overviewStoragePath ?? undefined,
     reportStoragePath: reportStoragePath ?? undefined,
+    routeStoragePaths,
+    monthlyStoragePaths,
+    routeMonthlyStoragePaths,
   };
+
+  if (monthlyStoragePaths && Object.keys(monthlyStoragePaths).length > 0) {
+    try {
+      const summaries = await Promise.all(Object.keys(monthlyStoragePaths).sort().map(async month => {
+        const [content] = await getBucket().file(monthlyStoragePaths[month]).download();
+        return JSON.parse(content.toString('utf-8')) as PerformanceDataSummary;
+      }));
+      const dailySummaries = summaries.flatMap(summary => summary.dailySummaries || []);
+      const base = summaries[0] ?? {
+        dailySummaries: [],
+        metadata: {
+          importedAt: metadata.importedAt || '',
+          importedBy: metadata.importedBy || '',
+          dateRange: metadata.dateRange || { start: '', end: '' },
+          dayCount: metadata.dayCount || 0,
+          totalRecords: metadata.totalRecords || 0,
+          runtimeLogicVersion: metadata.runtimeLogicVersion,
+          cleanHistoryStartDate: metadata.cleanHistoryStartDate,
+        },
+        schemaVersion: PERFORMANCE_SCHEMA_VERSION,
+      };
+      const summary = buildPerformanceSummaryFromBase(base, dailySummaries, metadata);
+      return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, metadata };
+    } catch (error) {
+      return {
+        summary: null,
+        storagePath,
+        overviewStoragePath,
+        reportStoragePath,
+        routeStoragePaths,
+        monthlyStoragePaths,
+        routeMonthlyStoragePaths,
+        metadata,
+        readError: error instanceof Error ? error : new Error(String(error)),
+      };
+    }
+  }
+
   if (!storagePath) {
-    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, metadata };
+    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, metadata };
   }
 
   try {
     const file = getBucket().file(storagePath);
     const [content] = await file.download();
     const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
-    return { summary, storagePath, overviewStoragePath, reportStoragePath, metadata };
+    return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, metadata };
   } catch (error) {
     return {
       summary: null,
       storagePath,
       overviewStoragePath,
       reportStoragePath,
+      routeStoragePaths,
+      monthlyStoragePaths,
+      routeMonthlyStoragePaths,
       metadata,
       readError: error instanceof Error ? error : new Error(String(error)),
     };
@@ -768,69 +884,84 @@ async function savePerformanceSummary(params: {
   oldStoragePath?: string | null;
   oldOverviewStoragePath?: string | null;
   oldReportStoragePath?: string | null;
+  oldRouteStoragePaths?: Record<string, string> | null;
+  oldMonthlyStoragePaths?: Record<string, string> | null;
+  oldRouteMonthlyStoragePaths?: Record<string, Record<string, string>> | null;
   deleteOld?: boolean;
 }): Promise<string> {
   const timestamp = Date.now().toString();
-  const storagePath = buildPerformanceDataStoragePath(params.teamId, timestamp, params.suffix ?? '');
   const overviewStoragePath = buildPerformanceDataStoragePath(params.teamId, timestamp, `${params.suffix ?? ''}-overview`);
   const reportStoragePath = buildPerformanceDataStoragePath(params.teamId, timestamp, `${params.suffix ?? ''}-report`);
-  const jsonStr = JSON.stringify(params.summary);
   const overviewJsonStr = JSON.stringify(buildPerformanceOverviewSummary(params.summary));
   const reportJsonStr = JSON.stringify(buildPerformanceReportSummary(params.summary));
-  const routeStoragePaths: Record<string, string> = {};
+  const monthlyStoragePaths: Record<string, string> = {};
+  const routeMonthlyStoragePaths: Record<string, Record<string, string>> = {};
 
-  await getBucket().file(storagePath).save(jsonStr, { contentType: 'application/json' });
+  await Promise.all([...buildMonthlyPerformanceSummaries(params.summary).entries()].map(async ([month, monthSummary]) => {
+    const monthPath = buildPerformanceMonthlyStoragePath(params.teamId, timestamp, month);
+    await getBucket().file(monthPath).save(JSON.stringify(monthSummary), { contentType: 'application/json' });
+    monthlyStoragePaths[month] = monthPath;
+  }));
   await getBucket().file(overviewStoragePath).save(overviewJsonStr, { contentType: 'application/json' });
   await getBucket().file(reportStoragePath).save(reportJsonStr, { contentType: 'application/json' });
+
   await Promise.all(getAvailablePerformanceRoutes(params.summary).map(async route => {
-    const routePath = buildPerformanceDataStoragePath(
-      params.teamId,
-      timestamp,
-      `${params.suffix ?? ''}-route-${encodeURIComponent(route.routeId)}`,
-    );
     const routeSummary = filterPerformanceSummaryByRoute(params.summary, route.routeId);
     if (!routeSummary) return;
-    await getBucket().file(routePath).save(JSON.stringify(routeSummary), { contentType: 'application/json' });
-    routeStoragePaths[route.routeId] = routePath;
+    routeMonthlyStoragePaths[route.routeId] = {};
+    await Promise.all([...buildMonthlyPerformanceSummaries(routeSummary).entries()].map(async ([month, monthSummary]) => {
+      const routeMonthPath = buildPerformanceRouteMonthlyStoragePath(params.teamId, timestamp, route.routeId, month);
+      await getBucket().file(routeMonthPath).save(JSON.stringify(monthSummary), { contentType: 'application/json' });
+      routeMonthlyStoragePaths[route.routeId][month] = routeMonthPath;
+    }));
   }));
 
   await getPerformanceMetadataRef(params.teamId).set({
     importedAt: admin.firestore.FieldValue.serverTimestamp(),
     importedBy: params.importedBy,
-    storagePath,
+    storageMode: 'monthly',
     overviewStoragePath,
     reportStoragePath,
+    monthlyStoragePaths,
+    routeMonthlyStoragePaths,
     dateRange: params.summary.metadata.dateRange,
     dayCount: params.summary.metadata.dayCount,
     totalRecords: params.summary.metadata.totalRecords,
     runtimeLogicVersion: params.summary.metadata.runtimeLogicVersion,
     cleanHistoryStartDate: params.summary.metadata.cleanHistoryStartDate ?? null,
-    routeStoragePaths,
   });
 
-  if (params.deleteOld && params.oldStoragePath && params.oldStoragePath !== storagePath) {
-    try {
-      await getBucket().file(params.oldStoragePath).delete();
-    } catch {
-      // Old file may already be gone.
+  if (params.deleteOld) {
+    const cleanupPaths = new Set<string>();
+    const migratingFromMonolithic = !!params.oldStoragePath
+      && Object.keys(params.oldMonthlyStoragePaths || {}).length === 0;
+    if (params.oldStoragePath && !migratingFromMonolithic) cleanupPaths.add(params.oldStoragePath);
+    if (params.oldOverviewStoragePath && params.oldOverviewStoragePath !== overviewStoragePath) cleanupPaths.add(params.oldOverviewStoragePath);
+    if (params.oldReportStoragePath && params.oldReportStoragePath !== reportStoragePath) cleanupPaths.add(params.oldReportStoragePath);
+    Object.values(params.oldMonthlyStoragePaths || {}).forEach(path => path && cleanupPaths.add(path));
+    if (!migratingFromMonolithic) {
+      Object.values(params.oldRouteStoragePaths || {}).forEach(path => path && cleanupPaths.add(path));
     }
-  }
-  if (params.deleteOld && params.oldOverviewStoragePath && params.oldOverviewStoragePath !== overviewStoragePath) {
-    try {
-      await getBucket().file(params.oldOverviewStoragePath).delete();
-    } catch {
-      // Old overview file may already be gone.
-    }
-  }
-  if (params.deleteOld && params.oldReportStoragePath && params.oldReportStoragePath !== reportStoragePath) {
-    try {
-      await getBucket().file(params.oldReportStoragePath).delete();
-    } catch {
-      // Old report file may already be gone.
-    }
+    Object.values(params.oldRouteMonthlyStoragePaths || {}).flatMap(months => Object.values(months)).forEach(path => path && cleanupPaths.add(path));
+
+    const newPaths = new Set([
+      overviewStoragePath,
+      reportStoragePath,
+      ...Object.values(monthlyStoragePaths),
+      ...Object.values(routeMonthlyStoragePaths).flatMap(months => Object.values(months)),
+    ]);
+
+    await Promise.all([...cleanupPaths].map(async path => {
+      if (newPaths.has(path)) return;
+      try {
+        await getBucket().file(path).delete();
+      } catch {
+        // Old file may already be gone.
+      }
+    }));
   }
 
-  return storagePath;
+  return Object.values(monthlyStoragePaths)[0] || overviewStoragePath;
 }
 
 /**
@@ -1049,11 +1180,17 @@ export const ingestPerformanceData = onRequest(
       let oldStoragePath: string | null = null;
       let oldOverviewStoragePath: string | null = null;
       let oldReportStoragePath: string | null = null;
+      let oldRouteStoragePaths: Record<string, string> | null = null;
+      let oldMonthlyStoragePaths: Record<string, string> | null = null;
+      let oldRouteMonthlyStoragePaths: Record<string, Record<string, string>> | null = null;
       let existingCleanHistoryStartDate: string | undefined;
 
       try {
         const existing = await loadExistingPerformanceSummary(teamId);
-        if (shouldAbortPerformanceSummaryOverwrite(existing.storagePath, existing.summary)) {
+        if (shouldAbortPerformanceSummaryOverwrite(
+          existing.storagePath || (existing.monthlyStoragePaths ? 'monthly-performance-history' : null),
+          existing.summary,
+        )) {
           console.error('Aborting ingest because the existing performance summary could not be read:', existing.readError);
           res.status(500).json({
             error: 'Could not read the existing saved performance history, so the import was aborted to avoid overwriting it.',
@@ -1065,6 +1202,9 @@ export const ingestPerformanceData = onRequest(
         oldStoragePath = existing.storagePath;
         oldOverviewStoragePath = existing.metadata?.overviewStoragePath ?? null;
         oldReportStoragePath = existing.metadata?.reportStoragePath ?? null;
+        oldRouteStoragePaths = existing.routeStoragePaths ?? null;
+        oldMonthlyStoragePaths = existing.monthlyStoragePaths ?? null;
+        oldRouteMonthlyStoragePaths = existing.routeMonthlyStoragePaths ?? null;
         existingCleanHistoryStartDate = mergeStoredPerformanceRuntimeMetadata(
           existing.summary?.metadata,
           existing.metadata,
@@ -1103,6 +1243,9 @@ export const ingestPerformanceData = onRequest(
         oldStoragePath,
         oldOverviewStoragePath,
         oldReportStoragePath,
+        oldRouteStoragePaths,
+        oldMonthlyStoragePaths,
+        oldRouteMonthlyStoragePaths,
         deleteOld: true,
       });
       console.log(`Saved ${summary.dailySummaries.length} day(s) to ${storagePath}`);
@@ -1416,6 +1559,9 @@ export const rebuildPerformanceHistory = onRequest(
         oldStoragePath: existing.storagePath,
         oldOverviewStoragePath: existing.metadata?.overviewStoragePath ?? null,
         oldReportStoragePath: existing.metadata?.reportStoragePath ?? null,
+        oldRouteStoragePaths: existing.routeStoragePaths ?? null,
+        oldMonthlyStoragePaths: existing.monthlyStoragePaths ?? null,
+        oldRouteMonthlyStoragePaths: existing.routeMonthlyStoragePaths ?? null,
         deleteOld,
       });
 

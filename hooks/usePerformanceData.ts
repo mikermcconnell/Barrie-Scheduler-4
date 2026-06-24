@@ -33,7 +33,12 @@ export function usePerformanceDataQuery(
     routeId?: string | null,
 ) {
     return useQuery({
-        queryKey: ['performanceData', teamId, metadata?.storagePath ?? null, routeId ?? 'all'],
+        queryKey: [
+            'performanceData',
+            teamId,
+            metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null),
+            routeId ?? 'all',
+        ],
         queryFn: async () => {
             if (!teamId) return null;
             return await getPerformanceData(teamId, metadata, routeId);
@@ -52,7 +57,7 @@ export function usePerformanceOverviewQuery(
     metadata?: PerformanceMetadata | null,
 ) {
     return useQuery({
-        queryKey: ['performanceOverview', teamId, metadata?.overviewStoragePath ?? metadata?.storagePath ?? null],
+        queryKey: ['performanceOverview', teamId, metadata?.overviewStoragePath ?? metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null)],
         queryFn: async () => {
             if (!teamId) return null;
             return await getPerformanceOverviewData(teamId, metadata);

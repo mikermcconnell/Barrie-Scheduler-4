@@ -188,10 +188,10 @@ The next morning after the daily email arrives:
 4. **Cloud Function** parses the CSV using the same STREETS parser your app uses
 5. **Aggregation** computes OTP, ridership, load profiles (same as manual import)
 6. **Merge** — loads existing data, adds the new day (or replaces if same date), saves back
-7. **Firebase Storage** stores the full JSON, **Firestore** stores the metadata
+7. **Firebase Storage** stores monthly performance JSON chunks plus lightweight overview/report snapshots, **Firestore** stores the metadata and chunk pointers
 8. **Performance Dashboard** shows the updated data next time you open it
 
-Data accumulates over time — each day appends to your history.
+Data accumulates over time — each day appends to your history. The app stores performance history in monthly chunks so the daily import does not have to rebuild one huge all-history JSON file.
 
 ---
 

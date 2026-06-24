@@ -71,6 +71,8 @@ Owns the core fixed-route workflow:
 ### Operations
 Owns STREETS-style performance dashboards, imports, summaries, and reporting.
 
+STREETS performance history is now stored as monthly Storage chunks instead of one giant all-route JSON file. Metadata lives at `teams/{teamId}/performanceData/metadata` with `storageMode: 'monthly'`, `monthlyStoragePaths`, and `routeMonthlyStoragePaths`; `overviewStoragePath` and `reportStoragePath` remain the fast dashboard/email entry points. The old `storagePath` monolithic file is legacy fallback only. Keep server auto-ingest (`functions/src/index.ts`) and client manual import (`utils/performanceDataService.ts`) behavior aligned when changing this pipeline.
+
 The Ridership tab also includes a Transit On Demand pickup map. TOD pickup uploads are separate from STREETS performance data: metadata lives at `teams/{teamId}/todPickupData/metadata`, aggregated monthly JSON lives under `teams/{teamId}/todPickupData/`, and replacing an upload replaces only the selected month. Stored TOD pickup data is aggregated by stop ID when present, otherwise pickup name plus rounded coordinates, or coordinates alone. Raw rider/request rows and address columns should not be persisted. Imports are limited to CSV files under 5 MB and 25,000 rows. All team members can view TOD map data and import metadata; upload controls are owner/admin-only.
 
 ### Parking

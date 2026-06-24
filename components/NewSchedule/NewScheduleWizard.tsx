@@ -226,9 +226,14 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
     const performanceLoadRouteIds = useMemo(() => {
         const paths = performanceMetadataQuery.data?.routeStoragePaths;
-        if (!paths) return [];
-        return buildFullPerformanceLoadRouteIds(Object.keys(paths));
-    }, [performanceMetadataQuery.data?.routeStoragePaths]);
+        const monthlyPaths = performanceMetadataQuery.data?.routeMonthlyStoragePaths;
+        const routeIds = [
+            ...Object.keys(paths || {}),
+            ...Object.keys(monthlyPaths || {}),
+        ];
+        if (routeIds.length === 0) return [];
+        return buildFullPerformanceLoadRouteIds(routeIds);
+    }, [performanceMetadataQuery.data?.routeStoragePaths, performanceMetadataQuery.data?.routeMonthlyStoragePaths]);
     const defaultPerformanceLoadRouteId = useMemo(() => {
         if (performanceLoadRouteIds.length === 0) return 'all';
         const configuredRouteId = performanceConfig.routeId.trim();

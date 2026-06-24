@@ -64,6 +64,8 @@ storage/
     ├── todPickupData/{timestamp}.json
     ├── performanceData/{timestamp}-overview.json
     ├── performanceData/{timestamp}-report.json
+    ├── performanceData/months/{timestamp}-{YYYY-MM}.json
+    ├── performanceData/months/{timestamp}-route-{routeId}-{YYYY-MM}.json
     ├── performanceImports/raw/{timestamp}.csv
     ├── parking/{month}_{timestamp}.json
     ├── odMatrixData/{allPaths}
@@ -72,9 +74,12 @@ storage/
 ```
 
 `teams/{teamId}/performanceData/metadata` may store multiple storage pointers for the same import:
-- `storagePath`: full performance summary for the app
+- `storageMode`: `monthly` for current chunked performance history, or older `monolithic` data
+- `monthlyStoragePaths`: month → full monthly performance summary JSON
+- `routeMonthlyStoragePaths`: route → month → route-scoped monthly summary JSON
 - `overviewStoragePath`: lightweight recent overview payload for dashboard first-load
 - `reportStoragePath`: report-focused snapshot used by the daily email
+- `storagePath`: legacy full performance summary pointer used by older imports only
 
 Daily performance summaries may include `byOperatorDwell.totalReportableDwellMinutes`, an optional moderate/high-only dwell total used by compact report snapshots when older incident arrays are trimmed.
 

@@ -573,10 +573,13 @@ export interface PerformanceMetadata {
     totalRecords: number;
     runtimeLogicVersion?: number;
     cleanHistoryStartDate?: string;
+    storageMode?: 'monolithic' | 'monthly';
     storagePath?: string;
     overviewStoragePath?: string;
     reportStoragePath?: string;
     routeStoragePaths?: Record<string, string>;
+    monthlyStoragePaths?: Record<string, string>;
+    routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
   }
 
 // ─── Import State (ephemeral, not stored) ───────────────────────────
