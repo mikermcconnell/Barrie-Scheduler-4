@@ -332,6 +332,22 @@ function readNestedStringRecord(value: unknown): Record<string, Record<string, s
   return Object.fromEntries(entries);
 }
 
+async function mapWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  const queue = [...items];
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), queue.length) }, async () => {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) continue;
+      await task(item);
+    }
+  });
+  await Promise.all(workers);
+}
+
 const REPORT_DAY_COUNT = 56;
 const REPORT_MISSED_TRIP_DETAIL_DAY_COUNT = 7;
 
@@ -897,24 +913,24 @@ async function savePerformanceSummary(params: {
   const monthlyStoragePaths: Record<string, string> = {};
   const routeMonthlyStoragePaths: Record<string, Record<string, string>> = {};
 
-  await Promise.all([...buildMonthlyPerformanceSummaries(params.summary).entries()].map(async ([month, monthSummary]) => {
+  await mapWithConcurrency([...buildMonthlyPerformanceSummaries(params.summary).entries()], 3, async ([month, monthSummary]) => {
     const monthPath = buildPerformanceMonthlyStoragePath(params.teamId, timestamp, month);
     await getBucket().file(monthPath).save(JSON.stringify(monthSummary), { contentType: 'application/json' });
     monthlyStoragePaths[month] = monthPath;
-  }));
+  });
   await getBucket().file(overviewStoragePath).save(overviewJsonStr, { contentType: 'application/json' });
   await getBucket().file(reportStoragePath).save(reportJsonStr, { contentType: 'application/json' });
 
-  await Promise.all(getAvailablePerformanceRoutes(params.summary).map(async route => {
+  await mapWithConcurrency(getAvailablePerformanceRoutes(params.summary), 2, async route => {
     const routeSummary = filterPerformanceSummaryByRoute(params.summary, route.routeId);
     if (!routeSummary) return;
     routeMonthlyStoragePaths[route.routeId] = {};
-    await Promise.all([...buildMonthlyPerformanceSummaries(routeSummary).entries()].map(async ([month, monthSummary]) => {
+    await mapWithConcurrency([...buildMonthlyPerformanceSummaries(routeSummary).entries()], 2, async ([month, monthSummary]) => {
       const routeMonthPath = buildPerformanceRouteMonthlyStoragePath(params.teamId, timestamp, route.routeId, month);
       await getBucket().file(routeMonthPath).save(JSON.stringify(monthSummary), { contentType: 'application/json' });
       routeMonthlyStoragePaths[route.routeId][month] = routeMonthPath;
-    }));
-  }));
+    });
+  });
 
   await getPerformanceMetadataRef(params.teamId).set({
     importedAt: admin.firestore.FieldValue.serverTimestamp(),

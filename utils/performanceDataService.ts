@@ -115,6 +115,22 @@ function readNestedStringRecord(value: unknown): Record<string, Record<string, s
     return Object.fromEntries(entries);
 }
 
+async function mapWithConcurrency<T>(
+    items: T[],
+    concurrency: number,
+    task: (item: T) => Promise<void>,
+): Promise<void> {
+    const queue = [...items];
+    const workers = Array.from({ length: Math.min(Math.max(1, concurrency), queue.length) }, async () => {
+        while (queue.length > 0) {
+            const item = queue.shift();
+            if (!item) continue;
+            await task(item);
+        }
+    });
+    await Promise.all(workers);
+}
+
 async function downloadStorageJson<T>(storagePath: string): Promise<T | null> {
     const url = await getDownloadURL(ref(storage, storagePath));
     const response = await fetch(url);
@@ -291,13 +307,13 @@ export async function savePerformanceData(
     const monthlySummaries = buildMonthlySummaries(merged);
 
     // Upload monthly chunks instead of one giant all-history JSON.
-    await Promise.all([...monthlySummaries.entries()].map(async ([month, monthSummary]) => {
+    await mapWithConcurrency([...monthlySummaries.entries()], 3, async ([month, monthSummary]) => {
         const monthPath = getMonthlyStoragePath(teamId, timestamp, month);
         await uploadBytes(ref(storage, monthPath), buildStorageJsonUploadData(monthSummary), {
             contentType: 'application/json',
         });
         monthlyStoragePaths[month] = monthPath;
-    }));
+    });
 
     await uploadBytes(ref(storage, overviewStoragePath), buildStorageJsonUploadData(overviewSummary), {
         contentType: 'application/json',
@@ -306,19 +322,19 @@ export async function savePerformanceData(
         contentType: 'application/json',
     });
 
-    await Promise.all(getAvailablePerformanceRoutes(merged).map(async route => {
+    await mapWithConcurrency(getAvailablePerformanceRoutes(merged), 2, async route => {
         const routeSummary = filterPerformanceSummaryByRoute(merged, route.routeId);
         if (!routeSummary) return;
         const routeMonthlySummaries = buildMonthlySummaries(routeSummary);
         routeMonthlyStoragePaths[route.routeId] = {};
-        await Promise.all([...routeMonthlySummaries.entries()].map(async ([month, monthSummary]) => {
+        await mapWithConcurrency([...routeMonthlySummaries.entries()], 2, async ([month, monthSummary]) => {
             const routeMonthPath = getRouteMonthlyStoragePath(teamId, timestamp, route.routeId, month);
             await uploadBytes(ref(storage, routeMonthPath), buildStorageJsonUploadData(monthSummary), {
                 contentType: 'application/json',
             });
             routeMonthlyStoragePaths[route.routeId][month] = routeMonthPath;
-        }));
-    }));
+        });
+    });
 
     await setDoc(metadataRef, {
         importedAt: serverTimestamp(),
