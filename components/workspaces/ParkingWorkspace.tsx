@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -39,16 +39,18 @@ import {
   getParkingData,
   getParkingSettings,
   rebuildParkingSummaryWithRules,
-  saveParkingMonthData,
+  saveParkingMonthsData,
   saveParkingSettings,
 } from '../../utils/parking/parkingService';
 import {
   DEFAULT_PARKING_SETTINGS,
   type ParkingCodeFamilyMapping,
+  type ParkingDepartmentLegendSortKey,
   type ParkingMonthlyDataset,
   type ParkingPlatePattern,
   type ParkingRawRow,
   type ParkingSettings,
+  type ParkingSortDirection,
   type ParkingSummary,
   type ParkingUnmappedCodeFamily,
   type ParkingYearCodeFormat,
@@ -107,6 +109,16 @@ const DEPARTMENT_COLORS = [
 ];
 
 const normalizeText = (value: string | null | undefined) => (value || '').trim().toLowerCase();
+const DEFAULT_DEPARTMENT_LEGEND_SORT = DEFAULT_PARKING_SETTINGS.departmentLegendSort || { key: 'color' as ParkingDepartmentLegendSortKey, direction: 'asc' as ParkingSortDirection };
+
+interface DepartmentLegendRow {
+  familyKey: string;
+  code: string;
+  department: string;
+  hex: string;
+  ignoreFlags: boolean;
+  mappingIndex: number;
+}
 
 function readableTextColor(hex: string): string {
   const value = hex.replace('#', '');
@@ -142,8 +154,9 @@ function getCodeFamilyColor(codeFamilyKey?: string, department?: string, mapping
 
 function getDepartmentRowsForLegend(settings: ParkingSettings) {
   return settings.codeFamilies
-    .filter(mapping => !mapping.archived)
-    .map(mapping => {
+    .map((mapping, mappingIndex) => ({ mapping, mappingIndex }))
+    .filter(({ mapping }) => !mapping.archived)
+    .map(({ mapping, mappingIndex }): DepartmentLegendRow => {
       const color = getCodeFamilyColor(mapping.familyKey, mapping.department, settings.codeFamilies);
       const previewYear = getParkingActiveYears(mapping)[0] || new Date().getFullYear();
       return {
@@ -151,8 +164,74 @@ function getDepartmentRowsForLegend(settings: ParkingSettings) {
         code: getParkingCodesForYear(mapping, previewYear)[0] || mapping.familyKey,
         department: mapping.department || 'Unnamed department',
         hex: color.hex,
+        ignoreFlags: Boolean(mapping.ignoreFlags),
+        mappingIndex,
       };
     });
+}
+
+function getHexSortValue(hex: string): number {
+  const value = hex.replace('#', '');
+  const red = parseInt(value.slice(0, 2), 16) / 255;
+  const green = parseInt(value.slice(2, 4), 16) / 255;
+  const blue = parseInt(value.slice(4, 6), 16) / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  let hue = 0;
+  if (delta) {
+    if (max === red) hue = ((green - blue) / delta) % 6;
+    else if (max === green) hue = (blue - red) / delta + 2;
+    else hue = (red - green) / delta + 4;
+    hue *= 60;
+    if (hue < 0) hue += 360;
+  }
+  const saturation = max === 0 ? 0 : delta / max;
+  const lightness = (max + min) / 2;
+  return hue * 10_000 + saturation * 100 + lightness;
+}
+
+function sortDepartmentLegendRows(rows: DepartmentLegendRow[], sortKey: ParkingDepartmentLegendSortKey, direction: ParkingSortDirection): DepartmentLegendRow[] {
+  const multiplier = direction === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    let result = 0;
+    if (sortKey === 'color') {
+      result = getHexSortValue(a.hex) - getHexSortValue(b.hex);
+    } else if (sortKey === 'code') {
+      result = a.code.localeCompare(b.code);
+    } else if (sortKey === 'department') {
+      result = a.department.localeCompare(b.department);
+    } else {
+      result = Number(a.ignoreFlags) - Number(b.ignoreFlags);
+    }
+    return (result * multiplier)
+      || a.department.localeCompare(b.department)
+      || a.familyKey.localeCompare(b.familyKey);
+  });
+}
+
+function mergeUnmappedCodeFamilies(values: ParkingUnmappedCodeFamily[]): ParkingUnmappedCodeFamily[] {
+  const merged = new Map<string, ParkingUnmappedCodeFamily>();
+  for (const value of values) {
+    const existing = merged.get(value.familyKey) || {
+      familyKey: value.familyKey,
+      codes: [],
+      descriptions: [],
+      rowCount: 0,
+    };
+    existing.codes = [...new Set([...existing.codes, ...value.codes])].sort();
+    existing.descriptions = [...new Set([...existing.descriptions, ...value.descriptions].filter(Boolean))].sort();
+    existing.rowCount += value.rowCount;
+    merged.set(value.familyKey, existing);
+  }
+  return [...merged.values()].sort((a, b) => a.familyKey.localeCompare(b.familyKey));
+}
+
+function summarizeImportMonths(datasets: ParkingMonthlyDataset[]): string {
+  const months = datasets.map(dataset => dataset.month).sort();
+  if (months.length === 0) return '';
+  if (months.length === 1) return months[0];
+  return `${months[0]} to ${months.at(-1)} (${months.length} months)`;
 }
 
 function minutesToDuration(minutes: number): string {
@@ -431,9 +510,10 @@ export const ParkingWorkspace: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<ParkingSettings>(DEFAULT_PARKING_SETTINGS);
+  const settingsRef = useRef<ParkingSettings>(DEFAULT_PARKING_SETTINGS);
   const [summary, setSummary] = useState<ParkingSummary | null>(null);
-  const [previewDataset, setPreviewDataset] = useState<ParkingMonthlyDataset | null>(null);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [previewDatasets, setPreviewDatasets] = useState<ParkingMonthlyDataset[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [unmapped, setUnmapped] = useState<ParkingUnmappedCodeFamily[]>([]);
   const [mappingDrafts, setMappingDrafts] = useState<Record<string, string>>({});
@@ -446,15 +526,22 @@ export const ParkingWorkspace: React.FC = () => {
   const [departmentManagerOpen, setDepartmentManagerOpen] = useState(false);
   const [departmentSearch, setDepartmentSearch] = useState('');
   const [departmentCodeYear, setDepartmentCodeYear] = useState(new Date().getFullYear());
+  const [departmentLegendSort, setDepartmentLegendSort] = useState(DEFAULT_DEPARTMENT_LEGEND_SORT);
 
   const displaySummary = useMemo(() => buildDisplaySummary(summary, settings), [settings, summary]);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
   const reviewMonths = useMemo(() => {
     const savedMonths = displaySummary?.months ?? [];
-    const months = previewDataset
-      ? [...savedMonths.filter(month => month.month !== previewDataset.month), previewDataset]
+    const previewMonthKeys = new Set(previewDatasets.map(month => month.month));
+    const months = previewDatasets.length > 0
+      ? [...savedMonths.filter(month => !previewMonthKeys.has(month.month)), ...previewDatasets]
       : savedMonths;
     return [...months].sort((a, b) => a.month.localeCompare(b.month));
-  }, [displaySummary, previewDataset]);
+  }, [displaySummary, previewDatasets]);
   const latestMonth = reviewMonths.at(-1) ?? null;
   const availableYears = useMemo(() => [...new Set(reviewMonths.map(month => month.month.slice(0, 4)))].sort(), [reviewMonths]);
   const monthsForSelectedYear = useMemo(
@@ -462,6 +549,7 @@ export const ParkingWorkspace: React.FC = () => {
     [reviewMonths, selectedYear],
   );
   const selectedMonthDataset = monthsForSelectedYear.find(month => month.month === selectedMonth) ?? null;
+  const selectedPreviewDataset = previewDatasets.find(month => month.month === selectedMonth) ?? null;
   const canEditParking = canManageTeam || canAccessWorkspaceFeature('workspaceParking', teamMember);
   const annualSummaryRows = useMemo(() => buildAnnualSummaryRows(reviewMonths, selectedYear), [reviewMonths, selectedYear]);
   const annualTotalValue = annualSummaryRows.reduce((sum, row) => sum + row.total, 0);
@@ -469,14 +557,14 @@ export const ParkingWorkspace: React.FC = () => {
   const selectedMonthLabel = MONTHS.find(month => month.value === selectedMonth.slice(5, 7))?.label ?? selectedMonth;
   const monthlyFlaggedPlates = useMemo(() => {
     if (!selectedMonth) return [];
-    if (previewDataset?.month === selectedMonth) return previewDataset.platePatterns.filter(pattern => pattern.flags.length > 0);
+    if (selectedPreviewDataset) return selectedPreviewDataset.platePatterns.filter(pattern => pattern.flags.length > 0);
     return displaySummary?.platePatterns.filter(pattern => pattern.month === selectedMonth && pattern.flags.length > 0) ?? [];
-  }, [displaySummary, previewDataset, selectedMonth]);
+  }, [displaySummary, selectedMonth, selectedPreviewDataset]);
   const monthlyDepartmentRows = useMemo(() => {
     if (!selectedMonth) return [];
-    if (previewDataset?.month === selectedMonth) return previewDataset.departmentSummaries;
+    if (selectedPreviewDataset) return selectedPreviewDataset.departmentSummaries;
     return displaySummary?.departmentSummaries.filter(row => row.month === selectedMonth) ?? [];
-  }, [displaySummary, previewDataset, selectedMonth]);
+  }, [displaySummary, selectedMonth, selectedPreviewDataset]);
   const highDepartments = monthlyDepartmentRows.filter(row => row.isHighUsage);
   const rawTransactionRows = useMemo<ParkingRawRow[]>(() => {
     const rows = selectedMonthDataset?.rows ?? [];
@@ -487,7 +575,13 @@ export const ParkingWorkspace: React.FC = () => {
     ));
   }, [selectedMonthDataset]);
   const selectedMonthTotalValue = selectedMonthDataset?.totalValue ?? 0;
-  const departmentLegendRows = useMemo(() => getDepartmentRowsForLegend(settings), [settings]);
+  const previewRowCount = previewDatasets.reduce((sum, dataset) => sum + dataset.rowCount, 0);
+  const previewTotalValue = previewDatasets.reduce((sum, dataset) => sum + dataset.totalValue, 0);
+  const previewFlaggedPlateCount = previewDatasets.reduce((sum, dataset) => sum + dataset.platePatterns.filter(pattern => pattern.flags.length > 0).length, 0);
+  const departmentLegendRows = useMemo(
+    () => sortDepartmentLegendRows(getDepartmentRowsForLegend(settings), departmentLegendSort.key, departmentLegendSort.direction),
+    [departmentLegendSort.direction, departmentLegendSort.key, settings],
+  );
   const filteredCodeFamilies = useMemo(() => {
     const query = normalizeText(departmentSearch);
     return settings.codeFamilies
@@ -517,7 +611,9 @@ export const ParkingWorkspace: React.FC = () => {
         getParkingSettings(team.id),
         getParkingData(team.id),
       ]);
+      settingsRef.current = loadedSettings;
       setSettings(loadedSettings);
+      setDepartmentLegendSort(loadedSettings.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
       setSummary(loadedData);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Could not load Parking data.');
@@ -572,32 +668,50 @@ export const ParkingWorkspace: React.FC = () => {
     setExpandedPlateKey('');
   }, [selectedMonth]);
 
-  const parseFile = useCallback(async (file: File, nextSettings = settings) => {
-    if (!user) return;
+  const parseFiles = useCallback(async (files: File[], nextSettings = settings) => {
+    if (!user || files.length === 0) return;
     setErrorMessage('');
     setWarnings([]);
     setUnmapped([]);
-    setPreviewDataset(null);
-    setPendingFile(file);
+    setPreviewDatasets([]);
+    setPendingFiles(files);
     try {
-      const result = await parseParkingFile(file, user.uid, nextSettings);
-      setWarnings(result.warnings);
-      setUnmapped(result.unmappedCodeFamilies);
-      setPreviewDataset(result.unmappedCodeFamilies.length === 0 ? result.dataset : null);
-      setMappingDrafts(Object.fromEntries(result.unmappedCodeFamilies.map(code => [code.familyKey, code.descriptions[0] || ''])));
+      const parsed = [];
+      for (const file of files) {
+        parsed.push({ fileName: file.name, result: await parseParkingFile(file, user.uid, nextSettings) });
+      }
+
+      const months = new Set<string>();
+      for (const entry of parsed) {
+        const month = entry.result.dataset.month;
+        if (months.has(month)) {
+          throw new Error(`Multiple selected Parking files contain ${month}. Pick one file per month.`);
+        }
+        months.add(month);
+      }
+
+      const combinedWarnings = parsed.flatMap(entry => (
+        entry.result.warnings.map(warning => files.length > 1 ? `${entry.fileName}: ${warning}` : warning)
+      ));
+      const combinedUnmapped = mergeUnmappedCodeFamilies(parsed.flatMap(entry => entry.result.unmappedCodeFamilies));
+      const datasets = parsed.map(entry => entry.result.dataset).sort((a, b) => a.month.localeCompare(b.month));
+      setWarnings(combinedWarnings);
+      setUnmapped(combinedUnmapped);
+      setPreviewDatasets(combinedUnmapped.length === 0 ? datasets : []);
+      setMappingDrafts(Object.fromEntries(combinedUnmapped.map(code => [code.familyKey, code.descriptions[0] || ''])));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Could not parse HotSpot file.');
+      setErrorMessage(error instanceof Error ? error.message : 'Could not parse HotSpot files.');
     }
   }, [settings, user]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) void parseFile(file);
+    const files = Array.from(event.target.files ?? []);
+    if (files.length > 0) void parseFiles(files);
     event.target.value = '';
   };
 
   const applyUnmappedMappings = async () => {
-    if (!pendingFile) return;
+    if (pendingFiles.length === 0) return;
     const newMappings: ParkingCodeFamilyMapping[] = unmapped.map(code => ({
       familyKey: code.familyKey,
       codes: code.codes,
@@ -619,21 +733,27 @@ export const ParkingWorkspace: React.FC = () => {
       ].sort((a, b) => a.familyKey.localeCompare(b.familyKey)),
     };
     setSettings(nextSettings);
-    await parseFile(pendingFile, nextSettings);
+    await parseFiles(pendingFiles, nextSettings);
   };
 
   const importPreview = async () => {
-    if (!team || !user || !previewDataset) return;
+    if (!team || !user || previewDatasets.length === 0) return;
     setSaving(true);
     try {
       const savedSettings = await saveParkingSettings(team.id, user.uid, settings);
-      const savedSummary = await saveParkingMonthData(team.id, user.uid, previewDataset, savedSettings);
-      setSettings(savedSettings);
+      const savedSummary = await saveParkingMonthsData(team.id, user.uid, previewDatasets, savedSettings);
+      applySettingsState(savedSettings);
+      setDepartmentLegendSort(savedSettings.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
       setSummary(savedSummary);
-      setPreviewDataset(null);
-      setPendingFile(null);
+      setPreviewDatasets([]);
+      setPendingFiles([]);
       setWarnings([]);
-      toast.success('Parking import saved', `${previewDataset.month} replaced with ${previewDataset.rowCount.toLocaleString()} rows.`);
+      toast.success(
+        'Parking import saved',
+        previewDatasets.length === 1
+          ? `${previewDatasets[0].month} replaced with ${previewDatasets[0].rowCount.toLocaleString()} rows.`
+          : `${previewDatasets.length} months replaced with ${previewRowCount.toLocaleString()} total rows.`,
+      );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Could not save Parking import.');
     } finally {
@@ -641,18 +761,29 @@ export const ParkingWorkspace: React.FC = () => {
     }
   };
 
-  const saveSettingsOnly = async () => {
+  const applySettingsState = (nextSettings: ParkingSettings) => {
+    settingsRef.current = nextSettings;
+    setSettings(nextSettings);
+  };
+
+  const persistParkingSettings = async (nextSettings: ParkingSettings, options: { showSaving?: boolean; showToast?: boolean } = {}) => {
     if (!team || !user) return;
-    setSaving(true);
+    applySettingsState(nextSettings);
+    if (options.showSaving) setSaving(true);
     try {
-      const saved = await saveParkingSettings(team.id, user.uid, settings);
-      setSettings(saved);
-      toast.success('Parking settings saved');
+      const saved = await saveParkingSettings(team.id, user.uid, nextSettings);
+      applySettingsState(saved);
+      setDepartmentLegendSort(saved.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
+      if (options.showToast) toast.success('Parking settings saved');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Could not save Parking settings.');
     } finally {
-      setSaving(false);
+      if (options.showSaving) setSaving(false);
     }
+  };
+
+  const saveSettingsOnly = async () => {
+    await persistParkingSettings(settingsRef.current, { showSaving: true, showToast: true });
   };
 
   const addCodeFamily = () => setSettings(current => ({
@@ -670,7 +801,7 @@ export const ParkingWorkspace: React.FC = () => {
     ],
   }));
 
-  const updateCodeFamilyDirectory = (index: number, patch: Partial<ParkingCodeFamilyMapping>) => setSettings(current => ({
+  const buildSettingsWithCodeFamilyPatch = (current: ParkingSettings, index: number, patch: Partial<ParkingCodeFamilyMapping>): ParkingSettings => ({
     ...current,
     codeFamilies: current.codeFamilies.map((mapping, i) => {
       if (i !== index) return mapping;
@@ -686,7 +817,14 @@ export const ParkingWorkspace: React.FC = () => {
         codes: activeYears.map(year => buildParkingGeneratedCode(familyKey, year, yearCodeFormat)).filter(Boolean),
       };
     }),
-  }));
+  });
+
+  const updateCodeFamilyDirectory = (index: number, patch: Partial<ParkingCodeFamilyMapping>) => setSettings(current => buildSettingsWithCodeFamilyPatch(current, index, patch));
+
+  const updateCodeFamilyDirectoryAndSave = (index: number, patch: Partial<ParkingCodeFamilyMapping>) => {
+    const nextSettings = buildSettingsWithCodeFamilyPatch(settingsRef.current, index, patch);
+    void persistParkingSettings(nextSettings);
+  };
 
   const updateCodeFamilyOverridesForYear = (index: number, year: number, codesText: string) => setSettings(current => ({
     ...current,
@@ -704,6 +842,32 @@ export const ParkingWorkspace: React.FC = () => {
     ...current,
     codeFamilies: current.codeFamilies.filter((_, i) => i !== index),
   }));
+
+  const toggleDepartmentLegendSort = (key: ParkingDepartmentLegendSortKey) => setDepartmentLegendSort(current => {
+    const nextSort = {
+      key,
+      direction: (current.key === key && current.direction === 'asc' ? 'desc' : 'asc') as ParkingSortDirection,
+    };
+    const nextSettings = {
+      ...settingsRef.current,
+      departmentLegendSort: nextSort,
+    };
+    void persistParkingSettings(nextSettings);
+    return nextSort;
+  });
+
+  const renderDepartmentLegendHeader = (key: ParkingDepartmentLegendSortKey, label: string, className = '') => (
+    <button
+      type="button"
+      onClick={() => toggleDepartmentLegendSort(key)}
+      className={`inline-flex items-center gap-1 text-left hover:text-blue-700 ${className}`}
+    >
+      {label}
+      <span className="text-[9px] text-gray-400">
+        {departmentLegendSort.key === key ? (departmentLegendSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+      </span>
+    </button>
+  );
 
   const addSpotLocation = () => setSettings(current => ({
     ...current,
@@ -771,12 +935,12 @@ export const ParkingWorkspace: React.FC = () => {
             <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-lg font-extrabold text-gray-950">Import HotSpot month</h3>
-                  <p className="mt-1 text-sm text-gray-500">One workbook must contain one month only. Saving replaces that month.</p>
+                  <h3 className="text-lg font-extrabold text-gray-950">Import HotSpot month(s)</h3>
+                  <p className="mt-1 text-sm text-gray-500">Each workbook must contain one month. Select multiple files to replace different months together.</p>
                 </div>
                 <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
                   <Upload size={16} /> Upload .xlsx
-                  <input type="file" accept=".xlsx,.xls" disabled={!canEditParking || saving} onChange={handleFileChange} className="hidden" />
+                  <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleFileChange} className="hidden" />
                 </label>
               </div>
 
@@ -810,16 +974,25 @@ export const ParkingWorkspace: React.FC = () => {
                 </div>
               ) : null}
 
-              {previewDataset ? (
+              {previewDatasets.length > 0 ? (
                 <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex items-start gap-3">
                       <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={20} />
                       <div>
-                        <h4 className="font-extrabold text-emerald-950">Ready to replace {previewDataset.month}</h4>
+                        <h4 className="font-extrabold text-emerald-950">Ready to replace {summarizeImportMonths(previewDatasets)}</h4>
                         <p className="mt-1 text-sm font-medium text-emerald-800">
-                          {previewDataset.rowCount.toLocaleString()} rows · {money(previewDataset.totalValue)} total value · {previewDataset.platePatterns.filter(p => p.flags.length > 0).length} flagged plates
+                          {previewRowCount.toLocaleString()} rows · {money(previewTotalValue)} total value · {previewFlaggedPlateCount} flagged plates
                         </p>
+                        {previewDatasets.length > 1 ? (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {previewDatasets.map(dataset => (
+                              <span key={dataset.month} className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-extrabold text-emerald-800">
+                                {dataset.month}: {dataset.rowCount.toLocaleString()} rows
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                     <button disabled={saving || !canEditParking} onClick={() => void importPreview()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
@@ -1044,7 +1217,7 @@ export const ParkingWorkspace: React.FC = () => {
                 <div>
                   <h3 className="text-lg font-extrabold text-gray-950">Raw transactions</h3>
                   <p className="mt-1 text-sm text-gray-500">
-                    {previewDataset ? 'Preview rows from the uploaded workbook before saving.' : 'Normalized HotSpot transaction rows from saved imports.'}
+                    {previewDatasets.length > 0 ? 'Preview rows from the uploaded workbook(s) before saving.' : 'Normalized HotSpot transaction rows from saved imports.'}
                   </p>
                 </div>
                 <span className="text-xs font-extrabold uppercase tracking-wide text-gray-400">{rawTransactionRows.length.toLocaleString()} rows</span>
@@ -1091,16 +1264,42 @@ export const ParkingWorkspace: React.FC = () => {
 
           <aside className="space-y-6">
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <h3 className="font-extrabold text-gray-950">Department color legend</h3>
-              <p className="mt-1 text-xs font-semibold text-gray-400">Matches the department colors used in the Excel assessment.</p>
-              <div className="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
-                {departmentLegendRows.map(color => (
-                  <div key={color.familyKey} className="flex items-center gap-2 text-xs">
-                    <span className="h-4 w-4 shrink-0 rounded" style={{ backgroundColor: color.hex }} />
-                    <span className="w-14 shrink-0 font-extrabold text-gray-700">{color.code}</span>
-                    <span className="min-w-0 truncate font-semibold text-gray-500">{color.department}</span>
-                  </div>
-                ))}
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-extrabold text-gray-950">Department color legend</h3>
+                  <p className="mt-1 text-xs font-semibold text-gray-400">Click a column header to sort. Ignore flags suppresses plate indicators for that department.</p>
+                </div>
+              </div>
+              <div className="mt-4 max-h-80 overflow-y-auto rounded-2xl border border-gray-100">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-gray-50 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">
+                    <tr>
+                      <th className="px-3 py-2">{renderDepartmentLegendHeader('color', 'Color')}</th>
+                      <th className="px-3 py-2">{renderDepartmentLegendHeader('code', 'Code')}</th>
+                      <th className="px-3 py-2">{renderDepartmentLegendHeader('department', 'Department')}</th>
+                      <th className="px-3 py-2 text-center">{renderDepartmentLegendHeader('ignoreFlags', 'Ignore flags', 'mx-auto')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {departmentLegendRows.map(color => (
+                      <tr key={`${color.familyKey}-${color.mappingIndex}`} className="bg-white">
+                        <td className="px-3 py-2"><span className="block h-4 w-4 rounded" style={{ backgroundColor: color.hex }} /></td>
+                        <td className="px-3 py-2 font-extrabold text-gray-700">{color.code}</td>
+                        <td className="min-w-0 px-3 py-2 font-semibold text-gray-500">{color.department}</td>
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={color.ignoreFlags}
+                            disabled={!canEditParking}
+                            onChange={event => updateCodeFamilyDirectoryAndSave(color.mappingIndex, { ignoreFlags: event.target.checked })}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
+                            aria-label={`Ignore plate flags for ${color.department}`}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </section>
 
@@ -1260,7 +1459,7 @@ export const ParkingWorkspace: React.FC = () => {
                     const finalCodes = getParkingCodesForYear(mapping, departmentCodeYear);
                     return (
                       <div key={`${mapping.familyKey}-${index}`} className="rounded-3xl border-2 border-gray-200 bg-white p-4 shadow-sm">
-                        <div className="grid gap-4 xl:grid-cols-[minmax(260px,1fr)_150px_210px_180px_90px] xl:items-end">
+                        <div className="grid gap-4 xl:grid-cols-[minmax(260px,1fr)_150px_210px_180px_120px_90px] xl:items-end">
                           <div>
                             <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Department</div>
                             <TextInput disabled={!canEditParking} value={mapping.department} onChange={value => updateCodeFamilyDirectory(index, { department: value })} placeholder="Department name" />
@@ -1300,6 +1499,17 @@ export const ParkingWorkspace: React.FC = () => {
                               {generated || 'Add short code'}
                             </div>
                           </div>
+
+                          <label className="flex min-h-10 items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+                            <input
+                              type="checkbox"
+                              disabled={!canEditParking}
+                              checked={Boolean(mapping.ignoreFlags)}
+                              onChange={event => updateCodeFamilyDirectoryAndSave(index, { ignoreFlags: event.target.checked })}
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
+                            />
+                            <span className="text-xs font-extrabold text-gray-600">Ignore flags</span>
+                          </label>
 
                           <div className="flex items-end gap-2">
                             <label className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50" title="Department color">

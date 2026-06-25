@@ -89,7 +89,7 @@ Shared department parking-code usage review lives in:
 - `components/workspaces/ParkingWorkspace.tsx`
 - `utils/parking/`
 
-The workspace imports one-month HotSpot Excel exports, stores normalized row-level data in team Storage, keeps code-family and spot-location mappings in Firestore, and derives department month-over-month summaries plus plate-level pattern flags.
+The workspace imports one or more one-month HotSpot Excel exports, stores normalized row-level data in team Storage, keeps code-family and spot-location mappings in Firestore, and derives department month-over-month summaries plus plate-level pattern flags.
 
 ### 5) Planning-data / analytics surfaces
 

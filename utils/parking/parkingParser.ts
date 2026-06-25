@@ -197,7 +197,7 @@ export function parseParkingWorkbook(
   }
 
   const month = [...months][0];
-  const analysis = buildParkingMonthAnalysis(parsedRows, settings.flagRules);
+  const analysis = buildParkingMonthAnalysis(parsedRows, settings);
   const dataset: ParkingMonthlyDataset = {
     month,
     importedAt: new Date().toISOString(),

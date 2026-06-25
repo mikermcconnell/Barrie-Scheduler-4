@@ -12,7 +12,7 @@ import {
   uploadBytes,
 } from 'firebase/storage';
 import { db, storage } from '../firebase';
-import { buildParkingMonthAnalysis, buildParkingReplacementSummary, buildParkingSummary, mergeParkingSettings } from './parkingAggregation';
+import { buildParkingMonthAnalysis, buildParkingReplacementSummaryForMonths, buildParkingSummary, mergeParkingSettings } from './parkingAggregation';
 import {
   DEFAULT_PARKING_SETTINGS,
   type ParkingMonthlyDataset,
@@ -33,6 +33,14 @@ function getStoragePath(teamId: string, timestamp: string): string {
   return `teams/${teamId}/parking/${timestamp}.json`;
 }
 
+function getImportStorageKey(datasets: ParkingMonthlyDataset[]): string {
+  const months = datasets.map(dataset => dataset.month).sort();
+  const prefix = months.length === 1
+    ? months[0]
+    : `${months[0]}_to_${months.at(-1)}_${months.length}months`;
+  return `${prefix}_${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function buildUploadPayload(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
 }
@@ -45,6 +53,19 @@ export function assertParkingStoragePathUnchanged(expectedPath: string | null, a
   if (expectedPath !== actualPath) {
     throw new Error('Parking data changed while importing. Refresh and try again.');
   }
+}
+
+function readDepartmentLegendSort(value: unknown): ParkingSettings['departmentLegendSort'] {
+  if (!value || typeof value !== 'object') return DEFAULT_PARKING_SETTINGS.departmentLegendSort;
+  const raw = value as Record<string, unknown>;
+  const key = raw.key;
+  const direction = raw.direction;
+  const validKey = key === 'color' || key === 'code' || key === 'department' || key === 'ignoreFlags';
+  const validDirection = direction === 'asc' || direction === 'desc';
+  return {
+    key: validKey ? key : 'color',
+    direction: validDirection ? direction : 'asc',
+  };
 }
 
 export function readParkingSettingsFromDocument(data: Record<string, unknown> | undefined): ParkingSettings {
@@ -61,6 +82,7 @@ export function readParkingSettingsFromDocument(data: Record<string, unknown> | 
       ...DEFAULT_PARKING_SETTINGS.flagRules,
       ...(typeof rawSettings.flagRules === 'object' && rawSettings.flagRules ? rawSettings.flagRules : {}),
     },
+    departmentLegendSort: readDepartmentLegendSort(rawSettings.departmentLegendSort),
     updatedAt: typeof rawSettings.updatedAt === 'string' ? rawSettings.updatedAt : undefined,
     updatedBy: typeof rawSettings.updatedBy === 'string' ? rawSettings.updatedBy : undefined,
   });
@@ -128,14 +150,14 @@ export function rebuildParkingSummaryWithRules(
   settings: ParkingSettings,
 ): ParkingSummary {
   const months = summary.months.map(month => {
-    const analysis = buildParkingMonthAnalysis(month.rows, settings.flagRules);
+    const analysis = buildParkingMonthAnalysis(month.rows, settings);
     return {
       ...month,
       departmentSummaries: analysis.departmentSummaries,
       platePatterns: analysis.platePatterns,
     };
   });
-  return buildParkingSummary(months, importedBy, storagePath, settings.flagRules);
+  return buildParkingSummary(months, importedBy, storagePath, settings);
 }
 
 export async function saveParkingMonthData(
@@ -144,8 +166,27 @@ export async function saveParkingMonthData(
   dataset: ParkingMonthlyDataset,
   settings: ParkingSettings,
 ): Promise<ParkingSummary> {
-  const timestamp = `${dataset.month}_${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const storagePath = getStoragePath(teamId, timestamp);
+  return saveParkingMonthsData(teamId, userId, [dataset], settings);
+}
+
+export async function saveParkingMonthsData(
+  teamId: string,
+  userId: string,
+  datasets: ParkingMonthlyDataset[],
+  settings: ParkingSettings,
+): Promise<ParkingSummary> {
+  if (datasets.length === 0) {
+    throw new Error('Select at least one Parking month to save.');
+  }
+  const months = new Set<string>();
+  for (const dataset of datasets) {
+    if (months.has(dataset.month)) {
+      throw new Error('Parking batch imports must contain different months.');
+    }
+    months.add(dataset.month);
+  }
+
+  const storagePath = getStoragePath(teamId, getImportStorageKey(datasets));
   const defaultRef = getParkingDefaultRef(teamId);
   const existing = await getDoc(defaultRef);
   const oldPath = existing.exists() ? normalizeParkingStoragePath(existing.data().storagePath) : null;
@@ -158,7 +199,7 @@ export async function saveParkingMonthData(
     oldSummary = await response.json() as ParkingSummary;
   }
 
-  const summary = buildParkingReplacementSummary(oldSummary, dataset, userId, storagePath, settings.flagRules);
+  const summary = buildParkingReplacementSummaryForMonths(oldSummary, datasets, userId, storagePath, settings);
   let uploadedNewFile = false;
   try {
     await uploadBytes(ref(storage, storagePath), buildUploadPayload(summary), { contentType: 'application/json' });
@@ -181,15 +222,17 @@ export async function saveParkingMonthData(
           updatedBy: settings.updatedBy || userId,
         },
       }, { merge: true });
-      transaction.set(getParkingMonthRef(teamId, dataset.month), {
-        month: dataset.month,
-        importedAt: serverTimestamp(),
-        importedBy: userId,
-        sourceFileName: dataset.sourceFileName,
-        rowCount: dataset.rowCount,
-        totalValue: dataset.totalValue,
-        storagePath,
-      });
+      for (const dataset of datasets) {
+        transaction.set(getParkingMonthRef(teamId, dataset.month), {
+          month: dataset.month,
+          importedAt: serverTimestamp(),
+          importedBy: userId,
+          sourceFileName: dataset.sourceFileName,
+          rowCount: dataset.rowCount,
+          totalValue: dataset.totalValue,
+          storagePath,
+        });
+      }
     });
   } catch (error) {
     if (uploadedNewFile) {

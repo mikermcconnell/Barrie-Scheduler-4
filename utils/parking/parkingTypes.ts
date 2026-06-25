@@ -1,6 +1,13 @@
 export const PARKING_SCHEMA_VERSION = 1;
 
 export type ParkingYearCodeFormat = 'yyyy' | 'yy';
+export type ParkingDepartmentLegendSortKey = 'color' | 'code' | 'department' | 'ignoreFlags';
+export type ParkingSortDirection = 'asc' | 'desc';
+
+export interface ParkingDepartmentLegendSortSetting {
+  key: ParkingDepartmentLegendSortKey;
+  direction: ParkingSortDirection;
+}
 
 export type ParkingFlagCode =
   | 'missing_plate'
@@ -21,6 +28,7 @@ export interface ParkingCodeFamilyMapping {
   codeOverrides?: Record<string, string[]>;
   colorHex?: string;
   archived?: boolean;
+  ignoreFlags?: boolean;
   description?: string;
 }
 
@@ -48,6 +56,7 @@ export interface ParkingSettings {
   codeFamilies: ParkingCodeFamilyMapping[];
   spotLocations: ParkingSpotLocationMapping[];
   flagRules: ParkingFlagRuleSettings;
+  departmentLegendSort?: ParkingDepartmentLegendSortSetting;
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -187,4 +196,5 @@ export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {
   ],
   spotLocations: [],
   flagRules: DEFAULT_PARKING_FLAG_RULES,
+  departmentLegendSort: { key: 'color', direction: 'asc' },
 };

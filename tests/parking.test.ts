@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import { describe, expect, it, vi } from 'vitest';
-import { buildParkingReplacementSummary, getLatestParkingMonth } from '../utils/parking/parkingAggregation';
+import { buildParkingReplacementSummary, buildParkingReplacementSummaryForMonths, getLatestParkingMonth } from '../utils/parking/parkingAggregation';
 import { getParkingCodeOverridesForYear, getParkingCodesForYear } from '../utils/parking/parkingCodeRules';
 import { createParkingExportWorkbook, exportParkingWorkbook } from '../utils/parking/parkingExport';
 import { getParkingCodeFamilyKey, parseParkingDurationMinutes, parseParkingFile, parseParkingWorkbook } from '../utils/parking/parkingParser';
@@ -251,6 +251,25 @@ describe('parking replacement and export', () => {
     expect(next.departmentSummaries.some(row => row.month === '2026-06' && row.previousValue !== null)).toBe(true);
   });
 
+  it('replaces multiple different months in one batch', () => {
+    const existing = buildParkingReplacementSummary(null, dataset('2026-04', 75), 'user-1', 'old.json', settings);
+    const next = buildParkingReplacementSummaryForMonths(existing, [
+      dataset('2026-05', 100),
+      dataset('2026-06', 300),
+    ], 'user-2', 'batch.json', settings);
+
+    expect(next.months.map(month => month.month)).toEqual(['2026-04', '2026-05', '2026-06']);
+    expect(next.metadata).toMatchObject({ importedBy: 'user-2', monthCount: 3, storagePath: 'batch.json' });
+    expect(next.departmentSummaries.some(row => row.month === '2026-06' && row.previousValue !== null)).toBe(true);
+  });
+
+  it('rejects batch imports with duplicate months', () => {
+    expect(() => buildParkingReplacementSummaryForMonths(null, [
+      dataset('2026-06', 100),
+      dataset('2026-06', 200),
+    ], 'user-1', 'batch.json', settings)).toThrow('different months');
+  });
+
   it('flags department high usage for high totals or significant month-over-month increases', () => {
     const highTotal = buildParkingReplacementSummary(null, dataset('2026-06', 300), 'user-1', 'parking.json', settings.flagRules);
     expect(highTotal.departmentSummaries.some(row => row.month === '2026-06' && row.isHighUsage)).toBe(true);
@@ -285,6 +304,17 @@ describe('parking replacement and export', () => {
     expect(() => assertParkingStoragePathUnchanged('old.json', 'new.json')).toThrow('Parking data changed while importing. Refresh and try again.');
   });
 
+  it('persists department legend sort settings from Firestore settings', () => {
+    const loaded = readParkingSettingsFromDocument({
+      settings: {
+        ...settings,
+        departmentLegendSort: { key: 'department', direction: 'desc' },
+      },
+    });
+
+    expect(loaded.departmentLegendSort).toEqual({ key: 'department', direction: 'desc' });
+  });
+
   it('recalculates plate flags when thresholds change', () => {
     const summary = buildParkingReplacementSummary(null, dataset('2026-06', 112), 'user-1', 'parking.json', settings.flagRules);
     const original = summary.platePatterns.find(pattern => pattern.plate === 'ABC123');
@@ -299,6 +329,26 @@ describe('parking replacement and export', () => {
     });
     const recalculated = stricter.platePatterns.find(pattern => pattern.plate === 'ABC123');
     expect(recalculated?.flags).not.toContain('high_value');
+  });
+
+  it('suppresses plate indicators for departments marked ignore flags', () => {
+    const ignoredSettings: ParkingSettings = {
+      ...settings,
+      codeFamilies: settings.codeFamilies.map(mapping => (
+        mapping.familyKey === 'RS' ? { ...mapping, ignoreFlags: true } : mapping
+      )),
+    };
+    const result = parseParkingWorkbook(workbookBuffer(hotSpotRows()), {
+      fileName: 'HotSpot.xlsx',
+      importedBy: 'user-1',
+      settings: ignoredSettings,
+    });
+
+    expect(result.dataset.platePatterns.find(pattern => pattern.plate === 'ABC123')?.flags).toEqual([]);
+    expect(result.dataset.platePatterns.find(pattern => pattern.plate === 'XYZ999')?.flags).toContain('unusual_timing');
+
+    const summary = buildParkingReplacementSummary(null, result.dataset, 'user-1', 'parking.json', ignoredSettings);
+    expect(summary.platePatterns.find(pattern => pattern.plate === 'ABC123')?.flags).toEqual([]);
   });
 
   it('handles non-consecutive weekdays and latest month lookups', () => {

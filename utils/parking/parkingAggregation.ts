@@ -10,6 +10,42 @@ import {
   type ParkingSettings,
   type ParkingSummary,
 } from './parkingTypes';
+import { getParkingCodeFamilyKey } from './parkingCodeRules';
+
+type ParkingAnalysisSettings = ParkingFlagRuleSettings | ParkingSettings;
+
+function isParkingSettings(value: ParkingAnalysisSettings): value is ParkingSettings {
+  return Array.isArray((value as ParkingSettings).codeFamilies);
+}
+
+function getFlagRules(value: ParkingAnalysisSettings): ParkingFlagRuleSettings {
+  return isParkingSettings(value) ? value.flagRules : value;
+}
+
+function normalizeKey(value: string | undefined): string {
+  return (value || '').trim().toUpperCase();
+}
+
+function buildIgnoredDepartmentKeys(settings: ParkingAnalysisSettings): Set<string> {
+  if (!isParkingSettings(settings)) return new Set();
+  const keys = new Set<string>();
+  for (const mapping of settings.codeFamilies) {
+    if (!mapping.ignoreFlags) continue;
+    const familyKey = normalizeKey(getParkingCodeFamilyKey(mapping.familyKey));
+    const department = normalizeKey(mapping.department);
+    if (familyKey) keys.add(`family:${familyKey}`);
+    if (department) keys.add(`department:${department}`);
+  }
+  return keys;
+}
+
+function isIgnoredDepartment(row: ParkingRawRow, ignoredKeys: Set<string>): boolean {
+  if (ignoredKeys.size === 0) return false;
+  const familyKey = normalizeKey(getParkingCodeFamilyKey(row.codeFamilyKey));
+  const department = normalizeKey(row.department || 'Unmapped');
+  return (familyKey && ignoredKeys.has(`family:${familyKey}`))
+    || (department && ignoredKeys.has(`department:${department}`));
+}
 
 export function mergeParkingSettings(base: ParkingSettings, override: ParkingSettings): ParkingSettings {
   return {
@@ -20,6 +56,7 @@ export function mergeParkingSettings(base: ParkingSettings, override: ParkingSet
       ...(base.flagRules || {}),
       ...(override.flagRules || {}),
     },
+    departmentLegendSort: override.departmentLegendSort ?? base.departmentLegendSort,
     updatedAt: override.updatedAt ?? base.updatedAt,
     updatedBy: override.updatedBy ?? base.updatedBy,
   };
@@ -111,7 +148,7 @@ function topSpot(rows: ParkingRawRow[]): { spotId: string; locationName: string;
   return { spotId: best?.spotId || '', locationName: best?.locationName || '', days: best?.days.size || 0 };
 }
 
-function buildPlatePattern(month: string, plate: string, rows: ParkingRawRow[], rules: ParkingFlagRuleSettings): ParkingPlatePattern {
+function buildPlatePattern(month: string, plate: string, rows: ParkingRawRow[], rules: ParkingFlagRuleSettings, ignoredKeys: Set<string>): ParkingPlatePattern {
   const activeDays = uniqueCount(rows.map(row => row.startDate));
   const longSessionCount = rows.filter(row => row.durationMinutes >= rules.longSessionHours * 60).length;
   const spot = topSpot(rows);
@@ -124,19 +161,28 @@ function buildPlatePattern(month: string, plate: string, rows: ParkingRawRow[], 
   const multipleDailySessionDays = [...dailyCounts.values()].filter(count => count >= rules.multipleDailySessions).length;
   const totalValue = money(rows.reduce((sum, row) => sum + row.discountAmount, 0));
   const flags: ParkingFlagCode[] = [];
+  const departmentTotals = new Map<string, { value: number; ignored: boolean }>();
+  for (const row of rows) {
+    const department = row.department || 'Unmapped';
+    const current = departmentTotals.get(department) || { value: 0, ignored: true };
+    current.value += row.discountAmount;
+    current.ignored = current.ignored && isIgnoredDepartment(row, ignoredKeys);
+    departmentTotals.set(department, current);
+  }
+  const primaryDepartment = [...departmentTotals.entries()].sort((a, b) => b[1].value - a[1].value || a[0].localeCompare(b[0]))[0];
+  const department = primaryDepartment?.[0] || 'Unmapped';
+  const shouldIgnoreFlags = primaryDepartment?.[1].ignored ?? false;
 
-  if (rows.some(row => row.hasMissingPlate)) flags.push('missing_plate');
-  if (activeDays >= rules.plateActiveDaysPerMonth) flags.push('high_frequency');
-  if (totalValue >= rules.plateMonthlyValueDollars) flags.push('high_value');
-  if (longSessionCount >= rules.longSessionCount) flags.push('long_duration');
-  if (spot.days >= rules.sameLocationDays) flags.push('same_location');
-  if (consecutiveWeekdays >= rules.consecutiveWeekdays) flags.push('consecutive_weekdays');
-  if (unusualTimingCount > 0) flags.push('unusual_timing');
-  if (multipleDailySessionDays > 0) flags.push('multiple_daily_sessions');
-
-  const departmentTotals = new Map<string, number>();
-  for (const row of rows) departmentTotals.set(row.department || 'Unmapped', (departmentTotals.get(row.department || 'Unmapped') || 0) + row.discountAmount);
-  const department = [...departmentTotals.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || 'Unmapped';
+  if (!shouldIgnoreFlags) {
+    if (rows.some(row => row.hasMissingPlate)) flags.push('missing_plate');
+    if (activeDays >= rules.plateActiveDaysPerMonth) flags.push('high_frequency');
+    if (totalValue >= rules.plateMonthlyValueDollars) flags.push('high_value');
+    if (longSessionCount >= rules.longSessionCount) flags.push('long_duration');
+    if (spot.days >= rules.sameLocationDays) flags.push('same_location');
+    if (consecutiveWeekdays >= rules.consecutiveWeekdays) flags.push('consecutive_weekdays');
+    if (unusualTimingCount > 0) flags.push('unusual_timing');
+    if (multipleDailySessionDays > 0) flags.push('multiple_daily_sessions');
+  }
 
   return {
     month,
@@ -157,7 +203,9 @@ function buildPlatePattern(month: string, plate: string, rows: ParkingRawRow[], 
   };
 }
 
-function summarizePlateRows(rows: ParkingRawRow[], rules: ParkingFlagRuleSettings): ParkingPlatePattern[] {
+function summarizePlateRows(rows: ParkingRawRow[], settings: ParkingAnalysisSettings): ParkingPlatePattern[] {
+  const rules = getFlagRules(settings);
+  const ignoredKeys = buildIgnoredDepartmentKeys(settings);
   const groups = new Map<string, ParkingRawRow[]>();
   for (const row of rows) {
     const key = `${row.startMonth}|${row.plate || '(missing)'}`;
@@ -168,18 +216,18 @@ function summarizePlateRows(rows: ParkingRawRow[], rules: ParkingFlagRuleSetting
   return [...groups.entries()]
     .map(([key, group]) => {
       const [month, plate] = key.split('|');
-      return buildPlatePattern(month, plate === '(missing)' ? '' : plate, group, rules);
+      return buildPlatePattern(month, plate === '(missing)' ? '' : plate, group, rules, ignoredKeys);
     })
     .sort((a, b) => b.flags.length - a.flags.length || b.totalValue - a.totalValue || a.displayPlate.localeCompare(b.displayPlate));
 }
 
-export function buildParkingMonthAnalysis(rows: ParkingRawRow[], rules: ParkingFlagRuleSettings): {
+export function buildParkingMonthAnalysis(rows: ParkingRawRow[], settings: ParkingAnalysisSettings): {
   departmentSummaries: ParkingDepartmentMonthlySummary[];
   platePatterns: ParkingPlatePattern[];
 } {
   return {
     departmentSummaries: summarizeDepartmentRows(rows),
-    platePatterns: summarizePlateRows(rows, rules),
+    platePatterns: summarizePlateRows(rows, settings),
   };
 }
 
@@ -228,9 +276,16 @@ export function buildParkingSummary(
   months: ParkingMonthlyDataset[],
   importedBy: string,
   storagePath?: string,
-  rules: ParkingFlagRuleSettings = DEFAULT_PARKING_FLAG_RULES,
+  settings: ParkingAnalysisSettings = DEFAULT_PARKING_FLAG_RULES,
 ): ParkingSummary {
-  const sortedMonths = [...months].sort((a, b) => a.month.localeCompare(b.month));
+  const rules = getFlagRules(settings);
+  const monthsForSummary = isParkingSettings(settings)
+    ? months.map(month => {
+      const analysis = buildParkingMonthAnalysis(month.rows, settings);
+      return { ...month, departmentSummaries: analysis.departmentSummaries, platePatterns: analysis.platePatterns };
+    })
+    : months;
+  const sortedMonths = [...monthsForSummary].sort((a, b) => a.month.localeCompare(b.month));
   const departmentSummaries = withMonthOverMonth(sortedMonths.flatMap(month => month.departmentSummaries), rules);
   const platePatterns = sortedMonths.flatMap(month => month.platePatterns)
     .sort((a, b) => b.month.localeCompare(a.month) || b.flags.length - a.flags.length || b.totalValue - a.totalValue);
@@ -249,10 +304,27 @@ export function buildParkingReplacementSummary(
   dataset: ParkingMonthlyDataset,
   importedBy: string,
   storagePath: string,
-  rules: ParkingFlagRuleSettings = DEFAULT_PARKING_FLAG_RULES,
+  settings: ParkingAnalysisSettings = DEFAULT_PARKING_FLAG_RULES,
 ): ParkingSummary {
-  const keptMonths = (existingSummary?.months || []).filter(month => month.month !== dataset.month);
-  return buildParkingSummary([...keptMonths, dataset], importedBy, storagePath, rules);
+  return buildParkingReplacementSummaryForMonths(existingSummary, [dataset], importedBy, storagePath, settings);
+}
+
+export function buildParkingReplacementSummaryForMonths(
+  existingSummary: ParkingSummary | null,
+  datasets: ParkingMonthlyDataset[],
+  importedBy: string,
+  storagePath: string,
+  settings: ParkingAnalysisSettings = DEFAULT_PARKING_FLAG_RULES,
+): ParkingSummary {
+  const replacementMonths = new Set<string>();
+  for (const dataset of datasets) {
+    if (replacementMonths.has(dataset.month)) {
+      throw new Error('Parking batch imports must contain different months.');
+    }
+    replacementMonths.add(dataset.month);
+  }
+  const keptMonths = (existingSummary?.months || []).filter(month => !replacementMonths.has(month.month));
+  return buildParkingSummary([...keptMonths, ...datasets], importedBy, storagePath, settings);
 }
 
 export function getLatestParkingMonth(summary: ParkingSummary | null | undefined): string | null {
