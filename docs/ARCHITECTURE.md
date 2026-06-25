@@ -35,6 +35,8 @@ Common app-wide infrastructure:
 - global header → `components/layout/Header.tsx`
 - feature flags → `utils/features.ts`
 - workspace access profiles → `utils/workspaceAccess.ts`, surfaced through `hooks/useWorkspaceAccess.ts`
+- named workspace access packages → `utils/workspaceAccessPackages.ts`, used by Team Management for safer onboarding presets
+- Developer Preview Mode → `utils/developerPreview.ts`, applied in `components/contexts/TeamContext.tsx`
 
 ---
 
@@ -93,7 +95,7 @@ The workspace imports one-month HotSpot Excel exports, stores normalized row-lev
 
 Broader planning and analysis tools mostly live under `components/Analytics/` plus matching domain folders in `utils/`.
 
-Visible workspace access is controlled by `utils/workspaceAccess.ts`. Global feature flags decide whether a feature exists in the build; user/team workspace access decides whether the current user can see and enter it. Signed-in users without a team member record, or with the `none` profile, see only the blocking Team Management setup flow until access is granted. The `parking` profile shows only the Parking workspace by default. Planning Data is a top-level app view whenever the user can access at least one analytics workspace, so Transit App-only external users do not need Scheduled Transit access. Global admins can use Team Management's Developer Access Wizard to pick a team, set the default invite-join profile, apply per-workspace overrides, adjust individual users, preview the app surface for that profile, and copy the invite link. External agency teams should be onboarded through the partner-team invite-link flow; use `external-planner` or `transit-app-only` when a team such as Lane Transit should see only Transit App Data.
+Visible workspace access is controlled by `utils/workspaceAccess.ts`. Global feature flags decide whether a feature exists in the build; user/team workspace access decides whether the current user can see and enter it. Signed-in users without a team member record, or with the `none` profile, see only the blocking Team Management setup flow until access is granted. The `parking` profile shows only the Parking workspace by default. Planning Data is a top-level app view whenever the user can access at least one analytics workspace, so Transit App-only external users do not need Scheduled Transit access. Global admins can use Team Management's Developer Access Wizard to pick a team, apply a named access package from `utils/workspaceAccessPackages.ts`, set the default invite-join profile, apply per-workspace overrides, adjust individual users, preview the app surface for that profile, enter Developer Preview Mode as that team/default or selected user, and copy the invite link. Developer Preview Mode changes only the in-memory `useTeam()` team/member surface; it does not update `users/{uid}.teamId`. External agency teams should be onboarded through the partner-team invite-link flow; use the `Transit App Data only` package when a team such as Lane Transit should see only Transit App Data, or `Transit App + STREETS Dashboard` for WATT-style access.
 
 Notable areas:
 - Transit App analytics → `components/Analytics/TransitApp*`, `utils/transit-app/`

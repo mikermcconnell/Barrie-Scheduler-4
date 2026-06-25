@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle } from 'lucide-react';
+import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle, Eye } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
 import { useTeam } from './contexts/TeamContext';
 import { useToast } from './contexts/ToastContext';
@@ -43,6 +43,12 @@ import {
     WORKSPACE_ACCESS_LEVEL_LABELS,
     WORKSPACE_ACCESS_LEVELS,
 } from '../utils/workspaceAccess';
+import {
+    buildWorkspaceSelectionFromPackage,
+    getWorkspaceAccessPackage,
+    WORKSPACE_ACCESS_PACKAGES,
+    type WorkspaceAccessPackageId,
+} from '../utils/workspaceAccessPackages';
 import { buildWorkspaceAccessPreview } from '../utils/workspaceAccessPreview';
 import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
 import { WorkspaceAccessAppPreview } from './WorkspaceAccessAppPreview';
@@ -113,7 +119,7 @@ interface TeamManagementProps {
 
 export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const { user, isGlobalAdmin } = useAuth();
-    const { team, refreshTeam } = useTeam();
+    const { team, refreshTeam, startDeveloperPreview } = useTeam();
     const toast = useToast();
 
     const [isCreating, setIsCreating] = useState(false);
@@ -139,7 +145,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [savingDefaultAccessLevel, setSavingDefaultAccessLevel] = useState(false);
     const [partnerTeamName, setPartnerTeamName] = useState('');
     const [partnerInviteCode, setPartnerInviteCode] = useState('');
-    const [partnerDefaultAccessLevel, setPartnerDefaultAccessLevel] = useState<WorkspaceAccessLevel>('external-planner');
+    const [partnerAccessPackageId, setPartnerAccessPackageId] = useState<WorkspaceAccessPackageId>('transit-app-only');
+    const [partnerDefaultAccessLevel, setPartnerDefaultAccessLevel] = useState<WorkspaceAccessLevel>('transit-app-only');
     const [creatingPartnerTeam, setCreatingPartnerTeam] = useState(false);
     const [createdPartnerInviteLink, setCreatedPartnerInviteLink] = useState('');
     const [wizardTeamAccessLevel, setWizardTeamAccessLevel] = useState<WorkspaceAccessLevel>('transit-app-only');
@@ -369,6 +376,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 teamName: partnerTeamName.trim(),
                 inviteCode: normalizedCode ?? undefined,
                 defaultMemberAccessLevel: partnerDefaultAccessLevel,
+                defaultMemberWorkspaceOverrides: getWorkspaceAccessPackage(partnerAccessPackageId).workspaceOverrides,
             });
             const details = await getTeamWithMembers(result.teamId);
             if (details) {
@@ -380,7 +388,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             setCreatedPartnerInviteLink(inviteLink);
             setPartnerTeamName('');
             setPartnerInviteCode('');
-            setPartnerDefaultAccessLevel('external-planner');
+            setPartnerAccessPackageId('transit-app-only');
+            setPartnerDefaultAccessLevel(getWorkspaceAccessPackage('transit-app-only').accessLevel);
             toast?.success(`Created ${partnerTeamName.trim()}`);
         } catch (error: any) {
             console.error('Error creating partner team:', error);
@@ -628,6 +637,56 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const handleWizardMemberAccessLevelChange = (nextAccessLevel: WorkspaceAccessLevel) => {
         setWizardMemberAccessLevel(nextAccessLevel);
         setWizardMemberWorkspaceSelection(buildWorkspaceSelection(nextAccessLevel));
+    };
+
+    const handlePartnerPackageChange = (packageId: WorkspaceAccessPackageId) => {
+        const pkg = getWorkspaceAccessPackage(packageId);
+        setPartnerAccessPackageId(packageId);
+        setPartnerDefaultAccessLevel(pkg.accessLevel);
+    };
+
+    const handleWizardTeamPackageChange = (packageId: WorkspaceAccessPackageId) => {
+        const pkg = getWorkspaceAccessPackage(packageId);
+        setWizardTeamAccessLevel(pkg.accessLevel);
+        setWizardTeamWorkspaceSelection(buildWorkspaceSelectionFromPackage(packageId));
+    };
+
+    const handleWizardMemberPackageChange = (packageId: WorkspaceAccessPackageId) => {
+        const pkg = getWorkspaceAccessPackage(packageId);
+        setWizardMemberAccessLevel(pkg.accessLevel);
+        setWizardMemberWorkspaceSelection(buildWorkspaceSelectionFromPackage(packageId));
+    };
+
+    const handlePreviewTeamDefault = () => {
+        if (!activeTeamDetails || !canLookupTeams) return;
+
+        startDeveloperPreview({
+            team: activeTeamDetails,
+            accessLevel: wizardTeamAccessLevel,
+            workspaceOverrides: buildWorkspaceOverrides(wizardTeamAccessLevel, wizardTeamWorkspaceSelection),
+            role: 'member',
+            displayName: `${activeTeamDetails.name} invite user`,
+            sourceLabel: `${activeTeamDetails.name} team default`,
+        });
+        toast?.success(`Previewing ${activeTeamDetails.name} team default`);
+        onClose?.();
+    };
+
+    const handlePreviewSelectedMember = () => {
+        if (!activeTeamDetails || !selectedWizardMember || !canLookupTeams) return;
+
+        startDeveloperPreview({
+            team: activeTeamDetails,
+            accessLevel: wizardMemberAccessLevel,
+            workspaceOverrides: buildWorkspaceOverrides(wizardMemberAccessLevel, wizardMemberWorkspaceSelection),
+            role: selectedWizardMember.role,
+            displayName: selectedWizardMember.displayName || selectedWizardMember.email || 'Selected user',
+            email: selectedWizardMember.email,
+            sourceLabel: selectedWizardMember.displayName || selectedWizardMember.email || 'selected user',
+            userId: selectedWizardMember.userId,
+        });
+        toast?.success(`Previewing ${activeTeamDetails.name} as ${selectedWizardMember.displayName || selectedWizardMember.email}`);
+        onClose?.();
     };
 
     const handleSaveWizardTeamAccess = async () => {
@@ -914,9 +973,22 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                             className="min-w-0 rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm uppercase tracking-wider focus:border-brand-green focus:ring-2 focus:ring-brand-green"
                         />
                         <select
+                            value={partnerAccessPackageId}
+                            onChange={(event) => handlePartnerPackageChange(event.target.value as WorkspaceAccessPackageId)}
+                            className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-800 focus:border-brand-green focus:ring-2 focus:ring-brand-green sm:col-span-2"
+                            title={getWorkspaceAccessPackage(partnerAccessPackageId).description}
+                        >
+                            {WORKSPACE_ACCESS_PACKAGES.map(pkg => (
+                                <option key={pkg.id} value={pkg.id}>
+                                    Package: {pkg.label}
+                                </option>
+                            ))}
+                        </select>
+                        <select
                             value={partnerDefaultAccessLevel}
                             onChange={(event) => setPartnerDefaultAccessLevel(event.target.value as WorkspaceAccessLevel)}
                             className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brand-green focus:ring-2 focus:ring-brand-green sm:col-span-2"
+                            title="Advanced: base access profile. The package may also apply workspace overrides."
                         >
                             {WORKSPACE_ACCESS_LEVELS.map(level => (
                                 <option key={level} value={level}>
@@ -927,7 +999,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     </div>
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-xs text-gray-500">
-                            Recommended for external agencies: External Agency Planner. The invite link will auto-join users after sign-in.
+                            Recommended: choose a package first. Use <span className="font-semibold">Transit App + STREETS Dashboard</span> for WATT-style access.
                         </p>
                         <button
                             onClick={handleCreatePartnerTeam}
@@ -1017,7 +1089,17 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 <p className="text-sm font-semibold text-gray-900">Team default access</p>
                                 <p className="text-xs text-gray-500">Applies to future users who join with the invite link.</p>
                             </div>
-                            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                            <select
+                                onChange={(event) => handleWizardTeamPackageChange(event.target.value as WorkspaceAccessPackageId)}
+                                value=""
+                                className="min-w-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900 focus:border-brand-blue focus:ring-2 focus:ring-blue-100"
+                            >
+                                <option value="" disabled>Apply access package...</option>
+                                {WORKSPACE_ACCESS_PACKAGES.map(pkg => (
+                                    <option key={pkg.id} value={pkg.id}>{pkg.label}</option>
+                                ))}
+                            </select>
+                            <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
                                 <select
                                     value={wizardTeamAccessLevel}
                                     onChange={(event) => handleWizardTeamAccessLevelChange(event.target.value as WorkspaceAccessLevel)}
@@ -1029,6 +1111,15 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                         </option>
                                     ))}
                                 </select>
+                                <button
+                                    onClick={handlePreviewTeamDefault}
+                                    disabled={!activeTeamDetails}
+                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                                    title="Preview the app as a future invite user with these settings. This does not change your developer account team."
+                                >
+                                    <Eye size={16} />
+                                    Preview
+                                </button>
                                 <button
                                     onClick={handleSaveWizardTeamAccess}
                                     disabled={savingWizardTeamAccess}
@@ -1079,6 +1170,17 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                     ))}
                                 </select>
                                 <select
+                                    onChange={(event) => handleWizardMemberPackageChange(event.target.value as WorkspaceAccessPackageId)}
+                                    value=""
+                                    disabled={!selectedWizardMember}
+                                    className="min-w-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900 disabled:opacity-50 focus:border-brand-blue focus:ring-2 focus:ring-blue-100"
+                                >
+                                    <option value="" disabled>Apply access package...</option>
+                                    {WORKSPACE_ACCESS_PACKAGES.map(pkg => (
+                                        <option key={pkg.id} value={pkg.id}>{pkg.label}</option>
+                                    ))}
+                                </select>
+                                <select
                                     value={wizardMemberAccessLevel}
                                     onChange={(event) => handleWizardMemberAccessLevelChange(event.target.value as WorkspaceAccessLevel)}
                                     disabled={!selectedWizardMember}
@@ -1096,6 +1198,15 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                     className="rounded-lg bg-brand-blue px-4 py-2 text-sm font-bold text-white hover:bg-blue-600 disabled:opacity-50 sm:col-span-2"
                                 >
                                     {savingWizardMemberAccess ? 'Saving...' : 'Save user access'}
+                                </button>
+                                <button
+                                    onClick={handlePreviewSelectedMember}
+                                    disabled={!selectedWizardMember}
+                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50 sm:col-span-2"
+                                    title="Preview the app as this user with the selected settings. This does not change your developer account team."
+                                >
+                                    <Eye size={16} />
+                                    Preview selected user
                                 </button>
                             </div>
                         </div>

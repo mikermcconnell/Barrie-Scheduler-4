@@ -11,6 +11,11 @@ import type { Team, TeamMember, TeamRole, WorkspaceAccessLevel } from '../../uti
 import { resolveWorkspaceAccessLevel } from '../../utils/workspaceAccess';
 import { getDevAuthConfig } from '../../utils/dev/devAuth';
 import { clearPendingInviteCodeFromUrl, getPendingInviteCode } from '../../utils/inviteLinks';
+import {
+    createDeveloperPreviewSession,
+    type DeveloperPreviewInput,
+    type DeveloperPreviewSession,
+} from '../../utils/developerPreview';
 
 interface TeamContextType {
     team: Team | null;
@@ -21,6 +26,11 @@ interface TeamContextType {
     loading: boolean;
     refreshTeam: () => Promise<void>;
     hasTeam: boolean;
+    isDeveloperPreview: boolean;
+    developerPreview: DeveloperPreviewSession | null;
+    actualTeam: Team | null;
+    startDeveloperPreview: (input: DeveloperPreviewInput) => void;
+    stopDeveloperPreview: () => void;
 }
 
 const fallbackTeamContext: TeamContextType = {
@@ -31,7 +41,12 @@ const fallbackTeamContext: TeamContextType = {
     canManageTeam: false,
     loading: false,
     refreshTeam: async () => { },
-    hasTeam: false
+    hasTeam: false,
+    isDeveloperPreview: false,
+    developerPreview: null,
+    actualTeam: null,
+    startDeveloperPreview: () => { },
+    stopDeveloperPreview: () => { },
 };
 
 const TeamContext = createContext<TeamContextType>(fallbackTeamContext);
@@ -45,18 +60,20 @@ interface TeamProviderProps {
 }
 
 export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
-    const { user } = useAuth();
-    const [team, setTeam] = useState<Team | null>(null);
-    const [teamMember, setTeamMember] = useState<TeamMember | null>(null);
-    const [teamRole, setTeamRole] = useState<TeamRole | null>(null);
+    const { user, isGlobalAdmin } = useAuth();
+    const [actualTeam, setActualTeam] = useState<Team | null>(null);
+    const [actualTeamMember, setActualTeamMember] = useState<TeamMember | null>(null);
+    const [actualTeamRole, setActualTeamRole] = useState<TeamRole | null>(null);
+    const [developerPreview, setDeveloperPreview] = useState<DeveloperPreviewSession | null>(null);
     const [loading, setLoading] = useState(true);
     const devAuth = getDevAuthConfig();
 
     const loadTeam = useCallback(async () => {
         if (!user) {
-            setTeam(null);
-            setTeamMember(null);
-            setTeamRole(null);
+            setActualTeam(null);
+            setActualTeamMember(null);
+            setActualTeamRole(null);
+            setDeveloperPreview(null);
             setLoading(false);
             return;
         }
@@ -91,20 +108,21 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
                 userTeam = await getUserTeam(user.uid);
             }
 
-            setTeam(userTeam);
+            setActualTeam(userTeam);
             if (userTeam) {
                 const member = await getTeamMember(userTeam.id, user.uid);
-                setTeamMember(member);
-                setTeamRole(member?.role ?? null);
+                setActualTeamMember(member);
+                setActualTeamRole(member?.role ?? null);
             } else {
-                setTeamMember(null);
-                setTeamRole(null);
+                setActualTeamMember(null);
+                setActualTeamRole(null);
             }
         } catch (error) {
             console.error('Error loading team:', error);
-            setTeam(null);
-            setTeamMember(null);
-            setTeamRole(null);
+            setActualTeam(null);
+            setActualTeamMember(null);
+            setActualTeamRole(null);
+            setDeveloperPreview(null);
         } finally {
             setLoading(false);
         }
@@ -118,6 +136,27 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         void loadTeam();
     }, [loadTeam]);
 
+    useEffect(() => {
+        if (!isGlobalAdmin && developerPreview) {
+            setDeveloperPreview(null);
+        }
+    }, [developerPreview, isGlobalAdmin]);
+
+    const startDeveloperPreview = (input: DeveloperPreviewInput) => {
+        if (!isGlobalAdmin) {
+            throw new Error('Developer Preview Mode requires global admin access.');
+        }
+        setDeveloperPreview(createDeveloperPreviewSession(input));
+    };
+
+    const stopDeveloperPreview = () => {
+        setDeveloperPreview(null);
+    };
+
+    const team = developerPreview?.team ?? actualTeam;
+    const teamMember = developerPreview?.teamMember ?? actualTeamMember;
+    const teamRole = teamMember?.role ?? actualTeamRole;
+
 
     const value: TeamContextType = {
         team,
@@ -127,7 +166,12 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         canManageTeam: teamRole === 'owner' || teamRole === 'admin',
         loading,
         refreshTeam,
-        hasTeam: team !== null
+        hasTeam: team !== null,
+        isDeveloperPreview: developerPreview !== null,
+        developerPreview,
+        actualTeam,
+        startDeveloperPreview,
+        stopDeveloperPreview,
     };
 
     return (

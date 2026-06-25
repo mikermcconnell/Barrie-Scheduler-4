@@ -167,7 +167,7 @@ const AppContent: React.FC = () => {
           {mustCompleteTeamSetup ? 'Get Started' : 'Team Management'}
         </Modal.Header>
         <Modal.Body className="p-4 bg-gray-50">
-          <TeamManagement />
+          <TeamManagement onClose={mustCompleteTeamSetup ? undefined : () => setShowTeamManagement(false)} />
         </Modal.Body>
         {mustCompleteTeamSetup && (
           <Modal.Footer>
