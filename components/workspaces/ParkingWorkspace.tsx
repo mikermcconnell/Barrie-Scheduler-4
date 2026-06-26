@@ -479,6 +479,13 @@ function compactMoney(value: number | null | undefined): string {
   return money(safe).replace('.00', '');
 }
 
+function roundedPinRevenue(value: number | null | undefined): string {
+  const safe = value || 0;
+  if (Math.abs(safe) >= 1_000_000) return `$${Math.round(safe / 100_000) / 10}M`;
+  if (Math.abs(safe) >= 1_000) return `$${Math.round(safe / 1_000)}k`;
+  return `$${Math.round(safe).toLocaleString()}`;
+}
+
 function shortNumber(value: number | null | undefined): string {
   const safe = value || 0;
   if (Math.abs(safe) >= 1000) return `${Math.round(safe / 100) / 10}k`;
@@ -1862,7 +1869,7 @@ export const ParkingWorkspace: React.FC = () => {
               {lotMapMode === 'markers' ? mapLocationSummaries.map(entry => {
                 const value = getParkingMapMetricValue(entry, parkingMapMetric);
                 const ratio = Math.min(1, value / mapMetricMax);
-                const size = Math.max(18, Math.min(54, 18 + Math.sqrt(ratio) * 36));
+                const size = Math.max(42, Math.min(72, 42 + Math.sqrt(ratio) * 30));
                 const isSelected = Boolean(activeLocation && entry.sourceLocationKeys.includes(activeLocation.key));
                 const fillColor = mapMetricColor(ratio);
                 const borderColor = isSelected ? '#FBBF24' : entry.coordinateSource === 'public' ? '#2563EB' : entry.coordinateSource === 'mixed' ? '#7C3AED' : '#FFFFFF';
@@ -1878,9 +1885,7 @@ export const ParkingWorkspace: React.FC = () => {
                         } ${activeLocation && !isSelected ? 'opacity-35' : 'opacity-100'}`}
                         style={{ width: size, height: size, backgroundColor: fillColor, borderColor }}
                       >
-                        {entry.aggregateCount > 1 && (!activeLocation || isSelected) ? (
-                          <span className="rounded-full bg-white/95 px-1.5 py-0.5 text-[10px] font-black text-slate-800 shadow-sm">{entry.aggregateCount}</span>
-                        ) : null}
+                        <span className="rounded-full bg-white/95 px-1.5 py-0.5 text-[10px] font-black text-slate-800 shadow-sm">{roundedPinRevenue(entry.totalRevenue)}</span>
                       </button>
                       <div className={`pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-48 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white/95 p-2 text-left shadow-xl transition ${
                         isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
@@ -1980,7 +1985,7 @@ export const ParkingWorkspace: React.FC = () => {
               <span>City public source</span>
             </div>
             <div className="mt-1 text-[11px] font-semibold text-slate-400">
-              {lotMapMode === 'heatmap' ? 'Heat map summarizes concentration; switch to Pins for exact lots.' : 'Numbers inside pins are grouped source IDs, not dollars.'}
+              {lotMapMode === 'heatmap' ? 'Heat map summarizes concentration; switch to Pins for exact lots.' : 'Numbers inside pins show rounded revenue.'}
             </div>
           </div>
 
@@ -2863,7 +2868,7 @@ export const ParkingWorkspace: React.FC = () => {
                                   className={`flex items-center justify-center rounded-full border-4 font-extrabold shadow-lg transition hover:scale-105 ${isSelected ? 'border-amber-300 bg-emerald-600 text-white' : 'border-white bg-emerald-500 text-white'}`}
                                   style={{ width: size, height: size }}
                                 >
-                                  <span className="text-[11px]">{money(location.totalRevenue).replace('.00', '')}</span>
+                                  <span className="text-[11px]">{roundedPinRevenue(location.totalRevenue)}</span>
                                 </button>
                               </Marker>
                             );
