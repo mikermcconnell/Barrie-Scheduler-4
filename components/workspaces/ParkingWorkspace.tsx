@@ -2,10 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
+  BarChart3,
+  CalendarDays,
   Car,
   CheckCircle2,
+  Clock3,
   Download,
   Loader2,
+  MapPin,
   Maximize2,
   Minimize2,
   Palette,
@@ -14,16 +19,65 @@ import {
   Search,
   Settings,
   SlidersHorizontal,
+  TrendingDown,
+  TrendingUp,
   Trash2,
   Upload,
   Wand2,
   X,
 } from 'lucide-react';
+import { Layer, Marker, Source } from 'react-map-gl/mapbox';
+import type { LayerProps } from 'react-map-gl/mapbox';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
+import { MapBase } from '../shared';
 import { exportParkingWorkbook } from '../../utils/parking/parkingExport';
 import { parseParkingFile } from '../../utils/parking/parkingParser';
+import {
+  buildParkingPlannerAnalysis,
+  buildParkingTrendOverview,
+  type ParkingAnalysisChartPoint,
+  type ParkingLotComparisonPoint,
+  type ParkingSourceMixPoint,
+  type ParkingTrendComparison,
+  type ParkingTrendDirection,
+} from '../../utils/parking/parkingAnalysis';
+import {
+  buildParkingRevenueAnalytics,
+  buildParkingRevenueReplacementSummary,
+  getParkingRevenueAvailableMonths,
+  getParkingRevenueSourceLabel,
+  parseParkingRevenueFile,
+} from '../../utils/parking/parkingRevenue';
+import {
+  BARRIE_PUBLIC_PARKING_VIEWER_URL,
+  fetchBarriePublicParkingLocations,
+  findPublicParkingLocationFallback,
+  type PublicParkingLocation,
+  type PublicParkingLocationMatch,
+} from '../../utils/parking/publicParkingLocations';
+import {
+  buildParkingRevenueMapDisplayLocations,
+  getParkingMapMetricLabel,
+  getParkingMapMetricValue,
+  type ParkingMapMetric,
+} from '../../utils/parking/parkingMapDisplay';
 import {
   buildParkingGeneratedCode,
   getParkingActiveYears,
@@ -37,9 +91,11 @@ import {
 } from '../../utils/parking/parkingCodeRules';
 import {
   getParkingData,
+  getParkingRevenueData,
   getParkingSettings,
   rebuildParkingSummaryWithRules,
   saveParkingMonthsData,
+  saveParkingRevenueDatasets,
   saveParkingSettings,
 } from '../../utils/parking/parkingService';
 import {
@@ -49,12 +105,19 @@ import {
   type ParkingMonthlyDataset,
   type ParkingPlatePattern,
   type ParkingRawRow,
+  type ParkingRevenueDataset,
+  type ParkingRevenueFilters,
+  type ParkingRevenueLocationMapping,
+  type ParkingRevenueLocationSummary,
+  type ParkingRevenueSource,
+  type ParkingRevenueSummary,
   type ParkingSettings,
   type ParkingSortDirection,
   type ParkingSummary,
   type ParkingUnmappedCodeFamily,
   type ParkingYearCodeFormat,
 } from '../../utils/parking/parkingTypes';
+import { searchRoutePlanner2Addresses, type RoutePlanner2AddressSuggestion } from '../../utils/route-planner-2/routePlanner2AddressSearch';
 import { canAccessWorkspaceFeature } from '../../utils/workspaceAccess';
 
 const money = (value: number | null | undefined) => `$${(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -110,6 +173,27 @@ const DEPARTMENT_COLORS = [
 
 const normalizeText = (value: string | null | undefined) => (value || '').trim().toLowerCase();
 const DEFAULT_DEPARTMENT_LEGEND_SORT = DEFAULT_PARKING_SETTINGS.departmentLegendSort || { key: 'color' as ParkingDepartmentLegendSortKey, direction: 'asc' as ParkingSortDirection };
+const ALL_REVENUE_SOURCES: Array<ParkingRevenueSource | 'all'> = ['all', 'hotspot', 'qr'];
+const ALL_REVENUE_DAY_TYPES: Array<NonNullable<ParkingRevenueFilters['dayType']>> = ['all', 'weekday', 'saturday', 'sunday'];
+
+const REVENUE_DAY_TYPE_LABELS: Record<NonNullable<ParkingRevenueFilters['dayType']>, string> = {
+  all: 'All',
+  weekday: 'Weekdays',
+  weekend: 'Weekend',
+  saturday: 'Saturday',
+  sunday: 'Sunday',
+};
+
+type ParkingWorkspaceView = 'dashboard' | 'plate-monitor' | 'lot-data';
+type ParkingLotViewMode = 'map' | 'analysis';
+type ParkingLotMapMode = 'markers' | 'heatmap';
+
+function parseParkingWorkspaceViewFromHash(hash = window.location.hash): ParkingWorkspaceView {
+  const normalized = hash.replace(/^#\/?/, '').toLowerCase();
+  if (normalized.includes('plate-monitor') || normalized.includes('plate')) return 'plate-monitor';
+  if (normalized.includes('lot-data') || normalized.includes('lot') || normalized.includes('data')) return 'lot-data';
+  return 'dashboard';
+}
 
 interface DepartmentLegendRow {
   familyKey: string;
@@ -119,6 +203,145 @@ interface DepartmentLegendRow {
   ignoreFlags: boolean;
   mappingIndex: number;
 }
+
+interface RevenueLocationSearchState {
+  query: string;
+  searching: boolean;
+  error: string;
+  suggestions: RoutePlanner2AddressSuggestion[];
+}
+
+const ParkingDashboardCard: React.FC<{
+  onClick: () => void;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  color: 'emerald' | 'amber';
+}> = ({ onClick, icon, title, description, color }) => {
+  const colorClasses = {
+    emerald: {
+      bg: 'bg-emerald-50/50',
+      text: 'text-emerald-600',
+      border: 'hover:border-emerald-300',
+      arrow: 'group-hover:text-emerald-500',
+    },
+    amber: {
+      bg: 'bg-amber-50/50',
+      text: 'text-amber-600',
+      border: 'hover:border-amber-300',
+      arrow: 'group-hover:text-amber-500',
+    },
+  }[color];
+
+  return (
+    <button
+      onClick={onClick}
+      className={`group flex h-full flex-col rounded-xl border border-gray-200 bg-white p-6 text-left shadow-sm transition-all hover:shadow-md active:scale-[0.99] ${colorClasses.border}`}
+    >
+      <div className="mb-4 flex items-center justify-between">
+        <div className={`${colorClasses.bg} rounded-lg p-2.5 ${colorClasses.text} transition-colors`}>{icon}</div>
+        <ArrowRight size={16} className={`text-gray-300 transition-colors ${colorClasses.arrow}`} />
+      </div>
+      <h3 className="mb-1 text-lg font-bold text-gray-900">{title}</h3>
+      <p className="text-sm leading-relaxed text-gray-500">{description}</p>
+    </button>
+  );
+};
+
+const ParkingChartCard: React.FC<{
+  title: string;
+  subtitle: string;
+  children: React.ReactNode;
+  tall?: boolean;
+}> = ({ title, subtitle, children, tall = false }) => (
+  <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="mb-3">
+      <h3 className="font-black text-slate-950">{title}</h3>
+      <p className="mt-1 text-xs font-semibold text-slate-400">{subtitle}</p>
+    </div>
+    <div className={tall ? 'h-72' : 'h-56'}>{children}</div>
+  </section>
+);
+
+const EmptyChartState: React.FC<{ label: string }> = ({ label }) => (
+  <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center text-sm font-bold text-slate-400">
+    {label}
+  </div>
+);
+
+const tooltipValue = (value: unknown, name: unknown) => {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  const label = String(name || '');
+  if (label.toLowerCase().includes('revenue')) return money(numeric);
+  if (label.toLowerCase().includes('stay')) return minutesToDuration(numeric);
+  return Number.isFinite(numeric) ? numeric.toLocaleString() : String(value ?? '');
+};
+
+const HourlyRevenueChart: React.FC<{ data: ParkingAnalysisChartPoint[]; compact?: boolean }> = ({ data, compact = false }) => (
+  data.some(point => point.sessions > 0) ? (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data} margin={{ top: 8, right: 8, left: compact ? -28 : -12, bottom: compact ? 0 : 8 }}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+        <XAxis dataKey="label" interval={compact ? 5 : 2} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <YAxis tickFormatter={compactMoney} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <Tooltip formatter={tooltipValue} labelClassName="font-bold text-slate-700" />
+        <Bar dataKey="revenue" name="Revenue" fill="#059669" radius={[8, 8, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  ) : <EmptyChartState label="No hourly activity in this filter." />
+);
+
+const TrendAreaChart: React.FC<{ data: ParkingAnalysisChartPoint[]; color?: string }> = ({ data, color = '#2563EB' }) => (
+  data.length > 0 ? (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={data} margin={{ top: 8, right: 10, left: -14, bottom: 8 }}>
+        <defs>
+          <linearGradient id="parkingRevenueGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor={color} stopOpacity={0.35} />
+            <stop offset="95%" stopColor={color} stopOpacity={0.04} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+        <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <YAxis tickFormatter={compactMoney} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <Tooltip formatter={tooltipValue} labelClassName="font-bold text-slate-700" />
+        <Area type="monotone" dataKey="revenue" name="Revenue" stroke={color} strokeWidth={3} fill="url(#parkingRevenueGradient)" />
+      </AreaChart>
+    </ResponsiveContainer>
+  ) : <EmptyChartState label="Import more revenue data to show a trend." />
+);
+
+const TopLotsChart: React.FC<{ data: ParkingLotComparisonPoint[] }> = ({ data }) => (
+  data.length > 0 ? (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 18, left: 16, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E2E8F0" />
+        <XAxis type="number" tickFormatter={compactMoney} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <YAxis type="category" dataKey="label" width={110} tick={{ fontSize: 10, fill: '#334155', fontWeight: 700 }} tickLine={false} axisLine={false} />
+        <Tooltip formatter={tooltipValue} labelClassName="font-bold text-slate-700" />
+        <Bar dataKey="revenue" name="Revenue" fill="#2563EB" radius={[0, 8, 8, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  ) : <EmptyChartState label="No lots to compare yet." />
+);
+
+function sourceMixColor(source: ParkingRevenueSource): string {
+  return source === 'hotspot' ? '#059669' : '#2563EB';
+}
+
+const SourceMixChart: React.FC<{ data: ParkingSourceMixPoint[] }> = ({ data }) => (
+  data.some(point => point.sessions > 0) ? (
+    <ResponsiveContainer width="100%" height="100%">
+      <PieChart>
+        <Pie data={data.filter(point => point.sessions > 0 || point.revenue > 0) as unknown as Record<string, unknown>[]} dataKey="revenue" nameKey="label" innerRadius="52%" outerRadius="78%" paddingAngle={3}>
+          {data.filter(point => point.sessions > 0 || point.revenue > 0).map(entry => <Cell key={entry.key} fill={sourceMixColor(entry.key)} />)}
+        </Pie>
+        <Tooltip formatter={tooltipValue} />
+        <Legend verticalAlign="bottom" height={28} wrapperStyle={{ fontSize: 11, fontWeight: 700 }} />
+      </PieChart>
+    </ResponsiveContainer>
+  ) : <EmptyChartState label="No app or QR split yet." />
+);
 
 function readableTextColor(hex: string): string {
   const value = hex.replace('#', '');
@@ -245,8 +468,157 @@ function minutesToTime(minutes: number): string {
   return `${String(Math.floor(safe / 60)).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`;
 }
 
+function formatHour(hour: number | null | undefined): string {
+  if (typeof hour !== 'number') return '—';
+  return `${String(hour).padStart(2, '0')}:00`;
+}
+
+function compactMoney(value: number | null | undefined): string {
+  const safe = value || 0;
+  if (Math.abs(safe) >= 1000) return `$${Math.round(safe / 100) / 10}k`;
+  return money(safe).replace('.00', '');
+}
+
+function shortNumber(value: number | null | undefined): string {
+  const safe = value || 0;
+  if (Math.abs(safe) >= 1000) return `${Math.round(safe / 100) / 10}k`;
+  return safe.toLocaleString();
+}
+
+function formatTrendMetric(value: number | null | undefined, format: ParkingTrendComparison['format']): string {
+  if (format === 'money') return money(value || 0);
+  if (format === 'duration') return minutesToDuration(Math.round(value || 0));
+  return (value || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+function formatTrendChange(card: ParkingTrendComparison): string {
+  if (card.changeValue == null) return 'No comparison';
+  const sign = card.changeValue > 0 ? '+' : '';
+  const percent = card.changePercent == null ? 'new' : `${sign}${card.changePercent.toFixed(1)}%`;
+  return `${percent} · ${sign}${formatTrendMetric(card.changeValue, card.format)}`;
+}
+
+function trendTone(direction: ParkingTrendDirection): { box: string; text: string; icon: React.ReactNode; rail: string } {
+  if (direction === 'up') return {
+    box: 'border-emerald-200 bg-emerald-50',
+    text: 'text-emerald-700',
+    icon: <TrendingUp size={15} />,
+    rail: 'from-emerald-500 to-teal-400',
+  };
+  if (direction === 'down') return {
+    box: 'border-rose-200 bg-rose-50',
+    text: 'text-rose-700',
+    icon: <TrendingDown size={15} />,
+    rail: 'from-rose-500 to-orange-400',
+  };
+  if (direction === 'flat') return {
+    box: 'border-slate-200 bg-slate-50',
+    text: 'text-slate-600',
+    icon: <ArrowRight size={15} />,
+    rail: 'from-slate-400 to-slate-300',
+  };
+  return {
+    box: 'border-slate-200 bg-white',
+    text: 'text-slate-400',
+    icon: <ArrowRight size={15} />,
+    rail: 'from-slate-300 to-slate-200',
+  };
+}
+
+const TrendComparisonCard: React.FC<{ card: ParkingTrendComparison; compact?: boolean }> = ({ card, compact = false }) => {
+  const tone = trendTone(card.direction);
+  return (
+    <div className={`relative overflow-hidden rounded-3xl border ${tone.box} ${compact ? 'p-3' : 'p-4'} shadow-sm`}>
+      <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${tone.rail}`} />
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{card.label}</div>
+          <div className={`${compact ? 'text-xl' : 'text-2xl'} mt-1 font-black text-slate-950`}>{formatTrendMetric(card.value, card.format)}</div>
+        </div>
+        <span className={`inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 ${compact ? 'text-[10px]' : 'text-[11px]'} font-black shadow-sm ${tone.text}`}>
+          {tone.icon}
+          {card.changePercent == null ? 'New' : `${card.changePercent > 0 ? '+' : ''}${card.changePercent.toFixed(1)}%`}
+        </span>
+      </div>
+      <div className={`${compact ? 'mt-2 text-[11px] leading-4' : 'mt-3 text-xs leading-5'} font-bold text-slate-500`}>
+        {card.currentLabel} vs {card.comparisonLabel}
+        <br />
+        <span className={tone.text}>{formatTrendChange(card)}</span>
+      </div>
+    </div>
+  );
+};
+
+const PARKING_MAP_METRICS: ParkingMapMetric[] = ['revenue', 'sessions', 'averageStay', 'revenuePerSpace'];
+
+function formatMapMetricValue(value: number, metric: ParkingMapMetric): string {
+  if (metric === 'revenue' || metric === 'revenuePerSpace') return compactMoney(value);
+  if (metric === 'averageStay') return minutesToDuration(value);
+  return shortNumber(value);
+}
+
+function mapMetricColor(ratio: number): string {
+  if (ratio >= 0.75) return '#047857';
+  if (ratio >= 0.45) return '#059669';
+  if (ratio >= 0.2) return '#34D399';
+  return '#A7F3D0';
+}
+
+const parkingHeatmapLayer: LayerProps = {
+  id: 'parking-revenue-heatmap',
+  type: 'heatmap',
+  paint: {
+    'heatmap-weight': ['get', 'intensity'] as unknown as mapboxgl.Expression,
+    'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 11, 0.8, 15, 2.2] as unknown as mapboxgl.Expression,
+    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 11, 28, 15, 56] as unknown as mapboxgl.Expression,
+    'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0.75, 16, 0.35] as unknown as mapboxgl.Expression,
+    'heatmap-color': [
+      'interpolate',
+      ['linear'],
+      ['heatmap-density'],
+      0,
+      'rgba(236,253,245,0)',
+      0.2,
+      'rgba(167,243,208,0.65)',
+      0.45,
+      'rgba(52,211,153,0.75)',
+      0.7,
+      'rgba(5,150,105,0.86)',
+      1,
+      'rgba(4,120,87,0.95)',
+    ] as unknown as mapboxgl.Expression,
+  },
+};
+
+const parkingHeatmapPointLayer: LayerProps = {
+  id: 'parking-revenue-heatmap-points',
+  type: 'circle',
+  minzoom: 14,
+  paint: {
+    'circle-radius': 5,
+    'circle-color': '#047857',
+    'circle-opacity': 0.55,
+    'circle-stroke-color': '#ffffff',
+    'circle-stroke-width': 1,
+  },
+};
+
 function hourToTime(hour: number): string {
   return `${String(Math.floor(hour)).padStart(2, '0')}:00`;
+}
+
+function revenueLocationKey(location: ParkingRevenueLocationSummary): string {
+  return location.key;
+}
+
+function createRevenueLocationId(location: ParkingRevenueLocationSummary): string {
+  const base = location.displayName || location.sourceIds[0]?.sourceId || 'parking-location';
+  return base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || `parking-location-${Date.now()}`;
+}
+
+function revenueLocationRefsOverlap(summary: ParkingRevenueLocationSummary, mapping: ParkingRevenueLocationMapping): boolean {
+  const summaryRefs = new Set(summary.sourceIds.map(ref => `${ref.source}:${String(ref.sourceId).trim().toUpperCase()}`));
+  return (mapping.sourceRefs || []).some(ref => summaryRefs.has(`${ref.source}:${String(ref.sourceId).trim().toUpperCase()}`));
 }
 
 function getPlatePatternKey(pattern: ParkingPlatePattern): string {
@@ -507,11 +879,31 @@ export const ParkingWorkspace: React.FC = () => {
   const { user } = useAuth();
   const { team, teamMember, canManageTeam } = useTeam();
   const toast = useToast();
+  const [activeWorkspace, setActiveWorkspace] = useState<ParkingWorkspaceView>(() => parseParkingWorkspaceViewFromHash());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<ParkingSettings>(DEFAULT_PARKING_SETTINGS);
   const settingsRef = useRef<ParkingSettings>(DEFAULT_PARKING_SETTINGS);
   const [summary, setSummary] = useState<ParkingSummary | null>(null);
+  const [revenueSummary, setRevenueSummary] = useState<ParkingRevenueSummary | null>(null);
+  const [previewRevenueDatasets, setPreviewRevenueDatasets] = useState<ParkingRevenueDataset[]>([]);
+  const [revenueWarnings, setRevenueWarnings] = useState<string[]>([]);
+  const [revenueImportStatus, setRevenueImportStatus] = useState('');
+  const [revenueSourceFilter, setRevenueSourceFilter] = useState<ParkingRevenueSource | 'all'>('all');
+  const [revenueDayTypeFilter, setRevenueDayTypeFilter] = useState<NonNullable<ParkingRevenueFilters['dayType']>>('all');
+  const [selectedRevenueMonth, setSelectedRevenueMonth] = useState('all');
+  const [revenueHourStart, setRevenueHourStart] = useState(0);
+  const [revenueHourEnd, setRevenueHourEnd] = useState(23);
+  const [selectedRevenueLocationKey, setSelectedRevenueLocationKey] = useState('');
+  const [lotViewMode, setLotViewMode] = useState<ParkingLotViewMode>('map');
+  const [lotMapMode, setLotMapMode] = useState<ParkingLotMapMode>('markers');
+  const [parkingMapMetric, setParkingMapMetric] = useState<ParkingMapMetric>('revenue');
+  const [locationSearchById, setLocationSearchById] = useState<Record<string, RevenueLocationSearchState>>({});
+  const [lotLeftRailOpen, setLotLeftRailOpen] = useState(true);
+  const [lotRightRailOpen, setLotRightRailOpen] = useState(true);
+  const [publicParkingLocations, setPublicParkingLocations] = useState<PublicParkingLocation[]>([]);
+  const [publicParkingLoading, setPublicParkingLoading] = useState(false);
+  const [publicParkingError, setPublicParkingError] = useState('');
   const [previewDatasets, setPreviewDatasets] = useState<ParkingMonthlyDataset[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -533,6 +925,17 @@ export const ParkingWorkspace: React.FC = () => {
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  useEffect(() => {
+    const handleHashChange = () => setActiveWorkspace(parseParkingWorkspaceViewFromHash());
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const navigateWorkspace = (view: ParkingWorkspaceView) => {
+    setActiveWorkspace(view);
+    window.location.hash = view === 'dashboard' ? 'parking' : `parking/${view}`;
+  };
 
   const reviewMonths = useMemo(() => {
     const savedMonths = displaySummary?.months ?? [];
@@ -574,6 +977,115 @@ export const ParkingWorkspace: React.FC = () => {
       a.plate.localeCompare(b.plate)
     ));
   }, [selectedMonthDataset]);
+  const displayRevenueSummary = useMemo(() => {
+    if (previewRevenueDatasets.length === 0) return revenueSummary;
+    return buildParkingRevenueReplacementSummary(
+      revenueSummary,
+      previewRevenueDatasets,
+      user?.uid || 'preview',
+      revenueSummary?.metadata.storagePath || 'preview-parking-revenue.json',
+    );
+  }, [previewRevenueDatasets, revenueSummary, user?.uid]);
+  const revenueMonths = useMemo(() => getParkingRevenueAvailableMonths(displayRevenueSummary), [displayRevenueSummary]);
+  const revenueFilters = useMemo<ParkingRevenueFilters>(() => ({
+    months: selectedRevenueMonth === 'all' ? undefined : [selectedRevenueMonth],
+    source: revenueSourceFilter,
+    dayType: revenueDayTypeFilter,
+    hourStart: revenueHourStart,
+    hourEnd: revenueHourEnd,
+  }), [revenueDayTypeFilter, revenueHourEnd, revenueHourStart, revenueSourceFilter, selectedRevenueMonth]);
+  const revenueAnalytics = useMemo(
+    () => buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueFilters),
+    [displayRevenueSummary, revenueFilters, settings],
+  );
+  const revenueTrendFilters = useMemo<ParkingRevenueFilters>(() => ({
+    ...revenueFilters,
+    months: undefined,
+  }), [revenueFilters]);
+  const revenueTrendAnalytics = useMemo(
+    () => buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueTrendFilters),
+    [displayRevenueSummary, revenueTrendFilters, settings],
+  );
+  const publicParkingMatchesByKey = useMemo(() => {
+    const matches = new Map<string, PublicParkingLocationMatch>();
+    if (publicParkingLocations.length === 0) return matches;
+    for (const location of revenueAnalytics.locationSummaries) {
+      if (location.isMapped) continue;
+      const match = findPublicParkingLocationFallback(location, publicParkingLocations);
+      if (match) matches.set(location.key, match);
+    }
+    return matches;
+  }, [publicParkingLocations, revenueAnalytics.locationSummaries]);
+  const allPublicParkingMatchesByKey = useMemo(() => {
+    const matches = new Map<string, PublicParkingLocationMatch>();
+    if (publicParkingLocations.length === 0) return matches;
+    for (const location of revenueAnalytics.locationSummaries) {
+      const match = findPublicParkingLocationFallback(location, publicParkingLocations);
+      if (match) matches.set(location.key, match);
+    }
+    return matches;
+  }, [publicParkingLocations, revenueAnalytics.locationSummaries]);
+  const publicCapacityByLocationKey = useMemo(() => (
+    Object.fromEntries(revenueAnalytics.locationSummaries.map(location => {
+      const match = allPublicParkingMatchesByKey.get(location.key);
+      return [location.key, {
+        spaces: match?.location.numSpaces ?? null,
+        sourceLabel: match ? (match.location.commonName || match.location.name || 'City parking source') : undefined,
+      }];
+    }))
+  ), [allPublicParkingMatchesByKey, revenueAnalytics.locationSummaries]);
+  const mapLocationSummaries = useMemo(() => (
+    buildParkingRevenueMapDisplayLocations(
+      revenueAnalytics.locationSummaries,
+      publicParkingMatchesByKey,
+      publicCapacityByLocationKey,
+    )
+  ), [publicCapacityByLocationKey, publicParkingMatchesByKey, revenueAnalytics.locationSummaries]);
+  const publicFallbackPinCount = mapLocationSummaries.filter(entry => entry.coordinateSource === 'public').length;
+  const selectedRevenueLocation = useMemo(() => {
+    if (!selectedRevenueLocationKey) return null;
+    return revenueAnalytics.locationSummaries.find(location => revenueLocationKey(location) === selectedRevenueLocationKey) || null;
+  }, [revenueAnalytics.locationSummaries, selectedRevenueLocationKey]);
+  const selectedTrendLocation = useMemo(() => {
+    if (!selectedRevenueLocationKey) return selectedRevenueLocation;
+    return selectedRevenueLocation
+      || revenueTrendAnalytics.locationSummaries.find(location => revenueLocationKey(location) === selectedRevenueLocationKey)
+      || null;
+  }, [revenueTrendAnalytics.locationSummaries, selectedRevenueLocation, selectedRevenueLocationKey]);
+  const parkingTrendOverview = useMemo(() => (
+    buildParkingTrendOverview(
+      revenueTrendAnalytics,
+      selectedTrendLocation,
+      selectedRevenueMonth === 'all' ? revenueMonths.at(-1) : selectedRevenueMonth,
+    )
+  ), [revenueMonths, revenueTrendAnalytics, selectedRevenueMonth, selectedTrendLocation]);
+  const activeMapLocation = useMemo(() => (
+    selectedRevenueLocation ? mapLocationSummaries.find(entry => entry.sourceLocationKeys.includes(selectedRevenueLocation.key)) || null : null
+  ), [mapLocationSummaries, selectedRevenueLocation]);
+  const mapMetricMax = useMemo(() => Math.max(...mapLocationSummaries.map(location => getParkingMapMetricValue(location, parkingMapMetric)), 1), [mapLocationSummaries, parkingMapMetric]);
+  const mapHeatmapGeoJson = useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: mapLocationSummaries.map(location => {
+      const value = getParkingMapMetricValue(location, parkingMapMetric);
+      return {
+        type: 'Feature',
+        properties: {
+          id: location.key,
+          value,
+          intensity: Math.max(0.05, Math.min(1, value / mapMetricMax)),
+          label: location.displayName,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [location.longitude, location.latitude],
+        },
+      };
+    }),
+  }), [mapLocationSummaries, mapMetricMax, parkingMapMetric]);
+  const parkingPlannerAnalysis = useMemo(
+    () => buildParkingPlannerAnalysis(revenueAnalytics, selectedRevenueLocation, publicCapacityByLocationKey),
+    [publicCapacityByLocationKey, revenueAnalytics, selectedRevenueLocation],
+  );
   const selectedMonthTotalValue = selectedMonthDataset?.totalValue ?? 0;
   const previewRowCount = previewDatasets.reduce((sum, dataset) => sum + dataset.rowCount, 0);
   const previewTotalValue = previewDatasets.reduce((sum, dataset) => sum + dataset.totalValue, 0);
@@ -607,14 +1119,16 @@ export const ParkingWorkspace: React.FC = () => {
     if (!team) return;
     setLoading(true);
     try {
-      const [loadedSettings, loadedData] = await Promise.all([
+      const [loadedSettings, loadedData, loadedRevenueData] = await Promise.all([
         getParkingSettings(team.id),
         getParkingData(team.id),
+        getParkingRevenueData(team.id),
       ]);
       settingsRef.current = loadedSettings;
       setSettings(loadedSettings);
       setDepartmentLegendSort(loadedSettings.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
       setSummary(loadedData);
+      setRevenueSummary(loadedRevenueData);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Could not load Parking data.');
     } finally {
@@ -625,6 +1139,28 @@ export const ParkingWorkspace: React.FC = () => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (activeWorkspace !== 'lot-data' || publicParkingLocations.length > 0) return undefined;
+    let cancelled = false;
+    setPublicParkingLoading(true);
+    setPublicParkingError('');
+    fetchBarriePublicParkingLocations()
+      .then(locations => {
+        if (cancelled) return;
+        setPublicParkingLocations(locations);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setPublicParkingError(error instanceof Error ? error.message : 'Could not load public parking locations.');
+      })
+      .finally(() => {
+        if (!cancelled) setPublicParkingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace, publicParkingLocations.length]);
 
   useEffect(() => {
     if (availableYears.length === 0) {
@@ -645,6 +1181,16 @@ export const ParkingWorkspace: React.FC = () => {
       setSelectedMonth(monthsForSelectedYear.at(-1)?.month || '');
     }
   }, [monthsForSelectedYear, selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    if (revenueMonths.length === 0) {
+      setSelectedRevenueMonth('all');
+      return;
+    }
+    if (selectedRevenueMonth !== 'all' && !revenueMonths.includes(selectedRevenueMonth)) {
+      setSelectedRevenueMonth(revenueMonths.at(-1) || 'all');
+    }
+  }, [revenueMonths, selectedRevenueMonth]);
 
   useEffect(() => {
     if (!annualFullscreen) return undefined;
@@ -708,6 +1254,74 @@ export const ParkingWorkspace: React.FC = () => {
     const files = Array.from(event.target.files ?? []);
     if (files.length > 0) void parseFiles(files);
     event.target.value = '';
+  };
+
+  const persistRevenueDatasets = async (datasets: ParkingRevenueDataset[], nextSettings = settings) => {
+    if (!team || !user || datasets.length === 0) return;
+    const rowCount = datasets.reduce((sum, dataset) => sum + dataset.rowCount, 0);
+    setSaving(true);
+    setRevenueImportStatus(`Saving ${rowCount.toLocaleString()} revenue rows...`);
+    const savedSettings = await saveParkingSettings(team.id, user.uid, nextSettings);
+    const savedRevenue = await saveParkingRevenueDatasets(team.id, user.uid, datasets, savedSettings);
+    settingsRef.current = savedSettings;
+    setSettings(savedSettings);
+    setRevenueSummary(savedRevenue);
+    setPreviewRevenueDatasets([]);
+    setRevenueWarnings([]);
+    setRevenueImportStatus('');
+    toast.success(
+      'Parking revenue import saved',
+      `${datasets.length} source/month dataset${datasets.length === 1 ? '' : 's'} saved with ${rowCount.toLocaleString()} rows.`,
+    );
+  };
+
+  const parseRevenueFiles = useCallback(async (files: File[], nextSettings = settings) => {
+    if (!team || !user || files.length === 0) return;
+    setErrorMessage('');
+    setRevenueWarnings([]);
+    setPreviewRevenueDatasets([]);
+    setRevenueImportStatus('Reading revenue workbook...');
+    try {
+      const parsed = [];
+      for (const file of files) {
+        parsed.push({ fileName: file.name, result: await parseParkingRevenueFile(file, user.uid, nextSettings) });
+      }
+      const keys = new Set<string>();
+      for (const entry of parsed) {
+        const key = `${entry.result.dataset.month}|${entry.result.dataset.source}`;
+        if (keys.has(key)) {
+          throw new Error(`Multiple selected revenue files contain ${entry.result.dataset.month} ${getParkingRevenueSourceLabel(entry.result.dataset.source)} data. Pick one file per source/month.`);
+        }
+        keys.add(key);
+      }
+      const datasets = parsed.map(entry => entry.result.dataset).sort((a, b) => a.month.localeCompare(b.month) || a.source.localeCompare(b.source));
+      setRevenueWarnings(parsed.flatMap(entry => entry.result.warnings.map(warning => files.length > 1 ? `${entry.fileName}: ${warning}` : warning)));
+      setPreviewRevenueDatasets(datasets);
+      await persistRevenueDatasets(datasets, nextSettings);
+    } catch (error) {
+      setRevenueImportStatus('');
+      setErrorMessage(error instanceof Error ? error.message : 'Could not import Parking revenue files.');
+    } finally {
+      setSaving(false);
+    }
+  }, [settings, team, user]);
+
+  const handleRevenueFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length > 0) void parseRevenueFiles(files);
+    event.target.value = '';
+  };
+
+  const saveRevenuePreview = async () => {
+    if (!team || !user || previewRevenueDatasets.length === 0) return;
+    try {
+      await persistRevenueDatasets(previewRevenueDatasets);
+    } catch (error) {
+      setRevenueImportStatus('');
+      setErrorMessage(error instanceof Error ? error.message : 'Could not save Parking revenue import.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const applyUnmappedMappings = async () => {
@@ -874,502 +1488,91 @@ export const ParkingWorkspace: React.FC = () => {
     spotLocations: [...current.spotLocations, { spotId: '', locationName: '' }],
   }));
 
-  if (!team || !user) {
-    return <div className="p-8 text-sm text-gray-500">Sign in and join a team to use Parking.</div>;
-  }
+  const upsertRevenueLocation = (location: ParkingRevenueLocationMapping) => {
+    setSettings(current => {
+      const existing = current.revenueLocations || [];
+      const nextLocations = existing.some(entry => entry.id === location.id)
+        ? existing.map(entry => entry.id === location.id ? location : entry)
+        : [...existing, location];
+      return { ...current, revenueLocations: nextLocations };
+    });
+  };
 
-  if (loading) {
-    return <div className="flex h-full items-center justify-center text-gray-500"><Loader2 className="mr-2 animate-spin" /> Loading Parking...</div>;
-  }
+  const createReviewedRevenueLocation = (location: ParkingRevenueLocationSummary, publicMatch?: PublicParkingLocationMatch | null) => {
+    const id = createRevenueLocationId(location);
+    upsertRevenueLocation({
+      id,
+      displayName: location.displayName,
+      latitude: publicMatch?.location.latitude ?? null,
+      longitude: publicMatch?.location.longitude ?? null,
+      sourceRefs: location.sourceIds,
+    });
+    setSelectedRevenueLocationKey(id);
+  };
 
-  return (
-    <div className="h-full overflow-y-auto pb-10">
-      <div className="mx-auto max-w-7xl space-y-6 px-2">
-        <button onClick={() => { window.location.hash = ''; }} className="mt-2 inline-flex items-center gap-1.5 text-sm font-bold text-gray-400 hover:text-gray-600">
-          <ArrowLeft size={14} /> Back to Main
-        </button>
+  const toggleRevenueLocationSelection = useCallback((locationKey: string, isAlreadySelected?: boolean) => {
+    setSelectedRevenueLocationKey(current => ((isAlreadySelected ?? current === locationKey) ? '' : locationKey));
+  }, []);
 
-        <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-emerald-700">
-                <Car size={14} /> Parking
-              </div>
-              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-gray-950">Shared department parking code usage</h2>
-              <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-gray-500">
-                Import monthly HotSpot workbooks, aggregate usage by department, compare month-over-month changes, and flag plate-level usage patterns for review.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                disabled={!displaySummary}
-                onClick={() => displaySummary && exportParkingWorkbook(displaySummary, `parking-usage-${latestMonth?.month || 'report'}.xlsx`)}
-                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
-              >
-                <Download size={16} /> Export Excel
-              </button>
-              <button
-                disabled={!canEditParking}
-                onClick={() => setDepartmentManagerOpen(true)}
-                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
-              >
-                <Palette size={16} /> Manage departments
-              </button>
-              <button
-                disabled={!canEditParking || saving}
-                onClick={() => void saveSettingsOnly()}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save settings
-              </button>
-            </div>
-          </div>
-        </section>
+  const updateRevenueLocation = (id: string, patch: Partial<ParkingRevenueLocationMapping>) => {
+    setSettings(current => ({
+      ...current,
+      revenueLocations: (current.revenueLocations || []).map(location => (
+        location.id === id ? { ...location, ...patch } : location
+      )),
+    }));
+  };
 
-        {errorMessage ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{errorMessage}</div>
-        ) : null}
+  const searchRevenueLocation = async (location: ParkingRevenueLocationMapping) => {
+    const query = locationSearchById[location.id]?.query || location.displayName;
+    setLocationSearchById(current => ({
+      ...current,
+      [location.id]: { query, searching: true, error: '', suggestions: [] },
+    }));
+    try {
+      const suggestions = await searchRoutePlanner2Addresses(`${query}, Barrie, ON`, { limit: 4 });
+      setLocationSearchById(current => ({
+        ...current,
+        [location.id]: { query, searching: false, error: suggestions.length === 0 ? 'No Mapbox suggestions found.' : '', suggestions },
+      }));
+    } catch (error) {
+      setLocationSearchById(current => ({
+        ...current,
+        [location.id]: { query, searching: false, error: error instanceof Error ? error.message : 'Mapbox search failed.', suggestions: [] },
+      }));
+    }
+  };
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-          <div className="space-y-6">
-            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-extrabold text-gray-950">Import HotSpot month(s)</h3>
-                  <p className="mt-1 text-sm text-gray-500">Each workbook must contain one month. Select multiple files to replace different months together.</p>
-                </div>
-                <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
-                  <Upload size={16} /> Upload .xlsx
-                  <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleFileChange} className="hidden" />
-                </label>
-              </div>
+  const applyRevenueLocationSuggestion = (locationId: string, suggestion: RoutePlanner2AddressSuggestion) => {
+    updateRevenueLocation(locationId, { latitude: suggestion.lat, longitude: suggestion.lng });
+    setLocationSearchById(current => ({
+      ...current,
+      [locationId]: {
+        ...(current[locationId] || { query: '', searching: false, error: '', suggestions: [] }),
+        query: suggestion.label,
+        suggestions: [],
+        error: '',
+      },
+    }));
+  };
 
-              {warnings.length > 0 ? (
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
-                  {warnings.map(warning => <div key={warning}>{warning}</div>)}
-                </div>
-              ) : null}
+  const applyPublicRevenueLocationFallback = (locationId: string, publicMatch: PublicParkingLocationMatch) => {
+    updateRevenueLocation(locationId, {
+      latitude: publicMatch.location.latitude,
+      longitude: publicMatch.location.longitude,
+    });
+    setLocationSearchById(current => ({
+      ...current,
+      [locationId]: {
+        ...(current[locationId] || { query: '', searching: false, error: '', suggestions: [] }),
+        query: [publicMatch.location.commonName || publicMatch.location.name, publicMatch.location.address].filter(Boolean).join(', '),
+        suggestions: [],
+        error: '',
+      },
+    }));
+  };
 
-              {unmapped.length > 0 ? (
-                <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                  <div className="flex items-start gap-2 text-amber-800">
-                    <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-                    <div>
-                      <h4 className="font-extrabold">Map discount codes before saving</h4>
-                      <p className="mt-1 text-sm">The file preview is blocked until every code family has a department.</p>
-                    </div>
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {unmapped.map(code => (
-                      <div key={code.familyKey} className="grid gap-3 rounded-xl bg-white p-3 md:grid-cols-[160px_minmax(0,1fr)_220px] md:items-center">
-                        <div className="text-sm font-extrabold text-gray-800">{code.familyKey}</div>
-                        <div className="text-xs font-medium text-gray-500">{code.codes.join(', ')} · {code.rowCount} rows · {code.descriptions.join('; ') || 'No description'}</div>
-                        <TextInput value={mappingDrafts[code.familyKey] || ''} onChange={value => setMappingDrafts(current => ({ ...current, [code.familyKey]: value }))} placeholder="Department" />
-                      </div>
-                    ))}
-                  </div>
-                  <button onClick={() => void applyUnmappedMappings()} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-700">
-                    <CheckCircle2 size={16} /> Apply mappings and preview
-                  </button>
-                </div>
-              ) : null}
-
-              {previewDatasets.length > 0 ? (
-                <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex items-start gap-3">
-                      <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={20} />
-                      <div>
-                        <h4 className="font-extrabold text-emerald-950">Ready to replace {summarizeImportMonths(previewDatasets)}</h4>
-                        <p className="mt-1 text-sm font-medium text-emerald-800">
-                          {previewRowCount.toLocaleString()} rows · {money(previewTotalValue)} total value · {previewFlaggedPlateCount} flagged plates
-                        </p>
-                        {previewDatasets.length > 1 ? (
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {previewDatasets.map(dataset => (
-                              <span key={dataset.month} className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-extrabold text-emerald-800">
-                                {dataset.month}: {dataset.rowCount.toLocaleString()} rows
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                    <button disabled={saving || !canEditParking} onClick={() => void importPreview()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
-                      {saving ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Save import
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <h3 className="text-lg font-extrabold text-gray-950">Review period</h3>
-                  <p className="mt-1 text-sm text-gray-500">Select a year for the annual summary, then a month for the detailed review tables.</p>
-                </div>
-                {selectedMonth ? <Badge tone="green">Viewing {selectedMonthLabel} {selectedYear}</Badge> : null}
-              </div>
-              <div className="mt-4">
-                <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-gray-400">Year</div>
-                <div className="flex flex-wrap gap-2">
-                  {availableYears.length > 0 ? availableYears.map(year => (
-                    <button
-                      key={year}
-                      onClick={() => setSelectedYear(year)}
-                      className={`rounded-full px-4 py-2 text-sm font-extrabold transition ${selectedYear === year ? 'bg-gray-950 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                    >
-                      {year}
-                    </button>
-                  )) : <span className="text-sm font-semibold text-gray-400">Import a month to start.</span>}
-                </div>
-              </div>
-              <div className="mt-4">
-                <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-gray-400">Month</div>
-                <div className="flex flex-wrap gap-2">
-                  {MONTHS.map(month => {
-                    const monthKey = `${selectedYear}-${month.value}`;
-                    const hasData = monthsForSelectedYear.some(entry => entry.month === monthKey);
-                    return (
-                      <button
-                        key={month.value}
-                        disabled={!hasData}
-                        onClick={() => setSelectedMonth(monthKey)}
-                        className={`rounded-full px-3 py-1.5 text-xs font-extrabold transition ${
-                          selectedMonth === monthKey
-                            ? 'bg-blue-600 text-white'
-                            : hasData
-                              ? 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                              : 'bg-gray-50 text-gray-300'
-                        }`}
-                      >
-                        {month.short}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
-
-            <section className="grid gap-4 md:grid-cols-4">
-              <Metric label="Selected month" value={selectedMonthLabel || '—'} />
-              <Metric label="Rows" value={(selectedMonthDataset?.rowCount ?? 0).toLocaleString()} />
-              <Metric label="Total value" value={money(selectedMonthTotalValue)} />
-              <Metric label="Flagged plates" value={monthlyFlaggedPlates.length.toLocaleString()} tone={monthlyFlaggedPlates.length ? 'amber' : 'green'} />
-            </section>
-
-            <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
-              <div className="flex flex-col gap-4 border-b border-gray-100 bg-gray-50/70 p-5 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">{selectedYear || 'No year selected'}</div>
-                  <h3 className="mt-1 text-lg font-extrabold text-gray-950">Annual department summary</h3>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={annualSummaryRows.length === 0}
-                    onClick={() => setAnnualExpanded(current => !current)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-extrabold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-40"
-                  >
-                    {annualExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-                    {annualExpanded ? 'Hide table' : 'Show table'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={annualSummaryRows.length === 0}
-                    onClick={() => setAnnualFullscreen(true)}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-gray-950 px-3 py-2 text-xs font-extrabold text-white shadow-sm hover:bg-gray-800 disabled:opacity-40"
-                  >
-                    <Maximize2 size={13} /> Full screen
-                  </button>
-                </div>
-              </div>
-
-              {!annualExpanded ? (
-                <div className="grid gap-3 p-5 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-gray-100 bg-white p-4">
-                    <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Departments</div>
-                    <div className="mt-2 text-2xl font-extrabold text-gray-950">{annualSummaryRows.length.toLocaleString()}</div>
-                  </div>
-                  <div className="rounded-2xl border border-gray-100 bg-white p-4">
-                    <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Annual total</div>
-                    <div className="mt-2 text-2xl font-extrabold text-gray-950">{money(annualTotalValue)}</div>
-                  </div>
-                  <div className="rounded-2xl border border-gray-100 bg-white p-4">
-                    <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Top department</div>
-                    <div className="mt-2 truncate text-lg font-extrabold text-gray-950">{annualTopDepartment}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="max-h-[520px] overflow-auto">
-                  <AnnualSummaryTable rows={annualSummaryRows} codeFamilies={settings.codeFamilies} stickyHeader />
-                </div>
-              )}
-            </section>
-
-            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-extrabold text-gray-950">Flagged plate indicators</h3>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
-                    <tr><th className="py-2 pr-4">Month</th><th className="py-2 pr-4">Plate</th><th className="py-2 pr-4">Department</th><th className="py-2 pr-4">Value</th><th className="py-2 pr-4">Days</th><th className="py-2 pr-4">Top location</th><th className="py-2 pr-4">Indicators</th><th className="py-2 pr-4">Why</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {monthlyFlaggedPlates.slice(0, 120).map(pattern => {
-                      const patternKey = getPlatePatternKey(pattern);
-                      const isExpanded = expandedPlateKey === patternKey;
-                      const plateRows = rawTransactionRows.filter(row => (
-                        row.startMonth === pattern.month &&
-                        (row.plate || '(missing)') === (pattern.plate || pattern.displayPlate)
-                      ));
-                      const evidence = buildFlagEvidence(pattern, settings, plateRows);
-                      return (
-                        <React.Fragment key={patternKey}>
-                          <tr className={isExpanded ? 'bg-amber-50/40' : undefined}>
-                            <td className="py-3 pr-4 font-bold text-gray-700">{pattern.month}</td>
-                            <td className="py-3 pr-4 font-extrabold text-gray-950">{pattern.displayPlate}</td>
-                            <td className="py-3 pr-4"><DepartmentChip department={pattern.department} codeFamilies={settings.codeFamilies} compact /></td>
-                            <td className="py-3 pr-4 font-bold text-gray-900">{money(pattern.totalValue)}</td>
-                            <td className="py-3 pr-4 text-gray-600">{pattern.activeDays}</td>
-                            <td className="py-3 pr-4 text-gray-600">{pattern.topLocationName || pattern.topSpotId}</td>
-                            <td className="py-3 pr-4"><div className="flex flex-wrap gap-1">{pattern.flags.map(flag => <Badge key={flag} tone="amber">{FLAG_LABELS[flag] || flag}</Badge>)}</div></td>
-                            <td className="py-3 pr-4">
-                              <button
-                                type="button"
-                                onClick={() => setExpandedPlateKey(current => current === patternKey ? '' : patternKey)}
-                                className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-extrabold text-amber-700 hover:bg-amber-100"
-                              >
-                                {isExpanded ? 'Hide why' : 'View why'}
-                              </button>
-                            </td>
-                          </tr>
-                          {isExpanded ? (
-                            <tr>
-                              <td colSpan={8} className="bg-amber-50/30 px-4 py-4">
-                                <div className="grid gap-3 md:grid-cols-2">
-                                  {evidence.map(item => (
-                                    <div key={item.label} className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
-                                      <div className="text-sm font-extrabold text-gray-950">{item.label}</div>
-                                      <p className="mt-1 text-sm font-medium text-gray-600">{item.detail}</p>
-                                      {item.evidence.length > 0 ? (
-                                        <div className="mt-3 flex flex-wrap gap-1.5">
-                                          {item.evidence.map(detail => (
-                                            <span key={detail} className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-bold text-gray-600">{detail}</span>
-                                          ))}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="mt-3 rounded-2xl border border-gray-100 bg-white p-4">
-                                  <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Transactions reviewed</div>
-                                  <div className="mt-2 grid gap-2 md:grid-cols-2">
-                                    {plateRows.slice(0, 6).map(row => (
-                                      <div key={row.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-gray-600">
-                                        <span className="font-extrabold text-gray-900">{row.startDate}</span>
-                                        <span>{minutesToTime(row.startMinutes)}–{minutesToTime(row.endMinutes)}</span>
-                                        <span>{minutesToDuration(row.durationMinutes)}</span>
-                                        <span>{money(row.discountAmount)}</span>
-                                        <span>{row.locationName || row.spotId}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          ) : null}
-                        </React.Fragment>
-                      );
-                    })}
-                    {monthlyFlaggedPlates.length === 0 ? <tr><td colSpan={8} className="py-8 text-center text-gray-400">No flagged plate indicators for the selected month and thresholds.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-extrabold text-gray-950">Department month-over-month</h3>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
-                    <tr><th className="py-2 pr-4">Month</th><th className="py-2 pr-4">Department</th><th className="py-2 pr-4">Total</th><th className="py-2 pr-4">Change</th><th className="py-2 pr-4">Sessions</th><th className="py-2 pr-4">Flag</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {monthlyDepartmentRows.slice(0, 80).map(row => (
-                      <tr key={`${row.month}-${row.department}-${row.codeFamilyKey}`}>
-                        <td className="py-3 pr-4 font-bold text-gray-700">{row.month}</td>
-                        <td className="py-3 pr-4"><DepartmentChip department={row.department} codeFamilyKey={row.codeFamilyKey} codeFamilies={settings.codeFamilies} /></td>
-                        <td className="py-3 pr-4 font-bold text-gray-900">{money(row.totalValue)}</td>
-                        <td className="py-3 pr-4 text-gray-600">{money(row.changeValue ?? 0)} · {pct(row.changePercent)}</td>
-                        <td className="py-3 pr-4 text-gray-600">{row.sessionCount}</td>
-                        <td className="py-3 pr-4">{row.isHighUsage ? <Badge tone="amber">High department usage</Badge> : <span className="text-gray-300">—</span>}</td>
-                      </tr>
-                    ))}
-                    {monthlyDepartmentRows.length === 0 ? <tr><td colSpan={6} className="py-8 text-center text-gray-400">No department summary for the selected month.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                <div>
-                  <h3 className="text-lg font-extrabold text-gray-950">Raw transactions</h3>
-                  <p className="mt-1 text-sm text-gray-500">
-                    {previewDatasets.length > 0 ? 'Preview rows from the uploaded workbook(s) before saving.' : 'Normalized HotSpot transaction rows from saved imports.'}
-                  </p>
-                </div>
-                <span className="text-xs font-extrabold uppercase tracking-wide text-gray-400">{rawTransactionRows.length.toLocaleString()} rows</span>
-              </div>
-              <div className="mt-4 max-h-[420px] overflow-auto rounded-2xl border border-gray-100">
-                <table className="min-w-[980px] w-full text-left text-sm">
-                  <thead className="sticky top-0 z-10 bg-gray-50 text-xs font-extrabold uppercase tracking-wide text-gray-400">
-                    <tr>
-                      <th className="px-3 py-2">Date</th>
-                      <th className="px-3 py-2">Start</th>
-                      <th className="px-3 py-2">Plate</th>
-                      <th className="px-3 py-2">Department</th>
-                      <th className="px-3 py-2">Code</th>
-                      <th className="px-3 py-2">Location</th>
-                      <th className="px-3 py-2">Duration</th>
-                      <th className="px-3 py-2 text-right">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {rawTransactionRows.slice(0, 500).map(row => {
-                      const color = getCodeFamilyColor(row.codeFamilyKey, row.department, settings.codeFamilies);
-                      return (
-                        <tr key={row.id} className="hover:bg-gray-50" style={{ borderLeft: `5px solid ${color.hex}` }}>
-                          <td className="px-3 py-2 font-bold text-gray-700">{row.startDate}</td>
-                          <td className="px-3 py-2 text-gray-600">{minutesToTime(row.startMinutes)}</td>
-                          <td className="px-3 py-2 font-extrabold text-gray-950">{row.plate || '(missing)'}</td>
-                          <td className="px-3 py-2"><DepartmentChip department={row.department || 'Unmapped'} codeFamilyKey={row.codeFamilyKey} codeFamilies={settings.codeFamilies} compact /></td>
-                          <td className="px-3 py-2 text-gray-600">{row.discountCode}</td>
-                          <td className="px-3 py-2 text-gray-600">{row.locationName || row.spotId}</td>
-                          <td className="px-3 py-2 text-gray-600">{minutesToDuration(row.durationMinutes)}</td>
-                          <td className="px-3 py-2 text-right font-bold text-gray-900">{money(row.discountAmount)}</td>
-                        </tr>
-                      );
-                    })}
-                    {rawTransactionRows.length === 0 ? <tr><td colSpan={8} className="py-8 text-center text-gray-400">No raw transactions loaded yet.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
-              {rawTransactionRows.length > 500 ? (
-                <p className="mt-2 text-xs font-semibold text-gray-400">Showing the newest 500 rows. Export Excel includes all rows.</p>
-              ) : null}
-            </section>
-          </div>
-
-          <aside className="space-y-6">
-            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-extrabold text-gray-950">Department color legend</h3>
-                  <p className="mt-1 text-xs font-semibold text-gray-400">Click a column header to sort. Ignore flags suppresses plate indicators for that department.</p>
-                </div>
-              </div>
-              <div className="mt-4 max-h-80 overflow-y-auto rounded-2xl border border-gray-100">
-                <table className="w-full text-left text-xs">
-                  <thead className="sticky top-0 bg-gray-50 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">
-                    <tr>
-                      <th className="px-3 py-2">{renderDepartmentLegendHeader('color', 'Color')}</th>
-                      <th className="px-3 py-2">{renderDepartmentLegendHeader('code', 'Code')}</th>
-                      <th className="px-3 py-2">{renderDepartmentLegendHeader('department', 'Department')}</th>
-                      <th className="px-3 py-2 text-center">{renderDepartmentLegendHeader('ignoreFlags', 'Ignore flags', 'mx-auto')}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {departmentLegendRows.map(color => (
-                      <tr key={`${color.familyKey}-${color.mappingIndex}`} className="bg-white">
-                        <td className="px-3 py-2"><span className="block h-4 w-4 rounded" style={{ backgroundColor: color.hex }} /></td>
-                        <td className="px-3 py-2 font-extrabold text-gray-700">{color.code}</td>
-                        <td className="min-w-0 px-3 py-2 font-semibold text-gray-500">{color.department}</td>
-                        <td className="px-3 py-2 text-center">
-                          <input
-                            type="checkbox"
-                            checked={color.ignoreFlags}
-                            disabled={!canEditParking}
-                            onChange={event => updateCodeFamilyDirectoryAndSave(color.mappingIndex, { ignoreFlags: event.target.checked })}
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
-                            aria-label={`Ignore plate flags for ${color.department}`}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Indicator thresholds</h3></div>
-              <div className="space-y-3 text-sm">
-                <SettingNumber label="High plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateMonthlyValueDollars: value } }))} />
-                <SettingNumber label="High frequency use" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateActiveDaysPerMonth: value } }))} />
-                <SettingNumber label="Long duration hours" value={settings.flagRules.longSessionHours} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionHours: value } }))} />
-                <SettingNumber label="Long duration count" value={settings.flagRules.longSessionCount} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionCount: value } }))} />
-                <SettingNumber label="Consistent location days" value={settings.flagRules.sameLocationDays} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, sameLocationDays: value } }))} />
-                <SettingNumber label="High department usage" value={settings.flagRules.departmentMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentMonthlyValueDollars: value } }))} />
-                <SettingNumber label="Department increase" value={settings.flagRules.departmentIncreasePercent} suffix="%" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentIncreasePercent: value } }))} />
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-start justify-between gap-2">
-                <div className="flex items-start gap-2">
-                  <Settings size={18} className="mt-0.5 text-blue-600" />
-                  <div>
-                    <h3 className="font-extrabold text-gray-950">Department directory</h3>
-                    <p className="mt-1 text-xs font-semibold text-gray-400">Names, colors, and yearly code rules live in one friendly editor.</p>
-                  </div>
-                </div>
-                <button disabled={!canEditParking} onClick={() => setDepartmentManagerOpen(true)} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Open</button>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
-                  <div className="text-xs font-extrabold uppercase tracking-wide text-blue-500">Departments</div>
-                  <div className="mt-1 text-2xl font-extrabold text-blue-950">{settings.codeFamilies.length}</div>
-                </div>
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
-                  <div className="text-xs font-extrabold uppercase tracking-wide text-emerald-500">Code year</div>
-                  <div className="mt-1 text-2xl font-extrabold text-emerald-950">{departmentCodeYear}</div>
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={!canEditParking}
-                onClick={() => setDepartmentManagerOpen(true)}
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-extrabold text-white transition hover:bg-blue-700 disabled:bg-gray-300"
-              >
-                <Wand2 size={16} /> Manage names, colors, and codes
-              </button>
-            </section>
-
-            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center justify-between gap-2"><h3 className="font-extrabold text-gray-950">Spot locations</h3><button disabled={!canEditParking} onClick={addSpotLocation} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Add</button></div>
-              <div className="space-y-3">
-                {settings.spotLocations.map((location, index) => (
-                  <div key={`${location.spotId}-${index}`} className="grid grid-cols-2 gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3">
-                    <TextInput disabled={!canEditParking} value={location.spotId} onChange={value => setSettings(current => ({ ...current, spotLocations: current.spotLocations.map((entry, i) => i === index ? { ...entry, spotId: value } : entry) }))} placeholder="Spot ID" />
-                    <TextInput disabled={!canEditParking} value={location.locationName} onChange={value => setSettings(current => ({ ...current, spotLocations: current.spotLocations.map((entry, i) => i === index ? { ...entry, locationName: value } : entry) }))} placeholder="Location" />
-                  </div>
-                ))}
-                {settings.spotLocations.length === 0 ? <p className="text-sm text-gray-400">Optional. Raw spot IDs are used until mapped.</p> : null}
-              </div>
-            </section>
-
-            {highDepartments.length > 0 ? (
-              <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
-                <h3 className="font-extrabold text-amber-950">Department alerts</h3>
-                <div className="mt-3 space-y-2">{highDepartments.slice(0, 6).map(row => <div key={`${row.month}-${row.department}`} className="text-sm font-semibold text-amber-800">{row.month}: {row.department} · {money(row.totalValue)}</div>)}</div>
-              </section>
-            ) : null}
-          </aside>
-        </div>
-
-        {departmentManagerOpen ? (
+  const departmentManagerModal = departmentManagerOpen ? (
           <div className="fixed inset-0 z-50 bg-gray-950/40 p-3 md:p-6" role="dialog" aria-modal="true" aria-label="Manage departments">
             <div className="mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-3xl border-2 border-gray-200 bg-gray-50 shadow-2xl">
               <div className="border-b border-gray-200 bg-white p-5">
@@ -1566,9 +1769,9 @@ export const ParkingWorkspace: React.FC = () => {
               </div>
             </div>
           </div>
-        ) : null}
+  ) : null;
 
-        {annualFullscreen ? (
+  const annualFullscreenModal = annualFullscreen ? (
           <div className="fixed inset-0 z-50 bg-white p-4 md:p-6" role="dialog" aria-modal="true" aria-label="Annual department summary full screen">
             <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 md:flex-row md:items-center md:justify-between">
               <div>
@@ -1589,7 +1792,1769 @@ export const ParkingWorkspace: React.FC = () => {
               <AnnualSummaryTable rows={annualSummaryRows} codeFamilies={settings.codeFamilies} stickyHeader />
             </div>
           </div>
+  ) : null;
+
+  if (!team || !user) {
+    return <div className="p-8 text-sm text-gray-500">Sign in and join a team to use Parking.</div>;
+  }
+
+  if (loading) {
+    return <div className="flex h-full items-center justify-center text-gray-500"><Loader2 className="mr-2 animate-spin" /> Loading Parking...</div>;
+  }
+
+  if (activeWorkspace === 'dashboard') {
+    return (
+      <div className="h-full overflow-y-auto pb-12">
+        <div className="mx-auto max-w-6xl animate-in fade-in slide-in-from-bottom-2 duration-500 pt-8">
+          <div className="mb-8 px-4">
+            <button
+              onClick={() => { window.location.hash = ''; }}
+              className="mb-3 flex items-center gap-1.5 text-sm font-medium text-gray-400 transition-colors hover:text-gray-600"
+            >
+              <ArrowLeft size={14} /> Back to Main
+            </button>
+            <h2 className="mb-2 text-2xl font-bold tracking-tight text-gray-900">Parking Workspace</h2>
+            <p className="text-gray-500">Select a parking tool to review plates, revenue, lots, and usage trends.</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 px-4 md:grid-cols-2">
+            <ParkingDashboardCard
+              onClick={() => navigateWorkspace('plate-monitor')}
+              icon={<Search size={20} />}
+              color="amber"
+              title="Plate Monitor"
+              description="Review flagged plates, repeat activity, unusual timing, and plate-level pattern evidence."
+            />
+            <ParkingDashboardCard
+              onClick={() => navigateWorkspace('lot-data')}
+              icon={<MapPin size={20} />}
+              color="emerald"
+              title="Parking Lot Data"
+              description="Import revenue files, map HotSpot locations, and compare lot usage, revenue, and peak periods."
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (activeWorkspace === 'lot-data') {
+    const mapMetricLabel = getParkingMapMetricLabel(parkingMapMetric);
+    const mapRevenueTotal = mapLocationSummaries.reduce((sum, entry) => sum + entry.totalRevenue, 0);
+    const activeLocation = selectedRevenueLocation;
+    const hasVisibleRevenuePins = mapLocationSummaries.length > 0;
+
+    return (
+      <div className="h-full overflow-hidden bg-slate-100">
+        <main
+          data-testid="parking-lot-data-map-first-shell"
+          data-layout="map-first"
+          className="relative h-full min-h-0 overflow-hidden bg-slate-100"
+        >
+          <div className={`absolute inset-0 transition-opacity ${lotViewMode === 'analysis' ? 'opacity-25' : 'opacity-100'}`}>
+            <MapBase latitude={44.389} longitude={-79.69} zoom={13} showNavigation showScale>
+              {lotMapMode === 'heatmap' && mapLocationSummaries.length > 0 ? (
+                <Source id="parking-revenue-heatmap-src" type="geojson" data={mapHeatmapGeoJson}>
+                  <Layer {...parkingHeatmapLayer} />
+                  <Layer {...parkingHeatmapPointLayer} />
+                </Source>
+              ) : null}
+              {lotMapMode === 'markers' ? mapLocationSummaries.map(entry => {
+                const value = getParkingMapMetricValue(entry, parkingMapMetric);
+                const ratio = Math.min(1, value / mapMetricMax);
+                const size = Math.max(18, Math.min(54, 18 + Math.sqrt(ratio) * 36));
+                const isSelected = Boolean(activeLocation && entry.sourceLocationKeys.includes(activeLocation.key));
+                const fillColor = mapMetricColor(ratio);
+                const borderColor = isSelected ? '#FBBF24' : entry.coordinateSource === 'public' ? '#2563EB' : entry.coordinateSource === 'mixed' ? '#7C3AED' : '#FFFFFF';
+                return (
+                  <Marker key={entry.key} longitude={entry.longitude} latitude={entry.latitude} anchor="center">
+                    <div className="group relative flex flex-col items-center">
+                      <button
+                        type="button"
+                        onClick={() => toggleRevenueLocationSelection(entry.primaryLocation.key, isSelected)}
+                        title={`${entry.displayName}: ${formatMapMetricValue(value, parkingMapMetric)} ${mapMetricLabel.toLowerCase()}${entry.aggregateCount > 1 ? ' · same-lot source IDs grouped' : ''}`}
+                        className={`relative flex items-center justify-center rounded-full border-[3px] shadow-lg transition hover:scale-110 focus:outline-none focus:ring-4 focus:ring-amber-200/80 ${
+                          isSelected ? 'z-10 ring-4 ring-amber-200/80' : ''
+                        } ${activeLocation && !isSelected ? 'opacity-35' : 'opacity-100'}`}
+                        style={{ width: size, height: size, backgroundColor: fillColor, borderColor }}
+                      >
+                        {entry.aggregateCount > 1 && (!activeLocation || isSelected) ? (
+                          <span className="rounded-full bg-white/95 px-1.5 py-0.5 text-[10px] font-black text-slate-800 shadow-sm">{entry.aggregateCount}</span>
+                        ) : null}
+                      </button>
+                      <div className={`pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-48 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white/95 p-2 text-left shadow-xl transition ${
+                        isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`}>
+                        <div className="truncate text-xs font-black text-slate-950">{entry.displayName}</div>
+                        <div className="mt-1 text-sm font-black text-emerald-700">{formatMapMetricValue(value, parkingMapMetric)}</div>
+                        <div className="mt-1 text-[11px] font-semibold text-slate-500">
+                          {entry.rowCount.toLocaleString()} sessions · {money(entry.totalRevenue)}
+                        </div>
+                      </div>
+                    </div>
+                  </Marker>
+                );
+              }) : null}
+            </MapBase>
+          </div>
+
+          <div className="pointer-events-none absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-start gap-3">
+            <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-3xl border border-slate-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur">
+              <button type="button" onClick={() => navigateWorkspace('dashboard')} aria-label="Back to Parking Workspaces" className="rounded-xl border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-50">
+                <ArrowLeft size={18} />
+              </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700">
+                  <MapPin size={16} /> Parking Lot Data
+                </div>
+                <div className="truncate text-lg font-black text-slate-950">Map-first lot activity</div>
+              </div>
+              <span className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-extrabold text-emerald-700 sm:inline-flex">{mapMetricLabel} map</span>
+              <span className={`hidden rounded-full px-3 py-1 text-xs font-extrabold sm:inline-flex ${
+                publicParkingError
+                  ? 'bg-amber-50 text-amber-700'
+                  : publicParkingLoading
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'bg-blue-50 text-blue-700'
+              }`}>
+                {publicParkingError ? 'City source unavailable' : publicParkingLoading ? 'Loading public lots' : `${publicFallbackPinCount} City-source groups`}
+              </span>
+              <div className="hidden rounded-2xl border border-slate-200 bg-slate-50 p-1 lg:grid lg:grid-cols-2">
+                {(['map', 'analysis'] as ParkingLotViewMode[]).map(mode => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setLotViewMode(mode)}
+                    className={`rounded-xl px-3 py-1.5 text-xs font-black capitalize transition ${
+                      lotViewMode === mode ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                    aria-pressed={lotViewMode === mode}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+              <div className="hidden rounded-2xl border border-slate-200 bg-slate-50 p-1 xl:grid xl:grid-cols-2">
+                {(['markers', 'heatmap'] as ParkingLotMapMode[]).map(mode => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setLotMapMode(mode)}
+                    className={`rounded-xl px-3 py-1.5 text-xs font-black capitalize transition ${
+                      lotMapMode === mode ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                    aria-pressed={lotMapMode === mode}
+                  >
+                    {mode === 'heatmap' ? 'Heat map' : 'Pins'}
+                  </button>
+                ))}
+              </div>
+              <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-extrabold text-white ${canEditParking ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-gray-300'}`}>
+                <Upload size={14} /> Revenue
+                <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleRevenueFileChange} className="hidden" />
+              </label>
+              {saving && previewRevenueDatasets.length > 0 ? (
+                <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-extrabold text-emerald-700">
+                  <Loader2 className="animate-spin" size={14} /> Auto-saving
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          <div
+            className="pointer-events-none absolute top-24 z-20 hidden max-w-xs rounded-3xl border border-slate-200 bg-white/95 p-3 text-xs font-bold text-slate-600 shadow-xl backdrop-blur xl:block"
+            style={{ left: lotLeftRailOpen ? 350 : 92 }}
+            aria-label="Parking map legend"
+          >
+            <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-slate-500">Map legend</div>
+            <div className="flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full bg-emerald-700" />
+              <span>{mapMetricLabel}: darker/larger means higher value</span>
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full border-[3px] border-white bg-emerald-400 shadow" />
+              <span>Reviewed location</span>
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full border-[3px] border-blue-600 bg-emerald-300 shadow" />
+              <span>City public source</span>
+            </div>
+            <div className="mt-1 text-[11px] font-semibold text-slate-400">
+              {lotMapMode === 'heatmap' ? 'Heat map summarizes concentration; switch to Pins for exact lots.' : 'Numbers inside pins are grouped source IDs, not dollars.'}
+            </div>
+          </div>
+
+          <aside
+            data-state={lotLeftRailOpen ? 'expanded' : 'collapsed'}
+            className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
+              lotLeftRailOpen ? 'w-80 p-3' : 'w-16 items-center p-2'
+            }`}
+            aria-label="Parking lot filters and list"
+          >
+            {lotLeftRailOpen ? (
+              <>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Map filters</div>
+                <p className="text-[11px] font-semibold text-slate-400">Pins resize by selected metric.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700">{mapLocationSummaries.length} pins</span>
+                <button
+                  type="button"
+                  onClick={() => setLotLeftRailOpen(false)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  aria-label="Collapse map filters"
+                  title="Collapse filters"
+                >
+                  <Minimize2 size={14} />
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div>
+                <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Month</div>
+                <select value={selectedRevenueMonth} onChange={event => setSelectedRevenueMonth(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                  <option value="all">All imported months</option>
+                  {revenueMonths.map(month => <option key={month} value={month}>{month}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Source</div>
+                <div className="grid grid-cols-3 gap-1 rounded-2xl border border-slate-200 bg-white p-1">
+                  {ALL_REVENUE_SOURCES.map(source => (
+                    <button key={source} type="button" onClick={() => setRevenueSourceFilter(source)} className={`rounded-xl px-2 py-2 text-xs font-extrabold ${revenueSourceFilter === source ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+                      {source === 'all' ? 'All' : source === 'hotspot' ? 'App' : 'QR'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Day type</div>
+                <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-white p-1">
+                  {ALL_REVENUE_DAY_TYPES.map(dayType => (
+                    <button key={dayType} type="button" onClick={() => setRevenueDayTypeFilter(dayType)} className={`rounded-xl px-2 py-2 text-xs font-extrabold ${revenueDayTypeFilter === dayType ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+                      {REVENUE_DAY_TYPE_LABELS[dayType]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Map metric</div>
+                <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-white p-1">
+                  {PARKING_MAP_METRICS.map(metric => (
+                    <button
+                      key={metric}
+                      type="button"
+                      onClick={() => setParkingMapMetric(metric)}
+                      className={`rounded-xl px-2 py-2 text-xs font-extrabold ${parkingMapMetric === metric ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                    >
+                      {getParkingMapMetricLabel(metric)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="rounded-2xl border border-slate-200 bg-white p-2">
+                  <span className="block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">From</span>
+                  <input type="number" min={0} max={23} value={revenueHourStart} onChange={event => setRevenueHourStart(Math.max(0, Math.min(23, Number(event.target.value))))} className="mt-1 w-full bg-transparent text-lg font-extrabold text-slate-900 outline-none" />
+                </label>
+                <label className="rounded-2xl border border-slate-200 bg-white p-2">
+                  <span className="block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">To</span>
+                  <input type="number" min={0} max={23} value={revenueHourEnd} onChange={event => setRevenueHourEnd(Math.max(0, Math.min(23, Number(event.target.value))))} className="mt-1 w-full bg-transparent text-lg font-extrabold text-slate-900 outline-none" />
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
+                <div className="text-[10px] font-black uppercase tracking-wide text-emerald-500">Revenue</div>
+                <div className="mt-1 text-lg font-black text-emerald-950">{money(revenueAnalytics.totalRevenue)}</div>
+              </div>
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                <div className="text-[10px] font-black uppercase tracking-wide text-blue-500">Sessions</div>
+                <div className="mt-1 text-lg font-black text-blue-950">{revenueAnalytics.rowCount.toLocaleString()}</div>
+              </div>
+              <div className="rounded-2xl border border-amber-100 bg-amber-50 p-3">
+                <div className="text-[10px] font-black uppercase tracking-wide text-amber-500">Avg stay</div>
+                <div className="mt-1 text-lg font-black text-amber-950">{minutesToDuration(revenueAnalytics.averageStayMinutes)}</div>
+              </div>
+              <div className="rounded-2xl border border-violet-100 bg-violet-50 p-3">
+                <div className="text-[10px] font-black uppercase tracking-wide text-violet-500">Peak</div>
+                <div className="mt-1 text-lg font-black text-violet-950">{formatHour(revenueAnalytics.peakHour)}</div>
+              </div>
+            </div>
+
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Parking lots</div>
+                <div className="text-[11px] font-bold text-slate-400">{revenueAnalytics.locationSummaries.length.toLocaleString()} total</div>
+              </div>
+              <div className="space-y-2">
+                {revenueAnalytics.locationSummaries.slice(0, 80).map(location => {
+                  const publicMatch = publicParkingMatchesByKey.get(location.key);
+                  return (
+                    <button
+                      key={location.key}
+                      type="button"
+                      onClick={() => toggleRevenueLocationSelection(location.key)}
+                      className={`w-full rounded-2xl border p-3 text-left transition ${
+                        activeLocation?.key === location.key ? 'border-emerald-300 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white hover:border-emerald-200 hover:bg-emerald-50/50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-black text-slate-950">{location.displayName}</div>
+                          <div className="mt-1 text-[11px] font-bold text-slate-400">{location.rowCount.toLocaleString()} sessions · avg {minutesToDuration(location.averageStayMinutes)}</div>
+                        </div>
+                        <div className="shrink-0 text-right text-sm font-black text-emerald-700">{money(location.totalRevenue)}</div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {location.sourceIds.slice(0, 3).map(ref => <span key={`${ref.source}-${ref.sourceId}`} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{getParkingRevenueSourceLabel(ref.source)} {ref.sourceId}</span>)}
+                        {location.isMapped ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Reviewed map</span> : publicMatch ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">City source</span> : null}
+                      </div>
+                    </button>
+                  );
+                })}
+                {revenueAnalytics.locationSummaries.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-white/80 p-5 text-center text-sm font-bold text-slate-400">
+                    Upload HotSpot or QR revenue files to start.
+                  </div>
+                ) : null}
+              </div>
+            </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setLotLeftRailOpen(true)}
+                className="flex h-full w-full flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                aria-label="Expand map filters"
+                title="Expand filters"
+              >
+                <SlidersHorizontal size={20} />
+                <span className="[writing-mode:vertical-rl] rotate-180 text-xs font-black uppercase tracking-wide">Filters</span>
+                <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-blue-700">{mapLocationSummaries.length}</span>
+              </button>
+            )}
+          </aside>
+
+          {lotViewMode === 'analysis' ? (
+            <section
+              className="pointer-events-auto absolute bottom-4 left-3 right-3 top-24 z-20 overflow-y-auto rounded-3xl border border-slate-200 bg-slate-50/95 p-4 shadow-2xl backdrop-blur xl:left-[350px] xl:right-[400px]"
+              aria-label="Parking data analysis summary"
+            >
+              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-violet-700">
+                    <BarChart3 size={14} /> Analysis summary
+                  </div>
+                  <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">Parking lot data analysis</h2>
+                  <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
+                    Chart-first view of revenue, sessions, stay length, payment source, and lot utilization for the current filters.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLotViewMode('map')}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  <MapPin size={16} /> Back to map
+                </button>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
+                  <div className="text-xs font-black uppercase tracking-wide text-emerald-600">Filtered revenue</div>
+                  <div className="mt-1 text-2xl font-black text-emerald-950">{money(revenueAnalytics.totalRevenue)}</div>
+                  <p className="mt-1 text-xs font-bold text-emerald-700">{revenueAnalytics.rowCount.toLocaleString()} sessions</p>
+                </div>
+                <div className="rounded-3xl border border-blue-100 bg-blue-50 p-4">
+                  <div className="text-xs font-black uppercase tracking-wide text-blue-600">Unique plates</div>
+                  <div className="mt-1 text-2xl font-black text-blue-950">{revenueAnalytics.uniquePlateCount.toLocaleString()}</div>
+                  <p className="mt-1 text-xs font-bold text-blue-700">Activity count, not enforcement finding.</p>
+                </div>
+                <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4">
+                  <div className="text-xs font-black uppercase tracking-wide text-amber-600">Average stay</div>
+                  <div className="mt-1 text-2xl font-black text-amber-950">{minutesToDuration(revenueAnalytics.averageStayMinutes)}</div>
+                  <p className="mt-1 text-xs font-bold text-amber-700">Peak starts {formatHour(revenueAnalytics.peakHour)}.</p>
+                </div>
+                <div className="rounded-3xl border border-violet-100 bg-violet-50 p-4">
+                  <div className="text-xs font-black uppercase tracking-wide text-violet-600">Known capacity</div>
+                  <div className="mt-1 text-2xl font-black text-violet-950">{parkingPlannerAnalysis.capacityRows.length.toLocaleString()} lots</div>
+                  <p className="mt-1 text-xs font-bold text-violet-700">Uses City public spaces where matched.</p>
+                </div>
+              </div>
+
+              <section className="mt-4 overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-100 bg-gradient-to-r from-slate-950 via-emerald-950 to-blue-950 p-5 text-white">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-100">
+                        <TrendingUp size={14} /> Trend overview
+                      </div>
+                      <h3 className="mt-2 text-2xl font-black tracking-tight">{parkingTrendOverview.scopeLabel}</h3>
+                      <p className="mt-1 max-w-3xl text-sm font-semibold leading-6 text-slate-200">
+                        Month-over-month, year-over-year, and day-pattern movement. Weekday, Saturday, and Sunday charts use average activity per active day so month length does not distort the trend.
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white/10 px-4 py-3 text-right">
+                      <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Focus month</div>
+                      <div className="mt-1 text-xl font-black">{parkingTrendOverview.targetMonth || '—'}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {parkingTrendOverview.comparisonCards.map(card => (
+                    <TrendComparisonCard key={card.key} card={card} />
+                  ))}
+                </div>
+                <div className="grid gap-4 border-t border-slate-100 bg-slate-50/70 p-4 xl:grid-cols-3">
+                  <ParkingChartCard title="Weekday trend" subtitle="Average revenue per active weekday.">
+                    <TrendAreaChart data={parkingTrendOverview.weekdayTrend} color="#2563EB" />
+                  </ParkingChartCard>
+                  <ParkingChartCard title="Saturday trend" subtitle="Average Saturday activity by month.">
+                    <TrendAreaChart data={parkingTrendOverview.saturdayTrend} color="#7C3AED" />
+                  </ParkingChartCard>
+                  <ParkingChartCard title="Sunday trend" subtitle="Average Sunday activity by month.">
+                    <TrendAreaChart data={parkingTrendOverview.sundayTrend} color="#EA580C" />
+                  </ParkingChartCard>
+                </div>
+                {parkingTrendOverview.fastestGrowingLot ? (
+                  <div className="border-t border-emerald-100 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-900">
+                    Fastest-growing lot this month: <span className="font-black">{parkingTrendOverview.fastestGrowingLot.label}</span>
+                    {' '}increased by {money(parkingTrendOverview.fastestGrowingLot.changeValue)}
+                    {parkingTrendOverview.fastestGrowingLot.changePercent == null ? '' : ` (${parkingTrendOverview.fastestGrowingLot.changePercent.toFixed(1)}%)`}.
+                  </div>
+                ) : null}
+              </section>
+
+              <div className="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <ParkingChartCard title="Revenue trend" subtitle="Monthly revenue movement for the current filter.">
+                    <TrendAreaChart data={parkingPlannerAnalysis.monthlyTrend} />
+                  </ParkingChartCard>
+                  <ParkingChartCard title="Hourly demand profile" subtitle="When paid parking activity is happening.">
+                    <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
+                  </ParkingChartCard>
+                  <ParkingChartCard title="Top lots by revenue" subtitle="Quick comparison of the highest value parking locations." tall>
+                    <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} />
+                  </ParkingChartCard>
+                  <ParkingChartCard title="Payment source mix" subtitle="HotSpot app compared with QR-code activity.">
+                    <SourceMixChart data={parkingPlannerAnalysis.sourceMix} />
+                  </ParkingChartCard>
+                </div>
+
+                <div className="space-y-4">
+                  <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="mb-3 flex items-center gap-2">
+                      <CheckCircle2 className="text-emerald-600" size={18} />
+                      <h3 className="font-black text-slate-950">Planner insights</h3>
+                    </div>
+                    <div className="space-y-2">
+                      {parkingPlannerAnalysis.insights.map(insight => (
+                        <div key={insight} className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm font-bold leading-5 text-slate-700">
+                          {insight}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="rounded-3xl border border-violet-100 bg-violet-50 p-4 shadow-sm">
+                    <div className="text-xs font-black uppercase tracking-wide text-violet-600">Capacity/utilization</div>
+                    <h3 className="mt-1 font-black text-violet-950">Revenue per known space</h3>
+                    <div className="mt-3 space-y-2">
+                      {parkingPlannerAnalysis.capacityRows.slice(0, 5).map(row => (
+                        <div key={row.key} className="rounded-2xl bg-white p-3">
+                          <div className="flex items-start justify-between gap-2 text-sm font-black text-slate-800">
+                            <span className="min-w-0 truncate">{row.label}</span>
+                            <span>{row.revenuePerSpace == null ? '—' : money(row.revenuePerSpace)}</span>
+                          </div>
+                          <div className="mt-1 text-xs font-bold text-slate-400">
+                            {row.spaces?.toLocaleString() || 'Unknown'} spaces · {row.sessionsPerSpace == null ? '—' : `${row.sessionsPerSpace} sessions/space`}
+                          </div>
+                        </div>
+                      ))}
+                      {parkingPlannerAnalysis.capacityRows.length === 0 ? (
+                        <div className="rounded-2xl bg-white p-3 text-sm font-bold text-violet-700">No matched public-space counts yet.</div>
+                      ) : null}
+                    </div>
+                  </section>
+                </div>
+              </div>
+
+              {parkingPlannerAnalysis.selectedLot ? (
+                <section className="mt-4 rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-wide text-emerald-600">Selected lot drilldown</div>
+                      <h3 className="mt-1 text-xl font-black text-slate-950">{parkingPlannerAnalysis.selectedLot.displayName}</h3>
+                      <p className="mt-1 text-sm font-semibold text-slate-500">
+                        #{parkingPlannerAnalysis.selectedLot.revenueRank} by revenue · {parkingPlannerAnalysis.selectedLot.revenueSharePercent}% of filtered revenue · {parkingPlannerAnalysis.selectedLot.spaces ? `${parkingPlannerAnalysis.selectedLot.spaces} known spaces` : 'capacity not matched yet'}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-right text-xs font-black text-slate-600 sm:grid-cols-4">
+                      <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-800">Rev/space<br /><span className="text-base">{parkingPlannerAnalysis.selectedLot.revenuePerSpace == null ? '—' : money(parkingPlannerAnalysis.selectedLot.revenuePerSpace)}</span></div>
+                      <div className="rounded-2xl bg-blue-50 p-3 text-blue-800">Sessions<br /><span className="text-base">{parkingPlannerAnalysis.selectedLot.sessionSharePercent}%</span></div>
+                      <div className="rounded-2xl bg-amber-50 p-3 text-amber-800">Avg stay<br /><span className="text-base">{minutesToDuration(activeLocation?.averageStayMinutes || 0)}</span></div>
+                      <div className="rounded-2xl bg-violet-50 p-3 text-violet-800">System avg<br /><span className="text-base">{minutesToDuration(parkingPlannerAnalysis.selectedLot.systemAverageStayMinutes)}</span></div>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 xl:grid-cols-3">
+                    <ParkingChartCard title="Selected-lot hourly profile" subtitle="Peak pattern for this lot only.">
+                      <HourlyRevenueChart data={parkingPlannerAnalysis.selectedLot.hourlyProfile} compact />
+                    </ParkingChartCard>
+                    <ParkingChartCard title="Selected-lot trend" subtitle="Revenue trend for this lot only.">
+                      <TrendAreaChart data={parkingPlannerAnalysis.selectedLot.monthlyTrend} color="#059669" />
+                    </ParkingChartCard>
+                    <ParkingChartCard title="Selected-lot payment mix" subtitle="App compared with QR for this lot.">
+                      <SourceMixChart data={parkingPlannerAnalysis.selectedLot.sourceMix} />
+                    </ParkingChartCard>
+                  </div>
+                </section>
+              ) : null}
+            </section>
+          ) : null}
+
+          <aside
+            data-state={lotRightRailOpen ? 'expanded' : 'collapsed'}
+            className={`pointer-events-auto absolute bottom-4 right-3 top-4 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
+              lotRightRailOpen ? 'w-[380px] p-3' : 'w-16 items-center p-2'
+            }`}
+            aria-label="Parking lot trends and details"
+          >
+            {lotRightRailOpen ? (
+              <>
+              <button
+                type="button"
+                onClick={() => setLotRightRailOpen(false)}
+                className="mb-2 ml-auto inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                aria-label="Collapse parking trends"
+                title="Collapse trends"
+              >
+                <Minimize2 size={14} />
+              </button>
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+              <section className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-wide text-emerald-600">
+                      {activeMapLocation?.coordinateSource === 'reviewed'
+                        ? 'Selected reviewed lot'
+                        : activeMapLocation?.coordinateSource === 'public'
+                          ? 'Selected public-source match'
+                          : 'Parking trends'}
+                    </div>
+                    <h3 className="mt-1 text-lg font-black text-emerald-950">{activeMapLocation?.displayName || activeLocation?.displayName || 'All parking lots'}</h3>
+                  </div>
+                  <BarChart3 className="text-emerald-700" size={22} />
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <div className="rounded-2xl bg-white p-3">
+                    <div className="text-[10px] font-black uppercase text-emerald-500">Revenue</div>
+                    <div className="mt-1 text-lg font-black text-emerald-950">{money(activeMapLocation?.totalRevenue || activeLocation?.totalRevenue || revenueAnalytics.totalRevenue)}</div>
+                  </div>
+                  <div className="rounded-2xl bg-white p-3">
+                    <div className="text-[10px] font-black uppercase text-blue-500">Plates</div>
+                    <div className="mt-1 text-lg font-black text-blue-950">{(activeMapLocation?.uniquePlateCount || activeLocation?.uniquePlateCount || revenueAnalytics.uniquePlateCount).toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-2xl bg-white p-3">
+                    <div className="text-[10px] font-black uppercase text-amber-500">Peak</div>
+                    <div className="mt-1 text-lg font-black text-amber-950">{formatHour(activeMapLocation?.peakHour ?? activeLocation?.peakHour ?? revenueAnalytics.peakHour)}</div>
+                  </div>
+                  <div className="rounded-2xl bg-white p-3">
+                    <div className="text-[10px] font-black uppercase text-violet-500">Map-visible rev.</div>
+                    <div className="mt-1 text-lg font-black text-violet-950">{money(mapRevenueTotal)}</div>
+                  </div>
+                </div>
+                {(activeMapLocation || activeLocation) ? (
+                  <div className="mt-3 rounded-2xl bg-white p-3 text-xs font-bold text-slate-600">
+                    HotSpot app: {money(activeMapLocation?.hotspotRevenue ?? activeLocation?.hotspotRevenue)} · QR: {money(activeMapLocation?.qrRevenue ?? activeLocation?.qrRevenue)}
+                    {activeMapLocation && activeMapLocation.aggregateCount > 1 ? (
+                      <div className="mt-2 rounded-xl bg-slate-50 p-2 text-slate-600">
+                        Same-lot source IDs grouped: {activeMapLocation.aggregateCount}.
+                      </div>
+                    ) : null}
+                    {activeMapLocation?.coordinateSource === 'public' ? (
+                      <div className="mt-2 rounded-xl bg-blue-50 p-2 text-blue-700">
+                        City source pin: {activeMapLocation.publicMatch?.location.commonName || activeMapLocation.publicMatch?.location.name}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <BarChart3 className="text-emerald-600" size={18} />
+                  <h3 className="font-black text-slate-950">Quick charts</h3>
+                </div>
+                <div className="h-44">
+                  <HourlyRevenueChart data={parkingPlannerAnalysis.selectedLot?.hourlyProfile || parkingPlannerAnalysis.hourlyProfile} compact />
+                </div>
+                <div className="mt-3 h-44">
+                  <SourceMixChart data={parkingPlannerAnalysis.selectedLot?.sourceMix || parkingPlannerAnalysis.sourceMix} />
+                </div>
+              </section>
+
+              <section className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Trend snapshot</div>
+                    <h3 className="mt-1 font-black text-slate-950">{parkingTrendOverview.scopeLabel}</h3>
+                    <p className="mt-1 text-xs font-bold text-slate-400">
+                      Comparing {parkingTrendOverview.targetMonth || 'latest month'} across all imported months.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-black text-emerald-700">MoM / YoY</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {parkingTrendOverview.comparisonCards.map(card => (
+                    <TrendComparisonCard key={card.key} card={card} compact />
+                  ))}
+                </div>
+                {parkingTrendOverview.fastestGrowingLot ? (
+                  <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-xs font-bold text-emerald-800">
+                    Fastest-growing lot: <span className="font-black">{parkingTrendOverview.fastestGrowingLot.label}</span>
+                    {' '}up {money(parkingTrendOverview.fastestGrowingLot.changeValue)}
+                    {parkingTrendOverview.fastestGrowingLot.changePercent == null ? '' : ` (${parkingTrendOverview.fastestGrowingLot.changePercent.toFixed(1)}%)`}.
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Clock3 className="text-amber-600" size={18} />
+                  <h3 className="font-black text-slate-950">Peak periods</h3>
+                </div>
+                <div className="space-y-2">
+                  {revenueAnalytics.revenueByHour.slice().sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 5).map(point => (
+                    <div key={point.key} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between text-sm font-black text-slate-800"><span>{point.label}</span><span>{money(point.totalRevenue)}</span></div>
+                      <div className="mt-1 text-xs font-semibold text-slate-400">{point.rowCount.toLocaleString()} sessions · avg {minutesToDuration(point.averageStayMinutes)}</div>
+                    </div>
+                  ))}
+                  {revenueAnalytics.revenueByHour.length === 0 ? <p className="text-sm font-semibold text-slate-400">No peak periods yet.</p> : null}
+                </div>
+              </section>
+
+              <section className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <CalendarDays className="text-blue-600" size={18} />
+                  <h3 className="font-black text-slate-950">Top single days</h3>
+                </div>
+                <div className="space-y-2">
+                  {revenueAnalytics.revenueByDay.slice().sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 5).map(point => (
+                    <div key={point.key} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between text-sm font-black text-slate-800"><span>{point.label}</span><span>{money(point.totalRevenue)}</span></div>
+                      <div className="mt-1 text-xs font-semibold text-slate-400">{point.rowCount.toLocaleString()} sessions</div>
+                    </div>
+                  ))}
+                  {revenueAnalytics.revenueByDay.length === 0 ? <p className="text-sm font-semibold text-slate-400">Upload revenue files to populate daily trends.</p> : null}
+                </div>
+              </section>
+
+              <details className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
+                <summary className="cursor-pointer text-sm font-black text-slate-950">
+                  Map location settings
+                </summary>
+                <a href={BARRIE_PUBLIC_PARKING_VIEWER_URL} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs font-black text-blue-700 hover:text-blue-900">
+                  City public parking source
+                </a>
+                <div className="mt-3 space-y-3">
+                  {(settings.revenueLocations || []).slice(0, 12).map(location => {
+                    const search = locationSearchById[location.id] || { query: location.displayName, searching: false, error: '', suggestions: [] };
+                    const sourceSummary = revenueAnalytics.locationSummaries.find(summary => summary.key === location.id || revenueLocationRefsOverlap(summary, location));
+                    const publicMatch = sourceSummary ? publicParkingMatchesByKey.get(sourceSummary.key) || null : null;
+                    return (
+                      <div key={location.id} className="rounded-2xl border border-amber-100 bg-white p-3">
+                        <TextInput disabled={!canEditParking} value={location.displayName} onChange={value => updateRevenueLocation(location.id, { displayName: value })} />
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <TextInput disabled={!canEditParking} value={location.latitude == null ? '' : String(location.latitude)} onChange={value => updateRevenueLocation(location.id, { latitude: value ? Number(value) : null })} placeholder="Latitude" />
+                          <TextInput disabled={!canEditParking} value={location.longitude == null ? '' : String(location.longitude)} onChange={value => updateRevenueLocation(location.id, { longitude: value ? Number(value) : null })} placeholder="Longitude" />
+                        </div>
+                        <div className="mt-2 flex gap-2">
+                          <input value={search.query} disabled={!canEditParking} onChange={event => setLocationSearchById(current => ({ ...current, [location.id]: { ...search, query: event.target.value } }))} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none" />
+                          <button type="button" disabled={!canEditParking || search.searching} onClick={() => void searchRevenueLocation(location)} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:bg-gray-300">
+                            {search.searching ? '...' : 'Find'}
+                          </button>
+                        </div>
+                        {publicMatch ? (
+                          <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs font-bold text-blue-800">
+                            <div>Public source match: {publicMatch.location.commonName || publicMatch.location.name}{publicMatch.location.address ? ` · ${publicMatch.location.address}` : ''}</div>
+                            <button type="button" disabled={!canEditParking} onClick={() => applyPublicRevenueLocationFallback(location.id, publicMatch)} className="mt-2 rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-blue-700 disabled:bg-gray-300">
+                              Use public coordinates
+                            </button>
+                          </div>
+                        ) : null}
+                        {search.error ? <div className="mt-2 text-xs font-bold text-amber-700">{search.error}</div> : null}
+                        {search.suggestions.length > 0 ? (
+                          <div className="mt-2 space-y-1.5">
+                            {search.suggestions.map(suggestion => (
+                              <button key={suggestion.id} type="button" onClick={() => applyRevenueLocationSuggestion(location.id, suggestion)} className="w-full rounded-xl border border-blue-100 bg-blue-50 p-2 text-left text-xs font-bold text-blue-800 hover:bg-blue-100">
+                                {suggestion.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {(settings.revenueLocations || []).length === 0 ? (
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3 text-xs font-bold text-blue-800">
+                      City public parking locations are used automatically for matching pins. Add reviewed coordinates only when you want to override a public match.
+                    </div>
+                  ) : null}
+                  <button type="button" disabled={saving || !canEditParking} onClick={() => void saveSettingsOnly()} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-700 disabled:bg-gray-300">
+                    {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save map locations
+                  </button>
+                </div>
+              </details>
+
+              <details className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
+                <summary className="cursor-pointer text-sm font-black text-slate-950">Department-code import and older tables</summary>
+                <div className="mt-3 space-y-3">
+                  <label className={`inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-black text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
+                    <Upload size={16} /> Upload department .xlsx
+                    <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleFileChange} className="hidden" />
+                  </label>
+                  {warnings.length > 0 ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">{warnings.map(warning => <div key={warning}>{warning}</div>)}</div> : null}
+                  {unmapped.length > 0 ? (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                      <div className="font-black text-amber-950">Map discount codes before saving</div>
+                      <div className="mt-2 space-y-2">
+                        {unmapped.map(code => (
+                          <div key={code.familyKey} className="rounded-xl bg-white p-3">
+                            <div className="text-sm font-black text-slate-800">{code.familyKey}</div>
+                            <div className="mb-2 text-xs font-medium text-slate-500">{code.codes.join(', ')} · {code.rowCount} rows</div>
+                            <TextInput value={mappingDrafts[code.familyKey] || ''} onChange={value => setMappingDrafts(current => ({ ...current, [code.familyKey]: value }))} placeholder="Department" />
+                          </div>
+                        ))}
+                      </div>
+                      <button onClick={() => void applyUnmappedMappings()} className="mt-3 inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700">
+                        <CheckCircle2 size={16} /> Apply mappings
+                      </button>
+                    </div>
+                  ) : null}
+                  {previewDatasets.length > 0 ? (
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+                      <div className="font-black text-emerald-950">Ready to replace {summarizeImportMonths(previewDatasets)}</div>
+                      <p className="mt-1 text-sm font-semibold text-emerald-800">{previewRowCount.toLocaleString()} rows · {money(previewTotalValue)} total value</p>
+                      <button disabled={saving || !canEditParking} onClick={() => void importPreview()} className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white hover:bg-emerald-700 disabled:opacity-50">
+                        {saving ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Save import
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                    <div className="text-xs font-black uppercase tracking-wide text-slate-400">Review period</div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {availableYears.length > 0 ? availableYears.map(year => (
+                        <button key={year} onClick={() => setSelectedYear(year)} className={`rounded-full px-3 py-1.5 text-xs font-black ${selectedYear === year ? 'bg-slate-950 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'}`}>{year}</button>
+                      )) : <span className="text-xs font-semibold text-slate-400">Import a month to start.</span>}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {MONTHS.map(month => {
+                        const monthKey = `${selectedYear}-${month.value}`;
+                        const hasData = monthsForSelectedYear.some(entry => entry.month === monthKey);
+                        return (
+                          <button key={month.value} disabled={!hasData} onClick={() => setSelectedMonth(monthKey)} className={`rounded-full px-2.5 py-1 text-[11px] font-black ${selectedMonth === monthKey ? 'bg-blue-600 text-white' : hasData ? 'bg-blue-50 text-blue-700 hover:bg-blue-100' : 'bg-white text-slate-300'}`}>
+                            {month.short}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                      <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Dept rows</div>
+                      <div className="mt-1 text-lg font-black text-slate-950">{monthlyDepartmentRows.length.toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                      <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Raw rows</div>
+                      <div className="mt-1 text-lg font-black text-slate-950">{rawTransactionRows.length.toLocaleString()}</div>
+                    </div>
+                  </div>
+                  <button disabled={!canEditParking} onClick={() => setDepartmentManagerOpen(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-700 disabled:bg-gray-300">
+                    <Wand2 size={16} /> Manage departments
+                  </button>
+                  <button type="button" disabled={annualSummaryRows.length === 0} onClick={() => setAnnualFullscreen(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-40">
+                    <Maximize2 size={16} /> Annual department summary
+                  </button>
+                </div>
+              </details>
+            </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setLotRightRailOpen(true)}
+                className="flex h-full w-full flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                aria-label="Expand parking trends"
+                title="Expand trends"
+              >
+                <BarChart3 size={20} />
+                <span className="[writing-mode:vertical-rl] rotate-180 text-xs font-black uppercase tracking-wide">Trends</span>
+                <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">{money(revenueAnalytics.totalRevenue).replace('.00', '')}</span>
+              </button>
+            )}
+          </aside>
+
+          {(errorMessage || publicParkingError || previewRevenueDatasets.length > 0 || revenueImportStatus || !hasVisibleRevenuePins) ? (
+            <div className="pointer-events-none absolute bottom-4 left-[350px] right-[400px] z-30 hidden xl:block">
+              <div className="pointer-events-auto rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur">
+                {errorMessage ? <div className="mb-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{errorMessage}</div> : null}
+                {publicParkingError ? <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">City public parking source could not load: {publicParkingError}</div> : null}
+                {revenueImportStatus ? <div className="mb-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{revenueImportStatus}</div> : null}
+                {(previewRevenueDatasets.length > 0 || !hasVisibleRevenuePins) && revenueWarnings.length > 0 ? <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">{revenueWarnings.map(warning => <div key={warning}>{warning}</div>)}</div> : null}
+                {previewRevenueDatasets.length > 0 ? (
+                  <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="font-black text-emerald-950">{saving ? 'Auto-saving revenue import' : 'Revenue import needs attention'}</div>
+                      <div className="mt-1 text-sm font-semibold text-emerald-800">
+                        {previewRevenueDatasets.reduce((sum, dataset) => sum + dataset.rowCount, 0).toLocaleString()} rows · {money(previewRevenueDatasets.reduce((sum, dataset) => sum + dataset.totalRevenue, 0))} revenue.
+                        {saving ? ' Saving automatically...' : ' Auto-save did not finish. You can retry below.'}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {previewRevenueDatasets.map(dataset => (
+                          <span key={`${dataset.source}-${dataset.month}`} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-emerald-800">
+                            {getParkingRevenueSourceLabel(dataset.source)} · {dataset.month} · {dataset.rowCount.toLocaleString()} rows · {money(dataset.totalRevenue)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    {saving ? (
+                      <span className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white">
+                        <Loader2 className="animate-spin" size={16} /> Saving
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={!canEditParking}
+                        onClick={() => void saveRevenuePreview()}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white hover:bg-emerald-700 disabled:bg-gray-300"
+                      >
+                        <Save size={16} /> Retry auto-save
+                      </button>
+                    )}
+                  </div>
+                ) : !hasVisibleRevenuePins ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">
+                    The map is ready. Upload revenue files; reviewed coordinates or public City matches will light up the pins.
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {departmentManagerModal}
+          {annualFullscreenModal}
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-y-auto pb-10">
+      <div className="mx-auto max-w-7xl space-y-6 px-2">
+        <button onClick={() => navigateWorkspace('dashboard')} className="mt-2 inline-flex items-center gap-1.5 text-sm font-bold text-gray-400 hover:text-gray-600">
+          <ArrowLeft size={14} /> Back to Parking Workspaces
+        </button>
+
+        <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-emerald-700">
+                <Car size={14} /> Parking
+              </div>
+              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-gray-950">
+                {activeWorkspace === 'plate-monitor' ? 'Parking Plate Monitor' : 'Parking Lot Data'}
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-gray-500">
+                {activeWorkspace === 'plate-monitor'
+                  ? 'Review flagged plates, repeat activity, unusual timing, and plate-level pattern evidence.'
+                  : 'Import revenue files, map HotSpot locations, and compare lot usage, revenue, and peak periods.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                disabled={!displaySummary}
+                onClick={() => displaySummary && exportParkingWorkbook(displaySummary, `parking-usage-${latestMonth?.month || 'report'}.xlsx`)}
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Download size={16} /> Export Excel
+              </button>
+              <button
+                disabled={!canEditParking}
+                onClick={() => setDepartmentManagerOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+              >
+                <Palette size={16} /> Manage departments
+              </button>
+              <button
+                disabled={!canEditParking || saving}
+                onClick={() => void saveSettingsOnly()}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save settings
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{errorMessage}</div>
         ) : null}
+
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="space-y-6">
+            {false ? (
+              <>
+                <section className="rounded-3xl border-2 border-emerald-100 bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-emerald-700">
+                        <MapPin size={14} /> Map-first revenue view
+                      </div>
+                      <h3 className="mt-3 text-2xl font-extrabold text-gray-950">Parking lot activity map</h3>
+                      <p className="mt-1 max-w-3xl text-sm font-semibold leading-6 text-gray-500">
+                        Import HotSpot app and QR revenue files, review physical map locations, then explore revenue, activity, and stay-length trends by lot.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-extrabold text-white ${canEditParking ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-gray-300'}`}>
+                        <Upload size={16} /> Upload revenue files
+                        <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleRevenueFileChange} className="hidden" />
+                      </label>
+                      {saving && previewRevenueDatasets.length > 0 ? (
+                        <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-extrabold text-emerald-700">
+                          <Loader2 className="animate-spin" size={16} /> Auto-saving
+                        </span>
+                      ) : previewRevenueDatasets.length > 0 ? (
+                        <button
+                          type="button"
+                          disabled={!canEditParking}
+                          onClick={() => void saveRevenuePreview()}
+                          className="inline-flex items-center gap-2 rounded-xl bg-gray-950 px-4 py-2 text-sm font-extrabold text-white hover:bg-gray-800 disabled:opacity-50"
+                        >
+                          <Save size={16} /> Retry auto-save
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {revenueWarnings.length > 0 ? (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">
+                      {revenueWarnings.map(warning => <div key={warning}>{warning}</div>)}
+                    </div>
+                  ) : null}
+
+                  {previewRevenueDatasets.length > 0 ? (
+                    <div className="mt-4 rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4">
+                      <div className="flex items-start gap-3">
+                        <CheckCircle2 className="mt-0.5 text-emerald-600" size={20} />
+                        <div>
+                          <h4 className="font-extrabold text-emerald-950">{saving ? 'Auto-saving revenue import' : 'Revenue import needs attention'}</h4>
+                          <p className="mt-1 text-sm font-semibold text-emerald-800">
+                            {previewRevenueDatasets.reduce((sum, dataset) => sum + dataset.rowCount, 0).toLocaleString()} rows · {money(previewRevenueDatasets.reduce((sum, dataset) => sum + dataset.totalRevenue, 0))} revenue.
+                            {saving ? ' Saving automatically...' : ' Auto-save did not finish. Use retry above.'}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {previewRevenueDatasets.map(dataset => (
+                              <span key={`${dataset.source}-${dataset.month}`} className="rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-emerald-800">
+                                {dataset.month} · {getParkingRevenueSourceLabel(dataset.source)} · {dataset.rowCount.toLocaleString()} rows
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+
+                <section className="grid gap-4 md:grid-cols-4">
+                  <Metric label="Revenue" value={money(revenueAnalytics.totalRevenue)} />
+                  <Metric label="Sessions" value={revenueAnalytics.rowCount.toLocaleString()} />
+                  <Metric label="Avg stay" value={minutesToDuration(revenueAnalytics.averageStayMinutes)} />
+                  <Metric label="Peak hour" value={formatHour(revenueAnalytics.peakHour)} tone="amber" />
+                </section>
+
+                <section className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+                  <div className="space-y-4 rounded-3xl border-2 border-gray-200 bg-white p-4 shadow-sm">
+                    <div>
+                      <h3 className="font-extrabold text-gray-950">Map filters</h3>
+                      <p className="mt-1 text-xs font-semibold text-gray-400">Revenue is the default map size metric.</p>
+                    </div>
+                    <div>
+                      <div className="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Month</div>
+                      <select value={selectedRevenueMonth} onChange={event => setSelectedRevenueMonth(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700">
+                        <option value="all">All imported months</option>
+                        {revenueMonths.map(month => <option key={month} value={month}>{month}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Source</div>
+                      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-gray-100 bg-gray-50 p-1">
+                        {ALL_REVENUE_SOURCES.map(source => (
+                          <button
+                            key={source}
+                            type="button"
+                            onClick={() => setRevenueSourceFilter(source)}
+                            className={`rounded-xl px-2 py-2 text-xs font-extrabold ${revenueSourceFilter === source ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                          >
+                            {source === 'all' ? 'All' : source === 'hotspot' ? 'App' : 'QR'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Day type</div>
+                      <div className="grid grid-cols-2 gap-1 rounded-2xl border border-gray-100 bg-gray-50 p-1">
+                        {ALL_REVENUE_DAY_TYPES.map(dayType => (
+                          <button
+                            key={dayType}
+                            type="button"
+                            onClick={() => setRevenueDayTypeFilter(dayType)}
+                            className={`rounded-xl px-2 py-2 text-xs font-extrabold ${revenueDayTypeFilter === dayType ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                          >
+                            {REVENUE_DAY_TYPE_LABELS[dayType]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="rounded-2xl border border-gray-100 bg-gray-50 p-2">
+                        <span className="block text-[10px] font-extrabold uppercase tracking-wide text-gray-400">From</span>
+                        <input type="number" min={0} max={23} value={revenueHourStart} onChange={event => setRevenueHourStart(Math.max(0, Math.min(23, Number(event.target.value))))} className="mt-1 w-full bg-transparent text-lg font-extrabold text-gray-900 outline-none" />
+                      </label>
+                      <label className="rounded-2xl border border-gray-100 bg-gray-50 p-2">
+                        <span className="block text-[10px] font-extrabold uppercase tracking-wide text-gray-400">To</span>
+                        <input type="number" min={0} max={23} value={revenueHourEnd} onChange={event => setRevenueHourEnd(Math.max(0, Math.min(23, Number(event.target.value))))} className="mt-1 w-full bg-transparent text-lg font-extrabold text-gray-900 outline-none" />
+                      </label>
+                    </div>
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                      <div className="text-xs font-extrabold uppercase tracking-wide text-blue-600">Mapped pins</div>
+                      <div className="mt-1 text-2xl font-extrabold text-blue-950">{revenueAnalytics.mappedLocationSummaries.length}</div>
+                      <p className="mt-1 text-xs font-bold text-blue-700">Reviewed and City-source locations are used where available.</p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded-3xl border-2 border-gray-200 bg-white shadow-sm">
+                    <div className="flex flex-col gap-3 border-b border-gray-100 bg-gray-50 p-4 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <h3 className="font-extrabold text-gray-950">Revenue map</h3>
+                        <p className="text-xs font-semibold text-gray-400">Bubble size is based on filtered revenue.</p>
+                      </div>
+                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-extrabold text-emerald-700">Amount = revenue</span>
+                    </div>
+                    <div className="relative h-[560px]">
+                      {revenueAnalytics.mappedLocationSummaries.length > 0 ? (
+                        <MapBase latitude={44.389} longitude={-79.69} zoom={13} showNavigation showScale>
+                          {revenueAnalytics.mappedLocationSummaries.map(location => {
+                            const maxRevenue = Math.max(...revenueAnalytics.mappedLocationSummaries.map(item => item.totalRevenue), 1);
+                            const size = Math.max(26, Math.min(74, 26 + Math.sqrt(location.totalRevenue / maxRevenue) * 48));
+                            const isSelected = selectedRevenueLocation?.key === location.key;
+                            return (
+                              <Marker key={location.key} longitude={location.longitude || -79.69} latitude={location.latitude || 44.389} anchor="center">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleRevenueLocationSelection(location.key)}
+                                  title={`${location.displayName}: ${money(location.totalRevenue)}`}
+                                  className={`flex items-center justify-center rounded-full border-4 font-extrabold shadow-lg transition hover:scale-105 ${isSelected ? 'border-amber-300 bg-emerald-600 text-white' : 'border-white bg-emerald-500 text-white'}`}
+                                  style={{ width: size, height: size }}
+                                >
+                                  <span className="text-[11px]">{money(location.totalRevenue).replace('.00', '')}</span>
+                                </button>
+                              </Marker>
+                            );
+                          })}
+                        </MapBase>
+                      ) : (
+                        <div className="grid h-full place-items-center bg-emerald-50 p-8 text-center">
+                          <div className="max-w-md rounded-3xl border-2 border-emerald-100 bg-white p-6 shadow-sm">
+                            <MapPin className="mx-auto text-emerald-600" size={36} />
+                            <h4 className="mt-3 text-lg font-extrabold text-gray-950">Upload revenue to light up the map</h4>
+                            <p className="mt-2 text-sm font-semibold text-gray-500">City public parking matches and reviewed coordinates will place pins automatically when available.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+                  <div className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-extrabold text-gray-950">Top parking locations</h3>
+                        <p className="mt-1 text-xs font-semibold text-gray-400">Click a row to sync the right-side detail panel and map pin.</p>
+                      </div>
+                      <BarChart3 className="text-emerald-600" size={22} />
+                    </div>
+                    <div className="mt-4 max-h-[420px] overflow-auto rounded-2xl border border-gray-100">
+                      <table className="w-full min-w-[760px] text-left text-sm">
+                        <thead className="sticky top-0 bg-gray-50 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">
+                          <tr>
+                            <th className="px-3 py-2">Location</th>
+                            <th className="px-3 py-2 text-right">Revenue</th>
+                            <th className="px-3 py-2 text-right">Sessions</th>
+                            <th className="px-3 py-2 text-right">Avg stay</th>
+                            <th className="px-3 py-2">Peak</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {revenueAnalytics.locationSummaries.slice(0, 80).map(location => (
+                            <tr
+                              key={location.key}
+                              onClick={() => toggleRevenueLocationSelection(location.key)}
+                              className={`cursor-pointer hover:bg-emerald-50/60 ${selectedRevenueLocation?.key === location.key ? 'bg-emerald-50' : 'bg-white'}`}
+                            >
+                              <td className="px-3 py-3">
+                                <div className="font-extrabold text-gray-950">{location.displayName}</div>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {location.sourceIds.map(ref => <span key={`${ref.source}-${ref.sourceId}`} className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-500">{getParkingRevenueSourceLabel(ref.source)} {ref.sourceId}</span>)}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-right font-extrabold text-gray-950">{money(location.totalRevenue)}</td>
+                              <td className="px-3 py-3 text-right font-bold text-gray-600">{location.rowCount.toLocaleString()}</td>
+                              <td className="px-3 py-3 text-right font-bold text-gray-600">{minutesToDuration(location.averageStayMinutes)}</td>
+                              <td className="px-3 py-3 font-bold text-gray-600">{formatHour(location.peakHour)}</td>
+                            </tr>
+                          ))}
+                          {revenueAnalytics.locationSummaries.length === 0 ? (
+                            <tr><td colSpan={5} className="py-8 text-center text-gray-400">Upload Parking revenue files to start.</td></tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <section className="rounded-3xl border-2 border-emerald-100 bg-emerald-50 p-5">
+                      <h3 className="font-extrabold text-emerald-950">{selectedRevenueLocation?.displayName || 'All parking lots'}</h3>
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl bg-white p-3">
+                          <div className="text-[10px] font-extrabold uppercase tracking-wide text-emerald-500">Revenue</div>
+                          <div className="mt-1 text-xl font-extrabold text-emerald-950">{money(selectedRevenueLocation?.totalRevenue || revenueAnalytics.totalRevenue)}</div>
+                        </div>
+                        <div className="rounded-2xl bg-white p-3">
+                          <div className="text-[10px] font-extrabold uppercase tracking-wide text-blue-500">Sessions</div>
+                          <div className="mt-1 text-xl font-extrabold text-blue-950">{(selectedRevenueLocation?.rowCount || revenueAnalytics.rowCount).toLocaleString()}</div>
+                        </div>
+                        <div className="rounded-2xl bg-white p-3">
+                          <div className="text-[10px] font-extrabold uppercase tracking-wide text-amber-500">Avg stay</div>
+                          <div className="mt-1 text-xl font-extrabold text-amber-950">{minutesToDuration(selectedRevenueLocation?.averageStayMinutes || revenueAnalytics.averageStayMinutes)}</div>
+                        </div>
+                        <div className="rounded-2xl bg-white p-3">
+                          <div className="text-[10px] font-extrabold uppercase tracking-wide text-violet-500">Unique plates</div>
+                          <div className="mt-1 text-xl font-extrabold text-violet-950">{(selectedRevenueLocation?.uniquePlateCount || revenueAnalytics.uniquePlateCount).toLocaleString()}</div>
+                        </div>
+                      </div>
+                      {selectedRevenueLocation ? (
+                        <div className="mt-4 rounded-2xl bg-white p-3 text-sm font-bold text-gray-600">
+                          HotSpot app: {money(selectedRevenueLocation.hotspotRevenue)} · QR: {money(selectedRevenueLocation.qrRevenue)}
+                        </div>
+                      ) : null}
+                    </section>
+
+                    <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <Clock3 className="text-amber-600" size={18} />
+                        <h3 className="font-extrabold text-gray-950">Peak periods</h3>
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        {revenueAnalytics.revenueByHour.slice().sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 5).map(point => (
+                          <div key={point.key} className="rounded-2xl border border-gray-100 bg-gray-50 p-3">
+                            <div className="flex items-center justify-between text-sm font-extrabold text-gray-800"><span>{point.label}</span><span>{money(point.totalRevenue)}</span></div>
+                            <div className="mt-1 text-xs font-semibold text-gray-400">{point.rowCount.toLocaleString()} sessions · avg {minutesToDuration(point.averageStayMinutes)}</div>
+                          </div>
+                        ))}
+                        {revenueAnalytics.revenueByHour.length === 0 ? <p className="text-sm font-semibold text-gray-400">No peak periods yet.</p> : null}
+                      </div>
+                    </section>
+                  </div>
+                </section>
+
+                <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <h3 className="font-extrabold text-gray-950">Reviewed map locations</h3>
+                      <p className="mt-1 text-sm font-semibold text-gray-500">Optional reviewed coordinates can override City-source matches when a lot needs a custom pin.</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={saving || !canEditParking}
+                      onClick={() => void saveSettingsOnly()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-extrabold text-white hover:bg-blue-700 disabled:bg-gray-300"
+                    >
+                      {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save map locations
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-3">
+                    {(settings.revenueLocations || []).map(location => {
+                      const search = locationSearchById[location.id] || { query: location.displayName, searching: false, error: '', suggestions: [] };
+                      return (
+                        <div key={location.id} className="rounded-3xl border border-gray-100 bg-gray-50 p-4">
+                          <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_120px_120px_220px] lg:items-end">
+                            <div>
+                              <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Location name</div>
+                              <TextInput disabled={!canEditParking} value={location.displayName} onChange={value => updateRevenueLocation(location.id, { displayName: value })} />
+                            </div>
+                            <div>
+                              <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Latitude</div>
+                              <TextInput disabled={!canEditParking} value={location.latitude == null ? '' : String(location.latitude)} onChange={value => updateRevenueLocation(location.id, { latitude: value ? Number(value) : null })} />
+                            </div>
+                            <div>
+                              <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Longitude</div>
+                              <TextInput disabled={!canEditParking} value={location.longitude == null ? '' : String(location.longitude)} onChange={value => updateRevenueLocation(location.id, { longitude: value ? Number(value) : null })} />
+                            </div>
+                            <div>
+                              <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Mapbox helper</div>
+                              <div className="flex gap-2">
+                                <input
+                                  value={search.query}
+                                  disabled={!canEditParking}
+                                  onChange={event => setLocationSearchById(current => ({ ...current, [location.id]: { ...search, query: event.target.value } }))}
+                                  className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={!canEditParking || search.searching}
+                                  onClick={() => void searchRevenueLocation(location)}
+                                  className="rounded-lg bg-gray-950 px-3 py-2 text-xs font-extrabold text-white disabled:bg-gray-300"
+                                >
+                                  {search.searching ? '...' : 'Find'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {location.sourceRefs.map(ref => <span key={`${ref.source}-${ref.sourceId}`} className="rounded-full bg-white px-2 py-1 text-[11px] font-bold text-gray-500">{getParkingRevenueSourceLabel(ref.source)} {ref.sourceId} · {ref.label || 'No label'}</span>)}
+                          </div>
+                          {search.error ? <div className="mt-2 text-xs font-bold text-amber-700">{search.error}</div> : null}
+                          {search.suggestions.length > 0 ? (
+                            <div className="mt-3 grid gap-2 md:grid-cols-2">
+                              {search.suggestions.map(suggestion => (
+                                <button
+                                  key={suggestion.id}
+                                  type="button"
+                                  onClick={() => applyRevenueLocationSuggestion(location.id, suggestion)}
+                                  className="rounded-xl border border-blue-100 bg-blue-50 p-2 text-left text-xs font-bold text-blue-800 hover:bg-blue-100"
+                                >
+                                  {suggestion.label}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                    {(settings.revenueLocations || []).length === 0 ? (
+                      <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5 text-center text-sm font-semibold text-gray-400">
+                        City public parking locations are used automatically when they match the imported lot. Add reviewed locations only when you want to override a pin.
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+              </>
+            ) : null}
+
+            {false ? (
+            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-extrabold text-gray-950">Import HotSpot month(s)</h3>
+                  <p className="mt-1 text-sm text-gray-500">Each workbook must contain one month. Select multiple files to replace different months together.</p>
+                </div>
+                <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
+                  <Upload size={16} /> Upload .xlsx
+                  <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleFileChange} className="hidden" />
+                </label>
+              </div>
+
+              {warnings.length > 0 ? (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
+                  {warnings.map(warning => <div key={warning}>{warning}</div>)}
+                </div>
+              ) : null}
+
+              {unmapped.length > 0 ? (
+                <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-start gap-2 text-amber-800">
+                    <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+                    <div>
+                      <h4 className="font-extrabold">Map discount codes before saving</h4>
+                      <p className="mt-1 text-sm">The file preview is blocked until every code family has a department.</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {unmapped.map(code => (
+                      <div key={code.familyKey} className="grid gap-3 rounded-xl bg-white p-3 md:grid-cols-[160px_minmax(0,1fr)_220px] md:items-center">
+                        <div className="text-sm font-extrabold text-gray-800">{code.familyKey}</div>
+                        <div className="text-xs font-medium text-gray-500">{code.codes.join(', ')} · {code.rowCount} rows · {code.descriptions.join('; ') || 'No description'}</div>
+                        <TextInput value={mappingDrafts[code.familyKey] || ''} onChange={value => setMappingDrafts(current => ({ ...current, [code.familyKey]: value }))} placeholder="Department" />
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => void applyUnmappedMappings()} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-700">
+                    <CheckCircle2 size={16} /> Apply mappings and preview
+                  </button>
+                </div>
+              ) : null}
+
+              {previewDatasets.length > 0 ? (
+                <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex items-start gap-3">
+                      <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={20} />
+                      <div>
+                        <h4 className="font-extrabold text-emerald-950">Ready to replace {summarizeImportMonths(previewDatasets)}</h4>
+                        <p className="mt-1 text-sm font-medium text-emerald-800">
+                          {previewRowCount.toLocaleString()} rows · {money(previewTotalValue)} total value · {previewFlaggedPlateCount} flagged plates
+                        </p>
+                        {previewDatasets.length > 1 ? (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {previewDatasets.map(dataset => (
+                              <span key={dataset.month} className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-extrabold text-emerald-800">
+                                {dataset.month}: {dataset.rowCount.toLocaleString()} rows
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <button disabled={saving || !canEditParking} onClick={() => void importPreview()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                      {saving ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Save import
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+            ) : null}
+
+            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h3 className="text-lg font-extrabold text-gray-950">Review period</h3>
+                  <p className="mt-1 text-sm text-gray-500">Select a year for the annual summary, then a month for the detailed review tables.</p>
+                </div>
+                {selectedMonth ? <Badge tone="green">Viewing {selectedMonthLabel} {selectedYear}</Badge> : null}
+              </div>
+              <div className="mt-4">
+                <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-gray-400">Year</div>
+                <div className="flex flex-wrap gap-2">
+                  {availableYears.length > 0 ? availableYears.map(year => (
+                    <button
+                      key={year}
+                      onClick={() => setSelectedYear(year)}
+                      className={`rounded-full px-4 py-2 text-sm font-extrabold transition ${selectedYear === year ? 'bg-gray-950 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      {year}
+                    </button>
+                  )) : <span className="text-sm font-semibold text-gray-400">Import a month to start.</span>}
+                </div>
+              </div>
+              <div className="mt-4">
+                <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-gray-400">Month</div>
+                <div className="flex flex-wrap gap-2">
+                  {MONTHS.map(month => {
+                    const monthKey = `${selectedYear}-${month.value}`;
+                    const hasData = monthsForSelectedYear.some(entry => entry.month === monthKey);
+                    return (
+                      <button
+                        key={month.value}
+                        disabled={!hasData}
+                        onClick={() => setSelectedMonth(monthKey)}
+                        className={`rounded-full px-3 py-1.5 text-xs font-extrabold transition ${
+                          selectedMonth === monthKey
+                            ? 'bg-blue-600 text-white'
+                            : hasData
+                              ? 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                              : 'bg-gray-50 text-gray-300'
+                        }`}
+                      >
+                        {month.short}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+
+            <section className="grid gap-4 md:grid-cols-4">
+              <Metric label="Selected month" value={selectedMonthLabel || '—'} />
+              <Metric label="Rows" value={(selectedMonthDataset?.rowCount ?? 0).toLocaleString()} />
+              <Metric label="Total value" value={money(selectedMonthTotalValue)} />
+              <Metric label="Flagged plates" value={monthlyFlaggedPlates.length.toLocaleString()} tone={monthlyFlaggedPlates.length ? 'amber' : 'green'} />
+            </section>
+
+            {false ? (
+            <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
+              <div className="flex flex-col gap-4 border-b border-gray-100 bg-gray-50/70 p-5 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">{selectedYear || 'No year selected'}</div>
+                  <h3 className="mt-1 text-lg font-extrabold text-gray-950">Annual department summary</h3>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={annualSummaryRows.length === 0}
+                    onClick={() => setAnnualExpanded(current => !current)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-extrabold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-40"
+                  >
+                    {annualExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                    {annualExpanded ? 'Hide table' : 'Show table'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={annualSummaryRows.length === 0}
+                    onClick={() => setAnnualFullscreen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-gray-950 px-3 py-2 text-xs font-extrabold text-white shadow-sm hover:bg-gray-800 disabled:opacity-40"
+                  >
+                    <Maximize2 size={13} /> Full screen
+                  </button>
+                </div>
+              </div>
+
+              {!annualExpanded ? (
+                <div className="grid gap-3 p-5 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-gray-100 bg-white p-4">
+                    <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Departments</div>
+                    <div className="mt-2 text-2xl font-extrabold text-gray-950">{annualSummaryRows.length.toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-2xl border border-gray-100 bg-white p-4">
+                    <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Annual total</div>
+                    <div className="mt-2 text-2xl font-extrabold text-gray-950">{money(annualTotalValue)}</div>
+                  </div>
+                  <div className="rounded-2xl border border-gray-100 bg-white p-4">
+                    <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Top department</div>
+                    <div className="mt-2 truncate text-lg font-extrabold text-gray-950">{annualTopDepartment}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="max-h-[520px] overflow-auto">
+                  <AnnualSummaryTable rows={annualSummaryRows} codeFamilies={settings.codeFamilies} stickyHeader />
+                </div>
+              )}
+            </section>
+            ) : null}
+
+            {activeWorkspace === 'plate-monitor' ? (
+            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-extrabold text-gray-950">Flagged plate indicators</h3>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
+                    <tr><th className="py-2 pr-4">Month</th><th className="py-2 pr-4">Plate</th><th className="py-2 pr-4">Department</th><th className="py-2 pr-4">Value</th><th className="py-2 pr-4">Days</th><th className="py-2 pr-4">Top location</th><th className="py-2 pr-4">Indicators</th><th className="py-2 pr-4">Why</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {monthlyFlaggedPlates.slice(0, 120).map(pattern => {
+                      const patternKey = getPlatePatternKey(pattern);
+                      const isExpanded = expandedPlateKey === patternKey;
+                      const plateRows = rawTransactionRows.filter(row => (
+                        row.startMonth === pattern.month &&
+                        (row.plate || '(missing)') === (pattern.plate || pattern.displayPlate)
+                      ));
+                      const evidence = buildFlagEvidence(pattern, settings, plateRows);
+                      return (
+                        <React.Fragment key={patternKey}>
+                          <tr className={isExpanded ? 'bg-amber-50/40' : undefined}>
+                            <td className="py-3 pr-4 font-bold text-gray-700">{pattern.month}</td>
+                            <td className="py-3 pr-4 font-extrabold text-gray-950">{pattern.displayPlate}</td>
+                            <td className="py-3 pr-4"><DepartmentChip department={pattern.department} codeFamilies={settings.codeFamilies} compact /></td>
+                            <td className="py-3 pr-4 font-bold text-gray-900">{money(pattern.totalValue)}</td>
+                            <td className="py-3 pr-4 text-gray-600">{pattern.activeDays}</td>
+                            <td className="py-3 pr-4 text-gray-600">{pattern.topLocationName || pattern.topSpotId}</td>
+                            <td className="py-3 pr-4"><div className="flex flex-wrap gap-1">{pattern.flags.map(flag => <Badge key={flag} tone="amber">{FLAG_LABELS[flag] || flag}</Badge>)}</div></td>
+                            <td className="py-3 pr-4">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedPlateKey(current => current === patternKey ? '' : patternKey)}
+                                className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-extrabold text-amber-700 hover:bg-amber-100"
+                              >
+                                {isExpanded ? 'Hide why' : 'View why'}
+                              </button>
+                            </td>
+                          </tr>
+                          {isExpanded ? (
+                            <tr>
+                              <td colSpan={8} className="bg-amber-50/30 px-4 py-4">
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  {evidence.map(item => (
+                                    <div key={item.label} className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
+                                      <div className="text-sm font-extrabold text-gray-950">{item.label}</div>
+                                      <p className="mt-1 text-sm font-medium text-gray-600">{item.detail}</p>
+                                      {item.evidence.length > 0 ? (
+                                        <div className="mt-3 flex flex-wrap gap-1.5">
+                                          {item.evidence.map(detail => (
+                                            <span key={detail} className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-bold text-gray-600">{detail}</span>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="mt-3 rounded-2xl border border-gray-100 bg-white p-4">
+                                  <div className="text-xs font-extrabold uppercase tracking-wide text-gray-400">Transactions reviewed</div>
+                                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                    {plateRows.slice(0, 6).map(row => (
+                                      <div key={row.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-gray-600">
+                                        <span className="font-extrabold text-gray-900">{row.startDate}</span>
+                                        <span>{minutesToTime(row.startMinutes)}–{minutesToTime(row.endMinutes)}</span>
+                                        <span>{minutesToDuration(row.durationMinutes)}</span>
+                                        <span>{money(row.discountAmount)}</span>
+                                        <span>{row.locationName || row.spotId}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                        </React.Fragment>
+                      );
+                    })}
+                    {monthlyFlaggedPlates.length === 0 ? <tr><td colSpan={8} className="py-8 text-center text-gray-400">No flagged plate indicators for the selected month and thresholds.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            ) : null}
+
+            {false ? (
+            <>
+            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-extrabold text-gray-950">Department month-over-month</h3>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
+                    <tr><th className="py-2 pr-4">Month</th><th className="py-2 pr-4">Department</th><th className="py-2 pr-4">Total</th><th className="py-2 pr-4">Change</th><th className="py-2 pr-4">Sessions</th><th className="py-2 pr-4">Flag</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {monthlyDepartmentRows.slice(0, 80).map(row => (
+                      <tr key={`${row.month}-${row.department}-${row.codeFamilyKey}`}>
+                        <td className="py-3 pr-4 font-bold text-gray-700">{row.month}</td>
+                        <td className="py-3 pr-4"><DepartmentChip department={row.department} codeFamilyKey={row.codeFamilyKey} codeFamilies={settings.codeFamilies} /></td>
+                        <td className="py-3 pr-4 font-bold text-gray-900">{money(row.totalValue)}</td>
+                        <td className="py-3 pr-4 text-gray-600">{money(row.changeValue ?? 0)} · {pct(row.changePercent)}</td>
+                        <td className="py-3 pr-4 text-gray-600">{row.sessionCount}</td>
+                        <td className="py-3 pr-4">{row.isHighUsage ? <Badge tone="amber">High department usage</Badge> : <span className="text-gray-300">—</span>}</td>
+                      </tr>
+                    ))}
+                    {monthlyDepartmentRows.length === 0 ? <tr><td colSpan={6} className="py-8 text-center text-gray-400">No department summary for the selected month.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h3 className="text-lg font-extrabold text-gray-950">Raw transactions</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {previewDatasets.length > 0 ? 'Preview rows from the uploaded workbook(s) before saving.' : 'Normalized HotSpot transaction rows from saved imports.'}
+                  </p>
+                </div>
+                <span className="text-xs font-extrabold uppercase tracking-wide text-gray-400">{rawTransactionRows.length.toLocaleString()} rows</span>
+              </div>
+              <div className="mt-4 max-h-[420px] overflow-auto rounded-2xl border border-gray-100">
+                <table className="min-w-[980px] w-full text-left text-sm">
+                  <thead className="sticky top-0 z-10 bg-gray-50 text-xs font-extrabold uppercase tracking-wide text-gray-400">
+                    <tr>
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Start</th>
+                      <th className="px-3 py-2">Plate</th>
+                      <th className="px-3 py-2">Department</th>
+                      <th className="px-3 py-2">Code</th>
+                      <th className="px-3 py-2">Location</th>
+                      <th className="px-3 py-2">Duration</th>
+                      <th className="px-3 py-2 text-right">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {rawTransactionRows.slice(0, 500).map(row => {
+                      const color = getCodeFamilyColor(row.codeFamilyKey, row.department, settings.codeFamilies);
+                      return (
+                        <tr key={row.id} className="hover:bg-gray-50" style={{ borderLeft: `5px solid ${color.hex}` }}>
+                          <td className="px-3 py-2 font-bold text-gray-700">{row.startDate}</td>
+                          <td className="px-3 py-2 text-gray-600">{minutesToTime(row.startMinutes)}</td>
+                          <td className="px-3 py-2 font-extrabold text-gray-950">{row.plate || '(missing)'}</td>
+                          <td className="px-3 py-2"><DepartmentChip department={row.department || 'Unmapped'} codeFamilyKey={row.codeFamilyKey} codeFamilies={settings.codeFamilies} compact /></td>
+                          <td className="px-3 py-2 text-gray-600">{row.discountCode}</td>
+                          <td className="px-3 py-2 text-gray-600">{row.locationName || row.spotId}</td>
+                          <td className="px-3 py-2 text-gray-600">{minutesToDuration(row.durationMinutes)}</td>
+                          <td className="px-3 py-2 text-right font-bold text-gray-900">{money(row.discountAmount)}</td>
+                        </tr>
+                      );
+                    })}
+                    {rawTransactionRows.length === 0 ? <tr><td colSpan={8} className="py-8 text-center text-gray-400">No raw transactions loaded yet.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
+              {rawTransactionRows.length > 500 ? (
+                <p className="mt-2 text-xs font-semibold text-gray-400">Showing the newest 500 rows. Export Excel includes all rows.</p>
+              ) : null}
+            </section>
+            </>
+            ) : null}
+          </div>
+
+          <aside className="space-y-6">
+            {activeWorkspace === 'plate-monitor' ? (
+            <>
+            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-extrabold text-gray-950">Department color legend</h3>
+                  <p className="mt-1 text-xs font-semibold text-gray-400">Click a column header to sort. Ignore flags suppresses plate indicators for that department.</p>
+                </div>
+              </div>
+              <div className="mt-4 max-h-80 overflow-y-auto rounded-2xl border border-gray-100">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-gray-50 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">
+                    <tr>
+                      <th className="px-3 py-2">{renderDepartmentLegendHeader('color', 'Color')}</th>
+                      <th className="px-3 py-2">{renderDepartmentLegendHeader('code', 'Code')}</th>
+                      <th className="px-3 py-2">{renderDepartmentLegendHeader('department', 'Department')}</th>
+                      <th className="px-3 py-2 text-center">{renderDepartmentLegendHeader('ignoreFlags', 'Ignore flags', 'mx-auto')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {departmentLegendRows.map(color => (
+                      <tr key={`${color.familyKey}-${color.mappingIndex}`} className="bg-white">
+                        <td className="px-3 py-2"><span className="block h-4 w-4 rounded" style={{ backgroundColor: color.hex }} /></td>
+                        <td className="px-3 py-2 font-extrabold text-gray-700">{color.code}</td>
+                        <td className="min-w-0 px-3 py-2 font-semibold text-gray-500">{color.department}</td>
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={color.ignoreFlags}
+                            disabled={!canEditParking}
+                            onChange={event => updateCodeFamilyDirectoryAndSave(color.mappingIndex, { ignoreFlags: event.target.checked })}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
+                            aria-label={`Ignore plate flags for ${color.department}`}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Indicator thresholds</h3></div>
+              <div className="space-y-3 text-sm">
+                <SettingNumber label="High plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateMonthlyValueDollars: value } }))} />
+                <SettingNumber label="High frequency use" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateActiveDaysPerMonth: value } }))} />
+                <SettingNumber label="Long duration hours" value={settings.flagRules.longSessionHours} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionHours: value } }))} />
+                <SettingNumber label="Long duration count" value={settings.flagRules.longSessionCount} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionCount: value } }))} />
+                <SettingNumber label="Consistent location days" value={settings.flagRules.sameLocationDays} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, sameLocationDays: value } }))} />
+                <SettingNumber label="High department usage" value={settings.flagRules.departmentMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentMonthlyValueDollars: value } }))} />
+                <SettingNumber label="Department increase" value={settings.flagRules.departmentIncreasePercent} suffix="%" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentIncreasePercent: value } }))} />
+              </div>
+            </section>
+            </>
+            ) : null}
+
+            {false ? (
+            <>
+            <section className="rounded-3xl border-2 border-emerald-100 bg-emerald-50 p-5 shadow-sm">
+              <div className="mb-4 flex items-center gap-2">
+                <CalendarDays size={18} className="text-emerald-700" />
+                <h3 className="font-extrabold text-emerald-950">All-lot trends</h3>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl bg-white p-3">
+                  <div className="text-[10px] font-extrabold uppercase tracking-wide text-emerald-500">Peak day</div>
+                  <div className="mt-1 text-sm font-extrabold text-emerald-950">{revenueAnalytics.peakDay || '—'}</div>
+                </div>
+                <div className="rounded-2xl bg-white p-3">
+                  <div className="text-[10px] font-extrabold uppercase tracking-wide text-amber-500">Peak hour</div>
+                  <div className="mt-1 text-sm font-extrabold text-amber-950">{formatHour(revenueAnalytics.peakHour)}</div>
+                </div>
+                <div className="rounded-2xl bg-white p-3">
+                  <div className="text-[10px] font-extrabold uppercase tracking-wide text-blue-500">Mapped revenue</div>
+                  <div className="mt-1 text-sm font-extrabold text-blue-950">{money(revenueAnalytics.mappedLocationSummaries.reduce((sum, location) => sum + location.totalRevenue, 0))}</div>
+                </div>
+                <div className="rounded-2xl bg-white p-3">
+                  <div className="text-[10px] font-extrabold uppercase tracking-wide text-violet-500">Total lots</div>
+                  <div className="mt-1 text-sm font-extrabold text-violet-950">{revenueAnalytics.locationSummaries.length}</div>
+                </div>
+              </div>
+              <div className="mt-4 space-y-2">
+                {revenueAnalytics.revenueByDay.slice().sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 4).map(point => (
+                  <div key={point.key} className="rounded-2xl bg-white p-3">
+                    <div className="flex items-center justify-between text-xs font-extrabold text-gray-800">
+                      <span>{point.label}</span>
+                      <span>{money(point.totalRevenue)}</span>
+                    </div>
+                    <div className="mt-1 text-[11px] font-bold text-gray-400">{point.rowCount.toLocaleString()} sessions</div>
+                  </div>
+                ))}
+                {revenueAnalytics.revenueByDay.length === 0 ? <p className="text-sm font-semibold text-emerald-700">Upload revenue files to populate trends.</p> : null}
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2">
+                  <Settings size={18} className="mt-0.5 text-blue-600" />
+                  <div>
+                    <h3 className="font-extrabold text-gray-950">Department directory</h3>
+                    <p className="mt-1 text-xs font-semibold text-gray-400">Names, colors, and yearly code rules live in one friendly editor.</p>
+                  </div>
+                </div>
+                <button disabled={!canEditParking} onClick={() => setDepartmentManagerOpen(true)} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Open</button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-blue-500">Departments</div>
+                  <div className="mt-1 text-2xl font-extrabold text-blue-950">{settings.codeFamilies.length}</div>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-emerald-500">Code year</div>
+                  <div className="mt-1 text-2xl font-extrabold text-emerald-950">{departmentCodeYear}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={!canEditParking}
+                onClick={() => setDepartmentManagerOpen(true)}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-extrabold text-white transition hover:bg-blue-700 disabled:bg-gray-300"
+              >
+                <Wand2 size={16} /> Manage names, colors, and codes
+              </button>
+            </section>
+
+            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-2"><h3 className="font-extrabold text-gray-950">Spot locations</h3><button disabled={!canEditParking} onClick={addSpotLocation} className="text-xs font-extrabold text-blue-600 disabled:text-gray-300">Add</button></div>
+              <div className="space-y-3">
+                {settings.spotLocations.map((location, index) => (
+                  <div key={`${location.spotId}-${index}`} className="grid grid-cols-2 gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3">
+                    <TextInput disabled={!canEditParking} value={location.spotId} onChange={value => setSettings(current => ({ ...current, spotLocations: current.spotLocations.map((entry, i) => i === index ? { ...entry, spotId: value } : entry) }))} placeholder="Spot ID" />
+                    <TextInput disabled={!canEditParking} value={location.locationName} onChange={value => setSettings(current => ({ ...current, spotLocations: current.spotLocations.map((entry, i) => i === index ? { ...entry, locationName: value } : entry) }))} placeholder="Location" />
+                  </div>
+                ))}
+                {settings.spotLocations.length === 0 ? <p className="text-sm text-gray-400">Optional. Raw spot IDs are used until mapped.</p> : null}
+              </div>
+            </section>
+
+            {highDepartments.length > 0 ? (
+              <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
+                <h3 className="font-extrabold text-amber-950">Department alerts</h3>
+                <div className="mt-3 space-y-2">{highDepartments.slice(0, 6).map(row => <div key={`${row.month}-${row.department}`} className="text-sm font-semibold text-amber-800">{row.month}: {row.department} · {money(row.totalValue)}</div>)}</div>
+              </section>
+            ) : null}
+            </>
+            ) : null}
+          </aside>
+        </div>
+
+        {departmentManagerModal}
+
+        {annualFullscreenModal}
       </div>
     </div>
   );

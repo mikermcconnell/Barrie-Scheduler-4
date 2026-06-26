@@ -1,8 +1,24 @@
 export const PARKING_SCHEMA_VERSION = 1;
+export const PARKING_REVENUE_SCHEMA_VERSION = 1;
 
 export type ParkingYearCodeFormat = 'yyyy' | 'yy';
 export type ParkingDepartmentLegendSortKey = 'color' | 'code' | 'department' | 'ignoreFlags';
 export type ParkingSortDirection = 'asc' | 'desc';
+export type ParkingRevenueSource = 'hotspot' | 'qr';
+
+export interface ParkingRevenueLocationRef {
+  source: ParkingRevenueSource;
+  sourceId: string;
+  label?: string;
+}
+
+export interface ParkingRevenueLocationMapping {
+  id: string;
+  displayName: string;
+  latitude: number | null;
+  longitude: number | null;
+  sourceRefs: ParkingRevenueLocationRef[];
+}
 
 export interface ParkingDepartmentLegendSortSetting {
   key: ParkingDepartmentLegendSortKey;
@@ -55,6 +71,7 @@ export interface ParkingFlagRuleSettings {
 export interface ParkingSettings {
   codeFamilies: ParkingCodeFamilyMapping[];
   spotLocations: ParkingSpotLocationMapping[];
+  revenueLocations?: ParkingRevenueLocationMapping[];
   flagRules: ParkingFlagRuleSettings;
   departmentLegendSort?: ParkingDepartmentLegendSortSetting;
   updatedAt?: string;
@@ -157,6 +174,115 @@ export interface ParkingParseResult {
   unmappedCodeFamilies: ParkingUnmappedCodeFamily[];
 }
 
+export interface ParkingRevenueRawRow {
+  id: string;
+  source: ParkingRevenueSource;
+  sourceId: string;
+  sourceLabel: string;
+  physicalLocationId: string | null;
+  physicalLocationName: string;
+  plate: string;
+  hasMissingPlate: boolean;
+  startRaw: string;
+  startDate: string;
+  startMonth: string;
+  startMinutes: number;
+  endMinutes: number;
+  weekday: number;
+  isWeekend: boolean;
+  durationMinutes: number;
+  amount: number;
+  tax: number;
+  total: number;
+  paymentType: string;
+}
+
+export interface ParkingRevenueDataset {
+  month: string;
+  source: ParkingRevenueSource;
+  importedAt: string;
+  importedBy: string;
+  sourceFileName: string;
+  rowCount: number;
+  skippedRows: number;
+  totalRevenue: number;
+  totalTax: number;
+  totalPaid: number;
+  rows: ParkingRevenueRawRow[];
+}
+
+export interface ParkingRevenueSummaryMetadata {
+  importedAt: string;
+  importedBy: string;
+  datasetCount: number;
+  monthCount: number;
+  totalRows: number;
+  totalRevenue: number;
+  storagePath?: string;
+}
+
+export interface ParkingRevenueSummary {
+  schemaVersion: number;
+  datasets: ParkingRevenueDataset[];
+  metadata: ParkingRevenueSummaryMetadata;
+}
+
+export interface ParkingRevenueParseResult {
+  dataset: ParkingRevenueDataset;
+  warnings: string[];
+}
+
+export interface ParkingRevenueFilters {
+  months?: string[];
+  source?: ParkingRevenueSource | 'all';
+  dayType?: 'all' | 'weekday' | 'weekend' | 'saturday' | 'sunday';
+  hourStart?: number;
+  hourEnd?: number;
+}
+
+export interface ParkingRevenueLocationSummary {
+  key: string;
+  displayName: string;
+  sourceIds: ParkingRevenueLocationRef[];
+  latitude: number | null;
+  longitude: number | null;
+  isMapped: boolean;
+  rowCount: number;
+  totalRevenue: number;
+  totalPaid: number;
+  averageStayMinutes: number;
+  uniquePlateCount: number;
+  hotspotRevenue: number;
+  qrRevenue: number;
+  peakHour: number | null;
+  peakDay: string;
+}
+
+export interface ParkingRevenueTrendPoint {
+  key: string;
+  label: string;
+  rowCount: number;
+  totalRevenue: number;
+  averageStayMinutes: number;
+}
+
+export interface ParkingRevenueAnalytics {
+  rows: ParkingRevenueRawRow[];
+  locationSummaries: ParkingRevenueLocationSummary[];
+  mappedLocationSummaries: ParkingRevenueLocationSummary[];
+  unmappedLocationSummaries: ParkingRevenueLocationSummary[];
+  totalRevenue: number;
+  totalPaid: number;
+  rowCount: number;
+  averageStayMinutes: number;
+  uniquePlateCount: number;
+  peakHour: number | null;
+  peakDay: string;
+  revenueByDay: ParkingRevenueTrendPoint[];
+  revenueByHour: ParkingRevenueTrendPoint[];
+  revenueByMonth: ParkingRevenueTrendPoint[];
+}
+
 export const DEFAULT_PARKING_FLAG_RULES: ParkingFlagRuleSettings = {
   plateMonthlyValueDollars: 50,
   plateActiveDaysPerMonth: 6,
@@ -195,6 +321,7 @@ export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {
     { familyKey: 'WW', codes: ['WW2025'], department: 'Waste Water Operations' },
   ],
   spotLocations: [],
+  revenueLocations: [],
   flagRules: DEFAULT_PARKING_FLAG_RULES,
   departmentLegendSort: { key: 'color', direction: 'asc' },
 };

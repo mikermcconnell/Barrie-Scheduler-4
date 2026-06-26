@@ -51,6 +51,7 @@ export function mergeParkingSettings(base: ParkingSettings, override: ParkingSet
   return {
     codeFamilies: override.codeFamilies ?? base.codeFamilies,
     spotLocations: override.spotLocations ?? base.spotLocations,
+    revenueLocations: override.revenueLocations ?? base.revenueLocations,
     flagRules: {
       ...DEFAULT_PARKING_FLAG_RULES,
       ...(base.flagRules || {}),

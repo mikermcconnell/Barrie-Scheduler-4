@@ -5,12 +5,27 @@ import { getParkingCodeOverridesForYear, getParkingCodesForYear } from '../utils
 import { createParkingExportWorkbook, exportParkingWorkbook } from '../utils/parking/parkingExport';
 import { getParkingCodeFamilyKey, parseParkingDurationMinutes, parseParkingFile, parseParkingWorkbook } from '../utils/parking/parkingParser';
 import {
+  buildParkingRevenueAnalytics,
+  buildParkingRevenueReplacementSummary,
+  parseParkingRevenueDurationMinutes,
+  parseParkingRevenueWorkbook,
+} from '../utils/parking/parkingRevenue';
+import {
+  buildParkingRevenueMapDisplayLocations,
+  getParkingMapMetricValue,
+} from '../utils/parking/parkingMapDisplay';
+import {
+  fetchBarriePublicParkingLocations,
+  findPublicParkingLocationFallback,
+} from '../utils/parking/publicParkingLocations';
+import {
   assertParkingStoragePathUnchanged,
   normalizeParkingStoragePath,
   readParkingSettingsFromDocument,
   rebuildParkingSummaryWithRules,
 } from '../utils/parking/parkingService';
 import { DEFAULT_PARKING_SETTINGS, type ParkingMonthlyDataset, type ParkingSettings } from '../utils/parking/parkingTypes';
+import type { ParkingRevenueLocationSummary } from '../utils/parking/parkingTypes';
 
 vi.mock('xlsx', async importOriginal => {
   const actual = await importOriginal<typeof import('xlsx')>();
@@ -375,5 +390,388 @@ describe('parking replacement and export', () => {
     exportParkingWorkbook(summary, 'parking.xlsx');
 
     expect(XLSX.writeFile).toHaveBeenCalledWith(expect.objectContaining({ SheetNames: ['Overview', 'Department Summary', 'Flagged Plates', 'Raw Rows'] }), 'parking.xlsx');
+  });
+});
+
+describe('parking revenue parser and analytics', () => {
+  function revenueSettings(): ParkingSettings {
+    return {
+      ...DEFAULT_PARKING_SETTINGS,
+      revenueLocations: [
+        {
+          id: 'collier-parkade',
+          displayName: 'Collier Parkade',
+          latitude: 44.389,
+          longitude: -79.69,
+          sourceRefs: [
+            { source: 'hotspot', sourceId: '1322', label: 'COLLIER PARKADE' },
+            { source: 'qr', sourceId: '1322', label: 'Collier Parkade' },
+          ],
+        },
+      ],
+    };
+  }
+
+  it('parses HotSpot app revenue workbooks and uses Amount as revenue', () => {
+    const result = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'User', 'Plate', 'Make', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'user', 'ABC123', 'Honda', '2.21  $', '0.29  $', '2.50  $', '0.25', 'Wallet Transaction'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 10:00:00', 'user', 'XYZ999', 'Ford', '8.85  $', '1.15  $', '10.00  $', '1', 'visa'],
+    ]), {
+      fileName: 'Hotspot Parking Revenue_Jan 2026.xlsx',
+      importedBy: 'user-1',
+      settings: revenueSettings(),
+    });
+
+    expect(result.dataset.source).toBe('hotspot');
+    expect(result.dataset.month).toBe('2026-01');
+    expect(result.dataset.rowCount).toBe(2);
+    expect(result.dataset.totalRevenue).toBe(11.06);
+    expect(result.dataset.totalPaid).toBe(12.5);
+    expect(result.dataset.rows[0]).toMatchObject({
+      source: 'hotspot',
+      sourceId: '1322',
+      sourceLabel: 'COLLIER PARKADE',
+      physicalLocationId: 'collier-parkade',
+      durationMinutes: 15,
+      amount: 2.21,
+      total: 2.5,
+    });
+    expect(result.dataset.rows.every(row => row.source === 'hotspot')).toBe(true);
+  });
+
+  it('parses QR revenue workbooks and keeps zero-amount activity', () => {
+    const result = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'Meter #', 'Tap Sign', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '8105', 'Gallie Court On Street', '2026-01-31 18:00:32', 'HBFWR', '0.00', '0.00', '0.00', '1', 'Wallet Transaction'],
+      ['', '1322', 'Collier Parkade', '2026-01-31 16:01:41', 'CDHM437', '1.28', '0.17', '1.45', '0.972', 'visa'],
+    ]), {
+      fileName: 'Hotsport QR Code Revenue_Jan 2026.xlsx',
+      importedBy: 'user-1',
+      settings: revenueSettings(),
+    });
+
+    expect(result.dataset.source).toBe('qr');
+    expect(result.dataset.rowCount).toBe(2);
+    expect(result.dataset.totalRevenue).toBe(1.28);
+    expect(result.dataset.rows[0]).toMatchObject({
+      sourceId: '8105',
+      physicalLocationId: null,
+      durationMinutes: 60,
+      amount: 0,
+    });
+    expect(result.warnings).toContain('1 revenue rows have $0 Amount and are included in activity counts.');
+    expect(parseParkingRevenueDurationMinutes('0.972')).toBe(58);
+    expect(parseParkingRevenueDurationMinutes('0')).toBe(0);
+  });
+
+  it('replaces revenue by source/month and aggregates reviewed physical locations', () => {
+    const settings = revenueSettings();
+    const hotspot = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '1.30', '11.30', '1', 'Wallet Transaction'],
+    ]), { fileName: 'app.xlsx', importedBy: 'user-1', settings }).dataset;
+    const qr = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'Meter #', 'Tap Sign', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'Collier Parkade', '2026-01-31 10:00:00', 'XYZ999', '5.00', '0.65', '5.65', '2', 'visa'],
+    ]), { fileName: 'qr.xlsx', importedBy: 'user-1', settings }).dataset;
+
+    const summary = buildParkingRevenueReplacementSummary(null, [hotspot, qr], 'user-1', 'revenue.json');
+    const analytics = buildParkingRevenueAnalytics(summary, settings);
+    const collier = analytics.locationSummaries.find(location => location.key === 'collier-parkade');
+
+    expect(summary.datasets.map(dataset => `${dataset.month}:${dataset.source}`)).toEqual(['2026-01:hotspot', '2026-01:qr']);
+    expect(analytics.totalRevenue).toBe(15);
+    expect(collier).toMatchObject({
+      displayName: 'Collier Parkade',
+      isMapped: true,
+      totalRevenue: 15,
+      rowCount: 2,
+      hotspotRevenue: 10,
+      qrRevenue: 5,
+    });
+  });
+
+  it('filters revenue analytics by weekdays, Saturdays, and Sundays separately', () => {
+    const settings = revenueSettings();
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-30 09:00:00', 'WEEKDAY', '10.00', '1.30', '11.30', '1', 'visa'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 10:00:00', 'SATURDAY', '20.00', '2.60', '22.60', '1', 'visa'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-25 11:00:00', 'SUNDAY', '30.00', '3.90', '33.90', '1', 'visa'],
+    ]), { fileName: 'app.xlsx', importedBy: 'user-1', settings }).dataset;
+
+    const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
+
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekday' }).totalRevenue).toBe(10);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'saturday' }).totalRevenue).toBe(20);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'sunday' }).totalRevenue).toBe(30);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekend' }).totalRevenue).toBe(50);
+  });
+
+  it('applies reviewed map locations to already-imported revenue rows', () => {
+    const importedWithoutMapping = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '1.30', '11.30', '1', 'Wallet Transaction'],
+    ]), { fileName: 'app.xlsx', importedBy: 'user-1', settings: DEFAULT_PARKING_SETTINGS }).dataset;
+
+    const summary = buildParkingRevenueReplacementSummary(null, [importedWithoutMapping], 'user-1', 'revenue.json');
+    const analytics = buildParkingRevenueAnalytics(summary, revenueSettings());
+    const collier = analytics.locationSummaries.find(location => location.key === 'collier-parkade');
+
+    expect(collier).toMatchObject({
+      displayName: 'Collier Parkade',
+      isMapped: true,
+      latitude: 44.389,
+      longitude: -79.69,
+      totalRevenue: 10,
+    });
+  });
+});
+
+describe('public parking location fallback', () => {
+  const summaryFor = (sourceId: string, displayName = 'Collier Parkade'): ParkingRevenueLocationSummary => ({
+    key: `hotspot:${sourceId}`,
+    displayName,
+    sourceIds: [{ source: 'hotspot', sourceId, label: displayName }],
+    latitude: null,
+    longitude: null,
+    isMapped: false,
+    rowCount: 1,
+    totalRevenue: 10,
+    totalPaid: 11.3,
+    averageStayMinutes: 60,
+    uniquePlateCount: 1,
+    hotspotRevenue: 10,
+    qrRevenue: 0,
+    peakHour: 9,
+    peakDay: '2026-01-31',
+  });
+
+  it('fetches City parking polygons, merges duplicate HotSpot IDs, and uses weighted coordinates', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        features: [
+          {
+            attributes: {
+              OBJECTID: 1,
+              PARKINGID: 'A',
+              PARKING_NAME: 'Collier Street Parkade',
+              CARTONAME: 'Collier Parkade',
+              ADDRESS: '31 Collier St',
+              HOTSPOT_ID: '1322',
+              NUMSPACES: 1,
+              TYPE: 'Lot',
+              CLASSIFICATION: 'Municipal',
+            },
+            geometry: { rings: [[[-79, 44]]] },
+          },
+          {
+            attributes: {
+              OBJECTID: 2,
+              PARKINGID: 'B',
+              PARKING_NAME: 'Collier Street Parkade',
+              CARTONAME: 'Collier Parkade',
+              ADDRESS: '31 Collier St',
+              HOTSPOT_ID: '1322',
+              NUMSPACES: 3,
+              TYPE: 'Lot',
+              CLASSIFICATION: 'Municipal',
+            },
+            geometry: { rings: [[[-80, 45]]] },
+          },
+        ],
+      }),
+    } as Response));
+
+    const locations = await fetchBarriePublicParkingLocations(fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('/query?'));
+    expect(locations).toHaveLength(1);
+    expect(locations[0]).toMatchObject({
+      id: 'hotspot-1322',
+      hotspotId: '1322',
+      objectIds: [1, 2],
+      numSpaces: 4,
+      latitude: 44.75,
+      longitude: -79.75,
+    });
+  });
+
+  it('matches public locations by HotSpot ID first', () => {
+    const match = findPublicParkingLocationFallback(summaryFor('1322', 'Some label'), [
+      {
+        id: 'hotspot-1322',
+        objectIds: [1],
+        hotspotId: '1322',
+        parkingId: 'A',
+        name: 'Collier Street Parkade',
+        commonName: 'Collier Parkade',
+        address: '31 Collier St',
+        latitude: 44.39,
+        longitude: -79.69,
+        numSpaces: 300,
+        type: 'Lot',
+        classification: 'Municipal',
+        sourceUrl: 'source',
+      },
+    ]);
+
+    expect(match).toMatchObject({ matchType: 'hotspot-id', confidence: 'high' });
+  });
+
+  it('falls back to matching by lot name', () => {
+    const match = findPublicParkingLocationFallback(summaryFor('9999', 'Heritage Park Lot'), [
+      {
+        id: 'public-1',
+        objectIds: [1],
+        hotspotId: '',
+        parkingId: 'A',
+        name: 'Heritage Park Parking Lot',
+        commonName: 'Heritage Park Lot',
+        address: '5 Simcoe St',
+        latitude: 44.38,
+        longitude: -79.69,
+        numSpaces: 40,
+        type: 'Lot',
+        classification: 'Municipal',
+        sourceUrl: 'source',
+      },
+    ]);
+
+    expect(match).toMatchObject({ matchType: 'name', confidence: 'medium' });
+  });
+
+  it('groups public fallback display pins by physical City lot', () => {
+    const publicMatch = {
+      location: {
+        id: 'hotspot-1322',
+        objectIds: [1],
+        hotspotId: '1322',
+        parkingId: 'A',
+        name: 'Collier Street Parkade',
+        commonName: 'Collier Parkade',
+        address: '31 Collier St',
+        latitude: 44.39,
+        longitude: -79.69,
+        numSpaces: 300,
+        type: 'Lot',
+        classification: 'Municipal',
+        sourceUrl: 'source',
+      },
+      matchType: 'hotspot-id' as const,
+      confidence: 'high' as const,
+    };
+    const sourceA = summaryFor('1322', 'Collier HotSpot');
+    const sourceB: ParkingRevenueLocationSummary = {
+      ...summaryFor('8105', 'Collier QR'),
+      key: 'qr:8105',
+      sourceIds: [{ source: 'qr', sourceId: '8105', label: 'Collier QR' }],
+      rowCount: 3,
+      totalRevenue: 25,
+      totalPaid: 28.25,
+      averageStayMinutes: 90,
+      uniquePlateCount: 3,
+      hotspotRevenue: 0,
+      qrRevenue: 25,
+    };
+    const publicMatches = new Map([
+      [sourceA.key, publicMatch],
+      [sourceB.key, publicMatch],
+    ]);
+
+    const displayLocations = buildParkingRevenueMapDisplayLocations([sourceA, sourceB], publicMatches);
+
+    expect(displayLocations).toHaveLength(1);
+    expect(displayLocations[0]).toMatchObject({
+      key: 'public:hotspot-1322',
+      displayName: 'Collier Parkade (2 IDs)',
+      coordinateSource: 'public',
+      aggregateCount: 2,
+      rowCount: 4,
+      totalRevenue: 35,
+      hotspotRevenue: 10,
+      qrRevenue: 25,
+      capacitySpaces: 300,
+    });
+    expect(displayLocations[0].sourceLocationKeys).toEqual([sourceA.key, sourceB.key]);
+    expect(getParkingMapMetricValue(displayLocations[0], 'revenuePerSpace')).toBeCloseTo(35 / 300);
+  });
+
+  it('keeps reviewed map locations as exact individual display pins', () => {
+    const reviewed: ParkingRevenueLocationSummary = {
+      ...summaryFor('1322', 'Collier Parkade'),
+      key: 'collier-parkade',
+      latitude: 44.389,
+      longitude: -79.69,
+      isMapped: true,
+      totalRevenue: 42,
+      rowCount: 5,
+    };
+
+    const displayLocations = buildParkingRevenueMapDisplayLocations([reviewed], new Map());
+
+    expect(displayLocations).toHaveLength(1);
+    expect(displayLocations[0]).toMatchObject({
+      key: 'collier-parkade',
+      displayName: 'Collier Parkade',
+      coordinateSource: 'reviewed',
+      latitude: 44.389,
+      longitude: -79.69,
+      aggregateCount: 1,
+      totalRevenue: 42,
+    });
+    expect(getParkingMapMetricValue(displayLocations[0], 'sessions')).toBe(5);
+  });
+
+  it('keeps nearby distinct parking lots separate', () => {
+    const first: ParkingRevenueLocationSummary = {
+      ...summaryFor('1322', 'Collier Street Parkade'),
+      key: 'collier',
+      latitude: 44.389,
+      longitude: -79.69,
+      isMapped: true,
+      totalRevenue: 100,
+      rowCount: 10,
+    };
+    const nearby: ParkingRevenueLocationSummary = {
+      ...summaryFor('1323', 'Dunlop Street On-Street'),
+      key: 'dunlop',
+      latitude: 44.3892,
+      longitude: -79.6902,
+      isMapped: true,
+      totalRevenue: 50,
+      rowCount: 5,
+    };
+    const distant: ParkingRevenueLocationSummary = {
+      ...summaryFor('9999', 'Waterfront Lot'),
+      key: 'waterfront',
+      latitude: 44.405,
+      longitude: -79.66,
+      isMapped: true,
+      totalRevenue: 25,
+      rowCount: 3,
+    };
+    const displayLocations = buildParkingRevenueMapDisplayLocations([first, nearby, distant], new Map());
+
+    expect(displayLocations).toHaveLength(3);
+    expect(displayLocations.map(location => location.key)).toEqual(['collier', 'dunlop', 'waterfront']);
+    expect(displayLocations.find(location => location.key === 'collier')).toMatchObject({
+      displayName: 'Collier Street Parkade',
+      aggregateCount: 1,
+      totalRevenue: 100,
+    });
+    expect(displayLocations.find(location => location.key === 'dunlop')).toMatchObject({
+      displayName: 'Dunlop Street On-Street',
+      aggregateCount: 1,
+      totalRevenue: 50,
+    });
   });
 });

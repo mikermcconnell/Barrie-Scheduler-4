@@ -27,7 +27,7 @@ firebase/
 │   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
 │   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
 │   ├── parking/default                   # Shared parking-code settings + active storage pointer
-│   │   └── months/{month}                # Monthly parking import metadata
+│   │   └── months/{month}                # Monthly parking usage/revenue import metadata
 │   ├── odMatrixData/{docId}              # Origin-destination datasets
 │   │   └── imports/{importId}            # OD import history
 │   ├── residentialGrowth/{docId}         # Monthly issued/occupied residential growth datasets
@@ -85,7 +85,7 @@ Daily performance summaries may include `byOperatorDwell.totalReportableDwellMin
 
 `teams/{teamId}/todPickupData/metadata` stores the active Transit On Demand pickup-map import pointer. Full monthly TOD pickup datasets live in Storage as aggregated JSON at `teams/{teamId}/todPickupData/{timestamp}.json`. Uploading a CSV for a month replaces that month only; other months remain in the same stored summary. The stored payload is aggregated by stop ID when present, otherwise by pickup name plus rounded coordinates, or by coordinates alone. Raw request rows, rider-identifying fields, and address columns are not persisted. Imports are bounded to CSV files under 5 MB and 25,000 rows. TOD pickup map data and import metadata are readable by team members; writes are restricted to team owners/admins or workspace permission managers.
 
-`teams/{teamId}/parking/default` stores the active Parking workspace settings and the Storage pointer for the current normalized parking usage payload. Code-family mappings connect annual HotSpot discount codes such as `RS2025`, `RS26`, and manual yearly overrides to a department, including the department color, short code, active years, preferred year format (`2026` or `26`), and optional `ignoreFlags` setting that suppresses plate-level indicators for that department. Parking settings also store the department color legend sort choice. Spot-location mappings optionally label spot IDs/tap tokens. Each HotSpot workbook must contain one month; users may save several different monthly files in one batch. Monthly imports replace the matching months and preserve other months in the stored summary. Parking data contains license plates and is intended for Parking, admin, or internal workspace access; reads and writes are allowed for users with Parking workspace access so Parking staff can import workbooks and maintain thresholds/mappings.
+`teams/{teamId}/parking/default` stores the active Parking workspace settings and Storage pointers for Parking usage and Parking Revenue payloads. Code-family mappings connect annual HotSpot discount codes such as `RS2025`, `RS26`, and manual yearly overrides to a department, including the department color, short code, active years, preferred year format (`2026` or `26`), and optional `ignoreFlags` setting that suppresses plate-level indicators for that department. Parking settings also store the department color legend sort choice, spot-location labels, and reviewed Parking Revenue map locations with physical display name, latitude/longitude, and linked HotSpot/QR source IDs. Department-code usage imports store normalized summaries under `storagePath`; Parking Revenue imports store source-aware monthly datasets under `revenueStoragePath` in Storage at `teams/{teamId}/parking/revenue/`. Revenue imports replace only the matching source/month combination and preserve other revenue months/sources. Parking data contains license plates and is intended for Parking, admin, or internal workspace access; reads and writes are allowed for users with Parking workspace access so Parking staff can import workbooks and maintain thresholds/mappings.
 
 ---
 
@@ -861,4 +861,4 @@ Routes like 2A+2B share a downtown terminus:
 | HubConfig, PlatformAnalysis | `utils/platform/platformConfig.ts`, `utils/platform/platformAnalysis.ts` |
 | Shift, Requirement, TOD day/zone types | `utils/demandTypes.ts` |
 | RideCo/MVT parser result and import report types | `utils/parsers/csvParsers.ts` |
-| Parking import, settings, summaries, and flags | `utils/parking/parkingTypes.ts` |
+| Parking import, revenue import, settings, summaries, and flags | `utils/parking/parkingTypes.ts` |

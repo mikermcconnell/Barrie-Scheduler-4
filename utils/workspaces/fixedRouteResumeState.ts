@@ -7,6 +7,7 @@ export interface FixedRouteResumeState {
 }
 
 const FIXED_ROUTE_RESUME_KEY = 'scheduler4:fixed-route-resume';
+export const FIXED_ROUTE_RESUME_UPDATED_EVENT = 'scheduler4:fixed-route-resume-updated';
 
 const getResumeKey = (userId: string): string => `${FIXED_ROUTE_RESUME_KEY}:${userId}`;
 
@@ -55,11 +56,13 @@ export const saveFixedRouteResumeState = (
 
     try {
         clearLegacyFixedRouteResumeState();
-        window.localStorage.setItem(getResumeKey(userId), JSON.stringify({
+        const savedState = {
             ...state,
             hash: normalizeHash(state.hash),
             updatedAt: new Date().toISOString(),
-        }));
+        };
+        window.localStorage.setItem(getResumeKey(userId), JSON.stringify(savedState));
+        window.dispatchEvent(new CustomEvent(FIXED_ROUTE_RESUME_UPDATED_EVENT, { detail: savedState }));
     } catch (error) {
         console.warn('Failed to save fixed-route resume state:', error);
     }

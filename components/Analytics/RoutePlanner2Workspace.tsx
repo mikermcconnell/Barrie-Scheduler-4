@@ -104,6 +104,7 @@ import type {
     RoutePlanner2ServiceAssumptions,
     RoutePlanner2StopRole,
 } from '../../utils/route-planner-2/routePlanner2Types';
+import { saveFixedRouteResumeState } from '../../utils/workspaces/fixedRouteResumeState';
 
 interface RoutePlanner2WorkspaceProps {
     onBack: () => void;
@@ -1365,6 +1366,18 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     useEffect(() => {
         void refreshSavedProjects();
     }, [refreshSavedProjects]);
+    useEffect(() => {
+        const projectName = project.name.trim();
+        const labelPrefix = window.location.hash.startsWith('#fixed/')
+            ? 'Scheduled Transit'
+            : 'Planning Data';
+        saveFixedRouteResumeState({
+            hash: window.location.hash || '#planning/route-planner-2',
+            label: projectName
+                ? `${labelPrefix} · Route Planner · ${projectName}`
+                : `${labelPrefix} · Route Planner`,
+        }, userId);
+    }, [project.name, userId]);
     useEffect(() => {
         if (!selectedScenario) {
             setSelectedStopId(null);

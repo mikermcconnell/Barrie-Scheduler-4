@@ -89,7 +89,7 @@ Shared department parking-code usage review lives in:
 - `components/workspaces/ParkingWorkspace.tsx`
 - `utils/parking/`
 
-The workspace imports one or more one-month HotSpot Excel exports, stores normalized row-level data in team Storage, keeps code-family and spot-location mappings in Firestore, and derives department month-over-month summaries plus plate-level pattern flags.
+The Parking workspace opens to a card dashboard, similar to Fixed Route Operations, with separate Plate Monitor and Parking Lot Data workspaces. Parking Lot Data is a Route Planner-style full-screen map-first shell for Parking Revenue analytics: it imports and auto-saves HotSpot app and QR revenue workbooks as source-aware monthly datasets, stores normalized row-level data in team Storage, keeps reviewed source-ID-to-lat/lng map locations in Firestore settings, uses public City of Barrie parking GIS locations as map-only fallback coordinates until reviewed locations are saved, and summarizes revenue, sessions, stay length, peak periods, and lot comparisons. Map pins may group multiple source IDs for the same physical lot, but distinct nearby lots or on-street parking areas must remain separate rather than distance-clustered. Public-source matches are treated as normal map pins in the UI rather than user-facing unmapped warnings. The older department-code usage import remains in Parking Lot Data for department summaries. Plate Monitor reviews the derived plate-level pattern flags and indicator thresholds.
 
 ### 5) Planning-data / analytics surfaces
 

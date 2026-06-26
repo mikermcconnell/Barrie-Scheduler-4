@@ -12,7 +12,7 @@ import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 import { isFeatureEnabled } from './utils/features';
-import { clearLegacyFixedRouteResumeState, loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
+import { clearLegacyFixedRouteResumeState, FIXED_ROUTE_RESUME_UPDATED_EVENT, loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
 import { useWorkspaceAccess } from './hooks/useWorkspaceAccess';
 import { getPendingInviteCode } from './utils/inviteLinks';
 import { ANALYTICS_WORKSPACE_FEATURES } from './utils/workspaceAccess';
@@ -101,6 +101,17 @@ const AppContent: React.FC = () => {
 
     setFixedRouteResume(loadFixedRouteResumeState(user.uid));
   }, [user]);
+
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    const refreshResume = () => setFixedRouteResume(loadFixedRouteResumeState(user.uid));
+    window.addEventListener(FIXED_ROUTE_RESUME_UPDATED_EVENT, refreshResume);
+    window.addEventListener('storage', refreshResume);
+    return () => {
+      window.removeEventListener(FIXED_ROUTE_RESUME_UPDATED_EVENT, refreshResume);
+      window.removeEventListener('storage', refreshResume);
+    };
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!loading && !user && pendingInviteCode) {

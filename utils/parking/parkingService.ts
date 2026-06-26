@@ -13,9 +13,13 @@ import {
 } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { buildParkingMonthAnalysis, buildParkingReplacementSummaryForMonths, buildParkingSummary, mergeParkingSettings } from './parkingAggregation';
+import { buildParkingRevenueReplacementSummary } from './parkingRevenue';
 import {
   DEFAULT_PARKING_SETTINGS,
   type ParkingMonthlyDataset,
+  type ParkingRevenueDataset,
+  type ParkingRevenueSummary,
+  type ParkingRevenueSummaryMetadata,
   type ParkingSettings,
   type ParkingSummary,
   type ParkingSummaryMetadata,
@@ -33,11 +37,23 @@ function getStoragePath(teamId: string, timestamp: string): string {
   return `teams/${teamId}/parking/${timestamp}.json`;
 }
 
+function getRevenueStoragePath(teamId: string, timestamp: string): string {
+  return `teams/${teamId}/parking/revenue/${timestamp}.json`;
+}
+
 function getImportStorageKey(datasets: ParkingMonthlyDataset[]): string {
   const months = datasets.map(dataset => dataset.month).sort();
   const prefix = months.length === 1
     ? months[0]
     : `${months[0]}_to_${months.at(-1)}_${months.length}months`;
+  return `${prefix}_${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getRevenueImportStorageKey(datasets: ParkingRevenueDataset[]): string {
+  const keys = datasets.map(dataset => `${dataset.month}_${dataset.source}`).sort();
+  const prefix = keys.length === 1
+    ? keys[0]
+    : `${keys[0]}_to_${keys.at(-1)}_${keys.length}datasets`;
   return `${prefix}_${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -78,6 +94,7 @@ export function readParkingSettingsFromDocument(data: Record<string, unknown> | 
   return mergeParkingSettings(DEFAULT_PARKING_SETTINGS, {
     codeFamilies: Array.isArray(rawSettings.codeFamilies) ? rawSettings.codeFamilies : DEFAULT_PARKING_SETTINGS.codeFamilies,
     spotLocations: Array.isArray(rawSettings.spotLocations) ? rawSettings.spotLocations : DEFAULT_PARKING_SETTINGS.spotLocations,
+    revenueLocations: Array.isArray(rawSettings.revenueLocations) ? rawSettings.revenueLocations : DEFAULT_PARKING_SETTINGS.revenueLocations,
     flagRules: {
       ...DEFAULT_PARKING_SETTINGS.flagRules,
       ...(typeof rawSettings.flagRules === 'object' && rawSettings.flagRules ? rawSettings.flagRules : {}),
@@ -86,6 +103,24 @@ export function readParkingSettingsFromDocument(data: Record<string, unknown> | 
     updatedAt: typeof rawSettings.updatedAt === 'string' ? rawSettings.updatedAt : undefined,
     updatedBy: typeof rawSettings.updatedBy === 'string' ? rawSettings.updatedBy : undefined,
   });
+}
+
+function readRevenueMetadata(data: Record<string, unknown> | undefined): ParkingRevenueSummaryMetadata | null {
+  const storagePath = normalizeParkingStoragePath(data?.revenueStoragePath);
+  if (!storagePath) return null;
+  return {
+    importedAt: data?.revenueImportedAt && typeof (data.revenueImportedAt as { toDate?: () => Date }).toDate === 'function'
+      ? (data.revenueImportedAt as { toDate: () => Date }).toDate().toISOString()
+      : typeof data?.revenueImportedAt === 'string'
+        ? data.revenueImportedAt
+        : '',
+    importedBy: typeof data?.revenueImportedBy === 'string' ? data.revenueImportedBy : '',
+    datasetCount: Number(data?.revenueDatasetCount || 0),
+    monthCount: Number(data?.revenueMonthCount || 0),
+    totalRows: Number(data?.revenueTotalRows || 0),
+    totalRevenue: Number(data?.revenueTotalValue || 0),
+    storagePath,
+  };
 }
 
 function readMetadata(data: Record<string, unknown> | undefined): ParkingSummaryMetadata | null {
@@ -134,6 +169,25 @@ export async function getParkingData(teamId: string): Promise<ParkingSummary | n
   const response = await fetch(url);
   if (!response.ok) return null;
   const summary = await response.json() as ParkingSummary;
+  return {
+    ...summary,
+    metadata: {
+      ...summary.metadata,
+      ...metadata,
+    },
+  };
+}
+
+export async function getParkingRevenueData(teamId: string): Promise<ParkingRevenueSummary | null> {
+  const snap = await getDoc(getParkingDefaultRef(teamId));
+  if (!snap.exists()) return null;
+  const metadata = readRevenueMetadata(snap.data());
+  if (!metadata?.storagePath) return null;
+
+  const url = await getDownloadURL(ref(storage, metadata.storagePath));
+  const response = await fetch(url);
+  if (!response.ok) return null;
+  const summary = await response.json() as ParkingRevenueSummary;
   return {
     ...summary,
     metadata: {
@@ -231,6 +285,89 @@ export async function saveParkingMonthsData(
           rowCount: dataset.rowCount,
           totalValue: dataset.totalValue,
           storagePath,
+        });
+      }
+    });
+  } catch (error) {
+    if (uploadedNewFile) {
+      try { await deleteObject(ref(storage, storagePath)); } catch { /* ignore cleanup failure */ }
+    }
+    throw error;
+  }
+
+  if (oldPath && oldPath !== storagePath) {
+    try { await deleteObject(ref(storage, oldPath)); } catch { /* ignore stale cleanup failure */ }
+  }
+
+  return summary;
+}
+
+export async function saveParkingRevenueDatasets(
+  teamId: string,
+  userId: string,
+  datasets: ParkingRevenueDataset[],
+  settings: ParkingSettings,
+): Promise<ParkingRevenueSummary> {
+  if (datasets.length === 0) {
+    throw new Error('Select at least one Parking revenue file to save.');
+  }
+  const keys = new Set<string>();
+  for (const dataset of datasets) {
+    const key = `${dataset.month}|${dataset.source}`;
+    if (keys.has(key)) {
+      throw new Error('Parking revenue batch imports must contain different source/month combinations.');
+    }
+    keys.add(key);
+  }
+
+  const storagePath = getRevenueStoragePath(teamId, getRevenueImportStorageKey(datasets));
+  const defaultRef = getParkingDefaultRef(teamId);
+  const existing = await getDoc(defaultRef);
+  const oldPath = existing.exists() ? normalizeParkingStoragePath(existing.data().revenueStoragePath) : null;
+
+  let oldSummary: ParkingRevenueSummary | null = null;
+  if (oldPath) {
+    const oldUrl = await getDownloadURL(ref(storage, oldPath));
+    const response = await fetch(oldUrl);
+    if (!response.ok) throw new Error('Existing Parking revenue data could not be downloaded.');
+    oldSummary = await response.json() as ParkingRevenueSummary;
+  }
+
+  const summary = buildParkingRevenueReplacementSummary(oldSummary, datasets, userId, storagePath);
+  let uploadedNewFile = false;
+  try {
+    await uploadBytes(ref(storage, storagePath), buildUploadPayload(summary), { contentType: 'application/json' });
+    uploadedNewFile = true;
+
+    await runTransaction(db, async transaction => {
+      const fresh = await transaction.get(defaultRef);
+      const freshPath = fresh.exists() ? normalizeParkingStoragePath(fresh.data().revenueStoragePath) : null;
+      assertParkingStoragePathUnchanged(oldPath, freshPath);
+      transaction.set(defaultRef, {
+        revenueImportedAt: serverTimestamp(),
+        revenueImportedBy: userId,
+        revenueDatasetCount: summary.metadata.datasetCount,
+        revenueMonthCount: summary.metadata.monthCount,
+        revenueTotalRows: summary.metadata.totalRows,
+        revenueTotalValue: summary.metadata.totalRevenue,
+        revenueStoragePath: storagePath,
+        settings: {
+          ...settings,
+          updatedAt: settings.updatedAt || new Date().toISOString(),
+          updatedBy: settings.updatedBy || userId,
+        },
+      }, { merge: true });
+      for (const dataset of datasets) {
+        transaction.set(getParkingMonthRef(teamId, `revenue_${dataset.source}_${dataset.month}`), {
+          month: dataset.month,
+          source: dataset.source,
+          importedAt: serverTimestamp(),
+          importedBy: userId,
+          sourceFileName: dataset.sourceFileName,
+          rowCount: dataset.rowCount,
+          totalValue: dataset.totalRevenue,
+          storagePath,
+          kind: 'revenue',
         });
       }
     });

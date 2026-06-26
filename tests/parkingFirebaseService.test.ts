@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ParkingSettings, ParkingSummary } from '../utils/parking/parkingTypes';
+import type { ParkingRevenueSummary, ParkingSettings, ParkingSummary } from '../utils/parking/parkingTypes';
 
 const firestoreMock = vi.hoisted(() => ({
   doc: vi.fn((_db: unknown, ...parts: string[]) => ({ path: parts.join('/') })),
@@ -172,6 +172,101 @@ describe('parking Firebase service', () => {
     expect(summary.platePatterns.find(pattern => pattern.plate === 'ABC123')?.flags).not.toContain('high_value');
   });
 
+  it('saves Parking revenue data separately from department-code usage data', async () => {
+    const { parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenue');
+    const { saveParkingRevenueDatasets } = await import('../utils/parking/parkingService');
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '1.30', '11.30', '1', 'Wallet Transaction'],
+    ]), {
+      fileName: 'Hotspot Parking Revenue_Jan 2026.xlsx',
+      importedBy: 'user-1',
+      settings: strictSettings,
+    }).dataset;
+    const transactionSet = vi.fn();
+
+    firestoreMock.getDoc.mockResolvedValue({ exists: () => false });
+    firestoreMock.runTransaction.mockImplementation(async (_db, callback) => callback({
+      get: vi.fn().mockResolvedValue({ exists: () => false }),
+      set: transactionSet,
+    }));
+    vi.spyOn(Date, 'now').mockReturnValue(223456789);
+    vi.spyOn(Math, 'random').mockReturnValue(0.4);
+
+    const summary = await saveParkingRevenueDatasets('team-1', 'user-1', [dataset], strictSettings);
+
+    expect(storageMock.uploadBytes).toHaveBeenCalledWith(
+      expect.objectContaining({ path: expect.stringMatching(/^teams\/team-1\/parking\/revenue\/2026-01_hotspot_223456789-/) }),
+      expect.anything(),
+      { contentType: 'application/json' },
+    );
+    expect(transactionSet).toHaveBeenCalledWith(
+      { path: 'teams/team-1/parking/default' },
+      expect.objectContaining({
+        revenueImportedBy: 'user-1',
+        revenueDatasetCount: 1,
+        revenueMonthCount: 1,
+        revenueTotalRows: 1,
+        revenueTotalValue: 10,
+        revenueStoragePath: expect.stringMatching(/^teams\/team-1\/parking\/revenue\/2026-01_hotspot_223456789-/),
+        settings: expect.objectContaining({ updatedBy: 'user-1' }),
+      }),
+      { merge: true },
+    );
+    expect(transactionSet).toHaveBeenCalledWith(
+      { path: 'teams/team-1/parking/default/months/revenue_hotspot_2026-01' },
+      expect.objectContaining({
+        month: '2026-01',
+        source: 'hotspot',
+        kind: 'revenue',
+        totalValue: 10,
+      }),
+    );
+    expect(summary.metadata).toMatchObject({ datasetCount: 1, totalRows: 1, totalRevenue: 10 });
+  });
+
+  it('auto-save persistence preserves other revenue source/month datasets when replacing one import', async () => {
+    const { buildParkingRevenueReplacementSummary, parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenue');
+    const { saveParkingRevenueDatasets } = await import('../utils/parking/parkingService');
+    const replacementHotspot = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '1.30', '11.30', '1', 'Wallet Transaction'],
+    ]), { fileName: 'Hotspot Parking Revenue_Jan 2026.xlsx', importedBy: 'user-1', settings: strictSettings }).dataset;
+    const oldHotspot = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2025-12-31 09:00:00', 'OLD111', '7.00', '0.91', '7.91', '1', 'Wallet Transaction'],
+    ]), { fileName: 'Hotspot Parking Revenue_Dec 2025.xlsx', importedBy: 'user-1', settings: strictSettings }).dataset;
+    const oldQr = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'Meter #', 'Tap Sign', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'Collier Parkade', '2026-01-31 10:00:00', 'QR999', '5.00', '0.65', '5.65', '2', 'visa'],
+    ]), { fileName: 'Hotsport QR Code Revenue_Jan 2026.xlsx', importedBy: 'user-1', settings: strictSettings }).dataset;
+    const oldSummary = buildParkingRevenueReplacementSummary(null, [oldHotspot, oldQr], 'user-1', 'old-revenue.json');
+
+    firestoreMock.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ revenueStoragePath: 'old-revenue.json' }) });
+    storageMock.getDownloadURL.mockResolvedValue('https://storage.example/old-revenue.json');
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => oldSummary } as Response);
+    firestoreMock.runTransaction.mockImplementation(async (_db, callback) => callback({
+      get: vi.fn().mockResolvedValue({ exists: () => true, data: () => ({ revenueStoragePath: 'old-revenue.json' }) }),
+      set: vi.fn(),
+    }));
+    vi.spyOn(Date, 'now').mockReturnValue(223456790);
+    vi.spyOn(Math, 'random').mockReturnValue(0.6);
+
+    const summary = await saveParkingRevenueDatasets('team-1', 'user-1', [replacementHotspot], strictSettings);
+
+    expect(summary.datasets.map(dataset => `${dataset.month}:${dataset.source}:${dataset.totalRevenue}`)).toEqual([
+      '2025-12:hotspot:7',
+      '2026-01:hotspot:10',
+      '2026-01:qr:5',
+    ]);
+    expect(summary.metadata).toMatchObject({ datasetCount: 3, monthCount: 2, totalRows: 3, totalRevenue: 22 });
+    expect(storageMock.deleteObject).toHaveBeenCalledWith({ path: 'old-revenue.json' });
+  });
+
   it('loads Parking settings and stored summaries from Firebase metadata', async () => {
     const { getParkingData, getParkingSettings } = await import('../utils/parking/parkingService');
     const importedDate = new Date('2026-06-15T12:00:00.000Z');
@@ -225,6 +320,72 @@ describe('parking Firebase service', () => {
       totalRows: 4,
       totalValue: 112,
       storagePath: 'teams/team-1/parking/current.json',
+    });
+  });
+
+  it('loads saved Parking revenue imports from Storage using Firestore metadata', async () => {
+    const { getParkingRevenueData } = await import('../utils/parking/parkingService');
+    const importedDate = new Date('2026-01-31T20:00:00.000Z');
+    const storedRevenueSummary: ParkingRevenueSummary = {
+      schemaVersion: 1,
+      datasets: [
+        {
+          month: '2026-01',
+          source: 'hotspot',
+          importedAt: 'older',
+          importedBy: 'older-user',
+          sourceFileName: 'Hotspot Parking Revenue_Jan 2026.xlsx',
+          rowCount: 1,
+          skippedRows: 0,
+          totalRevenue: 10,
+          totalTax: 1.3,
+          totalPaid: 11.3,
+          rows: [],
+        },
+      ],
+      metadata: {
+        importedAt: 'older',
+        importedBy: 'older-user',
+        datasetCount: 1,
+        monthCount: 1,
+        totalRows: 1,
+        totalRevenue: 10,
+      },
+    };
+
+    firestoreMock.getDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        revenueStoragePath: 'teams/team-1/parking/revenue/current.json',
+        revenueImportedAt: { toDate: () => importedDate },
+        revenueImportedBy: 'user-1',
+        revenueDatasetCount: 1,
+        revenueMonthCount: 1,
+        revenueTotalRows: 1,
+        revenueTotalValue: 10,
+      }),
+    });
+    storageMock.getDownloadURL.mockResolvedValue('https://storage.example/parking-revenue.json');
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => storedRevenueSummary,
+    } as Response);
+
+    const summary = await getParkingRevenueData('team-1');
+
+    expect(storageMock.getDownloadURL).toHaveBeenCalledWith({
+      path: 'teams/team-1/parking/revenue/current.json',
+    });
+    expect(fetch).toHaveBeenCalledWith('https://storage.example/parking-revenue.json');
+    expect(summary?.datasets).toHaveLength(1);
+    expect(summary?.metadata).toMatchObject({
+      importedAt: importedDate.toISOString(),
+      importedBy: 'user-1',
+      datasetCount: 1,
+      monthCount: 1,
+      totalRows: 1,
+      totalRevenue: 10,
+      storagePath: 'teams/team-1/parking/revenue/current.json',
     });
   });
 
