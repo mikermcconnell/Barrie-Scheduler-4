@@ -480,10 +480,8 @@ function compactMoney(value: number | null | undefined): string {
 }
 
 function roundedPinRevenue(value: number | null | undefined): string {
-  const safe = value || 0;
-  if (Math.abs(safe) >= 1_000_000) return `$${Math.round(safe / 100_000) / 10}M`;
-  if (Math.abs(safe) >= 1_000) return `$${Math.round(safe / 1_000)}k`;
-  return `$${Math.round(safe).toLocaleString()}`;
+  const roundedToNearestTen = Math.round((value || 0) / 10) * 10;
+  return `$${roundedToNearestTen.toLocaleString()}`;
 }
 
 function shortNumber(value: number | null | undefined): string {
@@ -908,6 +906,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [locationSearchById, setLocationSearchById] = useState<Record<string, RevenueLocationSearchState>>({});
   const [lotLeftRailOpen, setLotLeftRailOpen] = useState(true);
   const [lotRightRailOpen, setLotRightRailOpen] = useState(true);
+  const [parkingLegendCollapsed, setParkingLegendCollapsed] = useState(false);
   const [publicParkingLocations, setPublicParkingLocations] = useState<PublicParkingLocation[]>([]);
   const [publicParkingLoading, setPublicParkingLoading] = useState(false);
   const [publicParkingError, setPublicParkingError] = useState('');
@@ -943,6 +942,13 @@ export const ParkingWorkspace: React.FC = () => {
     setActiveWorkspace(view);
     window.location.hash = view === 'dashboard' ? 'parking' : `parking/${view}`;
   };
+
+  useEffect(() => {
+    if (activeWorkspace !== 'lot-data') return;
+    setParkingLegendCollapsed(false);
+    const timer = window.setTimeout(() => setParkingLegendCollapsed(true), 10000);
+    return () => window.clearTimeout(timer);
+  }, [activeWorkspace]);
 
   const reviewMonths = useMemo(() => {
     const savedMonths = displaySummary?.months ?? [];
@@ -1967,26 +1973,42 @@ export const ParkingWorkspace: React.FC = () => {
           </div>
 
           <div
-            className="pointer-events-none absolute top-24 z-20 hidden max-w-xs rounded-3xl border border-slate-200 bg-white/95 p-3 text-xs font-bold text-slate-600 shadow-xl backdrop-blur xl:block"
+            className={`absolute top-24 z-20 hidden rounded-3xl border border-slate-200 bg-white/95 text-xs font-bold text-slate-600 shadow-xl backdrop-blur transition-all xl:block ${
+              parkingLegendCollapsed ? 'pointer-events-auto max-w-[11rem] p-2' : 'pointer-events-none max-w-xs p-3'
+            }`}
             style={{ left: lotLeftRailOpen ? 350 : 92 }}
             aria-label="Parking map legend"
           >
-            <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-slate-500">Map legend</div>
-            <div className="flex items-center gap-2">
-              <span className="inline-block h-3 w-3 rounded-full bg-emerald-700" />
-              <span>{mapMetricLabel}: darker/larger means higher value</span>
-            </div>
-            <div className="mt-1 flex items-center gap-2">
-              <span className="inline-block h-3 w-3 rounded-full border-[3px] border-white bg-emerald-400 shadow" />
-              <span>Reviewed location</span>
-            </div>
-            <div className="mt-1 flex items-center gap-2">
-              <span className="inline-block h-3 w-3 rounded-full border-[3px] border-blue-600 bg-emerald-300 shadow" />
-              <span>City public source</span>
-            </div>
-            <div className="mt-1 text-[11px] font-semibold text-slate-400">
-              {lotMapMode === 'heatmap' ? 'Heat map summarizes concentration; switch to Pins for exact lots.' : 'Numbers inside pins show rounded revenue.'}
-            </div>
+            {parkingLegendCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setParkingLegendCollapsed(false)}
+                className="flex w-full items-center gap-2 rounded-2xl px-2 py-1 text-left text-[11px] font-black uppercase tracking-wide text-slate-600 hover:bg-slate-50"
+                aria-expanded="false"
+              >
+                <span className="inline-block h-3 w-3 rounded-full bg-emerald-700" />
+                Map legend
+              </button>
+            ) : (
+              <>
+                <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-slate-500">Map legend</div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 rounded-full bg-emerald-700" />
+                  <span>{mapMetricLabel}: darker/larger means higher value</span>
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 rounded-full border-[3px] border-white bg-emerald-400 shadow" />
+                  <span>Reviewed location</span>
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 rounded-full border-[3px] border-blue-600 bg-emerald-300 shadow" />
+                  <span>City public source</span>
+                </div>
+                <div className="mt-1 text-[11px] font-semibold text-slate-400">
+                  {lotMapMode === 'heatmap' ? 'Heat map summarizes concentration; switch to Pins for exact lots.' : 'Numbers inside pins show rounded revenue.'}
+                </div>
+              </>
+            )}
           </div>
 
           <aside

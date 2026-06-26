@@ -327,7 +327,7 @@ const AppContent: React.FC = () => {
                   </div>
                   <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-emerald-600 transition-colors">Parking</h3>
                   <p className="text-gray-500 font-bold mb-6">
-                    Import HotSpot shared-code usage, review department totals, and flag plate-level parking patterns.
+                    Open Parking Lot Data, import revenue files, review department totals, and monitor plate-level patterns.
                   </p>
                   <div className="flex items-center gap-2 text-emerald-600 font-extrabold uppercase tracking-wide text-sm">
                     Enter Workspace <ArrowRight size={16} />

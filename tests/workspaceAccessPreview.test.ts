@@ -53,4 +53,18 @@ describe('workspace access preview', () => {
         ]);
         expect(preview.hiddenFeatures).toContain('Scheduled Transit');
     });
+
+    it('shows Parking as the main workspace for the Parking profile', () => {
+        const preview = buildWorkspaceAccessPreview({
+            displayName: 'Parking reviewer',
+            accessLevel: 'parking',
+            flags: allFeaturesEnabled,
+        });
+
+        expect(preview.accessLabel).toBe('Parking');
+        expect(preview.homeWorkspaces.map(workspace => workspace.label)).toEqual(['Parking']);
+        expect(preview.homeWorkspaces[0].description).toContain('Parking Lot Data');
+        expect(preview.analyticsCards).toEqual([]);
+        expect(preview.operationsTools).toEqual([]);
+    });
 });

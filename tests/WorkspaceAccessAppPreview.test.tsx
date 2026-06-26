@@ -24,7 +24,7 @@ describe('WorkspaceAccessAppPreview', () => {
         container = null;
     });
 
-    function renderPreview(accessLevel: 'transit-app-only' | 'planner' | 'external-planner') {
+    function renderPreview(accessLevel: 'transit-app-only' | 'planner' | 'external-planner' | 'parking') {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -96,5 +96,22 @@ describe('WorkspaceAccessAppPreview', () => {
         expect(container?.textContent).toContain('Transit App Data');
         expect(container?.textContent).not.toContain('Scheduled Transit');
         expect(container?.textContent).not.toContain('Agency OD Analysis');
+    });
+
+    it('shows Parking Lot Data inside the Parking profile preview', () => {
+        renderPreview('parking');
+
+        const parkingButton = Array.from(container?.querySelectorAll('button') ?? []).find(
+            button => button.textContent?.includes('Parking')
+        );
+        expect(parkingButton).toBeTruthy();
+
+        flushSync(() => {
+            parkingButton?.click();
+        });
+
+        expect(container?.textContent).toContain('Parking preview');
+        expect(container?.textContent).toContain('Parking Lot Data');
+        expect(container?.textContent).toContain('Plate Monitor');
     });
 });

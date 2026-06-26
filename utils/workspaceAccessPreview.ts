@@ -42,6 +42,12 @@ const HOME_WORKSPACES: WorkspacePreviewItem[] = [
         description: 'Operational dashboards, reports, and performance review.',
         previewKind: 'workspace',
     },
+    {
+        feature: 'workspaceParking',
+        label: 'Parking',
+        description: 'Parking Lot Data, Plate Monitor, revenue imports, and usage review.',
+        previewKind: 'workspace',
+    },
 ];
 
 const PLANNING_DATA_WORKSPACE: WorkspacePreviewItem = {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, BarChart2, Bus, Eye, LayoutDashboard, Map, Smartphone, User } from 'lucide-react';
+import { ArrowLeft, BarChart2, Bus, Car, Eye, LayoutDashboard, Map, Smartphone, User } from 'lucide-react';
 import type { buildWorkspaceAccessPreview, WorkspacePreviewItem } from '../utils/workspaceAccessPreview';
 
 type WorkspaceAccessPreview = ReturnType<typeof buildWorkspaceAccessPreview>;
@@ -12,6 +12,7 @@ interface WorkspaceAccessAppPreviewProps {
 const iconForFeature = (feature: WorkspacePreviewItem['feature']): React.ReactNode => {
     if (feature === 'workspaceFixedRoute') return <Bus size={24} />;
     if (feature === 'workspaceOperations') return <BarChart2 size={24} />;
+    if (feature === 'workspaceParking') return <Car size={24} />;
     if (feature === 'analyticsTransitApp') return <Smartphone size={18} />;
     if (feature === 'workspaceOndemand') return <Map size={24} />;
     return <LayoutDashboard size={18} />;
@@ -271,6 +272,9 @@ function getPreviewActions(item: WorkspacePreviewItem): string[] {
     }
     if (item.feature === 'workspaceOperations') {
         return ['Performance Dashboard', 'Reports', 'Import Health'];
+    }
+    if (item.feature === 'workspaceParking') {
+        return ['Parking Lot Data', 'Plate Monitor', 'Revenue Imports', 'Department Settings'];
     }
     if (item.feature === 'analyticsTransitApp') {
         return ['Demand Map', 'Route Performance', 'Stop Analysis', 'Transfers'];
