@@ -19,6 +19,14 @@ import {
   findPublicParkingLocationFallback,
 } from '../utils/parking/publicParkingLocations';
 import {
+  mergeParkingRevenueLocationMappings,
+  parseParkingLocationWorkbook,
+} from '../utils/parking/parkingLocationWorkbook';
+import {
+  countMissingDefaultParkingRevenueLocations,
+  DEFAULT_PARKING_REVENUE_LOCATIONS,
+} from '../utils/parking/parkingDefaultLocations';
+import {
   assertParkingStoragePathUnchanged,
   normalizeParkingStoragePath,
   readParkingSettingsFromDocument,
@@ -330,6 +338,48 @@ describe('parking replacement and export', () => {
     expect(loaded.departmentLegendSort).toEqual({ key: 'department', direction: 'desc' });
   });
 
+  it('loads bundled ParkingLatLong coordinates into default Parking settings', () => {
+    const loaded = readParkingSettingsFromDocument(undefined);
+    const collier = loaded.revenueLocations?.find(location => location.id === 'hotspot-1322');
+
+    expect(DEFAULT_PARKING_REVENUE_LOCATIONS.length).toBe(104);
+    expect(countMissingDefaultParkingRevenueLocations(loaded.revenueLocations)).toBe(0);
+    expect(collier).toMatchObject({
+      displayName: 'Collier Street Parkade',
+      latitude: 44.390066,
+      longitude: -79.688843,
+      capacitySpaces: 303,
+    });
+    expect(collier?.sourceRefs.map(ref => `${ref.source}:${ref.sourceId}`)).toEqual(['hotspot:1322', 'qr:1322']);
+  });
+
+  it('adds missing default lot IDs without overwriting custom reviewed coordinates', () => {
+    const loaded = readParkingSettingsFromDocument({
+      settings: {
+        ...DEFAULT_PARKING_SETTINGS,
+        revenueLocations: [
+          {
+            id: 'custom-collier',
+            displayName: 'Planner-reviewed Collier',
+            latitude: 44.1,
+            longitude: -79.1,
+            sourceRefs: [{ source: 'hotspot', sourceId: '1322', label: 'Planner-reviewed Collier' }],
+          },
+        ],
+      },
+    });
+    const collier = loaded.revenueLocations?.find(location => location.id === 'custom-collier');
+
+    expect(countMissingDefaultParkingRevenueLocations(loaded.revenueLocations)).toBe(0);
+    expect(collier).toMatchObject({
+      displayName: 'Planner-reviewed Collier',
+      latitude: 44.1,
+      longitude: -79.1,
+      capacitySpaces: 303,
+    });
+    expect(collier?.sourceRefs.map(ref => `${ref.source}:${ref.sourceId}`)).toEqual(['hotspot:1322', 'qr:1322']);
+  });
+
   it('recalculates plate flags when thresholds change', () => {
     const summary = buildParkingReplacementSummary(null, dataset('2026-06', 112), 'user-1', 'parking.json', settings.flagRules);
     const original = summary.platePatterns.find(pattern => pattern.plate === 'ABC123');
@@ -532,6 +582,68 @@ describe('parking revenue parser and analytics', () => {
       longitude: -79.69,
       totalRevenue: 10,
     });
+  });
+});
+
+describe('parking location workbook parser', () => {
+  it('imports City parking coordinates, groups duplicate HotSpot IDs, and keeps spaces', () => {
+    const result = parseParkingLocationWorkbook(workbookBuffer([
+      ['Please note that these coordinates are provided in GCS_WGS_1984.'],
+      ['OBJECTID *', 'Parking Name', 'Lot Address/ Parking Location', 'Number of Spaces', 'Common Name', 'Hot Spot ID', 'Longitude', 'Latitude'],
+      [1, 'Heritage Park Lot', '5 Simcoe St', 24, 'Heritage Park Lot', 1130, -79.685086, 44.388601],
+      [2, 'Heritage Park Lot', '5 Simcoe St', 8, 'Heritage Park Lot', 1130, -79.685024, 44.388883],
+      [3, 'Skipped Lot', 'Unknown', 1, 'Skipped Lot', '<Null>', -79.68, 44.38],
+    ]));
+
+    expect(result.rowCount).toBe(2);
+    expect(result.skippedRows).toBe(1);
+    expect(result.mappings).toHaveLength(1);
+    expect(result.mappings[0]).toMatchObject({
+      id: 'hotspot-1130',
+      displayName: 'Heritage Park Lot',
+      capacitySpaces: 32,
+      sourceRefs: [
+        { source: 'hotspot', sourceId: '1130', label: 'Heritage Park Lot' },
+        { source: 'qr', sourceId: '1130', label: 'Heritage Park Lot' },
+      ],
+    });
+    expect(result.mappings[0].latitude).toBeCloseTo(44.388672, 6);
+    expect(result.mappings[0].longitude).toBeCloseTo(-79.68507, 6);
+    expect(result.warnings).toContain('1 rows were skipped because they were missing Hot Spot ID or valid coordinates.');
+  });
+
+  it('merges imported reviewed locations over existing locations with the same source IDs', () => {
+    const merged = mergeParkingRevenueLocationMappings([
+      {
+        id: 'old-collier',
+        displayName: 'Old Collier',
+        latitude: 44,
+        longitude: -79,
+        sourceRefs: [{ source: 'hotspot', sourceId: '1322', label: 'Old Collier' }],
+      },
+    ], [
+      {
+        id: 'hotspot-1322',
+        displayName: 'Collier Street Parkade',
+        latitude: 44.389,
+        longitude: -79.69,
+        capacitySpaces: 299,
+        sourceRefs: [
+          { source: 'hotspot', sourceId: '1322', label: 'Collier Street Parkade' },
+          { source: 'qr', sourceId: '1322', label: 'Collier Street Parkade' },
+        ],
+      },
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      id: 'hotspot-1322',
+      displayName: 'Collier Street Parkade',
+      latitude: 44.389,
+      longitude: -79.69,
+      capacitySpaces: 299,
+    });
+    expect(merged[0].sourceRefs.map(ref => `${ref.source}:${ref.sourceId}`)).toEqual(['hotspot:1322', 'qr:1322']);
   });
 });
 

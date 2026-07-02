@@ -11,6 +11,7 @@ import {
   type ParkingSummary,
 } from './parkingTypes';
 import { getParkingCodeFamilyKey } from './parkingCodeRules';
+import { mergeDefaultParkingRevenueLocations } from './parkingDefaultLocations';
 
 type ParkingAnalysisSettings = ParkingFlagRuleSettings | ParkingSettings;
 
@@ -51,7 +52,7 @@ export function mergeParkingSettings(base: ParkingSettings, override: ParkingSet
   return {
     codeFamilies: override.codeFamilies ?? base.codeFamilies,
     spotLocations: override.spotLocations ?? base.spotLocations,
-    revenueLocations: override.revenueLocations ?? base.revenueLocations,
+    revenueLocations: mergeDefaultParkingRevenueLocations(override.revenueLocations ?? base.revenueLocations),
     flagRules: {
       ...DEFAULT_PARKING_FLAG_RULES,
       ...(base.flagRules || {}),

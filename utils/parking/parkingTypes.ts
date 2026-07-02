@@ -17,6 +17,7 @@ export interface ParkingRevenueLocationMapping {
   displayName: string;
   latitude: number | null;
   longitude: number | null;
+  capacitySpaces?: number | null;
   sourceRefs: ParkingRevenueLocationRef[];
 }
 

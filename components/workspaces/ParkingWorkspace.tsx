@@ -66,6 +66,10 @@ import {
   parseParkingRevenueFile,
 } from '../../utils/parking/parkingRevenue';
 import {
+  mergeParkingRevenueLocationMappings,
+  parseParkingLocationWorkbookFile,
+} from '../../utils/parking/parkingLocationWorkbook';
+import {
   BARRIE_PUBLIC_PARKING_VIEWER_URL,
   fetchBarriePublicParkingLocations,
   findPublicParkingLocationFallback,
@@ -894,6 +898,8 @@ export const ParkingWorkspace: React.FC = () => {
   const [previewRevenueDatasets, setPreviewRevenueDatasets] = useState<ParkingRevenueDataset[]>([]);
   const [revenueWarnings, setRevenueWarnings] = useState<string[]>([]);
   const [revenueImportStatus, setRevenueImportStatus] = useState('');
+  const [locationImportWarnings, setLocationImportWarnings] = useState<string[]>([]);
+  const [locationImportStatus, setLocationImportStatus] = useState('');
   const [revenueSourceFilter, setRevenueSourceFilter] = useState<ParkingRevenueSource | 'all'>('all');
   const [revenueDayTypeFilter, setRevenueDayTypeFilter] = useState<NonNullable<ParkingRevenueFilters['dayType']>>('all');
   const [selectedRevenueMonth, setSelectedRevenueMonth] = useState('all');
@@ -1040,13 +1046,20 @@ export const ParkingWorkspace: React.FC = () => {
   }, [publicParkingLocations, revenueAnalytics.locationSummaries]);
   const publicCapacityByLocationKey = useMemo(() => (
     Object.fromEntries(revenueAnalytics.locationSummaries.map(location => {
+      const reviewedLocation = (settings.revenueLocations || []).find(mapping => (
+        mapping.id === location.key || revenueLocationRefsOverlap(location, mapping)
+      ));
       const match = allPublicParkingMatchesByKey.get(location.key);
       return [location.key, {
-        spaces: match?.location.numSpaces ?? null,
-        sourceLabel: match ? (match.location.commonName || match.location.name || 'City parking source') : undefined,
+        spaces: reviewedLocation?.capacitySpaces ?? match?.location.numSpaces ?? null,
+        sourceLabel: reviewedLocation?.capacitySpaces != null
+          ? 'Reviewed location import'
+          : match
+            ? (match.location.commonName || match.location.name || 'City parking source')
+            : undefined,
       }];
     }))
-  ), [allPublicParkingMatchesByKey, revenueAnalytics.locationSummaries]);
+  ), [allPublicParkingMatchesByKey, revenueAnalytics.locationSummaries, settings.revenueLocations]);
   const mapLocationSummaries = useMemo(() => (
     buildParkingRevenueMapDisplayLocations(
       revenueAnalytics.locationSummaries,
@@ -1411,6 +1424,40 @@ export const ParkingWorkspace: React.FC = () => {
 
   const saveSettingsOnly = async () => {
     await persistParkingSettings(settingsRef.current, { showSaving: true, showToast: true });
+  };
+
+  const importLocationWorkbook = async (file: File) => {
+    if (!team || !user) return;
+    setSaving(true);
+    setErrorMessage('');
+    setLocationImportWarnings([]);
+    setLocationImportStatus('Reading parking lot coordinates...');
+    try {
+      const result = await parseParkingLocationWorkbookFile(file);
+      const nextSettings: ParkingSettings = {
+        ...settingsRef.current,
+        revenueLocations: mergeParkingRevenueLocationMappings(settingsRef.current.revenueLocations || [], result.mappings),
+      };
+      const saved = await saveParkingSettings(team.id, user.uid, nextSettings);
+      applySettingsState(saved);
+      setDepartmentLegendSort(saved.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
+      setLocationImportWarnings(result.warnings);
+      toast.success(
+        'Parking lot coordinates imported',
+        `${result.mappings.length.toLocaleString()} mapped lot ID${result.mappings.length === 1 ? '' : 's'} saved from ${file.name}.`,
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Could not import the parking lot coordinate workbook.');
+    } finally {
+      setLocationImportStatus('');
+      setSaving(false);
+    }
+  };
+
+  const handleLocationWorkbookChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) void importLocationWorkbook(file);
+    event.target.value = '';
   };
 
   const addCodeFamily = () => setSettings(current => ({
@@ -1961,8 +2008,12 @@ export const ParkingWorkspace: React.FC = () => {
                 ))}
               </div>
               <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-extrabold text-white ${canEditParking ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-gray-300'}`}>
-                <Upload size={14} /> Revenue
+                <Upload size={14} /> Import revenue
                 <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleRevenueFileChange} className="hidden" />
+              </label>
+              <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-extrabold text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
+                <MapPin size={14} /> Refresh coords
+                <input type="file" accept=".xlsx,.xls" disabled={!canEditParking || saving} onChange={handleLocationWorkbookChange} className="hidden" />
               </label>
               {saving && previewRevenueDatasets.length > 0 ? (
                 <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-extrabold text-emerald-700">
@@ -2489,6 +2540,21 @@ export const ParkingWorkspace: React.FC = () => {
                 <a href={BARRIE_PUBLIC_PARKING_VIEWER_URL} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs font-black text-blue-700 hover:text-blue-900">
                   City public parking source
                 </a>
+                <label className={`mt-3 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-black text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
+                  <Upload size={16} /> Refresh lot coordinates .xlsx
+                  <input type="file" accept=".xlsx,.xls" disabled={!canEditParking || saving} onChange={handleLocationWorkbookChange} className="hidden" />
+                </label>
+                <p className="mt-2 text-xs font-semibold text-slate-500">
+                  Built-in ParkingLatLong coordinates are applied automatically. Use this only when refreshing from a newer City export.
+                </p>
+                {locationImportStatus ? (
+                  <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs font-bold text-blue-800">{locationImportStatus}</div>
+                ) : null}
+                {locationImportWarnings.length > 0 ? (
+                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs font-bold text-amber-800">
+                    {locationImportWarnings.map(warning => <div key={warning}>{warning}</div>)}
+                  </div>
+                ) : null}
                 <div className="mt-3 space-y-3">
                   {(settings.revenueLocations || []).slice(0, 12).map(location => {
                     const search = locationSearchById[location.id] || { query: location.displayName, searching: false, error: '', suggestions: [] };
@@ -2500,6 +2566,9 @@ export const ParkingWorkspace: React.FC = () => {
                         <div className="mt-2 grid grid-cols-2 gap-2">
                           <TextInput disabled={!canEditParking} value={location.latitude == null ? '' : String(location.latitude)} onChange={value => updateRevenueLocation(location.id, { latitude: value ? Number(value) : null })} placeholder="Latitude" />
                           <TextInput disabled={!canEditParking} value={location.longitude == null ? '' : String(location.longitude)} onChange={value => updateRevenueLocation(location.id, { longitude: value ? Number(value) : null })} placeholder="Longitude" />
+                        </div>
+                        <div className="mt-2">
+                          <TextInput disabled={!canEditParking} value={location.capacitySpaces == null ? '' : String(location.capacitySpaces)} onChange={value => updateRevenueLocation(location.id, { capacitySpaces: value ? Number(value) : null })} placeholder="Spaces" />
                         </div>
                         <div className="mt-2 flex gap-2">
                           <input value={search.query} disabled={!canEditParking} onChange={event => setLocationSearchById(current => ({ ...current, [location.id]: { ...search, query: event.target.value } }))} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none" />
@@ -2627,12 +2696,14 @@ export const ParkingWorkspace: React.FC = () => {
             )}
           </aside>
 
-          {(errorMessage || publicParkingError || previewRevenueDatasets.length > 0 || revenueImportStatus || !hasVisibleRevenuePins) ? (
+          {(errorMessage || publicParkingError || previewRevenueDatasets.length > 0 || revenueImportStatus || locationImportStatus || locationImportWarnings.length > 0 || !hasVisibleRevenuePins) ? (
             <div className="pointer-events-none absolute bottom-4 left-[350px] right-[400px] z-30 hidden xl:block">
               <div className="pointer-events-auto rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur">
                 {errorMessage ? <div className="mb-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{errorMessage}</div> : null}
                 {publicParkingError ? <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">City public parking source could not load: {publicParkingError}</div> : null}
                 {revenueImportStatus ? <div className="mb-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{revenueImportStatus}</div> : null}
+                {locationImportStatus ? <div className="mb-2 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-bold text-blue-800">{locationImportStatus}</div> : null}
+                {locationImportWarnings.length > 0 ? <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">{locationImportWarnings.map(warning => <div key={warning}>{warning}</div>)}</div> : null}
                 {(previewRevenueDatasets.length > 0 || !hasVisibleRevenuePins) && revenueWarnings.length > 0 ? <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">{revenueWarnings.map(warning => <div key={warning}>{warning}</div>)}</div> : null}
                 {previewRevenueDatasets.length > 0 ? (
                   <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2667,7 +2738,11 @@ export const ParkingWorkspace: React.FC = () => {
                   </div>
                 ) : !hasVisibleRevenuePins ? (
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">
-                    The map is ready. Upload revenue files; reviewed coordinates or public City matches will light up the pins.
+                    <div>The map is ready. Import revenue files; reviewed coordinates or public City matches will light up the pins.</div>
+                    <label className={`mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-black text-white ${canEditParking ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-gray-300'}`}>
+                      <Upload size={16} /> Import revenue .xlsx
+                      <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleRevenueFileChange} className="hidden" />
+                    </label>
                   </div>
                 ) : null}
               </div>
@@ -3023,7 +3098,7 @@ export const ParkingWorkspace: React.FC = () => {
                       const search = locationSearchById[location.id] || { query: location.displayName, searching: false, error: '', suggestions: [] };
                       return (
                         <div key={location.id} className="rounded-3xl border border-gray-100 bg-gray-50 p-4">
-                          <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_120px_120px_220px] lg:items-end">
+                          <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_120px_120px_100px_220px] lg:items-end">
                             <div>
                               <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Location name</div>
                               <TextInput disabled={!canEditParking} value={location.displayName} onChange={value => updateRevenueLocation(location.id, { displayName: value })} />
@@ -3035,6 +3110,10 @@ export const ParkingWorkspace: React.FC = () => {
                             <div>
                               <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Longitude</div>
                               <TextInput disabled={!canEditParking} value={location.longitude == null ? '' : String(location.longitude)} onChange={value => updateRevenueLocation(location.id, { longitude: value ? Number(value) : null })} />
+                            </div>
+                            <div>
+                              <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Spaces</div>
+                              <TextInput disabled={!canEditParking} value={location.capacitySpaces == null ? '' : String(location.capacitySpaces)} onChange={value => updateRevenueLocation(location.id, { capacitySpaces: value ? Number(value) : null })} />
                             </div>
                             <div>
                               <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Mapbox helper</div>
@@ -3087,15 +3166,15 @@ export const ParkingWorkspace: React.FC = () => {
               </>
             ) : null}
 
-            {false ? (
+            {activeWorkspace === 'plate-monitor' ? (
             <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-lg font-extrabold text-gray-950">Import HotSpot month(s)</h3>
-                  <p className="mt-1 text-sm text-gray-500">Each workbook must contain one month. Select multiple files to replace different months together.</p>
+                  <h3 className="text-lg font-extrabold text-gray-950">Import department parking data</h3>
+                  <p className="mt-1 text-sm text-gray-500">Upload HotSpot shared-code workbooks. Each workbook must contain one month; multiple files can replace different months together.</p>
                 </div>
                 <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
-                  <Upload size={16} /> Upload .xlsx
+                  <Upload size={16} /> Import department .xlsx
                   <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleFileChange} className="hidden" />
                 </label>
               </div>
