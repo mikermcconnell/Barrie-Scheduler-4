@@ -75,6 +75,15 @@ const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
 };
 
 type WorkspaceSelection = Record<WorkspaceAccessFeatureKey, boolean>;
+type TeamManagementTab = 'overview' | 'members' | 'access' | 'data' | 'admin';
+
+const TEAM_MANAGEMENT_TABS: Array<{ id: TeamManagementTab; label: string; adminOnly?: boolean }> = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'members', label: 'Members' },
+    { id: 'access', label: 'Access', adminOnly: true },
+    { id: 'data', label: 'Data Seeding', adminOnly: true },
+    { id: 'admin', label: 'Admin', adminOnly: true },
+];
 
 function buildWorkspaceSelection(
     accessLevel: WorkspaceAccessLevel,
@@ -166,6 +175,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [seedSourceTeamId, setSeedSourceTeamId] = useState('');
     const [seedingWorkspaceData, setSeedingWorkspaceData] = useState(false);
     const [lastSeedResult, setLastSeedResult] = useState<SeedPartnerWorkspaceDataResult | null>(null);
+    const [activeTab, setActiveTab] = useState<TeamManagementTab>('overview');
 
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
@@ -205,6 +215,11 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             availableTeam.inviteCode.toLowerCase().includes(filter);
     });
     const seedSourceTeams = availableTeams.filter(availableTeam => availableTeam.id !== activeTeamId);
+    const visibleTabs = useMemo(
+        () => TEAM_MANAGEMENT_TABS.filter(tab => !tab.adminOnly || canLookupTeams),
+        [canLookupTeams]
+    );
+    const seedSourceTeam = availableTeams.find(teamOption => teamOption.id === seedSourceTeamId) ?? null;
 
     // Load full team details with members
     useEffect(() => {
@@ -271,6 +286,11 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         const fallbackTeam = availableTeams.find(teamOption => teamOption.id !== activeTeamId);
         setSeedSourceTeamId((barrieTeam ?? fallbackTeam)?.id ?? '');
     }, [activeTeamId, availableTeams, canLookupTeams, seedSourceTeamId]);
+
+    useEffect(() => {
+        if (visibleTabs.some(tab => tab.id === activeTab)) return;
+        setActiveTab('overview');
+    }, [activeTab, visibleTabs]);
 
     const loadTeamDetails = async () => {
         if (!team) return;
@@ -507,6 +527,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         setSeedingWorkspaceData(true);
         setLastSeedResult(null);
         try {
+            await user.getIdToken(true);
             const result = await seedPartnerWorkspaceData({
                 sourceTeamId: seedSourceTeamId,
                 targetTeamId: activeTeamId,
@@ -527,7 +548,12 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             toast?.success(copied ? `Seeded ${copied} data` : 'No source data found to seed');
         } catch (error) {
             console.error('Error seeding workspace data:', error);
-            toast?.error(error instanceof Error ? error.message : 'Failed to seed workspace data');
+            const message = error instanceof Error ? error.message : 'Failed to seed workspace data';
+            toast?.error(
+                message.includes('storage/unauthorized') || message.toLowerCase().includes('permission')
+                    ? 'Storage permission blocked the copy. Refresh your admin session and make sure the latest Firebase rules are deployed.'
+                    : message
+            );
         } finally {
             setSeedingWorkspaceData(false);
         }
@@ -1001,7 +1027,23 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
             </div>
 
-            {canLookupTeams && (
+            <div className="mb-5 flex gap-2 overflow-x-auto border-b border-gray-200">
+                {visibleTabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-bold transition-colors ${
+                            activeTab === tab.id
+                                ? 'border-brand-green text-brand-green'
+                                : 'border-transparent text-gray-500 hover:text-gray-800'
+                        }`}
+                    >
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
+            {canLookupTeams && activeTab === 'admin' && (
                 <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-3">
                         <PlusCircle size={18} className="text-brand-green" />
@@ -1087,7 +1129,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
             )}
 
-            {canLookupTeams && activeTeamDetails && (
+            {canLookupTeams && activeTeamDetails && activeTab === 'access' && (
                 <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
@@ -1286,54 +1328,88 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         />
                     </div>
 
-                    <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-                        <div className="mb-3 flex items-start gap-3">
-                            <div className="rounded-lg bg-white p-2 text-emerald-700">
-                                <Database size={18} />
-                            </div>
-                            <div>
-                                <p className="text-sm font-semibold text-emerald-950">Seed partner workspace data</p>
-                                <p className="text-xs text-emerald-800">
-                                    Copy Transit App and STREETS data into this team so users do not need to upload files.
-                                </p>
-                            </div>
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                            <select
-                                value={seedSourceTeamId}
-                                onChange={(event) => setSeedSourceTeamId(event.target.value)}
-                                className="min-w-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-950 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                            >
-                                <option value="" disabled>Choose source team...</option>
-                                {seedSourceTeams.map(teamOption => (
-                                    <option key={teamOption.id} value={teamOption.id}>
-                                        Source: {teamOption.name}
-                                    </option>
-                                ))}
-                            </select>
-                            <button
-                                onClick={handleSeedWorkspaceData}
-                                disabled={seedingWorkspaceData || !seedSourceTeamId || !activeTeamId}
-                                className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                                {seedingWorkspaceData ? 'Copying...' : 'Copy data to this team'}
-                            </button>
-                        </div>
-                        {lastSeedResult && (
-                            <p className="mt-2 text-xs text-emerald-800">
-                                Last copy: Transit App {lastSeedResult.transitApp}, STREETS {lastSeedResult.performance}
-                                {' · '}{lastSeedResult.copiedStorageFiles} storage file{lastSeedResult.copiedStorageFiles === 1 ? '' : 's'} copied.
-                            </p>
-                        )}
-                    </div>
-
                     <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
                         Lane Transit setup: select <span className="font-semibold">Transit App Data only</span>. WATT setup: select <span className="font-semibold">Transit App + STREETS Dashboard</span>, then seed data from Barrie.
                     </p>
                 </div>
             )}
 
-            {canLookupTeams && (
+            {canLookupTeams && activeTeamDetails && activeTab === 'data' && (
+                <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+                    <div className="mb-4 flex items-start gap-3">
+                        <div className="rounded-lg bg-white p-2 text-emerald-700">
+                            <Database size={20} />
+                        </div>
+                        <div>
+                            <p className="text-base font-bold text-emerald-950">Seed partner workspace data</p>
+                            <p className="mt-1 text-sm text-emerald-800">
+                                Copy Barrie data into WATT or another partner team so users see loaded workspaces instead of upload prompts.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                        <div className="rounded-xl border border-emerald-200 bg-white p-4">
+                            <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">FROM source team</p>
+                            <select
+                                value={seedSourceTeamId}
+                                onChange={(event) => setSeedSourceTeamId(event.target.value)}
+                                className="mt-2 w-full min-w-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-950 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            >
+                                <option value="" disabled>Choose source team...</option>
+                                {seedSourceTeams.map(teamOption => (
+                                    <option key={teamOption.id} value={teamOption.id}>
+                                        {teamOption.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <p className="mt-2 text-xs text-gray-500">
+                                Usually Barrie — the team that already has Transit App and STREETS data.
+                            </p>
+                        </div>
+
+                        <div className="rounded-xl border border-emerald-200 bg-white p-4">
+                            <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">TO target team</p>
+                            <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-900">
+                                {activeTeamDetails.name}
+                            </div>
+                            <p className="mt-2 text-xs text-gray-500">
+                                This is the team currently selected in Team Management. WATT users will read from this copied data.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="mt-4 rounded-xl border border-emerald-200 bg-white p-4">
+                        <p className="text-sm font-semibold text-gray-900">What will be copied</p>
+                        <ul className="mt-2 space-y-1 text-sm text-gray-600">
+                            <li>• Transit App Data workspace JSON</li>
+                            <li>• STREETS dashboard and reporting JSON</li>
+                            <li>• Metadata pointers under the target team</li>
+                        </ul>
+                        <button
+                            onClick={handleSeedWorkspaceData}
+                            disabled={seedingWorkspaceData || !seedSourceTeamId || !activeTeamId}
+                            className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                        >
+                            {seedingWorkspaceData
+                                ? 'Copying data...'
+                                : `Copy ${seedSourceTeam?.name ?? 'source'} data into ${activeTeamDetails.name}`}
+                        </button>
+                        {lastSeedResult && (
+                            <p className="mt-3 text-xs text-emerald-800">
+                                Last copy: Transit App {lastSeedResult.transitApp}, STREETS {lastSeedResult.performance}
+                                {' · '}{lastSeedResult.copiedStorageFiles} storage file{lastSeedResult.copiedStorageFiles === 1 ? '' : 's'} copied.
+                            </p>
+                        )}
+                    </div>
+
+                    <p className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs text-emerald-800">
+                        If Storage says unauthorized, refresh your admin session. If it still fails, deploy the latest Firebase Storage rules.
+                    </p>
+                </div>
+            )}
+
+            {canLookupTeams && activeTab === 'admin' && (
                 <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6">
                     <p className="text-sm font-semibold text-blue-900 mb-2">Admin team lookup</p>
                     <div className="flex flex-col gap-2 sm:flex-row">
@@ -1390,6 +1466,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
             )}
 
+            {activeTab === 'overview' && (
+                <>
             {/* Invite Code */}
             <div className="bg-gray-50 rounded-lg p-4 mb-6">
                 <div className="flex items-center justify-between">
@@ -1498,7 +1576,11 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
             </div>
 
+                </>
+            )}
+
             {/* Members List */}
+            {activeTab === 'members' && (
             <div className="mb-6">
                 <h3 className="font-semibold text-gray-900 mb-3">Members</h3>
                 {canManageActiveAccess && (
@@ -1579,9 +1661,10 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     })}
                 </div>
             </div>
+            )}
 
             {/* Leave Team Button */}
-            {isViewingCurrentTeam && (
+            {activeTab === 'overview' && isViewingCurrentTeam && (
                 <div className="pt-4 border-t border-gray-200">
                     <button
                         onClick={handleLeaveTeam}
