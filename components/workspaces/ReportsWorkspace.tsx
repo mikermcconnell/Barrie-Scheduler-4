@@ -34,15 +34,17 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ onClose }) =
     const { team } = useTeam();
     const { user } = useAuth();
     const [view, setView] = useState<ReportsView>('landing');
+    const performanceDataTeamId = team?.dataSourceTeamIds?.performance || team?.id;
+    const usesSharedPerformanceData = !!team?.dataSourceTeamIds?.performance && team.dataSourceTeamIds.performance !== team.id;
 
-    const metadataQuery = usePerformanceMetadataQuery(team?.id);
+    const metadataQuery = usePerformanceMetadataQuery(performanceDataTeamId, team?.id);
     const hasExistingData = !!metadataQuery.data;
     const shouldLoadWorkspaceData = view === 'workspace' && hasExistingData;
-    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadWorkspaceData, metadataQuery.data);
+    const dataQuery = usePerformanceDataQuery(performanceDataTeamId, shouldLoadWorkspaceData, metadataQuery.data, undefined, team?.id);
 
     useEffect(() => {
         setView('landing');
-    }, [team?.id]);
+    }, [team?.id, performanceDataTeamId]);
 
     const handleImportComplete = () => {
         setView('workspace');
@@ -62,7 +64,7 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ onClose }) =
         );
     }
 
-    if (view === 'import' && user) {
+    if (view === 'import' && user && !usesSharedPerformanceData) {
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <Suspense fallback={<ReportsLoadingState label="Loading import tools..." />}>
@@ -101,19 +103,21 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ onClose }) =
                 <p className="text-gray-500 mb-8">Weekly summaries, route deep-dives, and AI-powered analysis of STREETS performance data.</p>
 
                 <button
-                    onClick={() => setView(hasExistingData ? 'workspace' : 'import')}
+                    onClick={() => setView(hasExistingData ? 'workspace' : (usesSharedPerformanceData ? 'landing' : 'import'))}
                     className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left flex flex-col max-w-sm active:scale-[0.99]"
                 >
                     <div className="bg-cyan-50/50 p-2.5 rounded-lg text-cyan-600 group-hover:bg-cyan-100 transition-colors mb-4 w-fit">
                         <Upload size={20} />
                     </div>
                     <h3 className="text-lg font-bold text-gray-900 mb-1">
-                        {hasExistingData ? 'Open STREETS Reports' : 'Import STREETS Data'}
+                        {hasExistingData ? 'Open STREETS Reports' : usesSharedPerformanceData ? 'No shared STREETS data found' : 'Import STREETS Data'}
                     </h3>
                     <p className="text-sm text-gray-500 leading-relaxed">
                         {hasExistingData
                             ? 'Open weekly summaries, route reports, and AI analysis using the latest imported performance data.'
-                            : 'Import AVL/APC data to generate weekly summaries, route reports, and AI-powered insights.'}
+                            : usesSharedPerformanceData
+                                ? 'This team is using a shared source, but no STREETS data was found on that source team.'
+                                : 'Import AVL/APC data to generate weekly summaries, route reports, and AI-powered insights.'}
                     </p>
                 </button>
             </div>

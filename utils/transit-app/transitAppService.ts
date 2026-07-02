@@ -16,10 +16,11 @@ import {
 import {
     ref,
     uploadString,
-    getDownloadURL,
     deleteObject,
+    getBytes,
 } from 'firebase/storage';
 import { db, storage } from '../firebase';
+import { requestSharedWorkspaceData } from '../sharedWorkspaceDataClient';
 import type { TransitAppDataSummary } from './transitAppTypes';
 
 // ============ HELPERS ============
@@ -87,8 +88,16 @@ export interface TransitAppMetadata {
     };
 }
 
-export async function getTransitAppMetadata(teamId: string): Promise<TransitAppMetadata | null> {
+export async function getTransitAppMetadata(teamId: string, requestingTeamId?: string): Promise<TransitAppMetadata | null> {
     try {
+        if (requestingTeamId && requestingTeamId !== teamId) {
+            return await requestSharedWorkspaceData<TransitAppMetadata>({
+                workspace: 'transitAppMetadata',
+                requestingTeamId,
+                sourceTeamId: teamId,
+            });
+        }
+
         const docSnap = await getDoc(getMetadataRef(teamId));
         if (!docSnap.exists()) return null;
 
@@ -109,17 +118,21 @@ export async function getTransitAppMetadata(teamId: string): Promise<TransitAppM
     }
 }
 
-export async function getTransitAppData(teamId: string): Promise<TransitAppDataSummary | null> {
+export async function getTransitAppData(teamId: string, requestingTeamId?: string): Promise<TransitAppDataSummary | null> {
     try {
+        if (requestingTeamId && requestingTeamId !== teamId) {
+            return await requestSharedWorkspaceData<TransitAppDataSummary>({
+                workspace: 'transitAppData',
+                requestingTeamId,
+                sourceTeamId: teamId,
+            });
+        }
+
         const metadata = await getTransitAppMetadata(teamId);
         if (!metadata?.storagePath) return null;
 
-        const storageRef = ref(storage, metadata.storagePath);
-        const url = await getDownloadURL(storageRef);
-        const response = await fetch(url);
-        if (!response.ok) return null;
-
-        const summary: TransitAppDataSummary = await response.json();
+        const bytes = await getBytes(ref(storage, metadata.storagePath));
+        const summary = JSON.parse(new TextDecoder().decode(bytes)) as TransitAppDataSummary;
         return summary;
     } catch (error) {
         console.error('Error getting transit app data:', error);

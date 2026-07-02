@@ -16,10 +16,11 @@ import {
 import {
     ref,
     uploadBytes,
-    getDownloadURL,
     deleteObject,
+    getBytes,
 } from 'firebase/storage';
 import { db, storage } from './firebase';
+import { requestSharedWorkspaceData } from './sharedWorkspaceDataClient';
 import { PERFORMANCE_SCHEMA_VERSION, type PerformanceDataSummary, type PerformanceMetadata } from './performanceDataTypes';
 import { aggregateMonthlySnapshots } from './performanceDataAggregator';
 import { buildPerformanceOverviewSummary, buildPerformanceReportSummary } from './performanceOverviewSummary';
@@ -132,10 +133,8 @@ async function mapWithConcurrency<T>(
 }
 
 async function downloadStorageJson<T>(storagePath: string): Promise<T | null> {
-    const url = await getDownloadURL(ref(storage, storagePath));
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    return await response.json() as T;
+    const bytes = await getBytes(ref(storage, storagePath));
+    return JSON.parse(new TextDecoder().decode(bytes)) as T;
 }
 
 async function loadMonthlyPerformanceSummary(
@@ -382,8 +381,16 @@ export async function savePerformanceData(
 
 // ============ READ ============
 
-export async function getPerformanceMetadata(teamId: string): Promise<PerformanceMetadata | null> {
+export async function getPerformanceMetadata(teamId: string, requestingTeamId?: string): Promise<PerformanceMetadata | null> {
     try {
+        if (requestingTeamId && requestingTeamId !== teamId) {
+            return await requestSharedWorkspaceData<PerformanceMetadata>({
+                workspace: 'performanceMetadata',
+                requestingTeamId,
+                sourceTeamId: teamId,
+            });
+        }
+
         const docSnap = await getDoc(getMetadataRef(teamId));
         if (!docSnap.exists()) return null;
 
@@ -414,8 +421,18 @@ export async function getPerformanceData(
     teamId: string,
     metadataOverride?: PerformanceMetadata | null,
     routeId?: string | null,
+    requestingTeamId?: string,
 ): Promise<PerformanceDataSummary | null> {
     try {
+        if (requestingTeamId && requestingTeamId !== teamId) {
+            return await requestSharedWorkspaceData<PerformanceDataSummary>({
+                workspace: 'performanceData',
+                requestingTeamId,
+                sourceTeamId: teamId,
+                routeId,
+            });
+        }
+
         const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
         if (!metadata) return null;
 
@@ -436,22 +453,19 @@ export async function getPerformanceData(
             : undefined;
         const storagePathToLoad = selectedRoutePath || metadata.storagePath;
 
-        let response: Response | null = null;
+        let summary: PerformanceDataSummary | null = null;
         try {
-            const url = await getDownloadURL(ref(storage, storagePathToLoad));
-            response = await fetch(url);
+            summary = await downloadStorageJson<PerformanceDataSummary>(storagePathToLoad);
         } catch (routeError) {
             if (!selectedRoutePath) throw routeError;
             console.warn('Route-scoped performance data unavailable; falling back to full data:', routeError);
         }
 
-        if (!response?.ok && selectedRoutePath) {
-            const url = await getDownloadURL(ref(storage, metadata.storagePath));
-            response = await fetch(url);
+        if (!summary && selectedRoutePath) {
+            summary = await downloadStorageJson<PerformanceDataSummary>(metadata.storagePath);
         }
-        if (!response?.ok) return null;
+        if (!summary) return null;
 
-        const summary: PerformanceDataSummary = await response.json();
         return filterPerformanceSummaryByRoute(
             mergePerformanceSummaryMetadata(summary, metadata),
             routeId,
@@ -465,8 +479,17 @@ export async function getPerformanceData(
 export async function getPerformanceOverviewData(
     teamId: string,
     metadataOverride?: PerformanceMetadata | null,
+    requestingTeamId?: string,
 ): Promise<PerformanceDataSummary | null> {
     try {
+        if (requestingTeamId && requestingTeamId !== teamId) {
+            return await requestSharedWorkspaceData<PerformanceDataSummary>({
+                workspace: 'performanceOverview',
+                requestingTeamId,
+                sourceTeamId: teamId,
+            });
+        }
+
         const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
         if (!metadata) return null;
 
@@ -475,12 +498,8 @@ export async function getPerformanceOverviewData(
             return fullSummary ? buildPerformanceOverviewSummary(fullSummary) : null;
         }
 
-        const storageRef = ref(storage, metadata.overviewStoragePath);
-        const url = await getDownloadURL(storageRef);
-        const response = await fetch(url);
-        if (!response.ok) return null;
-
-        const summary: PerformanceDataSummary = await response.json();
+        const summary = await downloadStorageJson<PerformanceDataSummary>(metadata.overviewStoragePath);
+        if (!summary) return null;
         return mergePerformanceOverviewMetadata(summary, metadata);
     } catch (error) {
         console.error('Error getting performance overview data:', error);

@@ -81,7 +81,7 @@ storage/
 - `reportStoragePath`: report-focused snapshot used by the daily email
 - `storagePath`: legacy full performance summary pointer used by older imports only
 
-Global workspace permission managers can seed partner teams, such as WATT, by copying Barrie Transit App and STREETS JSON into the partner team's own `teams/{teamId}/transitAppData/seeded/{seedId}/...` and `teams/{teamId}/performanceData/seeded/{seedId}/...` storage paths. Seeded metadata keeps the normal active metadata document shape and adds audit fields such as `seededAt`, `seededBy`, and `seededFromTeamId`, so partner users continue to read only their own team-scoped data paths.
+Partner teams, such as WATT, can use read-only shared data sources instead of copied JSON. `teams/{teamId}.dataSourceTeamIds.transitApp` and `.performance` may point at a source team such as Barrie Transit. The app reads shared Transit App and STREETS data through the `sharedWorkspaceData` Cloud Function, which verifies the signed-in user belongs to the requesting team and that the requesting team is explicitly configured to read from the source team. Imports and writes still target the current team only.
 
 Daily performance summaries may include `byOperatorDwell.totalReportableDwellMinutes`, an optional moderate/high-only dwell total used by compact report snapshots when older incident arrays are trimmed.
 
@@ -123,6 +123,10 @@ interface Team {
   inviteCode: string;       // For joining
   defaultMemberAccessLevel?: WorkspaceAccessLevel; // Access assigned to new invite joins.
   defaultMemberWorkspaceOverrides?: Partial<Record<string, boolean>>; // Optional default per-workspace allow/block overrides.
+  dataSourceTeamIds?: {     // Optional read-only source teams for partner workspace data.
+    transitApp?: string;    // Source team for Transit App Data.
+    performance?: string;   // Source team for STREETS dashboard/reporting data.
+  };
   partnerTeam?: boolean;    // True for externally onboarded agency teams.
 }
 ```

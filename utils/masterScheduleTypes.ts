@@ -26,6 +26,10 @@ export interface Team {
     inviteCode: string;
     defaultMemberAccessLevel?: WorkspaceAccessLevel;
     defaultMemberWorkspaceOverrides?: WorkspaceAccessOverrides;
+    dataSourceTeamIds?: {
+        transitApp?: string;
+        performance?: string;
+    };
     partnerTeam?: boolean;
 }
 

@@ -111,6 +111,18 @@ function readMemberData(docId: string, data: Record<string, any>): TeamMember {
 }
 
 function readTeamData(docId: string, data: Record<string, any>): Team {
+    const rawDataSourceTeamIds = data.dataSourceTeamIds;
+    const dataSourceTeamIds = rawDataSourceTeamIds && typeof rawDataSourceTeamIds === 'object' && !Array.isArray(rawDataSourceTeamIds)
+        ? {
+            ...(typeof rawDataSourceTeamIds.transitApp === 'string' && rawDataSourceTeamIds.transitApp
+                ? { transitApp: rawDataSourceTeamIds.transitApp }
+                : {}),
+            ...(typeof rawDataSourceTeamIds.performance === 'string' && rawDataSourceTeamIds.performance
+                ? { performance: rawDataSourceTeamIds.performance }
+                : {}),
+        }
+        : undefined;
+
     return {
         id: docId,
         name: data.name,
@@ -121,6 +133,7 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
             ? data.defaultMemberAccessLevel
             : getDefaultWorkspaceAccessLevelForRole('member'),
         defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(data.defaultMemberWorkspaceOverrides),
+        dataSourceTeamIds: dataSourceTeamIds && Object.keys(dataSourceTeamIds).length > 0 ? dataSourceTeamIds : undefined,
         partnerTeam: data.partnerTeam === true
     };
 }
@@ -672,6 +685,24 @@ export async function updateTeamDefaultWorkspaceAccess(
             }, { merge: true });
         }
     }
+}
+
+/**
+ * Set read-only source teams for partner workspaces.
+ * Empty values remove the override and make the workspace use its own team data.
+ */
+export async function updateTeamDataSourceTeamIds(
+    teamId: string,
+    dataSourceTeamIds: Team['dataSourceTeamIds']
+): Promise<void> {
+    const normalized = {
+        ...(dataSourceTeamIds?.transitApp ? { transitApp: dataSourceTeamIds.transitApp } : {}),
+        ...(dataSourceTeamIds?.performance ? { performance: dataSourceTeamIds.performance } : {}),
+    };
+
+    await updateDoc(doc(db, 'teams', teamId), {
+        dataSourceTeamIds: normalized,
+    });
 }
 
 /**

@@ -4,6 +4,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { parseSTREETSCSV } from './parser';
 export { sendDailyReport, testDailyReport, testStaleReportAlert } from './dailyReport';
 export { optimizeSchedule } from './optimize';
+export { sharedWorkspaceData } from './sharedWorkspaceData';
 import {
   decodeExcelRequestBody,
   parseIssuanceListingBuffer,

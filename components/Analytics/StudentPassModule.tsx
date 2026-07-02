@@ -32,6 +32,7 @@ import './studentPass.css';
 interface StudentPassModuleProps {
     onBack: () => void;
     teamId?: string;
+    accessTeamId?: string;
 }
 
 function parseInputDate(value: string): Date {
@@ -246,7 +247,7 @@ async function captureStudentPassMapCanvas(mapEl: HTMLElement): Promise<HTMLCanv
     return exportCanvas;
 }
 
-export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack, teamId }) => {
+export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack, teamId, accessTeamId }) => {
     const serviceDateInfo = useMemo(() => getStudentPassServiceDateInfo(), []);
     const [selectedSchoolId, setSelectedSchoolId] = useState<string>(BARRIE_SCHOOLS[0].id);
     const [bellStart, setBellStart] = useState<string>('');
@@ -347,7 +348,7 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack, te
         }
 
         let cancelled = false;
-        getPerformanceData(teamId)
+        getPerformanceData(teamId, undefined, undefined, accessTeamId)
             .then((data) => {
                 if (!cancelled) setPerformanceData(data);
             })
@@ -359,7 +360,7 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack, te
         return () => {
             cancelled = true;
         };
-    }, [teamId]);
+    }, [teamId, accessTeamId]);
 
     useEffect(() => {
         if (!polygon) {

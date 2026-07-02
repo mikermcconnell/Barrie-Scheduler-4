@@ -23,6 +23,7 @@ import { MapBase, toGeoJSON } from '../shared';
 interface CorridorSpeedMapProps {
     onBack: () => void;
     teamId?: string;
+    accessTeamId?: string;
 }
 
 interface SegmentFeatureProps {
@@ -57,7 +58,7 @@ const SEGMENT_HOVER_LAYER = 'corridor-speed-lines-hover';
 const HIGHLIGHT_SRC = 'corridor-speed-highlight';
 const HIGHLIGHT_LAYER = 'corridor-speed-highlight-line';
 
-export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, teamId }) => {
+export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, teamId, accessTeamId }) => {
     const mapRef = useRef<MapRef | null>(null);
 
     const [isFullscreen, setIsFullscreen] = useState(false);
@@ -70,9 +71,9 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
 
-    const metadataQuery = usePerformanceMetadataQuery(teamId);
+    const metadataQuery = usePerformanceMetadataQuery(teamId, accessTeamId);
     const hasPerformanceData = !!metadataQuery.data;
-    const dataQuery = usePerformanceDataQuery(teamId, hasPerformanceData, metadataQuery.data);
+    const dataQuery = usePerformanceDataQuery(teamId, hasPerformanceData, metadataQuery.data, undefined, accessTeamId);
 
     const hasLegacySegmentRuntimeData = useMemo(
         () => dataQuery.data?.dailySummaries.some(day => (day.segmentRuntimes?.entries.length ?? 0) > 0) ?? false,

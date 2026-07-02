@@ -98,13 +98,15 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     const [view, setView] = useState<PerformanceView>(() => (autoOpen ? 'loading' : 'landing'));
     const [importReturnTarget, setImportReturnTarget] = useState<ImportReturnTarget>(() => (autoOpen ? 'close' : 'landing'));
     const [selectedRouteId, setSelectedRouteId] = useState<string>('all');
+    const performanceDataTeamId = team?.dataSourceTeamIds?.performance || team?.id;
+    const usesSharedPerformanceData = !!team?.dataSourceTeamIds?.performance && team.dataSourceTeamIds.performance !== team.id;
 
-    const metadataQuery = usePerformanceMetadataQuery(team?.id);
+    const metadataQuery = usePerformanceMetadataQuery(performanceDataTeamId, team?.id);
     const hasExistingData = metadataQuery.data != null;
     const shouldLoadOverviewData = hasExistingData && (view === 'landing' || view === 'workspace' || (autoOpen && view === 'loading'));
     const shouldLoadFullData = hasExistingData && view === 'workspace' && !!metadataQuery.data?.overviewStoragePath;
-    const overviewQuery = usePerformanceOverviewQuery(team?.id, shouldLoadOverviewData, metadataQuery.data);
-    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadFullData, metadataQuery.data, selectedRouteId);
+    const overviewQuery = usePerformanceOverviewQuery(performanceDataTeamId, shouldLoadOverviewData, metadataQuery.data, team?.id);
+    const dataQuery = usePerformanceDataQuery(performanceDataTeamId, shouldLoadFullData, metadataQuery.data, selectedRouteId, team?.id);
     const routeOptions = useMemo(
         () => getAvailablePerformanceRoutes(overviewQuery.data),
         [overviewQuery.data],
@@ -126,7 +128,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
         setView(autoOpen ? 'loading' : 'landing');
         setImportReturnTarget(autoOpen ? 'close' : 'landing');
         setSelectedRouteId('all');
-    }, [team?.id, autoOpen]);
+    }, [team?.id, performanceDataTeamId, autoOpen]);
 
     useEffect(() => {
         if (selectedRouteId === 'all') return;
@@ -145,20 +147,20 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
             return;
         }
 
-        if (user) {
+        if (user && !usesSharedPerformanceData) {
             setImportReturnTarget('close');
             setView('import');
             return;
         }
 
         setView('landing');
-    }, [autoOpen, hasExistingData, metadataQuery.isLoading, team?.id, user, view]);
+    }, [autoOpen, hasExistingData, metadataQuery.isLoading, team?.id, user, usesSharedPerformanceData, view]);
 
     const handleCardClick = () => {
         if (!team?.id) return;
         if (hasExistingData) {
             setView('workspace');
-        } else {
+        } else if (!usesSharedPerformanceData) {
             setImportReturnTarget('landing');
             setView('import');
         }
@@ -244,6 +246,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                                 routeOptions={routeOptions}
                                 onRouteChange={setSelectedRouteId}
                                 onReimport={() => {
+                                    if (usesSharedPerformanceData) return;
                                     setImportReturnTarget('workspace');
                                     setView('import');
                                 }}

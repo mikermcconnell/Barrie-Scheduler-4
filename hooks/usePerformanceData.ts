@@ -11,12 +11,12 @@ const PERFORMANCE_QUERY_STALE_MS = 1000 * 60 * 30;
 const PERFORMANCE_QUERY_GC_MS = 1000 * 60 * 60;
 
 // Fetch Metadata
-export function usePerformanceMetadataQuery(teamId: string | undefined) {
+export function usePerformanceMetadataQuery(teamId: string | undefined, requestingTeamId?: string) {
     return useQuery({
-        queryKey: ['performanceMetadata', teamId],
+        queryKey: ['performanceMetadata', teamId, requestingTeamId ?? teamId ?? ''],
         queryFn: async () => {
             if (!teamId) return null;
-            return await getPerformanceMetadata(teamId);
+            return await getPerformanceMetadata(teamId, requestingTeamId);
         },
         enabled: !!teamId,
         staleTime: PERFORMANCE_QUERY_STALE_MS,
@@ -31,17 +31,19 @@ export function usePerformanceDataQuery(
     enabled = true,
     metadata?: PerformanceMetadata | null,
     routeId?: string | null,
+    requestingTeamId?: string,
 ) {
     return useQuery({
         queryKey: [
             'performanceData',
             teamId,
+            requestingTeamId ?? teamId ?? '',
             metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null),
             routeId ?? 'all',
         ],
         queryFn: async () => {
             if (!teamId) return null;
-            return await getPerformanceData(teamId, metadata, routeId);
+            return await getPerformanceData(teamId, metadata, routeId, requestingTeamId);
         },
         enabled: !!teamId && enabled,
         staleTime: PERFORMANCE_QUERY_STALE_MS,
@@ -55,12 +57,13 @@ export function usePerformanceOverviewQuery(
     teamId: string | undefined,
     enabled = true,
     metadata?: PerformanceMetadata | null,
+    requestingTeamId?: string,
 ) {
     return useQuery({
-        queryKey: ['performanceOverview', teamId, metadata?.overviewStoragePath ?? metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null)],
+        queryKey: ['performanceOverview', teamId, requestingTeamId ?? teamId ?? '', metadata?.overviewStoragePath ?? metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null)],
         queryFn: async () => {
             if (!teamId) return null;
-            return await getPerformanceOverviewData(teamId, metadata);
+            return await getPerformanceOverviewData(teamId, metadata, requestingTeamId);
         },
         enabled: !!teamId && enabled,
         staleTime: PERFORMANCE_QUERY_STALE_MS,

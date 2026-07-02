@@ -212,7 +212,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     const [hasODData, setHasODData] = useState(false);
     const [hasFleetPlanData, setHasFleetPlanData] = useState(false);
     const [hasResidentialGrowthData, setHasResidentialGrowthData] = useState(false);
-    const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
+    const transitAppDataTeamId = team?.dataSourceTeamIds?.transitApp || team?.id;
+    const performanceDataTeamId = team?.dataSourceTeamIds?.performance || team?.id;
+    const usesSharedTransitAppData = !!team?.dataSourceTeamIds?.transitApp && team.dataSourceTeamIds.transitApp !== team.id;
+    const performanceMetadataQuery = usePerformanceMetadataQuery(performanceDataTeamId, team?.id);
     const hasPerformanceData = !!performanceMetadataQuery.data;
     const { canAccess, loading: accessLoading } = useWorkspaceAccess();
     const initialViewHandledRef = React.useRef(false);
@@ -241,7 +244,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 const canReadFleetPlan = canAccess('analyticsFleetPlan');
                 const canReadResidentialGrowth = canAccess('analyticsResidentialGrowth');
                 const [transitMeta, odMeta, fleetPlanMeta, residentialGrowthMeta] = await Promise.all([
-                    canReadTransitApp ? getTransitAppMetadata(team.id) : Promise.resolve(null),
+                    canReadTransitApp && transitAppDataTeamId ? getTransitAppMetadata(transitAppDataTeamId, team.id) : Promise.resolve(null),
                     canReadODMatrix ? getODMatrixMetadata(team.id) : Promise.resolve(null),
                     canReadFleetPlan ? getFleetPlanMetadata(team.id) : Promise.resolve(null),
                     canReadResidentialGrowth ? getResidentialGrowthMetadata(team.id) : Promise.resolve(null),
@@ -256,41 +259,41 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 setLoading(false);
             }
         })();
-    }, [team?.id, canAccess]);
+    }, [team?.id, transitAppDataTeamId, canAccess]);
 
     // Handle clicking the Transit App Data card
     const handleTransitAppClick = async () => {
-        if (!team?.id) return;
+        if (!team?.id || !transitAppDataTeamId) return;
 
         if (hasExistingData) {
             // Load full data and show dashboard
             setLoading(true);
             try {
-                const data = await getTransitAppData(team.id);
+                const data = await getTransitAppData(transitAppDataTeamId, team.id);
                 if (data) {
                     setTransitData(data);
                     setView('transit-data');
                 } else {
                     // Data disappeared — show import
                     setHasExistingData(false);
-                    setView('import');
+                    setView(usesSharedTransitAppData ? 'dashboard' : 'import');
                 }
             } catch (error) {
                 console.error('Error loading transit app data:', error);
             } finally {
                 setLoading(false);
             }
-        } else {
+        } else if (!usesSharedTransitAppData) {
             setView('import');
         }
     };
 
     // Handle import complete — load data and switch to dashboard
     const handleImportComplete = async () => {
-        if (!team?.id) return;
+        if (!team?.id || !transitAppDataTeamId) return;
         setLoading(true);
         try {
-            const data = await getTransitAppData(team.id);
+            const data = await getTransitAppData(transitAppDataTeamId, team.id);
             if (data) {
                 setTransitData(data);
                 setHasExistingData(true);
@@ -497,7 +500,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                     <Suspense fallback={<AnalyticsPanelLoading label="Loading Transit App workspace..." />}>
                         <TransitAppWorkspace
                             data={transitData}
-                            onReimport={() => setView('import')}
+                            onReimport={() => setView(usesSharedTransitAppData ? 'dashboard' : 'import')}
                             onBack={() => setView('dashboard')}
                         />
                     </Suspense>
@@ -571,7 +574,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
                     <Suspense fallback={<AnalyticsPanelLoading label="Loading student pass tools..." />}>
-                        <StudentPassModule onBack={() => setView('dashboard')} teamId={team.id} />
+                        <StudentPassModule onBack={() => setView('dashboard')} teamId={performanceDataTeamId ?? team.id} accessTeamId={team.id} />
                     </Suspense>
                 </div>
             </div>
@@ -665,7 +668,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
                     <Suspense fallback={<AnalyticsPanelLoading label="Loading corridor speed map..." />}>
-                        <CorridorSpeedMap onBack={() => setView('dashboard')} teamId={team.id} />
+                        <CorridorSpeedMap onBack={() => setView('dashboard')} teamId={performanceDataTeamId ?? team.id} accessTeamId={team.id} />
                     </Suspense>
                 </div>
             </div>

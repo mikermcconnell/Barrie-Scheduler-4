@@ -26,7 +26,8 @@ import {
     updateTeamDefaultMemberAccessLevel,
     updateTeamDefaultWorkspaceAccess,
     regenerateInviteCode,
-    setInviteCode as setTeamInviteCode
+    setInviteCode as setTeamInviteCode,
+    updateTeamDataSourceTeamIds
 } from '../utils/services/teamService';
 import type {
     Team,
@@ -53,7 +54,6 @@ import {
 import { buildWorkspaceAccessPreview } from '../utils/workspaceAccessPreview';
 import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
 import { WorkspaceAccessAppPreview } from './WorkspaceAccessAppPreview';
-import { seedPartnerWorkspaceData, type SeedPartnerWorkspaceDataResult } from '../utils/services/teamDataSeedService';
 
 const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
     workspaceOndemand: 'On Demand',
@@ -81,7 +81,7 @@ const TEAM_MANAGEMENT_TABS: Array<{ id: TeamManagementTab; label: string; adminO
     { id: 'overview', label: 'Overview' },
     { id: 'members', label: 'Members' },
     { id: 'access', label: 'Access', adminOnly: true },
-    { id: 'data', label: 'Data Seeding', adminOnly: true },
+    { id: 'data', label: 'Data Sources', adminOnly: true },
     { id: 'admin', label: 'Admin', adminOnly: true },
 ];
 
@@ -172,9 +172,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         () => buildWorkspaceSelection('transit-app-only')
     );
     const [savingWizardMemberAccess, setSavingWizardMemberAccess] = useState(false);
-    const [seedSourceTeamId, setSeedSourceTeamId] = useState('');
-    const [seedingWorkspaceData, setSeedingWorkspaceData] = useState(false);
-    const [lastSeedResult, setLastSeedResult] = useState<SeedPartnerWorkspaceDataResult | null>(null);
+    const [transitAppSourceTeamId, setTransitAppSourceTeamId] = useState('');
+    const [performanceSourceTeamId, setPerformanceSourceTeamId] = useState('');
+    const [savingDataSources, setSavingDataSources] = useState(false);
     const [activeTab, setActiveTab] = useState<TeamManagementTab>('overview');
 
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
@@ -214,12 +214,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         return availableTeam.name.toLowerCase().includes(filter) ||
             availableTeam.inviteCode.toLowerCase().includes(filter);
     });
-    const seedSourceTeams = availableTeams.filter(availableTeam => availableTeam.id !== activeTeamId);
+    const dataSourceTeamOptions = availableTeams.filter(availableTeam => availableTeam.id !== activeTeamId);
     const visibleTabs = useMemo(
         () => TEAM_MANAGEMENT_TABS.filter(tab => !tab.adminOnly || canLookupTeams),
         [canLookupTeams]
     );
-    const seedSourceTeam = availableTeams.find(teamOption => teamOption.id === seedSourceTeamId) ?? null;
+    const transitAppSourceTeam = availableTeams.find(teamOption => teamOption.id === transitAppSourceTeamId) ?? null;
+    const performanceSourceTeam = availableTeams.find(teamOption => teamOption.id === performanceSourceTeamId) ?? null;
 
     // Load full team details with members
     useEffect(() => {
@@ -275,17 +276,14 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     ]);
 
     useEffect(() => {
-        if (!canLookupTeams || availableTeams.length === 0) return;
-        if (seedSourceTeamId && availableTeams.some(teamOption => teamOption.id === seedSourceTeamId && teamOption.id !== activeTeamId)) {
-            return;
-        }
-
-        const barrieTeam = availableTeams.find(teamOption =>
-            teamOption.id !== activeTeamId && teamOption.name.toLowerCase().includes('barrie')
-        );
-        const fallbackTeam = availableTeams.find(teamOption => teamOption.id !== activeTeamId);
-        setSeedSourceTeamId((barrieTeam ?? fallbackTeam)?.id ?? '');
-    }, [activeTeamId, availableTeams, canLookupTeams, seedSourceTeamId]);
+        if (!activeTeamDetails) return;
+        setTransitAppSourceTeamId(activeTeamDetails.dataSourceTeamIds?.transitApp ?? '');
+        setPerformanceSourceTeamId(activeTeamDetails.dataSourceTeamIds?.performance ?? '');
+    }, [
+        activeTeamDetails?.id,
+        activeTeamDetails?.dataSourceTeamIds?.transitApp,
+        activeTeamDetails?.dataSourceTeamIds?.performance,
+    ]);
 
     useEffect(() => {
         if (visibleTabs.some(tab => tab.id === activeTab)) return;
@@ -518,44 +516,34 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         setTeamLookupCode('');
         setIsEditingInviteCode(false);
         setIsEditingTeamName(false);
-        setLastSeedResult(null);
     };
 
-    const handleSeedWorkspaceData = async () => {
-        if (!user || !activeTeamId || !seedSourceTeamId || !canLookupTeams) return;
+    const handleSaveDataSources = async () => {
+        if (!activeTeamId || !canLookupTeams) return;
 
-        setSeedingWorkspaceData(true);
-        setLastSeedResult(null);
+        setSavingDataSources(true);
         try {
-            await user.getIdToken(true);
-            const result = await seedPartnerWorkspaceData({
-                sourceTeamId: seedSourceTeamId,
-                targetTeamId: activeTeamId,
-                userId: user.uid,
-                includeTransitApp: true,
-                includePerformance: true,
+            await updateTeamDataSourceTeamIds(activeTeamId, {
+                transitApp: transitAppSourceTeamId || undefined,
+                performance: performanceSourceTeamId || undefined,
             });
-            setLastSeedResult(result);
             await Promise.all([
-                queryClient.invalidateQueries({ queryKey: ['performanceMetadata', activeTeamId] }),
-                queryClient.invalidateQueries({ queryKey: ['performanceOverview', activeTeamId] }),
-                queryClient.invalidateQueries({ queryKey: ['performanceData', activeTeamId] }),
+                reloadActiveTeamDetails(),
+                queryClient.invalidateQueries({ queryKey: ['performanceMetadata'] }),
+                queryClient.invalidateQueries({ queryKey: ['performanceOverview'] }),
+                queryClient.invalidateQueries({ queryKey: ['performanceData'] }),
             ]);
-            const copied = [
-                result.transitApp === 'copied' ? 'Transit App' : null,
-                result.performance === 'copied' ? 'STREETS' : null,
-            ].filter(Boolean).join(' + ');
-            toast?.success(copied ? `Seeded ${copied} data` : 'No source data found to seed');
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
+            toast?.success('Data sources saved');
         } catch (error) {
-            console.error('Error seeding workspace data:', error);
-            const message = error instanceof Error ? error.message : 'Failed to seed workspace data';
-            toast?.error(
-                message.includes('storage/unauthorized') || message.toLowerCase().includes('permission')
-                    ? 'Storage permission blocked the copy. Refresh your admin session and make sure the latest Firebase rules are deployed.'
-                    : message
-            );
+            console.error('Error saving data sources:', error);
+            toast?.error(isPermissionDeniedError(error)
+                ? 'Permission denied while saving data sources. Refresh your admin session and try again.'
+                : 'Failed to save data sources');
         } finally {
-            setSeedingWorkspaceData(false);
+            setSavingDataSources(false);
         }
     };
 
@@ -1329,7 +1317,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     </div>
 
                     <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                        Lane Transit setup: select <span className="font-semibold">Transit App Data only</span>. WATT setup: select <span className="font-semibold">Transit App + STREETS Dashboard</span>, then seed data from Barrie.
+                        Lane Transit setup: select <span className="font-semibold">Transit App Data only</span>. WATT setup: select <span className="font-semibold">Transit App + STREETS Dashboard</span>, then set Barrie as the read-only data source.
                     </p>
                 </div>
             )}
@@ -1341,70 +1329,71 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                             <Database size={20} />
                         </div>
                         <div>
-                            <p className="text-base font-bold text-emerald-950">Seed partner workspace data</p>
+                            <p className="text-base font-bold text-emerald-950">Read-only partner data sources</p>
                             <p className="mt-1 text-sm text-emerald-800">
-                                Copy Barrie data into WATT or another partner team so users see loaded workspaces instead of upload prompts.
+                                Point WATT or another partner team at Barrie data without copying files. Partner users can view the shared workspaces, but imports still save only to their own team.
                             </p>
                         </div>
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2">
                         <div className="rounded-xl border border-emerald-200 bg-white p-4">
-                            <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">FROM source team</p>
+                            <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Transit App data source</p>
                             <select
-                                value={seedSourceTeamId}
-                                onChange={(event) => setSeedSourceTeamId(event.target.value)}
+                                value={transitAppSourceTeamId}
+                                onChange={(event) => setTransitAppSourceTeamId(event.target.value)}
                                 className="mt-2 w-full min-w-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-950 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                             >
-                                <option value="" disabled>Choose source team...</option>
-                                {seedSourceTeams.map(teamOption => (
+                                <option value="">Use {activeTeamDetails.name}'s own data</option>
+                                {dataSourceTeamOptions.map(teamOption => (
                                     <option key={teamOption.id} value={teamOption.id}>
-                                        {teamOption.name}
+                                        Read from {teamOption.name}
                                     </option>
                                 ))}
                             </select>
                             <p className="mt-2 text-xs text-gray-500">
-                                Usually Barrie — the team that already has Transit App and STREETS data.
+                                FROM: {transitAppSourceTeam?.name ?? activeTeamDetails.name}. TO/viewed by: {activeTeamDetails.name}.
                             </p>
                         </div>
 
                         <div className="rounded-xl border border-emerald-200 bg-white p-4">
-                            <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">TO target team</p>
-                            <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-900">
-                                {activeTeamDetails.name}
-                            </div>
+                            <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">STREETS dashboard/reports source</p>
+                            <select
+                                value={performanceSourceTeamId}
+                                onChange={(event) => setPerformanceSourceTeamId(event.target.value)}
+                                className="mt-2 w-full min-w-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-950 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            >
+                                <option value="">Use {activeTeamDetails.name}'s own data</option>
+                                {dataSourceTeamOptions.map(teamOption => (
+                                    <option key={teamOption.id} value={teamOption.id}>
+                                        Read from {teamOption.name}
+                                    </option>
+                                ))}
+                            </select>
                             <p className="mt-2 text-xs text-gray-500">
-                                This is the team currently selected in Team Management. WATT users will read from this copied data.
+                                FROM: {performanceSourceTeam?.name ?? activeTeamDetails.name}. TO/viewed by: {activeTeamDetails.name}.
                             </p>
                         </div>
                     </div>
 
                     <div className="mt-4 rounded-xl border border-emerald-200 bg-white p-4">
-                        <p className="text-sm font-semibold text-gray-900">What will be copied</p>
+                        <p className="text-sm font-semibold text-gray-900">What this does</p>
                         <ul className="mt-2 space-y-1 text-sm text-gray-600">
-                            <li>• Transit App Data workspace JSON</li>
-                            <li>• STREETS dashboard and reporting JSON</li>
-                            <li>• Metadata pointers under the target team</li>
+                            <li>• No Storage files are copied.</li>
+                            <li>• {activeTeamDetails.name} reads selected workspaces from the source team.</li>
+                            <li>• Upload/import buttons remain tied to {activeTeamDetails.name}, not the source team.</li>
                         </ul>
                         <button
-                            onClick={handleSeedWorkspaceData}
-                            disabled={seedingWorkspaceData || !seedSourceTeamId || !activeTeamId}
+                            onClick={handleSaveDataSources}
+                            disabled={savingDataSources || !activeTeamId}
                             className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                         >
-                            {seedingWorkspaceData
-                                ? 'Copying data...'
-                                : `Copy ${seedSourceTeam?.name ?? 'source'} data into ${activeTeamDetails.name}`}
+                            {savingDataSources ? 'Saving sources...' : 'Save data sources'}
                         </button>
-                        {lastSeedResult && (
-                            <p className="mt-3 text-xs text-emerald-800">
-                                Last copy: Transit App {lastSeedResult.transitApp}, STREETS {lastSeedResult.performance}
-                                {' · '}{lastSeedResult.copiedStorageFiles} storage file{lastSeedResult.copiedStorageFiles === 1 ? '' : 's'} copied.
-                            </p>
-                        )}
                     </div>
 
                     <p className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs text-emerald-800">
-                        If Storage says unauthorized, refresh your admin session. If it still fails, deploy the latest Firebase Storage rules.
+                        Best WATT setup: set both sources to Barrie Transit. If either dropdown is “own data”, that workspace will look for uploads on {activeTeamDetails.name}.
                     </p>
                 </div>
             )}
