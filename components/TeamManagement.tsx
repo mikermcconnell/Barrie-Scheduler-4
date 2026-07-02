@@ -5,7 +5,8 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle, Eye } from 'lucide-react';
+import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle, Eye, Database } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './contexts/AuthContext';
 import { useTeam } from './contexts/TeamContext';
 import { useToast } from './contexts/ToastContext';
@@ -52,6 +53,7 @@ import {
 import { buildWorkspaceAccessPreview } from '../utils/workspaceAccessPreview';
 import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
 import { WorkspaceAccessAppPreview } from './WorkspaceAccessAppPreview';
+import { seedPartnerWorkspaceData, type SeedPartnerWorkspaceDataResult } from '../utils/services/teamDataSeedService';
 
 const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
     workspaceOndemand: 'On Demand',
@@ -121,6 +123,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const { user, isGlobalAdmin } = useAuth();
     const { team, refreshTeam, startDeveloperPreview } = useTeam();
     const toast = useToast();
+    const queryClient = useQueryClient();
 
     const [isCreating, setIsCreating] = useState(false);
     const [isJoining, setIsJoining] = useState(false);
@@ -160,6 +163,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         () => buildWorkspaceSelection('transit-app-only')
     );
     const [savingWizardMemberAccess, setSavingWizardMemberAccess] = useState(false);
+    const [seedSourceTeamId, setSeedSourceTeamId] = useState('');
+    const [seedingWorkspaceData, setSeedingWorkspaceData] = useState(false);
+    const [lastSeedResult, setLastSeedResult] = useState<SeedPartnerWorkspaceDataResult | null>(null);
 
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
@@ -198,6 +204,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         return availableTeam.name.toLowerCase().includes(filter) ||
             availableTeam.inviteCode.toLowerCase().includes(filter);
     });
+    const seedSourceTeams = availableTeams.filter(availableTeam => availableTeam.id !== activeTeamId);
 
     // Load full team details with members
     useEffect(() => {
@@ -251,6 +258,19 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         selectedWizardMember?.accessLevel,
         JSON.stringify(selectedWizardMember?.workspaceOverrides ?? {}),
     ]);
+
+    useEffect(() => {
+        if (!canLookupTeams || availableTeams.length === 0) return;
+        if (seedSourceTeamId && availableTeams.some(teamOption => teamOption.id === seedSourceTeamId && teamOption.id !== activeTeamId)) {
+            return;
+        }
+
+        const barrieTeam = availableTeams.find(teamOption =>
+            teamOption.id !== activeTeamId && teamOption.name.toLowerCase().includes('barrie')
+        );
+        const fallbackTeam = availableTeams.find(teamOption => teamOption.id !== activeTeamId);
+        setSeedSourceTeamId((barrieTeam ?? fallbackTeam)?.id ?? '');
+    }, [activeTeamId, availableTeams, canLookupTeams, seedSourceTeamId]);
 
     const loadTeamDetails = async () => {
         if (!team) return;
@@ -478,6 +498,39 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         setTeamLookupCode('');
         setIsEditingInviteCode(false);
         setIsEditingTeamName(false);
+        setLastSeedResult(null);
+    };
+
+    const handleSeedWorkspaceData = async () => {
+        if (!user || !activeTeamId || !seedSourceTeamId || !canLookupTeams) return;
+
+        setSeedingWorkspaceData(true);
+        setLastSeedResult(null);
+        try {
+            const result = await seedPartnerWorkspaceData({
+                sourceTeamId: seedSourceTeamId,
+                targetTeamId: activeTeamId,
+                userId: user.uid,
+                includeTransitApp: true,
+                includePerformance: true,
+            });
+            setLastSeedResult(result);
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['performanceMetadata', activeTeamId] }),
+                queryClient.invalidateQueries({ queryKey: ['performanceOverview', activeTeamId] }),
+                queryClient.invalidateQueries({ queryKey: ['performanceData', activeTeamId] }),
+            ]);
+            const copied = [
+                result.transitApp === 'copied' ? 'Transit App' : null,
+                result.performance === 'copied' ? 'STREETS' : null,
+            ].filter(Boolean).join(' + ');
+            toast?.success(copied ? `Seeded ${copied} data` : 'No source data found to seed');
+        } catch (error) {
+            console.error('Error seeding workspace data:', error);
+            toast?.error(error instanceof Error ? error.message : 'Failed to seed workspace data');
+        } finally {
+            setSeedingWorkspaceData(false);
+        }
     };
 
     const handleRenameTeam = async () => {
@@ -1233,8 +1286,49 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         />
                     </div>
 
+                    <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                        <div className="mb-3 flex items-start gap-3">
+                            <div className="rounded-lg bg-white p-2 text-emerald-700">
+                                <Database size={18} />
+                            </div>
+                            <div>
+                                <p className="text-sm font-semibold text-emerald-950">Seed partner workspace data</p>
+                                <p className="text-xs text-emerald-800">
+                                    Copy Transit App and STREETS data into this team so users do not need to upload files.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                            <select
+                                value={seedSourceTeamId}
+                                onChange={(event) => setSeedSourceTeamId(event.target.value)}
+                                className="min-w-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-950 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            >
+                                <option value="" disabled>Choose source team...</option>
+                                {seedSourceTeams.map(teamOption => (
+                                    <option key={teamOption.id} value={teamOption.id}>
+                                        Source: {teamOption.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={handleSeedWorkspaceData}
+                                disabled={seedingWorkspaceData || !seedSourceTeamId || !activeTeamId}
+                                className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {seedingWorkspaceData ? 'Copying...' : 'Copy data to this team'}
+                            </button>
+                        </div>
+                        {lastSeedResult && (
+                            <p className="mt-2 text-xs text-emerald-800">
+                                Last copy: Transit App {lastSeedResult.transitApp}, STREETS {lastSeedResult.performance}
+                                {' · '}{lastSeedResult.copiedStorageFiles} storage file{lastSeedResult.copiedStorageFiles === 1 ? '' : 's'} copied.
+                            </p>
+                        )}
+                    </div>
+
                     <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                        Lane Transit setup: select <span className="font-semibold">Transit App Data only</span> and leave only Transit App Data checked.
+                        Lane Transit setup: select <span className="font-semibold">Transit App Data only</span>. WATT setup: select <span className="font-semibold">Transit App + STREETS Dashboard</span>, then seed data from Barrie.
                     </p>
                 </div>
             )}

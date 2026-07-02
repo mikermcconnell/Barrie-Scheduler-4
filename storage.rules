@@ -82,12 +82,12 @@ service firebase.storage {
 
     // Team transit app data (aggregated JSON)
     match /teams/{teamId}/transitAppData/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId);
+      allow read, write: if isTeamMember(teamId) || isWorkspacePermissionManager();
     }
 
     // Team performance data (STREETS summaries)
     match /teams/{teamId}/performanceData/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId);
+      allow read, write: if isTeamMember(teamId) || isWorkspacePermissionManager();
     }
 
     // Team Transit On Demand pickup map data

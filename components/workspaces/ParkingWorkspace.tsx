@@ -66,10 +66,6 @@ import {
   parseParkingRevenueFile,
 } from '../../utils/parking/parkingRevenue';
 import {
-  mergeParkingRevenueLocationMappings,
-  parseParkingLocationWorkbookFile,
-} from '../../utils/parking/parkingLocationWorkbook';
-import {
   BARRIE_PUBLIC_PARKING_VIEWER_URL,
   fetchBarriePublicParkingLocations,
   findPublicParkingLocationFallback,
@@ -893,8 +889,6 @@ export const ParkingWorkspace: React.FC = () => {
   const [previewRevenueDatasets, setPreviewRevenueDatasets] = useState<ParkingRevenueDataset[]>([]);
   const [revenueWarnings, setRevenueWarnings] = useState<string[]>([]);
   const [revenueImportStatus, setRevenueImportStatus] = useState('');
-  const [locationImportWarnings, setLocationImportWarnings] = useState<string[]>([]);
-  const [locationImportStatus, setLocationImportStatus] = useState('');
   const [revenueSourceFilter, setRevenueSourceFilter] = useState<ParkingRevenueSource | 'all'>('all');
   const [revenueDayTypeFilter, setRevenueDayTypeFilter] = useState<NonNullable<ParkingRevenueFilters['dayType']>>('all');
   const [selectedRevenueMonth, setSelectedRevenueMonth] = useState('all');
@@ -1419,40 +1413,6 @@ export const ParkingWorkspace: React.FC = () => {
 
   const saveSettingsOnly = async () => {
     await persistParkingSettings(settingsRef.current, { showSaving: true, showToast: true });
-  };
-
-  const importLocationWorkbook = async (file: File) => {
-    if (!team || !user) return;
-    setSaving(true);
-    setErrorMessage('');
-    setLocationImportWarnings([]);
-    setLocationImportStatus('Reading parking lot coordinates...');
-    try {
-      const result = await parseParkingLocationWorkbookFile(file);
-      const nextSettings: ParkingSettings = {
-        ...settingsRef.current,
-        revenueLocations: mergeParkingRevenueLocationMappings(settingsRef.current.revenueLocations || [], result.mappings),
-      };
-      const saved = await saveParkingSettings(team.id, user.uid, nextSettings);
-      applySettingsState(saved);
-      setDepartmentLegendSort(saved.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
-      setLocationImportWarnings(result.warnings);
-      toast.success(
-        'Parking lot coordinates imported',
-        `${result.mappings.length.toLocaleString()} mapped lot ID${result.mappings.length === 1 ? '' : 's'} saved from ${file.name}.`,
-      );
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Could not import the parking lot coordinate workbook.');
-    } finally {
-      setLocationImportStatus('');
-      setSaving(false);
-    }
-  };
-
-  const handleLocationWorkbookChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) void importLocationWorkbook(file);
-    event.target.value = '';
   };
 
   const addCodeFamily = () => setSettings(current => ({
@@ -2006,10 +1966,6 @@ export const ParkingWorkspace: React.FC = () => {
                 <Upload size={14} /> Import revenue
                 <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleRevenueFileChange} className="hidden" />
               </label>
-              <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-extrabold text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
-                <MapPin size={14} /> Refresh coords
-                <input type="file" accept=".xlsx,.xls" disabled={!canEditParking || saving} onChange={handleLocationWorkbookChange} className="hidden" />
-              </label>
               {saving && previewRevenueDatasets.length > 0 ? (
                 <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-extrabold text-emerald-700">
                   <Loader2 className="animate-spin" size={14} /> Auto-saving
@@ -2535,21 +2491,9 @@ export const ParkingWorkspace: React.FC = () => {
                 <a href={BARRIE_PUBLIC_PARKING_VIEWER_URL} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs font-black text-blue-700 hover:text-blue-900">
                   City public parking source
                 </a>
-                <label className={`mt-3 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-black text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
-                  <Upload size={16} /> Refresh lot coordinates .xlsx
-                  <input type="file" accept=".xlsx,.xls" disabled={!canEditParking || saving} onChange={handleLocationWorkbookChange} className="hidden" />
-                </label>
                 <p className="mt-2 text-xs font-semibold text-slate-500">
-                  Built-in ParkingLatLong coordinates are applied automatically. Use this only when refreshing from a newer City export.
+                  Built-in ParkingLatLong coordinates are applied automatically.
                 </p>
-                {locationImportStatus ? (
-                  <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs font-bold text-blue-800">{locationImportStatus}</div>
-                ) : null}
-                {locationImportWarnings.length > 0 ? (
-                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs font-bold text-amber-800">
-                    {locationImportWarnings.map(warning => <div key={warning}>{warning}</div>)}
-                  </div>
-                ) : null}
                 <div className="mt-3 space-y-3">
                   {(settings.revenueLocations || []).slice(0, 12).map(location => {
                     const search = locationSearchById[location.id] || { query: location.displayName, searching: false, error: '', suggestions: [] };
@@ -2691,14 +2635,12 @@ export const ParkingWorkspace: React.FC = () => {
             )}
           </aside>
 
-          {(errorMessage || publicParkingError || previewRevenueDatasets.length > 0 || revenueImportStatus || locationImportStatus || locationImportWarnings.length > 0 || !hasVisibleRevenuePins) ? (
+          {(errorMessage || publicParkingError || previewRevenueDatasets.length > 0 || revenueImportStatus || !hasVisibleRevenuePins) ? (
             <div className="pointer-events-none absolute bottom-4 left-[350px] right-[400px] z-30 hidden xl:block">
               <div className="pointer-events-auto rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur">
                 {errorMessage ? <div className="mb-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{errorMessage}</div> : null}
                 {publicParkingError ? <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">City public parking source could not load: {publicParkingError}</div> : null}
                 {revenueImportStatus ? <div className="mb-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{revenueImportStatus}</div> : null}
-                {locationImportStatus ? <div className="mb-2 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-bold text-blue-800">{locationImportStatus}</div> : null}
-                {locationImportWarnings.length > 0 ? <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">{locationImportWarnings.map(warning => <div key={warning}>{warning}</div>)}</div> : null}
                 {(previewRevenueDatasets.length > 0 || !hasVisibleRevenuePins) && revenueWarnings.length > 0 ? <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">{revenueWarnings.map(warning => <div key={warning}>{warning}</div>)}</div> : null}
                 {previewRevenueDatasets.length > 0 ? (
                   <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 sm:flex-row sm:items-center sm:justify-between">

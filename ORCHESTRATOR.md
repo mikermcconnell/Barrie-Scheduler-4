@@ -41,6 +41,8 @@ Workspace visibility is controlled by `utils/workspaceAccess.ts`, `hooks/useWork
 
 Cross-team team lookup and permission management require a Firebase Auth custom claim such as `schedulerAdmin: true`; do not infer global admin power from a user's own team role or workspace access level. Team owners/admins can manage their own team settings under Firestore rules. External agencies such as Ontario Northland, Lane Transit, or WATT should be separate partner teams. Use Team Management's Developer Access Wizard to set team defaults, apply a named access package, adjust per-user overrides, preview the app surface for that profile, and then use Developer Preview Mode to navigate the real app as that team/default or selected user. For Lane Transit-style access, use `Transit App Data only`. For WATT-style access, use `Transit App + STREETS Dashboard` and make sure the team has its required STREETS/Transit App data seeded or shared. Prefer the generated invite link rather than a bare code. Invite lookup docs mirror the team's default join access because new invite users cannot read the private team doc until after membership is created.
 
+Team Management also has an admin-only partner data seeding action. Use it to copy Barrie Transit App and STREETS dashboard/reporting data into a partner team's own Firestore metadata and Storage paths, instead of making WATT or other partner users direct members/readers of the Barrie team.
+
 This is a domain-heavy monolith:
 - UI lives in `components/`
 - domain logic lives in `utils/`
