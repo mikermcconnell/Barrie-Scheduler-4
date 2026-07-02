@@ -483,11 +483,6 @@ function compactMoney(value: number | null | undefined): string {
   return money(safe).replace('.00', '');
 }
 
-function roundedPinRevenue(value: number | null | undefined): string {
-  const roundedToNearestTen = Math.round((value || 0) / 10) * 10;
-  return `$${roundedToNearestTen.toLocaleString()}`;
-}
-
 function shortNumber(value: number | null | undefined): string {
   const safe = value || 0;
   if (Math.abs(safe) >= 1000) return `${Math.round(safe / 100) / 10}k`;
@@ -1938,7 +1933,7 @@ export const ParkingWorkspace: React.FC = () => {
                         } ${activeLocation && !isSelected ? 'opacity-35' : 'opacity-100'}`}
                         style={{ width: size, height: size, backgroundColor: fillColor, borderColor }}
                       >
-                        <span className="rounded-full bg-white/95 px-1.5 py-0.5 text-[10px] font-black text-slate-800 shadow-sm">{roundedPinRevenue(entry.totalRevenue)}</span>
+                        <span className="rounded-full bg-white/95 px-1.5 py-0.5 text-[10px] font-black text-slate-800 shadow-sm">{formatMapMetricValue(value, parkingMapMetric)}</span>
                       </button>
                       <div className={`pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-48 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white/95 p-2 text-left shadow-xl transition ${
                         isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
@@ -2056,7 +2051,7 @@ export const ParkingWorkspace: React.FC = () => {
                   <span>City public source</span>
                 </div>
                 <div className="mt-1 text-[11px] font-semibold text-slate-400">
-                  {lotMapMode === 'heatmap' ? 'Heat map summarizes concentration; switch to Pins for exact lots.' : 'Numbers inside pins show rounded revenue.'}
+                  {lotMapMode === 'heatmap' ? 'Heat map summarizes concentration; switch to Pins for exact lots.' : `Numbers inside pins show ${mapMetricLabel.toLowerCase()}.`}
                 </div>
               </>
             )}
@@ -2065,7 +2060,7 @@ export const ParkingWorkspace: React.FC = () => {
           <aside
             data-state={lotLeftRailOpen ? 'expanded' : 'collapsed'}
             className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
-              lotLeftRailOpen ? 'w-80 p-3' : 'w-16 items-center p-2'
+              lotLeftRailOpen ? 'w-80 overflow-y-auto p-3' : 'w-16 items-center p-2'
             }`}
             aria-label="Parking lot filters and list"
           >
@@ -2965,7 +2960,7 @@ export const ParkingWorkspace: React.FC = () => {
                                   className={`flex items-center justify-center rounded-full border-4 font-extrabold shadow-lg transition hover:scale-105 ${isSelected ? 'border-amber-300 bg-emerald-600 text-white' : 'border-white bg-emerald-500 text-white'}`}
                                   style={{ width: size, height: size }}
                                 >
-                                  <span className="text-[11px]">{roundedPinRevenue(location.totalRevenue)}</span>
+                                  <span className="text-[11px]">{compactMoney(location.totalRevenue)}</span>
                                 </button>
                               </Marker>
                             );
