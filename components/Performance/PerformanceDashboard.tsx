@@ -5,7 +5,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { TeamManagement } from '../TeamManagement';
 import {
     usePerformanceMetadataQuery,
-    usePerformanceDataQuery,
     usePerformanceOverviewQuery,
 } from '../../hooks/usePerformanceData';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
@@ -104,9 +103,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     const metadataQuery = usePerformanceMetadataQuery(performanceDataTeamId, team?.id);
     const hasExistingData = metadataQuery.data != null;
     const shouldLoadOverviewData = hasExistingData && (view === 'landing' || view === 'workspace' || (autoOpen && view === 'loading'));
-    const shouldLoadFullData = hasExistingData && view === 'workspace' && !!metadataQuery.data?.overviewStoragePath;
     const overviewQuery = usePerformanceOverviewQuery(performanceDataTeamId, shouldLoadOverviewData, metadataQuery.data, team?.id);
-    const dataQuery = usePerformanceDataQuery(performanceDataTeamId, shouldLoadFullData, metadataQuery.data, selectedRouteId, team?.id);
     const routeOptions = useMemo(
         () => getAvailablePerformanceRoutes(overviewQuery.data),
         [overviewQuery.data],
@@ -231,8 +228,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
             return <DashboardLoadingState label="Loading performance data..." />;
         }
 
-        const workspaceData = dataQuery.data ?? scopedOverviewData;
-        const detailsReady = !!dataQuery.data || !metadataQuery.data.overviewStoragePath;
+        const workspaceData = scopedOverviewData;
 
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -241,7 +237,9 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                         <Suspense fallback={<DashboardLoadingState label="Loading dashboard..." />}>
                             <PerformanceWorkspace
                                 data={workspaceData}
-                                detailsReady={detailsReady}
+                                teamId={performanceDataTeamId}
+                                requestingTeamId={team.id}
+                                metadata={metadataQuery.data}
                                 selectedRouteId={selectedRouteId}
                                 routeOptions={routeOptions}
                                 onRouteChange={setSelectedRouteId}

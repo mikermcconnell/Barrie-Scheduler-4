@@ -21,7 +21,14 @@ import {
 } from 'firebase/storage';
 import { db, storage } from './firebase';
 import { requestSharedWorkspaceData } from './sharedWorkspaceDataClient';
-import { PERFORMANCE_SCHEMA_VERSION, type PerformanceDataSummary, type PerformanceMetadata } from './performanceDataTypes';
+import {
+    PERFORMANCE_SCHEMA_VERSION,
+    type DailySummary,
+    type PerformanceDataLoadOptions,
+    type PerformanceDataSummary,
+    type PerformanceDetailMode,
+    type PerformanceMetadata,
+} from './performanceDataTypes';
 import { aggregateMonthlySnapshots } from './performanceDataAggregator';
 import { buildPerformanceOverviewSummary, buildPerformanceReportSummary } from './performanceOverviewSummary';
 import { saveMonthlySnapshots } from './performanceSnapshotService';
@@ -116,6 +123,104 @@ function readNestedStringRecord(value: unknown): Record<string, Record<string, s
     return Object.fromEntries(entries);
 }
 
+function dateInRange(date: string, range?: { start: string; end: string }): boolean {
+    if (!range?.start || !range?.end) return true;
+    return date >= range.start && date <= range.end;
+}
+
+function monthOverlapsRange(month: string, range?: { start: string; end: string }): boolean {
+    if (!range?.start || !range?.end) return true;
+    const startMonth = range.start.slice(0, 7);
+    const endMonth = range.end.slice(0, 7);
+    return month >= startMonth && month <= endMonth;
+}
+
+function trimMissedTrips(day: DailySummary, keepTripDetails: boolean): DailySummary['missedTrips'] {
+    return day.missedTrips
+        ? {
+            ...day.missedTrips,
+            trips: keepTripDetails ? (day.missedTrips.trips || []) : [],
+        }
+        : day.missedTrips;
+}
+
+function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
+    if (mode === 'all') return day;
+
+    const base: DailySummary = {
+        ...day,
+        byStop: [],
+        byTrip: [],
+        loadProfiles: [],
+        ridershipHeatmaps: undefined,
+        byOperatorDwell: undefined,
+        byCascade: undefined,
+        segmentRuntimes: undefined,
+        stopSegmentRuntimes: undefined,
+        tripStopSegmentRuntimes: undefined,
+        routeStopDeviations: undefined,
+        byRouteHour: undefined,
+    };
+
+    switch (mode) {
+        case 'overview':
+            return {
+                ...base,
+                byTrip: day.byTrip,
+                missedTrips: trimMissedTrips(day, false),
+            };
+        case 'otp':
+            return {
+                ...base,
+                byTrip: day.byTrip,
+                routeStopDeviations: day.routeStopDeviations,
+                byRouteHour: day.byRouteHour,
+                missedTrips: trimMissedTrips(day, true),
+            };
+        case 'ridership':
+            return {
+                ...base,
+                byStop: day.byStop,
+                ridershipHeatmaps: day.ridershipHeatmaps,
+                byRouteHour: day.byRouteHour,
+                missedTrips: trimMissedTrips(day, false),
+            };
+        case 'load-profiles':
+            return {
+                ...base,
+                loadProfiles: day.loadProfiles,
+                missedTrips: trimMissedTrips(day, false),
+            };
+        case 'operator-dwell':
+            return {
+                ...base,
+                byOperatorDwell: day.byOperatorDwell,
+                byCascade: day.byCascade,
+                missedTrips: trimMissedTrips(day, false),
+            };
+        default:
+            return day;
+    }
+}
+
+function applyPerformanceLoadOptions(
+    summary: PerformanceDataSummary,
+    options?: PerformanceDataLoadOptions,
+): PerformanceDataSummary {
+    const mode = options?.detailMode ?? 'all';
+    const days = summary.dailySummaries
+        .filter(day => dateInRange(day.date, options?.dateRange))
+        .map(day => trimDayForDetailMode(day, mode));
+
+    return buildSummaryFromDays(summary, days, {
+        ...summary.metadata,
+        dateRange: days.length > 0
+            ? { start: days[0].date, end: days[days.length - 1].date }
+            : (options?.dateRange ?? summary.metadata.dateRange),
+        dayCount: days.length,
+    });
+}
+
 async function mapWithConcurrency<T>(
     items: T[],
     concurrency: number,
@@ -140,6 +245,7 @@ async function downloadStorageJson<T>(storagePath: string): Promise<T | null> {
 async function loadMonthlyPerformanceSummary(
     metadata: PerformanceMetadata,
     routeId?: string | null,
+    options?: PerformanceDataLoadOptions,
 ): Promise<PerformanceDataSummary | null> {
     const selectedRoutePaths = routeId && routeId !== 'all'
         ? metadata.routeMonthlyStoragePaths?.[routeId]
@@ -147,7 +253,10 @@ async function loadMonthlyPerformanceSummary(
     const paths = selectedRoutePaths || metadata.monthlyStoragePaths;
     if (!paths || Object.keys(paths).length === 0) return null;
 
-    const months = Object.keys(paths).sort();
+    const months = Object.keys(paths)
+        .filter(month => monthOverlapsRange(month, options?.dateRange))
+        .sort();
+    if (months.length === 0) return null;
     const monthSummaries = await Promise.all(
         months.map(month => downloadStorageJson<PerformanceDataSummary>(paths[month]))
     );
@@ -159,7 +268,7 @@ async function loadMonthlyPerformanceSummary(
         metadata,
         schemaVersion: PERFORMANCE_SCHEMA_VERSION,
     };
-    return buildSummaryFromDays(base, dailySummaries, metadata);
+    return applyPerformanceLoadOptions(buildSummaryFromDays(base, dailySummaries, metadata), options);
 }
 
 export function buildStorageJsonUploadData(value: unknown): Blob | Uint8Array {
@@ -422,6 +531,7 @@ export async function getPerformanceData(
     metadataOverride?: PerformanceMetadata | null,
     routeId?: string | null,
     requestingTeamId?: string,
+    options?: PerformanceDataLoadOptions,
 ): Promise<PerformanceDataSummary | null> {
     try {
         if (requestingTeamId && requestingTeamId !== teamId) {
@@ -430,6 +540,8 @@ export async function getPerformanceData(
                 requestingTeamId,
                 sourceTeamId: teamId,
                 routeId,
+                dateRange: options?.dateRange,
+                detailMode: options?.detailMode,
             });
         }
 
@@ -437,7 +549,7 @@ export async function getPerformanceData(
         if (!metadata) return null;
 
         const monthlySummary = metadata.monthlyStoragePaths
-            ? await loadMonthlyPerformanceSummary(metadata, routeId)
+            ? await loadMonthlyPerformanceSummary(metadata, routeId, options)
             : null;
         if (monthlySummary) {
             return filterPerformanceSummaryByRoute(
@@ -467,7 +579,7 @@ export async function getPerformanceData(
         if (!summary) return null;
 
         return filterPerformanceSummaryByRoute(
-            mergePerformanceSummaryMetadata(summary, metadata),
+            applyPerformanceLoadOptions(mergePerformanceSummaryMetadata(summary, metadata), options),
             routeId,
         );
     } catch (error) {

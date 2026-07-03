@@ -563,6 +563,19 @@ export interface PerformanceDataSummary {
   schemaVersion: number;
 }
 
+export type PerformanceDetailMode =
+  | 'all'
+  | 'overview'
+  | 'otp'
+  | 'ridership'
+  | 'load-profiles'
+  | 'operator-dwell';
+
+export interface PerformanceDataLoadOptions {
+  dateRange?: { start: string; end: string };
+  detailMode?: PerformanceDetailMode;
+}
+
 // ─── Firebase Metadata ──────────────────────────────────────────────
 
 export interface PerformanceMetadata {

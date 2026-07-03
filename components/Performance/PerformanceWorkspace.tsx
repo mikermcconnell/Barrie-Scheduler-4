@@ -3,21 +3,32 @@ import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
     BarChart3, ExternalLink, Timer, Loader2,
 } from 'lucide-react';
-import type { PerformanceDataSummary, PerformanceTab, DayType } from '../../utils/performanceDataTypes';
+import type {
+    PerformanceDataLoadOptions,
+    PerformanceDataSummary,
+    PerformanceDetailMode,
+    PerformanceMetadata,
+    PerformanceTab,
+    DayType,
+} from '../../utils/performanceDataTypes';
 import { PerformanceFilterBar, filterDailySummaries, type TimeRange } from './PerformanceFilterBar';
 import { PerformanceScopeProvider } from './performanceScope';
 import { resolveFilteredScope } from '../../utils/performanceDataScope';
+import { addDaysToISODate } from '../../utils/performanceDateUtils';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { PerformanceImportHealthPanel } from './PerformanceImportHealthPanel';
 import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import type { PerformanceRouteOption } from '../../utils/performanceRouteFilter';
+import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
     onReimport: () => void;
     onBack: () => void;
-    detailsReady?: boolean;
+    teamId?: string;
+    requestingTeamId?: string;
+    metadata?: PerformanceMetadata | null;
     selectedRouteId?: string;
     routeOptions?: PerformanceRouteOption[];
     onRouteChange?: (routeId: string) => void;
@@ -102,17 +113,76 @@ const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
 
 const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
 
+function resolveDetailDateRange(
+    metadata: PerformanceMetadata | null | undefined,
+    timeRange: TimeRange,
+    selectedDate: string | null,
+): PerformanceDataLoadOptions['dateRange'] | undefined {
+    const end = metadata?.dateRange?.end;
+    if (!end) return undefined;
+
+    if (timeRange === 'all') return undefined;
+    if (timeRange === 'single-day') {
+        const date = selectedDate || end;
+        return { start: date, end: date };
+    }
+    if (timeRange === 'yesterday') {
+        const start = addDaysToISODate(end, -7) || end;
+        return { start, end };
+    }
+
+    const daysBack = timeRange === 'past-week' ? 6 : 29;
+    return { start: addDaysToISODate(end, -daysBack) || end, end };
+}
+
+function detailModeForTab(tab: PerformanceTab): PerformanceDetailMode {
+    return tab === 'reports' ? 'all' : tab;
+}
+
 export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     data,
     onReimport,
     onBack,
-    detailsReady = true,
+    teamId,
+    requestingTeamId,
+    metadata,
     selectedRouteId = 'all',
     routeOptions = [],
     onRouteChange,
 }) => {
     const { canAccess } = useWorkspaceAccess();
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
+    const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
+    const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({});
+    const [selectedDate, setSelectedDate] = useState<string | null>(null);
+    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
+
+    const timeRange = timeRanges[activeTab] ?? 'past-week';
+    const tabBarRef = useRef<HTMLDivElement>(null);
+    const detailOptions = useMemo<PerformanceDataLoadOptions | undefined>(() => ({
+        dateRange: resolveDetailDateRange(metadata, timeRange, selectedDate),
+        detailMode: detailModeForTab(activeTab),
+    }), [activeTab, metadata, selectedDate, timeRange]);
+    const shouldLoadDetailData = !!teamId && !!metadata && (
+        activeTab !== 'overview'
+        || timeRange === 'all'
+        || timeRange === 'past-month'
+        || timeRange === 'yesterday'
+        || timeRange === 'single-day'
+    );
+    const detailQuery = usePerformanceDataQuery(
+        teamId,
+        shouldLoadDetailData,
+        metadata,
+        selectedRouteId,
+        requestingTeamId,
+        detailOptions,
+    );
+    const detailData = detailQuery.data ?? null;
+    const isCurrentDetailLoading = shouldLoadDetailData && detailQuery.isFetching && !detailData;
+    const detailsReady = !shouldLoadDetailData || !!detailData;
+    const workspaceData = detailData ?? data;
+    const allowedTimeRanges = detailsReady ? undefined : OVERVIEW_ONLY_TIME_RANGES;
     const showImportHealthPanel = !import.meta.env.PROD
         && detailsReady
         && isFeatureEnabled('operationsImportHealth');
@@ -123,29 +193,21 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                 ...tab,
                 enabled: tab.id === 'overview'
                     ? true
-                    : detailsReady && (tab.status === 'complete' || allowIncompleteTabs),
+                    : (tab.status === 'complete' || allowIncompleteTabs),
             })),
-        [allowIncompleteTabs, canAccess, detailsReady]
+        [allowIncompleteTabs, canAccess]
     );
-    const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
-    const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({});
-    const [selectedDate, setSelectedDate] = useState<string | null>(null);
-    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
     const activeTabConfig = tabs.find(tab => tab.id === activeTab);
     const showUnderConstructionNotice = !!activeTabConfig?.feature && isFeatureUnderConstruction(activeTabConfig.feature);
 
-    const timeRange = timeRanges[activeTab] ?? 'past-week';
-    const tabBarRef = useRef<HTMLDivElement>(null);
-    const allowedTimeRanges = detailsReady ? undefined : OVERVIEW_ONLY_TIME_RANGES;
-
     const availableDayTypes = useMemo(() => {
-        const types = new Set(data.dailySummaries.map(d => d.dayType));
+        const types = new Set(workspaceData.dailySummaries.map(d => d.dayType));
         return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
-    }, [data]);
+    }, [workspaceData]);
 
     const availableDates = useMemo(
-        () => [...new Set(data.dailySummaries.map(d => d.date))].sort(),
-        [data.dailySummaries]
+        () => [...new Set(workspaceData.dailySummaries.map(d => d.date))].sort(),
+        [workspaceData.dailySummaries]
     );
     const latestAvailableDate = availableDates.at(-1) ?? null;
 
@@ -159,9 +221,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     }, [activeTab, latestAvailableDate]);
 
     const filteredData = useMemo((): PerformanceDataSummary => {
-        const dailySummaries = filterDailySummaries(data.dailySummaries, timeRange, dayTypeFilter, selectedDate);
-        return withFilteredMetadata(data, dailySummaries);
-    }, [data, timeRange, dayTypeFilter, selectedDate]);
+        const dailySummaries = filterDailySummaries(workspaceData.dailySummaries, timeRange, dayTypeFilter, selectedDate);
+        return withFilteredMetadata(workspaceData, dailySummaries);
+    }, [workspaceData, timeRange, dayTypeFilter, selectedDate]);
 
     useEffect(() => {
         if (timeRange !== 'single-day') return;
@@ -170,7 +232,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     }, [timeRange, selectedDate, availableDates, latestAvailableDate]);
 
     useEffect(() => {
-        if (detailsReady) return;
+        if (detailsReady || shouldLoadDetailData) return;
         if (activeTab !== 'overview') {
             setActiveTab('overview');
         }
@@ -178,7 +240,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
             setTimeRanges(prev => ({ ...prev, overview: 'past-week' }));
             setSelectedDate(null);
         }
-    }, [activeTab, detailsReady, timeRange]);
+    }, [activeTab, detailsReady, shouldLoadDetailData, timeRange]);
 
     useEffect(() => {
         if (tabs.some(tab => tab.id === activeTab)) return;
@@ -224,7 +286,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                 return (
                     <SystemOverviewModule
                         data={filteredData}
-                        allData={data}
+                        allData={workspaceData}
                         onNavigate={handleNavigate}
                         scope={filteredScope}
                         scopeLabel={filteredScopeLabel}
@@ -232,24 +294,28 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     />
                 );
             case 'otp':
+                if (isCurrentDetailLoading) return <PerformancePanelLoading label="Loading OTP details..." />;
                 return (
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <OTPModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
             case 'ridership':
+                if (isCurrentDetailLoading) return <PerformancePanelLoading label="Loading ridership details..." />;
                 return (
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <RidershipModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
             case 'load-profiles':
+                if (isCurrentDetailLoading) return <PerformancePanelLoading label="Loading load profiles..." />;
                 return (
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <LoadProfileModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
             case 'operator-dwell':
+                if (isCurrentDetailLoading) return <PerformancePanelLoading label="Loading operator dwell details..." />;
                 return (
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <OperatorDwellModule data={filteredData} />
@@ -409,6 +475,12 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <span className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100">
                         {filteredScopeLabel}
                     </span>
+                    {detailQuery.isFetching && detailData && (
+                        <span className="ml-2 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-gray-50 text-gray-500 border border-gray-100">
+                            <Loader2 size={11} className="animate-spin" />
+                            Refreshing detail slice
+                        </span>
+                    )}
                 </div>
                 <Suspense fallback={<PerformancePanelLoading label="Loading panel..." />}>
                     {renderPanel()}

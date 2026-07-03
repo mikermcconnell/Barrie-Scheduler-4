@@ -43,6 +43,8 @@ Cross-team team lookup and permission management require a Firebase Auth custom 
 
 Team Management has an admin-only Data Sources tab for partner teams. It writes `teams/{teamId}.dataSourceTeamIds.transitApp` and/or `.performance` so a team like WATT can read Barrie Transit App and STREETS dashboard/reporting data without copying Storage files. Shared reads go through the `sharedWorkspaceData` Cloud Function, which verifies the user is a member of the requesting team and that the source-team pointer is explicitly configured. Do not make WATT users direct Barrie members just to view shared analytics data.
 
+Partner teams with Scheduled Transit access can view published master schedules from a source team without copying schedule JSON. `dataSourceTeamIds.masterSchedules` is the explicit pointer; when absent, the Master Schedule Browser falls back to `dataSourceTeamIds.performance` if the partner team has no local schedules. Firebase rules allow this as read-only access only for members of the requesting team who also have Fixed Route workspace access.
+
 This is a domain-heavy monolith:
 - UI lives in `components/`
 - domain logic lives in `utils/`
@@ -74,6 +76,8 @@ Owns the core fixed-route workflow:
 Owns STREETS-style performance dashboards, imports, summaries, and reporting.
 
 STREETS performance history is now stored as monthly Storage chunks instead of one giant all-route JSON file. Metadata lives at `teams/{teamId}/performanceData/metadata` with `storageMode: 'monthly'`, `monthlyStoragePaths`, and `routeMonthlyStoragePaths`; `overviewStoragePath` and `reportStoragePath` remain the fast dashboard/email entry points. The old `storagePath` monolithic file is legacy fallback only. Keep server auto-ingest (`functions/src/index.ts`) and client manual import (`utils/performanceDataService.ts`) behavior aligned when changing this pipeline.
+
+Operations Dashboard should not eagerly load all STREETS detail history after the 7-day overview. Detail tabs request date-range and tab-specific slices through `usePerformanceDataQuery`/`getPerformanceData`; partner-team reads must pass the same `dateRange` and `detailMode` through `sharedWorkspaceData`.
 
 The Ridership tab also includes a Transit On Demand pickup map. TOD pickup uploads are separate from STREETS performance data: metadata lives at `teams/{teamId}/todPickupData/metadata`, aggregated monthly JSON lives under `teams/{teamId}/todPickupData/`, and replacing an upload replaces only the selected month. Stored TOD pickup data is aggregated by stop ID when present, otherwise pickup name plus rounded coordinates, or coordinates alone. Raw rider/request rows and address columns should not be persisted. Imports are limited to CSV files under 5 MB and 25,000 rows. All team members can view TOD map data and import metadata; upload controls are owner/admin-only.
 

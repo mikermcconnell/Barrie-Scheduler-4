@@ -193,9 +193,12 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [schedules, setSchedules] = useState<MasterScheduleEntry[]>([]);
+    const [scheduleReadTeamId, setScheduleReadTeamId] = useState<string | null>(null);
     const [contentCache, setContentCache] = useState<Map<RouteIdentity, MasterScheduleContent>>(new Map());
     const [loading, setLoading] = useState(true);
     const [loadingContent, setLoadingContent] = useState(false);
+    const sharedMasterScheduleSourceId = team?.dataSourceTeamIds?.masterSchedules || team?.dataSourceTeamIds?.performance;
+    const isSharedMasterScheduleView = Boolean(team && scheduleReadTeamId && scheduleReadTeamId !== team.id);
 
     // Calendar year and holiday-adjusted annual calculations
     const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
@@ -238,15 +241,25 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
         setLoading(true);
         try {
-            const data = await getAllMasterSchedules(team.id);
-            setSchedules(data);
+            const localSchedules = await getAllMasterSchedules(team.id);
+            if (localSchedules.length > 0 || !sharedMasterScheduleSourceId || sharedMasterScheduleSourceId === team.id) {
+                setScheduleReadTeamId(team.id);
+                setSchedules(localSchedules);
+                setContentCache(new Map());
+                return;
+            }
+
+            const sharedSchedules = await getAllMasterSchedules(sharedMasterScheduleSourceId);
+            setScheduleReadTeamId(sharedMasterScheduleSourceId);
+            setSchedules(sharedSchedules);
+            setContentCache(new Map());
         } catch (error) {
             console.error('Error loading master schedules:', error);
             toast?.error('Failed to load master schedules');
         } finally {
             setLoading(false);
         }
-    }, [team, toast]);
+    }, [sharedMasterScheduleSourceId, team, toast]);
 
     // Load all schedules on mount
     useEffect(() => {
@@ -258,11 +271,11 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     }, [hasTeam, team, loadSchedules]);
 
     const loadContentIfNeeded = useCallback(async (routeIdentity: RouteIdentity) => {
-        if (contentCache.has(routeIdentity) || !team) return;
+        if (contentCache.has(routeIdentity) || !scheduleReadTeamId) return;
 
         setLoadingContent(true);
         try {
-            const result = await getMasterSchedule(team.id, routeIdentity);
+            const result = await getMasterSchedule(scheduleReadTeamId, routeIdentity);
             if (result) {
                 setContentCache(prev => new Map(prev).set(routeIdentity, result.content));
             }
@@ -271,15 +284,15 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         } finally {
             setLoadingContent(false);
         }
-    }, [contentCache, team]);
+    }, [contentCache, scheduleReadTeamId]);
 
     // Lazy load content when route+dayType changes
     useEffect(() => {
-        if (selectedRoute !== 'overview' && selectedRoute !== 'platforms' && team) {
+        if (selectedRoute !== 'overview' && selectedRoute !== 'platforms' && scheduleReadTeamId) {
             const routeIdentity = buildRouteIdentity(selectedRoute, selectedDayType);
             loadContentIfNeeded(routeIdentity);
         }
-    }, [selectedRoute, selectedDayType, team, loadContentIfNeeded]);
+    }, [selectedRoute, selectedDayType, scheduleReadTeamId, loadContentIfNeeded]);
 
     useEffect(() => {
         if (hasAppliedExternalHandoff || schedules.length === 0) return;
@@ -298,18 +311,18 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
     // Preload all content for overview tab to show accurate service hours
     useEffect(() => {
-        if (selectedRoute === 'overview' && team && schedules.length > 0) {
+        if (selectedRoute === 'overview' && scheduleReadTeamId && schedules.length > 0) {
             // Load all schedule content in parallel
             schedules.forEach(entry => {
                 const routeIdentity = buildRouteIdentity(entry.routeNumber, entry.dayType);
                 loadContentIfNeeded(routeIdentity);
             });
         }
-    }, [selectedRoute, team, schedules, loadContentIfNeeded]);
+    }, [selectedRoute, scheduleReadTeamId, schedules, loadContentIfNeeded]);
 
     // Preload all schedules for the active day type when viewing platforms
     useEffect(() => {
-        if (selectedRoute === 'platforms' && team && schedules.length > 0) {
+        if (selectedRoute === 'platforms' && scheduleReadTeamId && schedules.length > 0) {
             schedules
                 .filter(entry => entry.dayType === selectedDayType)
                 .forEach(entry => {
@@ -317,11 +330,15 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                     loadContentIfNeeded(routeIdentity);
                 });
         }
-    }, [selectedRoute, selectedDayType, team, schedules, loadContentIfNeeded]);
+    }, [selectedRoute, selectedDayType, scheduleReadTeamId, schedules, loadContentIfNeeded]);
 
     // Handlers
     const handleDelete = async (routeIdentity: RouteIdentity, routeNumber: string, dayType: DayType) => {
         if (!team) return;
+        if (isSharedMasterScheduleView) {
+            toast?.error('Read-only source', 'Shared master schedules cannot be deleted from this team.');
+            return;
+        }
 
         if (!confirm(`Delete ${routeNumber} (${dayType})? This will remove all versions.`)) {
             return;
@@ -344,10 +361,10 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     };
 
     const handleCopyToDraft = async (routeIdentity: RouteIdentity) => {
-        if (!team) return;
+        if (!scheduleReadTeamId) return;
 
         try {
-            const result = await getMasterSchedule(team.id, routeIdentity);
+            const result = await getMasterSchedule(scheduleReadTeamId, routeIdentity);
             if (!result) {
                 toast?.error('Draft Not Created', 'Schedule not found');
                 return;
@@ -396,10 +413,10 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     }
 
     // Version History Panel
-    if (showVersionHistory && selectedRouteIdentity && team) {
+    if (showVersionHistory && selectedRouteIdentity && scheduleReadTeamId) {
         return (
             <VersionHistoryPanel
-                teamId={team.id}
+                teamId={scheduleReadTeamId}
                 routeIdentity={selectedRouteIdentity}
                 currentVersion={selectedCurrentVersion}
                 onClose={handleHistoryClose}
@@ -1471,6 +1488,11 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 <div className="flex items-center gap-4">
                     <h1 className={`${isTableView ? 'text-xl' : 'text-3xl'} font-bold text-gray-900`}>Master Schedule</h1>
                     {!isTableView && <p className="text-gray-600">Source of truth for all route schedules</p>}
+                    {isSharedMasterScheduleView && (
+                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                            Shared source
+                        </span>
+                    )}
                 </div>
 
             </div>
@@ -1552,24 +1574,28 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                         {/* Action buttons - only for routes */}
                         {selectedRoute !== 'platforms' && selectedRoute !== 'overview' && (
                             <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => openTimetablePublisher({
-                                        routeNumber: selectedRoute as string,
-                                        dayType: selectedDayType,
-                                    })}
-                                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors"
-                                    title="Open the public timetable for this route"
-                                >
-                                    <FileText size={14} />
-                                    Timetable
-                                </button>
-                                <button
-                                    onClick={() => handleCopyToDraft(buildRouteIdentity(selectedRoute as string, selectedDayType))}
-                                    disabled={!onCopyToDraft}
-                                    className="px-3 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    Copy to Draft
-                                </button>
+                                {!isSharedMasterScheduleView && (
+                                    <>
+                                        <button
+                                            onClick={() => openTimetablePublisher({
+                                                routeNumber: selectedRoute as string,
+                                                dayType: selectedDayType,
+                                            })}
+                                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors"
+                                            title="Open the public timetable for this route"
+                                        >
+                                            <FileText size={14} />
+                                            Timetable
+                                        </button>
+                                        <button
+                                            onClick={() => handleCopyToDraft(buildRouteIdentity(selectedRoute as string, selectedDayType))}
+                                            disabled={!onCopyToDraft}
+                                            className="px-3 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Copy to Draft
+                                        </button>
+                                    </>
+                                )}
                                 <button
                                     onClick={() => setIsFullScreen(true)}
                                     className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"

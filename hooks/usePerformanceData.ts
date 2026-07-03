@@ -5,7 +5,7 @@ import {
     getPerformanceOverviewData,
     savePerformanceData,
 } from '../utils/performanceDataService';
-import type { PerformanceDataSummary, PerformanceMetadata } from '../utils/performanceDataTypes';
+import type { PerformanceDataLoadOptions, PerformanceDataSummary, PerformanceMetadata } from '../utils/performanceDataTypes';
 
 const PERFORMANCE_QUERY_STALE_MS = 1000 * 60 * 30;
 const PERFORMANCE_QUERY_GC_MS = 1000 * 60 * 60;
@@ -32,6 +32,7 @@ export function usePerformanceDataQuery(
     metadata?: PerformanceMetadata | null,
     routeId?: string | null,
     requestingTeamId?: string,
+    options?: PerformanceDataLoadOptions,
 ) {
     return useQuery({
         queryKey: [
@@ -40,10 +41,13 @@ export function usePerformanceDataQuery(
             requestingTeamId ?? teamId ?? '',
             metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null),
             routeId ?? 'all',
+            options?.dateRange?.start ?? '',
+            options?.dateRange?.end ?? '',
+            options?.detailMode ?? 'all',
         ],
         queryFn: async () => {
             if (!teamId) return null;
-            return await getPerformanceData(teamId, metadata, routeId, requestingTeamId);
+            return await getPerformanceData(teamId, metadata, routeId, requestingTeamId, options);
         },
         enabled: !!teamId && enabled,
         staleTime: PERFORMANCE_QUERY_STALE_MS,

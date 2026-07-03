@@ -120,6 +120,9 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
             ...(typeof rawDataSourceTeamIds.performance === 'string' && rawDataSourceTeamIds.performance
                 ? { performance: rawDataSourceTeamIds.performance }
                 : {}),
+            ...(typeof rawDataSourceTeamIds.masterSchedules === 'string' && rawDataSourceTeamIds.masterSchedules
+                ? { masterSchedules: rawDataSourceTeamIds.masterSchedules }
+                : {}),
         }
         : undefined;
 
@@ -698,6 +701,7 @@ export async function updateTeamDataSourceTeamIds(
     const normalized = {
         ...(dataSourceTeamIds?.transitApp ? { transitApp: dataSourceTeamIds.transitApp } : {}),
         ...(dataSourceTeamIds?.performance ? { performance: dataSourceTeamIds.performance } : {}),
+        ...(dataSourceTeamIds?.masterSchedules ? { masterSchedules: dataSourceTeamIds.masterSchedules } : {}),
     };
 
     await updateDoc(doc(db, 'teams', teamId), {

@@ -50,12 +50,14 @@ service cloud.firestore {
 
       // Master Schedules
       match /masterSchedules/{scheduleId} {
-        allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute');
+        allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                       canReadSharedMasterSchedules(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
 
         // Version History
         match /versions/{versionId} {
-          allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute');
+          allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                         canReadSharedMasterSchedules(teamId);
           allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
         }
       }
@@ -175,6 +177,35 @@ service cloud.firestore {
     function isTeamMember(teamId) {
       return request.auth != null &&
              exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+    }
+
+    function hasUserTeam() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId is string;
+    }
+
+    function userTeamId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
+    }
+
+    function teamDataSources(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data.get('dataSourceTeamIds', {});
+    }
+
+    function configuredMasterScheduleSource(teamId) {
+      return teamDataSources(teamId).get(
+        'masterSchedules',
+        teamDataSources(teamId).get('performance', '')
+      );
+    }
+
+    function canReadSharedMasterSchedules(sourceTeamId) {
+      return hasUserTeam() &&
+             userTeamId() != sourceTeamId &&
+             isTeamMember(userTeamId()) &&
+             canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') &&
+             configuredMasterScheduleSource(userTeamId()) == sourceTeamId;
     }
 
     function canReadTeamForInviteJoin(teamId) {

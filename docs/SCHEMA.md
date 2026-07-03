@@ -83,6 +83,8 @@ storage/
 
 Partner teams, such as WATT, can use read-only shared data sources instead of copied JSON. `teams/{teamId}.dataSourceTeamIds.transitApp` and `.performance` may point at a source team such as Barrie Transit. The app reads shared Transit App and STREETS data through the `sharedWorkspaceData` Cloud Function, which verifies the signed-in user belongs to the requesting team and that the requesting team is explicitly configured to read from the source team. Imports and writes still target the current team only.
 
+Partner teams that are granted Scheduled Transit access can also read published master schedules from a configured source team. `teams/{teamId}.dataSourceTeamIds.masterSchedules` may point at the source team; when omitted, the Master Schedule Browser falls back to `dataSourceTeamIds.performance` for partner teams with no local schedules. Shared master-schedule access is read-only and still requires the requesting team member to have Fixed Route workspace access.
+
 Daily performance summaries may include `byOperatorDwell.totalReportableDwellMinutes`, an optional moderate/high-only dwell total used by compact report snapshots when older incident arrays are trimmed.
 
 `teams/{teamId}/todPickupData/metadata` stores the active Transit On Demand pickup-map import pointer. Full monthly TOD pickup datasets live in Storage as aggregated JSON at `teams/{teamId}/todPickupData/{timestamp}.json`. Uploading a CSV for a month replaces that month only; other months remain in the same stored summary. The stored payload is aggregated by stop ID when present, otherwise by pickup name plus rounded coordinates, or by coordinates alone. Raw request rows, rider-identifying fields, and address columns are not persisted. Imports are bounded to CSV files under 5 MB and 25,000 rows. TOD pickup map data and import metadata are readable by team members; writes are restricted to team owners/admins or workspace permission managers.
@@ -126,6 +128,7 @@ interface Team {
   dataSourceTeamIds?: {     // Optional read-only source teams for partner workspace data.
     transitApp?: string;    // Source team for Transit App Data.
     performance?: string;   // Source team for STREETS dashboard/reporting data.
+    masterSchedules?: string; // Source team for read-only published master schedules.
   };
   partnerTeam?: boolean;    // True for externally onboarded agency teams.
 }

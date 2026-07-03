@@ -7,6 +7,16 @@ service firebase.storage {
         firestore.exists(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid));
     }
 
+    function hasUserTeam() {
+      return request.auth != null &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.teamId is string;
+    }
+
+    function userTeamId() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.teamId;
+    }
+
     function isTeamManager(teamId) {
       return request.auth != null &&
         (
@@ -51,7 +61,10 @@ service firebase.storage {
 
     function workspaceAllowedByProfile(accessLevel, feature) {
       return accessLevel == 'internal' ||
-             (accessLevel == 'admin' && feature == 'workspaceParking') ||
+             (accessLevel == 'admin' &&
+              (feature in ['workspaceFixedRoute', 'workspaceParking'])) ||
+             (accessLevel == 'planner' && feature == 'workspaceFixedRoute') ||
+             (accessLevel == 'production' && feature == 'workspaceFixedRoute') ||
              (accessLevel == 'parking' && feature == 'workspaceParking');
     }
 
@@ -63,6 +76,25 @@ service firebase.storage {
                 workspaceAllowedByProfile(memberAccessLevel(teamId), feature))));
     }
 
+    function teamDataSources(teamId) {
+      return firestore.get(/databases/(default)/documents/teams/$(teamId)).data.get('dataSourceTeamIds', {});
+    }
+
+    function configuredMasterScheduleSource(teamId) {
+      return teamDataSources(teamId).get(
+        'masterSchedules',
+        teamDataSources(teamId).get('performance', '')
+      );
+    }
+
+    function canReadSharedMasterSchedules(sourceTeamId) {
+      return hasUserTeam() &&
+        userTeamId() != sourceTeamId &&
+        isTeamMember(userTeamId()) &&
+        canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') &&
+        configuredMasterScheduleSource(userTeamId()) == sourceTeamId;
+    }
+
     // Users can only access their own files
     match /users/{userId}/{allPaths=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -70,7 +102,7 @@ service firebase.storage {
 
     // Team master schedules - restricted to members of the team
     match /teams/{teamId}/masterSchedules/{allPaths=**} {
-      allow read: if isTeamMember(teamId);
+      allow read: if isTeamMember(teamId) || canReadSharedMasterSchedules(teamId);
       allow write: if isTeamManager(teamId);
     }
 

@@ -1,6 +1,12 @@
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
-import type { PerformanceDataSummary, PerformanceMetadata } from './types';
+import type {
+  DailySummary,
+  PerformanceDataLoadOptions,
+  PerformanceDataSummary,
+  PerformanceDetailMode,
+  PerformanceMetadata,
+} from './types';
 import { filterPerformanceSummaryByRoute } from './performanceRouteFilter';
 
 type SharedWorkspace =
@@ -17,6 +23,8 @@ interface SharedWorkspacePayload {
   requestingTeamId?: string;
   sourceTeamId?: string;
   routeId?: string | null;
+  dateRange?: { start: string; end: string };
+  detailMode?: PerformanceDetailMode;
 }
 
 function getDb() {
@@ -143,6 +151,108 @@ function mergePerformanceMetadata(summary: PerformanceDataSummary, metadata: Per
   };
 }
 
+function isPerformanceDetailMode(value: unknown): value is PerformanceDetailMode {
+  return ['all', 'overview', 'otp', 'ridership', 'load-profiles', 'operator-dwell'].includes(String(value));
+}
+
+function isDateRange(value: unknown): value is { start: string; end: string } {
+  return !!value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && typeof (value as { start?: unknown }).start === 'string'
+    && typeof (value as { end?: unknown }).end === 'string';
+}
+
+function dateInRange(date: string, range?: { start: string; end: string }): boolean {
+  if (!range?.start || !range?.end) return true;
+  return date >= range.start && date <= range.end;
+}
+
+function monthOverlapsRange(month: string, range?: { start: string; end: string }): boolean {
+  if (!range?.start || !range?.end) return true;
+  const startMonth = range.start.slice(0, 7);
+  const endMonth = range.end.slice(0, 7);
+  return month >= startMonth && month <= endMonth;
+}
+
+function trimMissedTrips(day: DailySummary, keepTripDetails: boolean): DailySummary['missedTrips'] {
+  return day.missedTrips
+    ? {
+      ...day.missedTrips,
+      trips: keepTripDetails ? (day.missedTrips.trips || []) : [],
+    }
+    : day.missedTrips;
+}
+
+function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
+  if (mode === 'all') return day;
+
+  const base: DailySummary = {
+    ...day,
+    byStop: [],
+    byTrip: [],
+    loadProfiles: [],
+    ridershipHeatmaps: undefined,
+    byOperatorDwell: undefined,
+    byCascade: undefined,
+    segmentRuntimes: undefined,
+    stopSegmentRuntimes: undefined,
+    tripStopSegmentRuntimes: undefined,
+    routeStopDeviations: undefined,
+    byRouteHour: undefined,
+  };
+
+  switch (mode) {
+    case 'overview':
+      return { ...base, byTrip: day.byTrip, missedTrips: trimMissedTrips(day, false) };
+    case 'otp':
+      return {
+        ...base,
+        byTrip: day.byTrip,
+        routeStopDeviations: day.routeStopDeviations,
+        byRouteHour: day.byRouteHour,
+        missedTrips: trimMissedTrips(day, true),
+      };
+    case 'ridership':
+      return {
+        ...base,
+        byStop: day.byStop,
+        ridershipHeatmaps: day.ridershipHeatmaps,
+        byRouteHour: day.byRouteHour,
+        missedTrips: trimMissedTrips(day, false),
+      };
+    case 'load-profiles':
+      return { ...base, loadProfiles: day.loadProfiles, missedTrips: trimMissedTrips(day, false) };
+    case 'operator-dwell':
+      return {
+        ...base,
+        byOperatorDwell: day.byOperatorDwell,
+        byCascade: day.byCascade,
+        missedTrips: trimMissedTrips(day, false),
+      };
+    default:
+      return day;
+  }
+}
+
+function applyPerformanceLoadOptions(
+  summary: PerformanceDataSummary,
+  options?: PerformanceDataLoadOptions,
+): PerformanceDataSummary {
+  const mode = options?.detailMode ?? 'all';
+  const days = summary.dailySummaries
+    .filter(day => dateInRange(day.date, options?.dateRange))
+    .map(day => trimDayForDetailMode(day, mode));
+
+  return buildSummaryFromDays(summary, days, {
+    ...summary.metadata,
+    dateRange: days.length > 0
+      ? { start: days[0].date, end: days[days.length - 1].date }
+      : (options?.dateRange ?? summary.metadata.dateRange),
+    dayCount: days.length,
+  });
+}
+
 async function readStorageJson<T>(path: string): Promise<T | null> {
   if (!path) return null;
   const [buf] = await getBucket().file(path).download();
@@ -195,6 +305,7 @@ function buildSummaryFromDays(
 async function loadMonthlyPerformanceSummary(
   metadata: PerformanceMetadata,
   routeId?: string | null,
+  options?: PerformanceDataLoadOptions,
 ): Promise<PerformanceDataSummary | null> {
   const selectedRoutePaths = routeId && routeId !== 'all'
     ? metadata.routeMonthlyStoragePaths?.[routeId]
@@ -202,25 +313,34 @@ async function loadMonthlyPerformanceSummary(
   const paths = selectedRoutePaths || metadata.monthlyStoragePaths;
   if (!paths || Object.keys(paths).length === 0) return null;
 
+  const months = Object.keys(paths)
+    .filter(month => monthOverlapsRange(month, options?.dateRange))
+    .sort();
+  if (months.length === 0) return null;
+
   const monthSummaries = await Promise.all(
-    Object.keys(paths).sort().map(month => readStorageJson<PerformanceDataSummary>(paths[month])),
+    months.map(month => readStorageJson<PerformanceDataSummary>(paths[month])),
   );
   const dailySummaries = monthSummaries.flatMap(summary => summary?.dailySummaries || []);
   if (dailySummaries.length === 0) return null;
 
   const base = monthSummaries.find((summary): summary is PerformanceDataSummary => !!summary);
-  return buildSummaryFromDays(base || { dailySummaries: [], metadata, schemaVersion: 9 }, dailySummaries, metadata);
+  return applyPerformanceLoadOptions(
+    buildSummaryFromDays(base || { dailySummaries: [], metadata, schemaVersion: 9 }, dailySummaries, metadata),
+    options,
+  );
 }
 
 async function getPerformanceData(
   sourceTeamId: string,
   routeId?: string | null,
+  options?: PerformanceDataLoadOptions,
 ): Promise<PerformanceDataSummary | null> {
   const metadata = await getPerformanceMetadata(sourceTeamId);
   if (!metadata) return null;
 
   const monthlySummary = metadata.monthlyStoragePaths
-    ? await loadMonthlyPerformanceSummary(metadata, routeId)
+    ? await loadMonthlyPerformanceSummary(metadata, routeId, options)
     : null;
   if (monthlySummary) {
     return filterPerformanceSummaryByRoute(mergePerformanceMetadata(monthlySummary, metadata), routeId);
@@ -231,7 +351,9 @@ async function getPerformanceData(
     : undefined;
   const storagePath = selectedRoutePath || metadata.storagePath;
   const summary = await readStorageJson<PerformanceDataSummary>(storagePath || '');
-  return summary ? filterPerformanceSummaryByRoute(mergePerformanceMetadata(summary, metadata), routeId) : null;
+  return summary
+    ? filterPerformanceSummaryByRoute(applyPerformanceLoadOptions(mergePerformanceMetadata(summary, metadata), options), routeId)
+    : null;
 }
 
 async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 'workspace' | 'sourceTeamId'>> & SharedWorkspacePayload) {
@@ -254,7 +376,10 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
       return getPerformanceData(payload.sourceTeamId);
     }
     case 'performanceData':
-      return getPerformanceData(payload.sourceTeamId, payload.routeId);
+      return getPerformanceData(payload.sourceTeamId, payload.routeId, {
+        dateRange: isDateRange(payload.dateRange) ? payload.dateRange : undefined,
+        detailMode: isPerformanceDetailMode(payload.detailMode) ? payload.detailMode : 'all',
+      });
     default:
       return null;
   }
@@ -299,6 +424,8 @@ export const sharedWorkspaceData = onRequest(
         requestingTeamId: payload.requestingTeamId,
         sourceTeamId: payload.sourceTeamId,
         routeId: typeof payload.routeId === 'string' ? payload.routeId : null,
+        dateRange: payload.dateRange,
+        detailMode: payload.detailMode,
       });
 
       if (!data) {

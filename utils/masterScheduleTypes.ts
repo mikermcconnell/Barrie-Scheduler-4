@@ -29,6 +29,7 @@ export interface Team {
     dataSourceTeamIds?: {
         transitApp?: string;
         performance?: string;
+        masterSchedules?: string;
     };
     partnerTeam?: boolean;
 }

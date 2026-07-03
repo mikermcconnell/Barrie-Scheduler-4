@@ -10,6 +10,8 @@ type SharedWorkspaceRequest = {
     requestingTeamId: string;
     sourceTeamId: string;
     routeId?: string | null;
+    dateRange?: { start: string; end: string };
+    detailMode?: 'all' | 'overview' | 'otp' | 'ridership' | 'load-profiles' | 'operator-dwell';
 };
 
 const PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'barrie-scheduler-7844a';
