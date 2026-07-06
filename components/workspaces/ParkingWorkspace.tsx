@@ -1932,7 +1932,6 @@ export const ParkingWorkspace: React.FC = () => {
 
   if (activeWorkspace === 'lot-data') {
     const mapMetricLabel = getParkingMapMetricLabel(parkingMapMetric);
-    const mapRevenueTotal = mapLocationSummaries.reduce((sum, entry) => sum + entry.totalRevenue, 0);
     const activeLocation = selectedRevenueLocation;
     const hasVisibleRevenuePins = mapLocationSummaries.length > 0;
 
@@ -2309,16 +2308,11 @@ export const ParkingWorkspace: React.FC = () => {
                 </button>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 md:grid-cols-3">
                 <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
                   <div className="text-xs font-black uppercase tracking-wide text-emerald-600">Filtered revenue</div>
                   <div className="mt-1 text-2xl font-black text-emerald-950">{money(revenueAnalytics.totalRevenue)}</div>
                   <p className="mt-1 text-xs font-bold text-emerald-700">{revenueAnalytics.rowCount.toLocaleString()} sessions</p>
-                </div>
-                <div className="rounded-3xl border border-blue-100 bg-blue-50 p-4">
-                  <div className="text-xs font-black uppercase tracking-wide text-blue-600">Mapped revenue</div>
-                  <div className="mt-1 text-2xl font-black text-blue-950">{money(mapRevenueTotal)}</div>
-                  <p className="mt-1 text-xs font-bold text-blue-700">Revenue represented by visible map pins.</p>
                 </div>
                 <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4">
                   <div className="text-xs font-black uppercase tracking-wide text-amber-600">Average stay</div>
@@ -2522,7 +2516,7 @@ export const ParkingWorkspace: React.FC = () => {
                   </div>
                   <BarChart3 className="text-emerald-700" size={22} />
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-2">
+                <div className="mt-4 grid grid-cols-3 gap-2">
                   <div className="rounded-2xl bg-white p-3">
                     <div className="text-[10px] font-black uppercase text-emerald-500">Revenue</div>
                     <div className="mt-1 text-lg font-black text-emerald-950">{money(activeMapLocation?.totalRevenue || activeLocation?.totalRevenue || revenueAnalytics.totalRevenue)}</div>
@@ -2535,14 +2529,7 @@ export const ParkingWorkspace: React.FC = () => {
                     <div className="text-[10px] font-black uppercase text-amber-500">Peak</div>
                     <div className="mt-1 text-lg font-black text-amber-950">{formatHour(activeMapLocation?.peakHour ?? activeLocation?.peakHour ?? revenueAnalytics.peakHour)}</div>
                   </div>
-                  <div className="rounded-2xl bg-white p-3">
-                    <div className="text-[10px] font-black uppercase text-violet-500">Mapped revenue</div>
-                    <div className="mt-1 text-lg font-black text-violet-950">{money(mapRevenueTotal)}</div>
-                  </div>
                 </div>
-                <p className="mt-2 text-[11px] font-bold leading-4 text-emerald-700">
-                  Mapped Revenue is the filtered revenue represented by visible pins. It can differ from Total Revenue when rows do not have reviewed or City-source coordinates.
-                </p>
                 {(activeMapLocation || activeLocation) ? (
                   <div className="mt-3 rounded-2xl bg-white p-3 text-xs font-bold text-slate-600">
                     HotSpot app: {money(activeMapLocation?.hotspotRevenue ?? activeLocation?.hotspotRevenue)} · QR: {money(activeMapLocation?.qrRevenue ?? activeLocation?.qrRevenue)} · unique plates: {(activeMapLocation?.uniquePlateCount || activeLocation?.uniquePlateCount || 0).toLocaleString()}
