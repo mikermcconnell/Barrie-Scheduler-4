@@ -2092,7 +2092,7 @@ export const ParkingWorkspace: React.FC = () => {
           <aside
             data-state={lotLeftRailOpen ? 'expanded' : 'collapsed'}
             className={`pointer-events-auto absolute bottom-3 left-3 top-20 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
-              lotLeftRailOpen ? 'w-80 overflow-hidden p-3' : 'w-16 items-center p-2'
+              lotLeftRailOpen ? 'w-80 min-h-0 overflow-y-auto overscroll-contain p-3' : 'w-16 items-center p-2'
             }`}
             aria-label="Parking lot filters and list"
           >
@@ -2229,7 +2229,7 @@ export const ParkingWorkspace: React.FC = () => {
               </div>
             </div>
 
-            <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+            <div className="mt-3 shrink-0 pr-1 pb-2">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-xs font-black uppercase tracking-wide text-slate-500">Parking lots</div>
                 <div className="text-[11px] font-bold text-slate-400">{revenueAnalytics.locationSummaries.length.toLocaleString()} total</div>
