@@ -910,6 +910,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [parkingMapMetric, setParkingMapMetric] = useState<ParkingMapMetric>('revenue');
   const [locationSearchById, setLocationSearchById] = useState<Record<string, RevenueLocationSearchState>>({});
   const [lotLeftRailOpen, setLotLeftRailOpen] = useState(true);
+  const [lotFiltersCollapsed, setLotFiltersCollapsed] = useState(true);
   const [lotRightRailOpen, setLotRightRailOpen] = useState(true);
   const [parkingLegendCollapsed, setParkingLegendCollapsed] = useState(false);
   const [publicParkingLocations, setPublicParkingLocations] = useState<PublicParkingLocation[]>([]);
@@ -2091,8 +2092,8 @@ export const ParkingWorkspace: React.FC = () => {
 
           <aside
             data-state={lotLeftRailOpen ? 'expanded' : 'collapsed'}
-            className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
-              lotLeftRailOpen ? 'w-80 overflow-y-auto p-3' : 'w-16 items-center p-2'
+            className={`pointer-events-auto absolute bottom-3 left-3 top-20 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
+              lotLeftRailOpen ? 'w-80 overflow-hidden p-3' : 'w-16 items-center p-2'
             }`}
             aria-label="Parking lot filters and list"
           >
@@ -2100,11 +2101,21 @@ export const ParkingWorkspace: React.FC = () => {
               <>
             <div className="flex items-center justify-between gap-2">
               <div>
-                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Map filters</div>
-                <p className="text-[11px] font-semibold text-slate-400">Pins resize by selected metric.</p>
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Parking lots</div>
+                <p className="text-[11px] font-semibold text-slate-400">Browse lots first; filters can tuck away.</p>
               </div>
               <div className="flex items-center gap-2">
                 <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700">{mapLocationSummaries.length} pins</span>
+                <button
+                  type="button"
+                  onClick={() => setLotFiltersCollapsed(current => !current)}
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 text-[11px] font-black text-slate-600 hover:bg-slate-50"
+                  aria-expanded={!lotFiltersCollapsed}
+                  title={lotFiltersCollapsed ? 'Show filters' : 'Hide filters'}
+                >
+                  <SlidersHorizontal size={13} />
+                  {lotFiltersCollapsed ? 'Filters' : 'Hide'}
+                </button>
                 <button
                   type="button"
                   onClick={() => setLotLeftRailOpen(false)}
@@ -2117,7 +2128,8 @@ export const ParkingWorkspace: React.FC = () => {
               </div>
             </div>
 
-            <div className="mt-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            {!lotFiltersCollapsed ? (
+            <div className="mt-3 shrink-0 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Year</div>
@@ -2193,8 +2205,13 @@ export const ParkingWorkspace: React.FC = () => {
               </div>
               <p className="text-[11px] font-semibold leading-4 text-slate-400">Time filters use session start time. Utilization uses paid minutes inside the selected hour range.</p>
             </div>
+            ) : (
+              <div className="mt-3 shrink-0 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] font-bold leading-4 text-blue-800">
+                Filters hidden to give the lot list more height. Showing {selectedRevenueYear === 'all' ? 'all years' : selectedRevenueYear}, {selectedRevenueMonth === 'all' ? 'all months' : selectedRevenueMonth}, {REVENUE_DAY_TYPE_LABELS[revenueDayTypeFilter].toLowerCase()}.
+              </div>
+            )}
 
-            <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="mt-3 grid shrink-0 grid-cols-2 gap-2">
               <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
                 <div className="text-[10px] font-black uppercase tracking-wide text-emerald-500">Revenue</div>
                 <div className="mt-1 text-lg font-black text-emerald-950">{money(revenueAnalytics.totalRevenue)}</div>
