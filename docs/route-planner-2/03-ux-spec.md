@@ -104,6 +104,9 @@ V1 interactions:
 - search for a Canadian address near Barrie, pick an autocomplete suggestion, and add it as the next stop
 - import an Excel/CSV address list, preview mapped/unresolved addresses, merge duplicate addresses, and add mapped stops in geographic order
 - drag numbered stop markers to move stops
+- use selected-stop **Flip side** when a stable street-side reference can be inferred, plus small N/S/E/W nudge controls when pixel-perfect dragging cannot place a stop on the correct curb side
+- use Box/Lasso selection N/S/E/W nudge controls to fine-tune selected stops and bend anchors
+- show a stop-side warning when the selected stop creates a suspicious routing detour, with **Flip side** as the primary repair action
 - delete stops from the stop order list
 - choose route type: one-way, closed loop, or out-and-back
 - for one-way shuttle patterns, use **Create back direction** to generate a separate editable **Back** route concept from the selected **Out** route

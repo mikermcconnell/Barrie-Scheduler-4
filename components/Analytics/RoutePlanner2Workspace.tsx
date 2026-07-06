@@ -93,6 +93,13 @@ import {
     buildRoutePlanner2StopVisitSequence,
     getRoutePlanner2LineWaypointsForSegment,
 } from '../../utils/route-planner-2/routePlanner2Segments';
+import {
+    canFlipRoutePlanner2StopSide,
+    flipRoutePlanner2StopSide,
+    getRoutePlanner2StopPlacementWarning,
+    nudgeRoutePlanner2StopCoordinate,
+    type RoutePlanner2StopNudgeDirection,
+} from '../../utils/route-planner-2/routePlanner2StopPlacement';
 import type {
     RoutePlanner2Project,
     RoutePlanner2RouteShape,
@@ -1048,6 +1055,22 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => selectedScenario ? [...selectedScenario.stops].sort((a, b) => a.sequence - b.sequence) : [],
         [selectedScenario],
     );
+    const selectedStopPlacementWarning = useMemo(
+        () => selectedScenario && selectedStop
+            ? getRoutePlanner2StopPlacementWarning(
+                selectedScenario,
+                selectedStop.id,
+                selectedFeasibility?.segmentSummaries ?? [],
+            )
+            : null,
+        [selectedFeasibility?.segmentSummaries, selectedScenario, selectedStop],
+    );
+    const selectedStopCanFlipSide = useMemo(
+        () => selectedScenario && selectedStop
+            ? canFlipRoutePlanner2StopSide(selectedScenario, selectedStop.id)
+            : false,
+        [selectedScenario, selectedStop],
+    );
     const stopCardDetails = useMemo(
         () => selectedScenario ? buildRoutePlanner2StopCardDetails(selectedScenario, selectedFeasibility) : [],
         [selectedFeasibility, selectedScenario],
@@ -1779,6 +1802,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setProject((current) => updateRoutePlanner2StopCoordinate(current, selectedScenario.id, stopId, coordinate));
         setSelectedStopId(stopId);
     }
+    function nudgeSelectedStop(direction: RoutePlanner2StopNudgeDirection) {
+        if (!selectedStop) return;
+        moveStop(selectedStop.id, nudgeRoutePlanner2StopCoordinate(selectedStop, direction));
+    }
+    function flipSelectedStopSide() {
+        if (!selectedScenario || !selectedStop) return;
+        const coordinate = flipRoutePlanner2StopSide(selectedScenario, selectedStop.id);
+        if (!coordinate) return;
+        moveStop(selectedStop.id, coordinate);
+    }
     function addLineWaypoint(placement: {
         fromStopId: string;
         toStopId: string;
@@ -1992,6 +2025,34 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setIsActionSidebarOpen(true);
         setIsSelectionMenuOpen(true);
         setMapSelectionMode(mode);
+    }
+    function nudgeSelectedMapItems(direction: RoutePlanner2StopNudgeDirection) {
+        if (!selectedScenario || mapSelectionCount === 0) return;
+        const selectedStopIds = new Set(mapSelection.stopIds);
+        const selectedWaypointIds = new Set(mapSelection.waypointIds);
+        const stopsToMove = selectedScenario.stops.filter((stop) => selectedStopIds.has(stop.id));
+        const waypointsToMove = selectedScenario.alignment.filter((waypoint) => selectedWaypointIds.has(waypoint.id));
+
+        setProject((current) => {
+            let next = current;
+            stopsToMove.forEach((stop) => {
+                next = updateRoutePlanner2StopCoordinate(
+                    next,
+                    selectedScenario.id,
+                    stop.id,
+                    nudgeRoutePlanner2StopCoordinate(stop, direction),
+                );
+            });
+            waypointsToMove.forEach((waypoint) => {
+                next = updateRoutePlanner2LineWaypointCoordinate(
+                    next,
+                    selectedScenario.id,
+                    waypoint.id,
+                    nudgeRoutePlanner2StopCoordinate(waypoint, direction),
+                );
+            });
+            return next;
+        });
     }
     function deleteSelectedMapItems() {
         if (!selectedScenario || mapSelectionCount === 0) return;
@@ -2988,6 +3049,20 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             >
                                                 <Trash2 size={14} /> Delete selected{mapSelectionCount > 0 ? ` (${mapSelectionCount})` : ''}
                                             </button>
+                                            <div className="mt-2 rounded-xl border border-violet-100 bg-white/80 p-2">
+                                                <div className="mb-1.5 text-[10px] font-black uppercase tracking-wide text-violet-700">Nudge selected</div>
+                                                <div className="grid grid-cols-3 gap-1 text-[10px] font-black">
+                                                    <span />
+                                                    <button type="button" onClick={() => nudgeSelectedMapItems('north')} disabled={mapSelectionCount === 0} className="rounded-lg bg-violet-100 px-2 py-1 text-violet-800 disabled:opacity-40" aria-label="Nudge selected map items north">N</button>
+                                                    <span />
+                                                    <button type="button" onClick={() => nudgeSelectedMapItems('west')} disabled={mapSelectionCount === 0} className="rounded-lg bg-violet-100 px-2 py-1 text-violet-800 disabled:opacity-40" aria-label="Nudge selected map items west">W</button>
+                                                    <span className="rounded-lg bg-violet-50 px-2 py-1 text-center text-violet-700">4 m</span>
+                                                    <button type="button" onClick={() => nudgeSelectedMapItems('east')} disabled={mapSelectionCount === 0} className="rounded-lg bg-violet-100 px-2 py-1 text-violet-800 disabled:opacity-40" aria-label="Nudge selected map items east">E</button>
+                                                    <span />
+                                                    <button type="button" onClick={() => nudgeSelectedMapItems('south')} disabled={mapSelectionCount === 0} className="rounded-lg bg-violet-100 px-2 py-1 text-violet-800 disabled:opacity-40" aria-label="Nudge selected map items south">S</button>
+                                                    <span />
+                                                </div>
+                                            </div>
                                             <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-bold text-violet-700">
                                                 <span>{mapSelectionCount} selected</span>
                                                 <button
@@ -3654,6 +3729,40 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <div className="space-y-3">
                                                 <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-stop-name">Stop name<input id="rp2-stop-name" value={selectedStop.name} onChange={(event) => renameSelectedStop(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold" /></label>
                                                 <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-stop-role">Stop role<select id="rp2-stop-role" value={selectedStop.role} onChange={(event) => updateSelectedStopRole(event.target.value as RoutePlanner2StopRole)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"><option value="regular">Regular stop</option><option value="timed">Timed stop</option><option value="start-terminal">Start terminal</option><option value="end-terminal">End terminal</option><option value="turnaround">Bus turnaround</option></select></label>
+                                                {selectedStopPlacementWarning && (
+                                                    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900" data-testid="rp2-stop-side-warning">
+                                                        <div className="font-black">{selectedStopPlacementWarning.message}</div>
+                                                        <div className="mt-1 font-semibold">{selectedStopPlacementWarning.action}</div>
+                                                    </div>
+                                                )}
+                                                <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-3" data-testid="rp2-stop-side-controls">
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div>
+                                                            <h4 className="text-xs font-black uppercase tracking-wide text-cyan-800">Street side</h4>
+                                                            <p className="mt-1 text-xs font-semibold leading-5 text-cyan-900">Use these when dragging cannot land the stop on the correct curb.</p>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={flipSelectedStopSide}
+                                                            disabled={!selectedStopCanFlipSide}
+                                                            title={selectedStopCanFlipSide ? undefined : 'Use nudges for endpoint stops on short routes.'}
+                                                            className="shrink-0 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs font-black text-cyan-800 shadow-sm hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                        >
+                                                            Flip side
+                                                        </button>
+                                                    </div>
+                                                    <div className="mt-3 grid grid-cols-3 gap-1.5 text-xs font-black">
+                                                        <span />
+                                                        <button type="button" onClick={() => nudgeSelectedStop('north')} className="rounded-lg border border-cyan-200 bg-white px-2 py-1.5 text-cyan-800 hover:bg-cyan-100" aria-label="Nudge stop north">N</button>
+                                                        <span />
+                                                        <button type="button" onClick={() => nudgeSelectedStop('west')} className="rounded-lg border border-cyan-200 bg-white px-2 py-1.5 text-cyan-800 hover:bg-cyan-100" aria-label="Nudge stop west">W</button>
+                                                        <span className="rounded-lg bg-cyan-100 px-2 py-1.5 text-center text-cyan-800">4 m</span>
+                                                        <button type="button" onClick={() => nudgeSelectedStop('east')} className="rounded-lg border border-cyan-200 bg-white px-2 py-1.5 text-cyan-800 hover:bg-cyan-100" aria-label="Nudge stop east">E</button>
+                                                        <span />
+                                                        <button type="button" onClick={() => nudgeSelectedStop('south')} className="rounded-lg border border-cyan-200 bg-white px-2 py-1.5 text-cyan-800 hover:bg-cyan-100" aria-label="Nudge stop south">S</button>
+                                                        <span />
+                                                    </div>
+                                                </div>
                                                 <div className="grid grid-cols-3 gap-2">
                                                     <button type="button" onClick={() => selectedScenario && selectedStop && setProject((current) => moveRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id, 'up'))} className="rounded-xl border bg-white px-2 py-2 text-xs font-bold">Up</button>
                                                     <button type="button" onClick={() => selectedScenario && selectedStop && setProject((current) => moveRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id, 'down'))} className="rounded-xl border bg-white px-2 py-2 text-xs font-bold">Down</button>
