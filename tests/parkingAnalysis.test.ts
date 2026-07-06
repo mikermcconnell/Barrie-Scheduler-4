@@ -39,10 +39,14 @@ function location(patch: Partial<ParkingRevenueLocationSummary>): ParkingRevenue
     sourceIds: patch.sourceIds || [{ source: 'hotspot', sourceId: '100', label: 'Lot A' }],
     latitude: patch.latitude ?? null,
     longitude: patch.longitude ?? null,
+    categoryId: patch.categoryId ?? null,
+    categoryLabel: patch.categoryLabel,
+    categoryColorHex: patch.categoryColorHex,
     isMapped: patch.isMapped || false,
     rowCount: patch.rowCount ?? 1,
     totalRevenue: patch.totalRevenue ?? 10,
     totalPaid: patch.totalPaid ?? 11.3,
+    paidMinutes: patch.paidMinutes,
     averageStayMinutes: patch.averageStayMinutes ?? 60,
     uniquePlateCount: patch.uniquePlateCount ?? 1,
     hotspotRevenue: patch.hotspotRevenue ?? 10,
@@ -71,6 +75,9 @@ function analytics(patch: Partial<ParkingRevenueAnalytics>): ParkingRevenueAnaly
     totalRevenue: patch.totalRevenue ?? 0,
     totalPaid: patch.totalPaid ?? 0,
     rowCount: patch.rowCount ?? 0,
+    paidMinutes: patch.paidMinutes,
+    activeDayCount: patch.activeDayCount,
+    hourWindowMinutes: patch.hourWindowMinutes,
     averageStayMinutes: patch.averageStayMinutes ?? 0,
     uniquePlateCount: patch.uniquePlateCount ?? 0,
     peakHour: patch.peakHour ?? null,
@@ -216,6 +223,93 @@ describe('parking planner analysis milestones', () => {
       sessionsPerSpace: null,
     });
     expect(result.insights).toContain('Temporary Lot represents 100% of filtered revenue and ranks #0 by revenue.');
+  });
+
+  it('ranks capacity by revenue per space while keeping utilization insight separate', () => {
+    const topRevenuePerSpace = location({
+      key: 'top-revenue-space',
+      displayName: 'Top Revenue Space Lot',
+      rowCount: 4,
+      totalRevenue: 100,
+      paidMinutes: 10,
+    });
+    const topUtilization = location({
+      key: 'top-utilization',
+      displayName: 'Top Utilization Lot',
+      rowCount: 20,
+      totalRevenue: 50,
+      paidMinutes: 600,
+    });
+
+    const result = buildParkingPlannerAnalysis(analytics({
+      rows: [
+        row({ sourceId: '100', physicalLocationId: 'top-revenue-space', amount: 100, durationMinutes: 10 }),
+        row({ sourceId: '200', physicalLocationId: 'top-utilization', amount: 50, durationMinutes: 600 }),
+      ],
+      locationSummaries: [topUtilization, topRevenuePerSpace],
+      totalRevenue: 150,
+      rowCount: 24,
+      activeDayCount: 1,
+      hourWindowMinutes: 60,
+    }), null, {
+      'top-revenue-space': { spaces: 1 },
+      'top-utilization': { spaces: 10 },
+    });
+
+    expect(result.capacityRows.map(point => point.key)).toEqual(['top-revenue-space', 'top-utilization']);
+    expect(result.capacityRows[0]).toMatchObject({
+      revenuePerSpace: 100,
+      utilizationPercent: 16.7,
+    });
+    expect(result.capacityRows[1]).toMatchObject({
+      revenuePerSpace: 5,
+      utilizationPercent: 100,
+    });
+    expect(result.insights).toEqual(expect.arrayContaining([
+      'Top Revenue Space Lot generates the most revenue per known space.',
+      'Top Utilization Lot has the strongest estimated utilization at 100.0%.',
+    ]));
+  });
+
+  it('does not inflate category revenue per space with unknown-capacity lots', () => {
+    const knownCapacityLot = location({
+      key: 'known-capacity',
+      displayName: 'Known Capacity Lot',
+      categoryId: 'downtown',
+      categoryLabel: 'Downtown',
+      rowCount: 10,
+      totalRevenue: 100,
+      paidMinutes: 120,
+    });
+    const unknownCapacityLot = location({
+      key: 'unknown-capacity',
+      displayName: 'Unknown Capacity Lot',
+      categoryId: 'downtown',
+      categoryLabel: 'Downtown',
+      rowCount: 90,
+      totalRevenue: 900,
+      paidMinutes: 900,
+    });
+
+    const result = buildParkingPlannerAnalysis(analytics({
+      locationSummaries: [knownCapacityLot, unknownCapacityLot],
+      totalRevenue: 1000,
+      rowCount: 100,
+      activeDayCount: 1,
+      hourWindowMinutes: 60,
+    }), null, {
+      'known-capacity': { spaces: 10 },
+    });
+
+    expect(result.categoryComparisonRows[0]).toMatchObject({
+      key: 'downtown',
+      label: 'Downtown',
+      revenue: 100,
+      sessions: 10,
+      spaces: 10,
+      revenuePerSpace: 10,
+      utilizationPercent: 20,
+    });
   });
 
   it('sorts tied lot and capacity comparisons predictably and handles zero totals', () => {

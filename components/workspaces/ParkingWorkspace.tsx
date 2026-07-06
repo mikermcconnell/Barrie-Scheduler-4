@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock3,
   Download,
+  Eye,
   Loader2,
   MapPin,
   Maximize2,
@@ -122,6 +123,8 @@ import {
   type ParkingYearCodeFormat,
 } from '../../utils/parking/parkingTypes';
 import { searchRoutePlanner2Addresses, type RoutePlanner2AddressSuggestion } from '../../utils/route-planner-2/routePlanner2AddressSearch';
+import { getTeamWithMembers } from '../../utils/services/teamService';
+import type { TeamMember } from '../../utils/masterScheduleTypes';
 import { canAccessWorkspaceFeature } from '../../utils/workspaceAccess';
 
 const money = (value: number | null | undefined) => `$${(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -629,6 +632,19 @@ function revenueLocationRefsOverlap(summary: ParkingRevenueLocationSummary, mapp
   return (mapping.sourceRefs || []).some(ref => summaryRefs.has(`${ref.source}:${String(ref.sourceId).trim().toUpperCase()}`));
 }
 
+function formatImportedAt(value?: string): string {
+  if (!value) return 'Unknown date';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function getPlatePatternKey(pattern: ParkingPlatePattern): string {
   return `${pattern.month}-${pattern.displayPlate}-${pattern.department}`;
 }
@@ -885,7 +901,7 @@ const DepartmentChip: React.FC<{ department: string; codeFamilyKey?: string; cod
 
 export const ParkingWorkspace: React.FC = () => {
   const { user } = useAuth();
-  const { team, teamMember, canManageTeam } = useTeam();
+  const { team, teamMember, canManageTeam, isDeveloperPreview } = useTeam();
   const toast = useToast();
   const [activeWorkspace, setActiveWorkspace] = useState<ParkingWorkspaceView>(() => parseParkingWorkspaceViewFromHash());
   const [loading, setLoading] = useState(true);
@@ -902,6 +918,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [selectedRevenueYear, setSelectedRevenueYear] = useState('all');
   const [selectedRevenueMonth, setSelectedRevenueMonth] = useState('all');
   const [selectedRevenueCategory, setSelectedRevenueCategory] = useState('all');
+  const [selectedRevenueUploader, setSelectedRevenueUploader] = useState('all');
   const [revenueHourStart, setRevenueHourStart] = useState(0);
   const [revenueHourEnd, setRevenueHourEnd] = useState(23);
   const [selectedRevenueLocationKey, setSelectedRevenueLocationKey] = useState('');
@@ -930,6 +947,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [departmentSearch, setDepartmentSearch] = useState('');
   const [departmentCodeYear, setDepartmentCodeYear] = useState(new Date().getFullYear());
   const [departmentLegendSort, setDepartmentLegendSort] = useState(DEFAULT_DEPARTMENT_LEGEND_SORT);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
   const displaySummary = useMemo(() => buildDisplaySummary(summary, settings), [settings, summary]);
 
@@ -971,7 +989,7 @@ export const ParkingWorkspace: React.FC = () => {
   );
   const selectedMonthDataset = monthsForSelectedYear.find(month => month.month === selectedMonth) ?? null;
   const selectedPreviewDataset = previewDatasets.find(month => month.month === selectedMonth) ?? null;
-  const canEditParking = canManageTeam || canAccessWorkspaceFeature('workspaceParking', teamMember);
+  const canEditParking = !isDeveloperPreview && (canManageTeam || canAccessWorkspaceFeature('workspaceParking', teamMember));
   const annualSummaryRows = useMemo(() => buildAnnualSummaryRows(reviewMonths, selectedYear), [reviewMonths, selectedYear]);
   const selectedMonthLabel = MONTHS.find(month => month.value === selectedMonth.slice(5, 7))?.label ?? selectedMonth;
   const monthlyFlaggedPlates = useMemo(() => {
@@ -1016,29 +1034,59 @@ export const ParkingWorkspace: React.FC = () => {
   const revenueCategoryOptions = useMemo(() => [
     ...(settings.revenueLocationCategories || []).filter(category => !category.archived),
   ], [settings.revenueLocationCategories]);
+  const uploaderLabelById = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const member of teamMembers) {
+      labels.set(member.userId, member.displayName || member.email || member.userId);
+    }
+    return labels;
+  }, [teamMembers]);
+  const revenueUploaderOptions = useMemo(() => {
+    const uploaders = new Map<string, { id: string; label: string; datasetCount: number }>();
+    for (const dataset of displayRevenueSummary?.datasets || []) {
+      const id = dataset.importedBy || 'unknown';
+      const current = uploaders.get(id);
+      uploaders.set(id, {
+        id,
+        label: uploaderLabelById.get(id) || id,
+        datasetCount: (current?.datasetCount || 0) + 1,
+      });
+    }
+    return [...uploaders.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [displayRevenueSummary?.datasets, uploaderLabelById]);
+  const revenueImportHistory = useMemo(() => (
+    [...(displayRevenueSummary?.datasets || [])]
+      .sort((a, b) => b.importedAt.localeCompare(a.importedAt) || b.month.localeCompare(a.month) || a.source.localeCompare(b.source))
+      .slice(0, 12)
+  ), [displayRevenueSummary?.datasets]);
   const revenueFilters = useMemo<ParkingRevenueFilters>(() => ({
     months: revenueFilterMonths,
     source: revenueSourceFilter,
+    importedBy: selectedRevenueUploader,
     dayType: revenueDayTypeFilter,
     categoryId: selectedRevenueCategory,
     hourStart: revenueHourStart,
     hourEnd: revenueHourEnd,
-  }), [revenueDayTypeFilter, revenueFilterMonths, revenueHourEnd, revenueHourStart, revenueSourceFilter, selectedRevenueCategory]);
+  }), [revenueDayTypeFilter, revenueFilterMonths, revenueHourEnd, revenueHourStart, revenueSourceFilter, selectedRevenueCategory, selectedRevenueUploader]);
   const revenueAnalytics = useMemo(
     () => buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueFilters),
     [displayRevenueSummary, revenueFilters, settings],
   );
   const revenueTrendFilterMonths = useMemo(() => {
     if (selectedRevenueYear === 'all') return undefined;
+    if (selectedRevenueMonth === 'all') return revenueFilterMonths;
     return revenueMonths.filter(month => month.startsWith(`${selectedRevenueYear}-`));
-  }, [revenueMonths, selectedRevenueYear]);
+  }, [revenueFilterMonths, revenueMonths, selectedRevenueMonth, selectedRevenueYear]);
   const revenueTrendFilters = useMemo<ParkingRevenueFilters>(() => ({
     ...revenueFilters,
     months: revenueTrendFilterMonths,
   }), [revenueFilters, revenueTrendFilterMonths]);
+  const revenueTrendUsesCurrentAnalytics = revenueTrendFilterMonths === revenueFilterMonths;
   const revenueTrendAnalytics = useMemo(
-    () => buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueTrendFilters),
-    [displayRevenueSummary, revenueTrendFilters, settings],
+    () => revenueTrendUsesCurrentAnalytics
+      ? revenueAnalytics
+      : buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueTrendFilters),
+    [displayRevenueSummary, revenueAnalytics, revenueTrendFilters, revenueTrendUsesCurrentAnalytics, settings],
   );
   const publicParkingMatchesByKey = useMemo(() => {
     const matches = new Map<string, PublicParkingLocationMatch>();
@@ -1136,6 +1184,11 @@ export const ParkingWorkspace: React.FC = () => {
         ? 'Uncategorized'
         : revenueCategoryOptions.find(category => category.id === selectedRevenueCategory)?.label || selectedRevenueCategory
   ), [revenueCategoryOptions, selectedRevenueCategory]);
+  const selectedRevenueUploaderLabel = useMemo(() => (
+    selectedRevenueUploader === 'all'
+      ? ''
+      : revenueUploaderOptions.find(option => option.id === selectedRevenueUploader)?.label || selectedRevenueUploader
+  ), [revenueUploaderOptions, selectedRevenueUploader]);
   const peakPeriodScopeLabel = parkingPlannerAnalysis.selectedLot
     ? 'Selected lot'
     : selectedRevenueCategoryLabel
@@ -1210,6 +1263,26 @@ export const ParkingWorkspace: React.FC = () => {
   }, [load]);
 
   useEffect(() => {
+    if (!team?.id) {
+      setTeamMembers([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    getTeamWithMembers(team.id)
+      .then(details => {
+        if (!cancelled) setTeamMembers(details?.members || []);
+      })
+      .catch(() => {
+        if (!cancelled) setTeamMembers([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [team?.id]);
+
+  useEffect(() => {
     if (activeWorkspace !== 'lot-data' || publicParkingLocations.length > 0) return undefined;
     let cancelled = false;
     setPublicParkingLoading(true);
@@ -1266,6 +1339,15 @@ export const ParkingWorkspace: React.FC = () => {
       setSelectedRevenueMonth('all');
     }
   }, [revenueMonths.length, revenueMonthsForSelectedYear, revenueYears, selectedRevenueMonth, selectedRevenueYear]);
+
+  useEffect(() => {
+    if (
+      selectedRevenueUploader !== 'all' &&
+      !revenueUploaderOptions.some(option => option.id === selectedRevenueUploader)
+    ) {
+      setSelectedRevenueUploader('all');
+    }
+  }, [revenueUploaderOptions, selectedRevenueUploader]);
 
   useEffect(() => {
     if (!annualFullscreen) return undefined;
@@ -1952,6 +2034,8 @@ export const ParkingWorkspace: React.FC = () => {
               ) : null}
               {lotMapMode === 'markers' ? mapLocationSummaries.map(entry => {
                 const value = getParkingMapMetricValue(entry, parkingMapMetric);
+                const hasMetricValue = parkingMapMetric !== 'revenuePerSpace' || Boolean(entry.capacitySpaces);
+                const metricValueLabel = hasMetricValue ? formatMapMetricValue(value, parkingMapMetric) : '—';
                 const ratio = Math.min(1, value / mapMetricMax);
                 const size = Math.max(42, Math.min(72, 42 + Math.sqrt(ratio) * 30));
                 const isSelected = Boolean(activeLocation && entry.sourceLocationKeys.includes(activeLocation.key));
@@ -1963,21 +2047,21 @@ export const ParkingWorkspace: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => toggleRevenueLocationSelection(entry.primaryLocation.key, isSelected)}
-                        title={`${entry.displayName}: ${formatMapMetricValue(value, parkingMapMetric)} ${mapMetricLabel.toLowerCase()}${entry.aggregateCount > 1 ? ' · same-lot source IDs grouped' : ''}`}
+                        title={`${entry.displayName}: ${metricValueLabel} ${mapMetricLabel.toLowerCase()}${hasMetricValue ? '' : ' · capacity not matched'}${entry.aggregateCount > 1 ? ' · same-lot source IDs grouped' : ''}`}
                         className={`relative flex items-center justify-center rounded-full border-[3px] shadow-lg transition hover:scale-110 focus:outline-none focus:ring-4 focus:ring-amber-200/80 ${
                           isSelected ? 'z-10 ring-4 ring-amber-200/80' : ''
                         } ${activeLocation && !isSelected ? 'opacity-35' : 'opacity-100'}`}
                         style={{ width: size, height: size, backgroundColor: fillColor, borderColor }}
                       >
-                        <span className="rounded-full bg-white/95 px-1.5 py-0.5 text-[10px] font-black text-slate-800 shadow-sm">{formatMapMetricValue(value, parkingMapMetric)}</span>
+                        <span className="rounded-full bg-white/95 px-1.5 py-0.5 text-[10px] font-black text-slate-800 shadow-sm">{metricValueLabel}</span>
                       </button>
                       <div className={`pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-48 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white/95 p-2 text-left shadow-xl transition ${
                         isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                       }`}>
                         <div className="truncate text-xs font-black text-slate-950">{entry.displayName}</div>
-                        <div className="mt-1 text-sm font-black text-emerald-700">{formatMapMetricValue(value, parkingMapMetric)}</div>
+                        <div className="mt-1 text-sm font-black text-emerald-700">{metricValueLabel}</div>
                         <div className="mt-1 text-[11px] font-semibold text-slate-500">
-                          {entry.rowCount.toLocaleString()} sessions · {money(entry.totalRevenue)}
+                          {parkingMapMetric === 'revenuePerSpace' && !hasMetricValue ? 'capacity not matched · ' : ''}{entry.rowCount.toLocaleString()} sessions · {money(entry.totalRevenue)}
                         </div>
                       </div>
                     </div>
@@ -2042,6 +2126,11 @@ export const ParkingWorkspace: React.FC = () => {
                 <Upload size={14} /> Import revenue
                 <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleRevenueFileChange} className="hidden" />
               </label>
+              {isDeveloperPreview ? (
+                <span className="inline-flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-extrabold text-amber-800">
+                  <Eye size={14} /> Read-only preview
+                </span>
+              ) : null}
               {saving && previewRevenueDatasets.length > 0 ? (
                 <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-extrabold text-emerald-700">
                   <Loader2 className="animate-spin" size={14} /> Auto-saving
@@ -2154,6 +2243,17 @@ export const ParkingWorkspace: React.FC = () => {
                 </select>
               </div>
               <div>
+                <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Uploaded by</div>
+                <select value={selectedRevenueUploader} onChange={event => setSelectedRevenueUploader(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                  <option value="all">All uploaders</option>
+                  {revenueUploaderOptions.map(option => (
+                    <option key={option.id} value={option.id}>
+                      {option.label} ({option.datasetCount})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Source</div>
                 <div className="grid grid-cols-3 gap-1 rounded-2xl border border-slate-200 bg-white p-1">
                   {ALL_REVENUE_SOURCES.map(source => (
@@ -2206,7 +2306,7 @@ export const ParkingWorkspace: React.FC = () => {
             </div>
             ) : (
               <div className="mt-3 shrink-0 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] font-bold leading-4 text-blue-800">
-                Filters hidden to give the lot list more height. Showing {selectedRevenueYear === 'all' ? 'all years' : selectedRevenueYear}, {selectedRevenueMonth === 'all' ? 'all months' : selectedRevenueMonth}, {REVENUE_DAY_TYPE_LABELS[revenueDayTypeFilter].toLowerCase()}.
+                Filters hidden to give the lot list more height. Showing {selectedRevenueYear === 'all' ? 'all years' : selectedRevenueYear}, {selectedRevenueMonth === 'all' ? 'all months' : selectedRevenueMonth}, {selectedRevenueUploaderLabel || 'all uploaders'}, {REVENUE_DAY_TYPE_LABELS[revenueDayTypeFilter].toLowerCase()}.
               </div>
             )}
 
@@ -2405,16 +2505,16 @@ export const ParkingWorkspace: React.FC = () => {
 
                   <section className="rounded-3xl border border-violet-100 bg-violet-50 p-4 shadow-sm">
                     <div className="text-xs font-black uppercase tracking-wide text-violet-600">Capacity/utilization</div>
-                    <h3 className="mt-1 font-black text-violet-950">Known spaces and estimated use</h3>
+                    <h3 className="mt-1 font-black text-violet-950">Revenue per known space</h3>
                     <div className="mt-3 space-y-2">
                       {parkingPlannerAnalysis.capacityRows.slice(0, 5).map(row => (
                         <div key={row.key} className="rounded-2xl bg-white p-3">
                           <div className="flex items-start justify-between gap-2 text-sm font-black text-slate-800">
                             <span className="min-w-0 truncate">{row.label}</span>
-                            <span>{formatUtilization(row.utilizationPercent)}</span>
+                            <span>{row.revenuePerSpace == null ? '—' : `${money(row.revenuePerSpace)}/space`}</span>
                           </div>
                           <div className="mt-1 text-xs font-bold text-slate-400">
-                            {row.spaces?.toLocaleString() || 'Unknown'} spaces · {row.revenuePerSpace == null ? '—' : `${money(row.revenuePerSpace)}/space`}
+                            {row.spaces?.toLocaleString() || 'Unknown'} spaces · utilization {formatUtilization(row.utilizationPercent)}
                           </div>
                         </div>
                       ))}
@@ -2435,7 +2535,7 @@ export const ParkingWorkspace: React.FC = () => {
                             <span>{row.spaces == null ? '—' : `${row.spaces.toLocaleString()} spaces`}</span>
                           </div>
                           <div className="mt-1 text-xs font-bold text-slate-400">
-                            {money(row.revenue)} · {row.sessions.toLocaleString()} sessions · avg stay {minutesToDuration(row.averageStayMinutes)}
+                            {money(row.revenue)} {row.spaces == null ? 'revenue' : 'known-space revenue'} · {row.sessions.toLocaleString()} sessions · avg stay {minutesToDuration(row.averageStayMinutes)}
                           </div>
                           <div className="mt-1 text-xs font-bold text-slate-400">
                             {row.revenuePerSpace == null ? '—' : `${money(row.revenuePerSpace)}/space`} · utilization {formatUtilization(row.utilizationPercent)}
@@ -2583,6 +2683,49 @@ export const ParkingWorkspace: React.FC = () => {
                     {parkingTrendOverview.fastestGrowingLot.changePercent == null ? '' : ` (${parkingTrendOverview.fastestGrowingLot.changePercent.toFixed(1)}%)`}.
                   </div>
                 ) : null}
+              </section>
+
+              <section className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Import history</div>
+                    <h3 className="mt-1 font-black text-slate-950">Recent uploaded files</h3>
+                    <p className="mt-1 text-xs font-bold text-slate-400">Use this to filter to Madison or any saved uploader.</p>
+                  </div>
+                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-blue-700">{revenueImportHistory.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {revenueImportHistory.map(dataset => {
+                    const uploaderId = dataset.importedBy || 'unknown';
+                    const uploaderLabel = uploaderLabelById.get(uploaderId) || uploaderId;
+                    return (
+                      <div key={`${dataset.source}:${dataset.month}:${dataset.importedAt}:${dataset.sourceFileName}`} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-black text-slate-900">{dataset.month} · {getParkingRevenueSourceLabel(dataset.source)}</div>
+                            <div className="mt-1 truncate text-xs font-bold text-slate-500">{dataset.sourceFileName || 'Imported workbook'}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRevenueUploader(uploaderId);
+                              setLotFiltersCollapsed(false);
+                            }}
+                            className="shrink-0 rounded-xl border border-blue-100 bg-white px-2.5 py-1 text-[11px] font-black text-blue-700 hover:bg-blue-50"
+                          >
+                            Filter
+                          </button>
+                        </div>
+                        <div className="mt-2 text-xs font-bold text-slate-400">
+                          Uploaded by {uploaderLabel} · {formatImportedAt(dataset.importedAt)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {revenueImportHistory.length === 0 ? (
+                    <p className="rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-400">No revenue imports yet.</p>
+                  ) : null}
+                </div>
               </section>
 
               <section className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">

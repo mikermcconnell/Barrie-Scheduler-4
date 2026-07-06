@@ -291,10 +291,6 @@ function rowMatchesHourFilters(row: ParkingRevenueRawRow, filters: ParkingRevenu
   return true;
 }
 
-function rowMatchesFilters(row: ParkingRevenueRawRow, filters: ParkingRevenueFilters): boolean {
-  return rowMatchesDateSourceDayFilters(row, filters) && rowMatchesHourFilters(row, filters);
-}
-
 function hourWindow(filters: ParkingRevenueFilters): { start: number; end: number; minutes: number } {
   const startHour = typeof filters.hourStart === 'number' ? Math.max(0, Math.min(23, filters.hourStart)) : 0;
   const endHour = typeof filters.hourEnd === 'number' ? Math.max(0, Math.min(23, filters.hourEnd)) : 23;
@@ -316,83 +312,229 @@ function average(values: number[]): number {
   return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
 }
 
+function peakEntryFromCounts<T extends string | number>(counts: Map<T, number>): T | null {
+  let bestValue: T | null = null;
+  let bestCount = -1;
+  for (const [value, count] of counts.entries()) {
+    if (
+      bestValue == null
+      || count > bestCount
+      || (count === bestCount && String(value).localeCompare(String(bestValue)) < 0)
+    ) {
+      bestValue = value;
+      bestCount = count;
+    }
+  }
+  return bestValue;
+}
+
 function peakEntry<T extends string | number>(values: Iterable<T>): T | null {
   const counts = new Map<T, number>();
   for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
-  return [...counts.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0]?.[0] ?? null;
+  return peakEntryFromCounts(counts);
 }
 
-function buildLocationSummaries(rows: ParkingRevenueRawRow[], settings: ParkingSettings): ParkingRevenueLocationSummary[] {
+interface LocationAccumulator {
+  key: string;
+  first: ParkingRevenueRawRow;
+  mappedLocation?: ParkingRevenueLocationMapping;
+  sourceIds: Map<string, ParkingRevenueLocationRef>;
+  rowCount: number;
+  totalRevenue: number;
+  totalPaid: number;
+  durationTotal: number;
+  durationCount: number;
+  uniquePlates: Set<string>;
+  hotspotRevenue: number;
+  qrRevenue: number;
+  hourCounts: Map<number, number>;
+  dayCounts: Map<string, number>;
+  paidMinutes: number;
+}
+
+interface LocationSummaryIndex {
+  summaries: ParkingRevenueLocationSummary[];
+  categoryMemberships: Map<string, {
+    keys: Set<string>;
+    names: Set<string>;
+  }>;
+}
+
+function addCount<T extends string | number>(counts: Map<T, number>, value: T): void {
+  counts.set(value, (counts.get(value) || 0) + 1);
+}
+
+function createLocationAccumulator(
+  key: string,
+  row: ParkingRevenueRawRow,
+  mappedLocation?: ParkingRevenueLocationMapping,
+): LocationAccumulator {
+  return {
+    key,
+    first: row,
+    mappedLocation,
+    sourceIds: new Map(),
+    rowCount: 0,
+    totalRevenue: 0,
+    totalPaid: 0,
+    durationTotal: 0,
+    durationCount: 0,
+    uniquePlates: new Set(),
+    hotspotRevenue: 0,
+    qrRevenue: 0,
+    hourCounts: new Map(),
+    dayCounts: new Map(),
+    paidMinutes: 0,
+  };
+}
+
+function addRowToLocationAccumulator(
+  accumulator: LocationAccumulator,
+  row: ParkingRevenueRawRow,
+  filtersForPaidMinutes?: ParkingRevenueFilters,
+): void {
+  accumulator.rowCount += 1;
+  accumulator.totalRevenue += row.amount;
+  accumulator.totalPaid += row.total;
+  if (row.durationMinutes > 0) {
+    accumulator.durationTotal += row.durationMinutes;
+    accumulator.durationCount += 1;
+  }
+  if (row.plate) accumulator.uniquePlates.add(row.plate);
+  if (row.source === 'hotspot') accumulator.hotspotRevenue += row.amount;
+  if (row.source === 'qr') accumulator.qrRevenue += row.amount;
+  addCount(accumulator.hourCounts, Math.floor(row.startMinutes / 60));
+  addCount(accumulator.dayCounts, row.startDate);
+  accumulator.sourceIds.set(locationKeyForRef(row.source, row.sourceId), {
+    source: row.source,
+    sourceId: row.sourceId,
+    label: row.sourceLabel,
+  });
+  accumulator.paidMinutes += paidMinutesForRow(row, filtersForPaidMinutes || {});
+}
+
+function buildLocationSummaryIndex(
+  rows: ParkingRevenueRawRow[],
+  settings: ParkingSettings,
+  filtersForPaidMinutes?: ParkingRevenueFilters,
+): LocationSummaryIndex {
   const locationById = new Map((settings.revenueLocations || []).map(location => [location.id, location]));
   const locationLookup = buildParkingRevenueLocationLookup(settings);
-  const groups = new Map<string, ParkingRevenueRawRow[]>();
+  const groups = new Map<string, LocationAccumulator>();
   for (const row of rows) {
     const key = groupKeyForRow(row, locationLookup);
-    const group = groups.get(key) || [];
-    group.push(row);
-    groups.set(key, group);
+    let accumulator = groups.get(key);
+    if (!accumulator) {
+      accumulator = createLocationAccumulator(
+        key,
+        row,
+        locationById.get(key) || (row.physicalLocationId ? locationById.get(row.physicalLocationId) : undefined),
+      );
+      groups.set(key, accumulator);
+    }
+    addRowToLocationAccumulator(accumulator, row, filtersForPaidMinutes);
   }
 
-  return [...groups.entries()].map(([key, group]) => {
-    const first = group[0];
-    const mappedLocation = locationById.get(key) || (first.physicalLocationId ? locationById.get(first.physicalLocationId) : undefined);
-    const sourceIds = new Map<string, ParkingRevenueLocationRef>();
-    for (const row of group) {
-      sourceIds.set(locationKeyForRef(row.source, row.sourceId), { source: row.source, sourceId: row.sourceId, label: row.sourceLabel });
-    }
-    const durations = group.map(row => row.durationMinutes).filter(value => value > 0);
+  const categoryMemberships = new Map<string, { keys: Set<string>; names: Set<string> }>();
+  const summaries = [...groups.values()].map(accumulator => {
+    const { key, first, mappedLocation } = accumulator;
     const category = getParkingCategoryDisplay(settings, mappedLocation?.categoryId);
+    const categoryKey = category.id || UNCATEGORIZED_PARKING_CATEGORY_ID;
+    const membership = categoryMemberships.get(categoryKey) || {
+      keys: new Set<string>(),
+      names: new Set<string>(),
+    };
+    const displayName = mappedLocation?.displayName || groupNameForRow(first);
+    membership.keys.add(key);
+    membership.names.add(normalizeText(displayName).toLowerCase());
+    categoryMemberships.set(categoryKey, membership);
+
     return {
       key,
-      displayName: mappedLocation?.displayName || groupNameForRow(first),
-      sourceIds: mappedLocation?.sourceRefs?.length ? mappedLocation.sourceRefs : [...sourceIds.values()],
+      displayName,
+      sourceIds: mappedLocation?.sourceRefs?.length ? mappedLocation.sourceRefs : [...accumulator.sourceIds.values()],
       latitude: mappedLocation?.latitude ?? null,
       longitude: mappedLocation?.longitude ?? null,
       categoryId: category.id,
       categoryLabel: category.label,
       categoryColorHex: category.colorHex,
       isMapped: Boolean(mappedLocation && typeof mappedLocation.latitude === 'number' && typeof mappedLocation.longitude === 'number'),
-      rowCount: group.length,
-      totalRevenue: roundMoney(group.reduce((sum, row) => sum + row.amount, 0)),
-      totalPaid: roundMoney(group.reduce((sum, row) => sum + row.total, 0)),
-      averageStayMinutes: average(durations),
-      uniquePlateCount: new Set(group.map(row => row.plate).filter(Boolean)).size,
-      hotspotRevenue: roundMoney(group.filter(row => row.source === 'hotspot').reduce((sum, row) => sum + row.amount, 0)),
-      qrRevenue: roundMoney(group.filter(row => row.source === 'qr').reduce((sum, row) => sum + row.amount, 0)),
-      peakHour: peakEntry(group.map(row => Math.floor(row.startMinutes / 60))),
-      peakDay: peakEntry(group.map(row => row.startDate)) || '',
+      rowCount: accumulator.rowCount,
+      totalRevenue: roundMoney(accumulator.totalRevenue),
+      totalPaid: roundMoney(accumulator.totalPaid),
+      paidMinutes: accumulator.paidMinutes,
+      averageStayMinutes: accumulator.durationCount > 0 ? Math.round(accumulator.durationTotal / accumulator.durationCount) : 0,
+      uniquePlateCount: accumulator.uniquePlates.size,
+      hotspotRevenue: roundMoney(accumulator.hotspotRevenue),
+      qrRevenue: roundMoney(accumulator.qrRevenue),
+      peakHour: peakEntryFromCounts(accumulator.hourCounts),
+      peakDay: peakEntryFromCounts(accumulator.dayCounts) || '',
     };
   }).sort((a, b) => b.totalRevenue - a.totalRevenue || b.rowCount - a.rowCount || a.displayName.localeCompare(b.displayName));
+
+  return { summaries, categoryMemberships };
 }
 
-function locationMatchesCategory(location: ParkingRevenueLocationSummary, categoryId: ParkingRevenueFilters['categoryId']): boolean {
-  if (!categoryId || categoryId === 'all') return true;
-  if (categoryId === UNCATEGORIZED_PARKING_CATEGORY_ID) return !location.categoryId;
-  return location.categoryId === categoryId;
+function categoryMembershipForSummaries(
+  index: LocationSummaryIndex,
+  categoryId: ParkingRevenueFilters['categoryId'],
+): { keys: Set<string>; names: Set<string> } | null {
+  if (!categoryId || categoryId === 'all') return null;
+  if (categoryId === UNCATEGORIZED_PARKING_CATEGORY_ID) {
+    return index.categoryMemberships.get(UNCATEGORIZED_PARKING_CATEGORY_ID) || { keys: new Set(), names: new Set() };
+  }
+  return index.categoryMemberships.get(categoryId) || { keys: new Set(), names: new Set() };
 }
 
-function rowBelongsToLocationSummary(row: ParkingRevenueRawRow, location: ParkingRevenueLocationSummary): boolean {
-  if (row.physicalLocationId && row.physicalLocationId === location.key) return true;
-  const refs = new Set(location.sourceIds.map(ref => locationKeyForRef(ref.source, ref.sourceId)));
-  if (refs.has(locationKeyForRef(row.source, row.sourceId))) return true;
+function rowLocationKey(row: ParkingRevenueRawRow, locationLookup: Map<string, ParkingRevenueLocationMapping>): string {
+  return groupKeyForRow(row, locationLookup);
+}
+
+function rowMatchesCategoryMembership(
+  row: ParkingRevenueRawRow,
+  membership: { keys: Set<string>; names: Set<string> },
+  locationLookup: Map<string, ParkingRevenueLocationMapping>,
+): boolean {
+  if (membership.keys.has(rowLocationKey(row, locationLookup))) return true;
   const rowNames = [row.physicalLocationName, row.sourceLabel].map(value => normalizeText(value).toLowerCase()).filter(Boolean);
-  return rowNames.includes(normalizeText(location.displayName).toLowerCase());
+  return rowNames.some(name => membership.names.has(name));
+}
+
+interface TrendAccumulator {
+  key: string;
+  label: string;
+  rowCount: number;
+  totalRevenue: number;
+  durationTotal: number;
+  durationCount: number;
 }
 
 function buildTrend(rows: ParkingRevenueRawRow[], keyForRow: (row: ParkingRevenueRawRow) => string, labelForKey = (key: string) => key): ParkingRevenueTrendPoint[] {
-  const groups = new Map<string, ParkingRevenueRawRow[]>();
+  const groups = new Map<string, TrendAccumulator>();
   for (const row of rows) {
     const key = keyForRow(row);
-    const group = groups.get(key) || [];
-    group.push(row);
+    const group = groups.get(key) || {
+      key,
+      label: labelForKey(key),
+      rowCount: 0,
+      totalRevenue: 0,
+      durationTotal: 0,
+      durationCount: 0,
+    };
+    group.rowCount += 1;
+    group.totalRevenue += row.amount;
+    if (row.durationMinutes > 0) {
+      group.durationTotal += row.durationMinutes;
+      group.durationCount += 1;
+    }
     groups.set(key, group);
   }
-  return [...groups.entries()].map(([key, group]) => ({
-    key,
-    label: labelForKey(key),
-    rowCount: group.length,
-    totalRevenue: roundMoney(group.reduce((sum, row) => sum + row.amount, 0)),
-    averageStayMinutes: average(group.map(row => row.durationMinutes).filter(value => value > 0)),
+  return [...groups.values()].map(group => ({
+    key: group.key,
+    label: group.label,
+    rowCount: group.rowCount,
+    totalRevenue: roundMoney(group.totalRevenue),
+    averageStayMinutes: group.durationCount > 0 ? Math.round(group.durationTotal / group.durationCount) : 0,
   })).sort((a, b) => a.key.localeCompare(b.key));
 }
 
@@ -401,42 +543,45 @@ export function buildParkingRevenueAnalytics(
   settings: ParkingSettings,
   filters: ParkingRevenueFilters = {},
 ): ParkingRevenueAnalytics {
-  const periodRows = (summary?.datasets || [])
-    .flatMap(dataset => dataset.rows)
-    .filter(row => rowMatchesDateSourceDayFilters(row, filters));
-  const baseRows = periodRows
-    .filter(row => rowMatchesFilters(row, filters));
-  const periodLocationSummaries = buildLocationSummaries(periodRows, settings);
-  const categoryFilteredPeriodSummaries = periodLocationSummaries.filter(location => locationMatchesCategory(location, filters.categoryId));
-  const activeDayRows = filters.categoryId && filters.categoryId !== 'all'
-    ? periodRows.filter(row => categoryFilteredPeriodSummaries.some(location => rowBelongsToLocationSummary(row, location)))
-    : periodRows;
-  const baseLocationSummaries = buildLocationSummaries(baseRows, settings);
-  const categoryFilteredSummaries = baseLocationSummaries.filter(location => locationMatchesCategory(location, filters.categoryId));
-  const rows = filters.categoryId && filters.categoryId !== 'all'
-    ? baseRows.filter(row => categoryFilteredSummaries.some(location => rowBelongsToLocationSummary(row, location)))
+  const locationLookup = buildParkingRevenueLocationLookup(settings);
+  const periodRows: ParkingRevenueRawRow[] = [];
+  const baseRows: ParkingRevenueRawRow[] = [];
+  for (const dataset of summary?.datasets || []) {
+    if (filters.importedBy && filters.importedBy !== 'all' && (dataset.importedBy || 'unknown') !== filters.importedBy) continue;
+    for (const row of dataset.rows) {
+      if (!rowMatchesDateSourceDayFilters(row, filters)) continue;
+      periodRows.push(row);
+      if (rowMatchesHourFilters(row, filters)) baseRows.push(row);
+    }
+  }
+
+  const periodIndex = buildLocationSummaryIndex(periodRows, settings);
+  const activeDayCategoryMembership = categoryMembershipForSummaries(periodIndex, filters.categoryId);
+  const activeDayDates = new Set<string>();
+  for (const row of periodRows) {
+    if (activeDayCategoryMembership && !rowMatchesCategoryMembership(row, activeDayCategoryMembership, locationLookup)) continue;
+    activeDayDates.add(row.startDate);
+  }
+
+  const baseIndex = buildLocationSummaryIndex(baseRows, settings, filters);
+  const rowCategoryMembership = categoryMembershipForSummaries(baseIndex, filters.categoryId);
+  const rows = rowCategoryMembership
+    ? baseRows.filter(row => rowMatchesCategoryMembership(row, rowCategoryMembership, locationLookup))
     : baseRows;
-  const locationSummaries = buildLocationSummaries(rows, settings);
+  const finalIndex = rowCategoryMembership ? buildLocationSummaryIndex(rows, settings, filters) : baseIndex;
+  const locationSummaries = finalIndex.summaries;
   const durations = rows.map(row => row.durationMinutes).filter(value => value > 0);
-  const enrichedLocationSummaries = locationSummaries
-    .filter(location => locationMatchesCategory(location, filters.categoryId))
-    .map(location => ({
-      ...location,
-      paidMinutes: rows
-        .filter(row => rowBelongsToLocationSummary(row, location))
-        .reduce((sum, row) => sum + paidMinutesForRow(row, filters), 0),
-    }));
   const window = hourWindow(filters);
   return {
     rows,
-    locationSummaries: enrichedLocationSummaries,
-    mappedLocationSummaries: enrichedLocationSummaries.filter(location => location.isMapped),
-    unmappedLocationSummaries: enrichedLocationSummaries.filter(location => !location.isMapped),
+    locationSummaries,
+    mappedLocationSummaries: locationSummaries.filter(location => location.isMapped),
+    unmappedLocationSummaries: locationSummaries.filter(location => !location.isMapped),
     totalRevenue: roundMoney(rows.reduce((sum, row) => sum + row.amount, 0)),
     totalPaid: roundMoney(rows.reduce((sum, row) => sum + row.total, 0)),
     rowCount: rows.length,
     paidMinutes: rows.reduce((sum, row) => sum + paidMinutesForRow(row, filters), 0),
-    activeDayCount: new Set(activeDayRows.map(row => row.startDate)).size,
+    activeDayCount: activeDayDates.size,
     hourWindowMinutes: window.minutes,
     averageStayMinutes: average(durations),
     uniquePlateCount: new Set(rows.map(row => row.plate).filter(Boolean)).size,

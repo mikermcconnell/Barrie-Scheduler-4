@@ -200,19 +200,42 @@ function buildActiveDayMonthlyTrend(
   rows: ParkingRevenueRawRow[],
   includeRow: (row: ParkingRevenueRawRow) => boolean,
 ): ParkingAnalysisChartPoint[] {
-  const groups = new Map<string, ParkingRevenueRawRow[]>();
-  for (const row of rows.filter(includeRow)) {
-    groups.set(row.startMonth, [...(groups.get(row.startMonth) || []), row]);
+  const groups = new Map<string, {
+    key: string;
+    revenue: number;
+    sessions: number;
+    durationTotal: number;
+    durationCount: number;
+    activeDates: Set<string>;
+  }>();
+  for (const row of rows) {
+    if (!includeRow(row)) continue;
+    const group = groups.get(row.startMonth) || {
+      key: row.startMonth,
+      revenue: 0,
+      sessions: 0,
+      durationTotal: 0,
+      durationCount: 0,
+      activeDates: new Set<string>(),
+    };
+    group.revenue += row.amount;
+    group.sessions += 1;
+    if (row.durationMinutes > 0) {
+      group.durationTotal += row.durationMinutes;
+      group.durationCount += 1;
+    }
+    group.activeDates.add(row.startDate);
+    groups.set(row.startMonth, group);
   }
 
-  return [...groups.entries()].map(([month, group]) => {
-    const activeDays = Math.max(1, new Set(group.map(row => row.startDate)).size);
+  return [...groups.values()].map(group => {
+    const activeDays = Math.max(1, group.activeDates.size);
     return {
-      key: month,
-      label: monthLabel(month),
-      revenue: roundMoney(group.reduce((sum, row) => sum + row.amount, 0) / activeDays),
-      sessions: roundOne(group.length / activeDays),
-      averageStayMinutes: average(group.map(row => row.durationMinutes).filter(value => value > 0)),
+      key: group.key,
+      label: monthLabel(group.key),
+      revenue: roundMoney(group.revenue / activeDays),
+      sessions: roundOne(group.sessions / activeDays),
+      averageStayMinutes: group.durationCount > 0 ? Math.round(group.durationTotal / group.durationCount) : 0,
     };
   }).sort((a, b) => a.key.localeCompare(b.key));
 }
@@ -278,18 +301,39 @@ function buildTrend(
   keyForRow: (row: ParkingRevenueRawRow) => string,
   labelForKey = (key: string) => key,
 ): ParkingAnalysisChartPoint[] {
-  const groups = new Map<string, ParkingRevenueRawRow[]>();
+  const groups = new Map<string, {
+    key: string;
+    label: string;
+    revenue: number;
+    sessions: number;
+    durationTotal: number;
+    durationCount: number;
+  }>();
   for (const row of rows) {
     const key = keyForRow(row);
-    groups.set(key, [...(groups.get(key) || []), row]);
+    const group = groups.get(key) || {
+      key,
+      label: labelForKey(key),
+      revenue: 0,
+      sessions: 0,
+      durationTotal: 0,
+      durationCount: 0,
+    };
+    group.revenue += row.amount;
+    group.sessions += 1;
+    if (row.durationMinutes > 0) {
+      group.durationTotal += row.durationMinutes;
+      group.durationCount += 1;
+    }
+    groups.set(key, group);
   }
 
-  return [...groups.entries()].map(([key, group]) => ({
-    key,
-    label: labelForKey(key),
-    revenue: roundMoney(group.reduce((sum, row) => sum + row.amount, 0)),
-    sessions: group.length,
-    averageStayMinutes: average(group.map(row => row.durationMinutes).filter(value => value > 0)),
+  return [...groups.values()].map(group => ({
+    key: group.key,
+    label: group.label,
+    revenue: roundMoney(group.revenue),
+    sessions: group.sessions,
+    averageStayMinutes: group.durationCount > 0 ? Math.round(group.durationTotal / group.durationCount) : 0,
   })).sort((a, b) => a.key.localeCompare(b.key));
 }
 
@@ -313,13 +357,23 @@ function buildHourlyProfile(rows: ParkingRevenueRawRow[]): ParkingAnalysisChartP
 }
 
 function buildSourceMix(rows: ParkingRevenueRawRow[]): ParkingSourceMixPoint[] {
+  const totals = new Map<ParkingRevenueSource, { revenue: number; sessions: number }>([
+    ['hotspot', { revenue: 0, sessions: 0 }],
+    ['qr', { revenue: 0, sessions: 0 }],
+  ]);
+  for (const row of rows) {
+    const total = totals.get(row.source);
+    if (!total) continue;
+    total.revenue += row.amount;
+    total.sessions += 1;
+  }
   return (['hotspot', 'qr'] as ParkingRevenueSource[]).map(source => {
-    const sourceRows = rows.filter(row => row.source === source);
+    const total = totals.get(source) || { revenue: 0, sessions: 0 };
     return {
       key: source,
       label: source === 'hotspot' ? 'HotSpot app' : 'QR code',
-      revenue: roundMoney(sourceRows.reduce((sum, row) => sum + row.amount, 0)),
-      sessions: sourceRows.length,
+      revenue: roundMoney(total.revenue),
+      sessions: total.sessions,
     };
   });
 }
@@ -398,6 +452,20 @@ function percentShare(value: number, total: number): number {
   return Math.round((value / total) * 1000) / 10;
 }
 
+function sortByRevenuePerSpace(a: ParkingLotComparisonPoint, b: ParkingLotComparisonPoint): number {
+  return (b.revenuePerSpace ?? -1) - (a.revenuePerSpace ?? -1)
+    || (b.utilizationPercent ?? -1) - (a.utilizationPercent ?? -1)
+    || b.revenue - a.revenue
+    || b.sessions - a.sessions;
+}
+
+function sortByUtilization(a: ParkingLotComparisonPoint, b: ParkingLotComparisonPoint): number {
+  return (b.utilizationPercent ?? -1) - (a.utilizationPercent ?? -1)
+    || (b.revenuePerSpace ?? -1) - (a.revenuePerSpace ?? -1)
+    || b.revenue - a.revenue
+    || b.sessions - a.sessions;
+}
+
 function buildSelectedLotAnalysis(
   analytics: ParkingRevenueAnalytics,
   selectedLocation: ParkingRevenueLocationSummary,
@@ -448,14 +516,21 @@ function buildInsights(
   const busiestLot = analytics.locationSummaries.slice().sort((a, b) => b.rowCount - a.rowCount)[0];
   const highestRevenueLot = topLotsByRevenue[0];
   const longestStayLot = analytics.locationSummaries.slice().sort((a, b) => b.averageStayMinutes - a.averageStayMinutes)[0];
-  const strongestCapacityLot = capacityRows[0];
+  const strongestRevenuePerSpaceLot = capacityRows
+    .filter(lot => lot.revenuePerSpace != null)
+    .slice()
+    .sort(sortByRevenuePerSpace)[0];
+  const strongestUtilizationLot = capacityRows
+    .filter(lot => lot.utilizationPercent != null)
+    .slice()
+    .sort(sortByUtilization)[0];
 
   if (highestRevenueLot) insights.push(`${highestRevenueLot.label} leads revenue at ${highestRevenueLot.revenue.toLocaleString(undefined, { style: 'currency', currency: 'CAD' })}.`);
   if (busiestLot) insights.push(`${busiestLot.displayName} has the most sessions with ${busiestLot.rowCount.toLocaleString()} visits.`);
   if (analytics.peakHour != null) insights.push(`The system-wide peak starts around ${String(analytics.peakHour).padStart(2, '0')}:00.`);
   if (longestStayLot && longestStayLot.averageStayMinutes > analytics.averageStayMinutes) insights.push(`${longestStayLot.displayName} has the longest average stay at ${Math.round(longestStayLot.averageStayMinutes / 60 * 10) / 10} hours.`);
-  if (strongestCapacityLot?.revenuePerSpace != null) insights.push(`${strongestCapacityLot.label} generates the most revenue per known space.`);
-  if (strongestCapacityLot?.utilizationPercent != null) insights.push(`${strongestCapacityLot.label} has the strongest estimated utilization at ${strongestCapacityLot.utilizationPercent.toFixed(1)}%.`);
+  if (strongestRevenuePerSpaceLot?.revenuePerSpace != null) insights.push(`${strongestRevenuePerSpaceLot.label} generates the most revenue per known space.`);
+  if (strongestUtilizationLot?.utilizationPercent != null) insights.push(`${strongestUtilizationLot.label} has the strongest estimated utilization at ${strongestUtilizationLot.utilizationPercent.toFixed(1)}%.`);
   if (selectedLot) insights.push(`${selectedLot.displayName} represents ${selectedLot.revenueSharePercent}% of filtered revenue and ranks #${selectedLot.revenueRank} by revenue.`);
 
   return insights.slice(0, 6);
@@ -473,15 +548,17 @@ function buildCategoryComparisonRows(
   }
 
   return [...groups.entries()].map(([key, group]) => {
-    const sessions = group.reduce((sum, lot) => sum + lot.sessions, 0);
-    const revenue = roundMoney(group.reduce((sum, lot) => sum + lot.revenue, 0));
-    const spaces = group.some(lot => lot.spaces != null)
-      ? group.reduce((sum, lot) => sum + (lot.spaces || 0), 0)
+    const knownCapacityLots = group.filter(lot => lot.spaces != null && lot.spaces > 0);
+    const metricGroup = knownCapacityLots.length > 0 ? knownCapacityLots : group;
+    const sessions = metricGroup.reduce((sum, lot) => sum + lot.sessions, 0);
+    const revenue = roundMoney(metricGroup.reduce((sum, lot) => sum + lot.revenue, 0));
+    const spaces = knownCapacityLots.length > 0
+      ? knownCapacityLots.reduce((sum, lot) => sum + (lot.spaces || 0), 0)
       : null;
-    const paidMinutes = group.reduce((sum, lot) => sum + lot.paidMinutes, 0);
+    const paidMinutes = metricGroup.reduce((sum, lot) => sum + lot.paidMinutes, 0);
     const availableSpaceMinutes = spaces && activeDayCount > 0 ? spaces * activeDayCount * hourWindowMinutes : 0;
-    const weightedStaySessions = group.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? Math.max(lot.sessions, 1) : 0), 0);
-    const weightedStayTotal = group.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? lot.averageStayMinutes * Math.max(lot.sessions, 1) : 0), 0);
+    const weightedStaySessions = metricGroup.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? Math.max(lot.sessions, 1) : 0), 0);
+    const weightedStayTotal = metricGroup.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? lot.averageStayMinutes * Math.max(lot.sessions, 1) : 0), 0);
     return {
       key,
       label: group[0]?.categoryLabel || 'Uncategorized',
@@ -492,13 +569,13 @@ function buildCategoryComparisonRows(
       sessions,
       paidMinutes,
       averageStayMinutes: weightedStaySessions > 0 ? Math.round(weightedStayTotal / weightedStaySessions) : 0,
-      uniquePlates: group.reduce((sum, lot) => sum + lot.uniquePlates, 0),
+      uniquePlates: metricGroup.reduce((sum, lot) => sum + lot.uniquePlates, 0),
       spaces,
       revenuePerSpace: spaces ? roundMoney(revenue / spaces) : null,
       sessionsPerSpace: spaces ? roundMoney(sessions / spaces) : null,
       utilizationPercent: availableSpaceMinutes > 0 ? roundOne((paidMinutes / availableSpaceMinutes) * 100) : null,
     };
-  }).sort((a, b) => b.revenue - a.revenue || b.sessions - a.sessions || a.label.localeCompare(b.label));
+  }).sort((a, b) => sortByRevenuePerSpace(a, b) || a.label.localeCompare(b.label));
 }
 
 export function buildParkingPlannerAnalysis(
@@ -517,7 +594,7 @@ export function buildParkingPlannerAnalysis(
   const capacityRows = analytics.locationSummaries
     .map(location => withCapacity(location, capacityByLocationKey, activeDayCount, hourWindowMinutes))
     .filter(location => location.spaces != null)
-    .sort((a, b) => (b.utilizationPercent ?? -1) - (a.utilizationPercent ?? -1) || (b.revenuePerSpace as number) - (a.revenuePerSpace as number) || b.revenue - a.revenue);
+    .sort(sortByRevenuePerSpace);
   const categoryComparisonRows = buildCategoryComparisonRows(lotComparisonRows, activeDayCount, hourWindowMinutes);
   const selectedLot = selectedLocation ? buildSelectedLotAnalysis(analytics, selectedLocation, capacityByLocationKey) : null;
 

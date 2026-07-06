@@ -246,6 +246,7 @@ export interface ParkingRevenueParseResult {
 export interface ParkingRevenueFilters {
   months?: string[];
   source?: ParkingRevenueSource | 'all';
+  importedBy?: string | 'all';
   dayType?: 'all' | 'weekday' | 'weekend' | 'saturday' | 'sunday';
   categoryId?: ParkingRevenueCategoryFilter;
   hourStart?: number;

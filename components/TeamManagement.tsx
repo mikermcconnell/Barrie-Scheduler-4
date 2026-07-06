@@ -359,7 +359,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             setCopiedCode(true);
             toast?.success('Invite code copied!');
             setTimeout(() => setCopiedCode(false), 2000);
-        } catch (error) {
+        } catch {
             toast?.error('Failed to copy code');
         }
     };
@@ -376,7 +376,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             if (isViewingCurrentTeam) {
                 await refreshTeam();
             }
-        } catch (error) {
+        } catch {
             toast?.error('Failed to regenerate code');
         }
     };
@@ -391,7 +391,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             setCopiedLink(true);
             toast?.success('Invite link copied!');
             setTimeout(() => setCopiedLink(false), 2000);
-        } catch (error) {
+        } catch {
             toast?.error('Failed to copy link');
         }
     };
@@ -637,7 +637,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             await leaveTeam(user.uid);
             await refreshTeam();
             toast?.success('Left team');
-        } catch (error) {
+        } catch {
             toast?.error('Failed to leave team');
         } finally {
             setLoading(false);
@@ -653,7 +653,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             await removeMember(activeTeamId, memberId);
             await reloadActiveTeamDetails();
             toast?.success(`${memberName} removed from team`);
-        } catch (error) {
+        } catch {
             toast?.error('Failed to remove member');
         }
     };
@@ -672,7 +672,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 await refreshTeam();
             }
             toast?.success('Workspace access updated');
-        } catch (error) {
+        } catch {
             toast?.error('Failed to update workspace access');
         }
     };
@@ -753,6 +753,25 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             userId: selectedWizardMember.userId,
         });
         toast?.success(`Previewing ${activeTeamDetails.name} as ${selectedWizardMember.displayName || selectedWizardMember.email}`);
+        onClose?.();
+    };
+
+    const handleViewAsSavedMember = () => {
+        if (!activeTeamDetails || !selectedWizardMember || !canLookupTeams) return;
+
+        const memberLabel = selectedWizardMember.displayName || selectedWizardMember.email || 'selected user';
+        startDeveloperPreview({
+            team: activeTeamDetails,
+            accessLevel: resolveWorkspaceAccessLevel(selectedWizardMember),
+            workspaceOverrides: selectedWizardMember.workspaceOverrides,
+            role: selectedWizardMember.role,
+            displayName: memberLabel,
+            email: selectedWizardMember.email,
+            sourceLabel: `${memberLabel} (saved access)`,
+            userId: selectedWizardMember.userId,
+            readOnly: true,
+        });
+        toast?.success(`Viewing ${activeTeamDetails.name} as ${memberLabel}`);
         onClose?.();
     };
 
@@ -1289,7 +1308,16 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                     title="Preview the app as this user with the selected settings. This does not change your developer account team."
                                 >
                                     <Eye size={16} />
-                                    Preview selected user
+                                    Preview selected settings
+                                </button>
+                                <button
+                                    onClick={handleViewAsSavedMember}
+                                    disabled={!selectedWizardMember}
+                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-purple-300 bg-purple-50 px-4 py-2 text-sm font-bold text-purple-800 hover:bg-purple-100 disabled:opacity-50 sm:col-span-2"
+                                    title="View the app exactly as this user's saved team access. This is read-only preview mode."
+                                >
+                                    <Eye size={16} />
+                                    View as saved user
                                 </button>
                             </div>
                         </div>

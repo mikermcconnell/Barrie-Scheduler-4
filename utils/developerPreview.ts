@@ -15,6 +15,7 @@ export interface DeveloperPreviewInput {
     email?: string;
     sourceLabel: string;
     userId?: string;
+    readOnly?: boolean;
 }
 
 export interface DeveloperPreviewSession {
@@ -22,6 +23,7 @@ export interface DeveloperPreviewSession {
     teamMember: TeamMember;
     sourceLabel: string;
     startedAt: string;
+    readOnly: boolean;
 }
 
 export function createDeveloperPreviewSession(input: DeveloperPreviewInput): DeveloperPreviewSession {
@@ -31,6 +33,7 @@ export function createDeveloperPreviewSession(input: DeveloperPreviewInput): Dev
         team: input.team,
         sourceLabel: input.sourceLabel,
         startedAt: now,
+        readOnly: input.readOnly ?? true,
         teamMember: {
             id: `developer-preview:${input.team.id}`,
             userId: input.userId ?? 'developer-preview',

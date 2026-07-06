@@ -600,6 +600,26 @@ describe('parking revenue parser and analytics', () => {
     });
   });
 
+  it('filters revenue analytics by uploader', () => {
+    const settings = revenueSettings();
+    const madisonDataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'MADISON', '10.00', '1.30', '11.30', '1', 'visa'],
+    ]), { fileName: 'madison.xlsx', importedBy: 'madison.shortt', settings }).dataset;
+    const otherDataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-02-01 09:00:00', 'OTHER', '5.00', '0.65', '5.65', '1', 'visa'],
+    ]), { fileName: 'other.xlsx', importedBy: 'user-2', settings }).dataset;
+
+    const summary = buildParkingRevenueReplacementSummary(null, [madisonDataset, otherDataset], 'user-1', 'revenue.json');
+
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'madison.shortt' }).totalRevenue).toBe(10);
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'user-2' }).totalRevenue).toBe(5);
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'all' }).totalRevenue).toBe(15);
+  });
+
   it('filters revenue analytics by weekdays, Saturdays, and Sundays separately', () => {
     const settings = revenueSettings();
     const dataset = parseParkingRevenueWorkbook(workbookBuffer([
