@@ -14,6 +14,7 @@ import {
   type ParkingRevenueTrendPoint,
   type ParkingSettings,
 } from './parkingTypes';
+import { getParkingCategoryDisplay, UNCATEGORIZED_PARKING_CATEGORY_ID } from './parkingCategories';
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
@@ -270,16 +271,44 @@ function groupNameForRow(row: ParkingRevenueRawRow): string {
   return row.physicalLocationName || row.sourceLabel || row.sourceId;
 }
 
-function rowMatchesFilters(row: ParkingRevenueRawRow, filters: ParkingRevenueFilters): boolean {
+function rowMatchesDateSourceDayFilters(row: ParkingRevenueRawRow, filters: ParkingRevenueFilters): boolean {
   if (filters.months && filters.months.length > 0 && !filters.months.includes(row.startMonth)) return false;
   if (filters.source && filters.source !== 'all' && row.source !== filters.source) return false;
   if (filters.dayType === 'weekday' && row.isWeekend) return false;
   if (filters.dayType === 'weekend' && !row.isWeekend) return false;
   if (filters.dayType === 'saturday' && row.weekday !== 6) return false;
   if (filters.dayType === 'sunday' && row.weekday !== 0) return false;
-  if (typeof filters.hourStart === 'number' && Math.floor(row.startMinutes / 60) < filters.hourStart) return false;
-  if (typeof filters.hourEnd === 'number' && Math.floor(row.startMinutes / 60) > filters.hourEnd) return false;
   return true;
+}
+
+function rowMatchesHourFilters(row: ParkingRevenueRawRow, filters: ParkingRevenueFilters): boolean {
+  const startHour = typeof filters.hourStart === 'number' ? Math.max(0, Math.min(23, filters.hourStart)) : 0;
+  const endHour = typeof filters.hourEnd === 'number' ? Math.max(0, Math.min(23, filters.hourEnd)) : 23;
+  const from = Math.min(startHour, endHour);
+  const to = Math.max(startHour, endHour);
+  const rowHour = Math.floor(row.startMinutes / 60);
+  if (rowHour < from || rowHour > to) return false;
+  return true;
+}
+
+function rowMatchesFilters(row: ParkingRevenueRawRow, filters: ParkingRevenueFilters): boolean {
+  return rowMatchesDateSourceDayFilters(row, filters) && rowMatchesHourFilters(row, filters);
+}
+
+function hourWindow(filters: ParkingRevenueFilters): { start: number; end: number; minutes: number } {
+  const startHour = typeof filters.hourStart === 'number' ? Math.max(0, Math.min(23, filters.hourStart)) : 0;
+  const endHour = typeof filters.hourEnd === 'number' ? Math.max(0, Math.min(23, filters.hourEnd)) : 23;
+  const from = Math.min(startHour, endHour);
+  const to = Math.max(startHour, endHour);
+  return { start: from * 60, end: (to + 1) * 60, minutes: (to - from + 1) * 60 };
+}
+
+function paidMinutesForRow(row: ParkingRevenueRawRow, filters: ParkingRevenueFilters): number {
+  const window = hourWindow(filters);
+  const rowStart = Math.max(0, row.startMinutes);
+  const rowEnd = Math.max(rowStart, row.endMinutes);
+  const overlap = Math.min(rowEnd, window.end) - Math.max(rowStart, window.start);
+  return Math.max(0, Math.min(row.durationMinutes, overlap));
 }
 
 function average(values: number[]): number {
@@ -312,12 +341,16 @@ function buildLocationSummaries(rows: ParkingRevenueRawRow[], settings: ParkingS
       sourceIds.set(locationKeyForRef(row.source, row.sourceId), { source: row.source, sourceId: row.sourceId, label: row.sourceLabel });
     }
     const durations = group.map(row => row.durationMinutes).filter(value => value > 0);
+    const category = getParkingCategoryDisplay(settings, mappedLocation?.categoryId);
     return {
       key,
       displayName: mappedLocation?.displayName || groupNameForRow(first),
       sourceIds: mappedLocation?.sourceRefs?.length ? mappedLocation.sourceRefs : [...sourceIds.values()],
       latitude: mappedLocation?.latitude ?? null,
       longitude: mappedLocation?.longitude ?? null,
+      categoryId: category.id,
+      categoryLabel: category.label,
+      categoryColorHex: category.colorHex,
       isMapped: Boolean(mappedLocation && typeof mappedLocation.latitude === 'number' && typeof mappedLocation.longitude === 'number'),
       rowCount: group.length,
       totalRevenue: roundMoney(group.reduce((sum, row) => sum + row.amount, 0)),
@@ -330,6 +363,20 @@ function buildLocationSummaries(rows: ParkingRevenueRawRow[], settings: ParkingS
       peakDay: peakEntry(group.map(row => row.startDate)) || '',
     };
   }).sort((a, b) => b.totalRevenue - a.totalRevenue || b.rowCount - a.rowCount || a.displayName.localeCompare(b.displayName));
+}
+
+function locationMatchesCategory(location: ParkingRevenueLocationSummary, categoryId: ParkingRevenueFilters['categoryId']): boolean {
+  if (!categoryId || categoryId === 'all') return true;
+  if (categoryId === UNCATEGORIZED_PARKING_CATEGORY_ID) return !location.categoryId;
+  return location.categoryId === categoryId;
+}
+
+function rowBelongsToLocationSummary(row: ParkingRevenueRawRow, location: ParkingRevenueLocationSummary): boolean {
+  if (row.physicalLocationId && row.physicalLocationId === location.key) return true;
+  const refs = new Set(location.sourceIds.map(ref => locationKeyForRef(ref.source, ref.sourceId)));
+  if (refs.has(locationKeyForRef(row.source, row.sourceId))) return true;
+  const rowNames = [row.physicalLocationName, row.sourceLabel].map(value => normalizeText(value).toLowerCase()).filter(Boolean);
+  return rowNames.includes(normalizeText(location.displayName).toLowerCase());
 }
 
 function buildTrend(rows: ParkingRevenueRawRow[], keyForRow: (row: ParkingRevenueRawRow) => string, labelForKey = (key: string) => key): ParkingRevenueTrendPoint[] {
@@ -354,19 +401,43 @@ export function buildParkingRevenueAnalytics(
   settings: ParkingSettings,
   filters: ParkingRevenueFilters = {},
 ): ParkingRevenueAnalytics {
-  const rows = (summary?.datasets || [])
+  const periodRows = (summary?.datasets || [])
     .flatMap(dataset => dataset.rows)
+    .filter(row => rowMatchesDateSourceDayFilters(row, filters));
+  const baseRows = periodRows
     .filter(row => rowMatchesFilters(row, filters));
+  const periodLocationSummaries = buildLocationSummaries(periodRows, settings);
+  const categoryFilteredPeriodSummaries = periodLocationSummaries.filter(location => locationMatchesCategory(location, filters.categoryId));
+  const activeDayRows = filters.categoryId && filters.categoryId !== 'all'
+    ? periodRows.filter(row => categoryFilteredPeriodSummaries.some(location => rowBelongsToLocationSummary(row, location)))
+    : periodRows;
+  const baseLocationSummaries = buildLocationSummaries(baseRows, settings);
+  const categoryFilteredSummaries = baseLocationSummaries.filter(location => locationMatchesCategory(location, filters.categoryId));
+  const rows = filters.categoryId && filters.categoryId !== 'all'
+    ? baseRows.filter(row => categoryFilteredSummaries.some(location => rowBelongsToLocationSummary(row, location)))
+    : baseRows;
   const locationSummaries = buildLocationSummaries(rows, settings);
   const durations = rows.map(row => row.durationMinutes).filter(value => value > 0);
+  const enrichedLocationSummaries = locationSummaries
+    .filter(location => locationMatchesCategory(location, filters.categoryId))
+    .map(location => ({
+      ...location,
+      paidMinutes: rows
+        .filter(row => rowBelongsToLocationSummary(row, location))
+        .reduce((sum, row) => sum + paidMinutesForRow(row, filters), 0),
+    }));
+  const window = hourWindow(filters);
   return {
     rows,
-    locationSummaries,
-    mappedLocationSummaries: locationSummaries.filter(location => location.isMapped),
-    unmappedLocationSummaries: locationSummaries.filter(location => !location.isMapped),
+    locationSummaries: enrichedLocationSummaries,
+    mappedLocationSummaries: enrichedLocationSummaries.filter(location => location.isMapped),
+    unmappedLocationSummaries: enrichedLocationSummaries.filter(location => !location.isMapped),
     totalRevenue: roundMoney(rows.reduce((sum, row) => sum + row.amount, 0)),
     totalPaid: roundMoney(rows.reduce((sum, row) => sum + row.total, 0)),
     rowCount: rows.length,
+    paidMinutes: rows.reduce((sum, row) => sum + paidMinutesForRow(row, filters), 0),
+    activeDayCount: new Set(activeDayRows.map(row => row.startDate)).size,
+    hourWindowMinutes: window.minutes,
     averageStayMinutes: average(durations),
     uniquePlateCount: new Set(rows.map(row => row.plate).filter(Boolean)).size,
     peakHour: peakEntry(rows.map(row => Math.floor(row.startMinutes / 60))),

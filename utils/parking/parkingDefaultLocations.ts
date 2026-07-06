@@ -1,4 +1,5 @@
 import type { ParkingRevenueLocationMapping } from './parkingTypes';
+import { applyDefaultParkingLocationCategories } from './parkingCategories';
 import { mergeParkingRevenueLocationMappings } from './parkingLocationMappings';
 
 export const DEFAULT_PARKING_LATLONG_SEED_VERSION = 'parking-latlong-2026-07-02';
@@ -1989,7 +1990,9 @@ function locationSourceKeys(location: ParkingRevenueLocationMapping): Set<string
 export function mergeDefaultParkingRevenueLocations(
   locations: ParkingRevenueLocationMapping[] = [],
 ): ParkingRevenueLocationMapping[] {
-  return mergeParkingRevenueLocationMappings(locations, DEFAULT_PARKING_REVENUE_LOCATIONS, { overwriteExisting: false });
+  return applyDefaultParkingLocationCategories(
+    mergeParkingRevenueLocationMappings(locations, DEFAULT_PARKING_REVENUE_LOCATIONS, { overwriteExisting: false }),
+  );
 }
 
 export function countMissingDefaultParkingRevenueLocations(

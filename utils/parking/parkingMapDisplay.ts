@@ -6,6 +6,8 @@ export type ParkingMapMetric = 'revenue' | 'sessions' | 'averageStay' | 'revenue
 export interface ParkingMapCapacityInfo {
   spaces: number | null;
   sourceLabel?: string;
+  activeDayCount?: number;
+  hourWindowMinutes?: number;
 }
 
 export interface ParkingRevenueMapDisplayLocation {
@@ -19,6 +21,7 @@ export interface ParkingRevenueMapDisplayLocation {
   rowCount: number;
   totalRevenue: number;
   totalPaid: number;
+  paidMinutes: number;
   averageStayMinutes: number;
   uniquePlateCount: number;
   hotspotRevenue: number;
@@ -28,6 +31,7 @@ export interface ParkingRevenueMapDisplayLocation {
   publicMatch: PublicParkingLocationMatch | null;
   aggregateCount: number;
   capacitySpaces: number | null;
+  utilizationPercent: number | null;
   primaryLocation: ParkingRevenueLocationSummary;
 }
 
@@ -63,9 +67,13 @@ function combineLocations(
   coordinateSource: ParkingRevenueMapDisplayLocation['coordinateSource'],
   publicMatch: PublicParkingLocationMatch | null,
   capacitySpaces: number | null,
+  activeDayCount = 0,
+  hourWindowMinutes = 1440,
 ): ParkingRevenueMapDisplayLocation {
   const primaryLocation = peakByRevenue(locations);
   const rowCount = locations.reduce((sum, location) => sum + location.rowCount, 0);
+  const paidMinutes = locations.reduce((sum, location) => sum + (location.paidMinutes || 0), 0);
+  const availableSpaceMinutes = capacitySpaces && activeDayCount > 0 ? capacitySpaces * activeDayCount * hourWindowMinutes : 0;
   const displayName = publicMatch
     ? publicMatch.location.commonName || publicMatch.location.name || primaryLocation.displayName
     : primaryLocation.displayName;
@@ -82,6 +90,7 @@ function combineLocations(
     rowCount,
     totalRevenue: roundMoney(locations.reduce((sum, location) => sum + location.totalRevenue, 0)),
     totalPaid: roundMoney(locations.reduce((sum, location) => sum + location.totalPaid, 0)),
+    paidMinutes,
     averageStayMinutes: weightedAverage(locations.map(location => ({ value: location.averageStayMinutes, weight: Math.max(location.rowCount, 1) }))),
     uniquePlateCount: locations.reduce((sum, location) => sum + location.uniquePlateCount, 0),
     hotspotRevenue: roundMoney(locations.reduce((sum, location) => sum + location.hotspotRevenue, 0)),
@@ -91,6 +100,7 @@ function combineLocations(
     publicMatch,
     aggregateCount: locations.length,
     capacitySpaces,
+    utilizationPercent: availableSpaceMinutes > 0 ? Math.round((paidMinutes / availableSpaceMinutes) * 1000) / 10 : null,
     primaryLocation,
   };
 }
@@ -116,6 +126,8 @@ export function buildParkingRevenueMapDisplayLocations(
         'reviewed',
         null,
         capacityByLocationKey[location.key]?.spaces ?? null,
+        capacityByLocationKey[location.key]?.activeDayCount ?? 0,
+        capacityByLocationKey[location.key]?.hourWindowMinutes ?? 1440,
       ));
       continue;
     }
@@ -132,6 +144,7 @@ export function buildParkingRevenueMapDisplayLocations(
     const capacitySpaces = group.publicMatch.location.numSpaces
       ?? group.locations.map(location => capacityByLocationKey[location.key]?.spaces).find((spaces): spaces is number => typeof spaces === 'number')
       ?? null;
+    const firstCapacityInfo = group.locations.map(location => capacityByLocationKey[location.key]).find(Boolean);
     displayLocations.push(combineLocations(
       key,
       group.locations,
@@ -140,6 +153,8 @@ export function buildParkingRevenueMapDisplayLocations(
       'public',
       group.publicMatch,
       capacitySpaces,
+      firstCapacityInfo?.activeDayCount ?? 0,
+      firstCapacityInfo?.hourWindowMinutes ?? 1440,
     ));
   }
 

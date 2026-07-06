@@ -95,6 +95,7 @@ export function readParkingSettingsFromDocument(data: Record<string, unknown> | 
     codeFamilies: Array.isArray(rawSettings.codeFamilies) ? rawSettings.codeFamilies : DEFAULT_PARKING_SETTINGS.codeFamilies,
     spotLocations: Array.isArray(rawSettings.spotLocations) ? rawSettings.spotLocations : DEFAULT_PARKING_SETTINGS.spotLocations,
     revenueLocations: Array.isArray(rawSettings.revenueLocations) ? rawSettings.revenueLocations : DEFAULT_PARKING_SETTINGS.revenueLocations,
+    revenueLocationCategories: Array.isArray(rawSettings.revenueLocationCategories) ? rawSettings.revenueLocationCategories : DEFAULT_PARKING_SETTINGS.revenueLocationCategories,
     flagRules: {
       ...DEFAULT_PARKING_SETTINGS.flagRules,
       ...(typeof rawSettings.flagRules === 'object' && rawSettings.flagRules ? rawSettings.flagRules : {}),

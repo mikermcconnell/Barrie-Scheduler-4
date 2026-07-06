@@ -5,6 +5,14 @@ export type ParkingYearCodeFormat = 'yyyy' | 'yy';
 export type ParkingDepartmentLegendSortKey = 'color' | 'code' | 'department' | 'ignoreFlags';
 export type ParkingSortDirection = 'asc' | 'desc';
 export type ParkingRevenueSource = 'hotspot' | 'qr';
+export type ParkingRevenueCategoryFilter = 'all' | 'uncategorized' | string;
+
+export interface ParkingRevenueLocationCategory {
+  id: string;
+  label: string;
+  colorHex?: string;
+  archived?: boolean;
+}
 
 export interface ParkingRevenueLocationRef {
   source: ParkingRevenueSource;
@@ -18,6 +26,7 @@ export interface ParkingRevenueLocationMapping {
   latitude: number | null;
   longitude: number | null;
   capacitySpaces?: number | null;
+  categoryId?: string | null;
   sourceRefs: ParkingRevenueLocationRef[];
 }
 
@@ -73,6 +82,7 @@ export interface ParkingSettings {
   codeFamilies: ParkingCodeFamilyMapping[];
   spotLocations: ParkingSpotLocationMapping[];
   revenueLocations?: ParkingRevenueLocationMapping[];
+  revenueLocationCategories?: ParkingRevenueLocationCategory[];
   flagRules: ParkingFlagRuleSettings;
   departmentLegendSort?: ParkingDepartmentLegendSortSetting;
   updatedAt?: string;
@@ -237,6 +247,7 @@ export interface ParkingRevenueFilters {
   months?: string[];
   source?: ParkingRevenueSource | 'all';
   dayType?: 'all' | 'weekday' | 'weekend' | 'saturday' | 'sunday';
+  categoryId?: ParkingRevenueCategoryFilter;
   hourStart?: number;
   hourEnd?: number;
 }
@@ -247,10 +258,14 @@ export interface ParkingRevenueLocationSummary {
   sourceIds: ParkingRevenueLocationRef[];
   latitude: number | null;
   longitude: number | null;
+  categoryId?: string | null;
+  categoryLabel?: string;
+  categoryColorHex?: string;
   isMapped: boolean;
   rowCount: number;
   totalRevenue: number;
   totalPaid: number;
+  paidMinutes?: number;
   averageStayMinutes: number;
   uniquePlateCount: number;
   hotspotRevenue: number;
@@ -275,6 +290,9 @@ export interface ParkingRevenueAnalytics {
   totalRevenue: number;
   totalPaid: number;
   rowCount: number;
+  paidMinutes?: number;
+  activeDayCount?: number;
+  hourWindowMinutes?: number;
   averageStayMinutes: number;
   uniquePlateCount: number;
   peakHour: number | null;
@@ -297,6 +315,14 @@ export const DEFAULT_PARKING_FLAG_RULES: ParkingFlagRuleSettings = {
   departmentMonthlyValueDollars: 250,
   departmentIncreasePercent: 50,
 };
+
+export const DEFAULT_PARKING_REVENUE_LOCATION_CATEGORIES: ParkingRevenueLocationCategory[] = [
+  { id: 'downtown', label: 'Downtown', colorHex: '#2563EB' },
+  { id: 'waterfront', label: 'Waterfront', colorHex: '#059669' },
+  { id: 'hybrid', label: 'Hybrid', colorHex: '#7C3AED' },
+  { id: 'marina', label: 'Marina', colorHex: '#0EA5E9' },
+  { id: 'hospital', label: 'Hospital', colorHex: '#EA580C' },
+];
 
 export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {
   codeFamilies: [
@@ -323,6 +349,7 @@ export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {
   ],
   spotLocations: [],
   revenueLocations: [],
+  revenueLocationCategories: DEFAULT_PARKING_REVENUE_LOCATION_CATEGORIES,
   flagRules: DEFAULT_PARKING_FLAG_RULES,
   departmentLegendSort: { key: 'color', direction: 'asc' },
 };

@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { describe, expect, it, vi } from 'vitest';
 import { buildParkingReplacementSummary, buildParkingReplacementSummaryForMonths, getLatestParkingMonth } from '../utils/parking/parkingAggregation';
+import { buildParkingPlannerAnalysis } from '../utils/parking/parkingAnalysis';
 import { getParkingCodeOverridesForYear, getParkingCodesForYear } from '../utils/parking/parkingCodeRules';
 import { createParkingExportWorkbook, exportParkingWorkbook } from '../utils/parking/parkingExport';
 import { getParkingCodeFamilyKey, parseParkingDurationMinutes, parseParkingFile, parseParkingWorkbook } from '../utils/parking/parkingParser';
@@ -351,6 +352,33 @@ describe('parking replacement and export', () => {
       capacitySpaces: 303,
     });
     expect(collier?.sourceRefs.map(ref => `${ref.source}:${ref.sourceId}`)).toEqual(['hotspot:1322', 'qr:1322']);
+    expect(loaded.revenueLocationCategories?.map(category => category.id)).toEqual(expect.arrayContaining(['downtown', 'waterfront', 'hybrid', 'marina', 'hospital']));
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5100')?.categoryId).toBe('hybrid');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5200')?.categoryId).toBe('hybrid');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5300')?.categoryId).toBe('hybrid');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5000')?.categoryId).toBe('marina');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1430')?.categoryId).toBe('hospital');
+  });
+
+  it('does not reapply seeded lot categories after a reviewed location is explicitly uncategorized', () => {
+    const loaded = readParkingSettingsFromDocument({
+      settings: {
+        ...DEFAULT_PARKING_SETTINGS,
+        revenueLocations: [
+          {
+            id: 'hotspot-5100',
+            displayName: 'Spirit Catcher Parking Lot',
+            latitude: 44.3869,
+            longitude: -79.689648,
+            capacitySpaces: 74,
+            categoryId: null,
+            sourceRefs: [{ source: 'hotspot', sourceId: '5100', label: 'Spirit Catcher Parking Lot' }],
+          },
+        ],
+      },
+    });
+
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5100')?.categoryId).toBeNull();
   });
 
   it('adds missing default lot IDs without overwriting custom reviewed coordinates', () => {
@@ -562,6 +590,63 @@ describe('parking revenue parser and analytics', () => {
     expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'saturday' }).totalRevenue).toBe(20);
     expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'sunday' }).totalRevenue).toBe(30);
     expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekend' }).totalRevenue).toBe(50);
+  });
+
+  it('filters revenue by lot category and estimates time-based utilization', () => {
+    const settings: ParkingSettings = {
+      ...DEFAULT_PARKING_SETTINGS,
+      revenueLocations: [
+        {
+          id: 'collier-parkade',
+          displayName: 'Collier Parkade',
+          latitude: 44.389,
+          longitude: -79.69,
+          capacitySpaces: 10,
+          categoryId: 'downtown',
+          sourceRefs: [{ source: 'hotspot', sourceId: '1322', label: 'Collier Parkade' }],
+        },
+        {
+          id: 'marina-lot',
+          displayName: 'Marina Lot',
+          latitude: 44.38,
+          longitude: -79.68,
+          capacitySpaces: 5,
+          categoryId: 'marina',
+          sourceRefs: [{ source: 'hotspot', sourceId: '5000', label: 'Marina Lot' }],
+        },
+      ],
+    };
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'Collier Parkade', '2026-01-01 09:30:00', 'ABC123', '20.00', '2.60', '22.60', '2', 'visa'],
+      ['', '5000', 'Marina Lot', '2026-01-01 10:00:00', 'MARINA', '10.00', '1.30', '11.30', '1', 'visa'],
+      ['', '1322', 'Collier Parkade', '2026-01-02 09:00:00', 'XYZ999', '5.00', '0.65', '5.65', '1', 'visa'],
+      ['', '1322', 'Collier Parkade', '2026-01-03 15:00:00', 'LATE', '7.00', '0.91', '7.91', '1', 'visa'],
+    ]), { fileName: 'app.xlsx', importedBy: 'user-1', settings }).dataset;
+
+    const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
+    const downtown = buildParkingRevenueAnalytics(summary, settings, { categoryId: 'downtown', hourStart: 9, hourEnd: 10 });
+    const planner = buildParkingPlannerAnalysis(downtown, null, {
+      'collier-parkade': { spaces: 10 },
+    });
+
+    expect(downtown.totalRevenue).toBe(25);
+    expect(downtown.locationSummaries.map(location => location.categoryLabel)).toEqual(['Downtown']);
+    expect(downtown.paidMinutes).toBe(150);
+    expect(downtown.activeDayCount).toBe(3);
+    expect(planner.capacityRows[0]).toMatchObject({
+      key: 'collier-parkade',
+      spaces: 10,
+      paidMinutes: 150,
+      utilizationPercent: 4.2,
+    });
+    expect(planner.categoryComparisonRows[0]).toMatchObject({
+      key: 'downtown',
+      label: 'Downtown',
+      spaces: 10,
+      utilizationPercent: 4.2,
+    });
   });
 
   it('applies reviewed map locations to already-imported revenue rows', () => {
