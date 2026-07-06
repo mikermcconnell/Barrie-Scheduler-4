@@ -322,6 +322,7 @@ export const DEFAULT_PARKING_REVENUE_LOCATION_CATEGORIES: ParkingRevenueLocation
   { id: 'hybrid', label: 'Hybrid', colorHex: '#7C3AED' },
   { id: 'marina', label: 'Marina', colorHex: '#0EA5E9' },
   { id: 'hospital', label: 'Hospital', colorHex: '#EA580C' },
+  { id: 'allandale-go', label: 'Allandale GO', colorHex: '#475569' },
 ];
 
 export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {

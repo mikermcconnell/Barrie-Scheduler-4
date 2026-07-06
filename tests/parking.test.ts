@@ -352,12 +352,38 @@ describe('parking replacement and export', () => {
       capacitySpaces: 303,
     });
     expect(collier?.sourceRefs.map(ref => `${ref.source}:${ref.sourceId}`)).toEqual(['hotspot:1322', 'qr:1322']);
-    expect(loaded.revenueLocationCategories?.map(category => category.id)).toEqual(expect.arrayContaining(['downtown', 'waterfront', 'hybrid', 'marina', 'hospital']));
+    expect(loaded.revenueLocationCategories?.map(category => category.id)).toEqual(expect.arrayContaining(['downtown', 'waterfront', 'hybrid', 'marina', 'hospital', 'allandale-go']));
+    expect(loaded.revenueLocations?.every(location => Boolean(location.categoryId))).toBe(true);
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1322')?.categoryId).toBe('downtown');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1430')?.categoryId).toBe('downtown');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-7100')?.categoryId).toBe('waterfront');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5100')?.categoryId).toBe('hybrid');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5200')?.categoryId).toBe('hybrid');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5300')?.categoryId).toBe('hybrid');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5000')?.categoryId).toBe('marina');
-    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1430')?.categoryId).toBe('hospital');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-8105')?.categoryId).toBe('hospital');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-9105')?.categoryId).toBe('allandale-go');
+  });
+
+  it('migrates the legacy H-Block default category from Hospital to Downtown', () => {
+    const loaded = readParkingSettingsFromDocument({
+      settings: {
+        ...DEFAULT_PARKING_SETTINGS,
+        revenueLocations: [
+          {
+            id: 'hotspot-1430',
+            displayName: 'H-Block Parking Lot',
+            latitude: 44.392072,
+            longitude: -79.689572,
+            capacitySpaces: 174,
+            categoryId: 'hospital',
+            sourceRefs: [{ source: 'hotspot', sourceId: '1430', label: 'H-Block Parking Lot' }],
+          },
+        ],
+      },
+    });
+
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1430')?.categoryId).toBe('downtown');
   });
 
   it('does not reapply seeded lot categories after a reviewed location is explicitly uncategorized', () => {
