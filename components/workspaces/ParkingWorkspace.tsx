@@ -39,9 +39,12 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
+  ZAxis,
 } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
@@ -193,6 +196,15 @@ const REVENUE_DAY_TYPE_LABELS: Record<NonNullable<ParkingRevenueFilters['dayType
 type ParkingWorkspaceView = 'dashboard' | 'plate-monitor' | 'lot-data';
 type ParkingLotViewMode = 'map' | 'analysis';
 type ParkingLotMapMode = 'markers' | 'heatmap';
+type ParkingAnalysisView = 'overview' | 'trends' | 'lots' | 'time' | 'capacity';
+
+const PARKING_ANALYSIS_VIEWS: Array<{ id: ParkingAnalysisView; label: string; description: string }> = [
+  { id: 'overview', label: 'Overview', description: 'Executive summary' },
+  { id: 'trends', label: 'Trends', description: 'Month and day movement' },
+  { id: 'lots', label: 'Lots', description: 'Lot and category leaders' },
+  { id: 'time', label: 'Time', description: 'Hourly and source patterns' },
+  { id: 'capacity', label: 'Capacity', description: 'Space productivity' },
+];
 
 function parseParkingWorkspaceViewFromHash(hash = window.location.hash): ParkingWorkspaceView {
   const normalized = hash.replace(/^#\/?/, '').toLowerCase();
@@ -269,9 +281,10 @@ const ParkingChartCard: React.FC<{
   </section>
 );
 
-const EmptyChartState: React.FC<{ label: string }> = ({ label }) => (
-  <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center text-sm font-bold text-slate-400">
-    {label}
+const EmptyChartState: React.FC<{ label: string; action?: string }> = ({ label, action }) => (
+  <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
+    <div className="text-sm font-black text-slate-500">{label}</div>
+    {action ? <div className="mt-1 max-w-xs text-xs font-bold leading-5 text-slate-400">{action}</div> : null}
   </div>
 );
 
@@ -454,19 +467,34 @@ const TrendAreaChart: React.FC<{ data: ParkingAnalysisChartPoint[]; color?: stri
   ) : <EmptyChartState label="Import more revenue data to show a trend." />;
 };
 
-const TopLotsChart: React.FC<{ data: ParkingLotComparisonPoint[] }> = ({ data }) => (
-  data.length > 0 ? (
+const TopLotsChart: React.FC<{
+  data: ParkingLotComparisonPoint[];
+  metric?: 'revenue' | 'revenuePerSpace' | 'sessions';
+  color?: string;
+  emptyLabel?: string;
+  emptyAction?: string;
+}> = ({ data, metric = 'revenue', color = '#2563EB', emptyLabel = 'No lots to compare yet.', emptyAction }) => {
+  const chartData = data
+    .filter(row => {
+      const value = row[metric];
+      return typeof value === 'number' && value > 0;
+    })
+    .slice(0, 8);
+  const metricLabel = metric === 'revenuePerSpace' ? 'Revenue per space' : metric === 'sessions' ? 'Sessions' : 'Revenue';
+  const tickFormatter = metric === 'sessions' ? shortNumber : compactMoney;
+
+  return chartData.length > 0 ? (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 18, left: 16, bottom: 4 }}>
+      <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 18, left: 16, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E2E8F0" />
-        <XAxis type="number" tickFormatter={compactMoney} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <XAxis type="number" tickFormatter={tickFormatter} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
         <YAxis type="category" dataKey="label" width={110} tick={{ fontSize: 10, fill: '#334155', fontWeight: 700 }} tickLine={false} axisLine={false} />
         <Tooltip formatter={tooltipValue} labelClassName="font-bold text-slate-700" />
-        <Bar dataKey="revenue" name="Revenue" fill="#2563EB" radius={[0, 8, 8, 0]} />
+        <Bar dataKey={metric} name={metricLabel} fill={color} radius={[0, 8, 8, 0]} />
       </BarChart>
     </ResponsiveContainer>
-  ) : <EmptyChartState label="No lots to compare yet." />
-);
+  ) : <EmptyChartState label={emptyLabel} action={emptyAction} />;
+};
 
 function sourceMixColor(source: ParkingRevenueSource): string {
   return source === 'hotspot' ? '#059669' : '#2563EB';
@@ -485,6 +513,79 @@ const SourceMixChart: React.FC<{ data: ParkingSourceMixPoint[] }> = ({ data }) =
     </ResponsiveContainer>
   ) : <EmptyChartState label="No app or QR split yet." />
 );
+
+const capacityTooltipValue = (value: unknown, name: unknown) => {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  const label = String(name || '').toLowerCase();
+  if (!Number.isFinite(numeric)) return String(value ?? '');
+  if (label.includes('revenue')) return money(numeric);
+  if (label.includes('utilization')) return `${numeric.toFixed(1)}%`;
+  return numeric.toLocaleString();
+};
+
+const CapacityOpportunityTooltip: React.FC<{
+  active?: boolean;
+  payload?: Array<{ payload: ParkingLotComparisonPoint & { bubbleSize: number } }>;
+}> = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+  const row = payload[0].payload;
+  return (
+    <div className="max-w-xs rounded-2xl border border-slate-200 bg-white p-3 text-xs shadow-xl">
+      <div className="font-black text-slate-950">{row.label}</div>
+      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-bold text-slate-500">
+        <span>Revenue/space</span>
+        <span className="text-right text-slate-900">{row.revenuePerSpace == null ? '—' : money(row.revenuePerSpace)}</span>
+        <span>Utilization</span>
+        <span className="text-right text-slate-900">{formatUtilization(row.utilizationPercent)}</span>
+        <span>Sessions</span>
+        <span className="text-right text-slate-900">{row.sessions.toLocaleString()}</span>
+        <span>Spaces</span>
+        <span className="text-right text-slate-900">{row.spaces?.toLocaleString() || '—'}</span>
+      </div>
+    </div>
+  );
+};
+
+const CapacityOpportunityChart: React.FC<{ data: ParkingLotComparisonPoint[] }> = ({ data }) => {
+  const chartData = data
+    .filter(row => row.revenuePerSpace != null && row.utilizationPercent != null)
+    .slice(0, 40)
+    .map(row => ({
+      ...row,
+      revenuePerSpace: row.revenuePerSpace || 0,
+      utilizationPercent: row.utilizationPercent || 0,
+      bubbleSize: Math.max(80, Math.min(700, row.sessions)),
+    }));
+
+  return chartData.length > 0 ? (
+    <ResponsiveContainer width="100%" height="100%">
+      <ScatterChart margin={{ top: 12, right: 16, left: -8, bottom: 12 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+        <XAxis
+          type="number"
+          dataKey="revenuePerSpace"
+          name="Revenue per space"
+          tickFormatter={compactMoney}
+          tick={{ fontSize: 10, fill: '#64748B' }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <YAxis
+          type="number"
+          dataKey="utilizationPercent"
+          name="Utilization"
+          tickFormatter={value => `${value}%`}
+          tick={{ fontSize: 10, fill: '#64748B' }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <ZAxis type="number" dataKey="bubbleSize" range={[80, 700]} name="Sessions" />
+        <Tooltip content={<CapacityOpportunityTooltip />} formatter={capacityTooltipValue} cursor={{ strokeDasharray: '3 3' }} />
+        <Scatter name="Known-space lots" data={chartData} fill="#2563EB" fillOpacity={0.72} />
+      </ScatterChart>
+    </ResponsiveContainer>
+  ) : <EmptyChartState label="No capacity comparison yet." action="Match reviewed or City space counts to lots to compare utilization and revenue per space." />;
+};
 
 function readableTextColor(hex: string): string {
   const value = hex.replace('#', '');
@@ -1060,6 +1161,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [revenueHourEnd, setRevenueHourEnd] = useState(23);
   const [selectedRevenueLocationKey, setSelectedRevenueLocationKey] = useState('');
   const [lotViewMode, setLotViewMode] = useState<ParkingLotViewMode>('map');
+  const [parkingAnalysisView, setParkingAnalysisView] = useState<ParkingAnalysisView>('overview');
   const [lotMapMode, setLotMapMode] = useState<ParkingLotMapMode>('markers');
   const [parkingMapMetric, setParkingMapMetric] = useState<ParkingMapMetric>('revenue');
   const [locationSearchById, setLocationSearchById] = useState<Record<string, RevenueLocationSearchState>>({});
@@ -1326,6 +1428,56 @@ export const ParkingWorkspace: React.FC = () => {
       ? ''
       : revenueUploaderOptions.find(option => option.id === selectedRevenueUploader)?.label || selectedRevenueUploader
   ), [revenueUploaderOptions, selectedRevenueUploader]);
+  const primaryTrendCard = parkingTrendOverview.comparisonCards[0] || null;
+  const topRevenueLot = parkingPlannerAnalysis.topLotsByRevenue[0] || null;
+  const topUtilizationLot = parkingPlannerAnalysis.capacityRows
+    .filter(row => row.utilizationPercent != null)
+    .slice()
+    .sort((a, b) => (b.utilizationPercent ?? -1) - (a.utilizationPercent ?? -1) || (b.revenuePerSpace ?? -1) - (a.revenuePerSpace ?? -1))[0] || null;
+  const analysisTakeaways = useMemo(() => {
+    const takeaways: Array<{ label: string; value: string; detail: string; tone: string }> = [];
+    takeaways.push({
+      label: 'Revenue leader',
+      value: topRevenueLot?.label || 'No lot yet',
+      detail: topRevenueLot ? `${money(topRevenueLot.revenue)} under current filters` : 'Upload or broaden filters to compare lots.',
+      tone: 'border-emerald-100 bg-emerald-50 text-emerald-900',
+    });
+    takeaways.push({
+      label: 'Peak demand',
+      value: formatHour(revenueAnalytics.peakHour),
+      detail: revenueAnalytics.peakHour == null ? 'No hourly activity in this filter.' : `${revenueAnalytics.rowCount.toLocaleString()} paid sessions analyzed.`,
+      tone: 'border-blue-100 bg-blue-50 text-blue-900',
+    });
+    takeaways.push({
+      label: 'Best utilization',
+      value: topUtilizationLot?.label || 'No capacity match',
+      detail: topUtilizationLot ? `${formatUtilization(topUtilizationLot.utilizationPercent)} estimated utilization` : 'Match lot space counts to unlock this view.',
+      tone: 'border-violet-100 bg-violet-50 text-violet-900',
+    });
+    return takeaways;
+  }, [revenueAnalytics.peakHour, revenueAnalytics.rowCount, topRevenueLot, topUtilizationLot]);
+  const analysisFilterChips = useMemo(() => {
+    const chips: string[] = [];
+    if (selectedRevenueYear !== 'all') chips.push(`Year ${selectedRevenueYear}`);
+    if (selectedRevenueMonth !== 'all') chips.push(selectedRevenueMonth);
+    if (selectedRevenueCategoryLabel) chips.push(selectedRevenueCategoryLabel);
+    if (selectedRevenueUploaderLabel) chips.push(`Uploaded by ${selectedRevenueUploaderLabel}`);
+    if (revenueDayTypeFilter !== 'all') chips.push(REVENUE_DAY_TYPE_LABELS[revenueDayTypeFilter]);
+    if (revenueSourceFilter !== 'all') chips.push(getParkingRevenueSourceLabel(revenueSourceFilter));
+    if (revenueHourStart !== 0 || revenueHourEnd !== 23) chips.push(`${formatHourOption(revenueHourStart)}–${formatHourOption(revenueHourEnd)}`);
+    if (selectedRevenueLocation) chips.push(selectedRevenueLocation.displayName);
+    return chips.length ? chips : ['All imported revenue data'];
+  }, [
+    revenueDayTypeFilter,
+    revenueHourEnd,
+    revenueHourStart,
+    revenueSourceFilter,
+    selectedRevenueCategoryLabel,
+    selectedRevenueLocation,
+    selectedRevenueMonth,
+    selectedRevenueUploaderLabel,
+    selectedRevenueYear,
+  ]);
   const peakPeriodScopeLabel = parkingPlannerAnalysis.selectedLot
     ? 'Selected lot'
     : selectedRevenueCategoryLabel
@@ -2529,11 +2681,11 @@ export const ParkingWorkspace: React.FC = () => {
               <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <div className="inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-violet-700">
-                    <BarChart3 size={14} /> Analysis summary
+                    <BarChart3 size={14} /> Analysis dashboard
                   </div>
                   <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">Parking lot data analysis</h2>
                   <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
-                    Chart-first view of revenue, sessions, stay length, payment source, and lot utilization for the current filters.
+                    Chart-led view for revenue, demand timing, top lots, and space productivity. Use the views below to reduce the amount of data on screen.
                   </p>
                 </div>
                 <button
@@ -2545,106 +2697,244 @@ export const ParkingWorkspace: React.FC = () => {
                 </button>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
-                  <div className="text-xs font-black uppercase tracking-wide text-emerald-600">Filtered revenue</div>
-                  <div className="mt-1 text-2xl font-black text-emerald-950">{money(revenueAnalytics.totalRevenue)}</div>
-                  <p className="mt-1 text-xs font-bold text-emerald-700">{revenueAnalytics.rowCount.toLocaleString()} sessions</p>
+              <div className="sticky top-0 z-20 -mx-1 mb-4 rounded-[1.75rem] border border-slate-200 bg-slate-50/95 p-2 shadow-sm backdrop-blur">
+                <div className="flex flex-wrap gap-2" aria-label="Analysis views">
+                  {PARKING_ANALYSIS_VIEWS.map(view => {
+                    const isActive = parkingAnalysisView === view.id;
+                    return (
+                      <button
+                        key={view.id}
+                        type="button"
+                        onClick={() => setParkingAnalysisView(view.id)}
+                        aria-pressed={isActive}
+                        className={`rounded-2xl px-3 py-2 text-left transition focus:outline-none focus:ring-2 focus:ring-blue-300 ${isActive ? 'bg-slate-950 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-slate-100'}`}
+                      >
+                        <div className="text-sm font-black">{view.label}</div>
+                        <div className={`text-[10px] font-bold ${isActive ? 'text-slate-300' : 'text-slate-400'}`}>{view.description}</div>
+                      </button>
+                    );
+                  })}
                 </div>
-                <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4">
-                  <div className="text-xs font-black uppercase tracking-wide text-amber-600">Average stay</div>
-                  <div className="mt-1 text-2xl font-black text-amber-950">{minutesToDuration(revenueAnalytics.averageStayMinutes)}</div>
-                  <p className="mt-1 text-xs font-bold text-amber-700">Peak starts {formatHour(revenueAnalytics.peakHour)}.</p>
-                </div>
-                <div className="rounded-3xl border border-violet-100 bg-violet-50 p-4">
-                  <div className="text-xs font-black uppercase tracking-wide text-violet-600">Known capacity</div>
-                  <div className="mt-1 text-2xl font-black text-violet-950">{parkingPlannerAnalysis.capacityRows.length.toLocaleString()} lots</div>
-                  <p className="mt-1 text-xs font-bold text-violet-700">Uses reviewed and City spaces where matched.</p>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {analysisFilterChips.map(chip => (
+                    <span key={chip} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-black text-slate-500">
+                      {chip}
+                    </span>
+                  ))}
                 </div>
               </div>
 
-              <section className="mt-4 overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
-                <div className="border-b border-slate-100 bg-gradient-to-r from-slate-950 via-emerald-950 to-blue-950 p-5 text-white">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div>
-                      <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-100">
-                        <TrendingUp size={14} /> Trend overview
-                      </div>
-                      <h3 className="mt-2 text-2xl font-black tracking-tight">{parkingTrendOverview.scopeLabel}</h3>
-                      <p className="mt-1 max-w-3xl text-sm font-semibold leading-6 text-slate-200">
-                        Month-over-month, year-over-year, and day-pattern movement. Weekday, Saturday, and Sunday charts use average activity per active day so month length does not distort the trend.
-                      </p>
+              <section className="mb-4 rounded-3xl border border-slate-200 bg-white p-3 shadow-sm" aria-label="Key parking analysis takeaways">
+                <div className="grid gap-2 lg:grid-cols-3">
+                  {analysisTakeaways.map(takeaway => (
+                    <div key={takeaway.label} className={`rounded-2xl border p-3 ${takeaway.tone}`}>
+                      <div className="text-[10px] font-black uppercase tracking-[0.16em] opacity-70">{takeaway.label}</div>
+                      <div className="mt-1 truncate text-base font-black">{takeaway.value}</div>
+                      <div className="mt-1 text-xs font-bold opacity-75">{takeaway.detail}</div>
                     </div>
-                    <div className="rounded-2xl bg-white/10 px-4 py-3 text-right">
-                      <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Focus month</div>
-                      <div className="mt-1 text-xl font-black">{parkingTrendOverview.targetMonth || '—'}</div>
-                    </div>
-                  </div>
-                </div>
-                <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
-                  {parkingTrendOverview.comparisonCards.map(card => (
-                    <TrendComparisonCard key={card.key} card={card} />
                   ))}
                 </div>
-                <div className="grid gap-4 border-t border-slate-100 bg-slate-50/70 p-4 xl:grid-cols-3">
-                  <ParkingChartCard title="Weekday trend" subtitle="Average revenue per active weekday.">
-                    <TrendAreaChart data={parkingTrendOverview.weekdayTrend} color="#2563EB" />
-                  </ParkingChartCard>
-                  <ParkingChartCard title="Saturday trend" subtitle="Average Saturday activity by month.">
-                    <TrendAreaChart data={parkingTrendOverview.saturdayTrend} color="#7C3AED" />
-                  </ParkingChartCard>
-                  <ParkingChartCard title="Sunday trend" subtitle="Average Sunday activity by month.">
-                    <TrendAreaChart data={parkingTrendOverview.sundayTrend} color="#EA580C" />
-                  </ParkingChartCard>
-                </div>
-                {parkingTrendOverview.fastestGrowingLot ? (
-                  <div className="border-t border-emerald-100 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-900">
-                    Fastest-growing lot this month: <span className="font-black">{parkingTrendOverview.fastestGrowingLot.label}</span>
-                    {' '}increased by {money(parkingTrendOverview.fastestGrowingLot.changeValue)}
-                    {parkingTrendOverview.fastestGrowingLot.changePercent == null ? '' : ` (${parkingTrendOverview.fastestGrowingLot.changePercent.toFixed(1)}%)`}.
-                  </div>
-                ) : null}
               </section>
 
-              <div className="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="grid gap-4 xl:grid-cols-2">
-                  <ParkingChartCard
-                    title={selectedRevenueMonth === 'all' ? 'Revenue trend' : 'Daily revenue trend'}
-                    subtitle={selectedRevenueMonth === 'all' ? 'Monthly revenue movement for the current filter.' : 'Daily movement within the selected month.'}
-                  >
-                    <TrendAreaChart data={selectedRevenueMonth === 'all' ? parkingPlannerAnalysis.monthlyTrend : parkingPlannerAnalysis.dailyTrend} />
-                  </ParkingChartCard>
-                  <ParkingChartCard title="Hourly demand profile" subtitle="Paid activity by hour, spread across session duration.">
-                    <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
-                  </ParkingChartCard>
-                  <ParkingChartCard title="Top lots by revenue" subtitle="Quick comparison of the highest value parking locations." tall>
-                    <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} />
+              <div className="grid gap-3 lg:grid-cols-[1.35fr_repeat(3,minmax(0,0.9fr))]">
+                <div className="rounded-3xl bg-gradient-to-br from-emerald-600 to-slate-950 p-5 text-white shadow-sm">
+                  <div className="text-xs font-black uppercase tracking-wide text-emerald-100">Filtered revenue</div>
+                  <div className="mt-1 text-3xl font-black">{money(revenueAnalytics.totalRevenue)}</div>
+                  <p className="mt-1 text-xs font-bold text-emerald-100">{revenueAnalytics.rowCount.toLocaleString()} sessions</p>
+                </div>
+                <div className="rounded-3xl border border-blue-100 bg-white p-3">
+                  <div className="text-xs font-black uppercase tracking-wide text-blue-600">Top lot</div>
+                  <div className="mt-1 truncate text-xl font-black text-blue-950">{topRevenueLot?.label || '—'}</div>
+                  <p className="mt-1 text-xs font-bold text-blue-700">{topRevenueLot ? money(topRevenueLot.revenue) : 'Upload revenue data'}</p>
+                </div>
+                <div className="rounded-3xl border border-amber-100 bg-white p-3">
+                  <div className="text-xs font-black uppercase tracking-wide text-amber-600">Average stay</div>
+                  <div className="mt-1 text-xl font-black text-amber-950">{minutesToDuration(revenueAnalytics.averageStayMinutes)}</div>
+                  <p className="mt-1 text-xs font-bold text-amber-700">Peak starts {formatHour(revenueAnalytics.peakHour)}.</p>
+                </div>
+                <div className="rounded-3xl border border-violet-100 bg-white p-3">
+                  <div className="text-xs font-black uppercase tracking-wide text-violet-600">Known capacity</div>
+                  <div className="mt-1 text-xl font-black text-violet-950">{parkingPlannerAnalysis.capacityRows.length.toLocaleString()} lots</div>
+                  <p className="mt-1 text-xs font-bold text-violet-700">{topUtilizationLot ? `${topUtilizationLot.label}: ${formatUtilization(topUtilizationLot.utilizationPercent)}` : 'No matched spaces yet'}</p>
+                </div>
+              </div>
+
+              {parkingAnalysisView === 'overview' ? (
+                <div className="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <ParkingChartCard
+                      title={selectedRevenueMonth === 'all' ? 'Revenue trend' : 'Daily revenue trend'}
+                      subtitle="The main movement line for the current filter."
+                    >
+                      <TrendAreaChart data={selectedRevenueMonth === 'all' ? parkingPlannerAnalysis.monthlyTrend : parkingPlannerAnalysis.dailyTrend} />
+                    </ParkingChartCard>
+                    <ParkingChartCard title="Hourly demand profile" subtitle="Shows when paid activity concentrates during the day.">
+                      <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
+                    </ParkingChartCard>
+                    <ParkingChartCard title="Top lots by revenue" subtitle="Highest-value parking locations under the current filters." tall>
+                      <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare lots." />
+                    </ParkingChartCard>
+                    <ParkingChartCard title="Capacity opportunity" subtitle="Revenue per space compared with estimated utilization." tall>
+                      <CapacityOpportunityChart data={parkingPlannerAnalysis.capacityRows} />
+                    </ParkingChartCard>
+                  </div>
+
+                  <div className="space-y-4">
+                    {primaryTrendCard ? <TrendComparisonCard card={primaryTrendCard} /> : null}
+                    <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex items-center gap-2">
+                        <CheckCircle2 className="text-emerald-600" size={18} />
+                        <h3 className="font-black text-slate-950">What to look at next</h3>
+                      </div>
+                      <div className="space-y-2">
+                        {parkingPlannerAnalysis.insights.slice(0, 4).map(insight => (
+                          <div key={insight} className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm font-bold leading-5 text-slate-700">
+                            {insight}
+                          </div>
+                        ))}
+                        {parkingPlannerAnalysis.insights.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-3 text-sm font-bold leading-5 text-slate-400">
+                            Upload revenue data or broaden the filters to generate planner insights.
+                          </div>
+                        ) : null}
+                      </div>
+                    </section>
+                    <ParkingChartCard title="Payment mix" subtitle="HotSpot app revenue compared with QR revenue.">
+                      <SourceMixChart data={parkingPlannerAnalysis.sourceMix} />
+                    </ParkingChartCard>
+                  </div>
+                </div>
+              ) : null}
+
+              {parkingAnalysisView === 'trends' ? (
+                <section className="mt-4 overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-100 bg-gradient-to-r from-slate-950 via-emerald-950 to-blue-950 p-5 text-white">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-100">
+                          <TrendingUp size={14} /> Trend overview
+                        </div>
+                        <h3 className="mt-2 text-2xl font-black tracking-tight">{parkingTrendOverview.scopeLabel}</h3>
+                        <p className="mt-1 max-w-3xl text-sm font-semibold leading-6 text-slate-200">
+                          Compare month-over-month, year-over-year, and day-pattern movement without showing every supporting table.
+                        </p>
+                      </div>
+                      <div className="rounded-2xl bg-white/10 px-4 py-3 text-right">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Focus month</div>
+                        <div className="mt-1 text-xl font-black">{parkingTrendOverview.targetMonth || '—'}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+                    {parkingTrendOverview.comparisonCards.map(card => (
+                      <TrendComparisonCard key={card.key} card={card} />
+                    ))}
+                  </div>
+                  <div className="grid gap-4 border-t border-slate-100 bg-slate-50/70 p-4 xl:grid-cols-3">
+                    <ParkingChartCard title="Weekday trend" subtitle="Average revenue per active weekday.">
+                      <TrendAreaChart data={parkingTrendOverview.weekdayTrend} color="#2563EB" />
+                    </ParkingChartCard>
+                    <ParkingChartCard title="Saturday trend" subtitle="Average Saturday activity by month.">
+                      <TrendAreaChart data={parkingTrendOverview.saturdayTrend} color="#7C3AED" />
+                    </ParkingChartCard>
+                    <ParkingChartCard title="Sunday trend" subtitle="Average Sunday activity by month.">
+                      <TrendAreaChart data={parkingTrendOverview.sundayTrend} color="#EA580C" />
+                    </ParkingChartCard>
+                  </div>
+                  {parkingTrendOverview.fastestGrowingLot ? (
+                    <div className="border-t border-emerald-100 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-900">
+                      Fastest-growing lot this month: <span className="font-black">{parkingTrendOverview.fastestGrowingLot.label}</span>
+                      {' '}increased by {money(parkingTrendOverview.fastestGrowingLot.changeValue)}
+                      {parkingTrendOverview.fastestGrowingLot.changePercent == null ? '' : ` (${parkingTrendOverview.fastestGrowingLot.changePercent.toFixed(1)}%)`}.
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
+              {parkingAnalysisView === 'lots' ? (
+                <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  <ParkingChartCard title="Top lots by revenue" subtitle="Quick comparison of the highest-value parking locations." tall>
+                    <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare lots." />
                   </ParkingChartCard>
                   <ParkingChartCard title="Category comparison" subtitle="Revenue by lot category for the current filters." tall>
-                    <TopLotsChart data={parkingPlannerAnalysis.categoryComparisonRows} />
+                    <TopLotsChart data={parkingPlannerAnalysis.categoryComparisonRows} emptyLabel="No category comparison yet." emptyAction="Assign imported lots to categories to compare Downtown, Waterfront, Hybrid, and other parking areas." />
                   </ParkingChartCard>
-                </div>
-
-                <div className="space-y-4">
-                  <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="mb-3 flex items-center gap-2">
-                      <CheckCircle2 className="text-emerald-600" size={18} />
-                      <h3 className="font-black text-slate-950">Planner insights</h3>
-                    </div>
-                    <div className="space-y-2">
-                      {parkingPlannerAnalysis.insights.map(insight => (
-                        <div key={insight} className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm font-bold leading-5 text-slate-700">
-                          {insight}
+                  <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
+                    <div className="text-xs font-black uppercase tracking-wide text-slate-400">Top category signals</div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {parkingPlannerAnalysis.categoryComparisonRows.slice(0, 6).map(row => (
+                        <div key={row.key} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                          <div className="flex items-start justify-between gap-2 text-sm font-black text-slate-800">
+                            <span className="min-w-0 truncate">{row.label}</span>
+                            <span>{money(row.revenue)}</span>
+                          </div>
+                          <div className="mt-1 text-xs font-bold text-slate-400">
+                            {row.sessions.toLocaleString()} sessions · avg stay {minutesToDuration(row.averageStayMinutes)}
+                          </div>
+                          <div className="mt-1 text-xs font-bold text-slate-400">
+                            {row.spaces == null ? 'No matched capacity' : `${row.spaces.toLocaleString()} spaces · ${money(row.revenuePerSpace || 0)}/space`}
+                          </div>
                         </div>
                       ))}
+                      {parkingPlannerAnalysis.categoryComparisonRows.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-400">
+                          Assign lot categories to unlock area-level comparisons.
+                        </div>
+                      ) : null}
                     </div>
                   </section>
+                </div>
+              ) : null}
 
+              {parkingAnalysisView === 'time' ? (
+                <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                  <ParkingChartCard title="Hourly demand profile" subtitle="Paid activity by hour, spread across session duration." tall>
+                    <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
+                  </ParkingChartCard>
+                  <ParkingChartCard title="Payment source mix" subtitle="App compared with QR for the current filters." tall>
+                    <SourceMixChart data={parkingPlannerAnalysis.sourceMix} />
+                  </ParkingChartCard>
+                  <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
+                    <div className="text-xs font-black uppercase tracking-wide text-slate-400">Peak periods</div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      {peakPeriodRows.map(row => (
+                        <div key={row.key} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                          <div className="text-lg font-black text-slate-950">{row.label}</div>
+                          <div className="mt-1 text-xs font-bold text-slate-500">{money(row.revenue)} · {row.sessions.toLocaleString()} sessions</div>
+                        </div>
+                      ))}
+                      {peakPeriodRows.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-400">
+                          No peak periods in this filter. Try all day types or a wider hour range.
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+
+              {parkingAnalysisView === 'capacity' ? (
+                <div className="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <ParkingChartCard title="Capacity opportunity" subtitle="Each dot is a known-space lot. Bigger dots have more sessions." tall>
+                      <CapacityOpportunityChart data={parkingPlannerAnalysis.capacityRows} />
+                    </ParkingChartCard>
+                    <ParkingChartCard title="Revenue per known space" subtitle="Lots ranked by paid revenue per matched space." tall>
+                      <TopLotsChart
+                        data={parkingPlannerAnalysis.capacityRows}
+                        metric="revenuePerSpace"
+                        color="#7C3AED"
+                        emptyLabel="No revenue-per-space ranking yet."
+                        emptyAction="Match space counts to imported lots to calculate productivity per known space."
+                      />
+                    </ParkingChartCard>
+                  </div>
                   <section className="rounded-3xl border border-violet-100 bg-violet-50 p-4 shadow-sm">
                     <div className="text-xs font-black uppercase tracking-wide text-violet-600">Capacity/utilization</div>
-                    <h3 className="mt-1 font-black text-violet-950">Revenue per known space</h3>
+                    <h3 className="mt-1 font-black text-violet-950">Highest space productivity</h3>
                     <div className="mt-3 space-y-2">
-                      {parkingPlannerAnalysis.capacityRows.slice(0, 5).map(row => (
+                      {parkingPlannerAnalysis.capacityRows.slice(0, 8).map(row => (
                         <div key={row.key} className="rounded-2xl bg-white p-3">
                           <div className="flex items-start justify-between gap-2 text-sm font-black text-slate-800">
                             <span className="min-w-0 truncate">{row.label}</span>
@@ -2660,29 +2950,8 @@ export const ParkingWorkspace: React.FC = () => {
                       ) : null}
                     </div>
                   </section>
-
-                  <section className="rounded-3xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
-                    <div className="text-xs font-black uppercase tracking-wide text-blue-600">Category capacity</div>
-                    <h3 className="mt-1 font-black text-blue-950">Compare parking areas</h3>
-                    <div className="mt-3 space-y-2">
-                      {parkingPlannerAnalysis.categoryComparisonRows.slice(0, 6).map(row => (
-                        <div key={row.key} className="rounded-2xl bg-white p-3">
-                          <div className="flex items-start justify-between gap-2 text-sm font-black text-slate-800">
-                            <span className="min-w-0 truncate">{row.label}</span>
-                            <span>{row.spaces == null ? '—' : `${row.spaces.toLocaleString()} spaces`}</span>
-                          </div>
-                          <div className="mt-1 text-xs font-bold text-slate-400">
-                            {money(row.revenue)} {row.spaces == null ? 'revenue' : 'known-space revenue'} · {row.sessions.toLocaleString()} sessions · avg stay {minutesToDuration(row.averageStayMinutes)}
-                          </div>
-                          <div className="mt-1 text-xs font-bold text-slate-400">
-                            {row.revenuePerSpace == null ? '—' : `${money(row.revenuePerSpace)}/space`} · utilization {formatUtilization(row.utilizationPercent)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
                 </div>
-              </div>
+              ) : null}
 
               {parkingPlannerAnalysis.selectedLot ? (
                 <section className="mt-4 rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm">
