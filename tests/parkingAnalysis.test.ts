@@ -21,7 +21,7 @@ function row(patch: Partial<ParkingRevenueRawRow>): ParkingRevenueRawRow {
     startDate: patch.startDate ?? '2026-01-01',
     startMonth: patch.startMonth ?? '2026-01',
     startMinutes: patch.startMinutes ?? 540,
-    endMinutes: patch.endMinutes ?? 600,
+    endMinutes: patch.endMinutes ?? ((patch.startMinutes ?? 540) + (patch.durationMinutes ?? 60)),
     weekday: patch.weekday ?? 4,
     isWeekend: patch.isWeekend || false,
     durationMinutes: patch.durationMinutes ?? 60,
@@ -156,8 +156,8 @@ describe('parking planner analysis milestones', () => {
     });
 
     expect(result.monthlyTrend).toEqual([{ key: '2026-01', label: '2026-01', revenue: 84, sessions: 4, averageStayMinutes: 124 }]);
-    expect(result.hourlyProfile.find(point => point.key === '09')).toMatchObject({ revenue: 40, sessions: 1 });
-    expect(result.hourlyProfile.find(point => point.key === '10')).toMatchObject({ revenue: 20, sessions: 2 });
+    expect(result.hourlyProfile.find(point => point.key === '09')).toMatchObject({ revenue: 13.33, sessions: 1 });
+    expect(result.hourlyProfile.find(point => point.key === '10')).toMatchObject({ revenue: 22.83, sessions: 3 });
     expect(result.sourceMix).toEqual([
       { key: 'hotspot', label: 'HotSpot app', revenue: 64, sessions: 2 },
       { key: 'qr', label: 'QR code', revenue: 20, sessions: 2 },
@@ -180,7 +180,7 @@ describe('parking planner analysis milestones', () => {
       revenuePerSpace: 1.88,
       sessionsPerSpace: 0.09,
     });
-    expect(result.selectedLot?.hourlyProfile.find(point => point.key === '10')).toMatchObject({ revenue: 20, sessions: 2 });
+    expect(result.selectedLot?.hourlyProfile.find(point => point.key === '10')).toMatchObject({ revenue: 22.83, sessions: 3 });
     expect(result.selectedLot?.sourceMix).toEqual([
       { key: 'hotspot', label: 'HotSpot app', revenue: 40, sessions: 1 },
       { key: 'qr', label: 'QR code', revenue: 20, sessions: 2 },
@@ -269,6 +269,47 @@ describe('parking planner analysis milestones', () => {
       'Top Revenue Space Lot generates the most revenue per known space.',
       'Top Utilization Lot has the strongest estimated utilization at 100.0%.',
     ]));
+  });
+
+  it('allocates hourly revenue across the paid session duration instead of only the start hour', () => {
+    const result = buildParkingPlannerAnalysis(analytics({
+      rows: [
+        row({
+          id: 'spans-hours',
+          startMinutes: 11 * 60 + 30,
+          endMinutes: 13 * 60 + 30,
+          durationMinutes: 120,
+          amount: 12,
+        }),
+      ],
+      locationSummaries: [location({ key: 'lot-a', totalRevenue: 12 })],
+      totalRevenue: 12,
+      rowCount: 1,
+    }), null);
+
+    expect(result.hourlyProfile.find(point => point.key === '11')).toMatchObject({ revenue: 3, sessions: 1 });
+    expect(result.hourlyProfile.find(point => point.key === '12')).toMatchObject({ revenue: 6, sessions: 1 });
+    expect(result.hourlyProfile.find(point => point.key === '13')).toMatchObject({ revenue: 3, sessions: 1 });
+  });
+
+  it('wraps overnight hourly revenue into the next day hours', () => {
+    const result = buildParkingPlannerAnalysis(analytics({
+      rows: [
+        row({
+          id: 'overnight-session',
+          startMinutes: 23 * 60 + 30,
+          durationMinutes: 120,
+          amount: 12,
+        }),
+      ],
+      locationSummaries: [location({ key: 'lot-a', totalRevenue: 12 })],
+      totalRevenue: 12,
+      rowCount: 1,
+    }), null);
+
+    expect(result.hourlyProfile.find(point => point.key === '23')).toMatchObject({ revenue: 3, sessions: 1 });
+    expect(result.hourlyProfile.find(point => point.key === '00')).toMatchObject({ revenue: 6, sessions: 1 });
+    expect(result.hourlyProfile.find(point => point.key === '01')).toMatchObject({ revenue: 3, sessions: 1 });
   });
 
   it('does not inflate category revenue per space with unknown-capacity lots', () => {

@@ -338,15 +338,53 @@ function buildTrend(
 }
 
 function buildHourlyProfile(rows: ParkingRevenueRawRow[]): ParkingAnalysisChartPoint[] {
-  const byHour = new Map(buildTrend(
-    rows,
-    row => String(Math.floor(row.startMinutes / 60)).padStart(2, '0'),
-    key => `${key}:00`,
-  ).map(point => [point.key, point]));
+  const byHour = new Map<string, {
+    revenue: number;
+    sessions: number;
+    durationTotal: number;
+    durationCount: number;
+  }>();
+
+  for (const row of rows) {
+    const rowStart = Math.max(0, row.startMinutes);
+    const duration = Math.max(1, row.durationMinutes || row.endMinutes - row.startMinutes || 1);
+    const rowEnd = rowStart + duration;
+
+    for (let segmentStart = rowStart; segmentStart < rowEnd;) {
+      const hour = Math.floor((segmentStart % 1440) / 60);
+      const nextHourBoundary = Math.floor(segmentStart / 60) * 60 + 60;
+      const segmentEnd = Math.min(rowEnd, nextHourBoundary);
+      const overlap = Math.max(0, segmentEnd - segmentStart);
+      if (overlap <= 0) continue;
+
+      const key = String(hour).padStart(2, '0');
+      const bucket = byHour.get(key) || {
+        revenue: 0,
+        sessions: 0,
+        durationTotal: 0,
+        durationCount: 0,
+      };
+      bucket.revenue += row.amount * (overlap / duration);
+      bucket.sessions += 1;
+      if (row.durationMinutes > 0) {
+        bucket.durationTotal += row.durationMinutes;
+        bucket.durationCount += 1;
+      }
+      byHour.set(key, bucket);
+      segmentStart = segmentEnd;
+    }
+  }
 
   return Array.from({ length: 24 }, (_, hour) => {
     const key = String(hour).padStart(2, '0');
-    return byHour.get(key) || {
+    const bucket = byHour.get(key);
+    return bucket ? {
+      key,
+      label: `${key}:00`,
+      revenue: roundMoney(bucket.revenue),
+      sessions: bucket.sessions,
+      averageStayMinutes: bucket.durationCount > 0 ? Math.round(bucket.durationTotal / bucket.durationCount) : 0,
+    } : {
       key,
       label: `${key}:00`,
       revenue: 0,

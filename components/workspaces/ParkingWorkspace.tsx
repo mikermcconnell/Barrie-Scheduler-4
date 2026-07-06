@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -276,6 +276,7 @@ const EmptyChartState: React.FC<{ label: string }> = ({ label }) => (
 );
 
 const tooltipValue = (value: unknown, name: unknown) => {
+  if (value == null) return 'No data';
   const numeric = typeof value === 'number' ? value : Number(value);
   const label = String(name || '');
   if (label.toLowerCase().includes('revenue')) return money(numeric);
@@ -283,39 +284,175 @@ const tooltipValue = (value: unknown, name: unknown) => {
   return Number.isFinite(numeric) ? numeric.toLocaleString() : String(value ?? '');
 };
 
+function hourNumberFromKey(value: unknown): number | null {
+  const match = String(value ?? '').match(/^(\d{1,2})(?::\d{2})?$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : null;
+}
+
+function formatHourlyAxisTick(value: unknown): string {
+  const hour = hourNumberFromKey(value);
+  if (hour == null) return String(value ?? '');
+  if (hour === 0) return '12a';
+  if (hour === 12) return 'Noon';
+  return hour < 12 ? `${hour}a` : `${hour - 12}p`;
+}
+
+function formatHourlyTooltipLabel(value: unknown): string {
+  const hour = hourNumberFromKey(value);
+  if (hour == null) return String(value ?? '');
+  return `${formatHourOption(hour)}–${formatHourOption((hour + 1) % 24)}`;
+}
+
+interface TrendAreaChartPoint extends Omit<ParkingAnalysisChartPoint, 'revenue'> {
+  revenue: number | null;
+  isMissing?: boolean;
+}
+
+const MONTH_KEY_PATTERN = /^(\d{4})-(\d{2})$/;
+const DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function monthMetaFromKey(key: string): { year: number; monthIndex: number } | null {
+  const match = MONTH_KEY_PATTERN.exec(key);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (!Number.isFinite(year) || monthIndex < 0 || monthIndex > 11) return null;
+  return { year, monthIndex };
+}
+
+function monthKeyFromSerial(serial: number): string {
+  const year = Math.floor(serial / 12);
+  const monthIndex = serial % 12;
+  return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+}
+
+function monthSerial(key: string): number | null {
+  const meta = monthMetaFromKey(key);
+  return meta ? meta.year * 12 + meta.monthIndex : null;
+}
+
+function formatTrendAxisTick(value: unknown): string {
+  const key = String(value || '');
+  const month = monthMetaFromKey(key);
+  if (month) {
+    const label = MONTHS[month.monthIndex]?.short || key;
+    return month.monthIndex === 0 ? `${label} '${String(month.year).slice(-2)}` : label;
+  }
+
+  const date = DATE_KEY_PATTERN.exec(key);
+  if (date) {
+    const monthIndex = Number(date[2]) - 1;
+    const day = Number(date[3]);
+    return `${MONTHS[monthIndex]?.short || date[2]} ${day}`;
+  }
+
+  return key;
+}
+
+function formatTrendTooltipLabel(value: unknown): string {
+  const key = String(value || '');
+  const month = monthMetaFromKey(key);
+  if (month) return `${MONTHS[month.monthIndex]?.label || key} ${month.year}`;
+
+  const date = DATE_KEY_PATTERN.exec(key);
+  if (date) {
+    const monthIndex = Number(date[2]) - 1;
+    return `${MONTHS[monthIndex]?.label || date[2]} ${Number(date[3])}, ${date[1]}`;
+  }
+
+  return key;
+}
+
+function normalizeTrendChartData(data: ParkingAnalysisChartPoint[]): TrendAreaChartPoint[] {
+  const sorted = [...data].sort((a, b) => a.key.localeCompare(b.key));
+  const monthSerials = sorted.map(point => monthSerial(point.key));
+  const isMonthlyTrend = sorted.length > 0 && monthSerials.every((serial): serial is number => serial != null);
+  if (!isMonthlyTrend) return sorted;
+
+  const byKey = new Map(sorted.map(point => [point.key, point]));
+  const min = Math.min(...monthSerials);
+  const max = Math.max(...monthSerials);
+  const normalized: TrendAreaChartPoint[] = [];
+
+  for (let serial = min; serial <= max; serial += 1) {
+    const key = monthKeyFromSerial(serial);
+    const existing = byKey.get(key);
+    if (existing) {
+      normalized.push(existing);
+    } else {
+      normalized.push({
+        key,
+        label: formatTrendTooltipLabel(key),
+        revenue: null,
+        sessions: 0,
+        averageStayMinutes: 0,
+        isMissing: true,
+      });
+    }
+  }
+
+  return normalized;
+}
+
+function trendTickInterval(pointCount: number): number {
+  if (pointCount <= 6) return 0;
+  if (pointCount <= 12) return 1;
+  return Math.max(1, Math.ceil(pointCount / 6) - 1);
+}
+
 const HourlyRevenueChart: React.FC<{ data: ParkingAnalysisChartPoint[]; compact?: boolean }> = ({ data, compact = false }) => (
   data.some(point => point.sessions > 0) ? (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 8, right: 8, left: compact ? -28 : -12, bottom: compact ? 0 : 8 }}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: compact ? -16 : -8, bottom: compact ? 2 : 8 }}>
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-        <XAxis dataKey="label" interval={compact ? 5 : 2} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <XAxis
+          dataKey="key"
+          interval={compact ? 5 : 2}
+          tickFormatter={formatHourlyAxisTick}
+          tick={{ fontSize: 10, fill: '#64748B' }}
+          tickLine={false}
+          axisLine={false}
+        />
         <YAxis tickFormatter={compactMoney} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
-        <Tooltip formatter={tooltipValue} labelClassName="font-bold text-slate-700" />
+        <Tooltip formatter={tooltipValue} labelFormatter={formatHourlyTooltipLabel} labelClassName="font-bold text-slate-700" />
         <Bar dataKey="revenue" name="Revenue" fill="#059669" radius={[8, 8, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   ) : <EmptyChartState label="No hourly activity in this filter." />
 );
 
-const TrendAreaChart: React.FC<{ data: ParkingAnalysisChartPoint[]; color?: string }> = ({ data, color = '#2563EB' }) => (
-  data.length > 0 ? (
+const TrendAreaChart: React.FC<{ data: ParkingAnalysisChartPoint[]; color?: string }> = ({ data, color = '#2563EB' }) => {
+  const gradientId = useId().replace(/:/g, '');
+  const chartData = useMemo(() => normalizeTrendChartData(data), [data]);
+  const hasData = chartData.some(point => typeof point.revenue === 'number');
+
+  return hasData ? (
     <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={{ top: 8, right: 10, left: -14, bottom: 8 }}>
+      <AreaChart data={chartData} margin={{ top: 8, right: 10, left: -14, bottom: 8 }}>
         <defs>
-          <linearGradient id="parkingRevenueGradient" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={color} stopOpacity={0.35} />
             <stop offset="95%" stopColor={color} stopOpacity={0.04} />
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-        <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <XAxis
+          dataKey="key"
+          interval={trendTickInterval(chartData.length)}
+          tickFormatter={formatTrendAxisTick}
+          tick={{ fontSize: 10, fill: '#64748B' }}
+          tickLine={false}
+          axisLine={false}
+        />
         <YAxis tickFormatter={compactMoney} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
-        <Tooltip formatter={tooltipValue} labelClassName="font-bold text-slate-700" />
-        <Area type="monotone" dataKey="revenue" name="Revenue" stroke={color} strokeWidth={3} fill="url(#parkingRevenueGradient)" />
+        <Tooltip formatter={tooltipValue} labelFormatter={formatTrendTooltipLabel} labelClassName="font-bold text-slate-700" />
+        <Area type="monotone" dataKey="revenue" name="Revenue" stroke={color} strokeWidth={3} fill={`url(#${gradientId})`} connectNulls={false} />
       </AreaChart>
     </ResponsiveContainer>
-  ) : <EmptyChartState label="Import more revenue data to show a trend." />
-);
+  ) : <EmptyChartState label="Import more revenue data to show a trend." />;
+};
 
 const TopLotsChart: React.FC<{ data: ParkingLotComparisonPoint[] }> = ({ data }) => (
   data.length > 0 ? (
@@ -2477,7 +2614,7 @@ export const ParkingWorkspace: React.FC = () => {
                   >
                     <TrendAreaChart data={selectedRevenueMonth === 'all' ? parkingPlannerAnalysis.monthlyTrend : parkingPlannerAnalysis.dailyTrend} />
                   </ParkingChartCard>
-                  <ParkingChartCard title="Hourly demand profile" subtitle="When paid parking activity is happening.">
+                  <ParkingChartCard title="Hourly demand profile" subtitle="Paid activity by hour, spread across session duration.">
                     <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
                   </ParkingChartCard>
                   <ParkingChartCard title="Top lots by revenue" subtitle="Quick comparison of the highest value parking locations." tall>
@@ -2565,7 +2702,7 @@ export const ParkingWorkspace: React.FC = () => {
                     </div>
                   </div>
                   <div className="grid gap-4 xl:grid-cols-3">
-                    <ParkingChartCard title="Selected-lot hourly profile" subtitle="Peak pattern for this lot only.">
+                    <ParkingChartCard title="Selected-lot hourly profile" subtitle="Paid activity by hour for this lot.">
                       <HourlyRevenueChart data={parkingPlannerAnalysis.selectedLot.hourlyProfile} compact />
                     </ParkingChartCard>
                     <ParkingChartCard
