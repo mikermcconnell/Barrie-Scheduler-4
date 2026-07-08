@@ -595,6 +595,14 @@ function readableTextColor(hex: string): string {
   return (red * 299 + green * 587 + blue * 114) / 1000 > 150 ? '#111827' : '#FFFFFF';
 }
 
+function hexToRgba(hex: string, alpha: number): string {
+  const value = hex.replace('#', '');
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
 function getCodeFamilyColor(codeFamilyKey?: string, department?: string, mappings: ParkingCodeFamilyMapping[] = []) {
   const key = (codeFamilyKey || '').trim().toUpperCase();
   const mapped = mappings.find(mapping => {
@@ -1093,55 +1101,58 @@ const AnnualDepartmentMatrixTable: React.FC<{ rows: AnnualSummaryRow[]; codeFami
   const monthlyTotals = MONTHS.map((_, index) => rows.reduce((sum, row) => sum + row.monthlyValues[index], 0));
 
   return (
-    <table className="min-w-[1100px] w-full text-left text-xs">
-      <thead className={`${stickyHeader ? 'sticky top-0 z-10' : ''} bg-white text-[10px] font-extrabold uppercase tracking-wide text-gray-500`}>
+    <table className="min-w-[1320px] w-full border-separate border-spacing-0 text-left text-xs">
+      <thead className={`${stickyHeader ? 'sticky top-0 z-20' : ''} bg-slate-50 text-[10px] font-extrabold uppercase tracking-wide text-gray-500 shadow-sm`}>
         <tr>
-          <th className="sticky left-0 z-20 bg-white px-3 py-2">Month</th>
+          <th className="sticky left-0 z-30 bg-slate-50 px-3 py-3">Month</th>
           {rows.map(row => {
             const color = getCodeFamilyColor(row.codeFamilyKey, row.department, codeFamilies);
             return (
-              <th key={`${row.codeFamilyKey}-${row.department}`} className="min-w-[120px] px-2 py-2 text-center">
+              <th key={`${row.codeFamilyKey}-${row.department}`} className="min-w-[150px] border-b border-slate-100 px-2 py-3 text-center">
                 <div
-                  className="rounded-xl px-2 py-1"
-                  style={{ backgroundColor: color.hex, color: readableTextColor(color.hex) }}
-                  title={row.department}
+                  className="rounded-xl border px-2.5 py-1.5 text-gray-900"
+                  style={{ backgroundColor: hexToRgba(color.hex, 0.12), borderColor: hexToRgba(color.hex, 0.45) }}
+                  title={`${row.codeLabel} · ${row.department}`}
                 >
-                  <div className="truncate">{row.codeLabel}</div>
-                  <div className="truncate text-[9px] opacity-85">{row.department}</div>
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color.hex }} />
+                    <span className="truncate">{row.codeLabel}</span>
+                  </div>
+                  <div className="truncate text-[9px] font-bold normal-case tracking-normal text-gray-600">{row.department}</div>
                 </div>
               </th>
             );
           })}
-          <th className="min-w-[120px] px-3 py-2 text-right">Monthly total</th>
+          <th className="sticky right-0 z-30 min-w-[130px] bg-slate-50 px-3 py-3 text-right">Monthly total</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-gray-100">
         {MONTHS.map((month, monthIndex) => (
           <tr key={month.value} className="hover:bg-gray-50">
-            <td className="sticky left-0 bg-white px-3 py-2 font-extrabold text-gray-800">{month.label}</td>
+            <td className="sticky left-0 z-10 border-b border-gray-100 bg-white px-3 py-2.5 font-extrabold text-gray-800">{month.label}</td>
             {rows.map(row => {
               const value = row.monthlyValues[monthIndex] || 0;
               const color = getCodeFamilyColor(row.codeFamilyKey, row.department, codeFamilies);
               return (
                 <td
                   key={`${month.value}-${row.codeFamilyKey}-${row.department}`}
-                  className="px-2 py-2 text-right font-extrabold"
-                  style={value ? { backgroundColor: color.hex, color: readableTextColor(color.hex) } : undefined}
+                  className="border-b border-gray-100 px-2 py-2.5 text-right font-extrabold text-gray-900"
+                  style={value ? { backgroundColor: hexToRgba(color.hex, 0.14), borderLeft: `3px solid ${color.hex}` } : undefined}
                 >
-                  {value ? money(value) : '—'}
+                  {value ? money(value) : <span className="font-bold text-gray-400">—</span>}
                 </td>
               );
             })}
-            <td className="px-3 py-2 text-right font-black text-gray-950">{monthlyTotals[monthIndex] ? money(monthlyTotals[monthIndex]) : '—'}</td>
+            <td className="sticky right-0 border-b border-gray-100 bg-white px-3 py-2.5 text-right font-black text-gray-950 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.55)]">{monthlyTotals[monthIndex] ? money(monthlyTotals[monthIndex]) : '—'}</td>
           </tr>
         ))}
         {rows.length > 0 ? (
-          <tr className="bg-gray-950 text-white">
-            <td className="sticky left-0 bg-gray-950 px-3 py-2 font-black">Annual total</td>
+          <tr className="sticky bottom-0 z-10 bg-gray-950 text-white">
+            <td className="sticky left-0 bg-gray-950 px-3 py-3 font-black">Annual total</td>
             {rows.map(row => (
-              <td key={`total-${row.codeFamilyKey}-${row.department}`} className="px-2 py-2 text-right font-black">{money(row.total)}</td>
+              <td key={`total-${row.codeFamilyKey}-${row.department}`} className="px-2 py-3 text-right font-black">{money(row.total)}</td>
             ))}
-            <td className="px-3 py-2 text-right font-black">{money(annualTotal)}</td>
+            <td className="sticky right-0 bg-gray-950 px-3 py-3 text-right font-black">{money(annualTotal)}</td>
           </tr>
         ) : (
           <tr><td colSpan={3} className="py-8 text-center text-gray-400">No annual summary data for this year.</td></tr>
@@ -1151,29 +1162,97 @@ const AnnualDepartmentMatrixTable: React.FC<{ rows: AnnualSummaryRow[]; codeFami
   );
 };
 
-const AnnualDepartmentPieChart: React.FC<{ rows: AnnualSummaryRow[]; codeFamilies: ParkingCodeFamilyMapping[] }> = ({ rows, codeFamilies }) => {
-  const data = rows.filter(row => row.total > 0).map(row => ({
+const AnnualDepartmentTotalsList: React.FC<{ rows: AnnualSummaryRow[]; codeFamilies: ParkingCodeFamilyMapping[]; limit?: number }> = ({ rows, codeFamilies, limit }) => {
+  const annualTotal = rows.reduce((sum, row) => sum + row.total, 0);
+  const data = rows
+    .filter(row => row.total > 0)
+    .map(row => ({
     ...row,
     label: row.department || row.codeLabel,
     color: getCodeFamilyColor(row.codeFamilyKey, row.department, codeFamilies).hex,
-  }));
+    }))
+    .sort((a, b) => b.total - a.total || a.department.localeCompare(b.department));
+  const visibleRows = typeof limit === 'number' ? data.slice(0, limit) : data;
+  const hiddenTotal = typeof limit === 'number' ? data.slice(limit).reduce((sum, row) => sum + row.total, 0) : 0;
 
   if (data.length === 0) {
-    return <div className="flex h-64 items-center justify-center text-sm font-semibold text-gray-400">No annual totals to chart.</div>;
+    return <div className="flex min-h-32 items-center justify-center text-sm font-semibold text-gray-400">No annual totals yet.</div>;
   }
 
   return (
-    <div className="h-72">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie data={data as unknown as Record<string, unknown>[]} dataKey="total" nameKey="label" innerRadius="48%" outerRadius="78%" paddingAngle={2}>
-            {data.map(entry => <Cell key={`${entry.codeFamilyKey}-${entry.department}`} fill={entry.color} />)}
-          </Pie>
-          <Tooltip formatter={(value: number) => money(value)} />
-          <Legend />
-        </PieChart>
-      </ResponsiveContainer>
+    <div className="space-y-3">
+      {visibleRows.map(row => {
+        const percent = annualTotal > 0 ? row.total / annualTotal : 0;
+        return (
+          <div key={`${row.codeFamilyKey}-${row.department}`} className="rounded-2xl border border-gray-100 bg-white p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: row.color }} />
+                  <span className="truncate text-xs font-black text-gray-950">{row.codeLabel}</span>
+                </div>
+                <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{row.department}</div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="text-sm font-black text-gray-950">{money(row.total)}</div>
+                <div className="text-[10px] font-extrabold text-gray-400">{(percent * 100).toFixed(1)}%</div>
+              </div>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100">
+              <div className="h-full rounded-full" style={{ width: `${Math.max(2, percent * 100)}%`, backgroundColor: row.color }} />
+            </div>
+          </div>
+        );
+      })}
+      {hiddenTotal > 0 ? (
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-3">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <div className="font-black text-gray-700">Other departments</div>
+            <div className="font-black text-gray-950">{money(hiddenTotal)}</div>
+          </div>
+          <div className="mt-1 text-xs font-semibold text-gray-400">{data.length - visibleRows.length} remaining departments</div>
+        </div>
+      ) : null}
     </div>
+  );
+};
+
+const AnnualDepartmentSummaryCard: React.FC<{ rows: AnnualSummaryRow[]; codeFamilies: ParkingCodeFamilyMapping[]; selectedYear: string; onOpen: () => void }> = ({ rows, codeFamilies, selectedYear, onOpen }) => {
+  const annualTotal = rows.reduce((sum, row) => sum + row.total, 0);
+  const activeMonths = MONTHS.filter((_, index) => rows.some(row => row.monthlyValues[index] > 0)).length;
+
+  return (
+    <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h3 className="text-lg font-extrabold text-gray-950">Annual department summary</h3>
+          <p className="mt-1 text-sm text-gray-500">A compact annual view. Open full screen for the month-by-department matrix.</p>
+        </div>
+        <button
+          type="button"
+          disabled={rows.length === 0}
+          onClick={onOpen}
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-40"
+        >
+          <Maximize2 size={16} /> Open annual report
+        </button>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <Metric label="Annual total" value={money(annualTotal)} />
+        <Metric label="Departments" value={rows.length.toLocaleString()} />
+        <Metric label="Months loaded" value={`${activeMonths}/12`} />
+      </div>
+      <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-black text-gray-950">Top departments</h4>
+            <p className="text-xs font-semibold text-gray-400">{selectedYear} annual totals</p>
+          </div>
+          {rows.length > 5 ? <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-gray-500">Top 5</span> : null}
+        </div>
+        <AnnualDepartmentTotalsList rows={rows} codeFamilies={codeFamilies} limit={5} />
+      </div>
+    </section>
   );
 };
 
@@ -2305,15 +2384,17 @@ export const ParkingWorkspace: React.FC = () => {
                 <X size={16} /> Close
               </button>
             </div>
-            <div className="mt-4 h-[calc(100vh-120px)] overflow-auto rounded-2xl border border-gray-200">
-              <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <div className="overflow-auto rounded-2xl border border-gray-200">
+            <div className="mt-4 h-[calc(100vh-120px)] overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
+              <div className="grid h-full gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+                <div className="min-h-0 overflow-auto rounded-2xl border border-gray-200 bg-white">
                   <AnnualDepartmentMatrixTable rows={annualSummaryRows} codeFamilies={settings.codeFamilies} stickyHeader />
                 </div>
-                <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                <div className="min-h-0 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4">
                   <h3 className="text-sm font-black text-gray-950">Annual totals by department</h3>
-                  <p className="mt-1 text-xs font-semibold text-gray-400">Share of selected year total.</p>
-                  <AnnualDepartmentPieChart rows={annualSummaryRows} codeFamilies={settings.codeFamilies} />
+                  <p className="mt-1 text-xs font-semibold text-gray-400">Ranked share of selected year total.</p>
+                  <div className="mt-4">
+                    <AnnualDepartmentTotalsList rows={annualSummaryRows} codeFamilies={settings.codeFamilies} />
+                  </div>
                 </div>
               </div>
             </div>
@@ -3659,32 +3740,12 @@ export const ParkingWorkspace: React.FC = () => {
             </section>
 
 {activeWorkspace === 'plate-monitor' ? (
-            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <h3 className="text-lg font-extrabold text-gray-950">Annual department summary</h3>
-                  <p className="mt-1 text-sm text-gray-500">Months are listed down the side; department codes run across the top using their assigned colors.</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={annualSummaryRows.length === 0}
-                  onClick={() => setAnnualFullscreen(true)}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-40"
-                >
-                  <Maximize2 size={16} /> Full screen
-                </button>
-              </div>
-              <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="max-h-[420px] overflow-auto rounded-2xl border border-gray-200">
-                  <AnnualDepartmentMatrixTable rows={annualSummaryRows} codeFamilies={settings.codeFamilies} stickyHeader />
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                  <h4 className="text-sm font-black text-gray-950">Annual totals</h4>
-                  <p className="mt-1 text-xs font-semibold text-gray-400">Department share of {selectedYear} total.</p>
-                  <AnnualDepartmentPieChart rows={annualSummaryRows} codeFamilies={settings.codeFamilies} />
-                </div>
-              </div>
-            </section>
+            <AnnualDepartmentSummaryCard
+              rows={annualSummaryRows}
+              codeFamilies={settings.codeFamilies}
+              selectedYear={selectedYear}
+              onOpen={() => setAnnualFullscreen(true)}
+            />
             ) : null}
 
             <section className="grid gap-4 md:grid-cols-4">
