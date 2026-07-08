@@ -5,7 +5,27 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle, Eye, Database, Edit2 } from 'lucide-react';
+import {
+    Users,
+    Copy,
+    Check,
+    Trash2,
+    Shield,
+    User,
+    LogOut,
+    X,
+    Link,
+    PlusCircle,
+    Eye,
+    Database,
+    Edit2,
+    Search,
+    FileText,
+    Download,
+    HardDrive,
+    Clock,
+    FolderOpen,
+} from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './contexts/AuthContext';
 import { useTeam } from './contexts/TeamContext';
@@ -51,6 +71,11 @@ import {
     WORKSPACE_ACCESS_PACKAGES,
     type WorkspaceAccessPackageId,
 } from '../utils/workspaceAccessPackages';
+import {
+    getAllFiles,
+    getAllUploadedFilesForAdmin,
+    type SavedFile,
+} from '../utils/services/dataService';
 import { buildWorkspaceAccessPreview } from '../utils/workspaceAccessPreview';
 import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
 import { WorkspaceAccessAppPreview } from './WorkspaceAccessAppPreview';
@@ -75,14 +100,16 @@ const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
 };
 
 type WorkspaceSelection = Record<WorkspaceAccessFeatureKey, boolean>;
-type TeamManagementTab = 'overview' | 'members' | 'access' | 'data' | 'admin';
+type TeamManagementTab = 'users' | 'access' | 'uploads' | 'data' | 'developer';
+type UploadAdminScope = 'team' | 'mine' | 'all';
+type UploadFileFilter = 'all' | SavedFile['type'];
 
 const TEAM_MANAGEMENT_TABS: Array<{ id: TeamManagementTab; label: string; adminOnly?: boolean }> = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'members', label: 'Members' },
-    { id: 'access', label: 'Access', adminOnly: true },
+    { id: 'users', label: 'Users' },
+    { id: 'access', label: 'Access' },
+    { id: 'uploads', label: 'Uploads', adminOnly: true },
     { id: 'data', label: 'Data Sources', adminOnly: true },
-    { id: 'admin', label: 'Admin', adminOnly: true },
+    { id: 'developer', label: 'Developer Tools', adminOnly: true },
 ];
 
 function buildWorkspaceSelection(
@@ -175,7 +202,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [transitAppSourceTeamId, setTransitAppSourceTeamId] = useState('');
     const [performanceSourceTeamId, setPerformanceSourceTeamId] = useState('');
     const [savingDataSources, setSavingDataSources] = useState(false);
-    const [activeTab, setActiveTab] = useState<TeamManagementTab>('overview');
+    const [activeTab, setActiveTab] = useState<TeamManagementTab>('users');
+    const [uploadScope, setUploadScope] = useState<UploadAdminScope>('team');
+    const [uploadedFiles, setUploadedFiles] = useState<SavedFile[]>([]);
+    const [uploadsLoading, setUploadsLoading] = useState(false);
+    const [uploadsError, setUploadsError] = useState('');
+    const [uploadSearch, setUploadSearch] = useState('');
+    const [uploadFileFilter, setUploadFileFilter] = useState<UploadFileFilter>('all');
 
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
@@ -216,8 +249,11 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     });
     const dataSourceTeamOptions = availableTeams.filter(availableTeam => availableTeam.id !== activeTeamId);
     const visibleTabs = useMemo(
-        () => TEAM_MANAGEMENT_TABS.filter(tab => !tab.adminOnly || canLookupTeams),
-        [canLookupTeams]
+        () => TEAM_MANAGEMENT_TABS.filter(tab => {
+            if (tab.id === 'access') return canManageActiveAccess;
+            return !tab.adminOnly || canLookupTeams;
+        }),
+        [canLookupTeams, canManageActiveAccess]
     );
     const transitAppSourceTeam = availableTeams.find(teamOption => teamOption.id === transitAppSourceTeamId) ?? null;
     const performanceSourceTeam = availableTeams.find(teamOption => teamOption.id === performanceSourceTeamId) ?? null;
@@ -287,7 +323,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
 
     useEffect(() => {
         if (visibleTabs.some(tab => tab.id === activeTab)) return;
-        setActiveTab('overview');
+        setActiveTab('users');
     }, [activeTab, visibleTabs]);
 
     const loadTeamDetails = async () => {
@@ -859,6 +895,74 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         }
     };
 
+    const loadUploadedFiles = async () => {
+        if (!user || activeTab !== 'uploads') return;
+
+        setUploadsLoading(true);
+        setUploadsError('');
+        try {
+            const files = canLookupTeams && uploadScope !== 'mine'
+                ? await getAllUploadedFilesForAdmin()
+                : await getAllFiles(user.uid);
+
+            if (uploadScope === 'team' && activeTeamDetails?.members.length) {
+                const teamUserIds = new Set(activeTeamDetails.members.map(member => member.userId));
+                setUploadedFiles(files.filter(file => file.ownerUserId && teamUserIds.has(file.ownerUserId)));
+            } else {
+                setUploadedFiles(files);
+            }
+        } catch (error) {
+            console.error('Error loading uploads:', error);
+            setUploadsError('Failed to load uploads.');
+        } finally {
+            setUploadsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'uploads') {
+            void loadUploadedFiles();
+        }
+    }, [activeTab, uploadScope, activeTeamDetails?.id, activeTeamDetails?.members.length, user?.uid, canLookupTeams]);
+
+    const formatFileSize = (bytes: number) => {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    const formatDate = (date: Date) => new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    }).format(date);
+
+    const getFileCategoryLabel = (type: SavedFile['type']) => {
+        switch (type) {
+            case 'schedule_master':
+                return 'Master Schedule';
+            case 'rideco':
+                return 'RideCo';
+            case 'barrie_tod':
+                return 'Barrie TOD';
+            default:
+                return 'Other';
+        }
+    };
+
+    const getUploaderLabel = (file: SavedFile) => (
+        file.ownerDisplayName || file.ownerEmail || file.ownerUserId || 'Unknown user'
+    );
+
+    const filteredUploadedFiles = uploadedFiles.filter(file => {
+        const query = uploadSearch.trim().toLowerCase();
+        const matchesSearch = !query ||
+            file.name.toLowerCase().includes(query) ||
+            getUploaderLabel(file).toLowerCase().includes(query);
+        const matchesType = uploadFileFilter === 'all' || file.type === uploadFileFilter;
+        return matchesSearch && matchesType;
+    });
+
     // No Team State - Create or Join
     if (!team) {
         return (
@@ -976,17 +1080,98 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         );
     }
 
-    // Has Team - Show Team Info
+    // Has Team - Show Team Admin Command Center
     return (
-        <div className="w-full max-w-full overflow-x-hidden rounded-xl border border-gray-200 bg-white p-4 sm:p-6">
+        <div className="relative w-full max-w-7xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
             {onClose && (
                 <button
                     onClick={onClose}
-                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+                    className="absolute right-4 top-4 z-20 rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                 >
                     <X size={20} />
                 </button>
             )}
+
+            <div className="grid min-h-[680px] lg:grid-cols-[300px_1fr]">
+                <aside className="border-b border-gray-200 bg-gray-50 p-4 lg:border-b-0 lg:border-r">
+                    <div className="mb-4 flex items-center gap-3">
+                        <div className="rounded-xl bg-brand-green/10 p-2 text-brand-green">
+                            <Users size={22} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Team Admin</p>
+                            <h2 className="text-lg font-black text-gray-900">Command Center</h2>
+                        </div>
+                    </div>
+
+                    {canLookupTeams ? (
+                        <>
+                            <label className="text-xs font-bold uppercase tracking-wide text-gray-500">Find team</label>
+                            <div className="mt-1 flex gap-2">
+                                <div className="relative min-w-0 flex-1">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                                    <input
+                                        type="text"
+                                        value={teamLookupCode}
+                                        onChange={(e) => setTeamLookupCode(e.target.value.toUpperCase())}
+                                        placeholder="Name or code"
+                                        className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm focus:border-brand-green focus:ring-2 focus:ring-brand-green/20"
+                                    />
+                                </div>
+                                <button
+                                    onClick={handleLookupTeam}
+                                    disabled={teamLookupLoading || !/^[A-Z0-9]{6}$/.test(teamLookupCode.trim().toUpperCase())}
+                                    className="rounded-lg bg-brand-green px-3 py-2 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                    title="Load by exact 6-character invite code"
+                                >
+                                    Load
+                                </button>
+                            </div>
+
+                            {!isViewingCurrentTeam && (
+                                <button
+                                    onClick={handleResetTeamLookup}
+                                    className="mt-3 w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"
+                                >
+                                    Back to my team
+                                </button>
+                            )}
+
+                            <div className="mt-3 max-h-[460px] overflow-y-auto rounded-xl border border-gray-200 bg-white">
+                                {availableTeamsLoading ? (
+                                    <p className="px-3 py-3 text-sm text-gray-500">Loading teams...</p>
+                                ) : filteredAvailableTeams.length === 0 ? (
+                                    <p className="px-3 py-3 text-sm text-gray-500">No teams found.</p>
+                                ) : (
+                                    filteredAvailableTeams.map(availableTeam => {
+                                        const isActiveTeam = availableTeam.id === activeTeamDetails?.id;
+                                        return (
+                                            <button
+                                                key={availableTeam.id}
+                                                onClick={() => handleSelectTeam(availableTeam)}
+                                                disabled={teamLookupLoading}
+                                                className={`flex w-full items-center justify-between gap-3 border-b border-gray-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-green-50 disabled:opacity-50 ${
+                                                    isActiveTeam ? 'bg-green-50 text-green-900' : 'text-gray-700'
+                                                }`}
+                                            >
+                                                <span className="truncate font-semibold">{availableTeam.name}</span>
+                                                <span className="font-mono text-xs text-gray-500">{availableTeam.inviteCode}</span>
+                                            </button>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </>
+                    ) : (
+                        <div className="rounded-xl border border-gray-200 bg-white p-3">
+                            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Current team</p>
+                            <p className="mt-1 font-bold text-gray-900">{activeTeamDetails?.name ?? team.name}</p>
+                            <p className="mt-1 text-sm text-gray-500">Use the tabs to manage your team.</p>
+                        </div>
+                    )}
+                </aside>
+
+                <main className="min-w-0 p-4 sm:p-6">
 
             {/* Team Header */}
             <div className="flex items-center justify-between mb-6">
@@ -1053,6 +1238,40 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
             </div>
 
+            <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Team invite</p>
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                        <p className="font-mono text-xl font-black tracking-wider text-gray-950">
+                            {activeTeamDetails?.inviteCode ?? team.inviteCode}
+                        </p>
+                        <div className="flex gap-1">
+                            <button onClick={handleCopyInviteCode} className="rounded-lg border border-gray-300 bg-white p-2 text-gray-700 hover:bg-gray-100" title="Copy code">
+                                {copiedCode ? <Check size={16} /> : <Copy size={16} />}
+                            </button>
+                            <button onClick={() => handleCopyInviteLink()} className="rounded-lg border border-gray-300 bg-white p-2 text-gray-700 hover:bg-gray-100" title="Copy invite link">
+                                {copiedLink ? <Check size={16} /> : <Link size={16} />}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <button type="button" onClick={() => setActiveTab('users')} className="rounded-xl border border-gray-200 bg-white p-4 text-left hover:bg-gray-50">
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Users</p>
+                    <p className="mt-2 text-2xl font-black text-gray-950">{activeTeamDetails?.memberCount ?? activeTeamDetails?.members.length ?? 0}</p>
+                    <p className="text-xs text-gray-500">Team members</p>
+                </button>
+                <button type="button" onClick={() => canManageActiveAccess && setActiveTab('access')} className="rounded-xl border border-gray-200 bg-white p-4 text-left hover:bg-gray-50">
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Default access</p>
+                    <p className="mt-2 text-sm font-black text-gray-950">{WORKSPACE_ACCESS_LEVEL_LABELS[activeDefaultAccessLevel]}</p>
+                    <p className="text-xs text-gray-500">For new invite users</p>
+                </button>
+                <button type="button" onClick={() => canLookupTeams && setActiveTab('uploads')} disabled={!canLookupTeams} className="rounded-xl border border-gray-200 bg-white p-4 text-left hover:bg-gray-50 disabled:cursor-default disabled:hover:bg-white">
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Uploads</p>
+                    <p className="mt-2 text-sm font-black text-gray-950">{canLookupTeams ? 'Team / all users' : 'File Manager'}</p>
+                    <p className="text-xs text-gray-500">Review source files</p>
+                </button>
+            </div>
+
             <div className="mb-5 flex gap-2 overflow-x-auto border-b border-gray-200">
                 {visibleTabs.map(tab => (
                     <button
@@ -1069,7 +1288,42 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 ))}
             </div>
 
-            {canLookupTeams && activeTab === 'admin' && (
+            {canLookupTeams && activeTeamDetails && activeTab === 'developer' && (
+                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-base font-bold text-amber-950">Developer support tools</p>
+                    <p className="mt-1 text-sm text-amber-800">
+                        Use these only for intentional support work. Editing as a saved user opens their surface with your admin write permissions.
+                    </p>
+                    <div className="mt-3">
+                        <label className="text-xs font-bold uppercase tracking-wide text-amber-800">Selected user</label>
+                        <select
+                            value={selectedWizardMemberId}
+                            onChange={(event) => setSelectedWizardMemberId(event.target.value)}
+                            className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-bold text-gray-800"
+                        >
+                            {activeTeamDetails.members.map(member => (
+                                <option key={member.id} value={member.id}>{member.displayName} ({member.email})</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                        <button onClick={handlePreviewTeamDefault} className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100">
+                            <Eye size={16} /> Preview default
+                        </button>
+                        <button onClick={handlePreviewSelectedMember} disabled={!selectedWizardMember} className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50">
+                            <Eye size={16} /> Preview selected
+                        </button>
+                        <button onClick={handleViewAsSavedMember} disabled={!selectedWizardMember} className="inline-flex items-center justify-center gap-2 rounded-lg border border-purple-300 bg-white px-4 py-2 text-sm font-bold text-purple-800 hover:bg-purple-100 disabled:opacity-50">
+                            <Eye size={16} /> View as user
+                        </button>
+                        <button onClick={handleEditAsSavedMember} disabled={!selectedWizardMember} className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50">
+                            <Edit2 size={16} /> Edit as user
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {canLookupTeams && activeTab === 'developer' && (
                 <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-3">
                         <PlusCircle size={18} className="text-brand-green" />
@@ -1155,13 +1409,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
             )}
 
-            {canLookupTeams && activeTeamDetails && activeTab === 'access' && (
+            {canManageActiveAccess && activeTeamDetails && activeTab === 'access' && (
                 <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
-                            <p className="text-sm font-semibold text-gray-900">Developer Access Wizard</p>
+                            <p className="text-sm font-semibold text-gray-900">Access controls</p>
                             <p className="mt-1 text-xs text-gray-500">
-                                Set team defaults, copy invites, and fine-tune user workspace access.
+                                Set team defaults and fine-tune one user's workspace access.
                             </p>
                         </div>
                         <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-blue-700">
@@ -1250,7 +1504,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 </button>
                             </div>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <details className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                            <summary className="cursor-pointer text-sm font-bold text-gray-700">Advanced workspace overrides</summary>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2">
                             {WORKSPACE_ACCESS_FEATURES.map(feature => (
                                 <label key={feature} className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
                                     <input
@@ -1265,7 +1521,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                     <span className="truncate">{WORKSPACE_FEATURE_LABELS[feature]}</span>
                                 </label>
                             ))}
-                        </div>
+                            </div>
+                        </details>
                         <WorkspaceAccessAppPreview
                             title="Access preview for future invite users"
                             preview={wizardTeamAccessPreview}
@@ -1349,7 +1606,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 </button>
                             </div>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <details className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                            <summary className="cursor-pointer text-sm font-bold text-gray-700">Advanced workspace overrides</summary>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2">
                             {WORKSPACE_ACCESS_FEATURES.map(feature => (
                                 <label key={feature} className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
                                     <input
@@ -1365,7 +1624,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                     <span className="truncate">{WORKSPACE_FEATURE_LABELS[feature]}</span>
                                 </label>
                             ))}
-                        </div>
+                            </div>
+                        </details>
                         <WorkspaceAccessAppPreview
                             title="Access preview for selected user"
                             preview={wizardMemberAccessPreview}
@@ -1375,6 +1635,116 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
                         Lane Transit setup: select <span className="font-semibold">Transit App Data only</span>. WATT setup: select <span className="font-semibold">Transit App + STREETS Dashboard</span>, then set Barrie as the read-only data source.
                     </p>
+                </div>
+            )}
+
+            {canLookupTeams && activeTab === 'uploads' && (
+                <div className="mb-5 rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="border-b border-gray-200 p-4">
+                        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                            <div>
+                                <p className="text-base font-bold text-gray-950">Uploads</p>
+                                <p className="text-sm text-gray-500">Review uploaded files by active team, your account, or all users.</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {(['team', 'mine', 'all'] as UploadAdminScope[]).map(scope => (
+                                    <button
+                                        key={scope}
+                                        onClick={() => setUploadScope(scope)}
+                                        className={`rounded-lg px-3 py-2 text-sm font-bold ${
+                                            uploadScope === scope
+                                                ? 'bg-brand-green text-white'
+                                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        {scope === 'team' ? 'Team uploads' : scope === 'mine' ? 'My uploads' : 'All uploads'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto]">
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                                <input
+                                    value={uploadSearch}
+                                    onChange={(event) => setUploadSearch(event.target.value)}
+                                    placeholder="Search file or uploader"
+                                    className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-brand-green focus:ring-2 focus:ring-brand-green/20"
+                                />
+                            </div>
+                            <select
+                                value={uploadFileFilter}
+                                onChange={(event) => setUploadFileFilter(event.target.value as UploadFileFilter)}
+                                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700"
+                            >
+                                <option value="all">All file types</option>
+                                <option value="schedule_master">Master Schedule</option>
+                                <option value="rideco">RideCo</option>
+                                <option value="barrie_tod">Barrie TOD</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {uploadsError && (
+                        <p className="m-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{uploadsError}</p>
+                    )}
+
+                    {uploadsLoading ? (
+                        <p className="p-6 text-sm text-gray-500">Loading uploads...</p>
+                    ) : filteredUploadedFiles.length === 0 ? (
+                        <div className="p-8 text-center text-gray-500">
+                            <FolderOpen className="mx-auto mb-3 opacity-40" size={42} />
+                            <p className="font-bold">No uploads found</p>
+                            <p className="text-sm">Try another scope or search.</p>
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full min-w-[760px] text-sm">
+                                <thead className="bg-gray-50 text-left text-xs font-bold uppercase tracking-wide text-gray-500">
+                                    <tr>
+                                        <th className="px-4 py-3">File</th>
+                                        <th className="px-4 py-3">Uploader</th>
+                                        <th className="px-4 py-3">Type</th>
+                                        <th className="px-4 py-3">Size</th>
+                                        <th className="px-4 py-3">Uploaded</th>
+                                        <th className="px-4 py-3 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {filteredUploadedFiles.map(file => (
+                                        <tr key={`${file.ownerUserId ?? 'mine'}-${file.id}`} className="hover:bg-gray-50">
+                                            <td className="px-4 py-3">
+                                                <div className="flex min-w-0 items-center gap-2">
+                                                    <FileText size={16} className="text-brand-blue" />
+                                                    <span className="truncate font-bold text-gray-900">{file.name}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 font-semibold text-blue-700">{getUploaderLabel(file)}</td>
+                                            <td className="px-4 py-3 text-gray-600">{getFileCategoryLabel(file.type)}</td>
+                                            <td className="px-4 py-3 text-gray-600">
+                                                <span className="inline-flex items-center gap-1"><HardDrive size={13} />{formatFileSize(file.size)}</span>
+                                            </td>
+                                            <td className="px-4 py-3 text-gray-600">
+                                                <span className="inline-flex items-center gap-1"><Clock size={13} />{formatDate(file.uploadedAt)}</span>
+                                            </td>
+                                            <td className="px-4 py-3 text-right">
+                                                <a
+                                                    href={file.downloadUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-100"
+                                                >
+                                                    <Download size={14} />
+                                                    Open
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -1454,7 +1824,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
             )}
 
-            {canLookupTeams && activeTab === 'admin' && (
+            {canLookupTeams && activeTab === 'developer' && (
                 <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6">
                     <p className="text-sm font-semibold text-blue-900 mb-2">Admin team lookup</p>
                     <div className="flex flex-col gap-2 sm:flex-row">
@@ -1511,7 +1881,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </div>
             )}
 
-            {activeTab === 'overview' && (
+            {activeTab === 'users' && (
                 <>
             {/* Invite Code */}
             <div className="bg-gray-50 rounded-lg p-4 mb-6">
@@ -1625,7 +1995,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             )}
 
             {/* Members List */}
-            {activeTab === 'members' && (
+            {activeTab === 'users' && (
             <div className="mb-6">
                 <h3 className="font-semibold text-gray-900 mb-3">Members</h3>
                 {canManageActiveAccess && (
@@ -1691,6 +2061,31 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                         </span>
                                     )}
 
+                                    {canManageActiveAccess && (
+                                        <button
+                                            onClick={() => {
+                                                setSelectedWizardMemberId(member.id);
+                                                setActiveTab('access');
+                                            }}
+                                            className="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                        >
+                                            Edit access
+                                        </button>
+                                    )}
+
+                                    {canLookupTeams && (
+                                        <button
+                                            onClick={() => {
+                                                setUploadScope('team');
+                                                setUploadSearch(member.email || member.displayName);
+                                                setActiveTab('uploads');
+                                            }}
+                                            className="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                        >
+                                            Uploads
+                                        </button>
+                                    )}
+
                                     {canRemoveActiveMembers && member.userId !== user?.uid && member.role !== 'owner' && (
                                         <button
                                             onClick={() => handleRemoveMember(member.id, member.displayName)}
@@ -1709,7 +2104,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             )}
 
             {/* Leave Team Button */}
-            {activeTab === 'overview' && isViewingCurrentTeam && (
+            {activeTab === 'users' && isViewingCurrentTeam && (
                 <div className="pt-4 border-t border-gray-200">
                     <button
                         onClick={handleLeaveTeam}
@@ -1721,7 +2116,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     </button>
                 </div>
             )}
+                </main>
+            </div>
         </div>
     );
 };
-

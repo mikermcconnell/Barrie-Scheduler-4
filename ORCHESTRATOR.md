@@ -47,6 +47,8 @@ Team Management has an admin-only Data Sources tab for partner teams. It writes 
 
 Partner teams with Scheduled Transit access can view published master schedules from a source team without copying schedule JSON. `dataSourceTeamIds.masterSchedules` is the explicit pointer; when absent, the Master Schedule Browser falls back to `dataSourceTeamIds.performance` if the partner team has no local schedules. Firebase rules allow this as read-only access only for members of the requesting team who also have Fixed Route workspace access.
 
+Team Management is now a command-center UI: a global-admin team picker rail, summary cards, and separate tabs for Users, Access, Uploads, Data Sources, and Developer Tools. Keep ordinary access editing package-first, hide workspace checkbox overrides behind advanced disclosure, keep uploads review in the Uploads tab, and keep preview/edit-as-user support actions in Developer Tools.
+
 This is a domain-heavy monolith:
 - UI lives in `components/`
 - domain logic lives in `utils/`
