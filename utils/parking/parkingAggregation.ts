@@ -41,12 +41,31 @@ function buildIgnoredDepartmentKeys(settings: ParkingAnalysisSettings): Set<stri
   return keys;
 }
 
+function buildIgnoredDataKeys(settings: ParkingAnalysisSettings): Set<string> {
+  if (!isParkingSettings(settings)) return new Set();
+  const keys = new Set<string>();
+  for (const mapping of settings.codeFamilies) {
+    if (!mapping.ignoreData) continue;
+    const familyKey = normalizeKey(getParkingCodeFamilyKey(mapping.familyKey));
+    const department = normalizeKey(mapping.department);
+    if (familyKey) keys.add(`family:${familyKey}`);
+    if (department) keys.add(`department:${department}`);
+  }
+  return keys;
+}
+
 function isIgnoredDepartment(row: ParkingRawRow, ignoredKeys: Set<string>): boolean {
   if (ignoredKeys.size === 0) return false;
   const familyKey = normalizeKey(getParkingCodeFamilyKey(row.codeFamilyKey));
   const department = normalizeKey(row.department || 'Unmapped');
   return (familyKey && ignoredKeys.has(`family:${familyKey}`))
     || (department && ignoredKeys.has(`department:${department}`));
+}
+
+function filterIgnoredDataRows(rows: ParkingRawRow[], settings: ParkingAnalysisSettings): ParkingRawRow[] {
+  const ignoredKeys = buildIgnoredDataKeys(settings);
+  if (ignoredKeys.size === 0) return rows;
+  return rows.filter(row => !isIgnoredDepartment(row, ignoredKeys));
 }
 
 export function mergeParkingSettings(base: ParkingSettings, override: ParkingSettings): ParkingSettings {
@@ -229,9 +248,10 @@ export function buildParkingMonthAnalysis(rows: ParkingRawRow[], settings: Parki
   departmentSummaries: ParkingDepartmentMonthlySummary[];
   platePatterns: ParkingPlatePattern[];
 } {
+  const activeRows = filterIgnoredDataRows(rows, settings);
   return {
-    departmentSummaries: summarizeDepartmentRows(rows),
-    platePatterns: summarizePlateRows(rows, settings),
+    departmentSummaries: summarizeDepartmentRows(activeRows),
+    platePatterns: summarizePlateRows(activeRows, settings),
   };
 }
 
@@ -285,8 +305,16 @@ export function buildParkingSummary(
   const rules = getFlagRules(settings);
   const monthsForSummary = isParkingSettings(settings)
     ? months.map(month => {
-      const analysis = buildParkingMonthAnalysis(month.rows, settings);
-      return { ...month, departmentSummaries: analysis.departmentSummaries, platePatterns: analysis.platePatterns };
+      const rows = filterIgnoredDataRows(month.rows, settings);
+      const analysis = buildParkingMonthAnalysis(rows, settings);
+      return {
+        ...month,
+        rows,
+        rowCount: rows.length,
+        totalValue: money(rows.reduce((sum, row) => sum + row.discountAmount, 0)),
+        departmentSummaries: analysis.departmentSummaries,
+        platePatterns: analysis.platePatterns,
+      };
     })
     : months;
   const sortedMonths = [...monthsForSummary].sort((a, b) => a.month.localeCompare(b.month));

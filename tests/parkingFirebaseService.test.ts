@@ -74,8 +74,14 @@ describe('parking Firebase service', () => {
 
   it('saves Parking settings to the team parking document, including flag thresholds', async () => {
     const { saveParkingSettings } = await import('../utils/parking/parkingService');
+    const settingsWithIgnoreData: ParkingSettings = {
+      ...strictSettings,
+      codeFamilies: strictSettings.codeFamilies.map(mapping => (
+        mapping.familyKey === 'IF' ? { ...mapping, ignoreData: true } : mapping
+      )),
+    };
 
-    const saved = await saveParkingSettings('team-1', 'user-1', strictSettings);
+    const saved = await saveParkingSettings('team-1', 'user-1', settingsWithIgnoreData);
 
     expect(firestoreMock.doc).toHaveBeenCalledWith(
       { name: 'mock-db' },
@@ -89,8 +95,15 @@ describe('parking Firebase service', () => {
       expect.objectContaining({
         settings: expect.objectContaining({
           updatedBy: 'user-1',
+          codeFamilies: expect.arrayContaining([
+            expect.objectContaining({
+              familyKey: 'IF',
+              ignoreData: true,
+            }),
+          ]),
           flagRules: expect.objectContaining({
             plateMonthlyValueDollars: 999,
+            multipleDailySessions: 3,
             departmentIncreasePercent: 200,
           }),
         }),
@@ -100,6 +113,7 @@ describe('parking Firebase service', () => {
       { merge: true },
     );
     expect(saved.flagRules).toMatchObject(strictSettings.flagRules);
+    expect(saved.codeFamilies.find(mapping => mapping.familyKey === 'IF')?.ignoreData).toBe(true);
   });
 
   it('saves imported month data to Storage and Firestore with the active flag thresholds', async () => {
@@ -294,9 +308,11 @@ describe('parking Firebase service', () => {
         totalRows: 4,
         totalValue: 112,
         settings: {
-          codeFamilies: strictSettings.codeFamilies,
+          codeFamilies: strictSettings.codeFamilies.map(mapping => (
+            mapping.familyKey === 'IF' ? { ...mapping, ignoreData: true } : mapping
+          )),
           spotLocations: strictSettings.spotLocations,
-          flagRules: { plateMonthlyValueDollars: 999 },
+          flagRules: { plateMonthlyValueDollars: 999, multipleDailySessions: 4 },
           updatedAt: '2026-06-01T00:00:00.000Z',
           updatedBy: 'user-1',
         },
@@ -312,7 +328,9 @@ describe('parking Firebase service', () => {
     const summary = await getParkingData('team-1');
 
     expect(settings.flagRules.plateMonthlyValueDollars).toBe(999);
+    expect(settings.flagRules.multipleDailySessions).toBe(4);
     expect(settings.flagRules.longSessionHours).toBe(6);
+    expect(settings.codeFamilies.find(mapping => mapping.familyKey === 'IF')?.ignoreData).toBe(true);
     expect(summary?.metadata).toMatchObject({
       importedAt: importedDate.toISOString(),
       importedBy: 'user-1',

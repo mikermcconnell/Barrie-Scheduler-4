@@ -177,10 +177,19 @@ const DEPARTMENT_COLORS = [
   { familyKey: 'WO', code: 'WO2025', department: 'Water Operations', hex: '#104861' },
   { familyKey: 'WW', code: 'WW2025', department: 'Waste Water Operations', hex: '#333F4F' },
   { familyKey: 'OP', code: 'OP2025', department: 'Operations', hex: '#292929' },
-  { familyKey: 'P1', code: 'P12026', department: 'City Staff Underground Parking', hex: '#6B7280' },
 ];
 
 const normalizeText = (value: string | null | undefined) => (value || '').trim().toLowerCase();
+const NON_DEPARTMENT_CODE_FAMILIES = new Set(['P1']);
+const NON_DEPARTMENT_NAMES = new Set([
+  'city staff underground parking',
+  'city underground parking',
+]);
+
+function isNonDepartmentParkingCode(codeFamilyKey: string | null | undefined, department: string | null | undefined): boolean {
+  return NON_DEPARTMENT_CODE_FAMILIES.has((codeFamilyKey || '').trim().toUpperCase())
+    || NON_DEPARTMENT_NAMES.has(normalizeText(department));
+}
 const DEFAULT_DEPARTMENT_LEGEND_SORT = DEFAULT_PARKING_SETTINGS.departmentLegendSort || { key: 'color' as ParkingDepartmentLegendSortKey, direction: 'asc' as ParkingSortDirection };
 const ALL_REVENUE_SOURCES: Array<ParkingRevenueSource | 'all'> = ['all', 'hotspot', 'qr'];
 const ALL_REVENUE_DAY_TYPES: Array<NonNullable<ParkingRevenueFilters['dayType']>> = ['all', 'weekday', 'weekend', 'saturday', 'sunday'];
@@ -218,6 +227,7 @@ interface DepartmentLegendRow {
   code: string;
   department: string;
   hex: string;
+  ignoreData: boolean;
   ignoreFlags: boolean;
   mappingIndex: number;
 }
@@ -630,7 +640,7 @@ function getCodeFamilyColor(codeFamilyKey?: string, department?: string, mapping
 function getDepartmentRowsForLegend(settings: ParkingSettings) {
   return settings.codeFamilies
     .map((mapping, mappingIndex) => ({ mapping, mappingIndex }))
-    .filter(({ mapping }) => !mapping.archived)
+    .filter(({ mapping }) => !mapping.archived && !isNonDepartmentParkingCode(mapping.familyKey, mapping.department))
     .map(({ mapping, mappingIndex }): DepartmentLegendRow => {
       const color = getCodeFamilyColor(mapping.familyKey, mapping.department, settings.codeFamilies);
       const previewYear = getParkingActiveYears(mapping)[0] || new Date().getFullYear();
@@ -639,6 +649,7 @@ function getDepartmentRowsForLegend(settings: ParkingSettings) {
         code: getParkingCodesForYear(mapping, previewYear)[0] || mapping.familyKey,
         department: mapping.department || 'Unnamed department',
         hex: color.hex,
+        ignoreData: Boolean(mapping.ignoreData),
         ignoreFlags: Boolean(mapping.ignoreFlags),
         mappingIndex,
       };
@@ -676,6 +687,8 @@ function sortDepartmentLegendRows(rows: DepartmentLegendRow[], sortKey: ParkingD
       result = a.code.localeCompare(b.code);
     } else if (sortKey === 'department') {
       result = a.department.localeCompare(b.department);
+    } else if (sortKey === 'ignoreData') {
+      result = Number(a.ignoreData) - Number(b.ignoreData);
     } else {
       result = Number(a.ignoreFlags) - Number(b.ignoreFlags);
     }
@@ -1057,6 +1070,7 @@ function buildAnnualSummaryRows(months: ParkingMonthlyDataset[], year: string): 
     for (const row of month.rows) {
       const codeFamilyKey = row.codeFamilyKey || 'OTHER';
       const department = row.department || row.description || 'Unmapped';
+      if (isNonDepartmentParkingCode(codeFamilyKey, department)) continue;
       const key = `${codeFamilyKey}|${department}`;
       const group = groups.get(key) || {
         codeFamilyKey,
@@ -1217,40 +1231,39 @@ const AnnualDepartmentTotalsList: React.FC<{ rows: AnnualSummaryRow[]; codeFamil
   );
 };
 
-const AnnualDepartmentSummaryCard: React.FC<{ rows: AnnualSummaryRow[]; codeFamilies: ParkingCodeFamilyMapping[]; selectedYear: string; onOpen: () => void }> = ({ rows, codeFamilies, selectedYear, onOpen }) => {
+const AnnualDepartmentSummaryCard: React.FC<{ rows: AnnualSummaryRow[]; onOpen: () => void }> = ({ rows, onOpen }) => {
   const annualTotal = rows.reduce((sum, row) => sum + row.total, 0);
   const activeMonths = MONTHS.filter((_, index) => rows.some(row => row.monthlyValues[index] > 0)).length;
 
   return (
-    <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h3 className="text-lg font-extrabold text-gray-950">Annual department summary</h3>
-          <p className="mt-1 text-sm text-gray-500">A compact annual view. Open full screen for the month-by-department matrix.</p>
+    <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-base font-extrabold text-gray-950">Annual department summary</h3>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Reduced view. Open full screen for the matrix and department rankings.</p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[420px]">
+          <div className="rounded-xl bg-gray-50 px-3 py-2">
+            <div className="text-[10px] font-black uppercase tracking-wide text-gray-400">Annual total</div>
+            <div className="text-sm font-black text-gray-950">{money(annualTotal)}</div>
+          </div>
+          <div className="rounded-xl bg-gray-50 px-3 py-2">
+            <div className="text-[10px] font-black uppercase tracking-wide text-gray-400">Departments</div>
+            <div className="text-sm font-black text-gray-950">{rows.length.toLocaleString()}</div>
+          </div>
+          <div className="rounded-xl bg-gray-50 px-3 py-2">
+            <div className="text-[10px] font-black uppercase tracking-wide text-gray-400">Months</div>
+            <div className="text-sm font-black text-gray-950">{activeMonths}/12</div>
+          </div>
         </div>
         <button
           type="button"
           disabled={rows.length === 0}
           onClick={onOpen}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-40"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-40"
         >
           <Maximize2 size={16} /> Open annual report
         </button>
-      </div>
-      <div className="mt-5 grid gap-3 md:grid-cols-3">
-        <Metric label="Annual total" value={money(annualTotal)} />
-        <Metric label="Departments" value={rows.length.toLocaleString()} />
-        <Metric label="Months loaded" value={`${activeMonths}/12`} />
-      </div>
-      <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <h4 className="text-sm font-black text-gray-950">Top departments</h4>
-            <p className="text-xs font-semibold text-gray-400">{selectedYear} annual totals</p>
-          </div>
-          {rows.length > 5 ? <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-gray-500">Top 5</span> : null}
-        </div>
-        <AnnualDepartmentTotalsList rows={rows} codeFamilies={codeFamilies} limit={5} />
       </div>
     </section>
   );
@@ -1642,6 +1655,7 @@ export const ParkingWorkspace: React.FC = () => {
     const query = normalizeText(departmentSearch);
     return settings.codeFamilies
       .map((mapping, index) => ({ mapping, index }))
+      .filter(({ mapping }) => !isNonDepartmentParkingCode(mapping.familyKey, mapping.department))
       .filter(({ mapping }) => !query
         || normalizeText(mapping.department).includes(query)
         || normalizeText(mapping.familyKey).includes(query)
@@ -1651,6 +1665,7 @@ export const ParkingWorkspace: React.FC = () => {
     const warnings: string[] = [];
     const seen = new Set<string>();
     for (const mapping of settings.codeFamilies) {
+      if (isNonDepartmentParkingCode(mapping.familyKey, mapping.department)) continue;
       const key = getParkingCodeFamilyKey(mapping.familyKey);
       if (!key || !mapping.department.trim()) warnings.push('Every department needs a short code and name.');
       if (key && seen.has(key)) warnings.push(`Duplicate short code: ${key}`);
@@ -1976,7 +1991,7 @@ export const ParkingWorkspace: React.FC = () => {
   };
 
   const saveSettingsOnly = async () => {
-    await persistParkingSettings(settingsRef.current, { showSaving: true, showToast: true });
+    await persistParkingSettings(settings, { showSaving: true, showToast: true });
   };
 
   const addCodeFamily = () => setSettings(current => ({
@@ -2308,6 +2323,17 @@ export const ParkingWorkspace: React.FC = () => {
                               className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
                             />
                             <span className="text-xs font-extrabold text-gray-600">Ignore flags</span>
+                          </label>
+
+                          <label className="flex min-h-10 items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+                            <input
+                              type="checkbox"
+                              disabled={!canEditParking}
+                              checked={Boolean(mapping.ignoreData)}
+                              onChange={event => updateCodeFamilyDirectoryAndSave(index, { ignoreData: event.target.checked })}
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
+                            />
+                            <span className="text-xs font-extrabold text-gray-600">Ignore data</span>
                           </label>
 
                           <div className="flex items-end gap-2">
@@ -3690,6 +3716,13 @@ export const ParkingWorkspace: React.FC = () => {
             </section>
             ) : null}
 
+{activeWorkspace === 'plate-monitor' ? (
+            <AnnualDepartmentSummaryCard
+              rows={annualSummaryRows}
+              onOpen={() => setAnnualFullscreen(true)}
+            />
+            ) : null}
+
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -3738,15 +3771,6 @@ export const ParkingWorkspace: React.FC = () => {
                 </div>
               </div>
             </section>
-
-{activeWorkspace === 'plate-monitor' ? (
-            <AnnualDepartmentSummaryCard
-              rows={annualSummaryRows}
-              codeFamilies={settings.codeFamilies}
-              selectedYear={selectedYear}
-              onOpen={() => setAnnualFullscreen(true)}
-            />
-            ) : null}
 
             <section className="grid gap-4 md:grid-cols-4">
               <Metric label="Selected month" value={selectedMonthLabel || '—'} />
@@ -3846,7 +3870,7 @@ export const ParkingWorkspace: React.FC = () => {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="font-extrabold text-gray-950">Department color legend</h3>
-                  <p className="mt-1 text-xs font-semibold text-gray-400">Click a column header to sort. Ignore flags suppresses plate indicators for that department.</p>
+                  <p className="mt-1 text-xs font-semibold text-gray-400">Click a column header to sort. Ignore data removes a code from summaries; ignore flags only suppresses plate indicators.</p>
                 </div>
               </div>
               <div className="mt-4 max-h-80 overflow-y-auto rounded-2xl border border-gray-100">
@@ -3856,6 +3880,7 @@ export const ParkingWorkspace: React.FC = () => {
                       <th className="px-3 py-2">{renderDepartmentLegendHeader('color', 'Color')}</th>
                       <th className="px-3 py-2">{renderDepartmentLegendHeader('code', 'Code')}</th>
                       <th className="px-3 py-2">{renderDepartmentLegendHeader('department', 'Department')}</th>
+                      <th className="px-3 py-2 text-center">{renderDepartmentLegendHeader('ignoreData', 'Ignore data', 'mx-auto')}</th>
                       <th className="px-3 py-2 text-center">{renderDepartmentLegendHeader('ignoreFlags', 'Ignore flags', 'mx-auto')}</th>
                     </tr>
                   </thead>
@@ -3865,6 +3890,16 @@ export const ParkingWorkspace: React.FC = () => {
                         <td className="px-3 py-2"><span className="block h-4 w-4 rounded" style={{ backgroundColor: color.hex }} /></td>
                         <td className="px-3 py-2 font-extrabold text-gray-700">{color.code}</td>
                         <td className="min-w-0 px-3 py-2 font-semibold text-gray-500">{color.department}</td>
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={color.ignoreData}
+                            disabled={!canEditParking}
+                            onChange={event => updateCodeFamilyDirectoryAndSave(color.mappingIndex, { ignoreData: event.target.checked })}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
+                            aria-label={`Ignore all Parking data for ${color.department}`}
+                          />
+                        </td>
                         <td className="px-3 py-2 text-center">
                           <input
                             type="checkbox"

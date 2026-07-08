@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import { describe, expect, it, vi } from 'vitest';
-import { buildParkingReplacementSummary, buildParkingReplacementSummaryForMonths, getLatestParkingMonth } from '../utils/parking/parkingAggregation';
+import { buildParkingReplacementSummary, buildParkingReplacementSummaryForMonths, buildParkingSummary, getLatestParkingMonth } from '../utils/parking/parkingAggregation';
 import { buildParkingPlannerAnalysis } from '../utils/parking/parkingAnalysis';
 import { getParkingCodeOverridesForYear, getParkingCodesForYear } from '../utils/parking/parkingCodeRules';
 import { createParkingExportWorkbook, exportParkingWorkbook } from '../utils/parking/parkingExport';
@@ -170,6 +170,28 @@ describe('parking parser and aggregation', () => {
       codeFamilyKey: 'IF',
       department: 'Infrastructure',
     });
+  });
+
+  it('excludes code families marked ignoreData from Parking summaries', () => {
+    const ignoredSettings: ParkingSettings = {
+      ...settings,
+      codeFamilies: settings.codeFamilies.map(mapping => (
+        mapping.familyKey === 'IF' ? { ...mapping, ignoreData: true } : mapping
+      )),
+    };
+    const parsed = parseParkingWorkbook(workbookBuffer(hotSpotRows()), {
+      fileName: 'HotSpot.xlsx',
+      importedBy: 'user-1',
+      settings: ignoredSettings,
+    }).dataset;
+
+    const summary = buildParkingSummary([parsed], 'user-1', undefined, ignoredSettings);
+
+    expect(summary.months[0].rows.some(row => row.codeFamilyKey === 'IF')).toBe(false);
+    expect(summary.months[0].rowCount).toBe(3);
+    expect(summary.months[0].totalValue).toBe(110);
+    expect(summary.departmentSummaries.map(row => row.department)).not.toContain('Infrastructure');
+    expect(summary.platePatterns.map(pattern => pattern.department)).not.toContain('Infrastructure');
   });
 
   it('supports two-digit yearly codes and manual yearly overrides', () => {

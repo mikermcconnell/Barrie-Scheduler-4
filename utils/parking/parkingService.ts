@@ -76,7 +76,7 @@ function readDepartmentLegendSort(value: unknown): ParkingSettings['departmentLe
   const raw = value as Record<string, unknown>;
   const key = raw.key;
   const direction = raw.direction;
-  const validKey = key === 'color' || key === 'code' || key === 'department' || key === 'ignoreFlags';
+  const validKey = key === 'color' || key === 'code' || key === 'department' || key === 'ignoreData' || key === 'ignoreFlags';
   const validDirection = direction === 'asc' || direction === 'desc';
   return {
     key: validKey ? key : 'color',
