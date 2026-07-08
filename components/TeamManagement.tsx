@@ -153,9 +153,10 @@ function getAccessSaveErrorMessage(error: unknown): string {
 
 interface TeamManagementProps {
     onClose?: () => void;
+    fullScreen?: boolean;
 }
 
-export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
+export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScreen = false }) => {
     const { user, isGlobalAdmin } = useAuth();
     const { team, refreshTeam, startDeveloperPreview } = useTeam();
     const toast = useToast();
@@ -1082,7 +1083,10 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
 
     // Has Team - Show Team Admin Command Center
     return (
-        <div className="relative w-full max-w-7xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div className={fullScreen
+            ? 'relative h-full w-full overflow-hidden bg-white'
+            : 'relative w-full max-w-7xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm'
+        }>
             {onClose && (
                 <button
                     onClick={onClose}
@@ -1092,7 +1096,10 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                 </button>
             )}
 
-            <div className="grid min-h-[680px] lg:grid-cols-[300px_1fr]">
+            <div className={fullScreen
+                ? 'grid h-full min-h-0 lg:grid-cols-[300px_1fr]'
+                : 'grid min-h-[680px] lg:grid-cols-[300px_1fr]'
+            }>
                 <aside className="border-b border-gray-200 bg-gray-50 p-4 lg:border-b-0 lg:border-r">
                     <div className="mb-4 flex items-center gap-3">
                         <div className="rounded-xl bg-brand-green/10 p-2 text-brand-green">
@@ -1171,7 +1178,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     )}
                 </aside>
 
-                <main className="min-w-0 p-4 sm:p-6">
+                <main className="min-w-0 overflow-y-auto p-4 sm:p-6">
 
             {/* Team Header */}
             <div className="flex items-center justify-between mb-6">

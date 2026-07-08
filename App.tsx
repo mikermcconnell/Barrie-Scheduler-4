@@ -169,16 +169,20 @@ const AppContent: React.FC = () => {
       <Modal
         isOpen={showTeamManagement || mustCompleteTeamSetup}
         onClose={handleSetupModalClose}
-        size="xl"
+        size="full"
         zIndex="high"
         closeOnBackdropClick={!mustCompleteTeamSetup}
         closeOnEscape={!mustCompleteTeamSetup}
+        className="h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)]"
       >
         <Modal.Header showClose={!mustCompleteTeamSetup}>
           {mustCompleteTeamSetup ? 'Get Started' : 'Team Management'}
         </Modal.Header>
-        <Modal.Body className="p-4 bg-gray-50">
-          <TeamManagement onClose={mustCompleteTeamSetup ? undefined : () => setShowTeamManagement(false)} />
+        <Modal.Body className="flex-1 bg-gray-50 p-0">
+          <TeamManagement
+            fullScreen
+            onClose={mustCompleteTeamSetup ? undefined : () => setShowTeamManagement(false)}
+          />
         </Modal.Body>
         {mustCompleteTeamSetup && (
           <Modal.Footer>
