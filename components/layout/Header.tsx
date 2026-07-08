@@ -64,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
                             <span>
                                 Previewing {team?.name} as {developerPreview.sourceLabel}
                                 {actualTeam?.name ? ` · real team: ${actualTeam.name}` : ''}
-                                {developerPreview.readOnly ? ' · read-only preview' : ''}
+                                {developerPreview.readOnly ? ' · read-only preview' : ' · admin edit mode'}
                             </span>
                         </div>
                         <button

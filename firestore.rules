@@ -5,9 +5,25 @@ service cloud.firestore {
 
     // ========== USERS ==========
 
-    // Users can access their own document
+    // Users can access their own document; global admins can read user profiles
+    // to identify upload owners without changing user-owned data.
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow get: if request.auth != null &&
+                  (request.auth.uid == userId || isWorkspacePermissionManager());
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Uploaded file metadata is user-owned, but global admins can read it for
+    // cross-team developer support and troubleshooting.
+    match /users/{userId}/files/{fileId} {
+      allow read: if request.auth != null &&
+                    (request.auth.uid == userId || isWorkspacePermissionManager());
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Collection-group support for global admin File Manager "All uploads".
+    match /{path=**}/files/{fileId} {
+      allow read: if isWorkspacePermissionManager();
     }
 
     // Users can access their own subdocuments (projects, drafts, etc.)

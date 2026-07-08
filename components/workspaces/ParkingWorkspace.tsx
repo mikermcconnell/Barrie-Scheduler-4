@@ -1138,8 +1138,8 @@ const DepartmentChip: React.FC<{ department: string; codeFamilyKey?: string; cod
 };
 
 export const ParkingWorkspace: React.FC = () => {
-  const { user } = useAuth();
-  const { team, teamMember, canManageTeam, isDeveloperPreview } = useTeam();
+  const { user, isGlobalAdmin } = useAuth();
+  const { team, teamMember, canManageTeam, developerPreview } = useTeam();
   const toast = useToast();
   const [activeWorkspace, setActiveWorkspace] = useState<ParkingWorkspaceView>(() => parseParkingWorkspaceViewFromHash());
   const [loading, setLoading] = useState(true);
@@ -1228,7 +1228,8 @@ export const ParkingWorkspace: React.FC = () => {
   );
   const selectedMonthDataset = monthsForSelectedYear.find(month => month.month === selectedMonth) ?? null;
   const selectedPreviewDataset = previewDatasets.find(month => month.month === selectedMonth) ?? null;
-  const canEditParking = !isDeveloperPreview && (canManageTeam || canAccessWorkspaceFeature('workspaceParking', teamMember));
+  const isReadOnlyPreview = developerPreview?.readOnly === true;
+  const canEditParking = !isReadOnlyPreview && (isGlobalAdmin || canManageTeam || canAccessWorkspaceFeature('workspaceParking', teamMember));
   const annualSummaryRows = useMemo(() => buildAnnualSummaryRows(reviewMonths, selectedYear), [reviewMonths, selectedYear]);
   const selectedMonthLabel = MONTHS.find(month => month.value === selectedMonth.slice(5, 7))?.label ?? selectedMonth;
   const monthlyFlaggedPlates = useMemo(() => {
@@ -2415,7 +2416,7 @@ export const ParkingWorkspace: React.FC = () => {
                 <Upload size={14} /> Import revenue
                 <input type="file" accept=".xlsx,.xls" multiple disabled={!canEditParking || saving} onChange={handleRevenueFileChange} className="hidden" />
               </label>
-              {isDeveloperPreview ? (
+              {isReadOnlyPreview ? (
                 <span className="inline-flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-extrabold text-amber-800">
                   <Eye size={14} /> Read-only preview
                 </span>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import {
     getAllFiles,
+    getAllUploadedFilesForAdmin,
     getAllSchedules,
     deleteFile,
     deleteSchedule,
@@ -46,6 +47,7 @@ interface FileManagerProps {
 type ViewMode = 'grid' | 'list';
 type Tab = 'files' | 'schedules';
 type FileFilter = 'all' | 'schedule_master' | 'rideco' | 'barrie_tod' | 'other';
+type UploadScope = 'mine' | 'all';
 
 const detectSavedFileType = (fileName: string): SavedFile['type'] => {
     const lowerName = fileName.toLowerCase();
@@ -132,9 +134,10 @@ export const FileManager: React.FC<FileManagerProps> = ({
     isSelectingFile = false,
     autoSelectUploadedFile = false,
 }) => {
-    const { user } = useAuth();
+    const { user, isGlobalAdmin } = useAuth();
     const [activeTab, setActiveTab] = useState<Tab>('schedules');
     const [viewMode, setViewMode] = useState<ViewMode>('grid');
+    const [uploadScope, setUploadScope] = useState<UploadScope>('mine');
     const [files, setFiles] = useState<SavedFile[]>([]);
     const [schedules, setSchedules] = useState<SavedSchedule[]>([]);
     const [loading, setLoading] = useState(true);
@@ -148,7 +151,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
         if (user) {
             loadData();
         }
-    }, [user]);
+    }, [user, uploadScope, isGlobalAdmin]);
 
     const loadData = async () => {
         if (!user) return;
@@ -156,7 +159,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
         setError('');
         try {
             const [filesData, schedulesData] = await Promise.all([
-                getAllFiles(user.uid),
+                isGlobalAdmin && uploadScope === 'all'
+                    ? getAllUploadedFilesForAdmin()
+                    : getAllFiles(user.uid),
                 getAllSchedules(user.uid)
             ]);
             setFiles(filesData);
@@ -190,7 +195,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
     };
 
     const handleDeleteFile = async (file: SavedFile) => {
-        if (!user || !confirm(`Delete "${file.name}"?`)) return;
+        if (!user || (file.ownerUserId && file.ownerUserId !== user.uid) || !confirm(`Delete "${file.name}"?`)) return;
         try {
             await deleteFile(user.uid, file.id, file.storagePath);
             setFiles(prev => prev.filter(f => f.id !== file.id));
@@ -256,6 +261,12 @@ export const FileManager: React.FC<FileManagerProps> = ({
         schedule.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
+    const uploaderLabel = (file: SavedFile) => (
+        file.ownerDisplayName || file.ownerEmail || file.ownerUserId || 'You'
+    );
+
+    const canDeleteFile = (file: SavedFile) => !file.ownerUserId || file.ownerUserId === user?.uid;
+
     const getFileIcon = (type: SavedFile['type']) => {
         switch (type) {
             case 'schedule_master':
@@ -306,7 +317,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
                         </div>
                         <div>
                             <h2 className="text-xl font-extrabold">File Manager</h2>
-                            <p className="text-white/60 text-sm font-medium">Manage your schedules and uploaded files</p>
+                            <p className="text-white/60 text-sm font-medium">
+                                {isGlobalAdmin && uploadScope === 'all' ? 'Review uploaded files across all users' : 'Manage your schedules and uploaded files'}
+                            </p>
                         </div>
                     </div>
                     <button
@@ -383,6 +396,25 @@ export const FileManager: React.FC<FileManagerProps> = ({
                             </div>
                         )}
 
+                        {isGlobalAdmin && activeTab === 'files' && (
+                            <div className="flex rounded-lg bg-gray-200 p-0.5 text-xs font-bold">
+                                <button
+                                    type="button"
+                                    onClick={() => setUploadScope('mine')}
+                                    className={`rounded-md px-3 py-2 ${uploadScope === 'mine' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    My uploads
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setUploadScope('all')}
+                                    className={`rounded-md px-3 py-2 ${uploadScope === 'all' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    All uploads
+                                </button>
+                            </div>
+                        )}
+
                         <div className="flex bg-gray-200 rounded-lg p-0.5">
                             <button
                                 onClick={() => setViewMode('grid')}
@@ -398,7 +430,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                             </button>
                         </div>
 
-                        {activeTab === 'files' && (
+                        {activeTab === 'files' && uploadScope === 'mine' && (
                             <label className="bg-brand-blue hover:bg-blue-600 text-white font-bold px-4 py-2 rounded-xl cursor-pointer transition-colors flex items-center gap-2">
                                 {uploading ? (
                                     <Loader2 className="animate-spin" size={18} />
@@ -611,7 +643,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 {getFileIcon(file.type)}
                                             </div>
                                             <div className="relative">
-                                                {onSetDefaultFile && (
+                                                {onSetDefaultFile && canDeleteFile(file) && (
                                                     <button
                                                         onClick={e => {
                                                             e.stopPropagation();
@@ -646,13 +678,15 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                         >
                                                             <Download size={14} /> Download
                                                         </a>
-                                                        <button
-                                                            onClick={e => { e.stopPropagation(); handleDeleteFile(file); }}
-                                                            disabled={isSelectingFile}
-                                                            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                                                        >
-                                                            <Trash2 size={14} /> Delete
-                                                        </button>
+                                                        {canDeleteFile(file) && (
+                                                            <button
+                                                                onClick={e => { e.stopPropagation(); handleDeleteFile(file); }}
+                                                                disabled={isSelectingFile}
+                                                                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                                            >
+                                                                <Trash2 size={14} /> Delete
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
@@ -668,6 +702,11 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                         <div className="text-xs text-gray-500 mb-2">
                                             {getCategoryLabel(file.type)}
                                         </div>
+                                        {isGlobalAdmin && uploadScope === 'all' && (
+                                            <div className="text-xs font-semibold text-blue-600 mb-2">
+                                                Uploaded by {uploaderLabel(file)}
+                                            </div>
+                                        )}
                                         <div className="flex items-center justify-between text-xs text-gray-400">
                                             <span className="flex items-center gap-1">
                                                 <HardDrive size={12} />
@@ -691,6 +730,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Type</th>
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Size</th>
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Uploaded</th>
+                                            {isGlobalAdmin && uploadScope === 'all' && (
+                                                <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Uploader</th>
+                                            )}
                                             <th className="w-24"></th>
                                         </tr>
                                     </thead>
@@ -720,9 +762,12 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 <td className="px-5 py-4 text-sm text-gray-500">{getCategoryLabel(file.type)}</td>
                                                 <td className="px-5 py-4 text-sm text-gray-500">{formatFileSize(file.size)}</td>
                                                 <td className="px-5 py-4 text-sm text-gray-500">{formatDate(file.uploadedAt)}</td>
+                                                {isGlobalAdmin && uploadScope === 'all' && (
+                                                    <td className="px-5 py-4 text-sm font-semibold text-blue-600">{uploaderLabel(file)}</td>
+                                                )}
                                                 <td className="px-3">
                                                     <div className="flex items-center justify-end gap-1">
-                                                        {onSetDefaultFile && (
+                                                        {onSetDefaultFile && canDeleteFile(file) && (
                                                             <button
                                                                 onClick={e => {
                                                                     e.stopPropagation();
@@ -739,13 +784,15 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                                 <Star size={16} className={isDefaultFile(file.id) ? 'fill-amber-500' : ''} />
                                                             </button>
                                                         )}
-                                                        <button
-                                                            onClick={e => { e.stopPropagation(); handleDeleteFile(file); }}
-                                                            disabled={isSelectingFile}
-                                                            className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
+                                                        {canDeleteFile(file) && (
+                                                            <button
+                                                                onClick={e => { e.stopPropagation(); handleDeleteFile(file); }}
+                                                                disabled={isSelectingFile}
+                                                                className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
+                                                            >
+                                                                <Trash2 size={16} />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </td>
                                             </tr>

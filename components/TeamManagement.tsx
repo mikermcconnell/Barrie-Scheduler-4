@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle, Eye, Database } from 'lucide-react';
+import { Users, Copy, Check, Trash2, Shield, User, LogOut, X, Link, PlusCircle, Eye, Database, Edit2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './contexts/AuthContext';
 import { useTeam } from './contexts/TeamContext';
@@ -775,6 +775,25 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         onClose?.();
     };
 
+    const handleEditAsSavedMember = () => {
+        if (!activeTeamDetails || !selectedWizardMember || !canLookupTeams) return;
+
+        const memberLabel = selectedWizardMember.displayName || selectedWizardMember.email || 'selected user';
+        startDeveloperPreview({
+            team: activeTeamDetails,
+            accessLevel: resolveWorkspaceAccessLevel(selectedWizardMember),
+            workspaceOverrides: selectedWizardMember.workspaceOverrides,
+            role: selectedWizardMember.role,
+            displayName: memberLabel,
+            email: selectedWizardMember.email,
+            sourceLabel: `${memberLabel} (admin edit)`,
+            userId: selectedWizardMember.userId,
+            readOnly: false,
+        });
+        toast?.success(`Editing ${activeTeamDetails.name} as ${memberLabel}`);
+        onClose?.();
+    };
+
     const handleSaveWizardTeamAccess = async () => {
         if (!activeTeamId || !canEditActiveTeam) return;
 
@@ -1318,6 +1337,15 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                 >
                                     <Eye size={16} />
                                     View as saved user
+                                </button>
+                                <button
+                                    onClick={handleEditAsSavedMember}
+                                    disabled={!selectedWizardMember}
+                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50 sm:col-span-2"
+                                    title="Open this user's saved team surface with your global-admin write permissions. Use only for intentional support changes."
+                                >
+                                    <Edit2 size={16} />
+                                    Edit as saved user
                                 </button>
                             </div>
                         </div>

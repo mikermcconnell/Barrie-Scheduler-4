@@ -1,5 +1,6 @@
 import {
     collection,
+    collectionGroup,
     doc,
     setDoc,
     getDoc,
@@ -47,6 +48,9 @@ export interface SavedFile {
     downloadUrl: string;
     size: number;
     uploadedAt: Date;
+    ownerUserId?: string;
+    ownerDisplayName?: string;
+    ownerEmail?: string;
 }
 
 // Note: ScheduleDraft is defined once below with full fields including storagePath
@@ -225,6 +229,44 @@ export const getAllFiles = async (userId: string): Promise<SavedFile[]> => {
         return {
             id: doc.id,
             ...data,
+            uploadedAt: (data.uploadedAt as Timestamp)?.toDate() || new Date()
+        } as SavedFile;
+    });
+};
+
+export const getAllUploadedFilesForAdmin = async (): Promise<SavedFile[]> => {
+    const filesRef = collectionGroup(db, 'files');
+    const q = query(filesRef, orderBy('uploadedAt', 'desc'));
+    const snapshot = await getDocs(q);
+    const ownerIds = [...new Set(snapshot.docs
+        .map(fileDoc => fileDoc.ref.parent.parent?.id)
+        .filter((id): id is string => Boolean(id)))];
+    type FileOwnerSummary = { displayName?: string; email?: string };
+
+    const ownerEntries: Array<readonly [string, FileOwnerSummary]> = await Promise.all(ownerIds.map(async userId => {
+        try {
+            const userSnap = await getDoc(doc(db, 'users', userId));
+            const data = userSnap.exists() ? userSnap.data() : {};
+            return [userId, {
+                displayName: typeof data.displayName === 'string' ? data.displayName : undefined,
+                email: typeof data.email === 'string' ? data.email : undefined,
+            } satisfies FileOwnerSummary] as const;
+        } catch {
+            return [userId, {} satisfies FileOwnerSummary] as const;
+        }
+    }));
+    const owners = new Map(ownerEntries);
+
+    return snapshot.docs.map(fileDoc => {
+        const data = fileDoc.data();
+        const ownerUserId = fileDoc.ref.parent.parent?.id;
+        const owner = ownerUserId ? owners.get(ownerUserId) : undefined;
+        return {
+            id: fileDoc.id,
+            ...data,
+            ownerUserId,
+            ownerDisplayName: owner?.displayName,
+            ownerEmail: owner?.email,
             uploadedAt: (data.uploadedAt as Timestamp)?.toDate() || new Date()
         } as SavedFile;
     });

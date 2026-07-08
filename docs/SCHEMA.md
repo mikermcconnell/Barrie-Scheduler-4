@@ -11,7 +11,7 @@ firebase/
 ├── users/{userId}/
 │   ├── draftSchedules/{draftId}          # Working schedule copies
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
-│   └── files/{fileId}                    # Uploaded file metadata
+│   └── files/{fileId}                    # Uploaded file metadata; owner-write, global-admin read for support
 │
 ├── teams/{teamId}/
 │   ├── members/{userId}                  # Team membership
@@ -157,6 +157,8 @@ interface TeamMember {
 `defaultMemberAccessLevel` and `defaultMemberWorkspaceOverrides` control the access assigned to future members who join with the team's invite code or invite link. The Developer Access Wizard in Team Management can set both the team default and individual member `workspaceOverrides`.
 
 Partner agency onboarding uses invite links in the form `?invite=CODE` or `#/join/CODE`. A signed-out user is prompted to sign in; after authentication, the app joins them to the matching team automatically. Invite lookup documents denormalize `defaultMemberAccessLevel` and optional `defaultMemberWorkspaceOverrides` so new members can receive the correct external profile before they are allowed to read the team document.
+
+Global admins can read user-uploaded file metadata and matching `users/{userId}/files/` Storage objects across users for developer support. They cannot write or delete another user's user-scoped file records through the normal client path.
 
 ---
 

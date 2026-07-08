@@ -113,7 +113,7 @@ RideCo/MVT imports are planner-reviewed before they replace the active shifts. T
 
 ### 4. Team-Based Multi-Tenancy
 - All data scoped to `teams/{teamId}/`
-- No cross-team data access
+- No ordinary user cross-team data access; only explicit partner data-source links and global-admin support access may cross team/user boundaries
 - Invitation-based team membership
 
 ### 5. AI as Assistant, Not Authority
