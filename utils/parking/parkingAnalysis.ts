@@ -94,6 +94,7 @@ export interface ParkingTrendOverview {
   targetMonth: string;
   scopeLabel: string;
   comparisonCards: ParkingTrendComparison[];
+  monthlyRevenueTrend: ParkingAnalysisChartPoint[];
   weekdayTrend: ParkingAnalysisChartPoint[];
   saturdayTrend: ParkingAnalysisChartPoint[];
   sundayTrend: ParkingAnalysisChartPoint[];
@@ -468,11 +469,12 @@ export function buildParkingTrendOverview(
     targetMonth,
     scopeLabel: selectedLocation?.displayName || 'All parking lots',
     comparisonCards: [
-      comparisonCard('revenue-mom', 'Revenue MoM', scopedComparisonRows, targetMonth, previous, 'money', revenueForRows),
+      comparisonCard('revenue-mom', 'Total revenue MoM', scopedComparisonRows, targetMonth, previous, 'money', revenueForRows),
       comparisonCard('sessions-mom', 'Sessions MoM', scopedComparisonRows, targetMonth, previous, 'number', rows => rows.length),
       comparisonCard('stay-mom', 'Avg stay MoM', scopedComparisonRows, targetMonth, previous, 'duration', rows => average(rows.map(row => row.durationMinutes).filter(value => value > 0))),
       comparisonCard('revenue-yoy', 'Revenue YoY', scopedComparisonRows, targetMonth, lastYear, 'money', revenueForRows),
     ],
+    monthlyRevenueTrend: buildTrend(scopedRows, row => row.startMonth, monthLabel),
     weekdayTrend: buildActiveDayMonthlyTrend(scopedRows, row => row.weekday >= 1 && row.weekday <= 5),
     saturdayTrend: buildActiveDayMonthlyTrend(scopedRows, row => row.weekday === 6),
     sundayTrend: buildActiveDayMonthlyTrend(scopedRows, row => row.weekday === 0),

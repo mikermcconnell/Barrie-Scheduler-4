@@ -3189,13 +3189,22 @@ export const ParkingWorkspace: React.FC = () => {
                     ))}
                   </div>
                   <div className="grid gap-4 border-t border-slate-100 bg-slate-50/70 p-4 xl:grid-cols-3">
-                    <ParkingChartCard title="Weekday trend" subtitle="Average revenue per active weekday.">
+                    <div className="xl:col-span-3">
+                      <ParkingChartCard
+                        title="Total monthly revenue"
+                        subtitle="This total matches the MoM card above. The day-type charts below show averages per active day and can move differently."
+                        tall
+                      >
+                        <TrendAreaChart data={parkingTrendOverview.monthlyRevenueTrend} color="#059669" />
+                      </ParkingChartCard>
+                    </div>
+                    <ParkingChartCard title="Average weekday revenue" subtitle="Average revenue per active weekday, not the monthly total.">
                       <TrendAreaChart data={parkingTrendOverview.weekdayTrend} color="#2563EB" />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Saturday trend" subtitle="Average Saturday activity by month.">
+                    <ParkingChartCard title="Average Saturday revenue" subtitle="Average revenue per active Saturday, not the monthly total.">
                       <TrendAreaChart data={parkingTrendOverview.saturdayTrend} color="#7C3AED" />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Sunday trend" subtitle="Average Sunday activity by month.">
+                    <ParkingChartCard title="Average Sunday revenue" subtitle="Average revenue per active Sunday, not the monthly total.">
                       <TrendAreaChart data={parkingTrendOverview.sundayTrend} color="#EA580C" />
                     </ParkingChartCard>
                   </div>

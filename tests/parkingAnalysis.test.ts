@@ -502,6 +502,11 @@ describe('parking planner analysis milestones', () => {
       previousValue: null,
       direction: 'none',
     });
+    expect(result.monthlyRevenueTrend.map(point => [point.key, point.revenue])).toEqual([
+      ['2026-01', 10],
+      ['2026-05', 50],
+      ['2026-06', 90],
+    ]);
     expect(result.weekdayTrend.map(point => [point.key, point.revenue])).toEqual([
       ['2026-01', 10],
       ['2026-05', 20],
@@ -513,6 +518,33 @@ describe('parking planner analysis milestones', () => {
     ]);
     expect(result.sundayTrend).toEqual([]);
     expect(result.fastestGrowingLot).toMatchObject({ label: 'Marina Lot', value: 80, changeValue: 80 });
+  });
+
+  it('keeps total revenue MoM distinct from average active-day trends', () => {
+    const rows = [
+      row({ id: 'apr-1', startDate: '2026-04-01', startMonth: '2026-04', weekday: 3, amount: 100 }),
+      row({ id: 'apr-2', startDate: '2026-04-02', startMonth: '2026-04', weekday: 4, amount: 100 }),
+      row({ id: 'may-1', startDate: '2026-05-01', startMonth: '2026-05', weekday: 5, amount: 110 }),
+    ];
+
+    const result = buildParkingTrendOverview(analytics({ rows }), null, '2026-05');
+
+    expect(result.comparisonCards.find(card => card.key === 'revenue-mom')).toMatchObject({
+      label: 'Total revenue MoM',
+      value: 110,
+      previousValue: 200,
+      changeValue: -90,
+      changePercent: -45,
+      direction: 'down',
+    });
+    expect(result.monthlyRevenueTrend.map(point => [point.key, point.revenue])).toEqual([
+      ['2026-04', 200],
+      ['2026-05', 110],
+    ]);
+    expect(result.weekdayTrend.map(point => [point.key, point.revenue])).toEqual([
+      ['2026-04', 100],
+      ['2026-05', 110],
+    ]);
   });
 
   it('uses all-month comparison context while keeping displayed trends year-scoped', () => {
