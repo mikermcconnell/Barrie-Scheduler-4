@@ -116,7 +116,7 @@ describe('parking Firebase service', () => {
     expect(saved.codeFamilies.find(mapping => mapping.familyKey === 'IF')?.ignoreData).toBe(true);
   });
 
-  it('saves imported month data to Storage and Firestore with the active flag thresholds', async () => {
+  it('saves imported month data with active thresholds without overwriting shared settings', async () => {
     const { parseParkingWorkbook } = await import('../utils/parking/parkingParser');
     const { saveParkingMonthData } = await import('../utils/parking/parkingService');
     const dataset = parseParkingWorkbook(workbookBuffer(parkingRows()), {
@@ -157,23 +157,14 @@ describe('parking Firebase service', () => {
     expect(uploadedPattern.flags).not.toContain('high_value');
     expect(uploadedSummary.metadata.storagePath).toMatch(/^teams\/team-1\/parking\/2026-06_123456789-/);
 
-    expect(transactionSet).toHaveBeenCalledWith(
-      { path: 'teams/team-1/parking/default' },
-      expect.objectContaining({
-        importedBy: 'user-1',
-        monthCount: 1,
-        totalRows: 4,
-        totalValue: 112,
-        settings: expect.objectContaining({
-          flagRules: expect.objectContaining({
-            plateMonthlyValueDollars: 999,
-            departmentMonthlyValueDollars: 9999,
-          }),
-          updatedBy: 'user-1',
-        }),
-      }),
-      { merge: true },
-    );
+    const defaultWrite = transactionSet.mock.calls.find(([target]) => target.path === 'teams/team-1/parking/default');
+    expect(defaultWrite?.[1]).toEqual(expect.objectContaining({
+      importedBy: 'user-1',
+      monthCount: 1,
+      totalRows: 4,
+      totalValue: 112,
+    }));
+    expect(defaultWrite?.[1]).not.toHaveProperty('settings');
     expect(transactionSet).toHaveBeenCalledWith(
       { path: 'teams/team-1/parking/default/months/2026-06' },
       expect.objectContaining({
@@ -215,19 +206,16 @@ describe('parking Firebase service', () => {
       expect.anything(),
       { contentType: 'application/json' },
     );
-    expect(transactionSet).toHaveBeenCalledWith(
-      { path: 'teams/team-1/parking/default' },
-      expect.objectContaining({
-        revenueImportedBy: 'user-1',
-        revenueDatasetCount: 1,
-        revenueMonthCount: 1,
-        revenueTotalRows: 1,
-        revenueTotalValue: 10,
-        revenueStoragePath: expect.stringMatching(/^teams\/team-1\/parking\/revenue\/2026-01_hotspot_223456789-/),
-        settings: expect.objectContaining({ updatedBy: 'user-1' }),
-      }),
-      { merge: true },
-    );
+    const defaultWrite = transactionSet.mock.calls.find(([target]) => target.path === 'teams/team-1/parking/default');
+    expect(defaultWrite?.[1]).toEqual(expect.objectContaining({
+      revenueImportedBy: 'user-1',
+      revenueDatasetCount: 1,
+      revenueMonthCount: 1,
+      revenueTotalRows: 1,
+      revenueTotalValue: 10,
+      revenueStoragePath: expect.stringMatching(/^teams\/team-1\/parking\/revenue\/2026-01_hotspot_223456789-/),
+    }));
+    expect(defaultWrite?.[1]).not.toHaveProperty('settings');
     expect(transactionSet).toHaveBeenCalledWith(
       { path: 'teams/team-1/parking/default/months/revenue_hotspot_2026-01' },
       expect.objectContaining({
@@ -443,9 +431,10 @@ describe('parking Firebase service', () => {
     firestoreMock.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ storagePath: 'old.json' }) });
     storageMock.getDownloadURL.mockResolvedValue('https://storage.example/old.json');
     vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => oldSummary } as Response);
+    const transactionSet = vi.fn();
     firestoreMock.runTransaction.mockImplementation(async (_db, callback) => callback({
       get: vi.fn().mockResolvedValue({ exists: () => true, data: () => ({ storagePath: 'old.json' }) }),
-      set: vi.fn(),
+      set: transactionSet,
     }));
     vi.spyOn(Date, 'now').mockReturnValue(123456790);
     vi.spyOn(Math, 'random').mockReturnValue(0.25);
@@ -453,6 +442,13 @@ describe('parking Firebase service', () => {
     const summary = await saveParkingMonthData('team-1', 'user-1', newDataset, strictSettings);
 
     expect(summary.months.map(month => month.month)).toEqual(['2026-05', '2026-06']);
+    expect(transactionSet).toHaveBeenCalledWith(
+      { path: 'teams/team-1/parking/default/months/2026-05' },
+      expect.objectContaining({
+        month: '2026-05',
+        storagePath: summary.metadata.storagePath,
+      }),
+    );
     expect(storageMock.deleteObject).toHaveBeenCalledWith({ path: 'old.json' });
   });
 

@@ -271,17 +271,14 @@ export async function saveParkingMonthsData(
         totalRows: summary.metadata.totalRows,
         totalValue: summary.metadata.totalValue,
         storagePath,
-        settings: {
-          ...settings,
-          updatedAt: settings.updatedAt || new Date().toISOString(),
-          updatedBy: settings.updatedBy || userId,
-        },
       }, { merge: true });
-      for (const dataset of datasets) {
+      // Every month document points at the active composite payload. Refresh all
+      // pointers before the previous object is removed, not only replaced months.
+      for (const dataset of summary.months) {
         transaction.set(getParkingMonthRef(teamId, dataset.month), {
           month: dataset.month,
-          importedAt: serverTimestamp(),
-          importedBy: userId,
+          importedAt: dataset.importedAt || serverTimestamp(),
+          importedBy: dataset.importedBy || userId,
           sourceFileName: dataset.sourceFileName,
           rowCount: dataset.rowCount,
           totalValue: dataset.totalValue,
@@ -307,7 +304,7 @@ export async function saveParkingRevenueDatasets(
   teamId: string,
   userId: string,
   datasets: ParkingRevenueDataset[],
-  settings: ParkingSettings,
+  _settings: ParkingSettings,
 ): Promise<ParkingRevenueSummary> {
   if (datasets.length === 0) {
     throw new Error('Select at least one Parking revenue file to save.');
@@ -352,18 +349,14 @@ export async function saveParkingRevenueDatasets(
         revenueTotalRows: summary.metadata.totalRows,
         revenueTotalValue: summary.metadata.totalRevenue,
         revenueStoragePath: storagePath,
-        settings: {
-          ...settings,
-          updatedAt: settings.updatedAt || new Date().toISOString(),
-          updatedBy: settings.updatedBy || userId,
-        },
       }, { merge: true });
-      for (const dataset of datasets) {
+      // Revenue month metadata also references the active composite payload.
+      for (const dataset of summary.datasets) {
         transaction.set(getParkingMonthRef(teamId, `revenue_${dataset.source}_${dataset.month}`), {
           month: dataset.month,
           source: dataset.source,
-          importedAt: serverTimestamp(),
-          importedBy: userId,
+          importedAt: dataset.importedAt || serverTimestamp(),
+          importedBy: dataset.importedBy || userId,
           sourceFileName: dataset.sourceFileName,
           rowCount: dataset.rowCount,
           totalValue: dataset.totalRevenue,

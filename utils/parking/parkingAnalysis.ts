@@ -41,6 +41,30 @@ export interface ParkingLotComparisonPoint {
   revenuePerSpace: number | null;
   sessionsPerSpace: number | null;
   utilizationPercent: number | null;
+  lotCount?: number;
+  capacityCoveredLotCount?: number;
+  capacityCoveredRevenue?: number;
+  capacityCoveredSessions?: number;
+  capacityCoveredPaidMinutes?: number;
+}
+
+export interface ParkingMonthlyUtilizationInput {
+  month: string;
+  analytics: ParkingRevenueAnalytics;
+  capacityByLocationKey: Record<string, ParkingCapacityInfo>;
+}
+
+export interface ParkingUtilizationTrendPoint {
+  key: string;
+  label: string;
+  utilizationPercent: number | null;
+  paidMinutes: number;
+  availableSpaceMinutes: number;
+  spaces: number | null;
+  activeDayCount: number;
+  hourWindowMinutes: number;
+  totalLotCount: number;
+  capacityCoveredLotCount: number;
 }
 
 export type ParkingTrendFormat = 'money' | 'number' | 'duration';
@@ -417,9 +441,12 @@ function buildSourceMix(rows: ParkingRevenueRawRow[]): ParkingSourceMixPoint[] {
 }
 
 function rowBelongsToLocation(row: ParkingRevenueRawRow, location: ParkingRevenueLocationSummary): boolean {
-  if (row.physicalLocationId && row.physicalLocationId === location.key) return true;
+  if (row.physicalLocationId) return row.physicalLocationId === location.key;
   const refs = new Set(location.sourceIds.map(ref => sourceKey(ref.source, ref.sourceId)));
-  if (refs.has(sourceKey(row.source, row.sourceId))) return true;
+  if (String(row.sourceId || '').trim()) {
+    const rowSourceKey = sourceKey(row.source, row.sourceId);
+    return location.key === rowSourceKey || refs.has(rowSourceKey);
+  }
   const rowNames = [row.physicalLocationName, row.sourceLabel].map(normalizeText).filter(Boolean);
   return rowNames.includes(normalizeText(location.displayName));
 }
@@ -428,9 +455,12 @@ export function buildParkingTrendOverview(
   analytics: ParkingRevenueAnalytics,
   selectedLocation: ParkingRevenueLocationSummary | null | undefined,
   requestedTargetMonth?: string,
+  comparisonAnalytics?: ParkingRevenueAnalytics,
 ): ParkingTrendOverview {
   const scopedRows = selectedLocation ? analytics.rows.filter(row => rowBelongsToLocation(row, selectedLocation)) : analytics.rows;
-  const targetMonth = requestedTargetMonth || latestMonth(scopedRows) || latestMonth(analytics.rows);
+  const comparisonRows = comparisonAnalytics?.rows || analytics.rows;
+  const scopedComparisonRows = selectedLocation ? comparisonRows.filter(row => rowBelongsToLocation(row, selectedLocation)) : comparisonRows;
+  const targetMonth = requestedTargetMonth || latestMonth(scopedRows) || latestMonth(scopedComparisonRows) || latestMonth(analytics.rows);
   const previous = previousMonth(targetMonth);
   const lastYear = sameMonthLastYear(targetMonth);
 
@@ -438,15 +468,15 @@ export function buildParkingTrendOverview(
     targetMonth,
     scopeLabel: selectedLocation?.displayName || 'All parking lots',
     comparisonCards: [
-      comparisonCard('revenue-mom', 'Revenue MoM', scopedRows, targetMonth, previous, 'money', revenueForRows),
-      comparisonCard('sessions-mom', 'Sessions MoM', scopedRows, targetMonth, previous, 'number', rows => rows.length),
-      comparisonCard('stay-mom', 'Avg stay MoM', scopedRows, targetMonth, previous, 'duration', rows => average(rows.map(row => row.durationMinutes).filter(value => value > 0))),
-      comparisonCard('revenue-yoy', 'Revenue YoY', scopedRows, targetMonth, lastYear, 'money', revenueForRows),
+      comparisonCard('revenue-mom', 'Revenue MoM', scopedComparisonRows, targetMonth, previous, 'money', revenueForRows),
+      comparisonCard('sessions-mom', 'Sessions MoM', scopedComparisonRows, targetMonth, previous, 'number', rows => rows.length),
+      comparisonCard('stay-mom', 'Avg stay MoM', scopedComparisonRows, targetMonth, previous, 'duration', rows => average(rows.map(row => row.durationMinutes).filter(value => value > 0))),
+      comparisonCard('revenue-yoy', 'Revenue YoY', scopedComparisonRows, targetMonth, lastYear, 'money', revenueForRows),
     ],
     weekdayTrend: buildActiveDayMonthlyTrend(scopedRows, row => row.weekday >= 1 && row.weekday <= 5),
     saturdayTrend: buildActiveDayMonthlyTrend(scopedRows, row => row.weekday === 6),
     sundayTrend: buildActiveDayMonthlyTrend(scopedRows, row => row.weekday === 0),
-    fastestGrowingLot: buildFastestGrowingLot(analytics.rows, targetMonth),
+    fastestGrowingLot: buildFastestGrowingLot(comparisonRows, targetMonth),
   };
 }
 
@@ -587,16 +617,18 @@ function buildCategoryComparisonRows(
 
   return [...groups.entries()].map(([key, group]) => {
     const knownCapacityLots = group.filter(lot => lot.spaces != null && lot.spaces > 0);
-    const metricGroup = knownCapacityLots.length > 0 ? knownCapacityLots : group;
-    const sessions = metricGroup.reduce((sum, lot) => sum + lot.sessions, 0);
-    const revenue = roundMoney(metricGroup.reduce((sum, lot) => sum + lot.revenue, 0));
+    const sessions = group.reduce((sum, lot) => sum + lot.sessions, 0);
+    const revenue = roundMoney(group.reduce((sum, lot) => sum + lot.revenue, 0));
+    const capacityCoveredSessions = knownCapacityLots.reduce((sum, lot) => sum + lot.sessions, 0);
+    const capacityCoveredRevenue = roundMoney(knownCapacityLots.reduce((sum, lot) => sum + lot.revenue, 0));
     const spaces = knownCapacityLots.length > 0
       ? knownCapacityLots.reduce((sum, lot) => sum + (lot.spaces || 0), 0)
       : null;
-    const paidMinutes = metricGroup.reduce((sum, lot) => sum + lot.paidMinutes, 0);
+    const paidMinutes = group.reduce((sum, lot) => sum + lot.paidMinutes, 0);
+    const capacityCoveredPaidMinutes = knownCapacityLots.reduce((sum, lot) => sum + lot.paidMinutes, 0);
     const availableSpaceMinutes = spaces && activeDayCount > 0 ? spaces * activeDayCount * hourWindowMinutes : 0;
-    const weightedStaySessions = metricGroup.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? Math.max(lot.sessions, 1) : 0), 0);
-    const weightedStayTotal = metricGroup.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? lot.averageStayMinutes * Math.max(lot.sessions, 1) : 0), 0);
+    const weightedStaySessions = group.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? Math.max(lot.sessions, 1) : 0), 0);
+    const weightedStayTotal = group.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? lot.averageStayMinutes * Math.max(lot.sessions, 1) : 0), 0);
     return {
       key,
       label: group[0]?.categoryLabel || 'Uncategorized',
@@ -607,13 +639,64 @@ function buildCategoryComparisonRows(
       sessions,
       paidMinutes,
       averageStayMinutes: weightedStaySessions > 0 ? Math.round(weightedStayTotal / weightedStaySessions) : 0,
-      uniquePlates: metricGroup.reduce((sum, lot) => sum + lot.uniquePlates, 0),
+      uniquePlates: group.reduce((sum, lot) => sum + lot.uniquePlates, 0),
       spaces,
-      revenuePerSpace: spaces ? roundMoney(revenue / spaces) : null,
-      sessionsPerSpace: spaces ? roundMoney(sessions / spaces) : null,
-      utilizationPercent: availableSpaceMinutes > 0 ? roundOne((paidMinutes / availableSpaceMinutes) * 100) : null,
+      revenuePerSpace: spaces ? roundMoney(capacityCoveredRevenue / spaces) : null,
+      sessionsPerSpace: spaces ? roundMoney(capacityCoveredSessions / spaces) : null,
+      utilizationPercent: availableSpaceMinutes > 0 ? roundOne((capacityCoveredPaidMinutes / availableSpaceMinutes) * 100) : null,
+      lotCount: group.length,
+      capacityCoveredLotCount: knownCapacityLots.length,
+      capacityCoveredRevenue,
+      capacityCoveredSessions,
+      capacityCoveredPaidMinutes,
     };
   }).sort((a, b) => sortByRevenuePerSpace(a, b) || a.label.localeCompare(b.label));
+}
+
+function locationsMatch(
+  candidate: ParkingRevenueLocationSummary,
+  selected: ParkingRevenueLocationSummary,
+): boolean {
+  if (candidate.key === selected.key) return true;
+  const selectedRefs = new Set(selected.sourceIds.map(ref => sourceKey(ref.source, ref.sourceId)));
+  return candidate.sourceIds.some(ref => selectedRefs.has(sourceKey(ref.source, ref.sourceId)));
+}
+
+export function buildParkingMonthlyUtilizationTrend(
+  periods: ParkingMonthlyUtilizationInput[],
+  selectedLocation?: ParkingRevenueLocationSummary | null,
+): ParkingUtilizationTrendPoint[] {
+  return periods.map(({ month, analytics, capacityByLocationKey }) => {
+    const locations = selectedLocation
+      ? analytics.locationSummaries.filter(location => locationsMatch(location, selectedLocation))
+      : analytics.locationSummaries;
+    const coveredLocations = locations.filter(location => {
+      const spaces = capacityForLocation(location, capacityByLocationKey).spaces;
+      return spaces != null && spaces > 0;
+    });
+    const spaces = coveredLocations.reduce(
+      (sum, location) => sum + (capacityForLocation(location, capacityByLocationKey).spaces || 0),
+      0,
+    );
+    const paidMinutes = coveredLocations.reduce((sum, location) => sum + (location.paidMinutes || 0), 0);
+    const activeDayCount = analytics.activeDayCount || 0;
+    const hourWindowMinutes = analytics.hourWindowMinutes || 1440;
+    const availableSpaceMinutes = spaces > 0 && activeDayCount > 0
+      ? spaces * activeDayCount * hourWindowMinutes
+      : 0;
+    return {
+      key: month,
+      label: monthLabel(month),
+      utilizationPercent: availableSpaceMinutes > 0 ? roundOne((paidMinutes / availableSpaceMinutes) * 100) : null,
+      paidMinutes,
+      availableSpaceMinutes,
+      spaces: spaces > 0 ? spaces : null,
+      activeDayCount,
+      hourWindowMinutes,
+      totalLotCount: locations.length,
+      capacityCoveredLotCount: coveredLocations.length,
+    };
+  }).sort((a, b) => a.key.localeCompare(b.key));
 }
 
 export function buildParkingPlannerAnalysis(

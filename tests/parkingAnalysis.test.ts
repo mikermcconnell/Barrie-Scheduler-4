@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildParkingPlannerAnalysis, buildParkingTrendOverview } from '../utils/parking/parkingAnalysis';
+import {
+  buildParkingMonthlyUtilizationTrend,
+  buildParkingPlannerAnalysis,
+  buildParkingTrendOverview,
+} from '../utils/parking/parkingAnalysis';
 import type {
   ParkingRevenueAnalytics,
   ParkingRevenueLocationSummary,
@@ -180,10 +184,10 @@ describe('parking planner analysis milestones', () => {
       revenuePerSpace: 1.88,
       sessionsPerSpace: 0.09,
     });
-    expect(result.selectedLot?.hourlyProfile.find(point => point.key === '10')).toMatchObject({ revenue: 22.83, sessions: 3 });
+    expect(result.selectedLot?.hourlyProfile.find(point => point.key === '10')).toMatchObject({ revenue: 20.83, sessions: 2 });
     expect(result.selectedLot?.sourceMix).toEqual([
       { key: 'hotspot', label: 'HotSpot app', revenue: 40, sessions: 1 },
-      { key: 'qr', label: 'QR code', revenue: 20, sessions: 2 },
+      { key: 'qr', label: 'QR code', revenue: 15, sessions: 1 },
     ]);
     expect(result.insights).toEqual(expect.arrayContaining([
       'Collier Parkade represents 71.4% of filtered revenue and ranks #1 by revenue.',
@@ -312,7 +316,7 @@ describe('parking planner analysis milestones', () => {
     expect(result.hourlyProfile.find(point => point.key === '01')).toMatchObject({ revenue: 3, sessions: 1 });
   });
 
-  it('does not inflate category revenue per space with unknown-capacity lots', () => {
+  it('keeps complete category totals while limiting per-space metrics to capacity-covered lots', () => {
     const knownCapacityLot = location({
       key: 'known-capacity',
       displayName: 'Known Capacity Lot',
@@ -345,12 +349,46 @@ describe('parking planner analysis milestones', () => {
     expect(result.categoryComparisonRows[0]).toMatchObject({
       key: 'downtown',
       label: 'Downtown',
-      revenue: 100,
-      sessions: 10,
+      revenue: 1000,
+      sessions: 100,
       spaces: 10,
       revenuePerSpace: 10,
       utilizationPercent: 20,
+      lotCount: 2,
+      capacityCoveredLotCount: 1,
+      capacityCoveredRevenue: 100,
+      capacityCoveredSessions: 10,
+      capacityCoveredPaidMinutes: 120,
     });
+  });
+
+  it('keeps selected-lot analysis isolated from a distinct same-named location', () => {
+    const selected = location({
+      key: 'lot-a',
+      displayName: 'Bayfield Street Parking',
+      sourceIds: [{ source: 'hotspot', sourceId: '100', label: 'Bayfield Street Parking' }],
+      rowCount: 1,
+      totalRevenue: 10,
+    });
+    const other = location({
+      key: 'lot-b',
+      displayName: 'Bayfield Street Parking',
+      sourceIds: [{ source: 'hotspot', sourceId: '200', label: 'Bayfield Street Parking' }],
+      rowCount: 1,
+      totalRevenue: 20,
+    });
+    const result = buildParkingPlannerAnalysis(analytics({
+      rows: [
+        row({ id: 'a', sourceId: '100', physicalLocationId: 'lot-a', physicalLocationName: 'Bayfield Street Parking', amount: 10 }),
+        row({ id: 'b', sourceId: '200', physicalLocationId: 'lot-b', physicalLocationName: 'Bayfield Street Parking', amount: 20 }),
+      ],
+      locationSummaries: [selected, other],
+      totalRevenue: 30,
+      rowCount: 2,
+    }), selected);
+
+    expect(result.selectedLot?.revenueSharePercent).toBe(33.3);
+    expect(result.selectedLot?.sourceMix.find(point => point.key === 'hotspot')).toMatchObject({ revenue: 10, sessions: 1 });
   });
 
   it('sorts tied lot and capacity comparisons predictably and handles zero totals', () => {
@@ -475,5 +513,98 @@ describe('parking planner analysis milestones', () => {
     ]);
     expect(result.sundayTrend).toEqual([]);
     expect(result.fastestGrowingLot).toMatchObject({ label: 'Marina Lot', value: 80, changeValue: 80 });
+  });
+
+  it('uses all-month comparison context while keeping displayed trends year-scoped', () => {
+    const selected = location({
+      key: 'collier',
+      displayName: 'Collier Parkade',
+      sourceIds: [{ source: 'hotspot', sourceId: '100', label: 'Collier Parkade' }],
+    });
+    const may = row({
+      id: 'may',
+      physicalLocationId: 'collier',
+      startDate: '2026-05-01',
+      startMonth: '2026-05',
+      amount: 50,
+    });
+    const june = row({
+      id: 'june',
+      physicalLocationId: 'collier',
+      startDate: '2026-06-01',
+      startMonth: '2026-06',
+      amount: 90,
+    });
+    const priorJune = row({
+      id: 'prior-june',
+      physicalLocationId: 'collier',
+      startDate: '2025-06-01',
+      startMonth: '2025-06',
+      amount: 30,
+    });
+
+    const result = buildParkingTrendOverview(
+      analytics({ rows: [june] }),
+      selected,
+      '2026-06',
+      analytics({ rows: [priorJune, may, june] }),
+    );
+
+    expect(result.weekdayTrend.map(point => point.key)).toEqual(['2026-06']);
+    expect(result.comparisonCards.find(card => card.key === 'revenue-mom')).toMatchObject({
+      value: 90,
+      previousValue: 50,
+      changeValue: 40,
+    });
+    expect(result.comparisonCards.find(card => card.key === 'revenue-yoy')).toMatchObject({
+      value: 90,
+      previousValue: 30,
+      changeValue: 60,
+      changePercent: 200,
+    });
+  });
+
+  it('builds monthly utilization trends for all covered lots and a selected lot', () => {
+    const lotA = location({ key: 'lot-a', displayName: 'Lot A', paidMinutes: 600 });
+    const lotB = location({
+      key: 'lot-b',
+      displayName: 'Lot B',
+      sourceIds: [{ source: 'hotspot', sourceId: '200', label: 'Lot B' }],
+      paidMinutes: 300,
+    });
+    const january = analytics({
+      locationSummaries: [lotA, lotB],
+      activeDayCount: 2,
+      hourWindowMinutes: 60,
+    });
+    const february = analytics({
+      locationSummaries: [location({ ...lotA, paidMinutes: 300 })],
+      activeDayCount: 1,
+      hourWindowMinutes: 120,
+    });
+    const capacity = {
+      'lot-a': { spaces: 10 },
+      'lot-b': { spaces: null as number | null },
+    };
+
+    const allLots = buildParkingMonthlyUtilizationTrend([
+      { month: '2026-02', analytics: february, capacityByLocationKey: capacity },
+      { month: '2026-01', analytics: january, capacityByLocationKey: capacity },
+    ]);
+    const selected = buildParkingMonthlyUtilizationTrend([
+      { month: '2026-01', analytics: january, capacityByLocationKey: capacity },
+    ], lotA);
+
+    expect(allLots.map(point => point.key)).toEqual(['2026-01', '2026-02']);
+    expect(allLots[0]).toMatchObject({
+      utilizationPercent: 50,
+      paidMinutes: 600,
+      availableSpaceMinutes: 1200,
+      spaces: 10,
+      totalLotCount: 2,
+      capacityCoveredLotCount: 1,
+    });
+    expect(allLots[1]).toMatchObject({ utilizationPercent: 25, paidMinutes: 300 });
+    expect(selected[0]).toMatchObject({ totalLotCount: 1, capacityCoveredLotCount: 1, utilizationPercent: 50 });
   });
 });

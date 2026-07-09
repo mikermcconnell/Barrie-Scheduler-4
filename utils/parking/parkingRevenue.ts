@@ -16,6 +16,8 @@ import {
 } from './parkingTypes';
 import { getParkingCategoryDisplay, UNCATEGORIZED_PARKING_CATEGORY_ID } from './parkingCategories';
 
+const MAX_PARKING_REVENUE_FILE_BYTES = 25 * 1024 * 1024;
+
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -208,6 +210,9 @@ export async function parseParkingRevenueFile(file: File, importedBy: string, se
   if (!file.name.match(/\.xlsx?$/i)) {
     throw new Error('Upload a Parking revenue Excel file (.xlsx or .xls).');
   }
+  if (file.size > MAX_PARKING_REVENUE_FILE_BYTES) {
+    throw new Error('Parking revenue files must be 25 MB or smaller. Split larger exports by month and source.');
+  }
   const buffer = await file.arrayBuffer();
   return parseParkingRevenueWorkbook(buffer, { fileName: file.name, importedBy, settings });
 }
@@ -303,7 +308,14 @@ function paidMinutesForRow(row: ParkingRevenueRawRow, filters: ParkingRevenueFil
   const window = hourWindow(filters);
   const rowStart = Math.max(0, row.startMinutes);
   const rowEnd = Math.max(rowStart, row.endMinutes);
-  const overlap = Math.min(rowEnd, window.end) - Math.max(rowStart, window.start);
+  let overlap = 0;
+  const firstDay = Math.floor(rowStart / 1440) - 1;
+  const lastDay = Math.floor(rowEnd / 1440) + 1;
+  for (let day = firstDay; day <= lastDay; day += 1) {
+    const windowStart = window.start + day * 1440;
+    const windowEnd = window.end + day * 1440;
+    overlap += Math.max(0, Math.min(rowEnd, windowEnd) - Math.max(rowStart, windowStart));
+  }
   return Math.max(0, Math.min(row.durationMinutes, overlap));
 }
 
@@ -391,7 +403,6 @@ function createLocationAccumulator(
 function addRowToLocationAccumulator(
   accumulator: LocationAccumulator,
   row: ParkingRevenueRawRow,
-  filtersForPaidMinutes?: ParkingRevenueFilters,
 ): void {
   accumulator.rowCount += 1;
   accumulator.totalRevenue += row.amount;
@@ -410,18 +421,31 @@ function addRowToLocationAccumulator(
     sourceId: row.sourceId,
     label: row.sourceLabel,
   });
-  accumulator.paidMinutes += paidMinutesForRow(row, filtersForPaidMinutes || {});
+}
+
+function addPaidMinutesToLocationAccumulator(
+  accumulator: LocationAccumulator,
+  row: ParkingRevenueRawRow,
+  filters: ParkingRevenueFilters,
+): void {
+  accumulator.paidMinutes += paidMinutesForRow(row, filters);
+  accumulator.sourceIds.set(locationKeyForRef(row.source, row.sourceId), {
+    source: row.source,
+    sourceId: row.sourceId,
+    label: row.sourceLabel,
+  });
 }
 
 function buildLocationSummaryIndex(
   rows: ParkingRevenueRawRow[],
   settings: ParkingSettings,
   filtersForPaidMinutes?: ParkingRevenueFilters,
+  paidMinuteRows: ParkingRevenueRawRow[] = rows,
 ): LocationSummaryIndex {
   const locationById = new Map((settings.revenueLocations || []).map(location => [location.id, location]));
   const locationLookup = buildParkingRevenueLocationLookup(settings);
   const groups = new Map<string, LocationAccumulator>();
-  for (const row of rows) {
+  const getAccumulator = (row: ParkingRevenueRawRow): LocationAccumulator => {
     const key = groupKeyForRow(row, locationLookup);
     let accumulator = groups.get(key);
     if (!accumulator) {
@@ -432,7 +456,13 @@ function buildLocationSummaryIndex(
       );
       groups.set(key, accumulator);
     }
-    addRowToLocationAccumulator(accumulator, row, filtersForPaidMinutes);
+    return accumulator;
+  };
+  for (const row of rows) {
+    addRowToLocationAccumulator(getAccumulator(row), row);
+  }
+  for (const row of paidMinuteRows) {
+    addPaidMinutesToLocationAccumulator(getAccumulator(row), row, filtersForPaidMinutes || {});
   }
 
   const categoryMemberships = new Map<string, { keys: Set<string>; names: Set<string> }>();
@@ -496,6 +526,7 @@ function rowMatchesCategoryMembership(
   locationLookup: Map<string, ParkingRevenueLocationMapping>,
 ): boolean {
   if (membership.keys.has(rowLocationKey(row, locationLookup))) return true;
+  if (String(row.physicalLocationId || '').trim() || String(row.sourceId || '').trim()) return false;
   const rowNames = [row.physicalLocationName, row.sourceLabel].map(value => normalizeText(value).toLowerCase()).filter(Boolean);
   return rowNames.some(name => membership.names.has(name));
 }
@@ -563,12 +594,15 @@ export function buildParkingRevenueAnalytics(
     activeDayDates.add(row.startDate);
   }
 
-  const baseIndex = buildLocationSummaryIndex(baseRows, settings, filters);
-  const rowCategoryMembership = categoryMembershipForSummaries(baseIndex, filters.categoryId);
+  const rowCategoryMembership = categoryMembershipForSummaries(periodIndex, filters.categoryId);
   const rows = rowCategoryMembership
     ? baseRows.filter(row => rowMatchesCategoryMembership(row, rowCategoryMembership, locationLookup))
     : baseRows;
-  const finalIndex = rowCategoryMembership ? buildLocationSummaryIndex(rows, settings, filters) : baseIndex;
+  const paidMinuteRows = (rowCategoryMembership
+    ? periodRows.filter(row => rowMatchesCategoryMembership(row, rowCategoryMembership, locationLookup))
+    : periodRows
+  ).filter(row => paidMinutesForRow(row, filters) > 0);
+  const finalIndex = buildLocationSummaryIndex(rows, settings, filters, paidMinuteRows);
   const locationSummaries = finalIndex.summaries;
   const durations = rows.map(row => row.durationMinutes).filter(value => value > 0);
   const window = hourWindow(filters);
@@ -580,7 +614,7 @@ export function buildParkingRevenueAnalytics(
     totalRevenue: roundMoney(rows.reduce((sum, row) => sum + row.amount, 0)),
     totalPaid: roundMoney(rows.reduce((sum, row) => sum + row.total, 0)),
     rowCount: rows.length,
-    paidMinutes: rows.reduce((sum, row) => sum + paidMinutesForRow(row, filters), 0),
+    paidMinutes: paidMinuteRows.reduce((sum, row) => sum + paidMinutesForRow(row, filters), 0),
     activeDayCount: activeDayDates.size,
     hourWindowMinutes: window.minutes,
     averageStayMinutes: average(durations),

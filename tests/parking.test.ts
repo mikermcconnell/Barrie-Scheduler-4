@@ -8,6 +8,7 @@ import { getParkingCodeFamilyKey, parseParkingDurationMinutes, parseParkingFile,
 import {
   buildParkingRevenueAnalytics,
   buildParkingRevenueReplacementSummary,
+  parseParkingRevenueFile,
   parseParkingRevenueDurationMinutes,
   parseParkingRevenueWorkbook,
 } from '../utils/parking/parkingRevenue';
@@ -520,6 +521,18 @@ describe('parking replacement and export', () => {
 });
 
 describe('parking revenue parser and analytics', () => {
+  it('rejects oversized revenue workbooks before reading them', async () => {
+    const arrayBuffer = vi.fn();
+    const file = {
+      name: 'oversized.xlsx',
+      size: 25 * 1024 * 1024 + 1,
+      arrayBuffer,
+    } as unknown as File;
+
+    await expect(parseParkingRevenueFile(file, 'user-1', settings)).rejects.toThrow('25 MB or smaller');
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
   function revenueSettings(): ParkingSettings {
     return {
       ...DEFAULT_PARKING_SETTINGS,
@@ -715,6 +728,102 @@ describe('parking revenue parser and analytics', () => {
       spaces: 10,
       utilizationPercent: 4.2,
     });
+  });
+
+  it('counts paid-minute overlap without adding out-of-window sessions or revenue', () => {
+    const settings: ParkingSettings = {
+      ...DEFAULT_PARKING_SETTINGS,
+      revenueLocations: [{
+        id: 'lot-a',
+        displayName: 'Lot A',
+        latitude: 44.39,
+        longitude: -79.69,
+        capacitySpaces: 10,
+        categoryId: 'downtown',
+        sourceRefs: [{ source: 'hotspot', sourceId: '100', label: 'Lot A' }],
+      }],
+    };
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '100', 'Lot A', '2026-01-01 08:30:00', 'EARLY', '20.00', '2.60', '22.60', '2', 'visa'],
+      ['', '100', 'Lot A', '2026-01-01 11:00:00', 'BOUNDARY', '10.00', '1.30', '11.30', '1', 'visa'],
+    ]), { fileName: 'overlap.xlsx', importedBy: 'user-1', settings }).dataset;
+    const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
+
+    const result = buildParkingRevenueAnalytics(summary, settings, { hourStart: 9, hourEnd: 10 });
+
+    expect(result).toMatchObject({ rowCount: 0, totalRevenue: 0, paidMinutes: 90 });
+    expect(result.locationSummaries).toHaveLength(1);
+    expect(result.locationSummaries[0]).toMatchObject({
+      key: 'lot-a',
+      rowCount: 0,
+      totalRevenue: 0,
+      paidMinutes: 90,
+    });
+  });
+
+  it('wraps overnight paid-minute overlap into after-midnight hour filters', () => {
+    const settings: ParkingSettings = {
+      ...DEFAULT_PARKING_SETTINGS,
+      revenueLocations: [{
+        id: 'overnight-lot',
+        displayName: 'Overnight Lot',
+        latitude: 44.39,
+        longitude: -79.69,
+        capacitySpaces: 10,
+        categoryId: 'downtown',
+        sourceRefs: [{ source: 'hotspot', sourceId: '100', label: 'Overnight Lot' }],
+      }],
+    };
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '100', 'Overnight Lot', '2026-01-01 23:30:00', 'NIGHT', '20.00', '2.60', '22.60', '2', 'visa'],
+    ]), { fileName: 'overnight.xlsx', importedBy: 'user-1', settings }).dataset;
+    const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
+
+    const result = buildParkingRevenueAnalytics(summary, settings, { hourStart: 0, hourEnd: 1 });
+
+    expect(result).toMatchObject({ rowCount: 0, totalRevenue: 0, paidMinutes: 90 });
+    expect(result.locationSummaries[0]).toMatchObject({ rowCount: 0, paidMinutes: 90 });
+  });
+
+  it('keeps same-named locations isolated when filtering by category', () => {
+    const settings: ParkingSettings = {
+      ...DEFAULT_PARKING_SETTINGS,
+      revenueLocations: [
+        {
+          id: 'downtown-bayfield',
+          displayName: 'Bayfield Street Parking',
+          latitude: 44.39,
+          longitude: -79.69,
+          categoryId: 'downtown',
+          sourceRefs: [{ source: 'hotspot', sourceId: '100', label: 'Bayfield Street Parking' }],
+        },
+        {
+          id: 'waterfront-bayfield',
+          displayName: 'Bayfield Street Parking',
+          latitude: 44.38,
+          longitude: -79.68,
+          categoryId: 'waterfront',
+          sourceRefs: [{ source: 'hotspot', sourceId: '200', label: 'Bayfield Street Parking' }],
+        },
+      ],
+    };
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '100', 'Bayfield Street Parking', '2026-01-01 09:00:00', 'DOWN', '10.00', '1.30', '11.30', '1', 'visa'],
+      ['', '200', 'Bayfield Street Parking', '2026-01-01 09:00:00', 'WATER', '20.00', '2.60', '22.60', '1', 'visa'],
+    ]), { fileName: 'same-name.xlsx', importedBy: 'user-1', settings }).dataset;
+    const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
+
+    const result = buildParkingRevenueAnalytics(summary, settings, { categoryId: 'downtown' });
+
+    expect(result.totalRevenue).toBe(10);
+    expect(result.rows.map(entry => entry.sourceId)).toEqual(['100']);
+    expect(result.locationSummaries.map(entry => entry.key)).toEqual(['downtown-bayfield']);
   });
 
   it('applies reviewed map locations to already-imported revenue rows', () => {

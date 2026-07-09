@@ -53,6 +53,7 @@ import { MapBase } from '../shared';
 import { exportParkingWorkbook } from '../../utils/parking/parkingExport';
 import { parseParkingFile } from '../../utils/parking/parkingParser';
 import {
+  buildParkingMonthlyUtilizationTrend,
   buildParkingPlannerAnalysis,
   buildParkingTrendOverview,
   type ParkingAnalysisChartPoint,
@@ -60,6 +61,7 @@ import {
   type ParkingSourceMixPoint,
   type ParkingTrendComparison,
   type ParkingTrendDirection,
+  type ParkingUtilizationTrendPoint,
 } from '../../utils/parking/parkingAnalysis';
 import {
   buildParkingRevenueAnalytics,
@@ -206,6 +208,19 @@ type ParkingWorkspaceView = 'dashboard' | 'plate-monitor' | 'lot-data';
 type ParkingLotViewMode = 'map' | 'analysis';
 type ParkingLotMapMode = 'markers' | 'heatmap';
 type ParkingAnalysisView = 'overview' | 'trends' | 'lots' | 'time' | 'capacity';
+type ParkingComparisonMetric = 'revenue' | 'sessions' | 'averageStayMinutes' | 'revenuePerSpace' | 'utilizationPercent';
+
+const PARKING_COMPARISON_METRICS: Array<{
+  id: ParkingComparisonMetric;
+  label: string;
+  color: string;
+}> = [
+  { id: 'revenue', label: 'Revenue', color: '#059669' },
+  { id: 'sessions', label: 'Sessions', color: '#2563EB' },
+  { id: 'averageStayMinutes', label: 'Average stay', color: '#D97706' },
+  { id: 'revenuePerSpace', label: 'Revenue/known space', color: '#7C3AED' },
+  { id: 'utilizationPercent', label: 'Estimated utilization', color: '#DB2777' },
+];
 
 const PARKING_ANALYSIS_VIEWS: Array<{ id: ParkingAnalysisView; label: string; description: string }> = [
   { id: 'overview', label: 'Overview', description: 'Executive summary' },
@@ -281,11 +296,15 @@ const ParkingChartCard: React.FC<{
   subtitle: string;
   children: React.ReactNode;
   tall?: boolean;
-}> = ({ title, subtitle, children, tall = false }) => (
+  action?: React.ReactNode;
+}> = ({ title, subtitle, children, tall = false, action }) => (
   <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-    <div className="mb-3">
-      <h3 className="font-black text-slate-950">{title}</h3>
-      <p className="mt-1 text-xs font-semibold text-slate-400">{subtitle}</p>
+    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h3 className="font-black text-slate-950">{title}</h3>
+        <p className="mt-1 text-xs font-semibold text-slate-400">{subtitle}</p>
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
     <div className={tall ? 'h-72' : 'h-56'}>{children}</div>
   </section>
@@ -479,19 +498,33 @@ const TrendAreaChart: React.FC<{ data: ParkingAnalysisChartPoint[]; color?: stri
 
 const TopLotsChart: React.FC<{
   data: ParkingLotComparisonPoint[];
-  metric?: 'revenue' | 'revenuePerSpace' | 'sessions';
+  metric?: ParkingComparisonMetric;
   color?: string;
   emptyLabel?: string;
   emptyAction?: string;
 }> = ({ data, metric = 'revenue', color = '#2563EB', emptyLabel = 'No lots to compare yet.', emptyAction }) => {
+  const metricConfig = PARKING_COMPARISON_METRICS.find(option => option.id === metric) || PARKING_COMPARISON_METRICS[0];
   const chartData = data
     .filter(row => {
       const value = row[metric];
       return typeof value === 'number' && value > 0;
     })
+    .sort((a, b) => (b[metric] ?? -1) - (a[metric] ?? -1) || b.revenue - a.revenue || a.label.localeCompare(b.label))
     .slice(0, 8);
-  const metricLabel = metric === 'revenuePerSpace' ? 'Revenue per space' : metric === 'sessions' ? 'Sessions' : 'Revenue';
-  const tickFormatter = metric === 'sessions' ? shortNumber : compactMoney;
+  const tickFormatter = (value: number) => {
+    if (metric === 'sessions') return shortNumber(value);
+    if (metric === 'averageStayMinutes') return `${Math.round(value)}m`;
+    if (metric === 'utilizationPercent') return `${value.toFixed(0)}%`;
+    return compactMoney(value);
+  };
+  const tooltipFormatter = (value: unknown) => {
+    const numeric = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numeric)) return String(value ?? '');
+    if (metric === 'sessions') return numeric.toLocaleString();
+    if (metric === 'averageStayMinutes') return minutesToDuration(numeric);
+    if (metric === 'utilizationPercent') return `${numeric.toFixed(1)}%`;
+    return money(numeric);
+  };
 
   return chartData.length > 0 ? (
     <ResponsiveContainer width="100%" height="100%">
@@ -499,8 +532,8 @@ const TopLotsChart: React.FC<{
         <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E2E8F0" />
         <XAxis type="number" tickFormatter={tickFormatter} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
         <YAxis type="category" dataKey="label" width={110} tick={{ fontSize: 10, fill: '#334155', fontWeight: 700 }} tickLine={false} axisLine={false} />
-        <Tooltip formatter={tooltipValue} labelClassName="font-bold text-slate-700" />
-        <Bar dataKey={metric} name={metricLabel} fill={color} radius={[0, 8, 8, 0]} />
+        <Tooltip formatter={tooltipFormatter} labelClassName="font-bold text-slate-700" />
+        <Bar dataKey={metric} name={metricConfig.label} fill={color || metricConfig.color} radius={[0, 8, 8, 0]} />
       </BarChart>
     </ResponsiveContainer>
   ) : <EmptyChartState label={emptyLabel} action={emptyAction} />;
@@ -1176,6 +1209,28 @@ const AnnualDepartmentMatrixTable: React.FC<{ rows: AnnualSummaryRow[]; codeFami
   );
 };
 
+const UtilizationTrendChart: React.FC<{ data: ParkingUtilizationTrendPoint[] }> = ({ data }) => {
+  const gradientId = useId().replace(/:/g, '');
+  const chartData = data.filter(point => point.utilizationPercent != null);
+  return chartData.length > 0 ? (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={chartData} margin={{ top: 8, right: 14, left: -8, bottom: 0 }}>
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#DB2777" stopOpacity={0.32} />
+            <stop offset="95%" stopColor="#DB2777" stopOpacity={0.03} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+        <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <YAxis tickFormatter={value => `${value}%`} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+        <Tooltip formatter={(value: unknown) => `${Number(value).toFixed(1)}%`} labelClassName="font-bold text-slate-700" />
+        <Area type="monotone" dataKey="utilizationPercent" name="Estimated utilization" stroke="#DB2777" strokeWidth={3} fill={`url(#${gradientId})`} connectNulls={false} />
+      </AreaChart>
+    </ResponsiveContainer>
+  ) : <EmptyChartState label="No utilization trend yet." action="Match known space counts and import more than one month to compare estimated utilization over time." />;
+};
+
 const AnnualDepartmentTotalsList: React.FC<{ rows: AnnualSummaryRow[]; codeFamilies: ParkingCodeFamilyMapping[]; limit?: number }> = ({ rows, codeFamilies, limit }) => {
   const annualTotal = rows.reduce((sum, row) => sum + row.total, 0);
   const data = rows
@@ -1307,6 +1362,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [selectedRevenueLocationKey, setSelectedRevenueLocationKey] = useState('');
   const [lotViewMode, setLotViewMode] = useState<ParkingLotViewMode>('map');
   const [parkingAnalysisView, setParkingAnalysisView] = useState<ParkingAnalysisView>('overview');
+  const [categoryComparisonMetric, setCategoryComparisonMetric] = useState<ParkingComparisonMetric>('revenue');
   const [lotMapMode, setLotMapMode] = useState<ParkingLotMapMode>('markers');
   const [parkingMapMetric, setParkingMapMetric] = useState<ParkingMapMetric>('revenue');
   const [locationSearchById, setLocationSearchById] = useState<Record<string, RevenueLocationSearchState>>({});
@@ -1473,6 +1529,16 @@ export const ParkingWorkspace: React.FC = () => {
       : buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueTrendFilters),
     [displayRevenueSummary, revenueAnalytics, revenueTrendFilters, revenueTrendUsesCurrentAnalytics, settings],
   );
+  const revenueComparisonFilters = useMemo<ParkingRevenueFilters>(() => ({
+    ...revenueFilters,
+    months: undefined,
+  }), [revenueFilters]);
+  const revenueComparisonAnalytics = useMemo(
+    () => revenueFilterMonths === undefined
+      ? revenueAnalytics
+      : buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueComparisonFilters),
+    [displayRevenueSummary, revenueAnalytics, revenueComparisonFilters, revenueFilterMonths, settings],
+  );
   const publicParkingMatchesByKey = useMemo(() => {
     const matches = new Map<string, PublicParkingLocationMatch>();
     if (publicParkingLocations.length === 0) return matches;
@@ -1517,6 +1583,14 @@ export const ParkingWorkspace: React.FC = () => {
       publicCapacityByLocationKey,
     )
   ), [publicCapacityByLocationKey, publicParkingMatchesByKey, revenueAnalytics.locationSummaries]);
+  const mapCoveredRevenue = useMemo(
+    () => Math.round(mapLocationSummaries.reduce((sum, location) => sum + location.totalRevenue, 0) * 100) / 100,
+    [mapLocationSummaries],
+  );
+  const mapUncoveredRevenue = Math.max(0, Math.round((revenueAnalytics.totalRevenue - mapCoveredRevenue) * 100) / 100);
+  const mapRevenueCoveragePercent = revenueAnalytics.totalRevenue > 0
+    ? Math.min(100, Math.round((mapCoveredRevenue / revenueAnalytics.totalRevenue) * 1000) / 10)
+    : 0;
   const publicFallbackPinCount = mapLocationSummaries.filter(entry => entry.coordinateSource === 'public').length;
   const selectedRevenueLocation = useMemo(() => {
     if (!selectedRevenueLocationKey) return null;
@@ -1528,13 +1602,43 @@ export const ParkingWorkspace: React.FC = () => {
       || revenueTrendAnalytics.locationSummaries.find(location => revenueLocationKey(location) === selectedRevenueLocationKey)
       || null;
   }, [revenueTrendAnalytics.locationSummaries, selectedRevenueLocation, selectedRevenueLocationKey]);
+  const utilizationTrendMonths = useMemo(() => (
+    selectedRevenueYear === 'all'
+      ? revenueMonths
+      : revenueMonths.filter(month => month.startsWith(`${selectedRevenueYear}-`))
+  ), [revenueMonths, selectedRevenueYear]);
+  const parkingUtilizationTrend = useMemo(() => {
+    const periods = utilizationTrendMonths.map(month => {
+      const analytics = buildParkingRevenueAnalytics(displayRevenueSummary, settings, {
+        ...revenueFilters,
+        months: [month],
+      });
+      const capacityByLocationKey = Object.fromEntries(analytics.locationSummaries.map(location => {
+        const reviewedLocation = (settings.revenueLocations || []).find(mapping => (
+          mapping.id === location.key || revenueLocationRefsOverlap(location, mapping)
+        ));
+        const publicMatch = publicParkingLocations.length > 0
+          ? findPublicParkingLocationFallback(location, publicParkingLocations)
+          : null;
+        return [location.key, {
+          spaces: reviewedLocation?.capacitySpaces ?? publicMatch?.location.numSpaces ?? null,
+          sourceLabel: reviewedLocation?.capacitySpaces != null
+            ? 'Reviewed location import'
+            : publicMatch?.location.commonName || publicMatch?.location.name,
+        }];
+      }));
+      return { month, analytics, capacityByLocationKey };
+    });
+    return buildParkingMonthlyUtilizationTrend(periods, selectedTrendLocation);
+  }, [displayRevenueSummary, publicParkingLocations, revenueFilters, selectedTrendLocation, settings, utilizationTrendMonths]);
   const parkingTrendOverview = useMemo(() => (
     buildParkingTrendOverview(
       revenueTrendAnalytics,
       selectedTrendLocation,
       selectedRevenueMonth === 'all' ? revenueMonthsForSelectedYear[0] : selectedRevenueMonth,
+      revenueComparisonAnalytics,
     )
-  ), [revenueMonthsForSelectedYear, revenueTrendAnalytics, selectedRevenueMonth, selectedTrendLocation]);
+  ), [revenueComparisonAnalytics, revenueMonthsForSelectedYear, revenueTrendAnalytics, selectedRevenueMonth, selectedTrendLocation]);
   const activeMapLocation = useMemo(() => (
     selectedRevenueLocation ? mapLocationSummaries.find(entry => entry.sourceLocationKeys.includes(selectedRevenueLocation.key)) || null : null
   ), [mapLocationSummaries, selectedRevenueLocation]);
@@ -1574,6 +1678,8 @@ export const ParkingWorkspace: React.FC = () => {
       ? ''
       : revenueUploaderOptions.find(option => option.id === selectedRevenueUploader)?.label || selectedRevenueUploader
   ), [revenueUploaderOptions, selectedRevenueUploader]);
+  const categoryComparisonMetricConfig = PARKING_COMPARISON_METRICS.find(option => option.id === categoryComparisonMetric)
+    || PARKING_COMPARISON_METRICS[0];
   const primaryTrendCard = parkingTrendOverview.comparisonCards[0] || null;
   const topRevenueLot = parkingPlannerAnalysis.topLotsByRevenue[0] || null;
   const topUtilizationLot = parkingPlannerAnalysis.capacityRows
@@ -1611,7 +1717,7 @@ export const ParkingWorkspace: React.FC = () => {
     if (revenueDayTypeFilter !== 'all') chips.push(REVENUE_DAY_TYPE_LABELS[revenueDayTypeFilter]);
     if (revenueSourceFilter !== 'all') chips.push(getParkingRevenueSourceLabel(revenueSourceFilter));
     if (revenueHourStart !== 0 || revenueHourEnd !== 23) chips.push(`${formatHourOption(revenueHourStart)}–${formatHourOption(revenueHourEnd)}`);
-    if (selectedRevenueLocation) chips.push(selectedRevenueLocation.displayName);
+    if (selectedRevenueLocation) chips.push(`Lot drilldown: ${selectedRevenueLocation.displayName}`);
     return chips.length ? chips : ['All imported revenue data'];
   }, [
     revenueDayTypeFilter,
@@ -1620,6 +1726,29 @@ export const ParkingWorkspace: React.FC = () => {
     revenueSourceFilter,
     selectedRevenueCategoryLabel,
     selectedRevenueLocation,
+    selectedRevenueMonth,
+    selectedRevenueUploaderLabel,
+    selectedRevenueYear,
+  ]);
+  const collapsedRevenueFilterSummary = useMemo(() => {
+    const summaryParts = [
+      selectedRevenueYear === 'all' ? 'all years' : selectedRevenueYear,
+      selectedRevenueMonth === 'all' ? 'all months' : selectedRevenueMonth,
+      selectedRevenueCategoryLabel || 'all categories',
+      selectedRevenueUploaderLabel || 'all uploaders',
+      REVENUE_DAY_TYPE_LABELS[revenueDayTypeFilter].toLowerCase(),
+      revenueSourceFilter === 'all' ? 'all payment sources' : getParkingRevenueSourceLabel(revenueSourceFilter),
+      revenueHourStart === 0 && revenueHourEnd === 23
+        ? 'all hours'
+        : `${formatHourOption(revenueHourStart)}–${formatHourOption(revenueHourEnd)} inclusive`,
+    ];
+    return summaryParts.join(', ');
+  }, [
+    revenueDayTypeFilter,
+    revenueHourEnd,
+    revenueHourStart,
+    revenueSourceFilter,
+    selectedRevenueCategoryLabel,
     selectedRevenueMonth,
     selectedRevenueUploaderLabel,
     selectedRevenueYear,
@@ -2080,6 +2209,18 @@ export const ParkingWorkspace: React.FC = () => {
   const toggleRevenueLocationSelection = useCallback((locationKey: string, isAlreadySelected?: boolean) => {
     setSelectedRevenueLocationKey(current => ((isAlreadySelected ?? current === locationKey) ? '' : locationKey));
   }, []);
+
+  const resetRevenueFilters = () => {
+    setSelectedRevenueYear('all');
+    setSelectedRevenueMonth('all');
+    setSelectedRevenueCategory('all');
+    setSelectedRevenueUploader('all');
+    setRevenueSourceFilter('all');
+    setRevenueDayTypeFilter('all');
+    setRevenueHourStart(0);
+    setRevenueHourEnd(23);
+    setSelectedRevenueLocationKey('');
+  };
 
   const updateRevenueLocation = (id: string, patch: Partial<ParkingRevenueLocationMapping>) => {
     setSettings(current => ({
@@ -2551,7 +2692,7 @@ export const ParkingWorkspace: React.FC = () => {
               }`}>
                 {publicParkingError ? 'City source unavailable' : publicParkingLoading ? 'Loading public lots' : `${publicFallbackPinCount} City-source groups`}
               </span>
-              <div className="hidden rounded-2xl border border-slate-200 bg-slate-50 p-1 lg:grid lg:grid-cols-2">
+              <div className="hidden rounded-2xl border border-slate-200 bg-slate-50 p-1 lg:grid lg:grid-cols-2" role="group" aria-label="Parking lot workspace view">
                 {(['map', 'analysis'] as ParkingLotViewMode[]).map(mode => (
                   <button
                     key={mode}
@@ -2566,7 +2707,7 @@ export const ParkingWorkspace: React.FC = () => {
                   </button>
                 ))}
               </div>
-              <div className="hidden rounded-2xl border border-slate-200 bg-slate-50 p-1 xl:grid xl:grid-cols-2">
+              <div className="hidden rounded-2xl border border-slate-200 bg-slate-50 p-1 xl:grid xl:grid-cols-2" role="group" aria-label="Parking map display">
                 {(['markers', 'heatmap'] as ParkingLotMapMode[]).map(mode => (
                   <button
                     key={mode}
@@ -2596,6 +2737,26 @@ export const ParkingWorkspace: React.FC = () => {
                 </span>
               ) : null}
             </div>
+          </div>
+
+          <div
+            className="pointer-events-auto absolute bottom-4 left-1/2 z-40 grid -translate-x-1/2 grid-cols-2 rounded-2xl border border-slate-200 bg-white/95 p-1 shadow-xl backdrop-blur lg:hidden"
+            role="group"
+            aria-label="Parking lot workspace view"
+          >
+            {(['map', 'analysis'] as ParkingLotViewMode[]).map(mode => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setLotViewMode(mode)}
+                aria-pressed={lotViewMode === mode}
+                className={`rounded-xl px-3 py-2 text-xs font-black capitalize transition ${
+                  lotViewMode === mode ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
           </div>
 
           <div
@@ -2639,8 +2800,10 @@ export const ParkingWorkspace: React.FC = () => {
 
           <aside
             data-state={lotLeftRailOpen ? 'expanded' : 'collapsed'}
-            className={`pointer-events-auto absolute bottom-3 left-3 top-20 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
-              lotLeftRailOpen ? 'w-80 min-h-0 overflow-y-auto overscroll-contain p-3' : 'w-16 items-center p-2'
+            className={`pointer-events-auto absolute bottom-3 left-3 top-20 z-30 flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
+              lotViewMode === 'analysis' ? 'hidden xl:flex' : 'flex'
+            } ${
+              lotLeftRailOpen ? 'w-[calc(100%-1.5rem)] min-h-0 overflow-y-auto overscroll-contain p-3 sm:w-80' : 'w-16 items-center p-2'
             }`}
             aria-label="Parking lot filters and list"
           >
@@ -2677,33 +2840,43 @@ export const ParkingWorkspace: React.FC = () => {
 
             {!lotFiltersCollapsed ? (
             <div className="mt-3 shrink-0 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Filter parking activity</div>
+                <button
+                  type="button"
+                  onClick={resetRevenueFilters}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-black text-slate-600 hover:bg-slate-100"
+                >
+                  Reset filters
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Year</div>
-                  <select value={selectedRevenueYear} onChange={event => { setSelectedRevenueYear(event.target.value); setSelectedRevenueMonth('all'); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                  <label htmlFor="parking-revenue-year-filter" className="mb-1 block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Year</label>
+                  <select id="parking-revenue-year-filter" value={selectedRevenueYear} onChange={event => { setSelectedRevenueYear(event.target.value); setSelectedRevenueMonth('all'); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
                     <option value="all">All years</option>
                     {revenueYears.map(year => <option key={year} value={year}>{year}</option>)}
                   </select>
                 </div>
                 <div>
-                  <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Month</div>
-                  <select value={selectedRevenueMonth} onChange={event => setSelectedRevenueMonth(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                  <label htmlFor="parking-revenue-month-filter" className="mb-1 block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Month</label>
+                  <select id="parking-revenue-month-filter" value={selectedRevenueMonth} onChange={event => setSelectedRevenueMonth(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
                     <option value="all">{selectedRevenueYear === 'all' ? 'All months' : `All ${selectedRevenueYear}`}</option>
                     {revenueMonthsForSelectedYear.map(month => <option key={month} value={month}>{month}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Lot category</div>
-                <select value={selectedRevenueCategory} onChange={event => setSelectedRevenueCategory(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                <label htmlFor="parking-revenue-category-filter" className="mb-1 block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Lot category</label>
+                <select id="parking-revenue-category-filter" value={selectedRevenueCategory} onChange={event => setSelectedRevenueCategory(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
                   <option value="all">All categories</option>
                   {revenueCategoryOptions.map(category => <option key={category.id} value={category.id}>{category.label}</option>)}
                   <option value={UNCATEGORIZED_PARKING_CATEGORY_ID}>Uncategorized</option>
                 </select>
               </div>
               <div>
-                <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Uploaded by</div>
-                <select value={selectedRevenueUploader} onChange={event => setSelectedRevenueUploader(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                <label htmlFor="parking-revenue-uploader-filter" className="mb-1 block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Uploaded by</label>
+                <select id="parking-revenue-uploader-filter" value={selectedRevenueUploader} onChange={event => setSelectedRevenueUploader(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
                   <option value="all">All uploaders</option>
                   {revenueUploaderOptions.map(option => (
                     <option key={option.id} value={option.id}>
@@ -2714,9 +2887,9 @@ export const ParkingWorkspace: React.FC = () => {
               </div>
               <div>
                 <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Source</div>
-                <div className="grid grid-cols-3 gap-1 rounded-2xl border border-slate-200 bg-white p-1">
+                <div className="grid grid-cols-3 gap-1 rounded-2xl border border-slate-200 bg-white p-1" role="group" aria-label="Payment source">
                   {ALL_REVENUE_SOURCES.map(source => (
-                    <button key={source} type="button" onClick={() => setRevenueSourceFilter(source)} className={`rounded-xl px-2 py-2 text-xs font-extrabold ${revenueSourceFilter === source ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+                    <button key={source} type="button" aria-pressed={revenueSourceFilter === source} onClick={() => setRevenueSourceFilter(source)} className={`rounded-xl px-2 py-2 text-xs font-extrabold ${revenueSourceFilter === source ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
                       {source === 'all' ? 'All' : source === 'hotspot' ? 'App' : 'QR'}
                     </button>
                   ))}
@@ -2724,9 +2897,9 @@ export const ParkingWorkspace: React.FC = () => {
               </div>
               <div>
                 <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Day type</div>
-                <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-white p-1">
+                <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-white p-1" role="group" aria-label="Day type">
                   {ALL_REVENUE_DAY_TYPES.map(dayType => (
-                    <button key={dayType} type="button" onClick={() => setRevenueDayTypeFilter(dayType)} className={`rounded-xl px-2 py-2 text-xs font-extrabold ${revenueDayTypeFilter === dayType ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+                    <button key={dayType} type="button" aria-pressed={revenueDayTypeFilter === dayType} onClick={() => setRevenueDayTypeFilter(dayType)} className={`rounded-xl px-2 py-2 text-xs font-extrabold ${revenueDayTypeFilter === dayType ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
                       {REVENUE_DAY_TYPE_LABELS[dayType]}
                     </button>
                   ))}
@@ -2734,12 +2907,13 @@ export const ParkingWorkspace: React.FC = () => {
               </div>
               <div>
                 <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Map metric</div>
-                <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-white p-1">
+                <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-white p-1" role="group" aria-label="Map metric">
                   {PARKING_MAP_METRICS.map(metric => (
                     <button
                       key={metric}
                       type="button"
                       onClick={() => setParkingMapMetric(metric)}
+                      aria-pressed={parkingMapMetric === metric}
                       className={`rounded-xl px-2 py-2 text-xs font-extrabold ${parkingMapMetric === metric ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
                     >
                       {getParkingMapMetricLabel(metric)}
@@ -2755,17 +2929,17 @@ export const ParkingWorkspace: React.FC = () => {
                   </select>
                 </label>
                 <label className="rounded-2xl border border-slate-200 bg-white p-2">
-                  <span className="block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">To</span>
+                  <span className="block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">To hour (inclusive)</span>
                   <select value={revenueHourEnd} onChange={event => setRevenueHourEnd(Number(event.target.value))} className="mt-1 w-full bg-transparent text-sm font-extrabold text-slate-900 outline-none">
                     {Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{formatHourOption(hour)}</option>)}
                   </select>
                 </label>
               </div>
-              <p className="text-[11px] font-semibold leading-4 text-slate-400">Time filters use session start time. Utilization uses paid minutes inside the selected hour range.</p>
+              <p className="text-[11px] font-semibold leading-4 text-slate-400">Time filters use session start time and include the full ending hour. Utilization uses paid minutes inside the selected hour range.</p>
             </div>
             ) : (
               <div className="mt-3 shrink-0 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] font-bold leading-4 text-blue-800">
-                Filters hidden to give the lot list more height. Showing {selectedRevenueYear === 'all' ? 'all years' : selectedRevenueYear}, {selectedRevenueMonth === 'all' ? 'all months' : selectedRevenueMonth}, {selectedRevenueUploaderLabel || 'all uploaders'}, {REVENUE_DAY_TYPE_LABELS[revenueDayTypeFilter].toLowerCase()}.
+                Filters hidden to give the lot list more height. Showing {collapsedRevenueFilterSummary}.
               </div>
             )}
 
@@ -2785,6 +2959,19 @@ export const ParkingWorkspace: React.FC = () => {
               <div className="rounded-2xl border border-violet-100 bg-violet-50 p-3">
                 <div className="text-[10px] font-black uppercase tracking-wide text-violet-500">Peak</div>
                 <div className="mt-1 text-lg font-black text-violet-950">{formatHour(revenueAnalytics.peakHour)}</div>
+              </div>
+            </div>
+
+            <div className="mt-3 shrink-0 rounded-2xl border border-slate-200 bg-white p-3 text-[11px] font-bold leading-4 text-slate-500">
+              <div className="flex items-center justify-between gap-2 text-slate-700">
+                <span className="font-black">Map revenue coverage</span>
+                <span>{mapRevenueCoveragePercent.toFixed(1)}%</span>
+              </div>
+              <div className="mt-1">
+                Pins represent {money(mapCoveredRevenue)} of {money(revenueAnalytics.totalRevenue)} in filtered revenue.
+                {mapUncoveredRevenue > 0.01
+                  ? ` ${money(mapUncoveredRevenue)} is not on the map because those records do not have a coordinate match.`
+                  : ' All filtered revenue is represented by mapped locations.'}
               </div>
             </div>
 
@@ -3027,8 +3214,35 @@ export const ParkingWorkspace: React.FC = () => {
                   <ParkingChartCard title="Top lots by revenue" subtitle="Quick comparison of the highest-value parking locations." tall>
                     <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare lots." />
                   </ParkingChartCard>
-                  <ParkingChartCard title="Category comparison" subtitle="Revenue by lot category for the current filters." tall>
-                    <TopLotsChart data={parkingPlannerAnalysis.categoryComparisonRows} emptyLabel="No category comparison yet." emptyAction="Assign imported lots to categories to compare Downtown, Waterfront, Hybrid, and other parking areas." />
+                  <ParkingChartCard
+                    title="Category comparison"
+                    subtitle={categoryComparisonMetric === 'revenuePerSpace' || categoryComparisonMetric === 'utilizationPercent'
+                      ? `${categoryComparisonMetricConfig.label} uses matched, known space counts.`
+                      : `${categoryComparisonMetricConfig.label} by lot category for the current filters.`}
+                    tall
+                    action={(
+                      <label className="block">
+                        <span className="sr-only">Category comparison metric</span>
+                        <select
+                          value={categoryComparisonMetric}
+                          onChange={event => setCategoryComparisonMetric(event.target.value as ParkingComparisonMetric)}
+                          className="max-w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700"
+                          aria-label="Category comparison metric"
+                        >
+                          {PARKING_COMPARISON_METRICS.map(option => (
+                            <option key={option.id} value={option.id}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  >
+                    <TopLotsChart
+                      data={parkingPlannerAnalysis.categoryComparisonRows}
+                      metric={categoryComparisonMetric}
+                      color={categoryComparisonMetricConfig.color}
+                      emptyLabel={`No ${categoryComparisonMetricConfig.label.toLowerCase()} comparison yet.`}
+                      emptyAction="Assign imported lots to categories. Capacity-derived metrics also require matched, known space counts."
+                    />
                   </ParkingChartCard>
                   <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
                     <div className="text-xs font-black uppercase tracking-wide text-slate-400">Top category signals</div>
@@ -3043,8 +3257,18 @@ export const ParkingWorkspace: React.FC = () => {
                             {row.sessions.toLocaleString()} sessions · avg stay {minutesToDuration(row.averageStayMinutes)}
                           </div>
                           <div className="mt-1 text-xs font-bold text-slate-400">
-                            {row.spaces == null ? 'No matched capacity' : `${row.spaces.toLocaleString()} spaces · ${money(row.revenuePerSpace || 0)}/space`}
+                            {row.spaces == null
+                              ? 'Capacity-derived metrics unavailable'
+                              : `${row.spaces.toLocaleString()} known spaces · ${money(row.revenuePerSpace || 0)}/known space`}
                           </div>
+                          <div className="mt-1 text-xs font-bold text-slate-400">
+                            Estimated utilization {formatUtilization(row.utilizationPercent)}
+                          </div>
+                          {row.lotCount && row.capacityCoveredLotCount !== row.lotCount ? (
+                            <div className="mt-1 text-[11px] font-bold text-amber-600">
+                              Capacity coverage: {row.capacityCoveredLotCount || 0} of {row.lotCount} lots
+                            </div>
+                          ) : null}
                         </div>
                       ))}
                       {parkingPlannerAnalysis.categoryComparisonRows.length === 0 ? (
@@ -3099,6 +3323,26 @@ export const ParkingWorkspace: React.FC = () => {
                         emptyAction="Match space counts to imported lots to calculate productivity per known space."
                       />
                     </ParkingChartCard>
+                    <div className="xl:col-span-2">
+                      <ParkingChartCard title="Estimated utilization by category" subtitle="Paid parking minutes divided by matched known spaces and active filtered hours." tall>
+                        <TopLotsChart
+                          data={parkingPlannerAnalysis.categoryComparisonRows}
+                          metric="utilizationPercent"
+                          color="#DB2777"
+                          emptyLabel="No category utilization comparison yet."
+                          emptyAction="Match known space counts to lots and assign categories to calculate estimated utilization by area."
+                        />
+                      </ParkingChartCard>
+                    </div>
+                    <div className="xl:col-span-2">
+                      <ParkingChartCard
+                        title={selectedTrendLocation ? 'Selected-lot utilization trend' : selectedRevenueCategoryLabel ? `${selectedRevenueCategoryLabel} utilization trend` : 'Utilization trend'}
+                        subtitle="Monthly estimated occupancy using matched known spaces, active imported days, and the selected hour window."
+                        tall
+                      >
+                        <UtilizationTrendChart data={parkingUtilizationTrend} />
+                      </ParkingChartCard>
+                    </div>
                   </div>
                   <section className="rounded-3xl border border-violet-100 bg-violet-50 p-4 shadow-sm">
                     <div className="text-xs font-black uppercase tracking-wide text-violet-600">Capacity/utilization</div>
@@ -3161,7 +3405,7 @@ export const ParkingWorkspace: React.FC = () => {
 
           <aside
             data-state={lotRightRailOpen ? 'expanded' : 'collapsed'}
-            className={`pointer-events-auto absolute bottom-4 right-3 top-4 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 ${
+            className={`pointer-events-auto absolute bottom-4 right-3 top-4 z-30 hidden flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 xl:flex ${
               lotRightRailOpen ? 'w-[380px] p-3' : 'w-16 items-center p-2'
             }`}
             aria-label="Parking lot trends and details"
@@ -3195,11 +3439,11 @@ export const ParkingWorkspace: React.FC = () => {
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   <div className="rounded-2xl bg-white p-3">
                     <div className="text-[10px] font-black uppercase text-emerald-500">Revenue</div>
-                    <div className="mt-1 text-lg font-black text-emerald-950">{money(activeMapLocation?.totalRevenue || activeLocation?.totalRevenue || revenueAnalytics.totalRevenue)}</div>
+                    <div className="mt-1 text-lg font-black text-emerald-950">{money(activeMapLocation?.totalRevenue ?? activeLocation?.totalRevenue ?? revenueAnalytics.totalRevenue)}</div>
                   </div>
                   <div className="rounded-2xl bg-white p-3">
                     <div className="text-[10px] font-black uppercase text-blue-500">Sessions</div>
-                    <div className="mt-1 text-lg font-black text-blue-950">{(activeMapLocation?.rowCount || activeLocation?.rowCount || revenueAnalytics.rowCount).toLocaleString()}</div>
+                    <div className="mt-1 text-lg font-black text-blue-950">{(activeMapLocation?.rowCount ?? activeLocation?.rowCount ?? revenueAnalytics.rowCount).toLocaleString()}</div>
                   </div>
                   <div className="rounded-2xl bg-white p-3">
                     <div className="text-[10px] font-black uppercase text-amber-500">Peak</div>
@@ -3208,7 +3452,7 @@ export const ParkingWorkspace: React.FC = () => {
                 </div>
                 {(activeMapLocation || activeLocation) ? (
                   <div className="mt-3 rounded-2xl bg-white p-3 text-xs font-bold text-slate-600">
-                    HotSpot app: {money(activeMapLocation?.hotspotRevenue ?? activeLocation?.hotspotRevenue)} · QR: {money(activeMapLocation?.qrRevenue ?? activeLocation?.qrRevenue)} · unique plates: {(activeMapLocation?.uniquePlateCount || activeLocation?.uniquePlateCount || 0).toLocaleString()}
+                    HotSpot app: {money(activeMapLocation?.hotspotRevenue ?? activeLocation?.hotspotRevenue)} · QR: {money(activeMapLocation?.qrRevenue ?? activeLocation?.qrRevenue)}
                     {activeMapLocation && activeMapLocation.aggregateCount > 1 ? (
                       <div className="mt-2 rounded-xl bg-slate-50 p-2 text-slate-600">
                         Same-lot source IDs grouped: {activeMapLocation.aggregateCount}.
