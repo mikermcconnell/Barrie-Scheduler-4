@@ -142,15 +142,15 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
 
     // Route OTP breakdown
     const routeOTP = useMemo(() => {
-        const routeMap = new Map<string, { routeId: string; routeName: string; early: number; onTime: number; late: number; total: number; deviations: number[] }>();
+        const routeMap = new Map<string, { routeId: string; routeName: string; early: number; onTime: number; late: number; total: number; weightedDeviation: number }>();
         for (const day of filtered) {
             for (const r of day.byRoute) {
-                const ex = routeMap.get(r.routeId) || { routeId: r.routeId, routeName: r.routeName, early: 0, onTime: 0, late: 0, total: 0, deviations: [] };
+                const ex = routeMap.get(r.routeId) || { routeId: r.routeId, routeName: r.routeName, early: 0, onTime: 0, late: 0, total: 0, weightedDeviation: 0 };
                 ex.early += r.otp.early;
                 ex.onTime += r.otp.onTime;
                 ex.late += r.otp.late;
                 ex.total += r.otp.total;
-                ex.deviations.push(r.otp.avgDeviationSeconds);
+                ex.weightedDeviation += r.otp.avgDeviationSeconds * r.otp.total;
                 routeMap.set(r.routeId, ex);
             }
         }
@@ -160,7 +160,7 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                 earlyPct: r.total > 0 ? Math.round((r.early / r.total) * 100) : 0,
                 onTimePct: r.total > 0 ? Math.round((r.onTime / r.total) * 100) : 0,
                 latePct: r.total > 0 ? Math.round((r.late / r.total) * 100) : 0,
-                avgDeviation: r.deviations.length > 0 ? Math.round(r.deviations.reduce((a, b) => a + b, 0) / r.deviations.length) : 0,
+                avgDeviation: r.total > 0 ? Math.round(r.weightedDeviation / r.total) : 0,
             }))
             .sort((a, b) => a.onTimePct - b.onTimePct);
     }, [filtered]);

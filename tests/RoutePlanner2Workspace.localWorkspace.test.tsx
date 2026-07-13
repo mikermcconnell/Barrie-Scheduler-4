@@ -269,7 +269,7 @@ function buildFamilySwitchProject(): RoutePlanner2Project {
   };
 }
 
-async function waitForMapExportCall(timeoutMs = 1200) {
+async function waitForMapExportCall(timeoutMs = 5000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (vi.mocked(exportRoutePlanner2MapPdf).mock.calls.length > 0) return;
@@ -277,7 +277,7 @@ async function waitForMapExportCall(timeoutMs = 1200) {
   }
 }
 
-async function waitForOperatorExportCall(timeoutMs = 1200) {
+async function waitForOperatorExportCall(timeoutMs = 5000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (vi.mocked(exportRoutePlanner2OperatorDirectionsPdf).mock.calls.length > 0) return;

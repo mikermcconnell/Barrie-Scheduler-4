@@ -104,7 +104,7 @@ describe('PerformanceDashboard', () => {
     expect(container.textContent).not.toContain('Mock Performance Import');
   });
 
-  it('opens the workspace directly when auto-open is enabled and data already exists', async () => {
+  it('opens the workspace directly from the lightweight overview without eagerly loading full details', async () => {
     const metadata = {
       lastUpdated: '2026-03-31T12:00:00Z',
       storagePath: 'teams/team-1/performanceData/latest.json',
@@ -132,17 +132,17 @@ describe('PerformanceDashboard', () => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Workspace'));
 
-    expect(usePerformanceDataQueryMock).toHaveBeenCalledWith('team-1', true, metadata, 'all');
-    expect(usePerformanceOverviewQueryMock).toHaveBeenCalledWith('team-1', true, metadata);
+    expect(usePerformanceDataQueryMock).not.toHaveBeenCalled();
+    expect(usePerformanceOverviewQueryMock).toHaveBeenCalledWith('team-1', true, metadata, 'team-1');
     expect(container.textContent).toContain('Mock Performance Workspace');
     expect(container.textContent).toContain('Full Details Ready');
     expect(container.textContent).not.toContain('STREETS AVL Data');
     expect(container.textContent).not.toContain('Mock Performance Import');
   });
 
-  it('opens the workspace from the lightweight overview while detailed tabs keep loading', async () => {
+  it('opens the workspace as soon as the lightweight overview is available', async () => {
     usePerformanceMetadataQueryMock.mockReturnValue({
       data: {
         importedAt: '2026-03-31T12:00:00Z',
@@ -165,10 +165,10 @@ describe('PerformanceDashboard', () => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Workspace'));
 
     expect(container.textContent).toContain('Mock Performance Workspace');
-    expect(container.textContent).toContain('Overview Only');
+    expect(container.textContent).toContain('Full Details Ready');
   });
 
   it('shows the loading shell while even the lightweight overview is still downloading', async () => {
@@ -194,7 +194,7 @@ describe('PerformanceDashboard', () => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Operations dashboard is opening'));
 
     expect(container.textContent).toContain('Operations dashboard is opening');
     expect(container.textContent).toContain('2026-03-01 → 2026-03-31');
@@ -215,7 +215,7 @@ describe('PerformanceDashboard', () => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Import'));
 
     expect(container.textContent).toContain('Mock Performance Import');
     expect(container.textContent).not.toContain('STREETS AVL Data');
@@ -240,7 +240,7 @@ describe('PerformanceDashboard', () => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Workspace'));
 
     const backButton = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Back From Workspace',
@@ -265,7 +265,7 @@ describe('PerformanceDashboard', () => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Import'));
 
     const cancelButton = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Cancel Import',
@@ -294,14 +294,14 @@ describe('PerformanceDashboard', () => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Workspace'));
 
     const reimportButton = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Re-import From Workspace',
     );
 
     reimportButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Import'));
 
     expect(container.textContent).toContain('Mock Performance Import');
 
@@ -310,7 +310,7 @@ describe('PerformanceDashboard', () => {
     );
 
     cancelButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Workspace'));
 
     expect(container.textContent).toContain('Mock Performance Workspace');
     expect(onCloseSpy).not.toHaveBeenCalled();

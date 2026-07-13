@@ -482,7 +482,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
     // ── Hourly boardings + BPH line (aggregated across filtered days) ─
     const hourlyData = useMemo(() => {
-        const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, boardings: 0, otp: 0, otpCount: 0, otpObservations: 0 }));
+        const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, boardings: 0, otpOnTime: 0, otpObservations: 0 }));
         let totalServiceHours = 0;
         for (const day of filtered) {
             for (const h of day.byHour) {
@@ -490,8 +490,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 if (idx < 0 || idx >= 24) continue;
                 hours[idx].boardings += h.boardings;
                 if (h.otp.total > 0) {
-                    hours[idx].otp += h.otp.onTimePercent;
-                    hours[idx].otpCount++;
+                    hours[idx].otpOnTime += h.otp.onTime;
                     hours[idx].otpObservations += h.otp.total;
                 }
             }
@@ -506,7 +505,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             label: `${h.hour.toString().padStart(2, '0')}:00`,
             boardings: h.boardings,
             bph: serviceHoursPerHour > 0 ? Math.round(h.boardings / serviceHoursPerHour * 10) / 10 : 0,
-            avgOtp: h.otpCount > 0 ? Math.round(h.otp / h.otpCount) : null,
+            avgOtp: h.otpObservations > 0 ? Math.round((h.otpOnTime / h.otpObservations) * 100) : null,
             otpObservations: h.otpObservations,
         }));
     }, [filtered]);
@@ -862,7 +861,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     </div>
                 </ChartCard>
 
-                <ChartCard title="OTP Trend" subtitle={`${data.dailySummaries.length}-day trend`}>
+                <ChartCard title="OTP Trend" subtitle={`${otpTrend.length}-day trend`}>
                     {otpTrend.length > 1 ? (
                         <ResponsiveContainer width="100%" height={250}>
                             <LineChart data={otpTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>

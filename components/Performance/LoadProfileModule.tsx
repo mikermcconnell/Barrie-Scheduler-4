@@ -251,6 +251,9 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
 
         for (const day of filtered) {
             for (const t of day.byTrip) {
+                // A zero max load means this trip had no reliable APC load observation.
+                // Do not treat missing load as an observed empty bus.
+                if (t.maxLoad <= 0) continue;
                 const key = `${t.routeId}__${t.direction}__${t.terminalDepartureTime}`;
                 const existing = tripMap.get(key);
                 if (!existing) {

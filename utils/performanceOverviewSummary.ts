@@ -23,7 +23,9 @@ function buildOverviewDay(day: DailySummary): DailySummary {
     stopSegmentRuntimes: undefined,
     tripStopSegmentRuntimes: undefined,
     routeStopDeviations: undefined,
-    byRouteHour: undefined,
+    // Keep the compact route/hour rollup so route-scoped overview charts do
+    // not have to fall back to the system-wide hourly totals.
+    byRouteHour: day.byRouteHour,
   };
 }
 

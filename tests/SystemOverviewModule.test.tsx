@@ -205,6 +205,17 @@ describe('SystemOverviewModule', () => {
     expect(otpMetric?.textContent).not.toContain('50%');
   });
 
+  it('weights worst-hour OTP by raw observations across days', () => {
+    render(summary([
+      buildDay('2026-03-10', { systemOtp: otp(10, 0, 0, 10) }),
+      buildDay('2026-03-11', { systemOtp: otp(90, 72, 0, 18) }),
+    ]));
+
+    expect(container.textContent).toContain('Worst OTP Hour');
+    expect(container.textContent).toContain('72% on-time');
+    expect(container.textContent).not.toContain('40% on-time');
+  });
+
   it('shows the filtered date range instead of the source import date range', () => {
     render(summary([
       buildDay('2026-03-10'),
@@ -229,6 +240,20 @@ describe('SystemOverviewModule', () => {
     expect(container.textContent).toContain('Action Queue');
     expect(container.textContent).toContain('using Weekday peer days (3 loaded)');
     expect(container.textContent).toContain('1 Main');
+  });
+
+  it('labels the OTP trend with the number of all-data days actually plotted', () => {
+    const all = summary([
+      buildDay('2026-03-09'),
+      buildDay('2026-03-10'),
+      buildDay('2026-03-11'),
+    ]);
+    const filtered = summary([all.dailySummaries[2]], { start: '2026-03-11', end: '2026-03-11' });
+
+    render(filtered, all);
+
+    expect(container.textContent).toContain('3-day trend');
+    expect(container.textContent).not.toContain('1-day trend');
   });
 
   it('does not render NaN data-quality percentages for zero-record days', () => {

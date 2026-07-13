@@ -144,11 +144,17 @@ function otpEligible(records: STREETSRecord[]): STREETSRecord[] {
 }
 
 function computeDeviation(r: STREETSRecord): number {
-  return timeToSeconds(r.observedDepartureTime!) - timeToSeconds(r.stopTime);
+  const scheduledSeconds = timeToSeconds(r.stopTime);
+  const observedSeconds = timeToSeconds(r.observedDepartureTime!);
+  let deviationSeconds = observedSeconds - scheduledSeconds;
+
+  if (deviationSeconds <= -MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS) deviationSeconds += 86400;
+  else if (deviationSeconds >= MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS) deviationSeconds -= 86400;
+
+  return deviationSeconds;
 }
 
-function computeOTP(records: STREETSRecord[]): OTPBreakdown {
-  const eligible = otpEligible(records);
+function computeOTPFromEligible(eligible: STREETSRecord[]): OTPBreakdown {
   const total = eligible.length;
 
   if (total === 0) {
@@ -185,8 +191,8 @@ function computeOTP(records: STREETSRecord[]): OTPBreakdown {
   };
 }
 
-function buildSystemMetrics(records: STREETSRecord[]): SystemMetrics {
-  const otp = computeOTP(records);
+function buildSystemMetrics(records: STREETSRecord[], eligibleOTP: STREETSRecord[]): SystemMetrics {
+  const otp = computeOTPFromEligible(eligibleOTP);
   let totalBoardings = 0;
   let totalAlightings = 0;
   let peakLoad = 0;
@@ -222,12 +228,13 @@ function buildSystemMetrics(records: STREETSRecord[]): SystemMetrics {
   };
 }
 
-function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
+function buildRouteMetrics(records: STREETSRecord[], eligibleOTP: STREETSRecord[]): RouteMetrics[] {
   const byRoute = groupBy(records, r => r.routeId);
+  const otpByRoute = groupBy(eligibleOTP, r => r.routeId);
   const results: RouteMetrics[] = [];
 
   for (const [routeId, recs] of byRoute) {
-    const otp = computeOTP(recs);
+    const otp = computeOTPFromEligible(otpByRoute.get(routeId) ?? []);
     let ridership = 0;
     let alightings = 0;
     let maxLoad = 0;
@@ -296,8 +303,12 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
   return results.sort((a, b) => a.routeId.localeCompare(b.routeId, undefined, { numeric: true }));
 }
 
-function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
+function buildHourMetrics(records: STREETSRecord[], eligibleOTP: STREETSRecord[]): HourMetrics[] {
   const byHour = groupBy(records, r => {
+    const h = parseInt(r.arrivalTime.split(':')[0], 10);
+    return String(h);
+  });
+  const eligibleByHour = groupBy(eligibleOTP, r => {
     const h = parseInt(r.arrivalTime.split(':')[0], 10);
     return String(h);
   });
@@ -306,7 +317,7 @@ function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
 
   for (const [hourStr, recs] of byHour) {
     const hour = parseInt(hourStr, 10);
-    const otp = computeOTP(recs);
+    const otp = computeOTPFromEligible(eligibleByHour.get(hourStr) ?? []);
     let boardings = 0;
     let alightings = 0;
     let loadSum = 0;
@@ -333,8 +344,12 @@ function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
   return results.sort((a, b) => a.hour - b.hour);
 }
 
-function buildRouteHourMetrics(records: STREETSRecord[]): RouteHourMetrics[] {
+function buildRouteHourMetrics(records: STREETSRecord[], eligibleOTP: STREETSRecord[]): RouteHourMetrics[] {
   const byRouteHour = groupBy(records, r => {
+    const h = parseInt(r.arrivalTime.split(':')[0], 10);
+    return `${r.routeId}||${h}`;
+  });
+  const eligibleByRouteHour = groupBy(eligibleOTP, r => {
     const h = parseInt(r.arrivalTime.split(':')[0], 10);
     return `${r.routeId}||${h}`;
   });
@@ -358,12 +373,14 @@ function buildRouteHourMetrics(records: STREETSRecord[]): RouteHourMetrics[] {
       }
     }
 
+    const otp = computeOTPFromEligible(eligibleByRouteHour.get(key) ?? []);
     results.push({
       routeId,
       hour,
       avgLoad: safeDivide(loadSum, loadCount),
       boardings,
       alightings,
+      ...(otp.total > 0 ? { otp } : {}),
     });
   }
 
@@ -374,12 +391,13 @@ function buildRouteHourMetrics(records: STREETSRecord[]): RouteHourMetrics[] {
   });
 }
 
-function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
+function buildStopMetrics(records: STREETSRecord[], eligibleOTP: STREETSRecord[]): StopMetrics[] {
   const byStop = groupBy(records, r => `${r.stopId}||${r.stopName}`);
+  const eligibleByStop = groupBy(eligibleOTP, r => `${r.stopId}||${r.stopName}`);
   const results: StopMetrics[] = [];
 
   for (const [key, recs] of byStop) {
-    const otp = computeOTP(recs);
+    const otp = computeOTPFromEligible(eligibleByStop.get(key) ?? []);
     let boardings = 0;
     let alightings = 0;
     let loadSum = 0;
@@ -390,6 +408,12 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
     let isTimepoint = false;
     const hBoard = new Array(24).fill(0);
     const hAlight = new Array(24).fill(0);
+    const byRoute = new Map<string, {
+      boardings: number;
+      alightings: number;
+      hourlyBoardings: number[];
+      hourlyAlightings: number[];
+    }>();
 
     for (const r of recs) {
       boardings += r.boardings;
@@ -406,9 +430,39 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
         hBoard[h] += r.boardings;
         hAlight[h] += r.alightings;
       }
+
+      const routeExisting = byRoute.get(r.routeId);
+      if (routeExisting) {
+        routeExisting.boardings += r.boardings;
+        routeExisting.alightings += r.alightings;
+        if (h >= 0 && h < 24) {
+          routeExisting.hourlyBoardings[h] += r.boardings;
+          routeExisting.hourlyAlightings[h] += r.alightings;
+        }
+      } else {
+        const hourlyBoardings = new Array(24).fill(0);
+        const hourlyAlightings = new Array(24).fill(0);
+        if (h >= 0 && h < 24) {
+          hourlyBoardings[h] = r.boardings;
+          hourlyAlightings[h] = r.alightings;
+        }
+        byRoute.set(r.routeId, {
+          boardings: r.boardings,
+          alightings: r.alightings,
+          hourlyBoardings,
+          hourlyAlightings,
+        });
+      }
     }
 
     const [stopId, stopName] = key.split('||');
+    const routeBreakdown = Array.from(byRoute.entries())
+      .map(([routeId, metrics]) => ({ routeId, ...metrics }))
+      .sort((a, b) => {
+        const totalCmp = (b.boardings + b.alightings) - (a.boardings + a.alightings);
+        if (totalCmp !== 0) return totalCmp;
+        return a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+      });
 
     results.push({
       stopName,
@@ -424,18 +478,20 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       routes: Array.from(routes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
       hourlyBoardings: hBoard,
       hourlyAlightings: hAlight,
+      routeBreakdown,
     });
   }
 
   return results.sort((a, b) => b.boardings - a.boardings);
 }
 
-function buildTripMetrics(records: STREETSRecord[]): TripMetrics[] {
+function buildTripMetrics(records: STREETSRecord[], eligibleOTP: STREETSRecord[]): TripMetrics[] {
   const byTrip = groupBy(records, r => r.tripId);
+  const otpByTrip = groupBy(eligibleOTP, r => r.tripId);
   const results: TripMetrics[] = [];
 
   for (const [tripId, recs] of byTrip) {
-    const otp = computeOTP(recs);
+    const otp = computeOTPFromEligible(otpByTrip.get(tripId) ?? []);
     let boardings = 0;
     let maxLoad = 0;
     let tripName = '';
@@ -1284,28 +1340,30 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     rawDay === 'TUESDAY' || rawDay === 'WEDNESDAY' || rawDay === 'THURSDAY' || rawDay === 'FRIDAY')
     ? parseDayType(rawDay)
     : deriveDayTypeFromDate(date);
-  const sanitization = sanitizeRecords(records);
+  const operationalRecords = records.filter(r => !r.inBetween);
+  const sanitization = sanitizeRecords(operationalRecords);
+  const eligibleOTP = otpEligible(operationalRecords);
 
-  const dwellMetrics = buildOperatorDwellMetrics(records, date);
+  const dwellMetrics = buildOperatorDwellMetrics(operationalRecords, date);
 
   return {
     date,
     dayType,
-    system: buildSystemMetrics(records),
-    byRoute: buildRouteMetrics(records),
-    byHour: buildHourMetrics(records),
-    byStop: buildStopMetrics(records),
-    byTrip: buildTripMetrics(records),
-    loadProfiles: buildLoadProfiles(records),
-    ridershipHeatmaps: buildRidershipHeatmaps(records),
+    system: buildSystemMetrics(operationalRecords, eligibleOTP),
+    byRoute: buildRouteMetrics(operationalRecords, eligibleOTP),
+    byHour: buildHourMetrics(operationalRecords, eligibleOTP),
+    byStop: buildStopMetrics(operationalRecords, eligibleOTP),
+    byTrip: buildTripMetrics(operationalRecords, eligibleOTP),
+    loadProfiles: buildLoadProfiles(operationalRecords),
+    ridershipHeatmaps: buildRidershipHeatmaps(operationalRecords),
     byOperatorDwell: dwellMetrics,
-    byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.severity !== 'minor')),
-    segmentRuntimes: buildSegmentRuntimes(records),
-    stopSegmentRuntimes: buildStopSegmentRuntimes(records),
-    tripStopSegmentRuntimes: buildTripStopSegmentRuntimes(records),
-    runtimePatterns: buildRuntimePatterns(records),
-    routeStopDeviations: buildRouteStopDeviations(records),
-    byRouteHour: buildRouteHourMetrics(records),
+    byCascade: buildDailyCascadeMetrics(operationalRecords, dwellMetrics.incidents.filter(i => i.severity !== 'minor')),
+    segmentRuntimes: buildSegmentRuntimes(operationalRecords),
+    stopSegmentRuntimes: buildStopSegmentRuntimes(operationalRecords),
+    tripStopSegmentRuntimes: buildTripStopSegmentRuntimes(operationalRecords),
+    runtimePatterns: buildRuntimePatterns(operationalRecords),
+    routeStopDeviations: buildRouteStopDeviations(operationalRecords),
+    byRouteHour: buildRouteHourMetrics(operationalRecords, eligibleOTP),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };

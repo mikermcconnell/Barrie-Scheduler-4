@@ -534,7 +534,7 @@ export interface DailySummary {
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 9;
+export const PERFORMANCE_SCHEMA_VERSION = 10;
 export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 4;
 
 export interface PerformanceDataSummary {

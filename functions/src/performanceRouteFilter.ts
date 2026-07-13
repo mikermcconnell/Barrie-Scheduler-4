@@ -1,6 +1,7 @@
 import type {
   DailySummary,
   HourMetrics,
+  OperatorDwellMetrics,
   OTPBreakdown,
   PerformanceDataSummary,
   RouteMetrics,
@@ -99,15 +100,83 @@ function buildRouteScopedSystem(original: SystemMetrics, routes: RouteMetrics[])
 
 function buildRouteScopedHours(day: DailySummary, selectedRouteId: string): HourMetrics[] {
   const routeHours = (day.byRouteHour || []).filter(row => routeMatches(row.routeId, selectedRouteId));
-  if (routeHours.length === 0) return day.byHour;
+  if (routeHours.length === 0) return [];
 
-  return routeHours.map(row => ({
-    hour: row.hour,
-    otp: row.otp ?? { ...EMPTY_OTP },
-    boardings: row.boardings || 0,
-    alightings: row.alightings || 0,
-    avgLoad: row.avgLoad || 0,
-  }));
+  const byHour = new Map<number, typeof routeHours>();
+  for (const row of routeHours) {
+    byHour.set(row.hour, [...(byHour.get(row.hour) || []), row]);
+  }
+
+  return Array.from(byHour.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([hour, rows]) => {
+      const otp = mergeOtp(rows.map(row => row.otp ?? { ...EMPTY_OTP }));
+      const loadWeight = rows.reduce((sum, row) => sum + (row.otp?.total || 0), 0);
+      const avgLoad = loadWeight > 0
+        ? rows.reduce((sum, row) => sum + ((row.avgLoad || 0) * (row.otp?.total || 0)), 0) / loadWeight
+        : rows.reduce((sum, row) => sum + (row.avgLoad || 0), 0) / rows.length;
+
+      return {
+        hour,
+        otp,
+        boardings: rows.reduce((sum, row) => sum + (row.boardings || 0), 0),
+        alightings: rows.reduce((sum, row) => sum + (row.alightings || 0), 0),
+        avgLoad,
+      };
+    });
+}
+
+function sumHourlyArrays(arrays: Array<number[] | undefined>): number[] | undefined {
+  const populated = arrays.filter((values): values is number[] => Array.isArray(values));
+  if (populated.length === 0) return undefined;
+  const length = Math.max(...populated.map(values => values.length));
+  return Array.from({ length }, (_, index) =>
+    populated.reduce((sum, values) => sum + (values[index] || 0), 0)
+  );
+}
+
+function buildRouteScopedDwell(
+  dwell: OperatorDwellMetrics | undefined,
+  selectedRouteId: string,
+): OperatorDwellMetrics | undefined {
+  if (!dwell) return undefined;
+  const incidents = dwell.incidents.filter(incident => routeMatches(incident.routeId, selectedRouteId));
+  const byOperatorIncidents = new Map<string, typeof incidents>();
+  for (const incident of incidents) {
+    byOperatorIncidents.set(incident.operatorId, [
+      ...(byOperatorIncidents.get(incident.operatorId) || []),
+      incident,
+    ]);
+  }
+
+  const byOperator = Array.from(byOperatorIncidents.entries()).map(([operatorId, rows]) => {
+    const moderateCount = rows.filter(row => row.severity === 'moderate').length;
+    const highCount = rows.filter(row => row.severity === 'high').length;
+    const totalTrackedDwellSeconds = rows.reduce((sum, row) => sum + row.trackedDwellSeconds, 0);
+    return {
+      operatorId,
+      moderateCount,
+      highCount,
+      totalIncidents: moderateCount + highCount,
+      totalTrackedDwellSeconds,
+      avgTrackedDwellSeconds: rows.length > 0 ? totalTrackedDwellSeconds / rows.length : 0,
+    };
+  }).sort((a, b) => b.totalTrackedDwellSeconds - a.totalTrackedDwellSeconds);
+
+  const reportable = incidents.filter(row => row.severity === 'moderate' || row.severity === 'high');
+  return {
+    incidents,
+    byOperator,
+    totalIncidents: reportable.length,
+    totalTrackedDwellMinutes: incidents.reduce((sum, row) => sum + row.trackedDwellSeconds, 0) / 60,
+    totalReportableDwellMinutes: reportable.reduce((sum, row) => sum + row.trackedDwellSeconds, 0) / 60,
+    // Stop visits and service hours are not stored by route. Omitting them is
+    // safer than presenting system-wide denominators as route-specific rates.
+    totalStopVisits: undefined,
+    totalServiceHours: undefined,
+    incidentsPer1kVisits: undefined,
+    incidentsPer100ServiceHours: undefined,
+  };
 }
 
 function filterDayByRoute(day: DailySummary, selectedRouteId: string): DailySummary {
@@ -123,16 +192,32 @@ function filterDayByRoute(day: DailySummary, selectedRouteId: string): DailySumm
   const missedTrips = day.missedTrips
     ? {
       ...day.missedTrips,
-      byRoute: day.missedTrips.byRoute.filter(row => routeMatches(row.routeId, selectedRouteId)),
-      trips: day.missedTrips.trips?.filter(trip => routeMatches(trip.routeId, selectedRouteId)),
+      ...(() => {
+        const byRoute = day.missedTrips!.byRoute.filter(row => routeMatches(row.routeId, selectedRouteId));
+        const trips = day.missedTrips!.trips?.filter(trip => routeMatches(trip.routeId, selectedRouteId));
+        const hasCompleteTripDetails = (day.missedTrips!.trips?.length || 0) === day.missedTrips!.totalMissed;
+        const totalMissed = byRoute.reduce((sum, row) => sum + row.count, 0);
+        return {
+          // The stored per-route schema has missed counts but no scheduled or
+          // matched denominators. Clear those unavailable values rather than
+          // leaking the system-wide missed-trip percentage into a route view.
+          totalScheduled: 0,
+          totalMatched: 0,
+          totalMissed,
+          missedPct: 0,
+          notPerformedCount: hasCompleteTripDetails
+            ? (trips || []).filter(trip => trip.missType === 'not_performed').length
+            : 0,
+          lateOver15Count: hasCompleteTripDetails
+            ? (trips || []).filter(trip => trip.missType === 'late_over_15').length
+            : 0,
+          byRoute,
+          trips,
+        };
+      })(),
     }
     : day.missedTrips;
-  const byOperatorDwell = day.byOperatorDwell
-    ? {
-      ...day.byOperatorDwell,
-      incidents: day.byOperatorDwell.incidents.filter(incident => routeMatches(incident.routeId, selectedRouteId)),
-    }
-    : day.byOperatorDwell;
+  const byOperatorDwell = buildRouteScopedDwell(day.byOperatorDwell, selectedRouteId);
   const byCascade = day.byCascade
     ? {
       ...day.byCascade,
@@ -150,12 +235,20 @@ function filterDayByRoute(day: DailySummary, selectedRouteId: string): DailySumm
     byStop: day.byStop
       .map(stop => {
         const routeBreakdown = stop.routeBreakdown?.filter(row => routeMatches(row.routeId, selectedRouteId));
-        const routeValues = routeBreakdown?.[0];
+        const routeValues = routeBreakdown && routeBreakdown.length > 0
+          ? {
+            routeId: selectedRouteId,
+            boardings: routeBreakdown.reduce((sum, row) => sum + (row.boardings || 0), 0),
+            alightings: routeBreakdown.reduce((sum, row) => sum + (row.alightings || 0), 0),
+            hourlyBoardings: sumHourlyArrays(routeBreakdown.map(row => row.hourlyBoardings)),
+            hourlyAlightings: sumHourlyArrays(routeBreakdown.map(row => row.hourlyAlightings)),
+          }
+          : undefined;
         return {
           ...stop,
-          routeCount: routeBreakdown && routeBreakdown.length > 0 ? routeBreakdown.length : stop.routeCount,
+          routeCount: routeValues ? 1 : stop.routeCount,
           routes: stop.routes.filter(routeId => routeMatches(routeId, selectedRouteId)),
-          routeBreakdown,
+          routeBreakdown: routeValues ? [routeValues] : routeBreakdown,
           boardings: routeValues?.boardings ?? stop.boardings,
           alightings: routeValues?.alightings ?? stop.alightings,
           hourlyBoardings: routeValues?.hourlyBoardings ?? stop.hourlyBoardings,

@@ -98,7 +98,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
             routeName: string;
             ridership: number;
             serviceHours: number;
-            days: number;
+            dates: Set<string>;
             sourceRouteIds: Set<string>;
         }>();
         for (const day of filtered) {
@@ -109,12 +109,12 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     routeName: r.routeName,
                     ridership: 0,
                     serviceHours: 0,
-                    days: 0,
+                    dates: new Set<string>(),
                     sourceRouteIds: new Set<string>(),
                 };
                 ex.ridership += r.ridership;
                 ex.serviceHours += r.serviceHours;
-                ex.days++;
+                ex.dates.add(day.date);
                 ex.sourceRouteIds.add(r.routeId);
                 routeMap.set(routeKey, ex);
             }
@@ -125,7 +125,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                 routeName: r.sourceRouteIds.size > 1
                     ? `Combined ${Array.from(r.sourceRouteIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(' + ')}`
                     : r.routeName,
-                avgPerDay: Math.round(r.ridership / r.days),
+                avgPerDay: Math.round(r.ridership / Math.max(1, r.dates.size)),
                 boardsPerServiceHour: r.serviceHours > 0
                     ? Math.round((r.ridership / r.serviceHours) * 10) / 10
                     : 0,

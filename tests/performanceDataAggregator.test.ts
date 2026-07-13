@@ -163,6 +163,56 @@ describe('aggregateDailySummaries', () => {
         expect(summaries[0].system.otp.early).toBe(1);
     });
 
+    it('normalizes OTP deviations across midnight', () => {
+        const records = [
+            makeRecord({
+                tripId: 'overnight-otp',
+                routeStopIndex: 0,
+                stopId: 'before-midnight',
+                arrivalTime: '23:58',
+                stopTime: '23:58',
+                observedDepartureTime: '00:02:00',
+            }),
+            makeRecord({
+                tripId: 'overnight-otp',
+                routeStopIndex: 1,
+                stopId: 'terminal',
+                arrivalTime: '00:10',
+                stopTime: '00:10',
+                observedDepartureTime: '00:11:00',
+            }),
+        ];
+
+        const summary = aggregateDailySummaries(records)[0];
+        expect(summary.system.otp).toMatchObject({ total: 1, onTime: 1, early: 0, late: 0 });
+        expect(summary.system.otp.avgDeviationSeconds).toBe(240);
+    });
+
+    it('uses full-trip terminal context for stop and hourly OTP rollups', () => {
+        const records = [
+            makeRecord({
+                tripId: 'cross-hour-trip', routeStopIndex: 0, stopId: 'stop-0', stopName: 'Stop 0',
+                arrivalTime: '07:10', stopTime: '07:10', observedDepartureTime: '07:11:00',
+            }),
+            makeRecord({
+                tripId: 'cross-hour-trip', routeStopIndex: 1, stopId: 'stop-1', stopName: 'Stop 1',
+                arrivalTime: '07:55', stopTime: '07:55', observedDepartureTime: '07:57:00',
+            }),
+            makeRecord({
+                tripId: 'cross-hour-trip', routeStopIndex: 2, stopId: 'terminal', stopName: 'Terminal',
+                arrivalTime: '08:05', stopTime: '08:05', observedDepartureTime: '08:06:00',
+            }),
+        ];
+
+        const summary = aggregateDailySummaries(records)[0];
+        expect(summary.byStop.find(stop => stop.stopId === 'stop-0')?.otp.total).toBe(1);
+        expect(summary.byStop.find(stop => stop.stopId === 'stop-1')?.otp.total).toBe(1);
+        expect(summary.byStop.find(stop => stop.stopId === 'terminal')?.otp.total).toBe(0);
+        expect(summary.byHour.find(hour => hour.hour === 7)?.otp.total).toBe(2);
+        expect(summary.byHour.find(hour => hour.hour === 8)?.otp.total).toBe(0);
+        expect(summary.byRouteHour?.find(hour => hour.routeId === '10' && hour.hour === 7)?.otp?.total).toBe(2);
+    });
+
     it('excludes tripper records from OTP', () => {
         const records = [
             makeRecord({ timePoint: true, routeStopIndex: 0, isTripper: false, observedDepartureTime: '12:01:00' }),
@@ -183,6 +233,28 @@ describe('aggregateDailySummaries', () => {
         expect(summaries[0].system.totalRidership).toBe(8);
         expect(summaries[0].system.totalBoardings).toBe(8);
         expect(summaries[0].system.totalAlightings).toBe(6);
+    });
+
+    it('excludes in-between records from operational metrics but retains raw quality counts', () => {
+        const records = [
+            makeRecord({
+                tripId: 'normal-trip', stopId: 'normal-stop', routeStopIndex: 0,
+                boardings: 5, alightings: 2, departureLoad: 8,
+            }),
+            makeRecord({
+                tripId: 'in-between-trip', stopId: 'in-between-stop', routeStopIndex: 0,
+                inBetween: true, boardings: 50, alightings: 20, departureLoad: 60,
+            }),
+        ];
+
+        const summary = aggregateDailySummaries(records)[0];
+        expect(summary.system.totalRidership).toBe(5);
+        expect(summary.system.totalAlightings).toBe(2);
+        expect(summary.system.avgSystemLoad).toBe(8);
+        expect(summary.system.tripCount).toBe(1);
+        expect(summary.byStop.map(stop => stop.stopId)).toEqual(['normal-stop']);
+        expect(summary.dataQuality.totalRecords).toBe(2);
+        expect(summary.dataQuality.inBetweenFiltered).toBe(1);
     });
 
     it('counts unique vehicles and trips', () => {

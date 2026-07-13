@@ -6,6 +6,8 @@ import {
 } from '../utils/performanceDataTypes';
 import type { STREETSRecord as FrontendRecord } from '../utils/performanceDataTypes';
 import { aggregateDailySummaries as aggregateBackend } from '../functions/src/aggregator';
+import { filterPerformanceSummaryByRoute as filterFrontendByRoute } from '../utils/performanceRouteFilter';
+import { filterPerformanceSummaryByRoute as filterBackendByRoute } from '../functions/src/performanceRouteFilter';
 import {
   PERFORMANCE_RUNTIME_LOGIC_VERSION as BACKEND_RUNTIME_LOGIC_VERSION,
   PERFORMANCE_SCHEMA_VERSION as BACKEND_SCHEMA_VERSION,
@@ -441,5 +443,127 @@ describe('functions performance aggregation stays aligned with app runtime logic
     expect(backend[0].tripStopSegmentRuntimes).toEqual(frontend[0].tripStopSegmentRuntimes);
     expect(frontend[0].runtimePatterns?.[0].patternKind).toBe('detour');
     expect(frontend[0].tripStopSegmentRuntimes?.entries[0].patternKind).toBe('detour');
+  });
+
+  it('keeps stop route breakdowns and route-hour OTP aligned', () => {
+    const records = [
+      makeRecord({
+        tripId: 'route-2-trip', routeId: '2A', routeStopIndex: 0,
+        stopId: 'shared', stopName: 'Shared Stop', arrivalTime: '07:10', stopTime: '07:10',
+        observedDepartureTime: '07:11:00', boardings: 4, alightings: 1,
+      }),
+      makeRecord({
+        tripId: 'route-2-trip', routeId: '2A', routeStopIndex: 1,
+        stopId: 'route-2-terminal', stopName: 'Route 2 Terminal', arrivalTime: '08:05', stopTime: '08:05',
+        observedDepartureTime: '08:06:00', boardings: 0, alightings: 4,
+      }),
+      makeRecord({
+        tripId: 'route-7-trip', routeId: '7', routeStopIndex: 0,
+        stopId: 'shared', stopName: 'Shared Stop', arrivalTime: '07:20', stopTime: '07:20',
+        observedDepartureTime: '07:26:00', boardings: 6, alightings: 2,
+      }),
+      makeRecord({
+        tripId: 'route-7-trip', routeId: '7', routeStopIndex: 1,
+        stopId: 'route-7-terminal', stopName: 'Route 7 Terminal', arrivalTime: '08:15', stopTime: '08:15',
+        observedDepartureTime: '08:16:00', boardings: 0, alightings: 6,
+      }),
+    ];
+
+    const frontend = aggregateFrontend(records);
+    const backend = aggregateBackend(records as any);
+    const frontendSharedStop = frontend[0].byStop.find(stop => stop.stopId === 'shared');
+    const backendSharedStop = backend[0].byStop.find(stop => stop.stopId === 'shared');
+
+    expect(backendSharedStop?.routeBreakdown).toEqual(frontendSharedStop?.routeBreakdown);
+    expect(backendSharedStop?.routeBreakdown).toEqual([
+      expect.objectContaining({ routeId: '7', boardings: 6, alightings: 2 }),
+      expect.objectContaining({ routeId: '2A', boardings: 4, alightings: 1 }),
+    ]);
+    expect(backend[0].byRouteHour).toEqual(frontend[0].byRouteHour);
+    expect(backend[0].byRouteHour?.find(row => row.routeId === '2A' && row.hour === 7)?.otp?.onTime).toBe(1);
+    expect(backend[0].byRouteHour?.find(row => row.routeId === '7' && row.hour === 7)?.otp?.late).toBe(1);
+  });
+
+  it('keeps midnight OTP and in-between filtering aligned', () => {
+    const records = [
+      makeRecord({
+        tripId: 'overnight-trip', routeStopIndex: 0, stopId: 'night-start',
+        arrivalTime: '23:58', stopTime: '23:58', observedDepartureTime: '00:02:00',
+        boardings: 3,
+      }),
+      makeRecord({
+        tripId: 'overnight-trip', routeStopIndex: 1, stopId: 'night-terminal',
+        arrivalTime: '00:10', stopTime: '00:10', observedDepartureTime: '00:11:00',
+        boardings: 0,
+      }),
+      makeRecord({
+        tripId: 'ignored-trip', stopId: 'ignored-stop', inBetween: true,
+        boardings: 99, alightings: 99, departureLoad: 60,
+      }),
+    ];
+
+    const frontend = aggregateFrontend(records);
+    const backend = aggregateBackend(records as any);
+
+    expect(backend[0].system).toEqual(frontend[0].system);
+    expect(backend[0].system.otp).toMatchObject({ total: 1, onTime: 1, early: 0, late: 0 });
+    expect(backend[0].system.otp.avgDeviationSeconds).toBe(240);
+    expect(backend[0].system.totalRidership).toBe(3);
+    expect(backend[0].dataQuality).toEqual(frontend[0].dataQuality);
+    expect(backend[0].dataQuality.inBetweenFiltered).toBe(1);
+  });
+
+  it('keeps client and shared-server route filtering aligned for merged branches', () => {
+    const records = [
+      makeRecord({
+        tripId: 'route-7a-trip', routeId: '7A', routeStopIndex: 0,
+        stopId: 'shared', stopName: 'Shared Stop', arrivalTime: '07:10', stopTime: '07:10',
+        observedDepartureTime: '07:11:00', boardings: 4, alightings: 1,
+      }),
+      makeRecord({
+        tripId: 'route-7a-trip', routeId: '7A', routeStopIndex: 1,
+        stopId: 'terminal-a', stopName: 'Terminal A', arrivalTime: '07:20', stopTime: '07:20',
+        observedDepartureTime: '07:21:00', boardings: 0, alightings: 4,
+      }),
+      makeRecord({
+        tripId: 'route-7b-trip', routeId: '7B', routeStopIndex: 0,
+        stopId: 'shared', stopName: 'Shared Stop', arrivalTime: '07:15', stopTime: '07:15',
+        observedDepartureTime: '07:21:00', boardings: 6, alightings: 2,
+      }),
+      makeRecord({
+        tripId: 'route-7b-trip', routeId: '7B', routeStopIndex: 1,
+        stopId: 'terminal-b', stopName: 'Terminal B', arrivalTime: '07:25', stopTime: '07:25',
+        observedDepartureTime: '07:26:00', boardings: 0, alightings: 6,
+      }),
+    ];
+
+    const daily = aggregateFrontend(records);
+    const summary = {
+      dailySummaries: daily,
+      metadata: {
+        importedAt: '2026-03-25T12:00:00Z',
+        importedBy: 'test',
+        dateRange: { start: daily[0].date, end: daily[0].date },
+        dayCount: 1,
+        totalRecords: daily[0].dataQuality.totalRecords,
+      },
+      schemaVersion: FRONTEND_SCHEMA_VERSION,
+    };
+
+    const frontend = filterFrontendByRoute(summary, '7');
+    const backend = filterBackendByRoute(summary as any, '7');
+
+    expect(backend).toEqual(frontend);
+    expect(frontend?.dailySummaries[0].byStop.find(stop => stop.stopId === 'shared')).toMatchObject({
+      boardings: 10,
+      alightings: 3,
+    });
+    expect(frontend?.dailySummaries[0].byHour).toEqual([
+      expect.objectContaining({
+        hour: 7,
+        boardings: 10,
+        otp: expect.objectContaining({ total: 2, onTime: 1, late: 1 }),
+      }),
+    ]);
   });
 });

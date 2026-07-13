@@ -7,6 +7,7 @@ import type {
   PerformanceDetailMode,
   PerformanceMetadata,
 } from './types';
+import { PERFORMANCE_SCHEMA_VERSION } from './types';
 import { filterPerformanceSummaryByRoute } from './performanceRouteFilter';
 
 type SharedWorkspace =
@@ -326,7 +327,11 @@ async function loadMonthlyPerformanceSummary(
 
   const base = monthSummaries.find((summary): summary is PerformanceDataSummary => !!summary);
   return applyPerformanceLoadOptions(
-    buildSummaryFromDays(base || { dailySummaries: [], metadata, schemaVersion: 9 }, dailySummaries, metadata),
+    buildSummaryFromDays(
+      base || { dailySummaries: [], metadata, schemaVersion: PERFORMANCE_SCHEMA_VERSION },
+      dailySummaries,
+      metadata,
+    ),
     options,
   );
 }

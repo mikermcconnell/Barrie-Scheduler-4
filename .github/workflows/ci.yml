@@ -7,6 +7,9 @@ on:
       - main
       - master
 
+permissions:
+  contents: read
+
 jobs:
   web:
     runs-on: ubuntu-latest
@@ -82,6 +85,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -101,7 +106,33 @@ jobs:
         env:
           VITE_DEMO_MODE: '1'
 
-      - name: Deploy Route Planner geocoder and Firebase Hosting
-        run: npx firebase-tools deploy --only functions:routePlannerGeocode,hosting
+      - name: Determine Firebase deploy targets
+        id: firebase-targets
+        shell: bash
+        run: |
+          before_sha="${{ github.event.before }}"
+          current_sha="${{ github.sha }}"
+
+          if [[ "$before_sha" =~ ^0+$ ]] || ! git cat-file -e "${before_sha}^{commit}" 2>/dev/null; then
+            changed_files="$(git ls-tree -r --name-only "$current_sha")"
+          else
+            changed_files="$(git diff --name-only "$before_sha" "$current_sha")"
+          fi
+
+          targets="functions:routePlannerGeocode,hosting"
+
+          if grep -Eq '^(firestore\.rules|firebase\.json)$' <<< "$changed_files"; then
+            targets="${targets},firestore:rules"
+          fi
+
+          if grep -Eq '^(storage\.rules|firebase\.json)$' <<< "$changed_files"; then
+            targets="${targets},storage"
+          fi
+
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "Firebase deploy targets: $targets"
+
+      - name: Deploy verified Firebase targets
+        run: npx firebase-tools deploy --only "${{ steps.firebase-targets.outputs.targets }}"
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}

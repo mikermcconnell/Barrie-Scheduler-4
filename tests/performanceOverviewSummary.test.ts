@@ -31,6 +31,7 @@ function buildDay(date: string, index: number): DailySummary {
     byStop: [{ stopId: 's1' } as DailySummary['byStop'][number]],
     byTrip: [],
     loadProfiles: [{ routeId: '1' } as DailySummary['loadProfiles'][number]],
+    byRouteHour: [{ routeId: '1', hour: 8, avgLoad: 10, boardings: 20, alightings: 18 }],
     ridershipHeatmaps: [{ routeId: '1' } as NonNullable<DailySummary['ridershipHeatmaps']>[number]],
     missedTrips: {
       totalScheduled: 10,
@@ -110,5 +111,6 @@ describe('buildPerformanceOverviewSummary', () => {
     expect(overview.dailySummaries.every(day => day.ridershipHeatmaps === undefined)).toBe(true);
     expect(overview.dailySummaries.every(day => day.tripStopSegmentRuntimes === undefined)).toBe(true);
     expect(overview.dailySummaries.every(day => (day.missedTrips?.trips?.length ?? 0) === 0)).toBe(true);
+    expect(overview.dailySummaries.every(day => day.byRouteHour?.length === 1)).toBe(true);
   });
 });
