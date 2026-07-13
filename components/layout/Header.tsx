@@ -35,7 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
     onShowAuthModal,
     canShowFileManager = true,
 }) => {
-    const { user, signOut } = useAuth();
+    const { user, signOut, isGlobalAdmin } = useAuth();
     const {
         accessLevel,
         team,
@@ -47,6 +47,9 @@ export const Header: React.FC<HeaderProps> = ({
     const [showUserMenu, setShowUserMenu] = useState(false);
     const username = user?.displayName || user?.email?.split('@')[0] || 'Signed in';
     const accessLabel = WORKSPACE_ACCESS_LEVEL_LABELS[accessLevel];
+    const supportExpiresAt = developerPreview
+        ? new Intl.DateTimeFormat('en-CA', { hour: 'numeric', minute: '2-digit' }).format(new Date(developerPreview.expiresAt))
+        : null;
 
     const handleSignOut = async () => {
         await signOut();
@@ -57,22 +60,23 @@ export const Header: React.FC<HeaderProps> = ({
     return (
         <header className="bg-white border-b border-gray-200 sticky top-0 z-50 transition-all duration-300">
             {isDeveloperPreview && developerPreview && (
-                <div className="border-b border-amber-200 bg-amber-50 px-6 py-2">
-                    <div className={`mx-auto flex flex-col gap-2 text-xs font-bold text-amber-900 sm:flex-row sm:items-center sm:justify-between ${currentView === 'home' ? 'max-w-7xl' : 'max-w-[1920px]'}`}>
+                <div className={`border-b px-6 py-2 ${developerPreview.mode === 'edit' ? 'border-red-300 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+                    <div className={`mx-auto flex flex-col gap-2 text-xs font-bold sm:flex-row sm:items-center sm:justify-between ${developerPreview.mode === 'edit' ? 'text-red-900' : 'text-amber-900'} ${currentView === 'home' ? 'max-w-7xl' : 'max-w-[1920px]'}`}>
                         <div className="flex items-center gap-2">
                             <Eye size={15} />
                             <span>
-                                Previewing {team?.name} as {developerPreview.sourceLabel}
+                                {developerPreview.mode === 'edit' ? 'Developer editing' : 'Inspecting'} {team?.name} as {developerPreview.sourceLabel}
                                 {actualTeam?.name ? ` · real team: ${actualTeam.name}` : ''}
-                                {developerPreview.readOnly ? ' · read-only preview' : ' · admin edit mode'}
+                                {developerPreview.readOnly ? ' · target team is read-only' : ` · reason: ${developerPreview.reason}`}
+                                {supportExpiresAt ? ` · expires ${supportExpiresAt}` : ''}
                             </span>
                         </div>
                         <button
-                            onClick={stopDeveloperPreview}
-                            className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-white px-3 py-1 text-amber-800 hover:bg-amber-100"
+                            onClick={() => void stopDeveloperPreview()}
+                            className={`inline-flex items-center gap-1 rounded-full border bg-white px-3 py-1 ${developerPreview.mode === 'edit' ? 'border-red-300 text-red-800 hover:bg-red-100' : 'border-amber-300 text-amber-800 hover:bg-amber-100'}`}
                         >
                             <XCircle size={14} />
-                            Exit preview
+                            Exit support session
                         </button>
                     </div>
                 </div>
@@ -162,6 +166,9 @@ export const Header: React.FC<HeaderProps> = ({
                                                     <p className="text-xs text-amber-700 truncate mt-0.5">Real team: {actualTeam.name}</p>
                                                 )}
                                                 <p className="text-xs text-gray-500 truncate mt-0.5">{accessLabel}</p>
+                                                {isGlobalAdmin && (
+                                                    <p className="mt-1 text-xs font-bold text-purple-700">Scheduler administrator</p>
+                                                )}
                                             </div>
 
                                             <div className="p-2">

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
+import { useTeam } from './contexts/TeamContext';
 import {
     getAllFiles,
     getAllUploadedFilesForAdmin,
@@ -135,6 +136,8 @@ export const FileManager: React.FC<FileManagerProps> = ({
     autoSelectUploadedFile = false,
 }) => {
     const { user, isGlobalAdmin } = useAuth();
+    const { team, developerPreview } = useTeam();
+    const isDeveloperSupportSession = Boolean(developerPreview);
     const [activeTab, setActiveTab] = useState<Tab>('schedules');
     const [viewMode, setViewMode] = useState<ViewMode>('grid');
     const [uploadScope, setUploadScope] = useState<UploadScope>('mine');
@@ -174,14 +177,19 @@ export const FileManager: React.FC<FileManagerProps> = ({
     };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!user || !e.target.files?.length || isSelectingFile) return;
+        if (!user || !e.target.files?.length || isSelectingFile || isDeveloperSupportSession) return;
         const file = e.target.files[0];
 
         const fileType = detectSavedFileType(file.name);
 
         setUploading(true);
         try {
-            const savedFile = await uploadFile(user.uid, file, fileType);
+            const savedFile = await uploadFile(user.uid, file, fileType, {
+                teamId: team?.id,
+                teamName: team?.name,
+                uploaderDisplayName: user.displayName,
+                uploaderEmail: user.email,
+            });
             setFiles(prev => [savedFile, ...prev]);
             if (autoSelectUploadedFile && onSelectFile) {
                 onSelectFile(savedFile);
@@ -195,7 +203,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
     };
 
     const handleDeleteFile = async (file: SavedFile) => {
-        if (!user || (file.ownerUserId && file.ownerUserId !== user.uid) || !confirm(`Delete "${file.name}"?`)) return;
+        if (!user || isDeveloperSupportSession || (file.ownerUserId && file.ownerUserId !== user.uid) || !confirm(`Delete "${file.name}"?`)) return;
         try {
             await deleteFile(user.uid, file.id, file.storagePath);
             setFiles(prev => prev.filter(f => f.id !== file.id));
@@ -209,7 +217,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
     };
 
     const handleDeleteSchedule = async (schedule: SavedSchedule) => {
-        if (!user || !confirm(`Delete "${schedule.name}"?`)) return;
+        if (!user || isDeveloperSupportSession || !confirm(`Delete "${schedule.name}"?`)) return;
         try {
             await deleteSchedule(user.uid, schedule.id);
             setSchedules(prev => prev.filter(s => s.id !== schedule.id));
@@ -226,12 +234,12 @@ export const FileManager: React.FC<FileManagerProps> = ({
     const isDefaultFile = (fileId: string) => defaultFileId === fileId;
 
     const handleToggleDefaultSchedule = (scheduleId: string) => {
-        if (!onSetDefaultSchedule) return;
+        if (!onSetDefaultSchedule || isDeveloperSupportSession) return;
         onSetDefaultSchedule(defaultScheduleId === scheduleId ? null : scheduleId);
     };
 
     const handleToggleDefaultFile = (fileId: string) => {
-        if (!onSetDefaultFile) return;
+        if (!onSetDefaultFile || isDeveloperSupportSession) return;
         onSetDefaultFile(defaultFileId === fileId ? null : fileId);
     };
 
@@ -252,7 +260,14 @@ export const FileManager: React.FC<FileManagerProps> = ({
     };
 
     const filteredFiles = files.filter(file => {
-        const matchesSearch = file.name.toLowerCase().includes(searchQuery.toLowerCase());
+        const normalizedSearch = searchQuery.toLowerCase();
+        const matchesSearch = [
+            file.name,
+            file.ownerDisplayName,
+            file.ownerEmail,
+            file.resolvedTeamName,
+            file.resolvedTeamId,
+        ].some(value => value?.toLowerCase().includes(normalizedSearch));
         const matchesFilter = fileFilter === 'all' || file.type === fileFilter;
         return matchesSearch && matchesFilter;
     });
@@ -265,7 +280,10 @@ export const FileManager: React.FC<FileManagerProps> = ({
         file.ownerDisplayName || file.ownerEmail || file.ownerUserId || 'You'
     );
 
-    const canDeleteFile = (file: SavedFile) => !file.ownerUserId || file.ownerUserId === user?.uid;
+    const teamLabel = (file: SavedFile) => file.resolvedTeamName || file.resolvedTeamId || 'No team recorded';
+    const usesLegacyTeamFallback = (file: SavedFile) => file.teamAttributionSource === 'owner_profile_fallback';
+
+    const canDeleteFile = (file: SavedFile) => !isDeveloperSupportSession && (!file.ownerUserId || file.ownerUserId === user?.uid);
 
     const getFileIcon = (type: SavedFile['type']) => {
         switch (type) {
@@ -430,7 +448,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                             </button>
                         </div>
 
-                        {activeTab === 'files' && uploadScope === 'mine' && (
+                        {activeTab === 'files' && uploadScope === 'mine' && !isDeveloperSupportSession && (
                             <label className="bg-brand-blue hover:bg-blue-600 text-white font-bold px-4 py-2 rounded-xl cursor-pointer transition-colors flex items-center gap-2">
                                 {uploading ? (
                                     <Loader2 className="animate-spin" size={18} />
@@ -445,12 +463,18 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                     disabled={uploading || isSelectingFile}
                                     className="hidden"
                                 />
+                                <span className="sr-only">CSV or Excel, maximum 25 MB</span>
                             </label>
                         )}
                     </div>
                 </div>
 
                 {/* Error Banner */}
+                {isDeveloperSupportSession && (
+                    <div className="border-b border-amber-100 bg-amber-50 px-6 py-3 text-sm font-semibold text-amber-800">
+                        Personal File Manager changes are disabled during developer support sessions.
+                    </div>
+                )}
                 {error && (
                     <div className="bg-red-50 border-b border-red-100 px-6 py-3 flex items-center gap-2 text-red-600 text-sm font-medium">
                         <AlertCircle size={16} />
@@ -511,7 +535,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 >
                                                     <MoreVertical size={16} className="text-gray-400" />
                                                 </button>
-                                                {menuOpen === schedule.id && (
+                                                {!isDeveloperSupportSession && menuOpen === schedule.id && (
                                                     <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[120px] z-10">
                                                         <button
                                                             onClick={e => { e.stopPropagation(); handleDeleteSchedule(schedule); }}
@@ -601,12 +625,14 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                                 <Star size={16} className={isDefaultSchedule(schedule.id) ? 'fill-amber-500' : ''} />
                                                             </button>
                                                         )}
-                                                        <button
-                                                            onClick={e => { e.stopPropagation(); handleDeleteSchedule(schedule); }}
-                                                            className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
+                                                        {!isDeveloperSupportSession && (
+                                                            <button
+                                                                onClick={e => { e.stopPropagation(); handleDeleteSchedule(schedule); }}
+                                                                className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
+                                                            >
+                                                                <Trash2 size={16} />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -703,8 +729,11 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                             {getCategoryLabel(file.type)}
                                         </div>
                                         {isGlobalAdmin && uploadScope === 'all' && (
-                                            <div className="text-xs font-semibold text-blue-600 mb-2">
-                                                Uploaded by {uploaderLabel(file)}
+                                            <div className="text-xs font-semibold text-blue-600 mb-2 space-y-0.5">
+                                                <div>Uploaded by {uploaderLabel(file)}</div>
+                                                <div className="text-gray-500">
+                                                    Team: {teamLabel(file)}{usesLegacyTeamFallback(file) ? ' (current profile fallback)' : ''}
+                                                </div>
                                             </div>
                                         )}
                                         <div className="flex items-center justify-between text-xs text-gray-400">
@@ -732,6 +761,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Uploaded</th>
                                             {isGlobalAdmin && uploadScope === 'all' && (
                                                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Uploader</th>
+                                            )}
+                                            {isGlobalAdmin && uploadScope === 'all' && (
+                                                <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Team</th>
                                             )}
                                             <th className="w-24"></th>
                                         </tr>
@@ -764,6 +796,14 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 <td className="px-5 py-4 text-sm text-gray-500">{formatDate(file.uploadedAt)}</td>
                                                 {isGlobalAdmin && uploadScope === 'all' && (
                                                     <td className="px-5 py-4 text-sm font-semibold text-blue-600">{uploaderLabel(file)}</td>
+                                                )}
+                                                {isGlobalAdmin && uploadScope === 'all' && (
+                                                    <td className="px-5 py-4 text-sm text-gray-600">
+                                                        {teamLabel(file)}
+                                                        {usesLegacyTeamFallback(file) && (
+                                                            <div className="text-xs text-amber-600">Current profile fallback</div>
+                                                        )}
+                                                    </td>
                                                 )}
                                                 <td className="px-3">
                                                     <div className="flex items-center justify-end gap-1">

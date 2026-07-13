@@ -18,7 +18,8 @@ The app uses a mixed model:
 - invite lookup under `teamInvites/{inviteCode}`
 - role checks for owners and admins on team management operations
 - team membership checks for shared schedules, analytics, storage assets, and imports
-- global cross-team permission management requires a Firebase Auth custom claim, such as `schedulerAdmin: true`
+- global team discovery and All uploads require the namespaced Firebase Auth custom claim `schedulerAdmin: true`
+- cross-team team-data access additionally requires an active `developerSupportSessions/{uid}` record for that team
 
 ### Firestore
 
@@ -36,12 +37,21 @@ The app uses a mixed model:
 Authorization should come from membership documents under `teams/{teamId}/members/{userId}`.
 Do not rely on `users/{userId}.teamId` for authorization.
 
-Team document updates and deletes are limited to team owners/admins and global workspace permission managers.
+Team document updates and deletes are limited to team owners/admins and scheduler administrators with an active team-scoped edit session.
+`dataSourceTeamIds` is an exception: cross-team source links require the scoped scheduler-admin edit session so a team cannot authorize itself to another team's data.
 Direct team document reads are also allowed during authenticated invite joins so the client can recover default join access for older invite lookup documents. Team collection listing remains limited to global workspace permission managers.
 Users can only create their own team membership through a valid invite lookup or as the initial owner of a team they are creating; knowing a team ID alone is not enough.
 The `none` workspace access profile grants no workspace reads/writes; it is intended for brand-new users and new self-created teams until access is explicitly granted in Team Management.
 
-Cross-team team lookup and permission management should come from Firebase Auth custom claims, not from a user's own team role or workspace access level.
+Cross-team authority must not be inferred from a user's own team role or `internal` workspace profile. Inspect sessions are read-only. Edit sessions require a reason, are audited, default to 30 minutes, and expire within 60 minutes.
+
+Grant or revoke the namespaced claim from `functions/` using Application Default Credentials. The command is a dry run unless `--apply` is supplied:
+
+```powershell
+npm run admin:scheduler -- --email user@example.com --project barrie-scheduler-7844a --grant --apply
+```
+
+The user must sign out and sign back in after the claim changes.
 
 ### Storage
 
@@ -59,7 +69,7 @@ Cross-team team lookup and permission management should come from Firebase Auth 
 Update the checked-in rule files first, then deploy from the repository root:
 
 ```powershell
-npx firebase deploy --only firestore:rules,storage
+npx firebase deploy --only functions:developerSupportAccess,firestore:rules,storage
 ```
 
 If you prefer to publish in the Firebase Console, copy from the current local files, not from this Markdown summary.

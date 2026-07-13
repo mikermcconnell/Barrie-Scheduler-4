@@ -79,6 +79,7 @@ import {
 import { buildWorkspaceAccessPreview } from '../utils/workspaceAccessPreview';
 import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils/inviteLinks';
 import { WorkspaceAccessAppPreview } from './WorkspaceAccessAppPreview';
+import { filterUploadsForTeam } from '../utils/adminUploadScope';
 
 const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
     workspaceOndemand: 'On Demand',
@@ -158,7 +159,13 @@ interface TeamManagementProps {
 
 export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScreen = false }) => {
     const { user, isGlobalAdmin } = useAuth();
-    const { team, refreshTeam, startDeveloperPreview } = useTeam();
+    const {
+        team,
+        actualTeam,
+        developerPreview,
+        refreshTeam,
+        startDeveloperPreview,
+    } = useTeam();
     const toast = useToast();
     const queryClient = useQueryClient();
 
@@ -214,14 +221,22 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
     const canLookupTeams = isGlobalAdmin;
-    const activeTeamDetails = managedTeamDetails ?? teamDetails;
-    const activeTeamId = activeTeamDetails?.id ?? team?.id;
+    const supportTeamDetails = developerPreview?.team && 'members' in developerPreview.team
+        ? developerPreview.team as TeamWithMembers
+        : null;
+    const activeTeamDetails = managedTeamDetails ?? supportTeamDetails ?? teamDetails;
+    const activeTeamId = activeTeamDetails?.id ?? actualTeam?.id;
     const activeDefaultAccessLevel: WorkspaceAccessLevel =
-        activeTeamDetails?.defaultMemberAccessLevel ?? team?.defaultMemberAccessLevel ?? 'planner';
-    const isViewingCurrentTeam = !managedTeamDetails || managedTeamDetails.id === team?.id;
-    const canEditActiveTeam = isCurrentTeamOwnerOrAdmin || canLookupTeams;
-    const canManageActiveAccess = isCurrentTeamOwnerOrAdmin || canLookupTeams;
-    const canRemoveActiveMembers = isCurrentTeamOwnerOrAdmin || canLookupTeams;
+        activeTeamDetails?.defaultMemberAccessLevel ?? actualTeam?.defaultMemberAccessLevel ?? 'planner';
+    const isViewingCurrentTeam = Boolean(actualTeam && activeTeamId === actualTeam.id);
+    const hasActiveDeveloperEdit = Boolean(
+        canLookupTeams &&
+        developerPreview?.mode === 'edit' &&
+        developerPreview.team.id === activeTeamId
+    );
+    const canEditActiveTeam = (isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin) || hasActiveDeveloperEdit;
+    const canManageActiveAccess = (isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin) || hasActiveDeveloperEdit;
+    const canRemoveActiveMembers = (isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin) || hasActiveDeveloperEdit;
     const selectedWizardMember = activeTeamDetails?.members.find(member => member.id === selectedWizardMemberId) ?? null;
     const wizardTeamAccessPreview = useMemo(() => buildWorkspaceAccessPreview({
         displayName: activeTeamDetails ? `${activeTeamDetails.name} invite user` : 'Invite user',
@@ -261,11 +276,20 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
 
     // Load full team details with members
     useEffect(() => {
-        if (team) {
+        if (developerPreview) {
+            void getTeamWithMembers(developerPreview.team.id)
+                .then(details => setManagedTeamDetails(details))
+                .catch(error => {
+                    console.error('Error loading active support team:', error);
+                    toast?.error('Failed to load the active support team');
+                });
+            return;
+        }
+        if (actualTeam) {
             setManagedTeamDetails(null);
             loadTeamDetails();
         }
-    }, [team]);
+    }, [actualTeam, developerPreview?.team.id]);
 
     useEffect(() => {
         if (canLookupTeams) {
@@ -328,10 +352,10 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     }, [activeTab, visibleTabs]);
 
     const loadTeamDetails = async () => {
-        if (!team) return;
+        if (!actualTeam) return;
 
         try {
-            const details = await getTeamWithMembers(team.id);
+            const details = await getTeamWithMembers(actualTeam.id);
             setTeamDetails(details);
         } catch (error) {
             console.error('Error loading team details:', error);
@@ -434,7 +458,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     };
 
     const handleCreatePartnerTeam = async () => {
-        if (!user || !canLookupTeams || !partnerTeamName.trim()) return;
+        if (!user || !canLookupTeams || developerPreview?.mode === 'inspect' || !partnerTeamName.trim()) return;
 
         const normalizedCode = partnerInviteCode.trim()
             ? normalizeInviteCode(partnerInviteCode)
@@ -479,6 +503,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
         try {
             const teams = await getTeamsForPermissionManagement();
             setAvailableTeams(teams);
+            if (!actualTeam && !developerPreview && !managedTeamDetails && teams.length > 0) {
+                const details = await getTeamWithMembers(teams[0].id);
+                if (details) {
+                    setManagedTeamDetails(details);
+                    setTeamLookupCode(details.inviteCode);
+                }
+            }
         } catch (error) {
             console.error('Error loading available teams:', error);
             toast?.error('Failed to load teams');
@@ -549,6 +580,11 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     };
 
     const handleResetTeamLookup = () => {
+        if (!actualTeam) {
+            const firstTeam = availableTeams[0];
+            if (firstTeam) void handleSelectTeam(firstTeam);
+            return;
+        }
         setManagedTeamDetails(null);
         setTeamLookupCode('');
         setIsEditingInviteCode(false);
@@ -556,7 +592,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     };
 
     const handleSaveDataSources = async () => {
-        if (!activeTeamId || !canLookupTeams) return;
+        if (!activeTeamId || !canEditActiveTeam) return;
 
         setSavingDataSources(true);
         try {
@@ -761,74 +797,106 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
         setWizardMemberWorkspaceSelection(buildWorkspaceSelectionFromPackage(packageId));
     };
 
-    const handlePreviewTeamDefault = () => {
+    const handlePreviewTeamDefault = async () => {
         if (!activeTeamDetails || !canLookupTeams) return;
 
-        startDeveloperPreview({
-            team: activeTeamDetails,
-            accessLevel: wizardTeamAccessLevel,
-            workspaceOverrides: buildWorkspaceOverrides(wizardTeamAccessLevel, wizardTeamWorkspaceSelection),
-            role: 'member',
-            displayName: `${activeTeamDetails.name} invite user`,
-            sourceLabel: `${activeTeamDetails.name} team default`,
-        });
-        toast?.success(`Previewing ${activeTeamDetails.name} team default`);
-        onClose?.();
+        try {
+            await startDeveloperPreview({
+                team: activeTeamDetails,
+                mode: 'inspect',
+                accessLevel: wizardTeamAccessLevel,
+                workspaceOverrides: buildWorkspaceOverrides(wizardTeamAccessLevel, wizardTeamWorkspaceSelection),
+                role: 'member',
+                displayName: `${activeTeamDetails.name} invite user`,
+                sourceLabel: `${activeTeamDetails.name} team default`,
+                reason: 'Preview team default access',
+            });
+            toast?.success(`Inspecting ${activeTeamDetails.name} team default`);
+            onClose?.();
+        } catch (error) {
+            console.error('Unable to start team inspection:', error);
+            toast?.error('Unable to start the inspection session. Confirm your scheduler administrator access.');
+        }
     };
 
-    const handlePreviewSelectedMember = () => {
+    const handlePreviewSelectedMember = async () => {
         if (!activeTeamDetails || !selectedWizardMember || !canLookupTeams) return;
 
-        startDeveloperPreview({
-            team: activeTeamDetails,
-            accessLevel: wizardMemberAccessLevel,
-            workspaceOverrides: buildWorkspaceOverrides(wizardMemberAccessLevel, wizardMemberWorkspaceSelection),
-            role: selectedWizardMember.role,
-            displayName: selectedWizardMember.displayName || selectedWizardMember.email || 'Selected user',
-            email: selectedWizardMember.email,
-            sourceLabel: selectedWizardMember.displayName || selectedWizardMember.email || 'selected user',
-            userId: selectedWizardMember.userId,
-        });
-        toast?.success(`Previewing ${activeTeamDetails.name} as ${selectedWizardMember.displayName || selectedWizardMember.email}`);
-        onClose?.();
+        try {
+            await startDeveloperPreview({
+                team: activeTeamDetails,
+                mode: 'inspect',
+                accessLevel: wizardMemberAccessLevel,
+                workspaceOverrides: buildWorkspaceOverrides(wizardMemberAccessLevel, wizardMemberWorkspaceSelection),
+                role: selectedWizardMember.role,
+                displayName: selectedWizardMember.displayName || selectedWizardMember.email || 'Selected user',
+                email: selectedWizardMember.email,
+                sourceLabel: selectedWizardMember.displayName || selectedWizardMember.email || 'selected user',
+                userId: selectedWizardMember.userId,
+                reason: 'Preview selected access settings',
+            });
+            toast?.success(`Inspecting ${activeTeamDetails.name} as ${selectedWizardMember.displayName || selectedWizardMember.email}`);
+            onClose?.();
+        } catch (error) {
+            console.error('Unable to start selected settings inspection:', error);
+            toast?.error('Unable to start the inspection session.');
+        }
     };
 
-    const handleViewAsSavedMember = () => {
-        if (!activeTeamDetails || !selectedWizardMember || !canLookupTeams) return;
-
-        const memberLabel = selectedWizardMember.displayName || selectedWizardMember.email || 'selected user';
-        startDeveloperPreview({
-            team: activeTeamDetails,
-            accessLevel: resolveWorkspaceAccessLevel(selectedWizardMember),
-            workspaceOverrides: selectedWizardMember.workspaceOverrides,
-            role: selectedWizardMember.role,
-            displayName: memberLabel,
-            email: selectedWizardMember.email,
-            sourceLabel: `${memberLabel} (saved access)`,
-            userId: selectedWizardMember.userId,
-            readOnly: true,
-        });
-        toast?.success(`Viewing ${activeTeamDetails.name} as ${memberLabel}`);
-        onClose?.();
-    };
-
-    const handleEditAsSavedMember = () => {
+    const handleViewAsSavedMember = async () => {
         if (!activeTeamDetails || !selectedWizardMember || !canLookupTeams) return;
 
         const memberLabel = selectedWizardMember.displayName || selectedWizardMember.email || 'selected user';
-        startDeveloperPreview({
-            team: activeTeamDetails,
-            accessLevel: resolveWorkspaceAccessLevel(selectedWizardMember),
-            workspaceOverrides: selectedWizardMember.workspaceOverrides,
-            role: selectedWizardMember.role,
-            displayName: memberLabel,
-            email: selectedWizardMember.email,
-            sourceLabel: `${memberLabel} (admin edit)`,
-            userId: selectedWizardMember.userId,
-            readOnly: false,
-        });
-        toast?.success(`Editing ${activeTeamDetails.name} as ${memberLabel}`);
-        onClose?.();
+        try {
+            await startDeveloperPreview({
+                team: activeTeamDetails,
+                mode: 'inspect',
+                accessLevel: resolveWorkspaceAccessLevel(selectedWizardMember),
+                workspaceOverrides: selectedWizardMember.workspaceOverrides,
+                role: selectedWizardMember.role,
+                displayName: memberLabel,
+                email: selectedWizardMember.email,
+                sourceLabel: `${memberLabel} (saved access)`,
+                userId: selectedWizardMember.userId,
+                reason: `Inspect saved access for ${memberLabel}`,
+            });
+            toast?.success(`Inspecting ${activeTeamDetails.name} as ${memberLabel}`);
+            onClose?.();
+        } catch (error) {
+            console.error('Unable to start saved-user inspection:', error);
+            toast?.error('Unable to start the inspection session.');
+        }
+    };
+
+    const handleStartDeveloperEdit = async () => {
+        if (!activeTeamDetails || !user || !canLookupTeams) return;
+
+        const reason = window.prompt(
+            `Why do you need developer edit access to ${activeTeamDetails.name}? This will be recorded in the audit log.`
+        )?.trim();
+        if (!reason) return;
+        if (!window.confirm(
+            `Start a 30-minute developer edit session for ${activeTeamDetails.name}? Changes will affect the live team data.`
+        )) return;
+
+        try {
+            await startDeveloperPreview({
+                team: activeTeamDetails,
+                mode: 'edit',
+                accessLevel: 'internal',
+                role: 'owner',
+                displayName: user.displayName || user.email || 'Developer administrator',
+                email: user.email || undefined,
+                sourceLabel: 'developer administrator',
+                userId: user.uid,
+                reason,
+            });
+            toast?.success(`Developer edit access started for ${activeTeamDetails.name}`);
+            onClose?.();
+        } catch (error) {
+            console.error('Unable to start developer edit session:', error);
+            toast?.error('Unable to start developer edit access. Confirm your scheduler administrator claim.');
+        }
     };
 
     const handleSaveWizardTeamAccess = async () => {
@@ -906,9 +974,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                 ? await getAllUploadedFilesForAdmin()
                 : await getAllFiles(user.uid);
 
-            if (uploadScope === 'team' && activeTeamDetails?.members.length) {
-                const teamUserIds = new Set(activeTeamDetails.members.map(member => member.userId));
-                setUploadedFiles(files.filter(file => file.ownerUserId && teamUserIds.has(file.ownerUserId)));
+            if (uploadScope === 'team') {
+                setUploadedFiles(filterUploadsForTeam(files, activeTeamId));
             } else {
                 setUploadedFiles(files);
             }
@@ -924,7 +991,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
         if (activeTab === 'uploads') {
             void loadUploadedFiles();
         }
-    }, [activeTab, uploadScope, activeTeamDetails?.id, activeTeamDetails?.members.length, user?.uid, canLookupTeams]);
+    }, [activeTab, uploadScope, activeTeamId, user?.uid, canLookupTeams]);
 
     const formatFileSize = (bytes: number) => {
         if (bytes < 1024) return `${bytes} B`;
@@ -959,13 +1026,17 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
         const query = uploadSearch.trim().toLowerCase();
         const matchesSearch = !query ||
             file.name.toLowerCase().includes(query) ||
-            getUploaderLabel(file).toLowerCase().includes(query);
+            getUploaderLabel(file).toLowerCase().includes(query) ||
+            file.teamNameAtUpload?.toLowerCase().includes(query) ||
+            file.teamIdAtUpload?.toLowerCase().includes(query) ||
+            file.resolvedTeamName?.toLowerCase().includes(query) ||
+            file.resolvedTeamId?.toLowerCase().includes(query);
         const matchesType = uploadFileFilter === 'all' || file.type === uploadFileFilter;
         return matchesSearch && matchesType;
     });
 
     // No Team State - Create or Join
-    if (!team) {
+    if (!team && !canLookupTeams) {
         return (
             <div className="bg-white rounded-xl border border-gray-200 p-8 max-w-lg mx-auto">
                 {onClose && (
@@ -1081,6 +1152,18 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
         );
     }
 
+    if (canLookupTeams && !activeTeamDetails) {
+        return (
+            <div className="flex min-h-[420px] items-center justify-center rounded-2xl border border-gray-200 bg-white p-8">
+                <div className="text-center">
+                    <Users className="mx-auto mb-3 text-brand-green" size={28} />
+                    <p className="font-bold text-gray-900">Loading developer team directory...</p>
+                    <p className="mt-1 text-sm text-gray-500">No home-team membership is required.</p>
+                </div>
+            </div>
+        );
+    }
+
     // Has Team - Show Team Admin Command Center
     return (
         <div className={fullScreen
@@ -1135,7 +1218,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                                 </button>
                             </div>
 
-                            {!isViewingCurrentTeam && (
+                            {!isViewingCurrentTeam && actualTeam && (
                                 <button
                                     onClick={handleResetTeamLookup}
                                     className="mt-3 w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"
@@ -1172,7 +1255,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                     ) : (
                         <div className="rounded-xl border border-gray-200 bg-white p-3">
                             <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Current team</p>
-                            <p className="mt-1 font-bold text-gray-900">{activeTeamDetails?.name ?? team.name}</p>
+                            <p className="mt-1 font-bold text-gray-900">{activeTeamDetails?.name ?? actualTeam?.name}</p>
                             <p className="mt-1 text-sm text-gray-500">Use the tabs to manage your team.</p>
                         </div>
                     )}
@@ -1214,12 +1297,12 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                             </div>
                         ) : (
                             <div className="flex flex-wrap items-center gap-2">
-                                <h2 className="text-2xl font-bold text-gray-900">{activeTeamDetails?.name ?? team.name}</h2>
+                                <h2 className="text-2xl font-bold text-gray-900">{activeTeamDetails?.name ?? actualTeam?.name}</h2>
                                 {canEditActiveTeam && (
                                     <>
                                         <button
                                             onClick={() => {
-                                                setEditedTeamName(activeTeamDetails?.name ?? team.name);
+                                                setEditedTeamName(activeTeamDetails?.name ?? actualTeam?.name ?? '');
                                                 setIsEditingTeamName(true);
                                             }}
                                             className="px-2 py-1 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50"
@@ -1250,7 +1333,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                     <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Team invite</p>
                     <div className="mt-2 flex items-center justify-between gap-3">
                         <p className="font-mono text-xl font-black tracking-wider text-gray-950">
-                            {activeTeamDetails?.inviteCode ?? team.inviteCode}
+                            {activeTeamDetails?.inviteCode ?? actualTeam?.inviteCode}
                         </p>
                         <div className="flex gap-1">
                             <button onClick={handleCopyInviteCode} className="rounded-lg border border-gray-300 bg-white p-2 text-gray-700 hover:bg-gray-100" title="Copy code">
@@ -1299,7 +1382,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                 <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
                     <p className="text-base font-bold text-amber-950">Developer support tools</p>
                     <p className="mt-1 text-sm text-amber-800">
-                        Use these only for intentional support work. Editing as a saved user opens their surface with your admin write permissions.
+                        Inspection cannot write the selected team. Developer edit access is team-scoped, audited, and expires after 30 minutes.
                     </p>
                     <div className="mt-3">
                         <label className="text-xs font-bold uppercase tracking-wide text-amber-800">Selected user</label>
@@ -1315,16 +1398,22 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                     </div>
                     <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
                         <button onClick={handlePreviewTeamDefault} className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100">
-                            <Eye size={16} /> Preview default
-                        </button>
-                        <button onClick={handlePreviewSelectedMember} disabled={!selectedWizardMember} className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50">
-                            <Eye size={16} /> Preview selected
+                            <Eye size={16} /> Inspect team default
                         </button>
                         <button onClick={handleViewAsSavedMember} disabled={!selectedWizardMember} className="inline-flex items-center justify-center gap-2 rounded-lg border border-purple-300 bg-white px-4 py-2 text-sm font-bold text-purple-800 hover:bg-purple-100 disabled:opacity-50">
-                            <Eye size={16} /> View as user
+                            <Eye size={16} /> Inspect as user
                         </button>
-                        <button onClick={handleEditAsSavedMember} disabled={!selectedWizardMember} className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50">
-                            <Edit2 size={16} /> Edit as user
+                        <button onClick={handleStartDeveloperEdit} className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-50">
+                            <Edit2 size={16} /> Start developer edit
+                        </button>
+                        <button
+                            onClick={() => {
+                                setUploadScope('all');
+                                setActiveTab('uploads');
+                            }}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-300 bg-white px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-50"
+                        >
+                            <FolderOpen size={16} /> View all uploads
                         </button>
                     </div>
                 </div>
@@ -1385,7 +1474,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                         </p>
                         <button
                             onClick={handleCreatePartnerTeam}
-                            disabled={creatingPartnerTeam || !partnerTeamName.trim()}
+                            disabled={creatingPartnerTeam || developerPreview?.mode === 'inspect' || !partnerTeamName.trim()}
                             className="w-full rounded-lg bg-brand-green px-4 py-2 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                         >
                             {creatingPartnerTeam ? 'Creating...' : 'Create team'}
@@ -1602,15 +1691,6 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                                     <Eye size={16} />
                                     View as saved user
                                 </button>
-                                <button
-                                    onClick={handleEditAsSavedMember}
-                                    disabled={!selectedWizardMember}
-                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50 sm:col-span-2"
-                                    title="Open this user's saved team surface with your global-admin write permissions. Use only for intentional support changes."
-                                >
-                                    <Edit2 size={16} />
-                                    Edit as saved user
-                                </button>
                             </div>
                         </div>
                         <details className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
@@ -1651,7 +1731,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                             <div>
                                 <p className="text-base font-bold text-gray-950">Uploads</p>
-                                <p className="text-sm text-gray-500">Review uploaded files by active team, your account, or all users.</p>
+                                <p className="text-sm text-gray-500">Review File Manager uploads by upload-time team, your account, or all users.</p>
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 {(['team', 'mine', 'all'] as UploadAdminScope[]).map(scope => (
@@ -1675,7 +1755,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                                 <input
                                     value={uploadSearch}
                                     onChange={(event) => setUploadSearch(event.target.value)}
-                                    placeholder="Search file or uploader"
+                                placeholder="Search file, uploader, or team"
                                     className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-brand-green focus:ring-2 focus:ring-brand-green/20"
                                 />
                             </div>
@@ -1712,6 +1792,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                                     <tr>
                                         <th className="px-4 py-3">File</th>
                                         <th className="px-4 py-3">Uploader</th>
+                                        <th className="px-4 py-3">Team</th>
                                         <th className="px-4 py-3">Type</th>
                                         <th className="px-4 py-3">Size</th>
                                         <th className="px-4 py-3">Uploaded</th>
@@ -1728,6 +1809,12 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                                                 </div>
                                             </td>
                                             <td className="px-4 py-3 font-semibold text-blue-700">{getUploaderLabel(file)}</td>
+                                            <td className="px-4 py-3 text-gray-600">
+                                                <span className="font-semibold">{file.resolvedTeamName || file.teamNameAtUpload || file.resolvedTeamId || file.teamIdAtUpload || 'No team recorded'}</span>
+                                                {file.teamAttributionSource === 'owner_profile_fallback' && (
+                                                    <span className="ml-1 text-xs text-amber-600">(legacy profile)</span>
+                                                )}
+                                            </td>
                                             <td className="px-4 py-3 text-gray-600">{getFileCategoryLabel(file.type)}</td>
                                             <td className="px-4 py-3 text-gray-600">
                                                 <span className="inline-flex items-center gap-1"><HardDrive size={13} />{formatFileSize(file.size)}</span>
@@ -1775,6 +1862,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                             <select
                                 value={transitAppSourceTeamId}
                                 onChange={(event) => setTransitAppSourceTeamId(event.target.value)}
+                                disabled={!canEditActiveTeam}
                                 className="mt-2 w-full min-w-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-950 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                             >
                                 <option value="">Use {activeTeamDetails.name}'s own data</option>
@@ -1794,6 +1882,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                             <select
                                 value={performanceSourceTeamId}
                                 onChange={(event) => setPerformanceSourceTeamId(event.target.value)}
+                                disabled={!canEditActiveTeam}
                                 className="mt-2 w-full min-w-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-950 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                             >
                                 <option value="">Use {activeTeamDetails.name}'s own data</option>
@@ -1818,73 +1907,21 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                         </ul>
                         <button
                             onClick={handleSaveDataSources}
-                            disabled={savingDataSources || !activeTeamId}
+                            disabled={savingDataSources || !activeTeamId || !canEditActiveTeam}
                             className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                         >
                             {savingDataSources ? 'Saving sources...' : 'Save data sources'}
                         </button>
+                        {!canEditActiveTeam && (
+                            <p className="mt-2 text-xs font-semibold text-amber-700">
+                                Start Developer edit from Developer Tools before changing cross-team data sources.
+                            </p>
+                        )}
                     </div>
 
                     <p className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs text-emerald-800">
                         Best WATT setup: set both sources to Barrie Transit. If either dropdown is “own data”, that workspace will look for uploads on {activeTeamDetails.name}.
                     </p>
-                </div>
-            )}
-
-            {canLookupTeams && activeTab === 'developer' && (
-                <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6">
-                    <p className="text-sm font-semibold text-blue-900 mb-2">Admin team lookup</p>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                        <input
-                            type="text"
-                            value={teamLookupCode}
-                            onChange={(e) => setTeamLookupCode(e.target.value.toUpperCase())}
-                            placeholder="Filter by team name or code"
-                            className="flex-1 px-3 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-brand-green"
-                        />
-                        <button
-                            onClick={handleLookupTeam}
-                            disabled={teamLookupLoading || !/^[A-Z0-9]{6}$/.test(teamLookupCode.trim().toUpperCase())}
-                            className="px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {teamLookupLoading ? 'Loading...' : 'Load Team'}
-                        </button>
-                        {!isViewingCurrentTeam && (
-                            <button
-                                onClick={handleResetTeamLookup}
-                                className="px-4 py-2 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100"
-                            >
-                                My Team
-                            </button>
-                        )}
-                    </div>
-                    <p className="mt-2 text-xs text-blue-700">
-                        Select any team below, or enter a 6-character code and load it directly.
-                    </p>
-                    <div className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-blue-100 bg-white">
-                        {availableTeamsLoading ? (
-                            <p className="px-3 py-2 text-sm text-gray-500">Loading teams...</p>
-                        ) : filteredAvailableTeams.length === 0 ? (
-                            <p className="px-3 py-2 text-sm text-gray-500">No teams found.</p>
-                        ) : (
-                            filteredAvailableTeams.map(availableTeam => {
-                                const isActiveTeam = availableTeam.id === activeTeamDetails?.id;
-                                return (
-                                    <button
-                                        key={availableTeam.id}
-                                        onClick={() => handleSelectTeam(availableTeam)}
-                                        disabled={teamLookupLoading}
-                                        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 disabled:opacity-50 ${
-                                            isActiveTeam ? 'bg-blue-100 text-blue-900' : 'text-gray-700'
-                                        }`}
-                                    >
-                                        <span className="font-semibold truncate">{availableTeam.name}</span>
-                                        <span className="font-mono text-xs text-gray-500">{availableTeam.inviteCode}</span>
-                                    </button>
-                                );
-                            })
-                        )}
-                    </div>
                 </div>
             )}
 
@@ -1896,7 +1933,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                     <div>
                         <p className="text-sm text-gray-600 mb-1">Invite Code</p>
                         <p className="text-2xl font-mono font-bold text-gray-900 tracking-wider">
-                            {activeTeamDetails?.inviteCode ?? team.inviteCode}
+                            {activeTeamDetails?.inviteCode ?? actualTeam?.inviteCode}
                         </p>
                     </div>
                     <div className="flex gap-2">
@@ -1918,7 +1955,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                             <>
                                 <button
                                     onClick={() => {
-                                        if (!isEditingInviteCode) setCustomInviteCode(activeTeamDetails?.inviteCode ?? team.inviteCode);
+                                        if (!isEditingInviteCode) setCustomInviteCode(activeTeamDetails?.inviteCode ?? actualTeam?.inviteCode ?? '');
                                         setIsEditingInviteCode(v => !v);
                                     }}
                                     className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-gray-700 text-sm"

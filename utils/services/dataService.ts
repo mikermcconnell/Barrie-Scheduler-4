@@ -8,7 +8,6 @@ import {
     deleteDoc,
     query,
     orderBy,
-    where,
     serverTimestamp,
     Timestamp
 } from 'firebase/firestore';
@@ -16,8 +15,7 @@ import {
     ref,
     uploadBytes,
     getDownloadURL,
-    deleteObject,
-    listAll
+    deleteObject
 } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import type { Shift, Requirement } from '../demandTypes';
@@ -51,7 +49,39 @@ export interface SavedFile {
     ownerUserId?: string;
     ownerDisplayName?: string;
     ownerEmail?: string;
+    /** Immutable team/uploader context captured when the upload was created. */
+    teamIdAtUpload?: string;
+    teamNameAtUpload?: string;
+    uploaderDisplayNameAtUpload?: string;
+    uploaderEmailAtUpload?: string;
+    /** Resolved values used by the global-admin upload list. */
+    resolvedTeamId?: string;
+    resolvedTeamName?: string;
+    teamAttributionSource?: 'upload_snapshot' | 'owner_profile_fallback' | 'unknown';
 }
+
+export interface UploadFileContext {
+    teamId?: string | null;
+    teamName?: string | null;
+    uploaderDisplayName?: string | null;
+    uploaderEmail?: string | null;
+}
+
+export const MAX_SAVED_FILE_SIZE_BYTES = 25 * 1024 * 1024;
+const ALLOWED_SAVED_FILE_EXTENSIONS = new Set(['csv', 'xls', 'xlsx']);
+
+export const validateSavedFileUpload = (file: Pick<File, 'name' | 'size'>): void => {
+    const extension = file.name.trim().split('.').pop()?.toLowerCase();
+    if (!extension || !ALLOWED_SAVED_FILE_EXTENSIONS.has(extension)) {
+        throw new Error('Only CSV, XLS, and XLSX files can be uploaded.');
+    }
+    if (file.size <= 0) {
+        throw new Error('The selected file is empty.');
+    }
+    if (file.size > MAX_SAVED_FILE_SIZE_BYTES) {
+        throw new Error('The selected file is larger than the 25 MB upload limit.');
+    }
+};
 
 // Note: ScheduleDraft is defined once below with full fields including storagePath
 // DraftVersion interface
@@ -185,38 +215,56 @@ export const deleteSchedule = async (
 export const uploadFile = async (
     userId: string,
     file: File,
-    fileType: SavedFile['type']
+    fileType: SavedFile['type'],
+    context: UploadFileContext = {},
 ): Promise<SavedFile> => {
+    validateSavedFileUpload(file);
+
     const timestamp = Date.now();
     const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const storagePath = `users/${userId}/files/${timestamp}_${safeName}`;
 
     const fileRef = ref(storage, storagePath);
     await uploadBytes(fileRef, file);
-    const downloadUrl = await getDownloadURL(fileRef);
 
-    // Save metadata to Firestore
-    const filesRef = collection(db, 'users', userId, 'files');
-    const newDocRef = doc(filesRef);
+    try {
+        const downloadUrl = await getDownloadURL(fileRef);
 
-    const fileData: Omit<SavedFile, 'id'> = {
-        name: file.name,
-        type: fileType,
-        storagePath,
-        downloadUrl,
-        size: file.size,
-        uploadedAt: new Date()
-    };
+        // Save metadata to Firestore only after Storage succeeds. Optional snapshot
+        // fields are omitted rather than written as undefined (which Firestore rejects).
+        const filesRef = collection(db, 'users', userId, 'files');
+        const newDocRef = doc(filesRef);
+        const fileData: Omit<SavedFile, 'id'> = {
+            name: file.name,
+            type: fileType,
+            storagePath,
+            downloadUrl,
+            size: file.size,
+            uploadedAt: new Date(),
+            ...(context.teamId && context.teamName ? {
+                teamIdAtUpload: context.teamId,
+                teamNameAtUpload: context.teamName,
+            } : {}),
+            ...(context.uploaderDisplayName && context.uploaderEmail ? {
+                uploaderDisplayNameAtUpload: context.uploaderDisplayName,
+                uploaderEmailAtUpload: context.uploaderEmail,
+            } : {}),
+        };
 
-    await setDoc(newDocRef, {
-        ...fileData,
-        uploadedAt: serverTimestamp()
-    });
+        await setDoc(newDocRef, {
+            ...fileData,
+            uploadedAt: serverTimestamp()
+        });
 
-    return {
-        id: newDocRef.id,
-        ...fileData
-    };
+        return {
+            id: newDocRef.id,
+            ...fileData
+        };
+    } catch (error) {
+        // Do not leave an untracked Storage object when URL/metadata creation fails.
+        await deleteObject(fileRef).catch((_cleanupError: unknown): void => { });
+        throw error;
+    }
 };
 
 export const getAllFiles = async (userId: string): Promise<SavedFile[]> => {
@@ -241,7 +289,7 @@ export const getAllUploadedFilesForAdmin = async (): Promise<SavedFile[]> => {
     const ownerIds = [...new Set(snapshot.docs
         .map(fileDoc => fileDoc.ref.parent.parent?.id)
         .filter((id): id is string => Boolean(id)))];
-    type FileOwnerSummary = { displayName?: string; email?: string };
+    type FileOwnerSummary = { displayName?: string; email?: string; teamId?: string };
 
     const ownerEntries: Array<readonly [string, FileOwnerSummary]> = await Promise.all(ownerIds.map(async userId => {
         try {
@@ -250,23 +298,72 @@ export const getAllUploadedFilesForAdmin = async (): Promise<SavedFile[]> => {
             return [userId, {
                 displayName: typeof data.displayName === 'string' ? data.displayName : undefined,
                 email: typeof data.email === 'string' ? data.email : undefined,
+                teamId: typeof data.teamId === 'string' && data.teamId ? data.teamId : undefined,
             } satisfies FileOwnerSummary] as const;
         } catch {
             return [userId, {} satisfies FileOwnerSummary] as const;
         }
     }));
     const owners = new Map(ownerEntries);
+    const verifiedFallbackEntries = await Promise.all(ownerEntries.map(async ([userId, owner]) => {
+        if (!owner.teamId) return [userId, undefined] as const;
+        try {
+            const membership = await getDoc(doc(db, 'teams', owner.teamId, 'members', userId));
+            return [userId, membership.exists() ? owner.teamId : undefined] as const;
+        } catch {
+            return [userId, undefined] as const;
+        }
+    }));
+    const verifiedFallbackTeamIds = new Map(verifiedFallbackEntries);
+    const teamIds = [...new Set(snapshot.docs.flatMap(fileDoc => {
+        const data = fileDoc.data();
+        const ownerUserId = fileDoc.ref.parent.parent?.id;
+        const snapshottedTeamId = typeof data.teamIdAtUpload === 'string' ? data.teamIdAtUpload : undefined;
+        const fallbackTeamId = ownerUserId ? verifiedFallbackTeamIds.get(ownerUserId) : undefined;
+        return snapshottedTeamId || fallbackTeamId ? [snapshottedTeamId || fallbackTeamId!] : [];
+    }))];
+    const teamEntries: Array<readonly [string, string | undefined]> = await Promise.all(teamIds.map(async teamId => {
+        try {
+            const teamSnap = await getDoc(doc(db, 'teams', teamId));
+            const teamName = teamSnap.exists() && typeof teamSnap.data().name === 'string'
+                ? teamSnap.data().name as string
+                : undefined;
+            return [teamId, teamName] as const;
+        } catch {
+            return [teamId, undefined] as const;
+        }
+    }));
+    const teamNames = new Map(teamEntries);
 
     return snapshot.docs.map(fileDoc => {
         const data = fileDoc.data();
         const ownerUserId = fileDoc.ref.parent.parent?.id;
         const owner = ownerUserId ? owners.get(ownerUserId) : undefined;
+        const snapshottedTeamId = typeof data.teamIdAtUpload === 'string' && data.teamIdAtUpload
+            ? data.teamIdAtUpload as string
+            : undefined;
+        const verifiedFallbackTeamId = ownerUserId ? verifiedFallbackTeamIds.get(ownerUserId) : undefined;
+        const resolvedTeamId = snapshottedTeamId || verifiedFallbackTeamId;
+        const snapshottedTeamName = typeof data.teamNameAtUpload === 'string' && data.teamNameAtUpload
+            ? data.teamNameAtUpload as string
+            : undefined;
         return {
             id: fileDoc.id,
             ...data,
             ownerUserId,
-            ownerDisplayName: owner?.displayName,
-            ownerEmail: owner?.email,
+            ownerDisplayName: typeof data.uploaderDisplayNameAtUpload === 'string'
+                ? data.uploaderDisplayNameAtUpload
+                : owner?.displayName,
+            ownerEmail: typeof data.uploaderEmailAtUpload === 'string'
+                ? data.uploaderEmailAtUpload
+                : owner?.email,
+            resolvedTeamId,
+            resolvedTeamName: snapshottedTeamName || (resolvedTeamId ? teamNames.get(resolvedTeamId) : undefined),
+            teamAttributionSource: snapshottedTeamId
+                ? 'upload_snapshot'
+                : verifiedFallbackTeamId
+                    ? 'owner_profile_fallback'
+                    : 'unknown',
             uploadedAt: (data.uploadedAt as Timestamp)?.toDate() || new Date()
         } as SavedFile;
     });

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import {
     User,
-    onAuthStateChanged,
+    onIdTokenChanged,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     signInWithPopup,
@@ -86,7 +86,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        const unsubscribe = onIdTokenChanged(auth, async (user) => {
             if (user) {
                 if (isBlockedProductionDevEmail(user.email)) {
                     console.warn('Blocked a local dev test account from using production.');
@@ -103,11 +103,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 try {
                     await ensureUserDocument(user);
                     const token = await getIdTokenResult(user);
-                    setIsGlobalAdmin(
-                        token.claims.schedulerAdmin === true ||
-                        token.claims.admin === true ||
-                        token.claims.globalAdmin === true
-                    );
+                    setIsGlobalAdmin(token.claims.schedulerAdmin === true);
                 } catch (error) {
                     console.error('Error ensuring user document:', error);
                     setIsGlobalAdmin(false);

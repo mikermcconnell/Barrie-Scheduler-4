@@ -25,13 +25,30 @@ service firebase.storage {
         );
     }
 
-    function isWorkspacePermissionManager() {
+    function isSchedulerAdmin() {
       return request.auth != null &&
-        (
-          request.auth.token.get('schedulerAdmin', false) == true ||
-          request.auth.token.get('admin', false) == true ||
-          request.auth.token.get('globalAdmin', false) == true
-        );
+        request.auth.token.get('schedulerAdmin', false) == true;
+    }
+
+    function supportSession() {
+      return firestore.get(/databases/(default)/documents/developerSupportSessions/$(request.auth.uid));
+    }
+
+    function hasActiveSupportSession(teamId) {
+      return isSchedulerAdmin() &&
+        firestore.exists(/databases/(default)/documents/developerSupportSessions/$(request.auth.uid)) &&
+        supportSession().data.teamId == teamId &&
+        supportSession().data.expiresAt is timestamp &&
+        supportSession().data.expiresAt > request.time &&
+        supportSession().data.mode in ['inspect', 'edit'];
+    }
+
+    function canSupportReadTeamData(teamId) {
+      return hasActiveSupportSession(teamId);
+    }
+
+    function canSupportWriteTeamData(teamId) {
+      return hasActiveSupportSession(teamId) && supportSession().data.mode == 'edit';
     }
 
     function memberAccessLevel(teamId) {
@@ -69,11 +86,10 @@ service firebase.storage {
     }
 
     function canAccessWorkspace(teamId, feature) {
-      return isWorkspacePermissionManager() ||
-             (isTeamMember(teamId) &&
+      return isTeamMember(teamId) &&
               (memberWorkspaceOverride(teamId, feature) == true ||
                (memberWorkspaceOverride(teamId, feature) != false &&
-                workspaceAllowedByProfile(memberAccessLevel(teamId), feature))));
+                workspaceAllowedByProfile(memberAccessLevel(teamId), feature)));
     }
 
     function teamDataSources(teamId) {
@@ -95,67 +111,95 @@ service firebase.storage {
         configuredMasterScheduleSource(userTeamId()) == sourceTeamId;
     }
 
-    // User-uploaded files can be read by global admins for developer support.
+    // User-uploaded files can be read by scheduler admins for developer support.
     // Writes stay limited to the owner.
     match /users/{userId}/files/{allPaths=**} {
       allow read: if request.auth != null &&
-        (request.auth.uid == userId || isWorkspacePermissionManager());
-      allow write: if request.auth != null && request.auth.uid == userId;
+        (request.auth.uid == userId || isSchedulerAdmin());
+      allow create, update: if request.auth != null &&
+        request.auth.uid == userId &&
+        allPaths.matches('.*\\.[cC][sS][vV]$|.*\\.[xX][lL][sS][xX]?$') &&
+        request.resource.size > 0 &&
+        request.resource.size <= 25 * 1024 * 1024;
+      allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Users can only access their own files
-    match /users/{userId}/{allPaths=**} {
+    // Other user-owned Storage prefixes remain private to their owner. Keep
+    // these explicit so File Manager uploads cannot bypass their size rule.
+    match /users/{userId}/drafts/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /users/{userId}/draftSchedules/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /users/{userId}/systemDrafts/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /users/{userId}/newScheduleProjects/{allPaths=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Team master schedules - restricted to members of the team
     match /teams/{teamId}/masterSchedules/{allPaths=**} {
-      allow read: if isTeamMember(teamId) || canReadSharedMasterSchedules(teamId);
-      allow write: if isTeamManager(teamId);
+      allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+        canReadSharedMasterSchedules(teamId) ||
+        canSupportReadTeamData(teamId);
+      allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team route map images
     match /teams/{teamId}/routeMaps/{allPaths=**} {
-      allow read: if isTeamMember(teamId);
-      allow write: if isTeamManager(teamId);
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team transit app data (aggregated JSON)
     match /teams/{teamId}/transitAppData/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId) || isWorkspacePermissionManager();
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team performance data (STREETS summaries)
     match /teams/{teamId}/performanceData/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId) || isWorkspacePermissionManager();
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team Transit On Demand pickup map data
     match /teams/{teamId}/todPickupData/{allPaths=**} {
-      allow read: if isTeamMember(teamId);
-      allow write: if isTeamManager(teamId) || isWorkspacePermissionManager();
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team shared parking-code usage data
     match /teams/{teamId}/parking/{allPaths=**} {
-      allow read: if canAccessWorkspace(teamId, 'workspaceParking');
-      allow write: if canAccessWorkspace(teamId, 'workspaceParking');
+      allow read: if canAccessWorkspace(teamId, 'workspaceParking') || canSupportReadTeamData(teamId);
+      allow write: if canAccessWorkspace(teamId, 'workspaceParking') || canSupportWriteTeamData(teamId);
     }
 
     // Team OD matrix data (origin-destination summaries)
     match /teams/{teamId}/odMatrixData/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId);
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team Fleet Plan data
     match /teams/{teamId}/fleetPlan/{allPaths=**} {
-      allow read: if isTeamMember(teamId);
-      allow write: if isTeamManager(teamId);
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team Residential Growth planning data
     match /teams/{teamId}/residentialGrowth/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId);
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+    }
+
+    // Apply support-session access consistently to current and future team
+    // storage paths without creating a permanent global-admin bypass.
+    match /teams/{teamId}/{allPaths=**} {
+      allow read: if canSupportReadTeamData(teamId);
+      allow write: if canSupportWriteTeamData(teamId);
     }
   }
 }

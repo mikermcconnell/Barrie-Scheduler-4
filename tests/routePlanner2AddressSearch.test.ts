@@ -67,6 +67,8 @@ describe('routePlanner2AddressSearch', () => {
       id: 'popular-place-sadlon-arena',
       name: 'Sadlon Arena',
       label: 'Sadlon Arena · 555 Bayview Dr, Barrie, ON L4N 8Y2',
+      lat: 44.337701,
+      lng: -79.677706,
     });
     expect(fetcher).not.toHaveBeenCalled();
   });

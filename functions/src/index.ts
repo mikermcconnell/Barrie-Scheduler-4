@@ -5,6 +5,7 @@ import { parseSTREETSCSV } from './parser';
 export { sendDailyReport, testDailyReport, testStaleReportAlert } from './dailyReport';
 export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
+export { developerSupportAccess } from './developerSupportAccess';
 import {
   decodeExcelRequestBody,
   parseIssuanceListingBuffer,

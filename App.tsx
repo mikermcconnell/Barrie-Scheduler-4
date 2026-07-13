@@ -51,7 +51,7 @@ function parseHashView(): View {
 
 
 const AppContent: React.FC = () => {
-  const { user, loading, signOut } = useAuth();
+  const { user, loading, signOut, isGlobalAdmin } = useAuth();
   const { hasTeam } = useTeam();
   const { canAccess, loading: accessLoading } = useWorkspaceAccess();
   const [currentView, setCurrentViewState] = useState<View>(parseHashView);
@@ -67,7 +67,9 @@ const AppContent: React.FC = () => {
     return feature ? canAccess(feature) : true;
   }, [canAccess]);
   const hasAvailableWorkspace = (['ondemand', 'fixed', 'operations', 'parking', 'planning'] as View[]).some(isViewAvailable);
-  const mustCompleteTeamSetup = Boolean(user && (!hasTeam || !hasAvailableWorkspace));
+  const mustCompleteTeamSetup = Boolean(
+    user && !isGlobalAdmin && (!hasTeam || !hasAvailableWorkspace)
+  );
 
   // Wrap navigation to sync URL hash
   const setCurrentView = useCallback((view: View) => {
@@ -203,7 +205,9 @@ const AppContent: React.FC = () => {
         onShowFileManager={() => setShowFileManager(true)}
         onShowTeamManagement={() => setShowTeamManagement(true)}
         onShowAuthModal={() => setShowAuthModal(true)}
-        canShowFileManager={Boolean(user && hasAvailableWorkspace && !mustCompleteTeamSetup)}
+        canShowFileManager={Boolean(
+          user && (isGlobalAdmin || hasAvailableWorkspace) && !mustCompleteTeamSetup
+        )}
       />
 
 

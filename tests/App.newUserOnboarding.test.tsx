@@ -8,6 +8,7 @@ const { authState, teamState } = vi.hoisted(() => ({
     user: { uid: 'new-user', email: 'new@example.com', displayName: 'New User' },
     loading: false,
     signOut: vi.fn(),
+    isGlobalAdmin: false,
   },
   teamState: {
     team: null as any,
@@ -81,6 +82,7 @@ describe('new user onboarding access gate', () => {
     window.location.hash = '';
     authState.user = { uid: 'new-user', email: 'new@example.com', displayName: 'New User' };
     authState.loading = false;
+    authState.isGlobalAdmin = false;
     authState.signOut.mockReset();
     Object.assign(teamState, {
       team: null,
@@ -142,5 +144,17 @@ describe('new user onboarding access gate', () => {
     expect(container.textContent).toContain('Get Started');
     expect(container.textContent).toContain('No workspace access');
     expect(container.textContent).not.toContain('Enter Workspace');
+  });
+
+  it('lets a global developer reach team management without joining a home team', () => {
+    authState.isGlobalAdmin = true;
+
+    flushSync(() => {
+      root.render(<App />);
+    });
+
+    expect(container.textContent).not.toContain('Get Started');
+    expect(container.textContent).not.toContain('Complete team setup to continue');
+    expect(container.textContent).toContain('Files');
   });
 });

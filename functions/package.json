@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "serve": "npm run build && firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions"
+    "deploy": "firebase deploy --only functions",
+    "admin:scheduler": "node scripts/set-scheduler-admin.mjs"
   },
   "engines": {
     "node": "22"

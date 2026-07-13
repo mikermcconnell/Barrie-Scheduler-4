@@ -11,7 +11,7 @@ firebase/
 ├── users/{userId}/
 │   ├── draftSchedules/{draftId}          # Working schedule copies
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
-│   └── files/{fileId}                    # Uploaded file metadata; owner-write, global-admin read for support
+│   └── files/{fileId}                    # Uploaded file metadata; owner-write, scheduler-admin read for support
 │
 ├── teams/{teamId}/
 │   ├── members/{userId}                  # Team membership
@@ -38,6 +38,8 @@ firebase/
 │       └── versions/{versionId}          # Fleet Plan version history
 │
 ├── teamInvites/{inviteCode}              # Invite lookup -> teamId + teamName + default join access
+├── developerSupportSessions/{adminUid}   # One expiring inspect/edit session per scheduler admin
+├── developerSupportAudit/{auditId}       # Append-only support-session start/stop audit
 │
 └── migrations/                           # Data migration tracking
 ```
@@ -158,7 +160,9 @@ interface TeamMember {
 
 Partner agency onboarding uses invite links in the form `?invite=CODE` or `#/join/CODE`. A signed-out user is prompted to sign in; after authentication, the app joins them to the matching team automatically. Invite lookup documents denormalize `defaultMemberAccessLevel` and optional `defaultMemberWorkspaceOverrides` so new members can receive the correct external profile before they are allowed to read the team document.
 
-Global admins can read user-uploaded file metadata and matching `users/{userId}/files/` Storage objects across users for developer support. They cannot write or delete another user's user-scoped file records through the normal client path.
+Scheduler administrators can read user-uploaded file metadata and matching `users/{userId}/files/` Storage objects across users for developer support. They cannot write or delete another user's user-scoped file records. New file records snapshot validated `teamIdAtUpload`, `teamNameAtUpload`, and uploader name/email so Team uploads remains accurate if membership changes; legacy records use a labelled current-profile fallback only when the matching team membership still exists.
+
+`developerSupportSessions/{adminUid}` stores `teamId`, `mode` (`inspect` or `edit`), `reason`, `createdAt`, `updatedAt`, and `expiresAt`. Sessions default to 30 minutes and cannot exceed 60 minutes. Inspect permits team-scoped reads only; edit permits team-scoped reads/writes. `developerSupportAudit` records immutable start/stop events. Only the namespaced Firebase Auth claim `schedulerAdmin: true` can create these records or use All uploads.
 
 ---
 
