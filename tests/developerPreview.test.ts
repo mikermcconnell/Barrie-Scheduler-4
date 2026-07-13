@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { createDeveloperPreviewSession } from '../utils/developerPreview';
+import {
+    createDeveloperPreviewSession,
+    resolveGlobalAdminHomeTeamMember,
+} from '../utils/developerPreview';
 import type { Team } from '../utils/masterScheduleTypes';
 
 const team: Team = {
@@ -17,6 +20,29 @@ const timing = {
 };
 
 describe('developer preview', () => {
+    const homeTeamMember = {
+        id: 'member-1',
+        userId: 'user-1',
+        role: 'member' as const,
+        accessLevel: 'none' as const,
+        workspaceOverrides: { workspaceOperations: false },
+        joinedAt: new Date('2026-01-01T00:00:00.000Z'),
+        displayName: 'Developer',
+        email: 'developer@example.com',
+    };
+
+    it('automatically grants a scheduler administrator internal access on their home team', () => {
+        expect(resolveGlobalAdminHomeTeamMember(homeTeamMember, true)).toMatchObject({
+            accessLevel: 'internal',
+            workspaceOverrides: undefined,
+        });
+    });
+
+    it('does not change ordinary members or invent a team membership', () => {
+        expect(resolveGlobalAdminHomeTeamMember(homeTeamMember, false)).toBe(homeTeamMember);
+        expect(resolveGlobalAdminHomeTeamMember(null, true)).toBeNull();
+    });
+
     it('builds a read-only inspection identity without changing the source team', () => {
         const preview = createDeveloperPreviewSession({
             team,

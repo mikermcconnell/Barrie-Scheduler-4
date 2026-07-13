@@ -13,6 +13,7 @@ import { getDevAuthConfig } from '../../utils/dev/devAuth';
 import { clearPendingInviteCodeFromUrl, getPendingInviteCode } from '../../utils/inviteLinks';
 import {
     createDeveloperPreviewSession,
+    resolveGlobalAdminHomeTeamMember,
     type DeveloperPreviewInput,
     type DeveloperPreviewSession,
 } from '../../utils/developerPreview';
@@ -230,7 +231,8 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
     }, [developerPreview, stopDeveloperPreview]);
 
     const team = developerPreview?.team ?? actualTeam;
-    const teamMember = developerPreview?.teamMember ?? actualTeamMember;
+    const teamMember = developerPreview?.teamMember
+        ?? resolveGlobalAdminHomeTeamMember(actualTeamMember, isGlobalAdmin);
     const teamRole = teamMember?.role ?? actualTeamRole;
 
 

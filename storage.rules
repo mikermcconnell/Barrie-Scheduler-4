@@ -87,7 +87,8 @@ service firebase.storage {
 
     function canAccessWorkspace(teamId, feature) {
       return isTeamMember(teamId) &&
-              (memberWorkspaceOverride(teamId, feature) == true ||
+              (isSchedulerAdmin() ||
+               memberWorkspaceOverride(teamId, feature) == true ||
                (memberWorkspaceOverride(teamId, feature) != false &&
                 workspaceAllowedByProfile(memberAccessLevel(teamId), feature)));
     }

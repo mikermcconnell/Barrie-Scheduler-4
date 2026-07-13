@@ -6,6 +6,14 @@ function readRepoFile(path: string) {
 }
 
 describe('security rules regression checks', () => {
+  it('grants scheduler administrators all workspaces only when they belong to the team', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+    const storageRules = readRepoFile('storage.rules');
+
+    expect(firestoreRules).toMatch(/function canAccessWorkspace\(teamId, feature\) \{[\s\S]*isTeamMember\(teamId\) &&[\s\S]*isSchedulerAdmin\(\)/);
+    expect(storageRules).toMatch(/function canAccessWorkspace\(teamId, feature\) \{[\s\S]*isTeamMember\(teamId\) &&[\s\S]*isSchedulerAdmin\(\)/);
+  });
+
   it('does not use users/{uid}.teamId as a team authorization fallback', () => {
     const firestoreRules = readRepoFile('firestore.rules');
     const storageRules = readRepoFile('storage.rules');

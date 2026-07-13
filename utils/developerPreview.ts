@@ -41,6 +41,23 @@ export interface DeveloperPreviewTiming {
 }
 
 /**
+ * Scheduler administrators automatically receive the internal workspace profile
+ * on their own team. Cross-team access still requires a support session.
+ */
+export function resolveGlobalAdminHomeTeamMember(
+    member: TeamMember | null,
+    isGlobalAdmin: boolean,
+): TeamMember | null {
+    if (!member || !isGlobalAdmin) return member;
+
+    return {
+        ...member,
+        accessLevel: 'internal',
+        workspaceOverrides: undefined,
+    };
+}
+
+/**
  * Builds the effective client identity for a time-limited support session.
  * Inspect mode mirrors the selected profile but is always read-only. Edit mode
  * uses an internal owner-like identity; backend rules remain authoritative.
