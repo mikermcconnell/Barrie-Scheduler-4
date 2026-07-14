@@ -34,7 +34,22 @@ describe('parking department drill-down aggregation', () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ department: 'Transit Administration', totalValue: 15 });
+    // One use is one matching raw observation, even when observations group
+    // into the same department rather than representing unique plates/codes.
+    expect(rows[0].rows).toHaveLength(2);
     expect(rows[0].rows.map(row => row.id)).toEqual(['newer', 'older']);
+  });
+
+  it('counts each matching raw row as a use, including repeated plates and codes', () => {
+    const rows = buildParkingDepartmentDrilldownRows([
+      rawRow({ id: 'first', plate: 'SAME1', discountCode: 'TA2026', discountAmount: 4 }),
+      rawRow({ id: 'second', plate: 'SAME1', discountCode: 'TA2026', discountAmount: 6 }),
+      rawRow({ id: 'third', plate: 'SAME1', discountCode: 'TA2026', discountAmount: 8 }),
+    ], DEFAULT_PARKING_SETTINGS, '2026-01');
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].totalValue).toBe(18);
+    expect(rows[0].rows).toHaveLength(3);
   });
 
   it('respects ignore data, excludes parking-pass codes, keeps Unmapped, and scopes the month', () => {

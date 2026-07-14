@@ -50,7 +50,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 import { MapBase } from '../shared';
-import { exportParkingWorkbook } from '../../utils/parking/parkingExport';
+import {
+  exportParkingRawObservationsExcel,
+  exportParkingRawObservationsPdf,
+  exportParkingWorkbook,
+} from '../../utils/parking/parkingExport';
 import { parseParkingFile } from '../../utils/parking/parkingParser';
 import {
   buildParkingMonthlyUtilizationTrend,
@@ -99,9 +103,12 @@ import {
   UNCATEGORIZED_PARKING_CATEGORY_ID,
 } from '../../utils/parking/parkingCategories';
 import {
-  getParkingData,
-  getParkingRevenueData,
-  getParkingSettings,
+  buildParkingObservationDrilldown,
+  filterParkingObservationRows,
+  type ParkingObservationScope,
+} from '../../utils/parking/parkingObservations';
+import {
+  loadParkingWorkspaceData,
   rebuildParkingSummaryWithRules,
   saveParkingMonthsData,
   saveParkingRevenueDatasets,
@@ -1133,42 +1140,49 @@ function buildDisplaySummary(summary: ParkingSummary | null, settings: ParkingSe
   return rebuildParkingSummaryWithRules(summary, summary.metadata.importedBy, summary.metadata.storagePath, settings);
 }
 
-interface AnnualSummaryRow {
+export interface AnnualSummaryRow {
   codeLabel: string;
   department: string;
   codeFamilyKey: string;
   monthlyValues: number[];
+  monthlyUseCounts: number[];
   total: number;
+  totalUseCount: number;
   percent: number | null;
 }
 
-function buildAnnualSummaryRows(months: ParkingMonthlyDataset[], year: string): AnnualSummaryRow[] {
+function buildAnnualSummaryRows(months: ParkingMonthlyDataset[], year: string, settings: ParkingSettings): AnnualSummaryRow[] {
   const groups = new Map<string, {
     codeFamilyKey: string;
     department: string;
     monthlyValues: number[];
+    monthlyUseCounts: number[];
     codes: Set<string>;
   }>();
 
-  for (const month of months.filter(entry => entry.month.startsWith(`${year}-`))) {
-    for (const row of month.rows) {
-      const codeFamilyKey = row.codeFamilyKey || 'OTHER';
-      const department = row.department || row.description || 'Unmapped';
-      if (isNonDepartmentParkingCode(codeFamilyKey, department)) continue;
-      const key = `${codeFamilyKey}|${department}`;
-      const group = groups.get(key) || {
-        codeFamilyKey,
-        department,
-        monthlyValues: Array(12).fill(0) as number[],
-        codes: new Set<string>(),
-      };
-      const monthIndex = Number(row.startMonth.slice(5, 7)) - 1;
-      if (monthIndex >= 0 && monthIndex < 12) {
-        group.monthlyValues[monthIndex] += row.discountAmount;
-      }
-      if (row.discountCode) group.codes.add(row.discountCode);
-      groups.set(key, group);
+  const observedRows = filterParkingObservationRows(months, settings, {
+    year,
+    label: `All Observed Values · ${year}`,
+  });
+  for (const row of observedRows) {
+    const codeFamilyKey = row.codeFamilyKey || 'OTHER';
+    const department = row.department || row.description || 'Unmapped';
+    if (isNonDepartmentParkingCode(codeFamilyKey, department)) continue;
+    const key = `${codeFamilyKey}|${department}`;
+    const group = groups.get(key) || {
+      codeFamilyKey,
+      department,
+      monthlyValues: Array(12).fill(0) as number[],
+      monthlyUseCounts: Array(12).fill(0) as number[],
+      codes: new Set<string>(),
+    };
+    const monthIndex = Number(row.startMonth.slice(5, 7)) - 1;
+    if (monthIndex >= 0 && monthIndex < 12) {
+      group.monthlyValues[monthIndex] += row.discountAmount;
+      group.monthlyUseCounts[monthIndex] += 1;
     }
+    if (row.discountCode) group.codes.add(row.discountCode);
+    groups.set(key, group);
   }
 
   const annualTotal = [...groups.values()].reduce(
@@ -1179,13 +1193,16 @@ function buildAnnualSummaryRows(months: ParkingMonthlyDataset[], year: string): 
 
   return [...groups.values()].map(group => {
     const total = group.monthlyValues.reduce((sum, value) => sum + value, 0);
+    const totalUseCount = group.monthlyUseCounts.reduce((sum, count) => sum + count, 0);
     const yearCode = [...group.codes].find(code => code.includes(year)) || [...group.codes][0] || `${group.codeFamilyKey}${year}`;
     return {
       codeLabel: yearCode,
       department: group.department,
       codeFamilyKey: group.codeFamilyKey,
       monthlyValues: group.monthlyValues.map(value => Math.round(value * 100) / 100),
+      monthlyUseCounts: group.monthlyUseCounts,
       total: Math.round(total * 100) / 100,
+      totalUseCount,
       percent: annualTotal > 0 ? total / annualTotal : null,
     };
   }).sort((a, b) => (
@@ -1194,9 +1211,17 @@ function buildAnnualSummaryRows(months: ParkingMonthlyDataset[], year: string): 
   ));
 }
 
-const AnnualDepartmentMatrixTable: React.FC<{ rows: AnnualSummaryRow[]; codeFamilies: ParkingCodeFamilyMapping[]; stickyHeader?: boolean }> = ({ rows, codeFamilies, stickyHeader = false }) => {
+export const AnnualDepartmentMatrixTable: React.FC<{
+  rows: AnnualSummaryRow[];
+  codeFamilies: ParkingCodeFamilyMapping[];
+  year: string;
+  stickyHeader?: boolean;
+  onOpenObservations: (scope: ParkingObservationScope) => void;
+}> = ({ rows, codeFamilies, year, stickyHeader = false, onOpenObservations }) => {
   const annualTotal = rows.reduce((sum, row) => sum + row.total, 0);
   const monthlyTotals = MONTHS.map((_, index) => rows.reduce((sum, row) => sum + row.monthlyValues[index], 0));
+  const annualUseCount = rows.reduce((sum, row) => sum + row.totalUseCount, 0);
+  const monthlyUseCounts = MONTHS.map((_, index) => rows.reduce((sum, row) => sum + row.monthlyUseCounts[index], 0));
 
   return (
     <table className="min-w-[1320px] w-full border-separate border-spacing-0 text-left text-xs">
@@ -1230,27 +1255,85 @@ const AnnualDepartmentMatrixTable: React.FC<{ rows: AnnualSummaryRow[]; codeFami
             <td className="sticky left-0 z-10 border-b border-gray-100 bg-white px-3 py-2.5 font-extrabold text-gray-800">{month.label}</td>
             {rows.map(row => {
               const value = row.monthlyValues[monthIndex] || 0;
+              const useCount = row.monthlyUseCounts[monthIndex] || 0;
               const color = getCodeFamilyColor(row.codeFamilyKey, row.department, codeFamilies);
               return (
                 <td
                   key={`${month.value}-${row.codeFamilyKey}-${row.department}`}
                   className="border-b border-gray-100 px-2 py-2.5 text-right font-extrabold text-gray-900"
-                  style={value ? { backgroundColor: hexToRgba(color.hex, 0.14), borderLeft: `3px solid ${color.hex}` } : undefined}
+                  style={useCount > 0 ? { backgroundColor: hexToRgba(color.hex, 0.14), borderLeft: `3px solid ${color.hex}` } : undefined}
                 >
-                  {value ? money(value) : <span className="font-bold text-gray-400">—</span>}
+                  {useCount > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenObservations({
+                        year,
+                        month: `${year}-${month.value}`,
+                        codeFamilyKey: row.codeFamilyKey,
+                        department: row.department,
+                        label: `${row.department} · ${month.label} ${year}`,
+                      })}
+                      className="rounded-lg px-2 py-1 text-blue-700 hover:bg-white/70 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                      aria-label={`View raw observations for ${row.department}, ${month.label} ${year}, ${money(value)}, ${useCount.toLocaleString()} uses`}
+                    >
+                      <span className="block underline decoration-blue-200 underline-offset-4 hover:decoration-blue-500">{money(value)}</span>
+                      <span className="mt-0.5 block text-[10px] font-bold text-gray-500">{useCount.toLocaleString()} {useCount === 1 ? 'use' : 'uses'}</span>
+                    </button>
+                  ) : <span className="font-bold text-gray-400">—</span>}
                 </td>
               );
             })}
-            <td className="sticky right-0 border-b border-gray-100 bg-white px-3 py-2.5 text-right font-black text-gray-950 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.55)]">{monthlyTotals[monthIndex] ? money(monthlyTotals[monthIndex]) : '—'}</td>
+            <td className="sticky right-0 border-b border-gray-100 bg-white px-3 py-2.5 text-right font-black text-gray-950 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.55)]">
+              {monthlyUseCounts[monthIndex] > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenObservations({
+                    year,
+                    month: `${year}-${month.value}`,
+                    label: `All Departments · ${month.label} ${year}`,
+                  })}
+                  className="rounded-lg px-2 py-1 text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                  aria-label={`View all raw observations for ${month.label} ${year}, ${money(monthlyTotals[monthIndex])}, ${monthlyUseCounts[monthIndex].toLocaleString()} uses`}
+                >
+                  <span className="block underline decoration-blue-200 underline-offset-4 hover:decoration-blue-500">{money(monthlyTotals[monthIndex])}</span>
+                  <span className="mt-0.5 block text-[10px] font-bold text-gray-500">{monthlyUseCounts[monthIndex].toLocaleString()} {monthlyUseCounts[monthIndex] === 1 ? 'use' : 'uses'}</span>
+                </button>
+              ) : '—'}
+            </td>
           </tr>
         ))}
         {rows.length > 0 ? (
           <tr className="sticky bottom-0 z-10 bg-gray-950 text-white">
             <td className="sticky left-0 bg-gray-950 px-3 py-3 font-black">Annual total</td>
             {rows.map(row => (
-              <td key={`total-${row.codeFamilyKey}-${row.department}`} className="px-2 py-3 text-right font-black">{money(row.total)}</td>
+              <td key={`total-${row.codeFamilyKey}-${row.department}`} className="px-2 py-3 text-right font-black">
+                <button
+                  type="button"
+                  onClick={() => onOpenObservations({
+                    year,
+                    codeFamilyKey: row.codeFamilyKey,
+                    department: row.department,
+                    label: `${row.department} · ${year} Annual Total`,
+                  })}
+                  className="rounded-lg px-2 py-1 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-950"
+                  aria-label={`View annual raw observations for ${row.department}, ${money(row.total)}, ${row.totalUseCount.toLocaleString()} uses`}
+                >
+                  <span className="block underline decoration-white/40 underline-offset-4 hover:decoration-white">{money(row.total)}</span>
+                  <span className="mt-0.5 block text-[10px] font-bold text-gray-300">{row.totalUseCount.toLocaleString()} {row.totalUseCount === 1 ? 'use' : 'uses'}</span>
+                </button>
+              </td>
             ))}
-            <td className="sticky right-0 bg-gray-950 px-3 py-3 text-right font-black">{money(annualTotal)}</td>
+            <td className="sticky right-0 bg-gray-950 px-3 py-3 text-right font-black">
+              <button
+                type="button"
+                onClick={() => onOpenObservations({ year, label: `All Observed Values · ${year}` })}
+                className="rounded-lg px-2 py-1 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-950"
+                aria-label={`View all raw observations for ${year}, ${money(annualTotal)}, ${annualUseCount.toLocaleString()} uses`}
+              >
+                <span className="block underline decoration-white/40 underline-offset-4 hover:decoration-white">{money(annualTotal)}</span>
+                <span className="mt-0.5 block text-[10px] font-bold text-gray-300">{annualUseCount.toLocaleString()} {annualUseCount === 1 ? 'use' : 'uses'}</span>
+              </button>
+            </td>
           </tr>
         ) : (
           <tr><td colSpan={3} className="py-8 text-center text-gray-400">No annual summary data for this year.</td></tr>
@@ -1339,13 +1422,13 @@ const AnnualDepartmentTotalsList: React.FC<{ rows: AnnualSummaryRow[]; codeFamil
 
 const AnnualDepartmentSummaryCard: React.FC<{ rows: AnnualSummaryRow[]; onOpen: () => void }> = ({ rows, onOpen }) => {
   const annualTotal = rows.reduce((sum, row) => sum + row.total, 0);
-  const activeMonths = MONTHS.filter((_, index) => rows.some(row => row.monthlyValues[index] > 0)).length;
+  const activeMonths = MONTHS.filter((_, index) => rows.some(row => row.monthlyUseCounts[index] > 0)).length;
 
   return (
     <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <h3 className="text-base font-extrabold text-gray-950">Annual department summary</h3>
+          <h3 className="text-base font-extrabold text-gray-950">Annual Department Summary</h3>
           <p className="mt-1 text-xs font-semibold text-gray-500">Reduced view. Open full screen for the matrix and department rankings.</p>
         </div>
         <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[420px]">
@@ -1397,6 +1480,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<ParkingSettings>(DEFAULT_PARKING_SETTINGS);
   const settingsRef = useRef<ParkingSettings>(DEFAULT_PARKING_SETTINGS);
+  const loadedTeamIdRef = useRef<string | null>(null);
   const [summary, setSummary] = useState<ParkingSummary | null>(null);
   const [revenueSummary, setRevenueSummary] = useState<ParkingRevenueSummary | null>(null);
   const [previewRevenueDatasets, setPreviewRevenueDatasets] = useState<ParkingRevenueDataset[]>([]);
@@ -1435,13 +1519,17 @@ export const ParkingWorkspace: React.FC = () => {
   const [annualFullscreen, setAnnualFullscreen] = useState(false);
   const [expandedPlateKey, setExpandedPlateKey] = useState('');
   const [selectedDrilldownDepartment, setSelectedDrilldownDepartment] = useState('');
+  const [selectedAnnualObservationScope, setSelectedAnnualObservationScope] = useState<ParkingObservationScope | null>(null);
   const [departmentManagerOpen, setDepartmentManagerOpen] = useState(false);
   const [departmentSearch, setDepartmentSearch] = useState('');
   const [departmentCodeYear, setDepartmentCodeYear] = useState(new Date().getFullYear());
   const [departmentLegendSort, setDepartmentLegendSort] = useState(DEFAULT_DEPARTMENT_LEGEND_SORT);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
-  const displaySummary = useMemo(() => buildDisplaySummary(summary, settings), [settings, summary]);
+  const displaySummary = useMemo(
+    () => activeWorkspace === 'dashboard' ? null : buildDisplaySummary(summary, settings),
+    [activeWorkspace, settings, summary],
+  );
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -1483,7 +1571,10 @@ export const ParkingWorkspace: React.FC = () => {
   const selectedPreviewDataset = previewDatasets.find(month => month.month === selectedMonth) ?? null;
   const isReadOnlyPreview = developerPreview?.readOnly === true;
   const canEditParking = !isReadOnlyPreview && (isGlobalAdmin || canManageTeam || canAccessWorkspaceFeature('workspaceParking', teamMember));
-  const annualSummaryRows = useMemo(() => buildAnnualSummaryRows(reviewMonths, selectedYear), [reviewMonths, selectedYear]);
+  const annualSummaryRows = useMemo(
+    () => buildAnnualSummaryRows(reviewMonths, selectedYear, settings),
+    [reviewMonths, selectedYear, settings],
+  );
   const selectedMonthLabel = MONTHS.find(month => month.value === selectedMonth.slice(5, 7))?.label ?? selectedMonth;
   const monthlyFlaggedPlates = useMemo(() => {
     if (!selectedMonth) return [];
@@ -1510,7 +1601,24 @@ export const ParkingWorkspace: React.FC = () => {
   const selectedDepartmentDrilldown = departmentDrilldownRows.find(
     row => row.department === selectedDrilldownDepartment,
   ) ?? null;
+  const selectedAnnualObservationDrilldown = useMemo(
+    () => selectedAnnualObservationScope
+      ? buildParkingObservationDrilldown(reviewMonths, settings, selectedAnnualObservationScope)
+      : null,
+    [reviewMonths, selectedAnnualObservationScope, settings],
+  );
+  const activeObservationDrilldown = useMemo(
+    () => selectedAnnualObservationDrilldown || (selectedDepartmentDrilldown ? {
+      year: selectedYear,
+      month: selectedMonth,
+      label: `${selectedDepartmentDrilldown.department} · ${selectedMonthLabel} ${selectedYear}`,
+      rows: selectedDepartmentDrilldown.rows,
+      totalValue: selectedDepartmentDrilldown.totalValue,
+    } : null),
+    [selectedAnnualObservationDrilldown, selectedDepartmentDrilldown, selectedMonth, selectedMonthLabel, selectedYear],
+  );
   const displayRevenueSummary = useMemo(() => {
+    if (activeWorkspace === 'dashboard') return null;
     if (previewRevenueDatasets.length === 0) return revenueSummary;
     return buildParkingRevenueReplacementSummary(
       revenueSummary,
@@ -1518,7 +1626,7 @@ export const ParkingWorkspace: React.FC = () => {
       user?.uid || 'preview',
       revenueSummary?.metadata.storagePath || 'preview-parking-revenue.json',
     );
-  }, [previewRevenueDatasets, revenueSummary, user?.uid]);
+  }, [activeWorkspace, previewRevenueDatasets, revenueSummary, user?.uid]);
   const revenueMonths = useMemo(() => getParkingRevenueAvailableMonths(displayRevenueSummary), [displayRevenueSummary]);
   const revenueYears = useMemo(() => [...new Set(revenueMonths.map(month => month.slice(0, 4)))].sort((a, b) => b.localeCompare(a)), [revenueMonths]);
   const revenueMonthsForSelectedYear = useMemo(() => (
@@ -1862,30 +1970,51 @@ export const ParkingWorkspace: React.FC = () => {
     return [...new Set(warnings)];
   }, [settings.codeFamilies]);
 
-  const load = useCallback(async () => {
-    if (!team) return;
-    setLoading(true);
-    try {
-      const [loadedSettings, loadedData, loadedRevenueData] = await Promise.all([
-        getParkingSettings(team.id),
-        getParkingData(team.id),
-        getParkingRevenueData(team.id),
-      ]);
-      settingsRef.current = loadedSettings;
-      setSettings(loadedSettings);
-      setDepartmentLegendSort(loadedSettings.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
-      setSummary(loadedData);
-      setRevenueSummary(loadedRevenueData);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Could not load Parking data.');
-    } finally {
-      setLoading(false);
-    }
-  }, [team]);
-
   useEffect(() => {
-    void load();
-  }, [load]);
+    const teamId = team?.id;
+    if (!teamId) {
+      loadedTeamIdRef.current = null;
+      settingsRef.current = DEFAULT_PARKING_SETTINGS;
+      setSettings(DEFAULT_PARKING_SETTINGS);
+      setDepartmentLegendSort(DEFAULT_DEPARTMENT_LEGEND_SORT);
+      setSummary(null);
+      setRevenueSummary(null);
+      setLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    settingsRef.current = DEFAULT_PARKING_SETTINGS;
+    setSettings(DEFAULT_PARKING_SETTINGS);
+    setDepartmentLegendSort(DEFAULT_DEPARTMENT_LEGEND_SORT);
+    setSummary(null);
+    setRevenueSummary(null);
+    setLoading(true);
+    setErrorMessage('');
+    loadParkingWorkspaceData(teamId)
+      .then(({ settings: loadedSettings, summary: loadedData, revenueSummary: loadedRevenueData }) => {
+        if (cancelled) return;
+        loadedTeamIdRef.current = teamId;
+        settingsRef.current = loadedSettings;
+        setSettings(loadedSettings);
+        setDepartmentLegendSort(loadedSettings.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
+        setSummary(loadedData);
+        setRevenueSummary(loadedRevenueData);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          loadedTeamIdRef.current = teamId;
+          setErrorMessage(error instanceof Error ? error.message : 'Could not load Parking data.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [team?.id]);
 
   useEffect(() => {
     if (!team?.id) {
@@ -1998,13 +2127,16 @@ export const ParkingWorkspace: React.FC = () => {
   }, [selectedMonth]);
 
   useEffect(() => {
-    if (!selectedDepartmentDrilldown) return undefined;
+    if (!activeObservationDrilldown) return undefined;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedDrilldownDepartment('');
+      if (event.key === 'Escape') {
+        setSelectedDrilldownDepartment('');
+        setSelectedAnnualObservationScope(null);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedDepartmentDrilldown]);
+  }, [activeObservationDrilldown]);
 
   const parseFiles = useCallback(async (files: File[], nextSettings = settings) => {
     if (!user || files.length === 0) return;
@@ -2402,7 +2534,7 @@ export const ParkingWorkspace: React.FC = () => {
                     <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-blue-700">
                       <Wand2 size={14} /> Department code manager
                     </div>
-                    <h2 className="mt-3 text-2xl font-extrabold text-gray-950">Pick a year and edit each department</h2>
+                    <h2 className="mt-3 text-2xl font-extrabold text-gray-950">Pick a Year and Edit Each Department</h2>
                     <p className="mt-1 max-w-3xl text-sm font-medium text-gray-500">
                       Change the year below and the code shown on every department updates automatically.
                     </p>
@@ -2569,7 +2701,7 @@ export const ParkingWorkspace: React.FC = () => {
                         </div>
 
                         <details className="mt-3 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2">
-                          <summary className="cursor-pointer text-xs font-extrabold text-gray-500">Advanced: extra matching codes</summary>
+                          <summary className="cursor-pointer text-xs font-extrabold text-gray-500">Advanced: Extra Matching Codes</summary>
                           <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(240px,1fr)_minmax(220px,1fr)] lg:items-end">
                             <div>
                               <div className="mb-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Also match these codes in {departmentCodeYear}</div>
@@ -2607,7 +2739,7 @@ export const ParkingWorkspace: React.FC = () => {
           <div className="fixed inset-0 z-50 bg-white p-4 md:p-6" role="dialog" aria-modal="true" aria-label="Annual department summary full screen">
             <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 md:flex-row md:items-center md:justify-between">
               <div>
-                <h2 className="text-2xl font-extrabold text-gray-950">Annual department summary</h2>
+                <h2 className="text-2xl font-extrabold text-gray-950">Annual Department Summary</h2>
                 <p className="mt-1 text-sm font-semibold text-gray-500">
                   {selectedYear || 'No year selected'} · {annualSummaryRows.length.toLocaleString()} departments
                 </p>
@@ -2623,10 +2755,16 @@ export const ParkingWorkspace: React.FC = () => {
             <div className="mt-4 h-[calc(100vh-120px)] overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
               <div className="grid h-full gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
                 <div className="min-h-0 overflow-auto rounded-2xl border border-gray-200 bg-white">
-                  <AnnualDepartmentMatrixTable rows={annualSummaryRows} codeFamilies={settings.codeFamilies} stickyHeader />
+                  <AnnualDepartmentMatrixTable
+                    rows={annualSummaryRows}
+                    codeFamilies={settings.codeFamilies}
+                    year={selectedYear}
+                    stickyHeader
+                    onOpenObservations={setSelectedAnnualObservationScope}
+                  />
                 </div>
                 <div className="min-h-0 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4">
-                  <h3 className="text-sm font-black text-gray-950">Annual totals by department</h3>
+                  <h3 className="text-sm font-black text-gray-950">Annual Totals by Department</h3>
                   <p className="mt-1 text-xs font-semibold text-gray-400">Ranked share of selected year total.</p>
                   <div className="mt-4">
                     <AnnualDepartmentTotalsList rows={annualSummaryRows} codeFamilies={settings.codeFamilies} />
@@ -2637,24 +2775,49 @@ export const ParkingWorkspace: React.FC = () => {
           </div>
   ) : null;
 
-  const departmentDrilldownModal = selectedDepartmentDrilldown ? (
-    <div className="fixed inset-0 z-50 bg-gray-950/50 p-3 md:p-6" role="dialog" aria-modal="true" aria-labelledby="parking-department-drilldown-title">
+  const departmentDrilldownModal = activeObservationDrilldown ? (
+    <div className="fixed inset-0 z-[60] bg-gray-950/50 p-3 md:p-6" role="dialog" aria-modal="true" aria-labelledby="parking-department-drilldown-title">
       <div className="mx-auto flex h-full max-w-7xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl">
         <div className="flex flex-col gap-4 border-b border-gray-200 p-5 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="text-xs font-extrabold uppercase tracking-wide text-blue-600">Raw observations</div>
-            <h2 id="parking-department-drilldown-title" className="mt-1 text-2xl font-extrabold text-gray-950">{selectedDepartmentDrilldown.department}</h2>
+            <h2 id="parking-department-drilldown-title" className="mt-1 text-2xl font-extrabold text-gray-950">{activeObservationDrilldown.label}</h2>
             <p className="mt-1 text-sm font-semibold text-gray-500">
-              {selectedMonthLabel} {selectedYear} · {selectedDepartmentDrilldown.rows.length.toLocaleString()} observations · {money(selectedDepartmentDrilldown.totalValue)} total
+              {activeObservationDrilldown.rows.length.toLocaleString()} {activeObservationDrilldown.rows.length === 1 ? 'use' : 'uses'} · {money(activeObservationDrilldown.totalValue)} total value
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setSelectedDrilldownDepartment('')}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-gray-950 px-4 py-2 text-sm font-extrabold text-white hover:bg-gray-800"
-          >
-            <X size={16} /> Close
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => exportParkingRawObservationsExcel(activeObservationDrilldown.rows, {
+                title: activeObservationDrilldown.label,
+                fileName: `parking-raw-observations-${activeObservationDrilldown.month || activeObservationDrilldown.year}.xlsx`,
+              })}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-extrabold text-gray-700 hover:bg-gray-50"
+            >
+              <Download size={16} /> Excel
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportParkingRawObservationsPdf(activeObservationDrilldown.rows, {
+                title: activeObservationDrilldown.label,
+                fileName: `parking-raw-observations-${activeObservationDrilldown.month || activeObservationDrilldown.year}.pdf`,
+              })}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-extrabold text-gray-700 hover:bg-gray-50"
+            >
+              <Download size={16} /> PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedDrilldownDepartment('');
+                setSelectedAnnualObservationScope(null);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-gray-950 px-4 py-2 text-sm font-extrabold text-white hover:bg-gray-800"
+            >
+              <X size={16} /> Close
+            </button>
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-auto p-5">
           <table className="min-w-[1120px] w-full text-left text-sm">
@@ -2671,7 +2834,7 @@ export const ParkingWorkspace: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {selectedDepartmentDrilldown.rows.map(row => (
+              {activeObservationDrilldown.rows.map(row => (
                 <tr key={row.id} className="align-top hover:bg-gray-50/80">
                   <td className="whitespace-nowrap px-3 py-3 font-extrabold text-gray-950">{row.plate || '(missing)'}</td>
                   <td className="whitespace-nowrap px-3 py-3 font-semibold text-gray-700">{row.startRaw || `${row.startDate} ${minutesToTime(row.startMinutes)}` || '—'}</td>
@@ -2694,7 +2857,7 @@ export const ParkingWorkspace: React.FC = () => {
     return <div className="p-8 text-sm text-gray-500">Sign in and join a team to use Parking.</div>;
   }
 
-  if (loading) {
+  if ((loading || loadedTeamIdRef.current !== team.id) && activeWorkspace !== 'dashboard') {
     return <div className="flex h-full items-center justify-center text-gray-500"><Loader2 className="mr-2 animate-spin" /> Loading Parking...</div>;
   }
 
@@ -3162,7 +3325,7 @@ export const ParkingWorkspace: React.FC = () => {
                   <div className="inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-violet-700">
                     <BarChart3 size={14} /> Analysis dashboard
                   </div>
-                  <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">Parking lot data analysis</h2>
+                  <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">Parking Lot Data Analysis</h2>
                   <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
                     Chart-led view for revenue, demand timing, top lots, and space productivity. Use the views below to reduce the amount of data on screen.
                   </p>
@@ -3243,18 +3406,18 @@ export const ParkingWorkspace: React.FC = () => {
                 <div className="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="grid gap-4 xl:grid-cols-2">
                     <ParkingChartCard
-                      title={selectedRevenueMonth === 'all' ? 'Revenue trend' : 'Daily revenue trend'}
+                      title={selectedRevenueMonth === 'all' ? 'Revenue Trend' : 'Daily Revenue Trend'}
                       subtitle="The main movement line for the current filter."
                     >
                       <TrendAreaChart data={selectedRevenueMonth === 'all' ? parkingPlannerAnalysis.monthlyTrend : parkingPlannerAnalysis.dailyTrend} />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Hourly demand profile" subtitle="Shows when paid activity concentrates during the day.">
+                    <ParkingChartCard title="Hourly Demand Profile" subtitle="Shows when paid activity concentrates during the day.">
                       <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Top lots by revenue" subtitle="Highest-value parking locations under the current filters." tall>
+                    <ParkingChartCard title="Top Lots by Revenue" subtitle="Highest-value parking locations under the current filters." tall>
                       <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare lots." />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Capacity opportunity" subtitle="Revenue per space compared with estimated utilization." tall>
+                    <ParkingChartCard title="Capacity Opportunity" subtitle="Revenue per space compared with estimated utilization." tall>
                       <CapacityOpportunityChart data={parkingPlannerAnalysis.capacityRows} />
                     </ParkingChartCard>
                   </div>
@@ -3264,7 +3427,7 @@ export const ParkingWorkspace: React.FC = () => {
                     <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center gap-2">
                         <CheckCircle2 className="text-emerald-600" size={18} />
-                        <h3 className="font-black text-slate-950">What to look at next</h3>
+                        <h3 className="font-black text-slate-950">What to Look at Next</h3>
                       </div>
                       <div className="space-y-2">
                         {parkingPlannerAnalysis.insights.slice(0, 4).map(insight => (
@@ -3279,7 +3442,7 @@ export const ParkingWorkspace: React.FC = () => {
                         ) : null}
                       </div>
                     </section>
-                    <ParkingChartCard title="Payment mix" subtitle="HotSpot app revenue compared with QR revenue.">
+                    <ParkingChartCard title="Payment Mix" subtitle="HotSpot app revenue compared with QR revenue.">
                       <SourceMixChart data={parkingPlannerAnalysis.sourceMix} />
                     </ParkingChartCard>
                   </div>
@@ -3313,20 +3476,20 @@ export const ParkingWorkspace: React.FC = () => {
                   <div className="grid gap-4 border-t border-slate-100 bg-slate-50/70 p-4 xl:grid-cols-3">
                     <div className="xl:col-span-3">
                       <ParkingChartCard
-                        title="Total monthly revenue"
+                        title="Total Monthly Revenue"
                         subtitle="This total matches the MoM card above. The day-type charts below show averages per active day and can move differently."
                         tall
                       >
                         <TrendAreaChart data={parkingTrendOverview.monthlyRevenueTrend} color="#059669" />
                       </ParkingChartCard>
                     </div>
-                    <ParkingChartCard title="Average weekday revenue" subtitle="Average revenue per active weekday, not the monthly total.">
+                    <ParkingChartCard title="Average Weekday Revenue" subtitle="Average revenue per active weekday, not the monthly total.">
                       <TrendAreaChart data={parkingTrendOverview.weekdayTrend} color="#2563EB" />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Average Saturday revenue" subtitle="Average revenue per active Saturday, not the monthly total.">
+                    <ParkingChartCard title="Average Saturday Revenue" subtitle="Average revenue per active Saturday, not the monthly total.">
                       <TrendAreaChart data={parkingTrendOverview.saturdayTrend} color="#7C3AED" />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Average Sunday revenue" subtitle="Average revenue per active Sunday, not the monthly total.">
+                    <ParkingChartCard title="Average Sunday Revenue" subtitle="Average revenue per active Sunday, not the monthly total.">
                       <TrendAreaChart data={parkingTrendOverview.sundayTrend} color="#EA580C" />
                     </ParkingChartCard>
                   </div>
@@ -3342,11 +3505,11 @@ export const ParkingWorkspace: React.FC = () => {
 
               {parkingAnalysisView === 'lots' ? (
                 <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                  <ParkingChartCard title="Top lots by revenue" subtitle="Quick comparison of the highest-value parking locations." tall>
+                  <ParkingChartCard title="Top Lots by Revenue" subtitle="Quick comparison of the highest-value parking locations." tall>
                     <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare lots." />
                   </ParkingChartCard>
                   <ParkingChartCard
-                    title="Category comparison"
+                    title="Category Comparison"
                     subtitle={categoryComparisonMetric === 'revenuePerSpace' || categoryComparisonMetric === 'utilizationPercent'
                       ? `${categoryComparisonMetricConfig.label} uses matched, known space counts.`
                       : `${categoryComparisonMetricConfig.label} by lot category for the current filters.`}
@@ -3414,10 +3577,10 @@ export const ParkingWorkspace: React.FC = () => {
 
               {parkingAnalysisView === 'time' ? (
                 <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-                  <ParkingChartCard title="Hourly demand profile" subtitle="Paid activity by hour, spread across session duration." tall>
+                  <ParkingChartCard title="Hourly Demand Profile" subtitle="Paid activity by hour, spread across session duration." tall>
                     <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
                   </ParkingChartCard>
-                  <ParkingChartCard title="Payment source mix" subtitle="App compared with QR for the current filters." tall>
+                  <ParkingChartCard title="Payment Source Mix" subtitle="App compared with QR for the current filters." tall>
                     <SourceMixChart data={parkingPlannerAnalysis.sourceMix} />
                   </ParkingChartCard>
                   <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
@@ -3442,10 +3605,10 @@ export const ParkingWorkspace: React.FC = () => {
               {parkingAnalysisView === 'capacity' ? (
                 <div className="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="grid gap-4 xl:grid-cols-2">
-                    <ParkingChartCard title="Capacity opportunity" subtitle="Each dot is a known-space lot. Bigger dots have more sessions." tall>
+                    <ParkingChartCard title="Capacity Opportunity" subtitle="Each dot is a known-space lot. Bigger dots have more sessions." tall>
                       <CapacityOpportunityChart data={parkingPlannerAnalysis.capacityRows} />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Revenue per known space" subtitle="Lots ranked by paid revenue per matched space." tall>
+                    <ParkingChartCard title="Revenue per Known Space" subtitle="Lots ranked by paid revenue per matched space." tall>
                       <TopLotsChart
                         data={parkingPlannerAnalysis.capacityRows}
                         metric="revenuePerSpace"
@@ -3455,7 +3618,7 @@ export const ParkingWorkspace: React.FC = () => {
                       />
                     </ParkingChartCard>
                     <div className="xl:col-span-2">
-                      <ParkingChartCard title="Estimated utilization by category" subtitle="Paid parking minutes divided by matched known spaces and active filtered hours." tall>
+                      <ParkingChartCard title="Estimated Utilization by Category" subtitle="Paid parking minutes divided by matched known spaces and active filtered hours." tall>
                         <TopLotsChart
                           data={parkingPlannerAnalysis.categoryComparisonRows}
                           metric="utilizationPercent"
@@ -3467,7 +3630,7 @@ export const ParkingWorkspace: React.FC = () => {
                     </div>
                     <div className="xl:col-span-2">
                       <ParkingChartCard
-                        title={selectedTrendLocation ? 'Selected-lot utilization trend' : selectedRevenueCategoryLabel ? `${selectedRevenueCategoryLabel} utilization trend` : 'Utilization trend'}
+                        title={selectedTrendLocation ? 'Selected-Lot Utilization Trend' : selectedRevenueCategoryLabel ? `${selectedRevenueCategoryLabel} Utilization Trend` : 'Utilization Trend'}
                         subtitle="Monthly estimated occupancy using matched known spaces, active imported days, and the selected hour window."
                         tall
                       >
@@ -3477,7 +3640,7 @@ export const ParkingWorkspace: React.FC = () => {
                   </div>
                   <section className="rounded-3xl border border-violet-100 bg-violet-50 p-4 shadow-sm">
                     <div className="text-xs font-black uppercase tracking-wide text-violet-600">Capacity/utilization</div>
-                    <h3 className="mt-1 font-black text-violet-950">Highest space productivity</h3>
+                    <h3 className="mt-1 font-black text-violet-950">Highest Space Productivity</h3>
                     <div className="mt-3 space-y-2">
                       {parkingPlannerAnalysis.capacityRows.slice(0, 8).map(row => (
                         <div key={row.key} className="rounded-2xl bg-white p-3">
@@ -3516,16 +3679,16 @@ export const ParkingWorkspace: React.FC = () => {
                     </div>
                   </div>
                   <div className="grid gap-4 xl:grid-cols-3">
-                    <ParkingChartCard title="Selected-lot hourly profile" subtitle="Paid activity by hour for this lot.">
+                    <ParkingChartCard title="Selected-Lot Hourly Profile" subtitle="Paid activity by hour for this lot.">
                       <HourlyRevenueChart data={parkingPlannerAnalysis.selectedLot.hourlyProfile} compact />
                     </ParkingChartCard>
                     <ParkingChartCard
-                      title={selectedRevenueMonth === 'all' ? 'Selected-lot trend' : 'Selected-lot daily trend'}
+                      title={selectedRevenueMonth === 'all' ? 'Selected-Lot Trend' : 'Selected-Lot Daily Trend'}
                       subtitle={selectedRevenueMonth === 'all' ? 'Revenue trend for this lot only.' : 'Daily movement for this lot in the selected month.'}
                     >
                       <TrendAreaChart data={selectedRevenueMonth === 'all' ? parkingPlannerAnalysis.selectedLot.monthlyTrend : parkingPlannerAnalysis.selectedLot.dailyTrend} color="#059669" />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Selected-lot payment mix" subtitle="App compared with QR for this lot.">
+                    <ParkingChartCard title="Selected-Lot Payment Mix" subtitle="App compared with QR for this lot.">
                       <SourceMixChart data={parkingPlannerAnalysis.selectedLot.sourceMix} />
                     </ParkingChartCard>
                   </div>
@@ -3563,7 +3726,7 @@ export const ParkingWorkspace: React.FC = () => {
                           ? 'Selected public-source match'
                           : 'Parking trends'}
                     </div>
-                    <h3 className="mt-1 text-lg font-black text-emerald-950">{activeMapLocation?.displayName || activeLocation?.displayName || 'All parking lots'}</h3>
+                    <h3 className="mt-1 text-lg font-black text-emerald-950">{activeMapLocation?.displayName || activeLocation?.displayName || 'All Parking Lots'}</h3>
                   </div>
                   <BarChart3 className="text-emerald-700" size={22} />
                 </div>
@@ -3601,7 +3764,7 @@ export const ParkingWorkspace: React.FC = () => {
               <section className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <BarChart3 className="text-emerald-600" size={18} />
-                  <h3 className="font-black text-slate-950">Quick charts</h3>
+                    <h3 className="font-black text-slate-950">Quick Charts</h3>
                 </div>
                 <div className="h-44">
                   <HourlyRevenueChart data={parkingPlannerAnalysis.selectedLot?.hourlyProfile || parkingPlannerAnalysis.hourlyProfile} compact />
@@ -3640,7 +3803,7 @@ export const ParkingWorkspace: React.FC = () => {
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Import history</div>
-                    <h3 className="mt-1 font-black text-slate-950">Recent uploaded files</h3>
+                    <h3 className="mt-1 font-black text-slate-950">Recent Uploaded Files</h3>
                     <p className="mt-1 text-xs font-bold text-slate-400">Use this to filter to Madison or any saved uploader.</p>
                   </div>
                   <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-blue-700">{revenueImportHistory.length}</span>
@@ -3683,7 +3846,7 @@ export const ParkingWorkspace: React.FC = () => {
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Clock3 className="text-amber-600" size={18} />
-                    <h3 className="font-black text-slate-950">Peak periods</h3>
+                    <h3 className="font-black text-slate-950">Peak Periods</h3>
                   </div>
                   <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-black text-amber-700">{peakPeriodScopeLabel}</span>
                 </div>
@@ -3701,7 +3864,7 @@ export const ParkingWorkspace: React.FC = () => {
               <section className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <CalendarDays className="text-blue-600" size={18} />
-                  <h3 className="font-black text-slate-950">Top single days</h3>
+                  <h3 className="font-black text-slate-950">Top Single Days</h3>
                 </div>
                 <div className="space-y-2">
                   {topDayRows.map(point => (
@@ -3716,7 +3879,7 @@ export const ParkingWorkspace: React.FC = () => {
 
               <details className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
                 <summary className="cursor-pointer text-sm font-black text-slate-950">
-                  Map location settings
+                  Map Location Settings
                 </summary>
                 <a href={BARRIE_PUBLIC_PARKING_VIEWER_URL} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs font-black text-blue-700 hover:text-blue-900">
                   City public parking source
@@ -3818,7 +3981,7 @@ export const ParkingWorkspace: React.FC = () => {
               </details>
 
               <details className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
-                <summary className="cursor-pointer text-sm font-black text-slate-950">Department-code import and older tables</summary>
+                <summary className="cursor-pointer text-sm font-black text-slate-950">Department-Code Import and Older Tables</summary>
                 <div className="mt-3 space-y-3">
                   <label className={`inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-black text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
                     <Upload size={16} /> Upload department .xlsx
@@ -3844,7 +4007,7 @@ export const ParkingWorkspace: React.FC = () => {
                   ) : null}
                   {previewDatasets.length > 0 ? (
                     <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
-                      <div className="font-black text-emerald-950">Ready to replace {summarizeImportMonths(previewDatasets)}</div>
+                      <div className="font-black text-emerald-950">Ready to Replace {summarizeImportMonths(previewDatasets)}</div>
                       <p className="mt-1 text-sm font-semibold text-emerald-800">{previewRowCount.toLocaleString()} rows · {money(previewTotalValue)} total value</p>
                       <button disabled={saving || !canEditParking} onClick={() => void importPreview()} className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white hover:bg-emerald-700 disabled:opacity-50">
                         {saving ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Save import
@@ -4022,7 +4185,7 @@ export const ParkingWorkspace: React.FC = () => {
             <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-lg font-extrabold text-gray-950">Import department parking data</h3>
+                  <h3 className="text-lg font-extrabold text-gray-950">Import Department Parking Data</h3>
                   <p className="mt-1 text-sm text-gray-500">Upload HotSpot shared-code workbooks. Each workbook must contain one month; multiple files can replace different months together.</p>
                 </div>
                 <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white ${canEditParking ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
@@ -4042,7 +4205,7 @@ export const ParkingWorkspace: React.FC = () => {
                   <div className="flex items-start gap-2 text-amber-800">
                     <AlertTriangle size={18} className="mt-0.5 shrink-0" />
                     <div>
-                      <h4 className="font-extrabold">Map discount codes before saving</h4>
+                      <h4 className="font-extrabold">Map Discount Codes Before Saving</h4>
                       <p className="mt-1 text-sm">The file preview is blocked until every code family has a department.</p>
                     </div>
                   </div>
@@ -4067,7 +4230,7 @@ export const ParkingWorkspace: React.FC = () => {
                     <div className="flex items-start gap-3">
                       <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={20} />
                       <div>
-                        <h4 className="font-extrabold text-emerald-950">Ready to replace {summarizeImportMonths(previewDatasets)}</h4>
+                        <h4 className="font-extrabold text-emerald-950">Ready to Replace {summarizeImportMonths(previewDatasets)}</h4>
                         <p className="mt-1 text-sm font-medium text-emerald-800">
                           {previewRowCount.toLocaleString()} rows · {money(previewTotalValue)} total value · {previewFlaggedPlateCount} flagged plates
                         </p>
@@ -4101,7 +4264,7 @@ export const ParkingWorkspace: React.FC = () => {
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <h3 className="text-lg font-extrabold text-gray-950">Review period</h3>
+                  <h3 className="text-lg font-extrabold text-gray-950">Review Period</h3>
                   <p className="mt-1 text-sm text-gray-500">Select a year for the annual summary, then a month for the detailed review tables.</p>
                 </div>
                 {selectedMonth ? <Badge tone="green">Viewing {selectedMonthLabel} {selectedYear}</Badge> : null}
@@ -4155,16 +4318,24 @@ export const ParkingWorkspace: React.FC = () => {
             </section>
 
 {activeWorkspace === 'plate-monitor' ? (
-            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div>
-                <h3 className="text-lg font-extrabold text-gray-950">Discount value by department</h3>
-                <p className="mt-1 text-sm text-gray-500">Selected-month discount-code value. Select an amount to review every matching observation.</p>
-              </div>
-              <div className="mt-4 overflow-x-auto">
+            <details key={selectedMonth} className="group rounded-3xl border border-gray-200 bg-white shadow-sm">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-3xl p-6 transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 [&::-webkit-details-marker]:hidden">
+                <div>
+                  <h3 className="text-lg font-extrabold text-gray-950">Discount Value by Department</h3>
+                  <p className="mt-1 text-sm text-gray-500">Selected-month discount-code value. Expand to review totals and open matching observations.</p>
+                </div>
+                <span className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs font-extrabold text-blue-700 group-open:bg-blue-100">
+                  <Plus size={15} className="transition-transform group-open:rotate-45" />
+                  <span className="group-open:hidden">Expand</span>
+                  <span className="hidden group-open:inline">Collapse</span>
+                </span>
+              </summary>
+              <div className="overflow-x-auto border-t border-gray-100 px-6 pb-6 pt-4">
                 <table className="min-w-full text-left text-sm">
                   <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
                     <tr>
                       <th className="py-2 pr-4">Department</th>
+                      <th className="py-2 pr-4 text-right">Uses</th>
                       <th className="py-2 text-right">Discount code value</th>
                     </tr>
                   </thead>
@@ -4172,6 +4343,7 @@ export const ParkingWorkspace: React.FC = () => {
                     {departmentDrilldownRows.map(row => (
                       <tr key={row.department}>
                         <td className="py-3 pr-4 font-extrabold text-gray-950">{row.department}</td>
+                        <td className="py-3 pr-4 text-right font-extrabold text-gray-700">{row.rows.length.toLocaleString()}</td>
                         <td className="py-3 text-right">
                           <button
                             type="button"
@@ -4185,17 +4357,26 @@ export const ParkingWorkspace: React.FC = () => {
                       </tr>
                     ))}
                     {departmentDrilldownRows.length === 0 ? (
-                      <tr><td colSpan={2} className="py-8 text-center font-semibold text-gray-400">No department observations for the selected month.</td></tr>
+                      <tr><td colSpan={3} className="py-8 text-center font-semibold text-gray-400">No department observations for the selected month.</td></tr>
                     ) : null}
                   </tbody>
+                  {departmentDrilldownRows.length > 0 ? (
+                    <tfoot className="border-t-2 border-gray-200 bg-gray-50 font-extrabold text-gray-950">
+                      <tr>
+                        <td className="px-0 py-3 pr-4">Total</td>
+                        <td className="py-3 pr-4 text-right">{departmentDrilldownRows.reduce((sum, row) => sum + row.rows.length, 0).toLocaleString()}</td>
+                        <td className="py-3 text-right">{money(departmentDrilldownRows.reduce((sum, row) => sum + row.totalValue, 0))}</td>
+                      </tr>
+                    </tfoot>
+                  ) : null}
                 </table>
               </div>
-            </section>
+            </details>
             ) : null}
 
 {activeWorkspace === 'plate-monitor' ? (
             <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-extrabold text-gray-950">Flagged plate indicators</h3>
+              <h3 className="text-lg font-extrabold text-gray-950">Flagged Plate Indicators</h3>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
                   <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
@@ -4283,7 +4464,7 @@ export const ParkingWorkspace: React.FC = () => {
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="font-extrabold text-gray-950">Department color legend</h3>
+                  <h3 className="font-extrabold text-gray-950">Department Color Legend</h3>
                   <p className="mt-1 text-xs font-semibold text-gray-400">Click a column header to sort. Ignore data removes a code from summaries; ignore flags only suppresses plate indicators.</p>
                 </div>
               </div>
@@ -4332,7 +4513,7 @@ export const ParkingWorkspace: React.FC = () => {
             </section>
 
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Indicator thresholds</h3></div>
+              <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Indicator Thresholds</h3></div>
               <div className="space-y-3 text-sm">
                 <SettingNumber label="High plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateMonthlyValueDollars: value } }))} />
                 <SettingNumber label="High frequency use" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateActiveDaysPerMonth: value } }))} />

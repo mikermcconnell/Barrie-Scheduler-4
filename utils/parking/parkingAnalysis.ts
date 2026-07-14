@@ -467,7 +467,7 @@ export function buildParkingTrendOverview(
 
   return {
     targetMonth,
-    scopeLabel: selectedLocation?.displayName || 'All parking lots',
+    scopeLabel: selectedLocation?.displayName || 'All Parking Lots',
     comparisonCards: [
       comparisonCard('revenue-mom', 'Total revenue MoM', scopedComparisonRows, targetMonth, previous, 'money', revenueForRows),
       comparisonCard('sessions-mom', 'Sessions MoM', scopedComparisonRows, targetMonth, previous, 'number', rows => rows.length),

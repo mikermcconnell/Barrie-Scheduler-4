@@ -160,10 +160,8 @@ export async function saveParkingSettings(teamId: string, userId: string, settin
   return nextSettings;
 }
 
-export async function getParkingData(teamId: string): Promise<ParkingSummary | null> {
-  const snap = await getDoc(getParkingDefaultRef(teamId));
-  if (!snap.exists()) return null;
-  const metadata = readMetadata(snap.data());
+async function loadParkingDataFromDocument(data: Record<string, unknown> | undefined): Promise<ParkingSummary | null> {
+  const metadata = readMetadata(data);
   if (!metadata?.storagePath) return null;
 
   const url = await getDownloadURL(ref(storage, metadata.storagePath));
@@ -179,10 +177,8 @@ export async function getParkingData(teamId: string): Promise<ParkingSummary | n
   };
 }
 
-export async function getParkingRevenueData(teamId: string): Promise<ParkingRevenueSummary | null> {
-  const snap = await getDoc(getParkingDefaultRef(teamId));
-  if (!snap.exists()) return null;
-  const metadata = readRevenueMetadata(snap.data());
+async function loadParkingRevenueDataFromDocument(data: Record<string, unknown> | undefined): Promise<ParkingRevenueSummary | null> {
+  const metadata = readRevenueMetadata(data);
   if (!metadata?.storagePath) return null;
 
   const url = await getDownloadURL(ref(storage, metadata.storagePath));
@@ -195,6 +191,37 @@ export async function getParkingRevenueData(teamId: string): Promise<ParkingReve
       ...summary.metadata,
       ...metadata,
     },
+  };
+}
+
+export async function getParkingData(teamId: string): Promise<ParkingSummary | null> {
+  const snap = await getDoc(getParkingDefaultRef(teamId));
+  return loadParkingDataFromDocument(snap.exists() ? snap.data() : undefined);
+}
+
+export async function getParkingRevenueData(teamId: string): Promise<ParkingRevenueSummary | null> {
+  const snap = await getDoc(getParkingDefaultRef(teamId));
+  return loadParkingRevenueDataFromDocument(snap.exists() ? snap.data() : undefined);
+}
+
+export interface ParkingWorkspaceData {
+  settings: ParkingSettings;
+  summary: ParkingSummary | null;
+  revenueSummary: ParkingRevenueSummary | null;
+}
+
+export async function loadParkingWorkspaceData(teamId: string): Promise<ParkingWorkspaceData> {
+  const snap = await getDoc(getParkingDefaultRef(teamId));
+  const data = snap.exists() ? snap.data() : undefined;
+  const [summary, revenueSummary] = await Promise.all([
+    loadParkingDataFromDocument(data),
+    loadParkingRevenueDataFromDocument(data),
+  ]);
+
+  return {
+    settings: readParkingSettingsFromDocument(data),
+    summary,
+    revenueSummary,
   };
 }
 
