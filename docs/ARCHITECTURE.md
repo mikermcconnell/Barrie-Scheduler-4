@@ -30,9 +30,9 @@ For collections, storage paths, and type locations, use `docs/SCHEMA.md`.
 
 Common app-wide infrastructure:
 - auth context → `components/contexts/AuthContext.tsx`
-- team context → `components/contexts/TeamContext.tsx`; it loads the active team plus the signed-in user's full membership list and owns active-team switching
+- team context → `components/contexts/TeamContext.tsx`; it loads the active team, ordinary users' memberships, or the full team directory for scheduler administrators, and owns active-team/support-team switching
 - toast context → `components/contexts/ToastContext.tsx`
-- global header → `components/layout/Header.tsx`; it keeps the active team visible and provides the membership-backed team switcher
+- global header → `components/layout/Header.tsx`; it keeps the active team visible, provides membership-backed switching for ordinary users, and lets scheduler administrators inspect any team through an expiring read-only support session
 - feature flags → `utils/features.ts`
 - workspace access profiles → `utils/workspaceAccess.ts`, surfaced through `hooks/useWorkspaceAccess.ts`
 - named workspace access packages → `utils/workspaceAccessPackages.ts`, used by Team Management for safer onboarding presets

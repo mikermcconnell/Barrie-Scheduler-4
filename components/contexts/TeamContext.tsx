@@ -9,6 +9,7 @@ import { useAuth } from './AuthContext';
 import {
     getUserTeam,
     getUserTeams,
+    getTeamsForPermissionManagement,
     joinTeamByInviteCode,
     getTeamMember,
     getTeamWithMembers,
@@ -132,10 +133,12 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
 
             setActualTeam(userTeam);
             try {
-                const memberships = await getUserTeams(user.uid);
-                setAvailableTeams(userTeam && !memberships.some(candidate => candidate.id === userTeam.id)
-                    ? [userTeam, ...memberships]
-                    : memberships);
+                const accessibleTeams = isGlobalAdmin
+                    ? await getTeamsForPermissionManagement()
+                    : await getUserTeams(user.uid);
+                setAvailableTeams(userTeam && !accessibleTeams.some(candidate => candidate.id === userTeam.id)
+                    ? [userTeam, ...accessibleTeams]
+                    : accessibleTeams);
             } catch (error) {
                 // Keep a valid active team usable while a new collection-group
                 // rule/index is still propagating or the enumeration is offline.
@@ -160,28 +163,23 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         } finally {
             if (showLoading) setLoading(false);
         }
-    }, [devAuth.enabled, devAuth.teamInviteCode, user]);
+    }, [devAuth.enabled, devAuth.teamInviteCode, isGlobalAdmin, user]);
 
     const refreshTeam = async () => {
         await loadTeam();
     };
 
-    const switchTeam = useCallback(async (teamId: string) => {
-        if (!user) {
-            throw new Error('Sign in before switching teams.');
+    const stopDeveloperPreview = useCallback(async () => {
+        // Revoke local effective access immediately, even if the backend delete
+        // fails after a claim has been removed or the user has signed out.
+        setDeveloperPreview(null);
+        if (!user) return;
+        try {
+            await deleteDeveloperSupportSession(user.uid);
+        } catch (error) {
+            console.error('Unable to delete developer support session:', error);
         }
-        if (developerPreview) {
-            throw new Error('Exit the developer support session before switching teams.');
-        }
-        if (teamId === actualTeam?.id) return;
-
-        await switchUserTeam(user.uid, teamId);
-        await loadTeam(false);
-    }, [actualTeam?.id, developerPreview, loadTeam, user]);
-
-    useEffect(() => {
-        void loadTeam();
-    }, [loadTeam]);
+    }, [user]);
 
     const startDeveloperPreview = useCallback(async (input: DeveloperPreviewInput) => {
         if (!user || !isGlobalAdmin) {
@@ -203,17 +201,45 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         return session;
     }, [isGlobalAdmin, user]);
 
-    const stopDeveloperPreview = useCallback(async () => {
-        // Revoke local effective access immediately, even if the backend delete
-        // fails after a claim has been removed or the user has signed out.
-        setDeveloperPreview(null);
-        if (!user) return;
-        try {
-            await deleteDeveloperSupportSession(user.uid);
-        } catch (error) {
-            console.error('Unable to delete developer support session:', error);
+    const switchTeam = useCallback(async (teamId: string) => {
+        if (!user) {
+            throw new Error('Sign in before switching teams.');
         }
-    }, [user]);
+        if (teamId === actualTeam?.id) {
+            if (developerPreview) await stopDeveloperPreview();
+            return;
+        }
+
+        if (isGlobalAdmin) {
+            const membership = await getTeamMember(teamId, user.uid);
+            if (!membership) {
+                const selectedTeam = availableTeams.find(candidate => candidate.id === teamId);
+                if (!selectedTeam) throw new Error('That team is no longer available.');
+
+                await startDeveloperPreview({
+                    team: selectedTeam,
+                    mode: 'inspect',
+                    accessLevel: 'internal',
+                    role: 'member',
+                    displayName: 'Developer support',
+                    email: user.email ?? undefined,
+                    userId: user.uid,
+                    sourceLabel: 'developer support inspection',
+                    reason: 'Selected from the active team menu',
+                });
+                return;
+            }
+        }
+
+        if (developerPreview) await stopDeveloperPreview();
+
+        await switchUserTeam(user.uid, teamId);
+        await loadTeam(false);
+    }, [actualTeam?.id, availableTeams, developerPreview, isGlobalAdmin, loadTeam, startDeveloperPreview, stopDeveloperPreview, user]);
+
+    useEffect(() => {
+        void loadTeam();
+    }, [loadTeam]);
 
     useEffect(() => {
         if (!isGlobalAdmin && developerPreview) {

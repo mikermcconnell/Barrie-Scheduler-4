@@ -7,11 +7,15 @@ const {
   authState,
   getUserTeamMock,
   getUserTeamsMock,
+  getTeamsForPermissionManagementMock,
   joinTeamByInviteCodeMock,
   getTeamMemberMock,
   switchUserTeamMock,
   getPendingInviteCodeMock,
   clearPendingInviteCodeFromUrlMock,
+  createDeveloperSupportSessionMock,
+  deleteDeveloperSupportSessionMock,
+  getActiveDeveloperSupportSessionMock,
 } = vi.hoisted(() => ({
   authState: {
     user: {
@@ -19,14 +23,19 @@ const {
       displayName: 'Lane User',
       email: 'lane.user@example.com',
     },
+    isGlobalAdmin: false,
   },
   getUserTeamMock: vi.fn(),
   getUserTeamsMock: vi.fn(),
+  getTeamsForPermissionManagementMock: vi.fn(),
   joinTeamByInviteCodeMock: vi.fn(),
   getTeamMemberMock: vi.fn(),
   switchUserTeamMock: vi.fn(),
   getPendingInviteCodeMock: vi.fn(),
   clearPendingInviteCodeFromUrlMock: vi.fn(),
+  createDeveloperSupportSessionMock: vi.fn(),
+  deleteDeveloperSupportSessionMock: vi.fn(),
+  getActiveDeveloperSupportSessionMock: vi.fn(),
 }));
 
 vi.mock('../components/contexts/AuthContext', () => ({
@@ -36,9 +45,17 @@ vi.mock('../components/contexts/AuthContext', () => ({
 vi.mock('../utils/services/teamService', () => ({
   getUserTeam: getUserTeamMock,
   getUserTeams: getUserTeamsMock,
+  getTeamsForPermissionManagement: getTeamsForPermissionManagementMock,
   joinTeamByInviteCode: joinTeamByInviteCodeMock,
   getTeamMember: getTeamMemberMock,
   switchUserTeam: switchUserTeamMock,
+  getTeamWithMembers: vi.fn(),
+}));
+
+vi.mock('../utils/services/developerSupportSessionService', () => ({
+  createDeveloperSupportSession: createDeveloperSupportSessionMock,
+  deleteDeveloperSupportSession: deleteDeveloperSupportSessionMock,
+  getActiveDeveloperSupportSession: getActiveDeveloperSupportSessionMock,
 }));
 
 vi.mock('../utils/inviteLinks', () => ({
@@ -56,15 +73,17 @@ vi.mock('../utils/dev/devAuth', () => ({
 import { TeamProvider, useTeam } from '../components/contexts/TeamContext';
 
 function TeamProbe() {
-  const { team, availableTeams, switchTeam, accessLevel, loading } = useTeam();
+  const { team, availableTeams, switchTeam, accessLevel, loading, isDeveloperPreview } = useTeam();
   return (
     <div
       data-loading={String(loading)}
       data-team={team?.id ?? 'none'}
       data-access={accessLevel}
       data-team-count={String(availableTeams.length)}
+      data-preview={String(isDeveloperPreview)}
     >
       <button type="button" onClick={() => void switchTeam('developer')}>Switch team</button>
+      <button type="button" onClick={() => void switchTeam('barrie-transit')}>Return home</button>
     </div>
   );
 }
@@ -76,11 +95,18 @@ describe('TeamContext invite links', () => {
   beforeEach(() => {
     getUserTeamMock.mockReset();
     getUserTeamsMock.mockReset();
+    getTeamsForPermissionManagementMock.mockReset();
     joinTeamByInviteCodeMock.mockReset();
     getTeamMemberMock.mockReset();
     switchUserTeamMock.mockReset();
     getPendingInviteCodeMock.mockReset();
     clearPendingInviteCodeFromUrlMock.mockReset();
+    createDeveloperSupportSessionMock.mockReset();
+    deleteDeveloperSupportSessionMock.mockReset();
+    getActiveDeveloperSupportSessionMock.mockReset();
+    authState.isGlobalAdmin = false;
+    getActiveDeveloperSupportSessionMock.mockResolvedValue(null);
+    deleteDeveloperSupportSessionMock.mockResolvedValue(undefined);
 
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -215,5 +241,60 @@ describe('TeamContext invite links', () => {
     expect(switchUserTeamMock).toHaveBeenCalledWith('user-1', 'developer');
     expect(container.firstElementChild?.getAttribute('data-team')).toBe('developer');
     expect(container.firstElementChild?.getAttribute('data-access')).toBe('none');
+  });
+
+  it('loads every team for a global admin and inspects a non-member team without changing membership', async () => {
+    authState.isGlobalAdmin = true;
+    const barrieTeam = { id: 'barrie-transit', name: 'Barrie Transit', inviteCode: 'BARRIE' };
+    const developerTeam = { id: 'developer', name: 'Developer', inviteCode: 'DEV123' };
+    getPendingInviteCodeMock.mockReturnValue(null);
+    getUserTeamMock.mockResolvedValue(barrieTeam);
+    getTeamsForPermissionManagementMock.mockResolvedValue([barrieTeam, developerTeam]);
+    getTeamMemberMock
+      .mockResolvedValueOnce({
+        id: 'user-1', userId: 'user-1', role: 'member', accessLevel: 'planner',
+        joinedAt: new Date(), displayName: 'Lane User', email: 'lane.user@example.com',
+      })
+      .mockResolvedValueOnce(null);
+    createDeveloperSupportSessionMock.mockResolvedValue({
+      startedAt: new Date('2026-07-14T14:00:00Z'),
+      expiresAt: new Date('2026-07-14T14:30:00Z'),
+      reason: 'Selected from the active team menu',
+    });
+
+    await act(async () => {
+      root.render(<TeamProvider><TeamProbe /></TeamProvider>);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(getTeamsForPermissionManagementMock).toHaveBeenCalledOnce();
+    expect(getUserTeamsMock).not.toHaveBeenCalled();
+    expect(container.firstElementChild?.getAttribute('data-team-count')).toBe('2');
+
+    await act(async () => {
+      container.querySelectorAll<HTMLButtonElement>('button')[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(createDeveloperSupportSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'user-1',
+      teamId: 'developer',
+      mode: 'inspect',
+      reason: 'Selected from the active team menu',
+    }));
+    expect(switchUserTeamMock).not.toHaveBeenCalled();
+    expect(container.firstElementChild?.getAttribute('data-team')).toBe('developer');
+    expect(container.firstElementChild?.getAttribute('data-access')).toBe('internal');
+    expect(container.firstElementChild?.getAttribute('data-preview')).toBe('true');
+
+    await act(async () => {
+      container.querySelectorAll<HTMLButtonElement>('button')[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(deleteDeveloperSupportSessionMock).toHaveBeenCalledWith('user-1');
+    expect(switchUserTeamMock).not.toHaveBeenCalled();
+    expect(container.firstElementChild?.getAttribute('data-team')).toBe('barrie-transit');
+    expect(container.firstElementChild?.getAttribute('data-preview')).toBe('false');
   });
 });

@@ -3,36 +3,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
-const { switchTeamMock } = vi.hoisted(() => ({
+const { switchTeamMock, authState, teamState } = vi.hoisted(() => ({
   switchTeamMock: vi.fn(),
-}));
-
-vi.mock('../components/contexts/AuthContext', () => ({
-  useAuth: () => ({
+  authState: {
     user: {
       uid: 'user-1',
       displayName: 'Mike McConnell',
       email: 'mike.mcconnell@barrie.ca',
-      photoURL: null,
+      photoURL: null as string | null,
     },
     signOut: vi.fn(),
     isGlobalAdmin: false,
-  }),
-}));
-
-vi.mock('../components/contexts/TeamContext', () => ({
-  useTeam: () => ({
+  },
+  teamState: {
     team: { id: 'barrie', name: 'Barrie Transit' },
     actualTeam: { id: 'barrie', name: 'Barrie Transit' },
     availableTeams: [
       { id: 'barrie', name: 'Barrie Transit' },
       { id: 'developer', name: 'Developer' },
     ],
-    switchTeam: switchTeamMock,
     accessLevel: 'planner',
     isDeveloperPreview: false,
-    developerPreview: null,
+    developerPreview: null as any,
     stopDeveloperPreview: vi.fn(),
+  },
+}));
+
+vi.mock('../components/contexts/AuthContext', () => ({
+  useAuth: () => authState,
+}));
+
+vi.mock('../components/contexts/TeamContext', () => ({
+  useTeam: () => ({
+    ...teamState,
+    switchTeam: switchTeamMock,
   }),
 }));
 
@@ -45,6 +49,13 @@ describe('Header team switcher', () => {
   beforeEach(() => {
     switchTeamMock.mockReset();
     switchTeamMock.mockResolvedValue(undefined);
+    authState.isGlobalAdmin = false;
+    Object.assign(teamState, {
+      team: { id: 'barrie', name: 'Barrie Transit' },
+      actualTeam: { id: 'barrie', name: 'Barrie Transit' },
+      isDeveloperPreview: false,
+      developerPreview: null,
+    });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -122,5 +133,50 @@ describe('Header team switcher', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
     expect(switcher?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('labels the global list and permits replacing a team inspection', async () => {
+    authState.isGlobalAdmin = true;
+    Object.assign(teamState, {
+      team: { id: 'developer', name: 'Developer' },
+      actualTeam: { id: 'barrie', name: 'Barrie Transit' },
+      isDeveloperPreview: true,
+      developerPreview: {
+        mode: 'inspect',
+        readOnly: true,
+        sourceLabel: 'developer support inspection',
+        reason: 'Selected from the active team menu',
+        expiresAt: '2026-07-14T14:30:00Z',
+      },
+    });
+
+    await act(async () => {
+      root.render(
+        <Header
+          currentView="home"
+          onNavigate={vi.fn()}
+          onShowFileManager={vi.fn()}
+          onShowTeamManagement={vi.fn()}
+          onShowAuthModal={vi.fn()}
+        />,
+      );
+    });
+
+    const switcher = container.querySelector<HTMLButtonElement>('[aria-label="Active team: Developer"]');
+    await act(async () => {
+      switcher?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('All teams');
+    expect(container.textContent).toContain('return to your actual team');
+    const barrieOption = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-team-option]'))
+      .find(option => option.textContent?.includes('Barrie Transit'));
+    expect(barrieOption?.disabled).toBe(false);
+
+    await act(async () => {
+      barrieOption?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(switchTeamMock).toHaveBeenCalledWith('barrie');
   });
 });

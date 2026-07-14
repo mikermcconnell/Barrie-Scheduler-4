@@ -75,7 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
     };
 
     const handleTeamSwitch = async (teamId: string) => {
-        if (teamId === actualTeam?.id || isDeveloperPreview) {
+        if (teamId === team?.id) {
             setShowTeamMenu(false);
             return;
         }
@@ -141,7 +141,7 @@ export const Header: React.FC<HeaderProps> = ({
                                 aria-expanded={showTeamMenu}
                                 aria-controls="team-switcher-popover"
                                 aria-label={`Active team: ${team?.name ?? 'No team selected'}`}
-                                title={isDeveloperPreview ? 'Exit the support session before switching teams' : 'Switch active team'}
+                                title="Switch active team"
                                 onClick={() => {
                                     setShowUserMenu(false);
                                     setTeamSwitchError(null);
@@ -174,14 +174,16 @@ export const Header: React.FC<HeaderProps> = ({
                                         className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-gray-100 bg-white py-2 shadow-xl"
                                     >
                                         <div className="border-b border-gray-100 px-4 py-2">
-                                            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Your teams</p>
+                                            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                                                {isGlobalAdmin ? 'All teams' : 'Your teams'}
+                                            </p>
                                             {isDeveloperPreview && (
-                                                <p className="mt-1 text-xs text-amber-700">Exit the support session before switching teams.</p>
+                                                <p className="mt-1 text-xs text-amber-700">Choose another team to replace this inspection, or return to your actual team.</p>
                                             )}
                                         </div>
                                         <div className="max-h-72 overflow-y-auto p-2">
                                             {availableTeams.length > 0 ? availableTeams.map(availableTeam => {
-                                                const isActive = availableTeam.id === actualTeam?.id && !isDeveloperPreview;
+                                                const isActive = availableTeam.id === team?.id;
                                                 const isSwitching = switchingTeamId === availableTeam.id;
                                                 return (
                                                     <button
@@ -189,7 +191,7 @@ export const Header: React.FC<HeaderProps> = ({
                                                         type="button"
                                                         data-team-option
                                                         aria-pressed={isActive}
-                                                        disabled={isDeveloperPreview || switchingTeamId !== null}
+                                                        disabled={switchingTeamId !== null}
                                                         onClick={() => void handleTeamSwitch(availableTeam.id)}
                                                         className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                                                     >
@@ -201,7 +203,11 @@ export const Header: React.FC<HeaderProps> = ({
                                                                     : <Building2 size={14} />}
                                                         </span>
                                                         <span className="min-w-0 flex-1 truncate">{availableTeam.name}</span>
-                                                        {isActive && <span className="text-xs font-semibold text-emerald-700">Active</span>}
+                                                        {isActive && (
+                                                            <span className="text-xs font-semibold text-emerald-700">
+                                                                {isDeveloperPreview ? 'Inspecting' : 'Active'}
+                                                            </span>
+                                                        )}
                                                     </button>
                                                 );
                                             }) : (
