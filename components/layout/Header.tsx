@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     LayoutDashboard,
     Bell,
@@ -11,6 +11,9 @@ import {
     ChevronDown,
     Eye,
     XCircle,
+    Building2,
+    Check,
+    LoaderCircle,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
@@ -43,18 +46,50 @@ export const Header: React.FC<HeaderProps> = ({
         isDeveloperPreview,
         developerPreview,
         stopDeveloperPreview,
+        availableTeams = [],
+        switchTeam: switchActiveTeam = async () => { },
     } = useTeam();
     const [showUserMenu, setShowUserMenu] = useState(false);
+    const [showTeamMenu, setShowTeamMenu] = useState(false);
+    const [switchingTeamId, setSwitchingTeamId] = useState<string | null>(null);
+    const [teamSwitchError, setTeamSwitchError] = useState<string | null>(null);
     const username = user?.displayName || user?.email?.split('@')[0] || 'Signed in';
     const accessLabel = WORKSPACE_ACCESS_LEVEL_LABELS[accessLevel];
     const supportExpiresAt = developerPreview
         ? new Intl.DateTimeFormat('en-CA', { hour: 'numeric', minute: '2-digit' }).format(new Date(developerPreview.expiresAt))
         : null;
 
+    useEffect(() => {
+        if (!showTeamMenu) return;
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setShowTeamMenu(false);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return () => window.removeEventListener('keydown', closeOnEscape);
+    }, [showTeamMenu]);
+
     const handleSignOut = async () => {
         await signOut();
         setShowUserMenu(false);
         onNavigate('home');
+    };
+
+    const handleTeamSwitch = async (teamId: string) => {
+        if (teamId === actualTeam?.id || isDeveloperPreview) {
+            setShowTeamMenu(false);
+            return;
+        }
+
+        setSwitchingTeamId(teamId);
+        setTeamSwitchError(null);
+        try {
+            await switchActiveTeam(teamId);
+            setShowTeamMenu(false);
+        } catch (error) {
+            setTeamSwitchError(error instanceof Error ? error.message : 'Unable to switch teams.');
+        } finally {
+            setSwitchingTeamId(null);
+        }
     };
 
     return (
@@ -99,6 +134,100 @@ export const Header: React.FC<HeaderProps> = ({
                 {/* Right Actions */}
                 <div className="flex items-center gap-4">
 
+                    {user && (
+                        <div className="relative">
+                            <button
+                                type="button"
+                                aria-expanded={showTeamMenu}
+                                aria-controls="team-switcher-popover"
+                                aria-label={`Active team: ${team?.name ?? 'No team selected'}`}
+                                title={isDeveloperPreview ? 'Exit the support session before switching teams' : 'Switch active team'}
+                                onClick={() => {
+                                    setShowUserMenu(false);
+                                    setTeamSwitchError(null);
+                                    setShowTeamMenu(current => !current);
+                                }}
+                                className="flex max-w-56 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left transition-colors hover:border-gray-300 hover:bg-gray-100"
+                            >
+                                <Building2 size={16} className="shrink-0 text-emerald-600" />
+                                <span className="min-w-0">
+                                    <span className="block text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                                        {isDeveloperPreview ? 'Preview team' : 'Active team'}
+                                    </span>
+                                    <span className="block truncate text-sm font-bold leading-tight text-gray-800">
+                                        {team?.name ?? 'No team selected'}
+                                    </span>
+                                </span>
+                                <ChevronDown
+                                    size={14}
+                                    className={`shrink-0 text-gray-400 transition-transform ${showTeamMenu ? 'rotate-180' : ''}`}
+                                />
+                            </button>
+
+                            {showTeamMenu && (
+                                <>
+                                    <div className="fixed inset-0 z-40" onClick={() => setShowTeamMenu(false)} />
+                                    <div
+                                        id="team-switcher-popover"
+                                        role="group"
+                                        aria-label="Switch active team"
+                                        className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-gray-100 bg-white py-2 shadow-xl"
+                                    >
+                                        <div className="border-b border-gray-100 px-4 py-2">
+                                            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Your teams</p>
+                                            {isDeveloperPreview && (
+                                                <p className="mt-1 text-xs text-amber-700">Exit the support session before switching teams.</p>
+                                            )}
+                                        </div>
+                                        <div className="max-h-72 overflow-y-auto p-2">
+                                            {availableTeams.length > 0 ? availableTeams.map(availableTeam => {
+                                                const isActive = availableTeam.id === actualTeam?.id && !isDeveloperPreview;
+                                                const isSwitching = switchingTeamId === availableTeam.id;
+                                                return (
+                                                    <button
+                                                        key={availableTeam.id}
+                                                        type="button"
+                                                        data-team-option
+                                                        aria-pressed={isActive}
+                                                        disabled={isDeveloperPreview || switchingTeamId !== null}
+                                                        onClick={() => void handleTeamSwitch(availableTeam.id)}
+                                                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
+                                                            {isSwitching
+                                                                ? <LoaderCircle size={14} className="animate-spin" />
+                                                                : isActive
+                                                                    ? <Check size={14} className="text-emerald-600" />
+                                                                    : <Building2 size={14} />}
+                                                        </span>
+                                                        <span className="min-w-0 flex-1 truncate">{availableTeam.name}</span>
+                                                        {isActive && <span className="text-xs font-semibold text-emerald-700">Active</span>}
+                                                    </button>
+                                                );
+                                            }) : (
+                                                <p className="px-3 py-3 text-sm text-gray-500">No team memberships found.</p>
+                                            )}
+                                        </div>
+                                        {teamSwitchError && (
+                                            <p role="alert" className="mx-3 mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                                                {teamSwitchError}
+                                            </p>
+                                        )}
+                                        <div className="border-t border-gray-100 px-2 pt-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => { onShowTeamManagement(); setShowTeamMenu(false); }}
+                                                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                                            >
+                                                <Users size={16} /> Team Management
+                                            </button>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
+
                     {/* Quick Actions */}
                     <div className="flex items-center gap-2 border-r border-gray-200 pr-4 mr-2">
                         {user && canShowFileManager && (
@@ -128,7 +257,7 @@ export const Header: React.FC<HeaderProps> = ({
                         {user ? (
                             <div className="relative">
                                 <button
-                                    onClick={() => setShowUserMenu(!showUserMenu)}
+                                    onClick={() => { setShowTeamMenu(false); setShowUserMenu(!showUserMenu); }}
                                     className="flex items-center gap-3 hover:bg-gray-50 rounded-full p-1 pl-2 pr-3 transition-colors border border-transparent hover:border-gray-100 active:bg-gray-100"
                                 >
                                     <div className="text-right hidden md:block">

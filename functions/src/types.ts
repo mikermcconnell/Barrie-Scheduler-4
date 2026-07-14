@@ -84,6 +84,8 @@ export function classifyDwell(dwellSeconds: number): DwellSeverity | null {
 }
 
 export interface DwellIncident {
+  /** Deterministic key used to join the incident to its downstream story. */
+  incidentId?: string;
   operatorId: string;
   date: string;
   routeId: string;
@@ -97,6 +99,27 @@ export interface DwellIncident {
   rawDwellSeconds: number;
   trackedDwellSeconds: number;
   severity: DwellSeverity;
+  tripId?: string;
+  vehicleId?: string;
+  direction?: string;
+  routeStopIndex?: number;
+  scheduledArrivalTime?: string;
+  scheduledDepartureTime?: string;
+  arrivalDeviationSeconds?: number;
+  departureDeviationSeconds?: number;
+  boardings?: number;
+  alightings?: number;
+  wheelchairUsageCount?: number;
+  departureLoad?: number | null;
+  departureLoadReliable?: boolean;
+  stopLat?: number;
+  stopLon?: number;
+}
+
+export interface DwellExposureSummary {
+  routeId: string;
+  operatorId: string;
+  eligibleTimepointVisits: number;
 }
 
 export interface OperatorDwellSummary {
@@ -110,6 +133,9 @@ export interface OperatorDwellSummary {
   serviceHours?: number;
   incidentsPer1kVisits?: number;
   incidentsPer100ServiceHours?: number;
+  reportableDwellSeconds?: number;
+  eligibleTimepointVisits?: number;
+  incidentsPer1kEligibleVisits?: number;
 }
 
 export interface OperatorDwellMetrics {
@@ -122,6 +148,9 @@ export interface OperatorDwellMetrics {
   totalServiceHours?: number;
   incidentsPer1kVisits?: number;
   incidentsPer100ServiceHours?: number;
+  eligibleTimepointVisits?: number;
+  incidentsPer1kEligibleVisits?: number;
+  exposureByRouteOperator?: DwellExposureSummary[];
 }
 
 export type CascadeThresholdStatus = 'returned-under' | 'stayed-under';
@@ -168,6 +197,7 @@ export interface CascadeAffectedTrip {
 /** A dwell incident annotated with its downstream cascade through the block. */
 export interface DwellCascade {
   // Origin incident fields
+  incidentId?: string;
   date: string;
   block: string;
   routeId: string;
@@ -419,9 +449,13 @@ export interface LoadProfileStop {
   stopName: string;
   stopId: string;
   routeStopIndex: number;
+  /** Zero-based visit number for repeated appearances of this physical stop within one trip. */
+  occurrenceIndex?: number;
   avgBoardings: number;
   avgAlightings: number;
   avgLoad: number;
+  /** Reliable per-trip departure-load observations included in avgLoad. */
+  loadObservationCount?: number;
   maxLoad: number;
   isTimepoint: boolean;
 }
@@ -458,6 +492,8 @@ export interface RidershipHeatmapStop {
   stopName: string;
   stopId: string;
   routeStopIndex: number;
+  /** Zero-based visit number for repeated appearances of this physical stop within one trip. */
+  occurrenceIndex?: number;
   isTimepoint: boolean;
 }
 
@@ -465,6 +501,8 @@ export interface RouteRidershipHeatmap {
   routeId: string;
   routeName: string;
   direction: string;
+  /** True when this daily route-direction summary contains more than one stop pattern. */
+  multipleStopPatterns?: boolean;
   trips: RidershipHeatmapTrip[];
   stops: RidershipHeatmapStop[];
   cells: ([number, number] | null)[][];
@@ -534,7 +572,7 @@ export interface DailySummary {
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 10;
+export const PERFORMANCE_SCHEMA_VERSION = 13;
 export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 4;
 
 export interface PerformanceDataSummary {

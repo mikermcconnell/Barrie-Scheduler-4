@@ -11,6 +11,8 @@ import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
 import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
 import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { RidershipStopProfileChart } from './RidershipStopProfileChart';
+import { buildRidershipStopProfiles } from '../../utils/performanceRidershipStopProfile';
 
 interface RidershipModuleProps {
     data: PerformanceDataSummary;
@@ -195,6 +197,10 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
 
     // Aggregate stop activity across filtered days (merges routes + hourly arrays)
     const stopActivity = useMemo(() => aggregateStopActivity(filtered), [filtered]);
+    const stopProfiles = useMemo(
+        () => buildRidershipStopProfiles(filtered),
+        [filtered],
+    );
 
     // Route daily trend (multi-line)
     const routeDailyTrend = useMemo(() => {
@@ -266,6 +272,11 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     </ResponsiveContainer>
                 )}
             </ChartCard>
+
+            <RidershipStopProfileChart
+                data={stopProfiles}
+                periodMode={filtered.length === 1 ? 'single-day' : 'multi-day'}
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Route Ranking */}

@@ -85,7 +85,7 @@ describe('ReportsModule dwell panel wiring', () => {
     });
 
     const dwellButton = Array.from(container.querySelectorAll('button'))
-      .find(btn => (btn.textContent || '').includes('Operator Dwell'));
+      .find(btn => (btn.textContent || '').includes('Dwell Incident Review'));
 
     expect(dwellButton).toBeTruthy();
 
@@ -114,7 +114,7 @@ describe('ReportsModule dwell panel wiring', () => {
     });
 
     const dwellButton = Array.from(container.querySelectorAll('button'))
-      .find(btn => (btn.textContent || '').includes('Operator Dwell'));
+      .find(btn => (btn.textContent || '').includes('Dwell Incident Review'));
 
     expect(dwellButton).toBeTruthy();
 
@@ -127,7 +127,7 @@ describe('ReportsModule dwell panel wiring', () => {
     });
 
     const dwellButtonAfterSwap = Array.from(container.querySelectorAll('button'))
-      .find(btn => (btn.textContent || '').includes('Operator Dwell'));
+      .find(btn => (btn.textContent || '').includes('Dwell Incident Review'));
 
     expect(dwellButtonAfterSwap).toBeTruthy();
 

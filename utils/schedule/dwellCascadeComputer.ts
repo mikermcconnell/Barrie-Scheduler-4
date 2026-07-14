@@ -448,6 +448,7 @@ function traceCascade(
   }
 
   return {
+    incidentId: incident.incidentId,
     date: incident.date,
     block: incident.block,
     routeId: incident.routeId,
@@ -611,7 +612,9 @@ export function buildDailyCascadeMetrics(
     const trips = blockTrips.get(incident.block);
     if (!trips) continue;
 
-    const tripIdx = trips.findIndex(t => t.tripName === incident.tripName);
+    const tripIdx = incident.tripId
+      ? trips.findIndex(t => t.tripId === incident.tripId)
+      : trips.findIndex(t => t.tripName === incident.tripName);
     if (tripIdx < 0) continue;
 
     const incidentTrip = trips[tripIdx];

@@ -420,4 +420,21 @@ describe('buildOperatorDwellMetrics (via aggregateDailySummaries)', () => {
     expect(dwell.incidents[0].rawDwellSeconds).toBe(360);
     expect(dwell.incidents[0].severity).toBe('high');
   });
+
+  it('keeps a valid duplicate observation when an earlier duplicate has malformed AVL times', () => {
+    const records = [
+      makeRecord({ observedArrivalTime: 'TBD', observedDepartureTime: 'TBD' }),
+      makeRecord({
+        vehicleLocationTPKey: 2,
+        observedArrivalTime: '10:00:00',
+        observedDepartureTime: '10:06:00',
+      }),
+    ];
+
+    const [day] = aggregateDailySummaries(records);
+    expect(day.byOperatorDwell!.totalIncidents).toBe(1);
+    expect(day.byOperatorDwell!.exposureByRouteOperator).toEqual([
+      { routeId: '10', operatorId: 'OP001', eligibleTimepointVisits: 1 },
+    ]);
+  });
 });

@@ -8,6 +8,8 @@ import type { STREETSRecord as FrontendRecord } from '../utils/performanceDataTy
 import { aggregateDailySummaries as aggregateBackend } from '../functions/src/aggregator';
 import { filterPerformanceSummaryByRoute as filterFrontendByRoute } from '../utils/performanceRouteFilter';
 import { filterPerformanceSummaryByRoute as filterBackendByRoute } from '../functions/src/performanceRouteFilter';
+import { trimDayForDetailMode as trimFrontendDay } from '../utils/performanceDataService';
+import { trimDayForDetailMode as trimBackendDay } from '../functions/src/sharedWorkspaceData';
 import {
   PERFORMANCE_RUNTIME_LOGIC_VERSION as BACKEND_RUNTIME_LOGIC_VERSION,
   PERFORMANCE_SCHEMA_VERSION as BACKEND_SCHEMA_VERSION,
@@ -61,6 +63,56 @@ describe('functions performance aggregation stays aligned with app runtime logic
 
   it('keeps the performance schema version constant in sync', () => {
     expect(BACKEND_SCHEMA_VERSION).toBe(FRONTEND_SCHEMA_VERSION);
+    expect(BACKEND_SCHEMA_VERSION).toBe(13);
+  });
+
+  it('retains load profiles in ridership detail mode for direct and shared reads', () => {
+    const day = aggregateFrontend([
+      makeRecord({ tripId: 'trip-1', departureLoad: 12, apcSource: 1 }),
+    ])[0];
+
+    const direct = trimFrontendDay(day, 'ridership');
+    const shared = trimBackendDay(day as any, 'ridership');
+
+    expect(direct.loadProfiles).toEqual(day.loadProfiles);
+    expect(shared.loadProfiles).toEqual(day.loadProfiles);
+    expect(shared).toEqual(direct);
+  });
+
+  it('keeps loads separate when different stop patterns share a sequence index', () => {
+    const records = [
+      makeRecord({ tripId: 'trip-a', stopId: 'stop-a', stopName: 'Stop A', routeStopIndex: 1, departureLoad: 10 }),
+      makeRecord({ tripId: 'trip-b', stopId: 'stop-b', stopName: 'Stop B', routeStopIndex: 1, departureLoad: 30 }),
+    ];
+
+    const frontend = aggregateFrontend(records);
+    const backend = aggregateBackend(records as any);
+
+    expect(backend[0].loadProfiles).toEqual(frontend[0].loadProfiles);
+    expect(frontend[0].loadProfiles[0].stops).toEqual([
+      expect.objectContaining({ stopId: 'stop-a', avgLoad: 10, loadObservationCount: 1 }),
+      expect.objectContaining({ stopId: 'stop-b', avgLoad: 30, loadObservationCount: 1 }),
+    ]);
+  });
+
+  it('keeps occurrence-aware loop heatmaps and load profiles aligned server-side', () => {
+    const records = [
+      makeRecord({ tripId: 'loop-1', terminalDepartureTime: '07:00', stopId: 'A', routeStopIndex: 0, departureLoad: 5 }),
+      makeRecord({ tripId: 'loop-1', terminalDepartureTime: '07:00', stopId: 'B', routeStopIndex: 1, departureLoad: 6 }),
+      makeRecord({ tripId: 'loop-1', terminalDepartureTime: '07:00', stopId: 'A', routeStopIndex: 2, departureLoad: 2 }),
+      makeRecord({ tripId: 'loop-2', terminalDepartureTime: '08:00', stopId: 'X', routeStopIndex: 0, departureLoad: 1 }),
+      makeRecord({ tripId: 'loop-2', terminalDepartureTime: '08:00', stopId: 'A', routeStopIndex: 1, departureLoad: 7 }),
+      makeRecord({ tripId: 'loop-2', terminalDepartureTime: '08:00', stopId: 'B', routeStopIndex: 2, departureLoad: 8 }),
+      makeRecord({ tripId: 'loop-2', terminalDepartureTime: '08:00', stopId: 'A', routeStopIndex: 3, departureLoad: 3 }),
+    ];
+
+    const frontend = aggregateFrontend(records)[0];
+    const backend = aggregateBackend(records as any)[0];
+
+    expect(backend.ridershipHeatmaps).toEqual(frontend.ridershipHeatmaps);
+    expect(backend.loadProfiles).toEqual(frontend.loadProfiles);
+    expect(frontend.ridershipHeatmaps![0].multipleStopPatterns).toBe(true);
+    expect(frontend.ridershipHeatmaps![0].stops.filter(stop => stop.stopId === 'A').map(stop => stop.occurrenceIndex)).toEqual([0, 1]);
   });
 
   it('uses downstream departure for non-terminal timepoint segments and downstream arrival at the terminal', () => {
@@ -393,6 +445,35 @@ describe('functions performance aggregation stays aligned with app runtime logic
     expect(backend[0].byOperatorDwell?.incidents).toHaveLength(0);
     expect(backend[0].byOperatorDwell?.totalIncidents).toBe(0);
     expect(backend[0].byOperatorDwell?.totalStopVisits).toBe(1);
+  });
+
+  it('uses a valid duplicate dwell observation when an earlier duplicate has malformed times', () => {
+    const records = [
+      makeRecord({
+        tripId: 'duplicate-dwell-trip',
+        stopId: 'duplicate-stop',
+        observedArrivalTime: 'not-a-time',
+        observedDepartureTime: '07:06:00',
+      }),
+      makeRecord({
+        tripId: 'duplicate-dwell-trip',
+        stopId: 'duplicate-stop',
+        observedArrivalTime: '07:00:30',
+        observedDepartureTime: '07:06:00',
+      }),
+    ];
+
+    const frontend = aggregateFrontend(records)[0].byOperatorDwell;
+    const backend = aggregateBackend(records as any)[0].byOperatorDwell;
+
+    expect(backend).toEqual(frontend);
+    expect(frontend?.incidents).toHaveLength(1);
+    expect(frontend?.incidents[0]).toMatchObject({
+      tripId: 'duplicate-dwell-trip',
+      stopId: 'duplicate-stop',
+      trackedDwellSeconds: 330,
+      severity: 'high',
+    });
   });
 
   it('keeps detour runtime pattern evidence aligned between frontend and backend aggregators', () => {

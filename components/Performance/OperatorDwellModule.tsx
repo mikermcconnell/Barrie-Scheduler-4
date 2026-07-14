@@ -1,711 +1,349 @@
-import React, { useMemo, useState, useCallback, useEffect } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-    LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+    AlertTriangle,
+    BarChart3,
+    ChevronLeft,
+    ChevronRight,
+    Clock3,
+    Download,
+    Info,
+    Search,
+    ShieldCheck,
+    TrendingUp,
+} from 'lucide-react';
+import {
+    CartesianGrid,
+    Line,
+    LineChart,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
 } from 'recharts';
-import { AlertTriangle, ArrowUpDown, ChevronDown, ChevronUp, Clock, Users, Timer, TrendingUp } from 'lucide-react';
-import type { PerformanceDataSummary, DwellIncident, OperatorDwellSummary } from '../../utils/performanceDataTypes';
-import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
-import { aggregateDwellAcrossDays } from '../../utils/schedule/operatorDwellUtils';
-import { exportOperatorDwell, exportOperatorDwellPDF } from './reports/reportExporter';
-import { DwellCascadeSection } from './DwellCascadeSection';
+import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
 import {
-    addDaysToISODate,
-    compareDateStrings,
-    getISOWeekStartMonday,
-    normalizeToISODate,
-    shortDateLabel,
-} from '../../utils/performanceDateUtils';
+    buildDwellIncidentReviewModel,
+    compareDwellReviewRows,
+    type DwellImpactStatus,
+    type DwellIncidentReviewRow,
+} from '../../utils/performanceDwellReview';
+import { buildStopLoadLookup } from '../../utils/schedule/cascadeStoryUtils';
+import { exportOperatorDwell, exportOperatorDwellPDF } from './reports/reportExporter';
+import DwellIncidentDetailDrawer from './DwellIncidentDetailDrawer';
 
 interface OperatorDwellModuleProps {
     data: PerformanceDataSummary;
 }
 
-const INCIDENTS_PER_PAGE = 100;
-type TrendDatesStyle = 'monthDay' | 'numeric' | 'iso';
-const TREND_DATES_STYLE: TrendDatesStyle = 'monthDay';
+type ViewMode = 'incidents' | 'patterns';
+type SeverityFilter = 'all' | 'high' | 'moderate';
+type SortMode = 'priority' | 'newest';
 
-type SortCol = 'date' | 'routeId' | 'stopName' | 'observedArrivalTime' | 'observedDepartureTime' | 'trackedDwellSeconds' | 'severity';
-type SortDir = 'asc' | 'desc';
-type OperatorSortCol = 'operatorId' | 'moderateCount' | 'highCount' | 'totalIncidents' | 'totalTrackedDwellSeconds' | 'avgTrackedDwellSeconds' | 'incidentsPer100ServiceHours';
-type TrendSortCol = 'routeId' | 'tripName' | 'block' | 'stopName' | 'approxTime' | 'distinctDays' | 'totalIncidents' | 'avgDwellMin' | 'operators' | 'dates';
-const SEVERITY_ORDER: Record<string, number> = { moderate: 1, high: 2 };
-const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+const ROWS_PER_PAGE = 75;
+
+const formatNumber = (value: number): string => new Intl.NumberFormat('en-CA', { maximumFractionDigits: 1 }).format(value);
+const minutes = (seconds: number): string => `${(seconds / 60).toFixed(1)} min`;
+
+const impactLabel: Record<DwellImpactStatus, string> = {
+    'otp-late': 'OTP-late carryover',
+    'delay-carried': 'Delay carried',
+    'no-later-carryover': 'No later carryover',
+    unknown: 'Unknown',
+};
+
+const impactStyles: Record<DwellImpactStatus, string> = {
+    'otp-late': 'border-red-200 bg-red-50 text-red-700',
+    'delay-carried': 'border-amber-200 bg-amber-50 text-amber-700',
+    'no-later-carryover': 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    unknown: 'border-gray-200 bg-gray-50 text-gray-600',
+};
 
 const SeverityBadge: React.FC<{ severity: 'moderate' | 'high' }> = ({ severity }) => (
-    <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
-        severity === 'high'
-            ? 'bg-red-100 text-red-700'
-            : 'bg-amber-100 text-amber-700'
-    }`}>
+    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${severity === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
         {severity === 'high' ? 'High' : 'Moderate'}
     </span>
 );
 
-function formatTrendDate(dateStr: string, style: TrendDatesStyle): string {
-    const iso = normalizeToISODate(dateStr);
-    if (!iso) return dateStr;
+const ImpactBadge: React.FC<{ status: DwellImpactStatus }> = ({ status }) => (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${impactStyles[status]}`}>
+        {impactLabel[status]}
+    </span>
+);
 
-    if (style === 'iso') return shortDateLabel(iso);
-
-    const [yearStr, monthStr, dayStr] = iso.split('-');
-    const year = Number(yearStr);
-    const month = Number(monthStr);
-    const day = Number(dayStr);
-    const parsed = new Date(Date.UTC(year, month - 1, day, 12));
-    if (Number.isNaN(parsed.getTime())) return iso;
-
-    const formatOpts: Intl.DateTimeFormatOptions = style === 'numeric'
-        ? { month: 'numeric', day: 'numeric' }
-        : { month: 'short', day: 'numeric' };
-    return parsed.toLocaleDateString('en-US', formatOpts);
-}
-
-function formatTrendDates(dates: string[], style: TrendDatesStyle): string {
-    return dates.map(d => formatTrendDate(d, style)).join(', ');
-}
-
-function compareText(a: string, b: string): number {
-    return collator.compare(a ?? '', b ?? '');
-}
-
-function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
-    if (!active) return <ArrowUpDown size={11} className="opacity-25" />;
-    return dir === 'desc'
-        ? <ChevronDown size={11} />
-        : <ChevronUp size={11} />;
-}
-
-function SortableHeader({
-    label,
-    right = false,
-    active,
-    dir,
-    onClick,
-    title,
-}: {
+const SummaryCard: React.FC<{
     label: string;
-    right?: boolean;
-    active: boolean;
-    dir: SortDir;
-    onClick: () => void;
-    title?: string;
-}) {
+    value: string;
+    note: string;
+    icon: React.ReactNode;
+    tone?: 'neutral' | 'amber' | 'red' | 'cyan';
+}> = ({ label, value, note, icon, tone = 'neutral' }) => {
+    const toneClasses = {
+        neutral: 'bg-gray-50 text-gray-600',
+        amber: 'bg-amber-50 text-amber-700',
+        red: 'bg-red-50 text-red-700',
+        cyan: 'bg-cyan-50 text-cyan-700',
+    }[tone];
     return (
-        <th className={`pb-2 pr-3 font-medium ${right ? 'text-right' : ''}`}>
-            <button
-                type="button"
-                onClick={onClick}
-                title={title}
-                className={`inline-flex items-center gap-0.5 cursor-pointer select-none hover:text-gray-700 transition-colors ${right ? 'justify-end w-full' : ''}`}
-            >
-                {label}
-                <SortIcon active={active} dir={dir} />
-            </button>
-        </th>
-    );
-}
-
-export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }) => {
-    const [subView, setSubView] = useState<'incidents' | 'cascade'>('incidents');
-    const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
-    const [incidentPage, setIncidentPage] = useState(1);
-    const [sortCol, setSortCol] = useState<SortCol>('trackedDwellSeconds');
-    const [sortDir, setSortDir] = useState<SortDir>('desc');
-    const [operatorSortCol, setOperatorSortCol] = useState<OperatorSortCol>('totalIncidents');
-    const [operatorSortDir, setOperatorSortDir] = useState<SortDir>('desc');
-    const [trendSortCol, setTrendSortCol] = useState<TrendSortCol>('distinctDays');
-    const [trendSortDir, setTrendSortDir] = useState<SortDir>('desc');
-    const [exportingExcel, setExportingExcel] = useState(false);
-    const [exportingPDF, setExportingPDF] = useState(false);
-
-    const activeDates = useMemo(
-        () => [...new Set(
-            data.dailySummaries
-                .map(d => normalizeToISODate(d.date) ?? d.date)
-                .filter((date): date is string => Boolean(date))
-        )].sort(compareDateStrings),
-        [data.dailySummaries]
-    );
-    const startDate = activeDates[0] ?? data.metadata.dateRange.start;
-    const endDate = activeDates[activeDates.length - 1] ?? data.metadata.dateRange.end;
-    const canExport = data.dailySummaries.length > 0;
-
-    const handleExportExcel = useCallback(async () => {
-        if (!canExport) return;
-        setExportingExcel(true);
-        try { await exportOperatorDwell(data.dailySummaries, startDate, endDate); }
-        finally { setExportingExcel(false); }
-    }, [canExport, data.dailySummaries, startDate, endDate]);
-
-    const handleExportPDF = useCallback(async () => {
-        if (!canExport) return;
-        setExportingPDF(true);
-        try { await exportOperatorDwellPDF(data.dailySummaries, startDate, endDate); }
-        finally { setExportingPDF(false); }
-    }, [canExport, data.dailySummaries, startDate, endDate]);
-
-    const metrics = useMemo(
-        () => aggregateDwellAcrossDays(data.dailySummaries),
-        [data.dailySummaries]
-    );
-
-    const filteredIncidents = useMemo((): DwellIncident[] => {
-        const classified = metrics.incidents.filter(i => i.severity !== 'minor');
-        if (!selectedOperator) return classified;
-        return classified.filter(i => i.operatorId === selectedOperator);
-    }, [metrics, selectedOperator]);
-
-    const handleSort = useCallback((col: SortCol) => {
-        if (col === sortCol) {
-            setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-        } else {
-            setSortCol(col);
-            setSortDir('desc');
-        }
-        setIncidentPage(1);
-    }, [sortCol]);
-
-    const sortedIncidents = useMemo(() => {
-        const sorted = [...filteredIncidents];
-        sorted.sort((a, b) => {
-            let cmp = 0;
-            if (sortCol === 'trackedDwellSeconds') {
-                cmp = a.trackedDwellSeconds - b.trackedDwellSeconds;
-            } else if (sortCol === 'severity') {
-                cmp = (SEVERITY_ORDER[a.severity] ?? 0) - (SEVERITY_ORDER[b.severity] ?? 0);
-            } else if (sortCol === 'date') {
-                cmp = compareDateStrings(a.date, b.date);
-            } else {
-                cmp = compareText(a[sortCol], b[sortCol]);
-            }
-            return sortDir === 'desc' ? -cmp : cmp;
-        });
-        return sorted;
-    }, [filteredIncidents, sortCol, sortDir]);
-
-    useEffect(() => {
-        setIncidentPage(1);
-    }, [selectedOperator, filteredIncidents.length]);
-
-    const totalIncidentPages = Math.max(1, Math.ceil(sortedIncidents.length / INCIDENTS_PER_PAGE));
-    const currentIncidentPage = Math.min(incidentPage, totalIncidentPages);
-    const pagedIncidents = useMemo(() => {
-        const start = (currentIncidentPage - 1) * INCIDENTS_PER_PAGE;
-        return sortedIncidents.slice(start, start + INCIDENTS_PER_PAGE);
-    }, [currentIncidentPage, sortedIncidents]);
-
-    const missingDwellDates = useMemo(() => {
-        const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - 7);
-        return data.dailySummaries
-            .filter(d => !d.byOperatorDwell)
-            .map(d => d.date)
-            .filter(date => new Date(`${date}T12:00:00`) >= cutoff);
-    }, [data.dailySummaries]);
-    const numDays = data.dailySummaries.filter(d => d.byOperatorDwell).length || 1;
-    const totalTrips = data.dailySummaries.reduce((s, d) => s + (d.system?.tripCount ?? 0), 0);
-    const highCount = metrics.byOperator.reduce((s, o) => s + o.highCount, 0);
-    const incPerDay = metrics.totalIncidents / numDays;
-    const avgDwellPerIncident = metrics.totalIncidents > 0
-        ? metrics.totalTrackedDwellMinutes / metrics.totalIncidents : 0;
-    const highPct = metrics.totalIncidents > 0
-        ? Math.round((highCount / metrics.totalIncidents) * 100) : 0;
-    const avgPerOperator = metrics.byOperator.length > 0
-        ? (metrics.totalIncidents / metrics.byOperator.length).toFixed(1) : '0';
-
-    // Daily dwell hours trend
-    const dailyDwellTrend = useMemo(() => {
-        return data.dailySummaries
-            .map(d => {
-                const totalSec = d.byOperatorDwell?.incidents.reduce((s, i) => s + i.trackedDwellSeconds, 0) ?? 0;
-                return { date: d.date, hours: +(totalSec / 3600).toFixed(2) };
-            })
-            .sort((a, b) => a.date.localeCompare(b.date));
-    }, [data.dailySummaries]);
-
-    // Weekly trend data
-    const weeklyTrend = useMemo(() => {
-        const weeks = new Map<string, { incidents: number; high: number; trips: number; days: number }>();
-        for (const day of data.dailySummaries) {
-            const iso = normalizeToISODate(day.date) ?? day.date;
-            const weekKey = getISOWeekStartMonday(iso) ?? iso;
-            const prev = weeks.get(weekKey) ?? { incidents: 0, high: 0, trips: 0, days: 0 };
-            const dwell = day.byOperatorDwell;
-            prev.incidents += dwell?.totalIncidents ?? 0;
-            prev.high += dwell?.byOperator.reduce((s, o) => s + o.highCount, 0) ?? 0;
-            prev.trips += day.system?.tripCount ?? 0;
-            prev.days += 1;
-            weeks.set(weekKey, prev);
-        }
-        return [...weeks.entries()]
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([weekStart, w]) => {
-                const weekEnd = addDaysToISODate(weekStart, 6) ?? weekStart;
-                const label = `${weekStart.slice(5)} – ${weekEnd.slice(5)}`;
-                return {
-                    weekStart,
-                    label,
-                    incPerDay: +(w.incidents / w.days).toFixed(1),
-                    highPerDay: +(w.high / w.days).toFixed(1),
-                    per1kTrips: w.trips > 0 ? +((w.incidents / w.trips) * 1000).toFixed(1) : 0,
-                };
-            });
-    }, [data.dailySummaries]);
-
-    // Trending dwell locations: high-severity incidents at same stop + same trip on 3+ distinct days
-    const trendingLocations = useMemo(() => {
-        const highIncidents = metrics.incidents.filter(i => i.severity === 'high');
-        if (highIncidents.length === 0) return [];
-
-        const groups = new Map<string, DwellIncident[]>();
-        for (const inc of highIncidents) {
-            if (!inc.tripName) continue;
-            const key = `${inc.stopId}||${inc.tripName}`;
-            const arr = groups.get(key);
-            if (arr) arr.push(inc);
-            else groups.set(key, [inc]);
-        }
-
-        const trends: {
-            stopName: string;
-            stopId: string;
-            routeId: string;
-            tripName: string;
-            blocks: string[];
-            approxTime: string;
-            distinctDays: number;
-            dates: string[];
-            totalIncidents: number;
-            avgDwellMin: number;
-            operators: string[];
-        }[] = [];
-
-        for (const [, incidents] of groups) {
-            const dates = [...new Set(incidents.map(i => i.date))].sort();
-            if (dates.length < 3) continue;
-
-            const operators = [...new Set(incidents.map(i => i.operatorId))].sort();
-            const blocks = [...new Set(incidents.map(i => i.block))].sort();
-            const totalDwell = incidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
-            // Use earliest incident by date for a stable representative time
-            const earliest = incidents.reduce((best, i) => i.date < best.date ? i : best);
-
-            trends.push({
-                stopName: earliest.stopName,
-                stopId: earliest.stopId,
-                routeId: earliest.routeId,
-                tripName: earliest.tripName,
-                blocks,
-                approxTime: earliest.observedArrivalTime.slice(0, 5),
-                distinctDays: dates.length,
-                dates,
-                totalIncidents: incidents.length,
-                avgDwellMin: +(totalDwell / incidents.length / 60).toFixed(1),
-                operators,
-            });
-        }
-
-        return trends.sort((a, b) => {
-            const mult = trendSortDir === 'asc' ? 1 : -1;
-            let cmp = 0;
-            switch (trendSortCol) {
-                case 'routeId':
-                    cmp = compareText(a.routeId, b.routeId);
-                    break;
-                case 'tripName':
-                    cmp = compareText(a.tripName, b.tripName);
-                    break;
-                case 'block':
-                    cmp = compareText(a.blocks.join(', '), b.blocks.join(', '));
-                    break;
-                case 'stopName':
-                    cmp = compareText(a.stopName, b.stopName);
-                    break;
-                case 'approxTime':
-                    cmp = compareText(a.approxTime, b.approxTime);
-                    break;
-                case 'distinctDays':
-                    cmp = a.distinctDays - b.distinctDays;
-                    break;
-                case 'totalIncidents':
-                    cmp = a.totalIncidents - b.totalIncidents;
-                    break;
-                case 'avgDwellMin':
-                    cmp = a.avgDwellMin - b.avgDwellMin;
-                    break;
-                case 'operators':
-                    cmp = compareText(a.operators.join(', '), b.operators.join(', '));
-                    break;
-                case 'dates':
-                    cmp = compareText(a.dates.join(', '), b.dates.join(', '));
-                    break;
-            }
-            return mult * cmp;
-        });
-    }, [metrics.incidents, trendSortCol, trendSortDir]);
-
-    const operatorSummary = useMemo(() => {
-        const rows = [...metrics.byOperator];
-        rows.sort((a, b) => {
-            const mult = operatorSortDir === 'asc' ? 1 : -1;
-            let cmp = 0;
-            switch (operatorSortCol) {
-                case 'operatorId':
-                    cmp = compareText(a.operatorId, b.operatorId);
-                    break;
-                case 'moderateCount':
-                    cmp = a.moderateCount - b.moderateCount;
-                    break;
-                case 'highCount':
-                    cmp = a.highCount - b.highCount;
-                    break;
-                case 'totalIncidents':
-                    cmp = a.totalIncidents - b.totalIncidents;
-                    break;
-                case 'totalTrackedDwellSeconds':
-                    cmp = a.totalTrackedDwellSeconds - b.totalTrackedDwellSeconds;
-                    break;
-                case 'avgTrackedDwellSeconds':
-                    cmp = a.avgTrackedDwellSeconds - b.avgTrackedDwellSeconds;
-                    break;
-                case 'incidentsPer100ServiceHours':
-                    cmp = (a.incidentsPer100ServiceHours ?? 0) - (b.incidentsPer100ServiceHours ?? 0);
-                    break;
-            }
-            return mult * cmp;
-        });
-        return rows;
-    }, [metrics.byOperator, operatorSortCol, operatorSortDir]);
-
-    const handleOperatorSort = useCallback((col: OperatorSortCol) => {
-        if (col === operatorSortCol) {
-            setOperatorSortDir(d => d === 'asc' ? 'desc' : 'asc');
-        } else {
-            setOperatorSortCol(col);
-            setOperatorSortDir('desc');
-        }
-    }, [operatorSortCol]);
-
-    const handleTrendSort = useCallback((col: TrendSortCol) => {
-        if (col === trendSortCol) {
-            setTrendSortDir(d => d === 'asc' ? 'desc' : 'asc');
-        } else {
-            setTrendSortCol(col);
-            setTrendSortDir('desc');
-        }
-    }, [trendSortCol]);
-
-    return (
-        <div className="space-y-5">
-            {/* Sub-view toggle */}
-            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5 w-fit">
-                <button
-                    onClick={() => setSubView('incidents')}
-                    className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                        subView === 'incidents'
-                            ? 'bg-white text-gray-900 shadow-sm'
-                            : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
-                    Incidents
-                </button>
-                <button
-                    onClick={() => setSubView('cascade')}
-                    className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                        subView === 'cascade'
-                            ? 'bg-white text-gray-900 shadow-sm'
-                            : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
-                    Cascade Analysis
-                </button>
-            </div>
-
-            {subView === 'cascade' ? (
-                <DwellCascadeSection data={data} />
-            ) : (<>
-            {/* Missing dwell data warning */}
-            {missingDwellDates.length > 0 && (
-                <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
-                    <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
-                    <span>
-                        <strong>{missingDwellDates.length} day{missingDwellDates.length !== 1 ? 's' : ''} missing dwell data</strong>
-                        {' '}— re-import to fix:{' '}
-                        <span className="font-mono">{missingDwellDates.join(', ')}</span>
-                    </span>
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+                    <p className="mt-2 text-2xl font-bold text-gray-900">{value}</p>
                 </div>
-            )}
-            {/* Normalized Metric Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <MetricCard
-                    icon={<AlertTriangle size={18} />}
-                    label="Incidents / Day"
-                    value={incPerDay.toFixed(1)}
-                    color="amber"
-                    subValue={`${fmt(metrics.totalIncidents)} total · ${numDays} days`}
-                />
-                <MetricCard
-                    icon={<Clock size={18} />}
-                    label="Total Dwell Hours"
-                    value={`${(metrics.totalTrackedDwellMinutes / 60).toFixed(1)} hr`}
-                    color="cyan"
-                    subValue={`${fmt(metrics.totalTrackedDwellMinutes)} min · ${avgDwellPerIncident.toFixed(1)} avg/inc`}
-                />
-                <MetricCard
-                    icon={<Timer size={18} />}
-                    label="High Severity"
-                    value={`${highPct}%`}
-                    color="red"
-                    subValue={`${fmt(highCount)} of ${fmt(metrics.totalIncidents)}`}
-                />
-                <MetricCard
-                    icon={<Users size={18} />}
-                    label="per 100 Svc Hours"
-                    value={metrics.incidentsPer100ServiceHours?.toFixed(1) ?? '—'}
-                    color="indigo"
-                    subValue={`${metrics.byOperator.length} operators · ${avgPerOperator} avg each`}
-                />
+                <div className={`rounded-lg p-2 ${toneClasses}`}>{icon}</div>
             </div>
-
-            {/* Operator Summary + Incident Detail Side-by-Side */}
-            <div className="grid grid-cols-1 lg:grid-cols-[35%_1fr] gap-4 items-start">
-                {/* Operator Summary Table */}
-                <ChartCard
-                    title="Operators"
-                    subtitle="Click to filter"
-                    headerExtra={
-                        <div className="flex items-center gap-2">
-                            {selectedOperator && (
-                                <button
-                                    onClick={() => setSelectedOperator(null)}
-                                    className="text-xs text-cyan-600 hover:text-cyan-700 font-medium"
-                                >
-                                    Clear
-                                </button>
-                            )}
-                            <button
-                                onClick={handleExportExcel}
-                                disabled={exportingExcel || !canExport}
-                                className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
-                            >
-                                {exportingExcel ? '...' : 'Excel'}
-                            </button>
-                            <button
-                                onClick={handleExportPDF}
-                                disabled={exportingPDF || !canExport}
-                                className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
-                            >
-                                {exportingPDF ? '...' : 'PDF'}
-                            </button>
-                        </div>
-                    }
-                >
-                    {metrics.byOperator.length === 0 ? (
-                        <p className="text-sm text-gray-400 py-8 text-center">No dwell incidents in selected period</p>
-                    ) : (
-                        <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                            <table className="w-full text-sm">
-                                <thead className="sticky top-0 bg-white">
-                                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                        <SortableHeader label="Operator" active={operatorSortCol === 'operatorId'} dir={operatorSortDir} onClick={() => handleOperatorSort('operatorId')} />
-                                        <SortableHeader label="Mod" right active={operatorSortCol === 'moderateCount'} dir={operatorSortDir} onClick={() => handleOperatorSort('moderateCount')} />
-                                        <SortableHeader label="High" right active={operatorSortCol === 'highCount'} dir={operatorSortDir} onClick={() => handleOperatorSort('highCount')} />
-                                        <SortableHeader label="Total" right active={operatorSortCol === 'totalIncidents'} dir={operatorSortDir} onClick={() => handleOperatorSort('totalIncidents')} />
-                                        <SortableHeader label="Total (hr)" right active={operatorSortCol === 'totalTrackedDwellSeconds'} dir={operatorSortDir} onClick={() => handleOperatorSort('totalTrackedDwellSeconds')} />
-                                        <SortableHeader label="Avg (min)" right active={operatorSortCol === 'avgTrackedDwellSeconds'} dir={operatorSortDir} onClick={() => handleOperatorSort('avgTrackedDwellSeconds')} />
-                                        <SortableHeader label="/100h" right active={operatorSortCol === 'incidentsPer100ServiceHours'} dir={operatorSortDir} onClick={() => handleOperatorSort('incidentsPer100ServiceHours')} title="Incidents per 100 service hours" />
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {operatorSummary.map((op: OperatorDwellSummary) => {
-                                        const isSelected = selectedOperator === op.operatorId;
-                                        return (
-                                            <tr
-                                                key={op.operatorId}
-                                                onClick={() => setSelectedOperator(isSelected ? null : op.operatorId)}
-                                                className={`border-b border-gray-100 cursor-pointer transition-colors ${
-                                                    isSelected ? 'bg-cyan-50' : 'hover:bg-gray-50'
-                                                }`}
-                                            >
-                                                <td className="py-2 pr-3 font-medium text-gray-900">{op.operatorId}</td>
-                                                <td className="py-2 pr-3 text-right text-amber-600">{op.moderateCount}</td>
-                                                <td className="py-2 pr-3 text-right text-red-600">{op.highCount}</td>
-                                                <td className="py-2 pr-3 text-right font-medium">{op.totalIncidents}</td>
-                                                <td className="py-2 pr-3 text-right font-medium text-cyan-700">{(op.totalTrackedDwellSeconds / 3600).toFixed(2)}</td>
-                                                <td className="py-2 pr-3 text-right">{(op.avgTrackedDwellSeconds / 60).toFixed(1)}</td>
-                                                <td className="py-2 text-right tabular-nums text-indigo-600">{op.incidentsPer100ServiceHours?.toFixed(1) ?? '—'}</td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
-                </ChartCard>
-
-                {/* Incident Detail Table */}
-                <ChartCard
-                    title="Incident Detail"
-                    subtitle={selectedOperator ? `Filtered to operator ${selectedOperator}` : 'All incidents'}
-                >
-                    {filteredIncidents.length === 0 ? (
-                        <p className="text-sm text-gray-400 py-8 text-center">No incidents to display</p>
-                    ) : (
-                        <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                            <table className="w-full text-sm">
-                                <thead className="sticky top-0 bg-white">
-                                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                        <SortableHeader label="Date" active={sortCol === 'date'} dir={sortDir} onClick={() => handleSort('date')} />
-                                        <SortableHeader label="Route" active={sortCol === 'routeId'} dir={sortDir} onClick={() => handleSort('routeId')} />
-                                        <SortableHeader label="Stop" active={sortCol === 'stopName'} dir={sortDir} onClick={() => handleSort('stopName')} />
-                                        <SortableHeader label="Arrival" active={sortCol === 'observedArrivalTime'} dir={sortDir} onClick={() => handleSort('observedArrivalTime')} />
-                                        <SortableHeader label="Departure" active={sortCol === 'observedDepartureTime'} dir={sortDir} onClick={() => handleSort('observedDepartureTime')} />
-                                        <SortableHeader label="Tracked (min)" right active={sortCol === 'trackedDwellSeconds'} dir={sortDir} onClick={() => handleSort('trackedDwellSeconds')} />
-                                        <SortableHeader label="Severity" active={sortCol === 'severity'} dir={sortDir} onClick={() => handleSort('severity')} />
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {pagedIncidents.map((inc, idx) => (
-                                        <tr key={`${inc.operatorId}-${inc.date}-${inc.stopId}-${idx}`} className="border-b border-gray-100">
-                                            <td className="py-2 pr-3 text-gray-600">{inc.date}</td>
-                                            <td className="py-2 pr-3 text-gray-600">{inc.routeId}</td>
-                                            <td className="py-2 pr-3 text-gray-600 max-w-[180px] truncate" title={inc.stopName}>{inc.stopName}</td>
-                                            <td className="py-2 pr-3 text-gray-600 tabular-nums">{inc.observedArrivalTime}</td>
-                                            <td className="py-2 pr-3 text-gray-600 tabular-nums">{inc.observedDepartureTime}</td>
-                                            <td className="py-2 pr-3 text-right tabular-nums">{(inc.trackedDwellSeconds / 60).toFixed(1)}</td>
-                                            <td className="py-2"><SeverityBadge severity={inc.severity as 'moderate' | 'high'} /></td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
-                    {sortedIncidents.length > INCIDENTS_PER_PAGE && (
-                        <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                            <span>
-                                Showing {(currentIncidentPage - 1) * INCIDENTS_PER_PAGE + 1}
-                                {'-'}
-                                {Math.min(currentIncidentPage * INCIDENTS_PER_PAGE, sortedIncidents.length)}
-                                {' '}of {sortedIncidents.length}
-                            </span>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => setIncidentPage(page => Math.max(1, page - 1))}
-                                    disabled={currentIncidentPage === 1}
-                                    className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40"
-                                >
-                                    Prev
-                                </button>
-                                <span>
-                                    Page {currentIncidentPage} / {totalIncidentPages}
-                                </span>
-                                <button
-                                    onClick={() => setIncidentPage(page => Math.min(totalIncidentPages, page + 1))}
-                                    disabled={currentIncidentPage === totalIncidentPages}
-                                    className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40"
-                                >
-                                    Next
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </ChartCard>
-            </div>
-
-            {/* Daily Dwell Hours Chart */}
-            {dailyDwellTrend.length > 1 && (
-                <ChartCard title="Total Dwell Hours / Day" subtitle="How is cumulative operator dwell trending day to day?">
-                    <ResponsiveContainer width="100%" height={260}>
-                        <LineChart data={dailyDwellTrend}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                            <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                            <YAxis tick={{ fontSize: 11 }} unit="h" />
-                            <Tooltip
-                                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
-                                formatter={(v: number) => [`${v} hr`, 'Total Dwell']}
-                            />
-                            <Line type="monotone" dataKey="hours" name="Dwell Hours" stroke="#0891b2" strokeWidth={2} dot={{ r: 3 }} />
-                        </LineChart>
-                    </ResponsiveContainer>
-                </ChartCard>
-            )}
-
-            {/* Weekly Trend Chart */}
-            {weeklyTrend.length > 1 && (
-                <ChartCard title="Weekly Trend" subtitle="Incidents per day by week — are things improving?">
-                    <ResponsiveContainer width="100%" height={260}>
-                        <LineChart data={weeklyTrend}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                            <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                            <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11 }} />
-                            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
-                            <Tooltip
-                                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
-                                labelFormatter={(_, payload) => {
-                                    const w = payload?.[0]?.payload?.weekStart;
-                                    return w ? `Week of ${w}` : '';
-                                }}
-                            />
-                            <Legend wrapperStyle={{ fontSize: 11 }} />
-                            <Line yAxisId="left" type="monotone" dataKey="incPerDay" name="Incidents / Day" stroke="#0891b2" strokeWidth={2} dot={{ r: 3 }} />
-                            <Line yAxisId="left" type="monotone" dataKey="highPerDay" name="High / Day" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="5 5" dot={false} />
-                            {totalTrips > 0 && (
-                                <Line yAxisId="right" type="monotone" dataKey="per1kTrips" name="Per 1K Trips" stroke="#7c3aed" strokeWidth={1.5} dot={false} />
-                            )}
-                        </LineChart>
-                    </ResponsiveContainer>
-                </ChartCard>
-            )}
-
-            {/* Trending Dwell Locations */}
-            {trendingLocations.length > 0 && (
-                <ChartCard
-                    title="Trending Dwell Locations"
-                    subtitle="High-severity incidents recurring on the same trip at the same stop on 3+ days"
-                    headerExtra={
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">
-                            <TrendingUp size={12} />
-                            {trendingLocations.length} trend{trendingLocations.length !== 1 ? 's' : ''}
-                        </span>
-                    }
-                >
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                    <SortableHeader label="Route" active={trendSortCol === 'routeId'} dir={trendSortDir} onClick={() => handleTrendSort('routeId')} />
-                                    <SortableHeader label="Trip" active={trendSortCol === 'tripName'} dir={trendSortDir} onClick={() => handleTrendSort('tripName')} />
-                                    <SortableHeader label="Block" active={trendSortCol === 'block'} dir={trendSortDir} onClick={() => handleTrendSort('block')} />
-                                    <SortableHeader label="Stop" active={trendSortCol === 'stopName'} dir={trendSortDir} onClick={() => handleTrendSort('stopName')} />
-                                    <SortableHeader label="~Time" active={trendSortCol === 'approxTime'} dir={trendSortDir} onClick={() => handleTrendSort('approxTime')} />
-                                    <SortableHeader label="Days" right active={trendSortCol === 'distinctDays'} dir={trendSortDir} onClick={() => handleTrendSort('distinctDays')} />
-                                    <SortableHeader label="Incidents" right active={trendSortCol === 'totalIncidents'} dir={trendSortDir} onClick={() => handleTrendSort('totalIncidents')} />
-                                    <SortableHeader label="Avg (min)" right active={trendSortCol === 'avgDwellMin'} dir={trendSortDir} onClick={() => handleTrendSort('avgDwellMin')} />
-                                    <SortableHeader label="Operators" active={trendSortCol === 'operators'} dir={trendSortDir} onClick={() => handleTrendSort('operators')} />
-                                    <SortableHeader label="Dates" active={trendSortCol === 'dates'} dir={trendSortDir} onClick={() => handleTrendSort('dates')} />
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {trendingLocations.map((t, idx) => (
-                                    <tr key={`${t.stopId}-${t.tripName}-${idx}`} className="border-b border-gray-100">
-                                        <td className="py-2 pr-3 text-gray-600">{t.routeId}</td>
-                                        <td className="py-2 pr-3 text-gray-900 font-medium">{t.tripName}</td>
-                                        <td className="py-2 pr-3 text-gray-600 text-xs">{t.blocks.join(', ')}</td>
-                                        <td className="py-2 pr-3 text-gray-900 max-w-[200px] truncate" title={t.stopName}>{t.stopName}</td>
-                                        <td className="py-2 pr-3 text-gray-600 tabular-nums">{t.approxTime}</td>
-                                        <td className="py-2 pr-3 text-right font-bold text-red-700 tabular-nums">{`${t.distinctDays}/${numDays}`}</td>
-                                        <td className="py-2 pr-3 text-right">{t.totalIncidents}</td>
-                                        <td className="py-2 pr-3 text-right tabular-nums">{t.avgDwellMin}</td>
-                                        <td className="py-2 pr-3 text-gray-600 text-xs">{t.operators.join(', ')}</td>
-                                        <td className="py-2 text-gray-500 text-xs">{formatTrendDates(t.dates, TREND_DATES_STYLE)}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </ChartCard>
-            )}
-            </>)}
+            <p className="mt-2 text-xs text-gray-500">{note}</p>
         </div>
     );
 };
+
+function getRowKey(row: DwellIncidentReviewRow): string {
+    return row.incident.incidentId ?? [
+        row.incident.date,
+        row.incident.tripName,
+        row.incident.stopId,
+        row.incident.operatorId,
+        row.incident.observedDepartureTime,
+    ].join('|');
+}
+
+function compareNewest(a: DwellIncidentReviewRow, b: DwellIncidentReviewRow): number {
+    const date = b.incident.date.localeCompare(a.incident.date);
+    return date !== 0 ? date : b.incident.observedDepartureTime.localeCompare(a.incident.observedDepartureTime);
+}
+
+export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }) => {
+    const [view, setView] = useState<ViewMode>('incidents');
+    const [severity, setSeverity] = useState<SeverityFilter>('all');
+    const [impact, setImpact] = useState<DwellImpactStatus | 'all'>('all');
+    const [operatorId, setOperatorId] = useState('all');
+    const [search, setSearch] = useState('');
+    const [sortMode, setSortMode] = useState<SortMode>('priority');
+    const [page, setPage] = useState(1);
+    const [selectedRow, setSelectedRow] = useState<DwellIncidentReviewRow | null>(null);
+    const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
+    const [exportError, setExportError] = useState<string | null>(null);
+
+    const model = useMemo(() => buildDwellIncidentReviewModel(data.dailySummaries), [data.dailySummaries]);
+    const stopLoadLookup = useMemo(() => buildStopLoadLookup(data.dailySummaries), [data.dailySummaries]);
+    const operators = useMemo(() => model.operatorContext.filter(row => row.incidentCount > 0), [model.operatorContext]);
+
+    const activeDates = useMemo(() => data.dailySummaries.map(day => day.date).sort(), [data.dailySummaries]);
+    const startDate = activeDates[0] ?? data.metadata.dateRange.start;
+    const endDate = activeDates[activeDates.length - 1] ?? data.metadata.dateRange.end;
+
+    const filteredRows = useMemo(() => {
+        const query = search.trim().toLocaleLowerCase();
+        return model.rows.filter(row => {
+            if (severity !== 'all' && row.incident.severity !== severity) return false;
+            if (impact !== 'all' && row.impactStatus !== impact) return false;
+            if (operatorId !== 'all' && row.incident.operatorId !== operatorId) return false;
+            if (!query) return true;
+            return [
+                row.incident.routeId,
+                row.incident.routeName,
+                row.incident.stopName,
+                row.incident.tripName,
+                row.incident.block,
+                row.incident.operatorId,
+            ].some(value => value.toLocaleLowerCase().includes(query));
+        }).sort(sortMode === 'priority' ? compareDwellReviewRows : compareNewest);
+    }, [impact, model.rows, operatorId, search, severity, sortMode]);
+    const filtersActive = severity !== 'all'
+        || impact !== 'all'
+        || operatorId !== 'all'
+        || search.trim().length > 0;
+
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / ROWS_PER_PAGE));
+    const currentPage = Math.min(page, totalPages);
+    const pagedRows = filteredRows.slice((currentPage - 1) * ROWS_PER_PAGE, currentPage * ROWS_PER_PAGE);
+
+    const updateFilter = useCallback((setter: () => void) => {
+        setter();
+        setPage(1);
+    }, []);
+
+    const handleExport = useCallback(async (format: 'excel' | 'pdf') => {
+        setExporting(format);
+        setExportError(null);
+        try {
+            if (format === 'excel') {
+                if (filtersActive) await exportOperatorDwell(data.dailySummaries, startDate, endDate, filteredRows, true);
+                else await exportOperatorDwell(data.dailySummaries, startDate, endDate, filteredRows);
+            } else if (filtersActive) {
+                await exportOperatorDwellPDF(data.dailySummaries, startDate, endDate, filteredRows, true);
+            } else {
+                await exportOperatorDwellPDF(data.dailySummaries, startDate, endDate, filteredRows);
+            }
+        } catch {
+            setExportError(`The ${format.toUpperCase()} export could not be created. Please try again.`);
+        } finally {
+            setExporting(null);
+        }
+    }, [data.dailySummaries, endDate, filteredRows, filtersActive, startDate]);
+
+    const openRow = (row: DwellIncidentReviewRow) => setSelectedRow(row);
+    const highPct = model.totalIncidents > 0 ? model.highCount / model.totalIncidents * 100 : 0;
+
+    return (
+        <div className="space-y-5">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+                    <div className="max-w-3xl">
+                        <div className="flex items-center gap-2 text-cyan-700">
+                            <ShieldCheck size={18} />
+                            <span className="text-xs font-bold uppercase tracking-[0.16em]">Operational review</span>
+                        </div>
+                        <h3 className="mt-2 text-xl font-bold text-gray-900">Dwell Incident Review</h3>
+                        <p className="mt-2 text-sm leading-6 text-gray-600">
+                            Review unusually long stop dwell associated with late departures, then follow the evidence through the incident trip and later service. These are investigation signals, not proof of operator fault.
+                        </p>
+                        <details className="mt-3 text-sm text-gray-600">
+                            <summary className="inline-flex cursor-pointer items-center gap-1.5 font-semibold text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300">
+                                <Info size={14} /> How incidents are defined
+                            </summary>
+                            <div className="mt-2 rounded-lg border border-cyan-100 bg-cyan-50/60 px-4 py-3 leading-6">
+                                A reportable incident departs more than 3 minutes late and records more than 2 minutes of effective dwell. More than 5 minutes is high severity. Passenger activity, accessibility needs, traffic, schedule design, and other conditions may contribute.
+                            </div>
+                        </details>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                        <button type="button" disabled={exporting !== null || data.dailySummaries.length === 0} onClick={() => handleExport('excel')} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                            <Download size={15} /> {exporting === 'excel' ? 'Exporting…' : 'Excel'}
+                        </button>
+                        <button type="button" disabled={exporting !== null || data.dailySummaries.length === 0} onClick={() => handleExport('pdf')} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                            <Download size={15} /> {exporting === 'pdf' ? 'Exporting…' : 'PDF'}
+                        </button>
+                    </div>
+                </div>
+                {exportError && <p role="alert" className="mt-3 text-sm font-semibold text-red-700">{exportError}</p>}
+            </section>
+
+            {(model.daysMissingDwellData.length > 0 || model.daysNeedingReimport.length > 0) && (
+                <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <AlertTriangle size={17} className="mt-0.5 shrink-0 text-amber-600" />
+                    <div>
+                        <p className="font-bold">Some selected days have incomplete dwell evidence.</p>
+                        <p className="mt-1 text-amber-800">
+                            {model.daysMissingDwellData.length > 0 ? `${model.daysMissingDwellData.length} days have no dwell data. ` : ''}
+                            {model.daysNeedingReimport.length > 0 ? `${model.daysNeedingReimport.length} days need re-import for exposure rates and complete incident context.` : ''}
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+                <SummaryCard label="Reportable incidents" value={formatNumber(model.totalIncidents)} note={`${formatNumber(model.reportableDwellMinutes)} reportable dwell minutes`} icon={<AlertTriangle size={18} />} tone="amber" />
+                <SummaryCard label="High severity" value={formatNumber(model.highCount)} note={`${highPct.toFixed(0)}% of reportable incidents`} icon={<Clock3 size={18} />} tone="red" />
+                <SummaryCard label="OTP-late departures" value={formatNumber(model.otpLateDepartures)} note={`Across ${model.otpCarryoverIncidentCount} originating incidents`} icon={<TrendingUp size={18} />} tone="red" />
+                <SummaryCard label="Incidents / 1K visits" value={model.incidentsPer1kEligibleVisits === null ? '—' : model.incidentsPer1kEligibleVisits.toFixed(1)} note={model.eligibleTimepointVisits === null ? 'Re-import required for a valid denominator' : `${formatNumber(model.eligibleTimepointVisits)} eligible timepoint visits`} icon={<BarChart3 size={18} />} tone="cyan" />
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-4 border-b border-gray-200 p-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="inline-flex w-fit rounded-lg bg-gray-100 p-1" role="group" aria-label="Dwell review views">
+                        <button type="button" aria-pressed={view === 'incidents'} onClick={() => setView('incidents')} className={`min-h-11 rounded-md px-4 py-2 text-sm font-semibold ${view === 'incidents' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>Incident Queue</button>
+                        <button type="button" aria-pressed={view === 'patterns'} onClick={() => setView('patterns')} className={`min-h-11 rounded-md px-4 py-2 text-sm font-semibold ${view === 'patterns' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>Patterns</button>
+                    </div>
+                    {view === 'incidents' && <span className="text-sm text-gray-500">{filteredRows.length} of {model.totalIncidents} incidents</span>}
+                </div>
+
+                {view === 'incidents' ? (
+                    <div>
+                        <div className="grid gap-3 border-b border-gray-100 p-4 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_190px_170px_150px]">
+                            <label className="relative">
+                                <span className="sr-only">Search incidents</span>
+                                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                <input aria-label="Search incidents" value={search} onChange={event => updateFilter(() => setSearch(event.target.value))} placeholder="Search route, stop, trip, block, operator" className="min-h-11 w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-100" />
+                            </label>
+                            <select aria-label="Severity" value={severity} onChange={event => updateFilter(() => setSeverity(event.target.value as SeverityFilter))} className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                                <option value="all">All severities</option><option value="high">High only</option><option value="moderate">Moderate only</option>
+                            </select>
+                            <select aria-label="Downstream effect" value={impact} onChange={event => updateFilter(() => setImpact(event.target.value as DwellImpactStatus | 'all'))} className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                                <option value="all">All downstream effects</option><option value="otp-late">OTP-late carryover</option><option value="delay-carried">Delay carried below threshold</option><option value="no-later-carryover">No later carryover</option><option value="unknown">Unknown</option>
+                            </select>
+                            <select aria-label="Operator" value={operatorId} onChange={event => updateFilter(() => setOperatorId(event.target.value))} className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                                <option value="all">All operators</option>{operators.map(operator => <option key={operator.operatorId} value={operator.operatorId}>{operator.operatorId}</option>)}
+                            </select>
+                            <select aria-label="Sort incidents" value={sortMode} onChange={event => { setSortMode(event.target.value as SortMode); setPage(1); }} className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                                <option value="priority">Operational impact</option><option value="newest">Newest first</option>
+                            </select>
+                        </div>
+
+                        {pagedRows.length === 0 ? (
+                            <div className="px-5 py-16 text-center"><ShieldCheck size={28} className="mx-auto text-gray-300" /><p className="mt-3 font-semibold text-gray-600">No reportable incidents match these filters.</p><p className="mt-1 text-sm text-gray-500">Adjust the filters or choose a different dashboard period.</p></div>
+                        ) : (
+                            <>
+                                <div className="hidden overflow-x-auto md:block">
+                                    <table className="w-full min-w-[1050px] text-sm">
+                                        <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+                                            <tr><th className="px-4 py-3">When</th><th className="px-4 py-3">Route / stop</th><th className="px-4 py-3">Dwell</th><th className="px-4 py-3">Passenger context</th><th className="px-4 py-3">Operator / block</th><th className="px-4 py-3">Downstream evidence</th></tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {pagedRows.map(row => (
+                                                <tr key={getRowKey(row)} onClick={() => openRow(row)} className="cursor-pointer hover:bg-cyan-50/50">
+                                                    <td className="px-4 py-3"><div className="font-semibold text-gray-900">{row.incident.date}</div><div className="mt-1 text-xs text-gray-500">{row.incident.observedDepartureTime}</div></td>
+                                                    <td className="px-4 py-3"><div className="font-semibold text-gray-900">Route {row.incident.routeId}</div><div className="mt-1 max-w-[230px] truncate text-gray-500" title={row.incident.stopName}>{row.incident.stopName}</div></td>
+                                                    <td className="px-4 py-3"><SeverityBadge severity={row.incident.severity as 'moderate' | 'high'} /><div className="mt-1.5 font-semibold text-gray-900">{minutes(row.incident.trackedDwellSeconds)}</div><div className="text-xs text-gray-500">{row.departureLatenessSeconds === null ? 'Late departure' : `${minutes(Math.max(0, row.departureLatenessSeconds))} late`}</div></td>
+                                                    <td className="px-4 py-3 text-gray-600"><div>{row.incident.boardings ?? '—'} on · {row.incident.alightings ?? '—'} off</div><div className="mt-1 text-xs text-gray-500">Wheelchair: {row.incident.wheelchairUsageCount ?? '—'} · Load: {row.incident.departureLoadReliable ? (row.incident.departureLoad ?? 0) : '—'}</div></td>
+                                                    <td className="px-4 py-3"><div className="font-mono text-gray-800">{row.incident.operatorId}</div><div className="mt-1 text-xs text-gray-500">Block {row.incident.block}</div></td>
+                                                    <td className="px-4 py-3"><ImpactBadge status={row.impactStatus} /><div className="mt-1.5 text-xs text-gray-500">{row.cascade && row.cascade.incidentRecordMatched !== false ? `${row.cascade.affectedTripCount} trips touched · ${row.cascade.blastRadius} OTP-late` : 'Re-import for complete evidence'}</div><button type="button" onClick={event => { event.stopPropagation(); openRow(row); }} className="mt-2 rounded-md px-2 py-1 font-semibold text-cyan-700 hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400" aria-label={`Review dwell incident on Route ${row.incident.routeId} at ${row.incident.stopName}`}>Review evidence</button></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="divide-y divide-gray-100 md:hidden">
+                                    {pagedRows.map(row => (
+                                        <button key={getRowKey(row)} type="button" onClick={() => openRow(row)} className="w-full p-4 text-left hover:bg-cyan-50">
+                                            <div className="flex items-start justify-between gap-3"><div><div className="font-bold text-gray-900">Route {row.incident.routeId} · {row.incident.stopName}</div><div className="mt-1 text-xs text-gray-500">{row.incident.date} at {row.incident.observedDepartureTime}</div></div><SeverityBadge severity={row.incident.severity as 'moderate' | 'high'} /></div>
+                                            <div className="mt-3 flex flex-wrap items-center gap-2"><span className="text-sm font-semibold text-gray-800">{minutes(row.incident.trackedDwellSeconds)}</span><ImpactBadge status={row.impactStatus} /></div>
+                                            <div className="mt-2 text-xs leading-5 text-gray-600">Operator {row.incident.operatorId} · Block {row.incident.block} · {row.incident.boardings ?? '—'} on / {row.incident.alightings ?? '—'} off · wheelchair {row.incident.wheelchairUsageCount ?? '—'} · load {row.incident.departureLoadReliable ? (row.incident.departureLoad ?? 0) : '—'}{row.cascade && row.cascade.incidentRecordMatched !== false ? ` · ${row.cascade.affectedTripCount} trips touched · ${row.cascade.blastRadius} OTP-late` : ' · downstream evidence unavailable'}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+
+                        {filteredRows.length > ROWS_PER_PAGE && (
+                            <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3 text-sm text-gray-500">
+                                <span>Showing {(currentPage - 1) * ROWS_PER_PAGE + 1}–{Math.min(currentPage * ROWS_PER_PAGE, filteredRows.length)} of {filteredRows.length}</span>
+                                <div className="flex items-center gap-2"><button type="button" aria-label="Previous incident page" disabled={currentPage === 1} onClick={() => setPage(value => Math.max(1, value - 1))} className="min-h-11 min-w-11 rounded-lg border border-gray-200 p-2 disabled:opacity-40"><ChevronLeft size={15} className="mx-auto" /></button><span>{currentPage} / {totalPages}</span><button type="button" aria-label="Next incident page" disabled={currentPage === totalPages} onClick={() => setPage(value => Math.min(totalPages, value + 1))} className="min-h-11 min-w-11 rounded-lg border border-gray-200 p-2 disabled:opacity-40"><ChevronRight size={15} className="mx-auto" /></button></div>
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div className="space-y-6 p-4 sm:p-5">
+                        <section className="rounded-xl border border-gray-200 p-4">
+                            <div><h4 className="font-bold text-gray-900">Exposure-normalized trend</h4><p className="mt-1 text-sm text-gray-500">Reportable incidents per 1,000 eligible timepoint visits.</p></div>
+                            {model.dailyTrend.some(point => point.incidentsPer1kEligibleVisits !== null) ? (
+                                <><div className="mt-4 h-64" aria-hidden="true"><ResponsiveContainer width="100%" height="100%"><LineChart data={model.dailyTrend}><CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip formatter={(value: number) => [value.toFixed(1), 'Incidents / 1K visits']} /><Line type="monotone" dataKey="incidentsPer1kEligibleVisits" stroke="#0891b2" strokeWidth={2} connectNulls={false} /></LineChart></ResponsiveContainer></div><table className="sr-only"><caption>Daily reportable dwell incident rate</caption><thead><tr><th>Date</th><th>Incidents per 1,000 eligible visits</th></tr></thead><tbody>{model.dailyTrend.map(point => <tr key={point.date}><td>{point.date}</td><td>{point.incidentsPer1kEligibleVisits?.toFixed(1) ?? 'Unavailable'}</td></tr>)}</tbody></table></>
+                            ) : <p className="mt-5 rounded-lg bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">Re-import the selected period to calculate exposure-normalized trends.</p>}
+                        </section>
+
+                        <section className="rounded-xl border border-gray-200">
+                            <div className="border-b border-gray-100 p-4"><h4 className="font-bold text-gray-900">Recurring route, trip, and stop patterns</h4><p className="mt-1 text-sm text-gray-500">Reportable incidents on at least three distinct service days.</p></div>
+                            {model.patterns.length === 0 ? <p className="px-4 py-10 text-center text-sm text-gray-500">No recurring patterns meet the three-day threshold.</p> : (
+                                <><div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[820px] text-sm"><thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3">Route / stop</th><th className="px-4 py-3">Trip</th><th className="px-4 py-3 text-right">Days</th><th className="px-4 py-3 text-right">Incidents</th><th className="px-4 py-3 text-right">High</th><th className="px-4 py-3 text-right">Avg dwell</th><th className="px-4 py-3 text-right">OTP-late dep.</th><th className="px-4 py-3 text-right">Operators</th></tr></thead><tbody className="divide-y divide-gray-100">{model.patterns.map(pattern => <tr key={pattern.key}><td className="px-4 py-3"><div className="font-semibold text-gray-900">Route {pattern.routeId}</div><div className="mt-1 text-gray-500">{pattern.stopName}</div></td><td className="px-4 py-3 text-gray-600">{pattern.tripName}</td><td className="px-4 py-3 text-right font-semibold">{pattern.distinctDays}</td><td className="px-4 py-3 text-right">{pattern.incidentCount}</td><td className="px-4 py-3 text-right text-red-700">{pattern.highCount}</td><td className="px-4 py-3 text-right">{minutes(pattern.avgDwellSeconds)}</td><td className="px-4 py-3 text-right">{pattern.otpLateDepartures}</td><td className="px-4 py-3 text-right">{pattern.operatorCount}</td></tr>)}</tbody></table></div><div className="divide-y divide-gray-100 md:hidden">{model.patterns.map(pattern => <div key={pattern.key} className="p-4 text-sm"><div className="font-bold text-gray-900">Route {pattern.routeId} · {pattern.stopName}</div><div className="mt-1 text-gray-600">{pattern.tripName}</div><div className="mt-2 text-xs leading-5 text-gray-600">{pattern.distinctDays} days · {pattern.incidentCount} incidents · {pattern.highCount} high · {minutes(pattern.avgDwellSeconds)} avg · {pattern.otpLateDepartures} OTP-late · {pattern.operatorCount} operators</div></div>)}</div></>
+                            )}
+                        </section>
+
+                        <section className="rounded-xl border border-gray-200">
+                            <div className="border-b border-gray-100 p-4"><h4 className="font-bold text-gray-900">Operator context</h4><p className="mt-1 text-sm text-gray-500">Alphabetical operational context—not a ranking or finding of fault.</p></div>
+                            {model.operatorContext.length === 0 ? <p className="px-4 py-10 text-center text-sm text-gray-500">No operator context is available.</p> : (
+                                <><div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[700px] text-sm"><thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3">Operator</th><th className="px-4 py-3 text-right">Eligible visits</th><th className="px-4 py-3 text-right">Reportable</th><th className="px-4 py-3 text-right">High</th><th className="px-4 py-3 text-right">Rate / 1K</th><th className="px-4 py-3 text-right">Reportable dwell</th></tr></thead><tbody className="divide-y divide-gray-100">{model.operatorContext.map(operator => <tr key={operator.operatorId}><td className="px-4 py-3 font-mono font-semibold text-gray-900">{operator.operatorId}</td><td className="px-4 py-3 text-right">{operator.eligibleTimepointVisits ?? '—'}</td><td className="px-4 py-3 text-right">{operator.incidentCount}</td><td className="px-4 py-3 text-right text-red-700">{operator.highCount}</td><td className="px-4 py-3 text-right">{operator.incidentsPer1kEligibleVisits?.toFixed(1) ?? '—'}</td><td className="px-4 py-3 text-right">{minutes(operator.reportableDwellSeconds)}</td></tr>)}</tbody></table></div><div className="divide-y divide-gray-100 md:hidden">{model.operatorContext.map(operator => <div key={operator.operatorId} className="p-4 text-sm"><div className="font-mono font-bold text-gray-900">{operator.operatorId}</div><div className="mt-2 text-xs leading-5 text-gray-600">{operator.eligibleTimepointVisits ?? '—'} eligible visits · {operator.incidentCount} reportable · {operator.highCount} high · {operator.incidentsPer1kEligibleVisits?.toFixed(1) ?? '—'} / 1K · {minutes(operator.reportableDwellSeconds)} reportable dwell</div></div>)}</div></>
+                            )}
+                        </section>
+                    </div>
+                )}
+            </div>
+
+            {selectedRow && (
+                <DwellIncidentDetailDrawer row={selectedRow} onClose={() => setSelectedRow(null)} stopLoadLookup={stopLoadLookup} dailySummaries={data.dailySummaries} />
+            )}
+        </div>
+    );
+};
+
+export default OperatorDwellModule;

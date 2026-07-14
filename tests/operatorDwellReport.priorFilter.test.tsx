@@ -1,73 +1,47 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import type { DailySummary } from '../utils/performanceDataTypes';
+import type { DailySummary, PerformanceDataSummary } from '../utils/performanceDataTypes';
 
-const aggregateDwellAcrossDaysMock = vi.fn((days: DailySummary[]) => ({
-  incidents: [],
-  byOperator: [],
-  totalIncidents: days.length,
-  totalTrackedDwellMinutes: 0,
-}));
+const reviewModuleSpy = vi.fn();
 
-vi.mock('../utils/schedule/operatorDwellUtils', () => ({
-  aggregateDwellAcrossDays: (days: DailySummary[]) => aggregateDwellAcrossDaysMock(days),
-}));
-
-vi.mock('../components/Performance/reports/reportExporter', () => ({
-  exportOperatorDwell: vi.fn().mockResolvedValue(undefined),
-  exportOperatorDwellPDF: vi.fn().mockResolvedValue(undefined),
+vi.mock('../components/Performance/OperatorDwellModule', () => ({
+  OperatorDwellModule: ({ data }: { data: PerformanceDataSummary }): null => {
+    reviewModuleSpy(data);
+    return null;
+  },
 }));
 
 import { OperatorDwellReport } from '../components/Performance/reports/OperatorDwellReport';
 
-function makeDay(date: string, dayType: 'weekday' | 'saturday' | 'sunday'): DailySummary {
-  return {
-    date,
-    dayType,
-    system: { tripCount: 0 },
-    byOperatorDwell: {
-      incidents: [],
-      byOperator: [],
-      totalIncidents: 0,
-      totalTrackedDwellMinutes: 0,
-    },
-  } as unknown as DailySummary;
+function makeDay(date: string): DailySummary {
+  return { date, dayType: 'weekday', schemaVersion: 12 } as unknown as DailySummary;
 }
 
-describe('OperatorDwellReport prior period filtering', () => {
+describe('Dwell Incident Review report wiring', () => {
   let container: HTMLDivElement;
   let root: Root;
 
   beforeEach(() => {
-    aggregateDwellAcrossDaysMock.mockClear();
+    reviewModuleSpy.mockClear();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
   });
 
   afterEach(() => {
-    flushSync(() => {
-      root.unmount();
-    });
+    flushSync(() => root.unmount());
     container.remove();
   });
 
-  it('applies dayTypeFilter to prior-period metrics', () => {
-    const allDays = [
-      makeDay('2026-02-08', 'sunday'),
-      makeDay('2026-02-09', 'weekday'),
-      makeDay('2026-02-10', 'weekday'),
-      makeDay('2026-02-11', 'weekday'),
-    ];
-    const filteredDays = [allDays[2], allDays[3]];
-
+  it('reuses the filtered dashboard review model instead of maintaining separate metrics', () => {
+    const filteredDays = [makeDay('2026-02-10'), makeDay('2026-02-11')];
     flushSync(() => {
       root.render(
         <OperatorDwellReport
           filteredDays={filteredDays}
-          allDays={allDays}
+          allDays={filteredDays}
           startDate="2026-02-10"
           endDate="2026-02-11"
           dayTypeFilter="weekday"
@@ -75,10 +49,10 @@ describe('OperatorDwellReport prior period filtering', () => {
       );
     });
 
-    expect(aggregateDwellAcrossDaysMock).toHaveBeenCalledTimes(2);
-
-    const priorPeriodDays = aggregateDwellAcrossDaysMock.mock.calls[1][0];
-    expect(priorPeriodDays.map(day => day.date)).toEqual(['2026-02-09']);
-    expect(priorPeriodDays.every(day => day.dayType === 'weekday')).toBe(true);
+    expect(reviewModuleSpy).toHaveBeenCalledTimes(1);
+    const data = reviewModuleSpy.mock.calls[0][0] as PerformanceDataSummary;
+    expect(data.dailySummaries).toEqual(filteredDays);
+    expect(data.metadata.dateRange).toEqual({ start: '2026-02-10', end: '2026-02-11' });
+    expect(data.schemaVersion).toBe(12);
   });
 });

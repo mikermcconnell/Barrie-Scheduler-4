@@ -4,7 +4,7 @@
 > Scope: STREETS AVL/APC Operations Dashboard  
 > Purpose: durable definitions and validation status for operational metrics
 
-The corrected aggregation contract is performance schema version 10. Older stored days remain visible for continuity but require rebuild or re-import before they receive the corrected OTP, route-hour, stop-breakdown, and in-between-row handling.
+The current aggregation contract is performance schema version 13. Version 10 corrected OTP, route-hour, stop-breakdown, and in-between-row handling. Version 11 added reliable stop-level load observation counts. Version 12 added deterministic dwell-incident IDs, incident operating context, and route/operator eligible-timepoint exposure so Dwell Incident Review rates remain scope-correct. Version 13 adds occurrence-aware stop identity so repeated loop visits remain separate while shifted route positions still align. Older stored days remain visible with unavailable fields labelled honestly until rebuilt or re-imported.
 
 Use this document when changing dashboard calculations, filters, labels, imports, or reports. A passing test confirms implementation behavior; operational sign-off confirms that the behavior is the intended Barrie Transit definition.
 
@@ -33,11 +33,13 @@ Primary calculation locations:
 | Trips operated | GTFS scheduled trips matched to STREETS observations | Display as suspected missed-trip analysis, not a final cancellation determination | Needs route-level scheduled/matched counts before route-scoped display can be fully validated |
 | Service hours | Sum of the scheduled operating span calculated for each observed trip | Used as the BPH denominator. The precise start/end fields require operational confirmation | Definition sign-off required |
 | Boards per service hour (BPH) | Boardings divided by service hours | Route BPH is a direct period ratio. The by-hour chart is only an explicitly labelled estimate because hourly service-hour denominators are not stored | Route calculation code-validated; business thresholds require sign-off |
-| Average load | Mean of APC-reliable departure-load observations; APC-backed zero is valid | Records without a reliable APC source are excluded. Values above the configured load cap are capped and disclosed in data quality | Code-validated at daily level; multi-day weighting needs better stored sample counts |
+| Average load | Mean of APC-reliable departure-load observations, grouped by route-stop occurrence and weighted across days by reliable stop-level observation count; APC-backed zero is valid | A route-stop occurrence is the physical stop ID plus its zero-based visit number within the trip, so a loop may contain the same stop more than once. Records without a reliable APC source are excluded. Version 10 history falls back to a disclosed average of daily averages; ambiguous legacy zeroes are omitted because v10 cannot distinguish missing APC from a genuine zero. Values above the configured load cap are capped and disclosed in data quality | Code-validated; legacy history remains explicitly estimated |
+| Passenger flow by stop | Boarding and alighting totals from occurrence-aware route-direction heatmap cells plus average onboard load from the matching occurrence-aware load profile | A single date shows exact stop-occurrence totals. Multi-day filters show boarding/alighting averages per observed route-direction service day and observation-weighted average onboard load. Repeated loop visits stay separate; inserted or removed intermediate stops do not change a physical stop visit's identity. | Code-validated; pattern changes and legacy estimates must be disclosed |
 | Peak load | Maximum APC-reliable departure load | Missing/unreliable load is not a zero-load observation | Code-validated |
 | Wheelchair trips | Distinct trips containing a positive wheelchair-use count | Counts trips with activity, not individual boardings unless the source definition changes | Code-validated |
-| Dwell incidents | Dwell events passing the lateness gate and severity classification | Moderate and high events are reportable incidents. Minor tracked events must not be mixed into a reportable-incident average without explicit labelling | Definition/display alignment still required |
-| Incidents per 100 service hours | Reportable incidents divided by the matching service-hour denominator, multiplied by 100 | Numerator and denominator must have identical route, operator, and date scope | System scope code-validated; route-level denominators are not currently available |
+| Dwell incidents | Timepoint events departing more than 3 minutes late, with effective dwell classified as minor (up to 2 minutes), moderate (over 2 through 5 minutes), or high (over 5 minutes) | Moderate and high events are reportable. Minor tracked events are excluded from reportable counts, averages, queues, patterns, and exports. These are investigation signals, not proof of operator fault. | Code-validated; thresholds still require operational sign-off |
+| Dwell incidents per 1,000 eligible timepoint visits | Reportable incidents divided by normal, non-tripper, non-detour timepoint observations with valid observed arrival and departure, multiplied by 1,000 | Numerator and denominator must share date, route, and operator scope. Version 12 stores route/operator exposure rows so route filters remain valid. | Code-validated |
+| Dwell-associated downstream delay | Observed departure delay remaining after subtracting positive lateness already present when the vehicle arrived at the dwell stop | Show same-trip impact first, then later block carryover. Distinguish any carried delay, OTP-late departures over 5 minutes, return under 5 minutes, and full recovery to zero. Do not claim sole causation. | Code-validated; operational interpretation remains advisory |
 | Data quality | Raw record and missing/capped/excluded field counts for the loaded import scope | Route-specific pages must not imply that system-wide quality counts are route-specific | Route-level quality fields are not currently available |
 | Action Queue priority | Heuristic combining severity, persistence, and relative rider impact | Decision-support ranking only; it is not an audited operating metric | Definition sign-off required |
 
@@ -47,7 +49,7 @@ Before treating a dashboard release as operationally validated:
 
 1. Select a known STREETS period and independently calculate OTP, boardings, alightings, trips, loads, and service hours.
 2. Reconcile system totals, each route, one merged A/B route, one stop shared by multiple routes, and at least two hourly buckets.
-3. Include missing AVL, missing APC, duplicate terminal observations, in-between rows, trippers, and a post-midnight trip.
+3. Include missing AVL, missing APC, duplicate terminal observations, a loop that visits the same stop twice, a shifted stop pattern, in-between rows, trippers, and a post-midnight trip.
 4. Confirm that date, day-type, and route filters change both numerators and denominators consistently.
 5. Record expected value, dashboard value, difference, explanation, and reviewer sign-off.
 
@@ -56,6 +58,7 @@ Before treating a dashboard release as operationally validated:
 - Confirm whether service hours begin at the first scheduled departure or another STREETS field.
 - Confirm BPH review thresholds and the minimum acceptable APC coverage.
 - Decide whether absent hourly data means zero service or missing evidence.
-- Add reliable-load observation counts so multi-day load averages can be weighted exactly.
-- Add route-level scheduled/matched trip counts, dwell denominators, and data-quality counts before presenting those values as route-specific.
+- Rebuild version 10 history when exact multi-day load weighting is required instead of the disclosed estimate. Rebuild pre-v13 loop history when separate repeated-stop occurrences are required.
+- Add route-level scheduled/matched trip counts and data-quality counts before presenting those values as route-specific. Dwell exposure denominators are route-scoped in schema v12.
+- Confirm the legacy dwell late gate and moderate/high thresholds as the permanent Barrie Transit operating definition.
 - Confirm whether Route 12A/12B should be combined everywhere that Routes 2A/2B and 7A/7B are combined.

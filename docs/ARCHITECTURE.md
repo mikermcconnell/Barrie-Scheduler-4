@@ -30,9 +30,9 @@ For collections, storage paths, and type locations, use `docs/SCHEMA.md`.
 
 Common app-wide infrastructure:
 - auth context → `components/contexts/AuthContext.tsx`
-- team context → `components/contexts/TeamContext.tsx`
+- team context → `components/contexts/TeamContext.tsx`; it loads the active team plus the signed-in user's full membership list and owns active-team switching
 - toast context → `components/contexts/ToastContext.tsx`
-- global header → `components/layout/Header.tsx`
+- global header → `components/layout/Header.tsx`; it keeps the active team visible and provides the membership-backed team switcher
 - feature flags → `utils/features.ts`
 - workspace access profiles → `utils/workspaceAccess.ts`, surfaced through `hooks/useWorkspaceAccess.ts`
 - named workspace access packages → `utils/workspaceAccessPackages.ts`, used by Team Management for safer onboarding presets
@@ -82,6 +82,8 @@ STREETS-style operational reporting and dashboards live in:
 - `components/Performance/`
 - `utils/performance*.ts`
 - scheduled/server aggregation in `functions/src/aggregator.ts` and related functions files
+
+Dwell Incident Review is an incident-first operations workflow. Stored detection and exposure metrics are built by the client/server aggregators, the shared queue/pattern/operator view model lives in `utils/performanceDwellReview.ts`, and `components/Performance/OperatorDwellModule.tsx` renders the queue and patterns while incident-level same-trip and later-block evidence opens in the dwell detail drawer. The standalone aggregate cascade dashboard is legacy UI; downstream analysis belongs inside incident detail.
 
 ### 4) Parking
 

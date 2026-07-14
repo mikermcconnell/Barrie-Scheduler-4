@@ -110,6 +110,7 @@ describe('performance dashboard metric rollups', () => {
     ]);
     flushSync(() => root.render(<RidershipModule data={data} />));
 
+    expect(container.textContent).toContain('Passenger Flow by Stop');
     const combinedRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('7A/7B'));
     expect(combinedRow?.querySelectorAll('td')[2].textContent).toBe('600');
     expect(combinedRow?.querySelectorAll('td')[3].textContent).toBe('300');

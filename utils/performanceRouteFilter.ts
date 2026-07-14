@@ -141,6 +141,8 @@ function buildRouteScopedDwell(
 ): OperatorDwellMetrics | undefined {
   if (!dwell) return undefined;
   const incidents = dwell.incidents.filter(incident => routeMatches(incident.routeId, selectedRouteId));
+  const exposureRows = dwell.exposureByRouteOperator?.filter(row => routeMatches(row.routeId, selectedRouteId));
+  const eligibleTimepointVisits = exposureRows?.reduce((sum, row) => sum + row.eligibleTimepointVisits, 0);
   const byOperatorIncidents = new Map<string, typeof incidents>();
   for (const incident of incidents) {
     byOperatorIncidents.set(incident.operatorId, [
@@ -153,6 +155,10 @@ function buildRouteScopedDwell(
     const moderateCount = rows.filter(row => row.severity === 'moderate').length;
     const highCount = rows.filter(row => row.severity === 'high').length;
     const totalTrackedDwellSeconds = rows.reduce((sum, row) => sum + row.trackedDwellSeconds, 0);
+    const reportableRows = rows.filter(row => row.severity === 'moderate' || row.severity === 'high');
+    const operatorEligibleVisits = exposureRows
+      ?.filter(row => row.operatorId === operatorId)
+      .reduce((sum, row) => sum + row.eligibleTimepointVisits, 0);
     return {
       operatorId,
       moderateCount,
@@ -160,6 +166,11 @@ function buildRouteScopedDwell(
       totalIncidents: moderateCount + highCount,
       totalTrackedDwellSeconds,
       avgTrackedDwellSeconds: rows.length > 0 ? totalTrackedDwellSeconds / rows.length : 0,
+      reportableDwellSeconds: reportableRows.reduce((sum, row) => sum + row.trackedDwellSeconds, 0),
+      eligibleTimepointVisits: operatorEligibleVisits,
+      incidentsPer1kEligibleVisits: operatorEligibleVisits && operatorEligibleVisits > 0
+        ? (moderateCount + highCount) / operatorEligibleVisits * 1000
+        : undefined,
     };
   }).sort((a, b) => b.totalTrackedDwellSeconds - a.totalTrackedDwellSeconds);
 
@@ -176,6 +187,11 @@ function buildRouteScopedDwell(
     totalServiceHours: undefined,
     incidentsPer1kVisits: undefined,
     incidentsPer100ServiceHours: undefined,
+    eligibleTimepointVisits,
+    incidentsPer1kEligibleVisits: eligibleTimepointVisits && eligibleTimepointVisits > 0
+      ? reportable.length / eligibleTimepointVisits * 1000
+      : undefined,
+    exposureByRouteOperator: exposureRows,
   };
 }
 

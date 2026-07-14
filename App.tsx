@@ -52,7 +52,7 @@ function parseHashView(): View {
 
 const AppContent: React.FC = () => {
   const { user, loading, signOut, isGlobalAdmin } = useAuth();
-  const { hasTeam } = useTeam();
+  const { hasTeam, actualTeam, availableTeams = [] } = useTeam();
   const { canAccess, loading: accessLoading } = useWorkspaceAccess();
   const [currentView, setCurrentViewState] = useState<View>(parseHashView);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -67,8 +67,12 @@ const AppContent: React.FC = () => {
     return feature ? canAccess(feature) : true;
   }, [canAccess]);
   const hasAvailableWorkspace = (['ondemand', 'fixed', 'operations', 'parking', 'planning'] as View[]).some(isViewAvailable);
+  const hasSwitchableTeam = availableTeams.some(team => team.id !== actualTeam?.id);
   const mustCompleteTeamSetup = Boolean(
-    user && !isGlobalAdmin && (!hasTeam || !hasAvailableWorkspace)
+    user && !isGlobalAdmin && (
+      (!hasTeam && !hasSwitchableTeam) ||
+      (!hasAvailableWorkspace && !hasSwitchableTeam)
+    )
   );
 
   // Wrap navigation to sync URL hash
@@ -233,6 +237,17 @@ const AppContent: React.FC = () => {
             <div className="text-center mb-12 mt-8">
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
             </div>
+
+            {user && !hasAvailableWorkspace && hasSwitchableTeam && (
+              <div className="mx-auto mb-8 max-w-2xl rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-center">
+                <p className="text-sm font-bold text-amber-900">
+                  No workspaces are available for {actualTeam?.name ?? 'the current team'}.
+                </p>
+                <p className="mt-1 text-sm font-medium text-amber-800">
+                  Use the Active team menu in the header to switch to another team.
+                </p>
+              </div>
+            )}
 
             {user && fixedRouteResume && (
               <div className="max-w-4xl mx-auto mb-8 px-2">

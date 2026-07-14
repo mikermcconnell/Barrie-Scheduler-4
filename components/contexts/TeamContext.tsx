@@ -6,7 +6,14 @@
 
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { getUserTeam, joinTeamByInviteCode, getTeamMember, getTeamWithMembers } from '../../utils/services/teamService';
+import {
+    getUserTeam,
+    getUserTeams,
+    joinTeamByInviteCode,
+    getTeamMember,
+    getTeamWithMembers,
+    switchUserTeam,
+} from '../../utils/services/teamService';
 import type { Team, TeamMember, TeamRole, WorkspaceAccessLevel } from '../../utils/masterScheduleTypes';
 import { resolveWorkspaceAccessLevel } from '../../utils/workspaceAccess';
 import { getDevAuthConfig } from '../../utils/dev/devAuth';
@@ -35,6 +42,8 @@ interface TeamContextType {
     isDeveloperPreview: boolean;
     developerPreview: DeveloperPreviewSession | null;
     actualTeam: Team | null;
+    availableTeams: Team[];
+    switchTeam: (teamId: string) => Promise<void>;
     startDeveloperPreview: (input: DeveloperPreviewInput) => Promise<DeveloperPreviewSession>;
     stopDeveloperPreview: () => Promise<void>;
 }
@@ -51,6 +60,8 @@ const fallbackTeamContext: TeamContextType = {
     isDeveloperPreview: false,
     developerPreview: null,
     actualTeam: null,
+    availableTeams: [],
+    switchTeam: async () => { throw new Error('Team context is unavailable.'); },
     startDeveloperPreview: async () => { throw new Error('Team context is unavailable.'); },
     stopDeveloperPreview: async () => { },
 };
@@ -70,22 +81,24 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
     const [actualTeam, setActualTeam] = useState<Team | null>(null);
     const [actualTeamMember, setActualTeamMember] = useState<TeamMember | null>(null);
     const [actualTeamRole, setActualTeamRole] = useState<TeamRole | null>(null);
+    const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
     const [developerPreview, setDeveloperPreview] = useState<DeveloperPreviewSession | null>(null);
     const [loading, setLoading] = useState(true);
     const devAuth = getDevAuthConfig();
 
-    const loadTeam = useCallback(async () => {
+    const loadTeam = useCallback(async (showLoading = true) => {
         if (!user) {
             setActualTeam(null);
             setActualTeamMember(null);
             setActualTeamRole(null);
+            setAvailableTeams([]);
             setDeveloperPreview(null);
             setLoading(false);
             return;
         }
 
         try {
-            setLoading(true);
+            if (showLoading) setLoading(true);
             let userTeam = await getUserTeam(user.uid);
 
             const pendingInviteCode = getPendingInviteCode();
@@ -96,8 +109,11 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
                         pendingInviteCode,
                         user.displayName || user.email?.split('@')[0] || 'User',
                         user.email || '',
+                        { activate: !userTeam },
                     );
-                    userTeam = await getUserTeam(user.uid);
+                    if (!userTeam) {
+                        userTeam = await getUserTeam(user.uid);
+                    }
                 } catch (error) {
                     console.error('Error joining team from invite link:', error);
                 }
@@ -115,6 +131,17 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
             }
 
             setActualTeam(userTeam);
+            try {
+                const memberships = await getUserTeams(user.uid);
+                setAvailableTeams(userTeam && !memberships.some(candidate => candidate.id === userTeam.id)
+                    ? [userTeam, ...memberships]
+                    : memberships);
+            } catch (error) {
+                // Keep a valid active team usable while a new collection-group
+                // rule/index is still propagating or the enumeration is offline.
+                console.error('Error loading team memberships:', error);
+                setAvailableTeams(userTeam ? [userTeam] : []);
+            }
             if (userTeam) {
                 const member = await getTeamMember(userTeam.id, user.uid);
                 setActualTeamMember(member);
@@ -128,15 +155,29 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
             setActualTeam(null);
             setActualTeamMember(null);
             setActualTeamRole(null);
+            setAvailableTeams([]);
             setDeveloperPreview(null);
         } finally {
-            setLoading(false);
+            if (showLoading) setLoading(false);
         }
     }, [devAuth.enabled, devAuth.teamInviteCode, user]);
 
     const refreshTeam = async () => {
         await loadTeam();
     };
+
+    const switchTeam = useCallback(async (teamId: string) => {
+        if (!user) {
+            throw new Error('Sign in before switching teams.');
+        }
+        if (developerPreview) {
+            throw new Error('Exit the developer support session before switching teams.');
+        }
+        if (teamId === actualTeam?.id) return;
+
+        await switchUserTeam(user.uid, teamId);
+        await loadTeam(false);
+    }, [actualTeam?.id, developerPreview, loadTeam, user]);
 
     useEffect(() => {
         void loadTeam();
@@ -248,6 +289,8 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         isDeveloperPreview: developerPreview !== null,
         developerPreview,
         actualTeam,
+        availableTeams,
+        switchTeam,
         startDeveloperPreview,
         stopDeveloperPreview,
     };

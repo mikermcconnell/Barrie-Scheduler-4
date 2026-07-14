@@ -162,7 +162,7 @@ service firebase.storage {
 
     // Team performance data (STREETS summaries)
     match /teams/{teamId}/performanceData/{allPaths=**} {
-      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow read: if canAccessWorkspace(teamId, 'workspaceOperations') || canSupportReadTeamData(teamId);
       allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
     }
 

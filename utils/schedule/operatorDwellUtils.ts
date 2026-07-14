@@ -14,9 +14,31 @@ import type {
 export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMetrics {
   const incidents: DwellIncident[] = days.flatMap(d => d.byOperatorDwell?.incidents ?? []);
   const reportableIncidents = incidents.filter(i => i.severity === 'moderate' || i.severity === 'high');
+  const exposureMap = new Map<string, { routeId: string; operatorId: string; eligibleTimepointVisits: number }>();
+  for (const day of days) {
+    for (const row of day.byOperatorDwell?.exposureByRouteOperator ?? []) {
+      const key = `${row.routeId}||${row.operatorId}`;
+      const current = exposureMap.get(key);
+      if (current) current.eligibleTimepointVisits += row.eligibleTimepointVisits;
+      else exposureMap.set(key, { ...row });
+    }
+  }
+  const exposureRows = [...exposureMap.values()];
+  const hasCompleteExposure = days.length > 0
+    && days.every(day => day.byOperatorDwell?.exposureByRouteOperator !== undefined);
 
   if (incidents.length === 0) {
-    return { incidents: [], byOperator: [], totalIncidents: 0, totalTrackedDwellMinutes: 0 };
+    return {
+      incidents: [],
+      byOperator: [],
+      totalIncidents: 0,
+      totalTrackedDwellMinutes: 0,
+      totalReportableDwellMinutes: 0,
+      eligibleTimepointVisits: hasCompleteExposure
+        ? exposureRows.reduce((sum, row) => sum + row.eligibleTimepointVisits, 0)
+        : undefined,
+      exposureByRouteOperator: exposureRows,
+    };
   }
 
   const opMap = new Map<string, DwellIncident[]>();
@@ -49,6 +71,13 @@ export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMet
     }
 
     const reportableCount = moderateCount + highCount;
+    const reportableDwellSeconds = opIncidents
+      .filter(incident => incident.severity === 'moderate' || incident.severity === 'high')
+      .reduce((sum, incident) => sum + incident.trackedDwellSeconds, 0);
+    const eligibleTimepointVisits = hasCompleteExposure
+      ? exposureRows.filter(row => row.operatorId === operatorId)
+        .reduce((sum, row) => sum + row.eligibleTimepointVisits, 0)
+      : undefined;
 
     const visits = opVisitsMap.get(operatorId) ?? 0;
     const hours = opHoursMap.get(operatorId) ?? 0;
@@ -70,6 +99,11 @@ export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMet
       incidentsPer100ServiceHours: hours > 0
         ? Math.round(reportableCount / hours * 100 * 100) / 100
         : undefined,
+      reportableDwellSeconds,
+      eligibleTimepointVisits,
+      incidentsPer1kEligibleVisits: eligibleTimepointVisits !== undefined && eligibleTimepointVisits > 0
+        ? Math.round(reportableCount / eligibleTimepointVisits * 1000 * 100) / 100
+        : undefined,
     });
   }
 
@@ -80,12 +114,17 @@ export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMet
   const totalTrackedSeconds = incidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
   const totalStopVisits = [...opVisitsMap.values()].reduce((s, v) => s + v, 0);
   const totalServiceHours = Math.round([...opHoursMap.values()].reduce((s, v) => s + v, 0) * 100) / 100;
+  const totalReportableSeconds = reportableIncidents.reduce((sum, incident) => sum + incident.trackedDwellSeconds, 0);
+  const eligibleTimepointVisits = hasCompleteExposure
+    ? exposureRows.reduce((sum, row) => sum + row.eligibleTimepointVisits, 0)
+    : undefined;
 
   return {
     incidents,
     byOperator,
     totalIncidents: reportableIncidents.length,
     totalTrackedDwellMinutes: Math.round(totalTrackedSeconds / 60 * 10) / 10,
+    totalReportableDwellMinutes: Math.round(totalReportableSeconds / 60 * 10) / 10,
     totalStopVisits,
     totalServiceHours,
     incidentsPer1kVisits: totalStopVisits > 0
@@ -94,6 +133,11 @@ export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMet
     incidentsPer100ServiceHours: totalServiceHours > 0
       ? Math.round(reportableIncidents.length / totalServiceHours * 100 * 100) / 100
       : undefined,
+    eligibleTimepointVisits,
+    incidentsPer1kEligibleVisits: eligibleTimepointVisits !== undefined && eligibleTimepointVisits > 0
+      ? Math.round(reportableIncidents.length / eligibleTimepointVisits * 1000 * 100) / 100
+      : undefined,
+    exposureByRouteOperator: exposureRows,
   };
 }
 

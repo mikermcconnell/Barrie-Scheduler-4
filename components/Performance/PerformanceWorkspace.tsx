@@ -48,7 +48,7 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
     { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete', badge: 'Testing', feature: 'operationsLoadProfiles' },
-    { id: 'operator-dwell', label: 'Operator Dwell', icon: Timer, status: 'complete', badge: 'Testing', feature: 'operationsOperatorDwell' },
+    { id: 'operator-dwell', label: 'Dwell Incident Review', icon: Timer, status: 'complete', badge: 'Testing', feature: 'operationsOperatorDwell' },
 ];
 
 const PERFORMANCE_TAB_FEATURES: Partial<Record<PerformanceTab, Parameters<typeof isFeatureEnabled>[0]>> = {
@@ -108,6 +108,16 @@ const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
             <Loader2 className="animate-spin text-cyan-500" size={28} />
             <span className="text-sm font-medium">{label}</span>
         </div>
+    </div>
+);
+
+const PerformancePanelError: React.FC<{ onRetry: () => void }> = ({ onRetry }) => (
+    <div role="alert" className="mx-auto flex min-h-[280px] max-w-xl flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 px-6 text-center">
+        <h3 className="font-bold text-red-900">Performance details could not be loaded</h3>
+        <p className="mt-2 text-sm text-red-800">No incident conclusions are shown from the incomplete fallback data.</p>
+        <button type="button" onClick={onRetry} className="mt-4 min-h-11 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400">
+            Try again
+        </button>
     </div>
 );
 
@@ -179,6 +189,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         detailOptions,
     );
     const detailData = detailQuery.data ?? null;
+    const detailLoadFailed = shouldLoadDetailData && detailQuery.isError;
     const isCurrentDetailLoading = shouldLoadDetailData && detailQuery.isFetching && !detailData;
     const detailsReady = !shouldLoadDetailData || !!detailData;
     const workspaceData = detailData ?? data;
@@ -281,6 +292,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     }, [filteredData, filteredScope, dayTypeFilter]);
 
     const renderPanel = () => {
+        if (detailLoadFailed) return <PerformancePanelError onRetry={() => { void detailQuery.refetch(); }} />;
         switch (activeTab) {
             case 'overview':
                 return (
@@ -315,7 +327,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     </PerformanceScopeProvider>
                 );
             case 'operator-dwell':
-                if (isCurrentDetailLoading) return <PerformancePanelLoading label="Loading operator dwell details..." />;
+                if (isCurrentDetailLoading) return <PerformancePanelLoading label="Loading dwell incident evidence..." />;
                 return (
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <OperatorDwellModule data={filteredData} />
@@ -329,28 +341,29 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     return (
         <div className="space-y-0">
             {/* Header */}
-            <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
                     <button
                         onClick={onBack}
-                        className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 text-sm font-medium transition-colors"
+                        className="flex min-h-11 items-center gap-1.5 text-sm font-medium text-gray-500 transition-colors hover:text-gray-700"
                     >
                         <ArrowLeft size={14} /> Back
                     </button>
                     <div className="h-4 w-px bg-gray-300" />
                     <h2 className="text-lg font-bold text-gray-900">Operations Dashboard</h2>
-                    <span className="text-xs text-gray-400">
+                    <span className="text-xs text-gray-500">
                         {data.metadata.dateRange.start} — {data.metadata.dateRange.end}
                         {' · '}{data.metadata.dayCount} day{data.metadata.dayCount !== 1 ? 's' : ''}
                         {' · '}{routeScopeLabel}
                     </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     {onRouteChange && (
                         <select
+                            aria-label="Filter dashboard by route"
                             value={selectedRouteId}
                             onChange={(event) => onRouteChange(event.target.value)}
-                            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-sm focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-100"
+                            className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-sm focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-100"
                         >
                             <option value="all">All routes</option>
                             {routeOptions.map(route => (
@@ -362,7 +375,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     )}
                     <button
                         onClick={onReimport}
-                        className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                        className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
                     >
                         <RefreshCw size={14} />
                         Re-import
@@ -384,7 +397,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                 </>
             )}
 
-            {!detailsReady && (
+            {!detailsReady && !detailLoadFailed && (
                 <div className="mb-3 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-800">
                     Showing the most recent 7 days on Overview first. {routeScopeLabel} details are still loading in the background.
                 </div>
@@ -401,7 +414,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
 
             {/* Tab Bar */}
             <div className="border-b border-gray-200 bg-gray-50/50 rounded-t-lg">
-                <div ref={tabBarRef} className="flex overflow-x-auto scrollbar-hide">
+                <div ref={tabBarRef} className="flex overflow-x-auto scrollbar-hide" role="group" aria-label="Operations dashboard sections">
                     {tabs.map(tab => {
                         const isActive = activeTab === tab.id;
                         const Icon = tab.icon;
@@ -409,6 +422,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                             <button
                                 key={tab.id}
                                 data-tab={tab.id}
+                                aria-pressed={isActive}
                                 disabled={!tab.enabled}
                                 onClick={() => tab.enabled && setActiveTab(tab.id)}
                                 className={`relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
@@ -442,7 +456,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <div className="ml-auto flex items-center pr-2">
                         <button
                             onClick={() => { window.location.hash = 'operations/perf-reports'; }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-cyan-600 hover:text-cyan-700 hover:bg-cyan-50 rounded-md transition-colors whitespace-nowrap"
+                            className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium text-cyan-600 transition-colors hover:bg-cyan-50 hover:text-cyan-700"
                         >
                             <ExternalLink size={13} />
                             STREETS Reports
@@ -470,7 +484,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                 )}
 
             {/* Panel */}
-            <div className="bg-white border border-t-0 border-gray-200 rounded-b-lg p-5 min-h-[500px]">
+            <div className="min-h-[500px] rounded-b-lg border border-t-0 border-gray-200 bg-white p-5">
                 <div className="mb-4">
                     <span className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100">
                         {filteredScopeLabel}

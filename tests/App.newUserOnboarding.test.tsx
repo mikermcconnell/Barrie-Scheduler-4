@@ -19,6 +19,8 @@ const { authState, teamState } = vi.hoisted(() => ({
     loading: false,
     refreshTeam: vi.fn(),
     hasTeam: false,
+    actualTeam: null as any,
+    availableTeams: [] as any[],
   },
 }));
 
@@ -92,6 +94,8 @@ describe('new user onboarding access gate', () => {
       canManageTeam: false,
       loading: false,
       hasTeam: false,
+      actualTeam: null,
+      availableTeams: [],
     });
 
     container = document.createElement('div');
@@ -135,6 +139,8 @@ describe('new user onboarding access gate', () => {
       accessLevel: 'none',
       canManageTeam: true,
       hasTeam: true,
+      actualTeam: { id: 'team-1', name: 'New Team', inviteCode: 'ABC123' },
+      availableTeams: [{ id: 'team-1', name: 'New Team', inviteCode: 'ABC123' }],
     });
 
     flushSync(() => {
@@ -144,6 +150,40 @@ describe('new user onboarding access gate', () => {
     expect(container.textContent).toContain('Get Started');
     expect(container.textContent).toContain('No workspace access');
     expect(container.textContent).not.toContain('Enter Workspace');
+  });
+
+  it('keeps the header team switcher available when another membership can recover access', () => {
+    const currentTeam = { id: 'team-1', name: 'No Access Team', inviteCode: 'NOACC1' };
+    Object.assign(teamState, {
+      team: currentTeam,
+      actualTeam: currentTeam,
+      teamMember: {
+        id: 'new-user',
+        userId: 'new-user',
+        role: 'member',
+        accessLevel: 'none',
+        joinedAt: new Date(),
+        displayName: 'New User',
+        email: 'new@example.com',
+      },
+      teamRole: 'member',
+      accessLevel: 'none',
+      canManageTeam: false,
+      hasTeam: true,
+      availableTeams: [
+        currentTeam,
+        { id: 'team-2', name: 'Barrie Transit', inviteCode: 'BARRIE' },
+      ],
+    });
+
+    flushSync(() => {
+      root.render(<App />);
+    });
+
+    expect(container.textContent).not.toContain('Get Started');
+    expect(container.textContent).toContain('Active team');
+    expect(container.textContent).toContain('No workspaces are available for No Access Team');
+    expect(container.textContent).toContain('switch to another team');
   });
 
   it('lets a global developer reach team management without joining a home team', () => {

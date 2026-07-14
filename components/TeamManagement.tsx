@@ -97,7 +97,7 @@ const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
     analyticsRoutePlanner2: 'Route Planner',
     analyticsShuttlePlanner: 'Shuttle Planner',
     operationsLoadProfiles: 'Load Profiles',
-    operationsOperatorDwell: 'Operator Dwell',
+    operationsOperatorDwell: 'Dwell Incident Review',
 };
 
 type WorkspaceSelection = Record<WorkspaceAccessFeatureKey, boolean>;

@@ -6,6 +6,7 @@
 
 import {
     collection,
+    collectionGroup,
     doc,
     setDoc,
     getDoc,
@@ -14,7 +15,9 @@ import {
     serverTimestamp,
     Timestamp,
     updateDoc,
-    writeBatch
+    writeBatch,
+    query,
+    where,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { Team, TeamMember, TeamWithMembers, TeamRole, WorkspaceAccessLevel, WorkspaceAccessOverrides } from '../masterScheduleTypes';
@@ -359,6 +362,54 @@ export async function getUserTeam(userId: string): Promise<Team | null> {
 }
 
 /**
+ * Get every team the user belongs to.
+ *
+ * The userId equality filter is part of the authorization contract for the
+ * collection-group query. Firestore rules only permit callers to enumerate
+ * membership records whose stored userId matches their authenticated UID.
+ */
+export async function getUserTeams(userId: string): Promise<Team[]> {
+    const membershipsQuery = query(
+        collectionGroup(db, 'members'),
+        where('userId', '==', userId),
+    );
+    const membershipsSnap = await getDocs(membershipsQuery);
+
+    const teamIds = Array.from(new Set(membershipsSnap.docs.flatMap(membershipDoc => {
+        if (membershipDoc.id !== userId || membershipDoc.data().userId !== userId) return [];
+        const teamId = membershipDoc.ref.parent.parent?.id;
+        return teamId ? [teamId] : [];
+    })));
+
+    const teamSnaps = await Promise.all(
+        teamIds.map(teamId => getDoc(doc(db, 'teams', teamId))),
+    );
+
+    return teamSnaps
+        .filter(teamSnap => teamSnap.exists())
+        .map(teamSnap => readTeamData(teamSnap.id, teamSnap.data()))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Change the user's active team after confirming that they belong to it.
+ */
+export async function switchUserTeam(userId: string, teamId: string): Promise<void> {
+    const memberRef = doc(db, 'teams', teamId, 'members', userId);
+    const memberSnap = await getDoc(memberRef);
+    if (!memberSnap.exists() || memberSnap.data().userId !== userId) {
+        throw new Error('You are not a member of that team.');
+    }
+
+    const teamSnap = await getDoc(doc(db, 'teams', teamId));
+    if (!teamSnap.exists()) {
+        throw new Error('That team is no longer available.');
+    }
+
+    await setDoc(doc(db, 'users', userId), { teamId }, { merge: true });
+}
+
+/**
  * Get a single team member record.
  */
 export async function getTeamMember(teamId: string, userId: string): Promise<TeamMember | null> {
@@ -491,7 +542,8 @@ export async function joinTeamByInviteCode(
     userId: string,
     inviteCode: string,
     displayName: string,
-    email: string
+    email: string,
+    options: { activate?: boolean } = {},
 ): Promise<string> {
     // Find team by invite code
     const team = await findTeamByInviteCode(inviteCode);
@@ -507,9 +559,9 @@ export async function joinTeamByInviteCode(
     const memberSnap = await getDoc(memberRef);
 
     if (memberSnap.exists()) {
-        // Already a member, just update user's teamId
-        const userRef = doc(db, 'users', userId);
-        await setDoc(userRef, { teamId }, { merge: true });
+        if (options.activate !== false) {
+            await setDoc(doc(db, 'users', userId), { teamId }, { merge: true });
+        }
         return teamId;
     }
 
@@ -544,9 +596,9 @@ export async function joinTeamByInviteCode(
         inviteCode: inviteCode.toUpperCase()
     });
 
-    // Update user document with teamId
-    const userRef = doc(db, 'users', userId);
-    await setDoc(userRef, { teamId }, { merge: true });
+    if (options.activate !== false) {
+        await setDoc(doc(db, 'users', userId), { teamId }, { merge: true });
+    }
 
     return teamId;
 }

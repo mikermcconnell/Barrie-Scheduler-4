@@ -731,4 +731,28 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.blastRadius).toBe(0);
     expect(cascade.cascadedTrips).toHaveLength(1);
   });
+
+  it('uses the stable trip id when duplicate trip names exist in one block', () => {
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 3,
+      baseHour: 8,
+      intervalMin: 30,
+    });
+    for (const record of records) {
+      if (record.tripId === 'trip-guid-2') record.tripName = 'Trip-1';
+    }
+    const incident = makeIncident({
+      tripId: 'trip-guid-2',
+      tripName: 'Trip-1',
+      block: '10-01',
+      observedArrivalTime: '08:40:00',
+      observedDepartureTime: '08:45:00',
+    });
+
+    const client = buildDailyCascadeMetrics(records, [incident]);
+    const server = buildServerDailyCascadeMetrics(records, [incident]);
+    expect(client.cascades[0].cascadedTrips[0]?.tripId).toBe('trip-guid-3');
+    expect(server).toEqual(client);
+  });
 });

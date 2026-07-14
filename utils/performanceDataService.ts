@@ -144,7 +144,7 @@ function trimMissedTrips(day: DailySummary, keepTripDetails: boolean): DailySumm
         : day.missedTrips;
 }
 
-function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
+export function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
     if (mode === 'all') return day;
 
     const base: DailySummary = {
@@ -181,6 +181,7 @@ function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = '
             return {
                 ...base,
                 byStop: day.byStop,
+                loadProfiles: day.loadProfiles,
                 ridershipHeatmaps: day.ridershipHeatmaps,
                 byRouteHour: day.byRouteHour,
                 missedTrips: trimMissedTrips(day, false),

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Activity,
     ArrowRight,
@@ -11,15 +11,17 @@ import {
     X,
     Zap,
 } from 'lucide-react';
-import type { CascadeAffectedTrip, DailySummary, DwellCascade, DwellSeverity } from '../../utils/performanceDataTypes';
+import type { CascadeAffectedTrip, DailySummary, DwellCascade, DwellIncident, DwellSeverity } from '../../utils/performanceDataTypes';
 import type { StopLoadData } from '../../utils/schedule/cascadeStoryUtils';
 import { buildIncidentLateDepartureImpactByRoute } from '../../utils/schedule/cascadeImpactUtils';
+import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import CascadeTimelineChart from './CascadeTimelineChart';
 import CascadeTripChain from './CascadeTripChain';
 import CascadeRouteMap from './CascadeRouteMap';
 
 interface CascadeStorySlideOverProps {
     cascade: DwellCascade;
+    incident?: DwellIncident;
     onClose: () => void;
     stopLoadLookup: Map<string, StopLoadData>;
     dailySummaries: DailySummary[];
@@ -75,7 +77,7 @@ const WorkspaceCard: React.FC<{ title: string; subtitle?: string; children: Reac
     <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-start justify-between gap-4">
             <div>
-                <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">{title}</p>
+                <h3 className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-500">{title}</h3>
                 {subtitle ? <p className="mt-1 text-sm font-semibold text-gray-500">{subtitle}</p> : null}
             </div>
         </div>
@@ -200,7 +202,9 @@ function getMilestonePhaseBadge(cascade: DwellCascade, tripName: string | null):
     return tripName === cascade.tripName ? 'Same trip' : 'Later trip';
 }
 
-const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, onClose, stopLoadLookup, dailySummaries }) => {
+const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, incident, onClose, stopLoadLookup, dailySummaries }) => {
+    const panelRef = useRef<HTMLDivElement | null>(null);
+    const closeButtonRef = useRef<HTMLButtonElement | null>(null);
     const [selectedTripIndex, setSelectedTripIndex] = useState<number | null>(null);
     const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
     const [visible, setVisible] = useState(false);
@@ -208,6 +212,11 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
         () => cascade.sameTripImpact ? [cascade.sameTripImpact, ...cascade.cascadedTrips] : cascade.cascadedTrips,
         [cascade.cascadedTrips, cascade.sameTripImpact],
     );
+    const hasMapCoordinates = useMemo(() => {
+        const coordinateStopIds = new Set(getAllStopsWithCoords().map(stop => stop.stop_id));
+        return coordinateStopIds.has(cascade.stopId)
+            || storyTrips.some(trip => trip.timepoints.some(point => coordinateStopIds.has(point.stopId)));
+    }, [cascade.stopId, storyTrips]);
     const sameTripImpact = cascade.sameTripImpact ?? null;
     const sameTripObserved = cascade.sameTripObserved === true;
 
@@ -328,10 +337,29 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
+            if (e.key === 'Tab' && panelRef.current) {
+                const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(
+                    'button:not([disabled]), [href], select, input, textarea, [tabindex]:not([tabindex="-1"])',
+                ));
+                if (focusable.length === 0) return;
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            }
         };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
     }, [onClose]);
+
+    useEffect(() => {
+        if (visible) closeButtonRef.current?.focus();
+    }, [visible]);
 
     return (
         <>
@@ -345,6 +373,10 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
             />
 
             <div
+                ref={panelRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="dwell-incident-story-title"
                 className="fixed inset-3 z-50 flex flex-col overflow-hidden rounded-[32px] border-2 border-gray-200 bg-[#F7F7F7] shadow-2xl md:inset-6"
                 style={{
                     transform: visible ? 'translateY(0)' : 'translateY(16px)',
@@ -360,7 +392,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                     <Zap size={22} />
                                 </div>
                                 <div className="min-w-0">
-                                    <h2 className="text-2xl font-extrabold text-gray-900">Dwell Incident Story</h2>
+                                    <h2 id="dwell-incident-story-title" className="text-2xl font-extrabold text-gray-900">Dwell Incident Story</h2>
                                     <p className="text-sm font-semibold text-gray-500">
                                         Follow the incident on the same trip first, then see whether it carried into later trips on the block.
                                     </p>
@@ -374,6 +406,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                 <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1">{cascade.date}</span>
                                 <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1">{cascade.stopName}</span>
                                 <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1">{fmtTime(cascade.observedDepartureTime)}</span>
+                                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 font-mono">Operator {cascade.operatorId}</span>
                                 <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-red-700">
                                     +{fmtMin(cascade.trackedDwellSeconds)} min dwell
                                 </span>
@@ -397,6 +430,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                         </div>
 
                         <button
+                            ref={closeButtonRef}
                             onClick={onClose}
                             className="flex h-11 w-11 items-center justify-center text-gray-500 transition-colors hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             aria-label="Close"
@@ -410,8 +444,29 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[290px_minmax(0,1fr)_320px]">
                         <div className="space-y-5">
                             <WorkspaceCard
+                                title="Why This Was Flagged"
+                                subtitle="The detection rule identifies review signals, not confirmed operator fault."
+                            >
+                                <div className="space-y-3 text-sm font-semibold text-gray-600">
+                                    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                                        <p className="font-extrabold text-gray-900">
+                                            Departed {incident?.departureDeviationSeconds !== undefined
+                                                ? `${fmtMin(Math.max(0, incident.departureDeviationSeconds))} minutes late`
+                                                : 'more than 3 minutes late'}
+                                        </p>
+                                        <p className="mt-1">
+                                            Effective dwell was {fmtMin(cascade.trackedDwellSeconds)} minutes, classified as {cascade.severity}.
+                                        </p>
+                                    </div>
+                                    <p>
+                                        Reportable incidents require a departure more than 3 minutes late and effective dwell above 2 minutes. High severity is above 5 minutes.
+                                    </p>
+                                </div>
+                            </WorkspaceCard>
+
+                            <WorkspaceCard
                                 title="Story Path"
-                                subtitle="Planner-facing milestones for this dwell incident."
+                                subtitle="Observed milestones for this dwell incident."
                             >
                                 <div className="space-y-3">
                                     <StoryStep
@@ -531,17 +586,32 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                         </div>
 
                         <div className="space-y-5">
-                            <WorkspaceCard
-                                title="Story Route Map"
-                                subtitle="Origin, same-trip observations, and later-trip carryover on the route."
-                            >
-                                <CascadeRouteMap
-                                    cascade={cascade}
-                                    selectedPointIndex={selectedPointIndex}
-                                    selectedTripIndex={selectedTripIndex}
-                                    stopLoadLookup={stopLoadLookup}
-                                />
-                            </WorkspaceCard>
+                            {incident ? (
+                                <WorkspaceCard
+                                    title="Operating Context"
+                                    subtitle="Available STREETS AVL/APC evidence at the incident stop."
+                                >
+                                    <div className="grid grid-cols-2 gap-3 text-sm font-semibold text-gray-600">
+                                        {[
+                                            ['Scheduled arrival', incident.scheduledArrivalTime ?? 'Unavailable'],
+                                            ['Observed arrival', incident.observedArrivalTime],
+                                            ['Scheduled departure', incident.scheduledDepartureTime ?? 'Unavailable'],
+                                            ['Observed departure', incident.observedDepartureTime],
+                                            ['Boardings', incident.boardings ?? 'Unavailable'],
+                                            ['Alightings', incident.alightings ?? 'Unavailable'],
+                                            ['Wheelchair activity', incident.wheelchairUsageCount ?? 'Unavailable'],
+                                            ['Departure load', incident.departureLoadReliable ? (incident.departureLoad ?? 0) : 'Unavailable'],
+                                            ['Vehicle', incident.vehicleId ?? 'Unavailable'],
+                                            ['Direction', incident.direction ?? 'Unavailable'],
+                                        ].map(([label, value]) => (
+                                            <div key={String(label)} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.14em] text-gray-500">{label}</div>
+                                                <div className="mt-2 font-extrabold text-gray-900">{value}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </WorkspaceCard>
+                            ) : null}
 
                             <WorkspaceCard
                                 title="Incident Delay Timeline"
@@ -558,6 +628,20 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                     dwellExcessMinutes={cascade.trackedDwellSeconds / 60}
                                 />
                             </WorkspaceCard>
+
+                            {hasMapCoordinates ? (
+                                <WorkspaceCard
+                                    title="Story Route Map"
+                                    subtitle="Origin, same-trip observations, and later-trip carryover on the route."
+                                >
+                                    <CascadeRouteMap
+                                        cascade={cascade}
+                                        selectedPointIndex={selectedPointIndex}
+                                        selectedTripIndex={selectedTripIndex}
+                                        stopLoadLookup={stopLoadLookup}
+                                    />
+                                </WorkspaceCard>
+                            ) : null}
                         </div>
 
                         <div className="space-y-5">
@@ -571,7 +655,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                             <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-brand-blue">
                                                 Same trip
                                             </span>
-                                            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Incident trip remainder</p>
+                                            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-500">Incident trip remainder</p>
                                         </div>
                                         <MetricBlock
                                             label="Same-Trip Observed Delay Sum"
@@ -598,7 +682,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                             <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-700">
                                                 Later trips
                                             </span>
-                                            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Carryover beyond the incident trip</p>
+                                            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-500">Carryover beyond the incident trip</p>
                                         </div>
                                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
                                             <MetricBlock
@@ -675,19 +759,19 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                     />
                                     <div className="grid grid-cols-2 gap-3 text-sm font-semibold text-gray-600">
                                         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Incident match</div>
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-500">Incident match</div>
                                             <div className="mt-2 font-extrabold text-gray-900">{cascade.incidentRecordMatched === false ? 'No' : 'Yes'}</div>
                                         </div>
                                         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Same-trip observed</div>
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-500">Same-trip observed</div>
                                             <div className="mt-2 font-extrabold text-gray-900">{sameTripObservedCount}</div>
                                         </div>
                                         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Later observed</div>
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-500">Later observed</div>
                                             <div className="mt-2 font-extrabold text-gray-900">{laterTripObservedCount}</div>
                                         </div>
                                         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Missing AVL points</div>
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-500">Missing AVL points</div>
                                             <div className="mt-2 font-extrabold text-gray-900">{sameTripMissingCount + laterTripMissingCount}</div>
                                         </div>
                                     </div>
@@ -748,11 +832,11 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
                                         <div className="grid grid-cols-2 gap-3">
                                             <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">OTP-late Points</div>
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-500">OTP-late Points</div>
                                                 <div className="mt-2 text-lg font-extrabold text-gray-900">{focusTrip.lateTimepointCount}</div>
                                             </div>
                                             <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Carryover Points</div>
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-500">Carryover Points</div>
                                                 <div className="mt-2 text-lg font-extrabold text-gray-900">{focusTrip.affectedTimepointCount}</div>
                                             </div>
                                         </div>
@@ -760,23 +844,23 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-600">
                                             {focusTrip.phase === 'same-trip' ? (
                                                 <div className="flex items-center gap-2">
-                                                    <Clock3 size={15} className="text-gray-400" />
+                                                    <Clock3 size={15} className="text-gray-500" />
                                                     This segment shows observed downstream points on the incident trip after the dwell stop.
                                                 </div>
                                             ) : (
                                                 <div className="flex items-center gap-2">
-                                                    <Clock3 size={15} className="text-gray-400" />
+                                                    <Clock3 size={15} className="text-gray-500" />
                                                     Scheduled recovery before this trip: <span className="font-extrabold text-gray-900">{fmtMin(focusTrip.scheduledRecoverySeconds)} min</span>
                                                 </div>
                                             )}
                                             {focusTrip.phase !== 'same-trip' && focusTrip.observedRecoverySeconds !== undefined ? (
                                                 <div className="mt-2 flex items-center gap-2">
-                                                    <Activity size={15} className="text-gray-400" />
+                                                    <Activity size={15} className="text-gray-500" />
                                                     Observed recovery before this trip: <span className="font-extrabold text-gray-900">{fmtMin(focusTrip.observedRecoverySeconds)} min</span>
                                                 </div>
                                             ) : null}
                                             <div className="mt-2 flex items-center gap-2">
-                                                <ArrowRight size={15} className="text-gray-400" />
+                                                <ArrowRight size={15} className="text-gray-500" />
                                                 {tripRecoveredHere(focusTrip)
                                                     ? `Cleared to zero at ${focusTrip.recoveredAtStop}.`
                                                     : tripBackUnderThresholdHere(focusTrip)

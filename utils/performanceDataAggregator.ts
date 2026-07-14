@@ -208,6 +208,41 @@ function computeDeviation(r: STREETSRecord): number {
   return deviationSeconds;
 }
 
+/**
+ * Assign each physical stop visit a stable zero-based ordinal within its trip.
+ * Duplicate source rows for the same stop and route position share one visit.
+ */
+function buildStopOccurrenceIndexes(records: STREETSRecord[]): Map<STREETSRecord, number> {
+  const result = new Map<STREETSRecord, number>();
+  const byTrip = groupBy(records, record => record.tripId);
+
+  for (const tripRecords of byTrip.values()) {
+    const uniqueByPosition = new Map<string, STREETSRecord>();
+    for (const record of tripRecords) {
+      const positionKey = JSON.stringify([record.stopId, record.routeStopIndex]);
+      if (!uniqueByPosition.has(positionKey)) uniqueByPosition.set(positionKey, record);
+    }
+
+    const occurrenceByPosition = new Map<string, number>();
+    const occurrenceCounts = new Map<string, number>();
+    const ordered = [...uniqueByPosition.entries()].sort(([, a], [, b]) =>
+      a.routeStopIndex - b.routeStopIndex || a.stopId.localeCompare(b.stopId)
+    );
+    for (const [positionKey, record] of ordered) {
+      const occurrenceIndex = occurrenceCounts.get(record.stopId) ?? 0;
+      occurrenceCounts.set(record.stopId, occurrenceIndex + 1);
+      occurrenceByPosition.set(positionKey, occurrenceIndex);
+    }
+
+    for (const record of tripRecords) {
+      const positionKey = JSON.stringify([record.stopId, record.routeStopIndex]);
+      result.set(record, occurrenceByPosition.get(positionKey) ?? 0);
+    }
+  }
+
+  return result;
+}
+
 function computeOTPFromEligible(eligible: STREETSRecord[]): OTPBreakdown {
   const total = eligible.length;
 
@@ -617,20 +652,24 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
   for (const [key, recs] of byRouteDir) {
     const [routeId, direction] = key.split('||');
     const routeName = recs[0].routeName;
-
     // Count unique trips in this route+direction
     const tripIds = new Set<string>();
     for (const r of recs) tripIds.add(r.tripId);
     const tripCount = tripIds.size;
+    const occurrenceIndexes = buildStopOccurrenceIndexes(recs);
 
-    // Group by routeStopIndex within this route+direction
-    const byStopIdx = groupBy(recs, r => String(r.routeStopIndex));
+    // Match the same visit across shifted patterns while preserving repeated loop visits.
+    const byStopOccurrence = groupBy(
+      recs,
+      r => JSON.stringify([r.stopId, occurrenceIndexes.get(r) ?? 0]),
+    );
 
     // For each stop position, compute per-trip values then average
     const stops: LoadProfileStop[] = [];
 
-    for (const [idxStr, stopRecs] of byStopIdx) {
-      const routeStopIndex = parseInt(idxStr, 10);
+    for (const [, stopRecs] of byStopOccurrence) {
+      const routeStopIndex = stopRecs[0].routeStopIndex;
+      const occurrenceIndex = occurrenceIndexes.get(stopRecs[0]) ?? 0;
 
       // Aggregate per trip at this stop, then average across trips
       const byTrip = groupBy(stopRecs, r => r.tripId);
@@ -640,7 +679,7 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
       const tripLoads: number[] = [];
       let maxLoad = 0;
       let stopName = '';
-      let stopId = '';
+      const stopId = stopRecs[0].stopId;
       let isTimepoint = false;
 
       for (const [, tripRecs] of byTrip) {
@@ -657,7 +696,6 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
           }
           if (!stopName) {
             stopName = r.stopName;
-            stopId = r.stopId;
           }
           if (r.timePoint) isTimepoint = true;
         }
@@ -673,9 +711,11 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
         stopName,
         stopId,
         routeStopIndex,
+        occurrenceIndex,
         avgBoardings: mean(tripBoardings),
         avgAlightings: mean(tripAlightings),
         avgLoad: mean(tripLoads),
+        loadObservationCount: tripLoads.length,
         maxLoad,
         isTimepoint,
       });
@@ -701,6 +741,11 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
   for (const [key, recs] of byRouteDir) {
     const [routeId, direction] = key.split('||');
     const routeName = recs[0].routeName;
+    const occurrenceIndexes = buildStopOccurrenceIndexes(recs);
+    const occurrenceKey = (record: STREETSRecord) => JSON.stringify([
+      record.stopId,
+      occurrenceIndexes.get(record) ?? 0,
+    ]);
 
     // Identify unique trips by terminalDepartureTime
     const tripMap = new Map<string, RidershipHeatmapTrip>();
@@ -716,16 +761,27 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
           direction: r.direction,
         });
       }
-      const tripRecs = recordsByTrip.get(r.terminalDepartureTime);
+      const tripRecs = recordsByTrip.get(r.tripId);
       if (tripRecs) tripRecs.push(r);
-      else recordsByTrip.set(r.terminalDepartureTime, [r]);
+      else recordsByTrip.set(r.tripId, [r]);
     }
+    const patternSignatures = new Set([...recordsByTrip.values()].map(tripRecs => {
+      const uniqueOccurrences = new Map<string, STREETSRecord>();
+      for (const record of tripRecs) {
+        const stopOccurrenceKey = occurrenceKey(record);
+        if (!uniqueOccurrences.has(stopOccurrenceKey)) uniqueOccurrences.set(stopOccurrenceKey, record);
+      }
+      return [...uniqueOccurrences.entries()]
+        .sort(([, a], [, b]) => a.routeStopIndex - b.routeStopIndex || a.stopId.localeCompare(b.stopId))
+        .map(([stopOccurrenceKey]) => stopOccurrenceKey)
+        .join('\u001f');
+    }));
 
     // Find the trip with the most unique stops — its routeStopIndex values are canonical
     let longestTripRecs: STREETSRecord[] = [];
     let longestStopCount = 0;
     for (const tripRecs of recordsByTrip.values()) {
-      const uniqueStops = new Set(tripRecs.map(r => r.stopId));
+      const uniqueStops = new Set(tripRecs.map(occurrenceKey));
       if (uniqueStops.size > longestStopCount) {
         longestStopCount = uniqueStops.size;
         longestTripRecs = tripRecs;
@@ -735,23 +791,27 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
     // Build canonical stop ordering from the longest trip
     const canonicalIndex = new Map<string, number>();
     for (const r of longestTripRecs) {
-      if (!canonicalIndex.has(r.stopId)) {
-        canonicalIndex.set(r.stopId, r.routeStopIndex);
+      const stopOccurrenceKey = occurrenceKey(r);
+      if (!canonicalIndex.has(stopOccurrenceKey)) {
+        canonicalIndex.set(stopOccurrenceKey, r.routeStopIndex);
       }
     }
 
     // Build stop map: use canonical index when available, else fall back to record's own index
     const stopMap = new Map<string, RidershipHeatmapStop>();
     for (const r of recs) {
-      if (!stopMap.has(r.stopId)) {
-        stopMap.set(r.stopId, {
+      const stopOccurrenceKey = occurrenceKey(r);
+      const occurrenceIndex = occurrenceIndexes.get(r) ?? 0;
+      if (!stopMap.has(stopOccurrenceKey)) {
+        stopMap.set(stopOccurrenceKey, {
           stopName: r.stopName,
           stopId: r.stopId,
-          routeStopIndex: canonicalIndex.get(r.stopId) ?? r.routeStopIndex,
+          routeStopIndex: canonicalIndex.get(stopOccurrenceKey) ?? r.routeStopIndex,
+          occurrenceIndex,
           isTimepoint: r.timePoint,
         });
       } else {
-        if (r.timePoint) stopMap.get(r.stopId)!.isTimepoint = true;
+        if (r.timePoint) stopMap.get(stopOccurrenceKey)!.isTimepoint = true;
       }
     }
 
@@ -765,14 +825,14 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
     const tripIdx = new Map<string, number>();
     trips.forEach((t, i) => tripIdx.set(t.terminalDepartureTime, i));
     const stopIdx = new Map<string, number>();
-    stops.forEach((s, i) => stopIdx.set(s.stopId, i));
+    stops.forEach((s, i) => stopIdx.set(JSON.stringify([s.stopId, s.occurrenceIndex ?? 0]), i));
 
     // Initialize cells as null
     const cells: ([number, number] | null)[][] = stops.map(() => trips.map((): [number, number] | null => null));
 
     // Single pass: accumulate boardings/alightings per cell
     for (const r of recs) {
-      const si = stopIdx.get(r.stopId);
+      const si = stopIdx.get(occurrenceKey(r));
       const ti = tripIdx.get(r.terminalDepartureTime);
       if (si === undefined || ti === undefined) continue;
       const existing = cells[si][ti];
@@ -784,7 +844,15 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
       }
     }
 
-    results.push({ routeId, routeName, direction, trips, stops, cells });
+    results.push({
+      routeId,
+      routeName,
+      direction,
+      multipleStopPatterns: patternSignatures.size > 1,
+      trips,
+      stops,
+      cells,
+    });
   }
 
   return results.sort((a, b) => {
@@ -796,6 +864,7 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
 
 function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): OperatorDwellMetrics {
   const incidents: DwellIncident[] = [];
+  const exposureByRouteOperator = new Map<string, { routeId: string; operatorId: string; eligibleTimepointVisits: number }>();
 
   // STREETS can emit multiple observations for the same trip+stop (terminal arrival/departure passes).
   // Keep the closest-to-schedule observation per trip+stop+routeStopIndex.
@@ -812,12 +881,18 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
   }
 
   for (const recs of groups.values()) {
-    let chosen = recs[0];
+    const validRecs = recs.filter(record => (
+      parseStrictTimeToSeconds(record.observedArrivalTime!) !== null
+      && parseStrictTimeToSeconds(record.observedDepartureTime!) !== null
+    ));
+    if (validRecs.length === 0) continue;
+
+    let chosen = validRecs[0];
     let bestDev = Math.abs(timeToSeconds(chosen.observedDepartureTime!) - timeToSeconds(chosen.stopTime));
-    for (let i = 1; i < recs.length; i++) {
-      const dev = Math.abs(timeToSeconds(recs[i].observedDepartureTime!) - timeToSeconds(recs[i].stopTime));
+    for (let i = 1; i < validRecs.length; i++) {
+      const dev = Math.abs(timeToSeconds(validRecs[i].observedDepartureTime!) - timeToSeconds(validRecs[i].stopTime));
       if (dev < bestDev) {
-        chosen = recs[i];
+        chosen = validRecs[i];
         bestDev = dev;
       }
     }
@@ -835,6 +910,17 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
     if (depSec < arrSec) {
       if (arrSec - depSec >= MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS) depSec += 86400;
       else continue;
+    }
+
+    const exposureKey = `${chosen.routeId}||${chosen.operatorId}`;
+    const exposure = exposureByRouteOperator.get(exposureKey);
+    if (exposure) exposure.eligibleTimepointVisits += 1;
+    else {
+      exposureByRouteOperator.set(exposureKey, {
+        routeId: chosen.routeId,
+        operatorId: chosen.operatorId,
+        eligibleTimepointVisits: 1,
+      });
     }
 
     const rawDwell = depSec - arrSec;
@@ -859,8 +945,22 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
     if (!severity) continue;
 
     const trackedDwell = dwell;
+    const scheduledArrivalSeconds = timeToSeconds(chosen.arrivalTime);
+    let arrivalDeviationSeconds = arrSec - scheduledArrivalSeconds;
+    if (arrivalDeviationSeconds < -43200) arrivalDeviationSeconds += 86400;
+    if (arrivalDeviationSeconds > 43200) arrivalDeviationSeconds -= 86400;
+    const departureDeviationSeconds = depSec - schedDepSec;
+    const incidentId = [
+      date,
+      chosen.tripId,
+      chosen.routeId,
+      chosen.stopId,
+      chosen.routeStopIndex,
+      observedDeparture,
+    ].map(value => encodeURIComponent(String(value))).join('|');
 
     incidents.push({
+      incidentId,
       operatorId: chosen.operatorId,
       date,
       routeId: chosen.routeId,
@@ -874,6 +974,21 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
       rawDwellSeconds: rawDwell,
       trackedDwellSeconds: trackedDwell,
       severity,
+      tripId: chosen.tripId,
+      vehicleId: chosen.vehicleId,
+      direction: chosen.direction,
+      routeStopIndex: chosen.routeStopIndex,
+      scheduledArrivalTime: chosen.arrivalTime,
+      scheduledDepartureTime: chosen.stopTime,
+      arrivalDeviationSeconds,
+      departureDeviationSeconds,
+      boardings: chosen.boardings,
+      alightings: chosen.alightings,
+      wheelchairUsageCount: chosen.wheelchairUsageCount,
+      departureLoad: chosen.apcSource > 0 ? chosen.departureLoad : null,
+      departureLoadReliable: chosen.apcSource > 0,
+      stopLat: chosen.stopLat,
+      stopLon: chosen.stopLon,
     });
   }
 
@@ -899,6 +1014,12 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
     }
 
     const classifiedCount = moderateCount + highCount;
+    const reportableDwellSeconds = opIncidents
+      .filter(incident => incident.severity === 'moderate' || incident.severity === 'high')
+      .reduce((sum, incident) => sum + incident.trackedDwellSeconds, 0);
+    const eligibleTimepointVisits = [...exposureByRouteOperator.values()]
+      .filter(row => row.operatorId === operatorId)
+      .reduce((sum, row) => sum + row.eligibleTimepointVisits, 0);
     byOperator.push({
       operatorId,
       moderateCount,
@@ -906,6 +1027,11 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
       totalIncidents: classifiedCount,
       totalTrackedDwellSeconds,
       avgTrackedDwellSeconds: safeDivide(totalTrackedDwellSeconds, opIncidents.length),
+      reportableDwellSeconds,
+      eligibleTimepointVisits,
+      incidentsPer1kEligibleVisits: eligibleTimepointVisits > 0
+        ? Math.round(classifiedCount / eligibleTimepointVisits * 1000 * 100) / 100
+        : undefined,
     });
   }
 
@@ -966,6 +1092,8 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
   const classifiedIncidents = incidents.filter(i => i.severity !== 'minor');
   const classifiedCount = classifiedIncidents.length;
   const totalReportableSeconds = classifiedIncidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
+  const exposureRows = [...exposureByRouteOperator.values()];
+  const eligibleTimepointVisits = exposureRows.reduce((sum, row) => sum + row.eligibleTimepointVisits, 0);
 
   return {
     incidents,
@@ -981,6 +1109,11 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
     incidentsPer100ServiceHours: totalServiceHours > 0
       ? Math.round(classifiedCount / totalServiceHours * 100 * 100) / 100
       : undefined,
+    eligibleTimepointVisits,
+    incidentsPer1kEligibleVisits: eligibleTimepointVisits > 0
+      ? Math.round(classifiedCount / eligibleTimepointVisits * 1000 * 100) / 100
+      : undefined,
+    exposureByRouteOperator: exposureRows,
   };
 }
 

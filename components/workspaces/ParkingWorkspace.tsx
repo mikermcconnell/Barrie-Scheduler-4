@@ -247,6 +247,57 @@ interface DepartmentLegendRow {
   mappingIndex: number;
 }
 
+export interface ParkingDepartmentDrilldownRow {
+  department: string;
+  totalValue: number;
+  rows: ParkingRawRow[];
+}
+
+export function buildParkingDepartmentDrilldownRows(
+  rows: ParkingRawRow[],
+  settings: ParkingSettings,
+  selectedMonth: string,
+): ParkingDepartmentDrilldownRow[] {
+  const ignoredKeys = new Set<string>();
+  for (const mapping of settings.codeFamilies) {
+    if (!mapping.ignoreData) continue;
+    const familyKey = getParkingCodeFamilyKey(mapping.familyKey).trim().toUpperCase();
+    const department = normalizeText(mapping.department);
+    if (familyKey) ignoredKeys.add(`family:${familyKey}`);
+    if (department) ignoredKeys.add(`department:${department}`);
+  }
+
+  const groups = new Map<string, ParkingDepartmentDrilldownRow>();
+  for (const row of rows) {
+    if (row.startMonth !== selectedMonth) continue;
+    const familyKey = getParkingCodeFamilyKey(row.codeFamilyKey).trim().toUpperCase();
+    const department = row.department.trim() || 'Unmapped';
+    if (
+      isNonDepartmentParkingCode(familyKey, department)
+      || ignoredKeys.has(`family:${familyKey}`)
+      || ignoredKeys.has(`department:${normalizeText(department)}`)
+    ) continue;
+
+    const key = normalizeText(department);
+    const group = groups.get(key) || { department, totalValue: 0, rows: [] };
+    group.totalValue += row.discountAmount;
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      totalValue: Math.round(group.totalValue * 100) / 100,
+      rows: [...group.rows].sort((a, b) => (
+        b.startDate.localeCompare(a.startDate)
+        || b.startMinutes - a.startMinutes
+        || a.plate.localeCompare(b.plate)
+      )),
+    }))
+    .sort((a, b) => b.totalValue - a.totalValue || a.department.localeCompare(b.department));
+}
+
 interface RevenueLocationSearchState {
   query: string;
   searching: boolean;
@@ -1383,6 +1434,7 @@ export const ParkingWorkspace: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [annualFullscreen, setAnnualFullscreen] = useState(false);
   const [expandedPlateKey, setExpandedPlateKey] = useState('');
+  const [selectedDrilldownDepartment, setSelectedDrilldownDepartment] = useState('');
   const [departmentManagerOpen, setDepartmentManagerOpen] = useState(false);
   const [departmentSearch, setDepartmentSearch] = useState('');
   const [departmentCodeYear, setDepartmentCodeYear] = useState(new Date().getFullYear());
@@ -1451,6 +1503,13 @@ export const ParkingWorkspace: React.FC = () => {
       a.plate.localeCompare(b.plate)
     ));
   }, [selectedMonthDataset]);
+  const departmentDrilldownRows = useMemo(
+    () => buildParkingDepartmentDrilldownRows(selectedMonthDataset?.rows ?? [], settings, selectedMonth),
+    [selectedMonth, selectedMonthDataset, settings],
+  );
+  const selectedDepartmentDrilldown = departmentDrilldownRows.find(
+    row => row.department === selectedDrilldownDepartment,
+  ) ?? null;
   const displayRevenueSummary = useMemo(() => {
     if (previewRevenueDatasets.length === 0) return revenueSummary;
     return buildParkingRevenueReplacementSummary(
@@ -1935,7 +1994,17 @@ export const ParkingWorkspace: React.FC = () => {
 
   useEffect(() => {
     setExpandedPlateKey('');
+    setSelectedDrilldownDepartment('');
   }, [selectedMonth]);
+
+  useEffect(() => {
+    if (!selectedDepartmentDrilldown) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedDrilldownDepartment('');
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedDepartmentDrilldown]);
 
   const parseFiles = useCallback(async (files: File[], nextSettings = settings) => {
     if (!user || files.length === 0) return;
@@ -2566,6 +2635,59 @@ export const ParkingWorkspace: React.FC = () => {
               </div>
             </div>
           </div>
+  ) : null;
+
+  const departmentDrilldownModal = selectedDepartmentDrilldown ? (
+    <div className="fixed inset-0 z-50 bg-gray-950/50 p-3 md:p-6" role="dialog" aria-modal="true" aria-labelledby="parking-department-drilldown-title">
+      <div className="mx-auto flex h-full max-w-7xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl">
+        <div className="flex flex-col gap-4 border-b border-gray-200 p-5 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="text-xs font-extrabold uppercase tracking-wide text-blue-600">Raw observations</div>
+            <h2 id="parking-department-drilldown-title" className="mt-1 text-2xl font-extrabold text-gray-950">{selectedDepartmentDrilldown.department}</h2>
+            <p className="mt-1 text-sm font-semibold text-gray-500">
+              {selectedMonthLabel} {selectedYear} · {selectedDepartmentDrilldown.rows.length.toLocaleString()} observations · {money(selectedDepartmentDrilldown.totalValue)} total
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedDrilldownDepartment('')}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-gray-950 px-4 py-2 text-sm font-extrabold text-white hover:bg-gray-800"
+          >
+            <X size={16} /> Close
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-5">
+          <table className="min-w-[1120px] w-full text-left text-sm">
+            <thead className="sticky top-0 z-10 bg-gray-50 text-xs font-extrabold uppercase tracking-wide text-gray-500 shadow-[0_1px_0_0_#e5e7eb]">
+              <tr>
+                <th className="px-3 py-3">Licence plate</th>
+                <th className="px-3 py-3">Start time</th>
+                <th className="px-3 py-3">Spot ID</th>
+                <th className="px-3 py-3">Length</th>
+                <th className="px-3 py-3">Tap Signs/Spot</th>
+                <th className="px-3 py-3">Discount code</th>
+                <th className="px-3 py-3">Description</th>
+                <th className="px-3 py-3 text-right">Discount amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {selectedDepartmentDrilldown.rows.map(row => (
+                <tr key={row.id} className="align-top hover:bg-gray-50/80">
+                  <td className="whitespace-nowrap px-3 py-3 font-extrabold text-gray-950">{row.plate || '(missing)'}</td>
+                  <td className="whitespace-nowrap px-3 py-3 font-semibold text-gray-700">{row.startRaw || `${row.startDate} ${minutesToTime(row.startMinutes)}` || '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-gray-600">{row.spotId || '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-gray-600">{Number.isFinite(row.durationMinutes) ? minutesToDuration(row.durationMinutes) : '—'}</td>
+                  <td className="px-3 py-3 text-gray-600">{row.tapType || '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-3 font-bold text-gray-700">{row.discountCode || '—'}</td>
+                  <td className="min-w-64 px-3 py-3 text-gray-600">{row.description || '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right font-extrabold text-gray-950">{money(row.discountAmount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   ) : null;
 
   if (!team || !user) {
@@ -4034,6 +4156,45 @@ export const ParkingWorkspace: React.FC = () => {
 
 {activeWorkspace === 'plate-monitor' ? (
             <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div>
+                <h3 className="text-lg font-extrabold text-gray-950">Discount value by department</h3>
+                <p className="mt-1 text-sm text-gray-500">Selected-month discount-code value. Select an amount to review every matching observation.</p>
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="text-xs font-extrabold uppercase tracking-wide text-gray-400">
+                    <tr>
+                      <th className="py-2 pr-4">Department</th>
+                      <th className="py-2 text-right">Discount code value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {departmentDrilldownRows.map(row => (
+                      <tr key={row.department}>
+                        <td className="py-3 pr-4 font-extrabold text-gray-950">{row.department}</td>
+                        <td className="py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDrilldownDepartment(row.department)}
+                            aria-label={`View raw observations for ${row.department}, ${money(row.totalValue)}`}
+                            className="rounded-lg px-2 py-1 font-extrabold text-blue-700 underline decoration-blue-200 underline-offset-4 hover:bg-blue-50 hover:decoration-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                          >
+                            {money(row.totalValue)}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {departmentDrilldownRows.length === 0 ? (
+                      <tr><td colSpan={2} className="py-8 text-center font-semibold text-gray-400">No department observations for the selected month.</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            ) : null}
+
+{activeWorkspace === 'plate-monitor' ? (
+            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="text-lg font-extrabold text-gray-950">Flagged plate indicators</h3>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
@@ -4192,6 +4353,8 @@ export const ParkingWorkspace: React.FC = () => {
         {departmentManagerModal}
 
         {annualFullscreenModal}
+
+        {departmentDrilldownModal}
       </div>
     </div>
   );

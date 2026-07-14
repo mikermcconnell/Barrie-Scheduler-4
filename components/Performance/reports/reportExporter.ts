@@ -1,6 +1,10 @@
 import ExcelJS from 'exceljs';
 import type { DailySummary } from '../../../utils/performanceDataTypes';
-import { aggregateDwellAcrossDays } from '../../../utils/schedule/operatorDwellUtils';
+import {
+    buildDwellIncidentReviewModel,
+    buildFilteredDwellIncidentReviewModel,
+    type DwellIncidentReviewRow,
+} from '../../../utils/performanceDwellReview';
 
 // ─── Shared Helpers ──────────────────────────────────────────────
 
@@ -277,131 +281,190 @@ export async function exportRoutePerformance(
     downloadBuffer(buffer, `route_${routeId}_performance_${startDate}_${endDate}.xlsx`);
 }
 
-// ─── Operator Dwell Excel Export ────────────────────────────────
+// ─── Dwell Incident Review Excel Export ─────────────────────────
 
 export async function exportOperatorDwell(
     filteredDays: DailySummary[],
     startDate: string,
     endDate: string,
+    reviewRows?: DwellIncidentReviewRow[],
+    filtersActive = false,
 ): Promise<void> {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Barrie Transit Scheduler';
-    const metrics = aggregateDwellAcrossDays(filteredDays);
+    const fullModel = buildDwellIncidentReviewModel(filteredDays);
+    const model = filtersActive && reviewRows
+        ? buildFilteredDwellIncidentReviewModel(filteredDays, reviewRows)
+        : fullModel;
+    const incidentRows = reviewRows ?? model.rows;
 
-    // Sheet 1: Operator Summary
-    const summarySheet = wb.addWorksheet('Operator Summary');
-    const summaryHeader = summarySheet.addRow([
-        'Operator ID', 'Moderate', 'High', 'Total', 'Tracked (min)', 'Avg (min)',
-    ]);
-    styleHeader(summaryHeader);
-    for (const op of metrics.byOperator) {
-        summarySheet.addRow([
-            op.operatorId,
-            op.moderateCount,
-            op.highCount,
-            op.totalIncidents,
-            Math.round(op.totalTrackedDwellSeconds / 60 * 10) / 10,
-            Math.round(op.avgTrackedDwellSeconds / 60 * 10) / 10,
-        ]);
-    }
-    autoWidth(summarySheet);
-
-    // Sheet 2: Incident Detail
-    const detailSheet = wb.addWorksheet('Incident Detail');
+    // Sheet 1: prioritized reportable incident queue
+    const detailSheet = wb.addWorksheet('Incident Queue');
     const detailHeader = detailSheet.addRow([
-        'Operator', 'Date', 'Route', 'Stop', 'Arrival', 'Departure',
-        'Raw (min)', 'Tracked (min)', 'Severity',
+        'Date', 'Departure', 'Route', 'Stop', 'Trip', 'Block', 'Operator',
+        'Severity', 'Effective Dwell (min)', 'Departure Late (min)',
+        'Boardings', 'Alightings', 'Wheelchair Activity', 'Departure Load',
+        'Later Trips Touched', 'OTP-Late Departures', 'Downstream Evidence',
     ]);
     styleHeader(detailHeader);
-    for (const inc of metrics.incidents) {
+    for (const row of incidentRows) {
+        const inc = row.incident;
+        const cascade = row.cascade?.incidentRecordMatched === false ? null : row.cascade;
         detailSheet.addRow([
-            inc.operatorId, inc.date, inc.routeId, inc.stopName,
-            inc.observedArrivalTime, inc.observedDepartureTime,
-            Math.round(inc.rawDwellSeconds / 60 * 10) / 10,
+            inc.date, inc.observedDepartureTime, inc.routeId, inc.stopName, inc.tripName,
+            inc.block, inc.operatorId, inc.severity,
             Math.round(inc.trackedDwellSeconds / 60 * 10) / 10,
-            inc.severity,
+            inc.departureDeviationSeconds === undefined ? null : Math.round(inc.departureDeviationSeconds / 60 * 10) / 10,
+            inc.boardings ?? null,
+            inc.alightings ?? null,
+            inc.wheelchairUsageCount ?? null,
+            inc.departureLoadReliable ? (inc.departureLoad ?? 0) : null,
+            cascade?.affectedTripCount ?? null,
+            cascade?.blastRadius ?? null,
+            row.impactStatus,
         ]);
     }
     autoWidth(detailSheet);
 
-    // Sheet 3: Daily Trend
+    // Sheet 2: recurring patterns
+    const patternSheet = wb.addWorksheet('Recurring Patterns');
+    styleHeader(patternSheet.addRow([
+        'Route', 'Stop', 'Trip', 'Distinct Days', 'Incidents', 'High',
+        'Average Dwell (min)', 'OTP-Late Departures', 'Operators', 'Latest Date',
+    ]));
+    for (const pattern of model.patterns) {
+        patternSheet.addRow([
+            pattern.routeId, pattern.stopName, pattern.tripName, pattern.distinctDays,
+            pattern.incidentCount, pattern.highCount, (pattern.avgDwellSeconds / 60).toFixed(1),
+            pattern.otpLateDepartures, pattern.operatorCount, pattern.latestDate,
+        ]);
+    }
+    autoWidth(patternSheet);
+
+    // Sheet 3: neutral operator context
+    const operatorSheet = wb.addWorksheet('Operator Context');
+    styleHeader(operatorSheet.addRow([
+        'Operator ID', 'Eligible Timepoint Visits', 'Reportable Incidents', 'High',
+        'Incidents per 1K Eligible Visits', 'Reportable Dwell (min)',
+    ]));
+    for (const operator of model.operatorContext) {
+        operatorSheet.addRow([
+            operator.operatorId,
+            operator.eligibleTimepointVisits,
+            operator.incidentCount,
+            operator.highCount,
+            operator.incidentsPer1kEligibleVisits === null ? null : +operator.incidentsPer1kEligibleVisits.toFixed(2),
+            +(operator.reportableDwellSeconds / 60).toFixed(1),
+        ]);
+    }
+    autoWidth(operatorSheet);
+
+    // Sheet 4: definitions and scope
+    const definitionsSheet = wb.addWorksheet('Definitions');
+    styleHeader(definitionsSheet.addRow(['Item', 'Definition']));
+    const definitions: Array<[string, string]> = [
+        ['Report period', `${startDate} to ${endDate}`],
+        ['Reportable incident', 'Departure more than 3 minutes late with effective dwell above 2 minutes.'],
+        ['High severity', 'Effective dwell above 5 minutes.'],
+        ['Exposure rate', 'Reportable incidents per 1,000 eligible timepoint visits.'],
+        ['Active incident filters', filtersActive
+            ? 'Applied to the incident queue, recurring patterns, operator context, and daily counts. Exposure rates are blank because arbitrary incident filters do not have a matching eligible-visit denominator.'
+            : 'None. Supporting sections cover the full selected dashboard period.'],
+        ['Dwell-associated delay', 'Observed delay remaining after subtracting lateness already present on arrival. This is an association, not proof of sole causation.'],
+        ['Missing evidence', 'Blank downstream values mean the stored day did not contain a complete matching incident story.'],
+    ];
+    for (const definition of definitions) definitionsSheet.addRow(definition);
+    autoWidth(definitionsSheet);
+
     const trendSheet = wb.addWorksheet('Daily Trend');
-    const trendHeader = trendSheet.addRow([
-        'Date', 'Day Type', 'Incidents', 'Moderate', 'High', 'Tracked (min)',
-    ]);
-    styleHeader(trendHeader);
-    for (const d of [...filteredDays].sort((a, b) => a.date.localeCompare(b.date))) {
-        const dwell = d.byOperatorDwell;
+    styleHeader(trendSheet.addRow([
+        'Date', 'Reportable Incidents', 'High', 'Eligible Timepoint Visits', 'Incidents per 1K Visits',
+    ]));
+    for (const point of model.dailyTrend) {
         trendSheet.addRow([
-            d.date,
-            d.dayType,
-            dwell?.totalIncidents ?? 0,
-            dwell?.byOperator.reduce((s, o) => s + o.moderateCount, 0) ?? 0,
-            dwell?.byOperator.reduce((s, o) => s + o.highCount, 0) ?? 0,
-            dwell?.totalTrackedDwellMinutes ?? 0,
+            point.date,
+            point.incidents,
+            point.high,
+            point.eligibleTimepointVisits,
+            point.incidentsPer1kEligibleVisits === null ? null : +point.incidentsPer1kEligibleVisits.toFixed(2),
         ]);
     }
     autoWidth(trendSheet);
 
     const buffer = await wb.xlsx.writeBuffer();
-    downloadBuffer(buffer, `operator_dwell_${startDate}_${endDate}.xlsx`);
+    downloadBuffer(buffer, `dwell_incident_review_${startDate}_${endDate}.xlsx`);
 }
 
-// ─── Operator Dwell PDF Export ──────────────────────────────────
+// ─── Dwell Incident Review PDF Export ───────────────────────────
 
 export async function exportOperatorDwellPDF(
     filteredDays: DailySummary[],
     startDate: string,
     endDate: string,
+    reviewRows?: DwellIncidentReviewRow[],
+    filtersActive = false,
 ): Promise<void> {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
         import('jspdf'),
         import('jspdf-autotable'),
     ]);
 
-    const metrics = aggregateDwellAcrossDays(filteredDays);
+    const fullModel = buildDwellIncidentReviewModel(filteredDays);
+    const model = filtersActive && reviewRows
+        ? buildFilteredDwellIncidentReviewModel(filteredDays, reviewRows)
+        : fullModel;
+    const incidentRows = reviewRows ?? model.rows;
     const doc = new jsPDF({ orientation: 'landscape' });
 
-    // Title
     doc.setFontSize(16);
-    doc.text('Operator Dwell Report', 14, 18);
+    doc.text('Dwell Incident Review', 14, 18);
     doc.setFontSize(10);
-    doc.text(`${startDate} — ${endDate}  |  ${filteredDays.length} days  |  ${metrics.totalIncidents} incidents`, 14, 26);
-
-    // Table 1: Operator Summary
-    autoTable(doc, {
-        startY: 32,
-        head: [['Operator', 'Moderate', 'High', 'Total', 'Tracked (min)', 'Avg (min)']],
-        body: metrics.byOperator.map(op => [
-            op.operatorId,
-            op.moderateCount,
-            op.highCount,
-            op.totalIncidents,
-            (op.totalTrackedDwellSeconds / 60).toFixed(1),
-            (op.avgTrackedDwellSeconds / 60).toFixed(1),
-        ]),
-        styles: { fontSize: 9 },
-        headStyles: { fillColor: [8, 145, 178] }, // cyan-600
-    });
-
-    // Table 2: Incident Detail (new page if needed)
-    const finalY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY ?? 80;
-    if (finalY > 140) doc.addPage();
+    const exportedOtpLateDepartures = incidentRows.reduce((sum, row) => (
+        sum + (row.cascade?.incidentRecordMatched === false ? 0 : (row.cascade?.blastRadius ?? 0))
+    ), 0);
+    doc.text(`${startDate} — ${endDate}  |  ${filteredDays.length} days  |  ${incidentRows.length} reportable incidents  |  ${exportedOtpLateDepartures} OTP-late departures`, 14, 26);
+    doc.setFontSize(8);
+    doc.text('Investigation signals only. Results do not prove operator fault or sole causation.', 14, 31);
 
     autoTable(doc, {
-        startY: finalY > 140 ? 14 : finalY + 10,
-        head: [['Operator', 'Date', 'Route', 'Stop', 'Arrival', 'Departure', 'Raw', 'Tracked', 'Severity']],
-        body: metrics.incidents.map(inc => [
-            inc.operatorId, inc.date, inc.routeId,
-            inc.stopName.length > 25 ? inc.stopName.slice(0, 25) + '...' : inc.stopName,
-            inc.observedArrivalTime, inc.observedDepartureTime,
-            (inc.rawDwellSeconds / 60).toFixed(1),
-            (inc.trackedDwellSeconds / 60).toFixed(1),
-            inc.severity,
+        startY: 36,
+        head: [['Date', 'Time', 'Route', 'Stop', 'Operator', 'Severity', 'Dwell', 'Trips Touched', 'OTP-Late', 'Evidence']],
+        body: incidentRows.map(row => [
+            row.incident.date,
+            row.incident.observedDepartureTime,
+            row.incident.routeId,
+            row.incident.stopName.length > 28 ? `${row.incident.stopName.slice(0, 28)}…` : row.incident.stopName,
+            row.incident.operatorId,
+            row.incident.severity,
+            (row.incident.trackedDwellSeconds / 60).toFixed(1),
+            row.cascade?.incidentRecordMatched === false ? '—' : (row.cascade?.affectedTripCount ?? '—'),
+            row.cascade?.incidentRecordMatched === false ? '—' : (row.cascade?.blastRadius ?? '—'),
+            row.impactStatus,
         ]),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [8, 145, 178] },
     });
 
-    doc.save(`operator_dwell_${startDate}_${endDate}.pdf`);
+    doc.addPage();
+    doc.setFontSize(13);
+    doc.text('Recurring patterns', 14, 16);
+    autoTable(doc, {
+        startY: 22,
+        head: [['Route', 'Stop', 'Trip', 'Days', 'Incidents', 'High', 'Avg Dwell', 'OTP-Late', 'Operators']],
+        body: model.patterns.map(pattern => [
+            pattern.routeId,
+            pattern.stopName,
+            pattern.tripName,
+            pattern.distinctDays,
+            pattern.incidentCount,
+            pattern.highCount,
+            (pattern.avgDwellSeconds / 60).toFixed(1),
+            pattern.otpLateDepartures,
+            pattern.operatorCount,
+        ]),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [8, 145, 178] },
+    });
+
+    doc.save(`dwell_incident_review_${startDate}_${endDate}.pdf`);
 }

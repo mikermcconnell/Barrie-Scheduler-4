@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { aggregateDailySummaries } from '../utils/performanceDataAggregator';
 import { classifyOTP, parseDayType, OTP_THRESHOLDS, DEFAULT_LOAD_CAP } from '../utils/performanceDataTypes';
 import type { STREETSRecord } from '../utils/performanceDataTypes';
+import { buildRidershipStopProfiles } from '../utils/performanceRidershipStopProfile';
 
 // ─── Helper: make a minimal valid STREETS record ────────────────────
 function makeRecord(overrides: Partial<STREETSRecord> = {}): STREETSRecord {
@@ -339,9 +340,9 @@ describe('aggregateDailySummaries', () => {
 
     it('builds load profiles by route+direction', () => {
         const records = [
-            makeRecord({ routeId: '10', direction: 'CW', routeStopIndex: 0, stopName: 'Stop A', tripId: 'T1', departureLoad: 5, boardings: 5, alightings: 0 }),
-            makeRecord({ routeId: '10', direction: 'CW', routeStopIndex: 1, stopName: 'Stop B', tripId: 'T1', departureLoad: 8, boardings: 3, alightings: 0 }),
-            makeRecord({ routeId: '10', direction: 'CW', routeStopIndex: 2, stopName: 'Stop C', tripId: 'T1', departureLoad: 4, boardings: 0, alightings: 4 }),
+            makeRecord({ routeId: '10', direction: 'CW', routeStopIndex: 0, stopId: 'A', stopName: 'Stop A', tripId: 'T1', departureLoad: 5, boardings: 5, alightings: 0 }),
+            makeRecord({ routeId: '10', direction: 'CW', routeStopIndex: 1, stopId: 'B', stopName: 'Stop B', tripId: 'T1', departureLoad: 8, boardings: 3, alightings: 0 }),
+            makeRecord({ routeId: '10', direction: 'CW', routeStopIndex: 2, stopId: 'C', stopName: 'Stop C', tripId: 'T1', departureLoad: 4, boardings: 0, alightings: 4 }),
         ];
         const summaries = aggregateDailySummaries(records);
         const profile = summaries[0].loadProfiles.find(p => p.routeId === '10' && p.direction === 'CW');
@@ -349,8 +350,57 @@ describe('aggregateDailySummaries', () => {
         expect(profile!.stops).toHaveLength(3);
         expect(profile!.stops[0].stopName).toBe('Stop A');
         expect(profile!.stops[0].avgLoad).toBe(5);
+        expect(profile!.stops[0].loadObservationCount).toBe(1);
         expect(profile!.stops[1].avgLoad).toBe(8);
         expect(profile!.stops[2].avgLoad).toBe(4);
+    });
+
+    it('counts reliable load observations once per trip and excludes missing APC data', () => {
+        const records = [
+            makeRecord({ tripId: 'T1', routeStopIndex: 0, stopId: 'A', departureLoad: 15, apcSource: 1 }),
+            makeRecord({ tripId: 'T1', routeStopIndex: 0, stopId: 'A', departureLoad: 20, apcSource: 1 }),
+            makeRecord({ tripId: 'T2', routeStopIndex: 0, stopId: 'A', departureLoad: 99, apcSource: 0 }),
+            makeRecord({ tripId: 'T3', routeStopIndex: 0, stopId: 'A', departureLoad: 0, apcSource: 1 }),
+        ];
+
+        const stop = aggregateDailySummaries(records)[0].loadProfiles[0].stops[0];
+
+        expect(stop.loadObservationCount).toBe(2);
+        expect(stop.avgLoad).toBe(10);
+        expect(stop.maxLoad).toBe(20);
+    });
+
+    it('preserves repeated loop visits and aligns them across shifted stop indexes', () => {
+        const records = [
+            makeRecord({ tripId: 'T1', terminalDepartureTime: '08:00', stopId: 'A', stopName: 'Stop A', routeStopIndex: 0, boardings: 2, alightings: 0, departureLoad: 5 }),
+            makeRecord({ tripId: 'T1', terminalDepartureTime: '08:00', stopId: 'B', stopName: 'Stop B', routeStopIndex: 1, boardings: 1, alightings: 1, departureLoad: 7 }),
+            makeRecord({ tripId: 'T1', terminalDepartureTime: '08:00', stopId: 'A', stopName: 'Stop A', routeStopIndex: 2, boardings: 0, alightings: 3, departureLoad: 4 }),
+            // Same displayed departure time as T1 verifies pattern detection remains keyed by trip ID.
+            makeRecord({ tripId: 'T2', terminalDepartureTime: '08:00', stopId: 'X', stopName: 'Stop X', routeStopIndex: 0, boardings: 1, alightings: 0, departureLoad: 1 }),
+            makeRecord({ tripId: 'T2', terminalDepartureTime: '08:00', stopId: 'A', stopName: 'Stop A', routeStopIndex: 1, boardings: 4, alightings: 0, departureLoad: 8 }),
+            makeRecord({ tripId: 'T2', terminalDepartureTime: '08:00', stopId: 'B', stopName: 'Stop B', routeStopIndex: 2, boardings: 1, alightings: 1, departureLoad: 9 }),
+            makeRecord({ tripId: 'T2', terminalDepartureTime: '08:00', stopId: 'A', stopName: 'Stop A', routeStopIndex: 3, boardings: 0, alightings: 5, departureLoad: 2 }),
+        ];
+
+        const summary = aggregateDailySummaries(records)[0];
+        const heatmap = summary.ridershipHeatmaps![0];
+        const profile = summary.loadProfiles[0];
+
+        expect(heatmap.multipleStopPatterns).toBe(true);
+        expect(heatmap.stops.filter(stop => stop.stopId === 'A')).toEqual([
+            expect.objectContaining({ occurrenceIndex: 0, routeStopIndex: 1 }),
+            expect.objectContaining({ occurrenceIndex: 1, routeStopIndex: 3 }),
+        ]);
+        expect(profile.stops.filter(stop => stop.stopId === 'A')).toEqual([
+            expect.objectContaining({ occurrenceIndex: 0, loadObservationCount: 2, avgLoad: 6.5 }),
+            expect.objectContaining({ occurrenceIndex: 1, loadObservationCount: 2, avgLoad: 3 }),
+        ]);
+        const chartProfile = buildRidershipStopProfiles([summary]).options[0];
+        expect(chartProfile.multipleStopPatterns).toBe(true);
+        expect(chartProfile.rows.filter(stop => stop.stopId === 'A')).toEqual([
+            expect.objectContaining({ occurrenceIndex: 0, boardings: 6, alightings: 0, averageLoad: 6.5 }),
+            expect.objectContaining({ occurrenceIndex: 1, boardings: 0, alightings: 8, averageLoad: 3 }),
+        ]);
     });
 
     it('tracks data quality metrics', () => {

@@ -8,7 +8,7 @@
 
 ```
 firebase/
-├── users/{userId}/
+├── users/{userId}/                       # Profile; teamId is the active-team pointer
 │   ├── draftSchedules/{draftId}          # Working schedule copies
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
 │   └── files/{fileId}                    # Uploaded file metadata; owner-write, scheduler-admin read for support
@@ -45,6 +45,7 @@ firebase/
 ```
 
 `teams/{teamId}/connectionLibrary/default` and `teams/{teamId}/routeConnectionConfigs/{routeIdentity}` are used by the application and documented here because code reads and writes those paths directly.
+`teams/{teamId}/members/{userId}` is the durable source of team membership. The `userId` field must match the document ID so a collection-group query filtered to the signed-in user can safely enumerate only that user's teams. The required collection-group `userId` index is declared in `firestore.indexes.json`. `users/{userId}.teamId` selects the active team; joining an additional team does not replace an existing active-team pointer unless activation is explicitly requested.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
 `teams/{teamId}/routePlanner2Projects/{projectId}` stores Route Planner 2 project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection.
 `teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
@@ -87,7 +88,9 @@ Partner teams, such as WATT, can use read-only shared data sources instead of co
 
 Partner teams that are granted Scheduled Transit access can also read published master schedules from a configured source team. `teams/{teamId}.dataSourceTeamIds.masterSchedules` may point at the source team; when omitted, the Master Schedule Browser falls back to `dataSourceTeamIds.performance` for partner teams with no local schedules. Shared master-schedule access is read-only and still requires the requesting team member to have Fixed Route workspace access.
 
-Daily performance summaries may include `byOperatorDwell.totalReportableDwellMinutes`, an optional moderate/high-only dwell total used by compact report snapshots when older incident arrays are trimmed.
+Performance schema v12 extends daily dwell summaries with `exposureByRouteOperator`, `eligibleTimepointVisits`, and `incidentsPer1kEligibleVisits`. Each exposure row counts deduplicated normal timepoint observations with valid observed arrival and departure for one route/operator pair, allowing route and operator filters to keep matching numerators and denominators. Dwell incidents may include a deterministic `incidentId`, scheduled/observed timing context, vehicle/direction, passenger activity, reliable load status, and coordinates; cascades repeat `incidentId` for stable joining. These fields are optional so older stored days remain readable. `byOperatorDwell.totalReportableDwellMinutes` remains the moderate/high-only dwell total used by compact report snapshots.
+
+Performance schema v13 adds optional `occurrenceIndex` to load-profile and ridership-heatmap stops. The value is the zero-based visit number for that physical stop within one trip. It keeps repeated loop visits separate and aligns the same visit when other stops shift its `routeStopIndex`. Ridership heatmaps may also store `multipleStopPatterns` so the dashboard can disclose within-day pattern variation. Older summaries remain readable but cannot recover repeated visits that were already collapsed; rebuild or re-import them when occurrence-level passenger flow is required.
 
 `teams/{teamId}/todPickupData/metadata` stores the active Transit On Demand pickup-map import pointer. Full monthly TOD pickup datasets live in Storage as aggregated JSON at `teams/{teamId}/todPickupData/{timestamp}.json`. Uploading a CSV for a month replaces that month only; other months remain in the same stored summary. The stored payload is aggregated by stop ID when present, otherwise by pickup name plus rounded coordinates, or by coordinates alone. Raw request rows, rider-identifying fields, and address columns are not persisted. Imports are bounded to CSV files under 5 MB and 25,000 rows. TOD pickup map data and import metadata are readable by team members; writes are restricted to team owners/admins or workspace permission managers.
 

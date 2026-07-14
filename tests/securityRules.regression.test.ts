@@ -29,6 +29,12 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).toMatch(/allow list: if isWorkspacePermissionManager\(\);/);
   });
 
+  it('requires Operations workspace access to read raw performance files', () => {
+    const storageRules = readRepoFile('storage.rules');
+
+    expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/performanceData\/\{allPaths=\*\*\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'workspaceOperations'\) \|\| canSupportReadTeamData\(teamId\);/);
+  });
+
   it('allows own-team managers or scoped developer edit sessions to update team settings', () => {
     const firestoreRules = readRepoFile('firestore.rules');
 
@@ -122,6 +128,23 @@ describe('security rules regression checks', () => {
 
     expect(memberCreateRule).toMatch(/canCreateSelfFromInvite\(teamId, memberId\)/);
     expect(memberCreateRule).not.toMatch(/request\.auth\.uid == memberId \|\|/);
+  });
+
+  it('limits collection-group membership enumeration to the caller records', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+    const firestoreIndexes = readRepoFile('firestore.indexes.json');
+
+    expect(firestoreRules).toMatch(
+      /match \/\{path=\*\*\}\/members\/\{memberId\} \{[\s\S]*allow list: if request\.auth != null &&[\s\S]*resource\.data\.userId == request\.auth\.uid;/,
+    );
+    expect(firestoreIndexes).toMatch(/"collectionGroup": "members"[\s\S]*"fieldPath": "userId"[\s\S]*"queryScope": "COLLECTION_GROUP"/);
+  });
+
+  it('only allows active team pointers backed by an existing membership', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/allow create, update: if request\.auth != null &&[\s\S]*isValidActiveTeamSelection\(userId\);/);
+    expect(firestoreRules).toMatch(/function isValidActiveTeamSelection\(userId\) \{[\s\S]*existsAfter\([\s\S]*teams\/\$\(teamId\)\/members\/\$\(userId\)[\s\S]*\);/);
   });
 
   it('requires an expiring, team-scoped scheduler-admin support session', () => {

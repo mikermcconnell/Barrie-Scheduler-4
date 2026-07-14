@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   collectionMock,
+  collectionGroupMock,
   docMock,
   setDocMock,
   getDocMock,
@@ -14,6 +15,7 @@ const {
   serverTimestampMock,
 } = vi.hoisted(() => ({
   collectionMock: vi.fn(),
+  collectionGroupMock: vi.fn(),
   docMock: vi.fn(),
   setDocMock: vi.fn(),
   getDocMock: vi.fn(),
@@ -28,6 +30,7 @@ const {
 
 vi.mock('firebase/firestore', () => ({
   collection: collectionMock,
+  collectionGroup: collectionGroupMock,
   doc: docMock,
   setDoc: setDocMock,
   getDoc: getDocMock,
@@ -50,8 +53,10 @@ import {
   createPartnerTeam,
   deleteTeam,
   getUserTeam,
+  getUserTeams,
   joinTeamByInviteCode,
   removeMember,
+  switchUserTeam,
   updateTeamDefaultMemberAccessLevel,
   updateTeamDefaultWorkspaceAccess,
   updateMemberWorkspaceAccess,
@@ -60,6 +65,7 @@ import {
 describe('teamService security-sensitive flows', () => {
   beforeEach(() => {
     collectionMock.mockReset();
+    collectionGroupMock.mockReset();
     docMock.mockReset();
     setDocMock.mockReset();
     getDocMock.mockReset();
@@ -85,6 +91,11 @@ describe('teamService security-sensitive flows', () => {
     collectionMock.mockImplementation((_db: unknown, ...segments: string[]) => ({
       path: segments.join('/'),
     }));
+    collectionGroupMock.mockImplementation((_db: unknown, collectionId: string) => ({
+      path: `**/${collectionId}`,
+    }));
+    whereMock.mockImplementation((field: string, operator: string, value: unknown) => ({ field, operator, value }));
+    queryMock.mockImplementation((...parts: unknown[]) => ({ parts }));
     docMock.mockImplementation((parent: unknown, ...segments: string[]) => {
       if (typeof parent === 'object' && parent && 'path' in parent && segments.length === 0) {
         return { id: 'generated-team', path: `${(parent as { path: string }).path}/generated-team` };
@@ -168,6 +179,79 @@ describe('teamService security-sensitive flows', () => {
     );
   });
 
+  it('enumerates only the signed-in user memberships and returns their teams', async () => {
+    getDocsMock.mockResolvedValueOnce({
+      docs: [
+        {
+          id: 'user-1',
+          data: () => ({ userId: 'user-1' }),
+          ref: { parent: { parent: { id: 'team-b' } } },
+        },
+        {
+          id: 'user-1',
+          data: () => ({ userId: 'user-1' }),
+          ref: { parent: { parent: { id: 'team-a' } } },
+        },
+      ],
+    });
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        id: 'team-b',
+        data: () => ({ name: 'Zulu Team', createdBy: 'owner', inviteCode: 'ZULU01' }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        id: 'team-a',
+        data: () => ({ name: 'Alpha Team', createdBy: 'owner', inviteCode: 'ALPHA1' }),
+      });
+
+    const teams = await getUserTeams('user-1');
+
+    expect(collectionGroupMock).toHaveBeenCalledWith(expect.anything(), 'members');
+    expect(whereMock).toHaveBeenCalledWith('userId', '==', 'user-1');
+    expect(teams.map(team => team.id)).toEqual(['team-a', 'team-b']);
+  });
+
+  it('verifies membership before changing the active team', async () => {
+    getDocMock.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ userId: 'user-1' }),
+    }).mockResolvedValueOnce({ exists: () => true });
+
+    await switchUserTeam('user-1', 'team-2');
+
+    expect(getDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-2/members/user-1' }),
+    );
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'users/user-1' }),
+      { teamId: 'team-2' },
+      { merge: true },
+    );
+  });
+
+  it('rejects active-team changes when the membership is missing', async () => {
+    getDocMock.mockResolvedValueOnce({ exists: () => false });
+
+    await expect(switchUserTeam('user-1', 'team-2')).rejects.toThrow('not a member');
+
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects active-team changes when the team document is missing', async () => {
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ userId: 'user-1' }),
+      })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await expect(switchUserTeam('user-1', 'team-2')).rejects.toThrow('no longer available');
+
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
   it('deletes the invite lookup when deleting a team', async () => {
     const batchDeleteMock = vi.fn();
     const batchCommitMock = vi.fn().mockResolvedValue(undefined);
@@ -211,6 +295,37 @@ describe('teamService security-sensitive flows', () => {
         role: 'member',
         accessLevel: 'planner',
       })
+    );
+  });
+
+  it('can join a team without replacing the existing active team', async () => {
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          teamId: 'team-2',
+          teamName: 'Second Team',
+          defaultMemberAccessLevel: 'planner',
+        }),
+      })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await joinTeamByInviteCode(
+      'user-1',
+      'SECOND',
+      'Existing User',
+      'existing@example.com',
+      { activate: false },
+    );
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-2/members/user-1' }),
+      expect.objectContaining({ userId: 'user-1' }),
+    );
+    expect(setDocMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'users/user-1' }),
+      expect.anything(),
+      expect.anything(),
     );
   });
 

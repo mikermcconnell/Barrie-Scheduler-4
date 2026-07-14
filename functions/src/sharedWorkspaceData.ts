@@ -82,14 +82,14 @@ async function assertCanReadSharedSource(
   sourceTeamId: string,
   kind: DataSourceKind,
   decoded: admin.auth.DecodedIdToken,
-) {
+): Promise<admin.firestore.DocumentData | null> {
   const isSchedulerAdmin = decoded.schedulerAdmin === true;
   const memberSnap = await getDb().doc(`teams/${requestingTeamId}/members/${uid}`).get();
   if (!memberSnap.exists && !isSchedulerAdmin) {
     throw Object.assign(new Error('User is not a member of the requesting team.'), { status: 403 });
   }
 
-  if (requestingTeamId === sourceTeamId) return;
+  if (requestingTeamId === sourceTeamId) return memberSnap.exists ? memberSnap.data() ?? null : null;
 
   const teamSnap = await getDb().doc(`teams/${requestingTeamId}`).get();
   if (!teamSnap.exists) {
@@ -100,6 +100,34 @@ async function assertCanReadSharedSource(
   if (!dataSourceTeamIds || dataSourceTeamIds[kind] !== sourceTeamId) {
     throw Object.assign(new Error('This team is not configured to read that shared data source.'), { status: 403 });
   }
+  return memberSnap.exists ? memberSnap.data() ?? null : null;
+}
+
+export function canReadOperatorDwell(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  if (!member) return false;
+  const override = member.workspaceOverrides?.operationsOperatorDwell;
+  if (typeof override === 'boolean') return override;
+  const accessLevel = typeof member.accessLevel === 'string'
+    ? member.accessLevel
+    : (member.role === 'owner' || member.role === 'admin' ? 'internal' : 'planner');
+  return accessLevel === 'admin' || accessLevel === 'internal';
+}
+
+export function redactOperatorDwellEvidence(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const summary = value as PerformanceDataSummary;
+  if (!Array.isArray(summary.dailySummaries)) return value;
+  return {
+    ...summary,
+    dailySummaries: summary.dailySummaries.map(day => {
+      const { byOperatorDwell: _operatorDwell, byCascade: _cascade, ...redactedDay } = day;
+      return redactedDay;
+    }),
+  };
 }
 
 function timestampToIso(value: any): string {
@@ -185,7 +213,7 @@ function trimMissedTrips(day: DailySummary, keepTripDetails: boolean): DailySumm
     : day.missedTrips;
 }
 
-function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
+export function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
   if (mode === 'all') return day;
 
   const base: DailySummary = {
@@ -218,6 +246,7 @@ function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = '
       return {
         ...base,
         byStop: day.byStop,
+        loadProfiles: day.loadProfiles,
         ridershipHeatmaps: day.ridershipHeatmaps,
         byRouteHour: day.byRouteHour,
         missedTrips: trimMissedTrips(day, false),
@@ -416,15 +445,21 @@ export const sharedWorkspaceData = onRequest(
         return;
       }
 
-      await assertCanReadSharedSource(
+      const requestingMember = await assertCanReadSharedSource(
         decoded.uid,
         payload.requestingTeamId,
         payload.sourceTeamId,
         dataSourceKindForWorkspace(payload.workspace),
         decoded,
       );
+      const operatorDwellAllowed = canReadOperatorDwell(requestingMember, decoded);
+      const operatorDwellRequested = payload.workspace === 'performanceData'
+        && payload.detailMode === 'operator-dwell';
+      if (operatorDwellRequested && !operatorDwellAllowed) {
+        throw Object.assign(new Error('Dwell Incident Review access is required.'), { status: 403 });
+      }
 
-      const data = await loadWorkspaceData({
+      const loadedData = await loadWorkspaceData({
         workspace: payload.workspace,
         requestingTeamId: payload.requestingTeamId,
         sourceTeamId: payload.sourceTeamId,
@@ -432,6 +467,9 @@ export const sharedWorkspaceData = onRequest(
         dateRange: payload.dateRange,
         detailMode: payload.detailMode,
       });
+      const data = payload.workspace.startsWith('performance') && !operatorDwellAllowed
+        ? redactOperatorDwellEvidence(loadedData)
+        : loadedData;
 
       if (!data) {
         res.status(404).json({ data: null });

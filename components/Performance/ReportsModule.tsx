@@ -17,7 +17,7 @@ type ReportPanel = 'summary' | 'route' | 'dwell' | 'ai';
 const PANEL_CONFIG: { id: ReportPanel; label: string; icon: React.FC<{ size?: number }> }[] = [
     { id: 'summary', label: 'Weekly / Monthly Summary', icon: FileBarChart },
     { id: 'route', label: 'Route Performance', icon: Route },
-    { id: 'dwell', label: 'Operator Dwell', icon: Timer },
+    { id: 'dwell', label: 'Dwell Incident Review', icon: Timer },
     { id: 'ai', label: 'AI Assistant', icon: Sparkles },
 ];
 
@@ -128,15 +128,16 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
             />
 
             {/* Sub-navigation */}
-            <div className="flex gap-1 border-b border-gray-200">
+            <div className="flex gap-1 overflow-x-auto border-b border-gray-200" role="group" aria-label="Report sections">
                 {PANEL_CONFIG.map(panel => {
                     const isActive = activePanel === panel.id;
                     const Icon = panel.icon;
                     return (
                         <button
                             key={panel.id}
+                            aria-pressed={isActive}
                             onClick={() => setActivePanel(panel.id)}
-                            className={`relative flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
+                            className={`relative flex min-h-11 items-center gap-1.5 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors ${
                                 isActive ? 'text-gray-900' : 'text-gray-500 hover:text-gray-700'
                             }`}
                         >
@@ -151,7 +152,9 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
             </div>
 
             {/* Panel Content */}
-            {renderPanel()}
+            <div>
+                {renderPanel()}
+            </div>
         </div>
     );
 };

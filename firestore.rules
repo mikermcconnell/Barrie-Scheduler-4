@@ -10,7 +10,10 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if request.auth != null &&
                   (request.auth.uid == userId || isSchedulerAdmin());
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null &&
+                              request.auth.uid == userId &&
+                              isValidActiveTeamSelection(userId);
+      allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
     // Uploaded file metadata is user-owned, but scheduler admins can read it for
@@ -52,6 +55,13 @@ service cloud.firestore {
     }
 
     // ========== TEAMS ==========
+
+    // Collection-group membership enumeration is limited to the caller's own
+    // records. Client queries must include where('userId', '==', auth.uid).
+    match /{path=**}/members/{memberId} {
+      allow list: if request.auth != null &&
+                    resource.data.userId == request.auth.uid;
+    }
 
     // A scheduler admin may activate one short-lived, team-scoped support
     // session for themselves. The document ID is always the admin's auth UID.
@@ -253,6 +263,14 @@ service cloud.firestore {
     function isTeamMember(teamId) {
       return request.auth != null &&
              exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+    }
+
+    function isValidActiveTeamSelection(userId) {
+      let teamId = request.resource.data.get('teamId', null);
+      return teamId == null ||
+             (teamId is string &&
+              existsAfter(/databases/$(database)/documents/teams/$(teamId)) &&
+              existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(userId)));
     }
 
     function hasUserTeam() {
