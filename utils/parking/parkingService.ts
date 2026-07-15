@@ -12,7 +12,7 @@ import {
   uploadBytes,
 } from 'firebase/storage';
 import { db, storage } from '../firebase';
-import { buildParkingMonthAnalysis, buildParkingReplacementSummaryForMonths, buildParkingSummary, mergeParkingSettings } from './parkingAggregation';
+import { buildParkingReplacementSummaryForMonths, buildParkingSummary, mergeParkingSettings } from './parkingAggregation';
 import { buildParkingRevenueReplacementSummary } from './parkingRevenue';
 import {
   DEFAULT_PARKING_SETTINGS,
@@ -231,15 +231,7 @@ export function rebuildParkingSummaryWithRules(
   storagePath: string | undefined,
   settings: ParkingSettings,
 ): ParkingSummary {
-  const months = summary.months.map(month => {
-    const analysis = buildParkingMonthAnalysis(month.rows, settings);
-    return {
-      ...month,
-      departmentSummaries: analysis.departmentSummaries,
-      platePatterns: analysis.platePatterns,
-    };
-  });
-  return buildParkingSummary(months, importedBy, storagePath, settings);
+  return buildParkingSummary(summary.months, importedBy, storagePath, settings);
 }
 
 export async function saveParkingMonthData(

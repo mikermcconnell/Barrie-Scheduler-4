@@ -108,6 +108,10 @@ import {
   type ParkingObservationScope,
 } from '../../utils/parking/parkingObservations';
 import {
+  buildParkingMonthAnalysis,
+  buildParkingSummary,
+} from '../../utils/parking/parkingAggregation';
+import {
   loadParkingWorkspaceData,
   rebuildParkingSummaryWithRules,
   saveParkingMonthsData,
@@ -118,6 +122,7 @@ import {
   DEFAULT_PARKING_SETTINGS,
   type ParkingCodeFamilyMapping,
   type ParkingDepartmentLegendSortKey,
+  type ParkingFlagRuleSettings,
   type ParkingMonthlyDataset,
   type ParkingPlatePattern,
   type ParkingRawRow,
@@ -212,6 +217,7 @@ const REVENUE_DAY_TYPE_LABELS: Record<NonNullable<ParkingRevenueFilters['dayType
 };
 
 type ParkingWorkspaceView = 'dashboard' | 'plate-monitor' | 'lot-data';
+type ThresholdSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type ParkingLotViewMode = 'map' | 'analysis';
 type ParkingLotMapMode = 'markers' | 'heatmap';
 type ParkingAnalysisView = 'overview' | 'trends' | 'lots' | 'time' | 'capacity';
@@ -1111,33 +1117,15 @@ function CompactTextInput({ value, onChange, placeholder, disabled = false }: {
   );
 }
 
-function NumberInput({ value, onChange, suffix, min = 0, step = 1, disabled = false }: {
-  value: number;
-  onChange: (value: number) => void;
-  suffix?: string;
-  min?: number;
-  step?: number;
-  disabled?: boolean;
-}) {
-  return (
-    <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
-      <input
-        type="number"
-        min={min}
-        step={step}
-        value={value}
-        disabled={disabled}
-        onChange={event => onChange(Number(event.target.value))}
-        className="w-full bg-transparent text-sm font-bold text-gray-800 outline-none disabled:text-gray-400"
-      />
-      {suffix ? <span className="text-xs font-bold uppercase tracking-wide text-gray-400">{suffix}</span> : null}
-    </label>
-  );
-}
-
 function buildDisplaySummary(summary: ParkingSummary | null, settings: ParkingSettings): ParkingSummary | null {
   if (!summary) return null;
   return rebuildParkingSummaryWithRules(summary, summary.metadata.importedBy, summary.metadata.storagePath, settings);
+}
+
+export function buildSelectedMonthParkingAnalysis(dataset: ParkingMonthlyDataset | null, settings: ParkingSettings) {
+  return dataset
+    ? buildParkingMonthAnalysis(dataset.rows, settings)
+    : { platePatterns: [], departmentSummaries: [] };
 }
 
 export interface AnnualSummaryRow {
@@ -1525,15 +1513,36 @@ export const ParkingWorkspace: React.FC = () => {
   const [departmentCodeYear, setDepartmentCodeYear] = useState(new Date().getFullYear());
   const [departmentLegendSort, setDepartmentLegendSort] = useState(DEFAULT_DEPARTMENT_LEGEND_SORT);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [thresholdSaveStatus, setThresholdSaveStatus] = useState<ThresholdSaveStatus>('idle');
+  const [thresholdSaveError, setThresholdSaveError] = useState('');
+  const thresholdSaveSequenceRef = useRef(0);
+  const thresholdSaveTailRef = useRef<Promise<void>>(Promise.resolve());
+  const settingsSaveMountedRef = useRef(true);
 
-  const displaySummary = useMemo(
-    () => activeWorkspace === 'dashboard' ? null : buildDisplaySummary(summary, settings),
+  const observationSettings = useMemo<ParkingSettings>(() => ({
+    ...DEFAULT_PARKING_SETTINGS,
+    codeFamilies: settings.codeFamilies,
+  }), [settings.codeFamilies]);
+  const plateDisplaySummary = useMemo(
+    () => activeWorkspace === 'plate-monitor' ? buildDisplaySummary(summary, observationSettings) : null,
+    [activeWorkspace, observationSettings, summary],
+  );
+  const lotDisplaySummary = useMemo(
+    () => activeWorkspace === 'lot-data' ? buildDisplaySummary(summary, settings) : null,
     [activeWorkspace, settings, summary],
   );
+  const displaySummary = activeWorkspace === 'plate-monitor' ? plateDisplaySummary : lotDisplaySummary;
 
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  useEffect(() => {
+    settingsSaveMountedRef.current = true;
+    return () => {
+      settingsSaveMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const handleHashChange = () => setActiveWorkspace(parseParkingWorkspaceViewFromHash());
@@ -1568,24 +1577,26 @@ export const ParkingWorkspace: React.FC = () => {
     [reviewMonths, selectedYear],
   );
   const selectedMonthDataset = monthsForSelectedYear.find(month => month.month === selectedMonth) ?? null;
-  const selectedPreviewDataset = previewDatasets.find(month => month.month === selectedMonth) ?? null;
   const isReadOnlyPreview = developerPreview?.readOnly === true;
   const canEditParking = !isReadOnlyPreview && (isGlobalAdmin || canManageTeam || canAccessWorkspaceFeature('workspaceParking', teamMember));
+  const plateAnalysisSettings = useMemo<ParkingSettings>(() => ({
+    ...observationSettings,
+    flagRules: settings.flagRules,
+  }), [observationSettings, settings.flagRules]);
   const annualSummaryRows = useMemo(
-    () => buildAnnualSummaryRows(reviewMonths, selectedYear, settings),
-    [reviewMonths, selectedYear, settings],
+    () => buildAnnualSummaryRows(reviewMonths, selectedYear, observationSettings),
+    [observationSettings, reviewMonths, selectedYear],
   );
   const selectedMonthLabel = MONTHS.find(month => month.value === selectedMonth.slice(5, 7))?.label ?? selectedMonth;
-  const monthlyFlaggedPlates = useMemo(() => {
-    if (!selectedMonth) return [];
-    if (selectedPreviewDataset) return selectedPreviewDataset.platePatterns.filter(pattern => pattern.flags.length > 0);
-    return displaySummary?.platePatterns.filter(pattern => pattern.month === selectedMonth && pattern.flags.length > 0) ?? [];
-  }, [displaySummary, selectedMonth, selectedPreviewDataset]);
-  const monthlyDepartmentRows = useMemo(() => {
-    if (!selectedMonth) return [];
-    if (selectedPreviewDataset) return selectedPreviewDataset.departmentSummaries;
-    return displaySummary?.departmentSummaries.filter(row => row.month === selectedMonth) ?? [];
-  }, [displaySummary, selectedMonth, selectedPreviewDataset]);
+  const selectedMonthAnalysis = useMemo(
+    () => buildSelectedMonthParkingAnalysis(selectedMonthDataset, plateAnalysisSettings),
+    [plateAnalysisSettings, selectedMonthDataset],
+  );
+  const monthlyFlaggedPlates = useMemo(
+    () => selectedMonthAnalysis.platePatterns.filter(pattern => pattern.flags.length > 0),
+    [selectedMonthAnalysis.platePatterns],
+  );
+  const monthlyDepartmentRows = selectedMonthAnalysis.departmentSummaries;
   const rawTransactionRows = useMemo<ParkingRawRow[]>(() => {
     const rows = selectedMonthDataset?.rows ?? [];
     return [...rows].sort((a, b) => (
@@ -1595,17 +1606,17 @@ export const ParkingWorkspace: React.FC = () => {
     ));
   }, [selectedMonthDataset]);
   const departmentDrilldownRows = useMemo(
-    () => buildParkingDepartmentDrilldownRows(selectedMonthDataset?.rows ?? [], settings, selectedMonth),
-    [selectedMonth, selectedMonthDataset, settings],
+    () => buildParkingDepartmentDrilldownRows(selectedMonthDataset?.rows ?? [], observationSettings, selectedMonth),
+    [observationSettings, selectedMonth, selectedMonthDataset],
   );
   const selectedDepartmentDrilldown = departmentDrilldownRows.find(
     row => row.department === selectedDrilldownDepartment,
   ) ?? null;
   const selectedAnnualObservationDrilldown = useMemo(
     () => selectedAnnualObservationScope
-      ? buildParkingObservationDrilldown(reviewMonths, settings, selectedAnnualObservationScope)
+      ? buildParkingObservationDrilldown(reviewMonths, observationSettings, selectedAnnualObservationScope)
       : null,
-    [reviewMonths, selectedAnnualObservationScope, settings],
+    [observationSettings, reviewMonths, selectedAnnualObservationScope],
   );
   const activeObservationDrilldown = useMemo(
     () => selectedAnnualObservationDrilldown || (selectedDepartmentDrilldown ? {
@@ -1676,9 +1687,14 @@ export const ParkingWorkspace: React.FC = () => {
     hourStart: revenueHourStart,
     hourEnd: revenueHourEnd,
   }), [revenueDayTypeFilter, revenueFilterMonths, revenueHourEnd, revenueHourStart, revenueSourceFilter, selectedRevenueCategory, selectedRevenueUploader]);
+  const revenueAnalysisSettings = useMemo<ParkingSettings>(() => ({
+    ...DEFAULT_PARKING_SETTINGS,
+    revenueLocations: settings.revenueLocations,
+    revenueLocationCategories: settings.revenueLocationCategories,
+  }), [settings.revenueLocationCategories, settings.revenueLocations]);
   const revenueAnalytics = useMemo(
-    () => buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueFilters),
-    [displayRevenueSummary, revenueFilters, settings],
+    () => buildParkingRevenueAnalytics(displayRevenueSummary, revenueAnalysisSettings, revenueFilters),
+    [displayRevenueSummary, revenueAnalysisSettings, revenueFilters],
   );
   const revenueTrendFilterMonths = useMemo(() => {
     if (selectedRevenueYear === 'all') return undefined;
@@ -1693,8 +1709,8 @@ export const ParkingWorkspace: React.FC = () => {
   const revenueTrendAnalytics = useMemo(
     () => revenueTrendUsesCurrentAnalytics
       ? revenueAnalytics
-      : buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueTrendFilters),
-    [displayRevenueSummary, revenueAnalytics, revenueTrendFilters, revenueTrendUsesCurrentAnalytics, settings],
+      : buildParkingRevenueAnalytics(displayRevenueSummary, revenueAnalysisSettings, revenueTrendFilters),
+    [displayRevenueSummary, revenueAnalytics, revenueAnalysisSettings, revenueTrendFilters, revenueTrendUsesCurrentAnalytics],
   );
   const revenueComparisonFilters = useMemo<ParkingRevenueFilters>(() => ({
     ...revenueFilters,
@@ -1703,8 +1719,8 @@ export const ParkingWorkspace: React.FC = () => {
   const revenueComparisonAnalytics = useMemo(
     () => revenueFilterMonths === undefined
       ? revenueAnalytics
-      : buildParkingRevenueAnalytics(displayRevenueSummary, settings, revenueComparisonFilters),
-    [displayRevenueSummary, revenueAnalytics, revenueComparisonFilters, revenueFilterMonths, settings],
+      : buildParkingRevenueAnalytics(displayRevenueSummary, revenueAnalysisSettings, revenueComparisonFilters),
+    [displayRevenueSummary, revenueAnalytics, revenueAnalysisSettings, revenueComparisonFilters, revenueFilterMonths],
   );
   const publicParkingMatchesByKey = useMemo(() => {
     const matches = new Map<string, PublicParkingLocationMatch>();
@@ -1776,7 +1792,7 @@ export const ParkingWorkspace: React.FC = () => {
   ), [revenueMonths, selectedRevenueYear]);
   const parkingUtilizationTrend = useMemo(() => {
     const periods = utilizationTrendMonths.map(month => {
-      const analytics = buildParkingRevenueAnalytics(displayRevenueSummary, settings, {
+      const analytics = buildParkingRevenueAnalytics(displayRevenueSummary, revenueAnalysisSettings, {
         ...revenueFilters,
         months: [month],
       });
@@ -1797,7 +1813,7 @@ export const ParkingWorkspace: React.FC = () => {
       return { month, analytics, capacityByLocationKey };
     });
     return buildParkingMonthlyUtilizationTrend(periods, selectedTrendLocation);
-  }, [displayRevenueSummary, publicParkingLocations, revenueFilters, selectedTrendLocation, settings, utilizationTrendMonths]);
+  }, [displayRevenueSummary, publicParkingLocations, revenueAnalysisSettings, revenueFilters, selectedTrendLocation, settings.revenueLocations, utilizationTrendMonths]);
   const parkingTrendOverview = useMemo(() => (
     buildParkingTrendOverview(
       revenueTrendAnalytics,
@@ -1942,7 +1958,13 @@ export const ParkingWorkspace: React.FC = () => {
   const selectedMonthTotalValue = selectedMonthDataset?.totalValue ?? 0;
   const previewRowCount = previewDatasets.reduce((sum, dataset) => sum + dataset.rowCount, 0);
   const previewTotalValue = previewDatasets.reduce((sum, dataset) => sum + dataset.totalValue, 0);
-  const previewFlaggedPlateCount = previewDatasets.reduce((sum, dataset) => sum + dataset.platePatterns.filter(pattern => pattern.flags.length > 0).length, 0);
+  const previewFlaggedPlateCount = useMemo(
+    () => previewDatasets.reduce((sum, dataset) => (
+      sum + buildSelectedMonthParkingAnalysis(dataset, plateAnalysisSettings).platePatterns
+        .filter(pattern => pattern.flags.length > 0).length
+    ), 0),
+    [plateAnalysisSettings, previewDatasets],
+  );
   const departmentLegendRows = useMemo(
     () => sortDepartmentLegendRows(getDepartmentRowsForLegend(settings), departmentLegendSort.key, departmentLegendSort.direction),
     [departmentLegendSort.direction, departmentLegendSort.key, settings],
@@ -1972,6 +1994,9 @@ export const ParkingWorkspace: React.FC = () => {
 
   useEffect(() => {
     const teamId = team?.id;
+    thresholdSaveSequenceRef.current += 1;
+    setThresholdSaveStatus('idle');
+    setThresholdSaveError('');
     if (!teamId) {
       loadedTeamIdRef.current = null;
       settingsRef.current = DEFAULT_PARKING_SETTINGS;
@@ -2304,14 +2329,62 @@ export const ParkingWorkspace: React.FC = () => {
     setSettings(nextSettings);
   };
 
+  const queueThresholdSettingsSave = (nextSettings: ParkingSettings) => {
+    if (!team || !user) return;
+    const teamId = team.id;
+    const userId = user.uid;
+    const sequence = ++thresholdSaveSequenceRef.current;
+    setThresholdSaveStatus('saving');
+    setThresholdSaveError('');
+
+    thresholdSaveTailRef.current = thresholdSaveTailRef.current
+      .catch((): void => undefined)
+      .then(async () => {
+        try {
+          await saveParkingSettings(teamId, userId, nextSettings);
+          if (settingsSaveMountedRef.current && sequence === thresholdSaveSequenceRef.current) {
+            setThresholdSaveStatus('saved');
+          }
+        } catch (error) {
+          if (settingsSaveMountedRef.current && sequence === thresholdSaveSequenceRef.current) {
+            setThresholdSaveStatus('error');
+            setThresholdSaveError(error instanceof Error ? error.message : 'Could not save indicator thresholds.');
+          }
+        }
+      });
+  };
+
+  const commitThresholdRule = <K extends keyof ParkingFlagRuleSettings>(key: K, value: ParkingFlagRuleSettings[K]) => {
+    const current = settingsRef.current;
+    if (current.flagRules[key] === value) return;
+    const nextSettings = {
+      ...current,
+      flagRules: {
+        ...current.flagRules,
+        [key]: value,
+      },
+    };
+    applySettingsState(nextSettings);
+    queueThresholdSettingsSave(nextSettings);
+  };
+
   const persistParkingSettings = async (nextSettings: ParkingSettings, options: { showSaving?: boolean; showToast?: boolean } = {}) => {
     if (!team || !user) return;
+    const teamId = team.id;
+    const userId = user.uid;
+    const settingsBeingSaved = nextSettings;
     applySettingsState(nextSettings);
     if (options.showSaving) setSaving(true);
     try {
-      const saved = await saveParkingSettings(team.id, user.uid, nextSettings);
-      applySettingsState(saved);
-      setDepartmentLegendSort(saved.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
+      const saveTask = thresholdSaveTailRef.current
+        .catch((): void => undefined)
+        .then(() => saveParkingSettings(teamId, userId, settingsBeingSaved));
+      thresholdSaveTailRef.current = saveTask.then((): void => undefined, (): void => undefined);
+      const saved = await saveTask;
+      if (settingsRef.current === settingsBeingSaved) {
+        applySettingsState(saved);
+        setDepartmentLegendSort(saved.departmentLegendSort || DEFAULT_DEPARTMENT_LEGEND_SORT);
+      }
       if (options.showToast) toast.success('Parking settings saved');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Could not save Parking settings.');
@@ -2321,7 +2394,7 @@ export const ParkingWorkspace: React.FC = () => {
   };
 
   const saveSettingsOnly = async () => {
-    await persistParkingSettings(settings, { showSaving: true, showToast: true });
+    await persistParkingSettings(settingsRef.current, { showSaving: true, showToast: true });
   };
 
   const addCodeFamily = () => setSettings(current => ({
@@ -4150,8 +4223,18 @@ export const ParkingWorkspace: React.FC = () => {
             </div>
             <div className="flex flex-wrap gap-2">
               <button
-                disabled={!displaySummary}
-                onClick={() => displaySummary && exportParkingWorkbook(displaySummary, `parking-usage-${latestMonth?.month || 'report'}.xlsx`)}
+                disabled={activeWorkspace === 'plate-monitor' ? reviewMonths.length === 0 : !summary}
+                onClick={() => {
+                  const exportSummary = activeWorkspace === 'plate-monitor'
+                    ? buildParkingSummary(
+                      reviewMonths,
+                      summary?.metadata.importedBy || user?.uid || 'export',
+                      undefined,
+                      settingsRef.current,
+                    )
+                    : displaySummary;
+                  if (exportSummary) exportParkingWorkbook(exportSummary, `parking-usage-${latestMonth?.month || 'report'}.xlsx`);
+                }}
                 className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
               >
                 <Download size={16} /> Export Excel
@@ -4513,17 +4596,25 @@ export const ParkingWorkspace: React.FC = () => {
             </section>
 
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Indicator Thresholds</h3></div>
-              <div className="space-y-3 text-sm">
-                <SettingNumber label="High plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateMonthlyValueDollars: value } }))} />
-                <SettingNumber label="High frequency use" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, plateActiveDaysPerMonth: value } }))} />
-                <SettingNumber label="Long duration hours" value={settings.flagRules.longSessionHours} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionHours: value } }))} />
-                <SettingNumber label="Long duration count" value={settings.flagRules.longSessionCount} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, longSessionCount: value } }))} />
-                <SettingNumber label="Consistent location days" value={settings.flagRules.sameLocationDays} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, sameLocationDays: value } }))} />
-                <SettingNumber label="Multiple daily sessions" value={settings.flagRules.multipleDailySessions} disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, multipleDailySessions: value } }))} />
-                <SettingNumber label="High department usage" value={settings.flagRules.departmentMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentMonthlyValueDollars: value } }))} />
-                <SettingNumber label="Department increase" value={settings.flagRules.departmentIncreasePercent} suffix="%" disabled={!canEditParking} onChange={value => setSettings(current => ({ ...current, flagRules: { ...current.flagRules, departmentIncreasePercent: value } }))} />
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2"><SlidersHorizontal size={18} className="text-emerald-600" /><h3 className="font-extrabold text-gray-950">Indicator Thresholds</h3></div>
+                {thresholdSaveStatus === 'saving' ? <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-600"><Loader2 size={13} className="animate-spin" /> Saving</span> : null}
+                {thresholdSaveStatus === 'saved' ? <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600"><CheckCircle2 size={13} /> Saved</span> : null}
+                {thresholdSaveStatus === 'error' ? <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600"><AlertTriangle size={13} /> Not saved</span> : null}
               </div>
+              <div className="space-y-3 text-sm">
+                <SettingNumber label="High plate value" value={settings.flagRules.plateMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => commitThresholdRule('plateMonthlyValueDollars', value)} />
+                <SettingNumber label="High frequency use" value={settings.flagRules.plateActiveDaysPerMonth} disabled={!canEditParking} onChange={value => commitThresholdRule('plateActiveDaysPerMonth', value)} />
+                <SettingNumber label="Long duration hours" value={settings.flagRules.longSessionHours} disabled={!canEditParking} onChange={value => commitThresholdRule('longSessionHours', value)} />
+                <SettingNumber label="Long duration count" value={settings.flagRules.longSessionCount} disabled={!canEditParking} onChange={value => commitThresholdRule('longSessionCount', value)} />
+                <SettingNumber label="Consistent location days" value={settings.flagRules.sameLocationDays} disabled={!canEditParking} onChange={value => commitThresholdRule('sameLocationDays', value)} />
+                <SettingNumber label="Multiple daily sessions" value={settings.flagRules.multipleDailySessions} disabled={!canEditParking} onChange={value => commitThresholdRule('multipleDailySessions', value)} />
+                <SettingNumber label="High department usage" value={settings.flagRules.departmentMonthlyValueDollars} suffix="$" disabled={!canEditParking} onChange={value => commitThresholdRule('departmentMonthlyValueDollars', value)} />
+                <SettingNumber label="Department increase" value={settings.flagRules.departmentIncreasePercent} suffix="%" disabled={!canEditParking} onChange={value => commitThresholdRule('departmentIncreasePercent', value)} />
+              </div>
+              <p className={`mt-3 text-xs font-semibold ${thresholdSaveStatus === 'error' ? 'text-red-600' : 'text-gray-400'}`}>
+                {thresholdSaveStatus === 'error' ? thresholdSaveError : 'Changes apply when you leave a field or press Enter, then save automatically.'}
+              </p>
             </section>
             </>
             ) : null}
@@ -4552,9 +4643,65 @@ const Badge: React.FC<{ children: React.ReactNode; tone: 'amber' | 'green' }> = 
   <span className={`rounded-full px-2 py-0.5 text-[11px] font-extrabold ${tone === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{children}</span>
 );
 
-const SettingNumber: React.FC<{ label: string; value: number; onChange: (value: number) => void; suffix?: string; disabled?: boolean }> = ({ label, value, onChange, suffix, disabled }) => (
-  <div className="grid grid-cols-[1fr_120px] items-center gap-3">
-    <span className="font-bold text-gray-600">{label}</span>
-    <NumberInput value={value} onChange={onChange} suffix={suffix} disabled={disabled} />
-  </div>
-);
+export function parseParkingThresholdDraft(draft: string): number | null {
+  if (!draft.trim()) return null;
+  const value = Number(draft);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export const SettingNumber: React.FC<{ label: string; value: number; onChange: (value: number) => void; suffix?: string; disabled?: boolean }> = ({ label, value, onChange, suffix, disabled }) => {
+  const [draft, setDraft] = useState(String(value));
+  const [invalid, setInvalid] = useState(false);
+
+  useEffect(() => {
+    setDraft(String(value));
+    setInvalid(false);
+  }, [value]);
+
+  const commit = () => {
+    const nextValue = parseParkingThresholdDraft(draft);
+    if (nextValue == null) {
+      setDraft(String(value));
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    setDraft(String(nextValue));
+    if (nextValue !== value) onChange(nextValue);
+  };
+
+  return (
+    <div className="grid grid-cols-[1fr_120px] items-start gap-3">
+      <span className="pt-2 font-bold text-gray-600">{label}</span>
+      <div>
+        <label className={`flex items-center gap-2 rounded-lg border bg-white px-3 py-2 ${invalid ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'}`}>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={draft}
+            aria-label={label}
+            aria-invalid={invalid}
+            disabled={disabled}
+            onChange={event => {
+              setDraft(event.target.value);
+              setInvalid(false);
+            }}
+            onBlur={commit}
+            onKeyDown={event => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setDraft(String(value));
+                setInvalid(false);
+              }
+            }}
+            className="w-full bg-transparent text-sm font-bold text-gray-800 outline-none disabled:text-gray-400"
+          />
+          {suffix ? <span className="text-xs font-bold uppercase tracking-wide text-gray-400">{suffix}</span> : null}
+        </label>
+        {invalid ? <span className="mt-1 block text-[11px] font-semibold text-red-600">Enter zero or a positive number.</span> : null}
+      </div>
+    </div>
+  );
+};
