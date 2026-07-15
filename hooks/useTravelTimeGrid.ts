@@ -16,6 +16,7 @@ import { getRouteConfig, parseRouteInfo } from '../utils/config/routeDirectionCo
 import { TimeUtils } from '../utils/timeUtils';
 import { deepCloneSchedules } from '../utils/schedule/scheduleEditorUtils';
 import { resolveGridSegmentTimes } from '../utils/schedule/travelTimeGridUtils';
+import { summarizeScheduleEditImpact, type ScheduleEditImpact } from '../utils/schedule/scheduleEditImpact';
 
 export interface UseTravelTimeGridResult {
     handleBulkAdjustTravelTime: (fromStop: string, toStop: string, delta: number, routeName: string) => void;
@@ -159,7 +160,8 @@ const cascadeNextBlockTrip = (
 export function useTravelTimeGrid(
     schedules: MasterRouteTable[],
     onSchedulesChange: (schedules: MasterRouteTable[]) => void,
-    logAction?: (type: string, message: string, details: object) => void
+    logAction?: (type: string, message: string, details: object) => void,
+    onEditImpact?: (impact: ScheduleEditImpact) => void,
 ): UseTravelTimeGridResult {
 
     /**
@@ -212,7 +214,8 @@ export function useTravelTimeGrid(
         newScheds.forEach(t => validateRouteTable(t));
         reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange, logAction]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, logAction, onEditImpact]);
 
     /**
      * Adjust travel time for a single trip
@@ -257,7 +260,8 @@ export function useTravelTimeGrid(
         newScheds.forEach(t => validateRouteTable(t));
         reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, onEditImpact]);
 
     /**
      * Bulk adjust recovery time for all trips at a specific stop
@@ -313,7 +317,8 @@ export function useTravelTimeGrid(
         newScheds.forEach(t => validateRouteTable(t));
         reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, onEditImpact]);
 
     /**
      * Adjust recovery time for a single trip at a specific stop
@@ -371,7 +376,8 @@ export function useTravelTimeGrid(
         newScheds.forEach(t => validateRouteTable(t));
         reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, onEditImpact]);
 
     return {
         handleBulkAdjustTravelTime,

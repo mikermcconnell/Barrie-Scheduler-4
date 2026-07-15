@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
-const { toast, saveDraftMock, publishDraftMock } = vi.hoisted(() => ({
+const { toast, saveDraftMock, publishDraftMock, createScheduleReviewMock } = vi.hoisted(() => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
@@ -11,6 +11,7 @@ const { toast, saveDraftMock, publishDraftMock } = vi.hoisted(() => ({
   },
   saveDraftMock: vi.fn(),
   publishDraftMock: vi.fn(),
+  createScheduleReviewMock: vi.fn(),
 }));
 
 const teamContextState = vi.hoisted(() => ({
@@ -79,17 +80,31 @@ vi.mock('../components/ScheduleEditor', () => ({
     <div data-testid="editor-shell" data-status={props.autoSaveStatus} data-unsaved={String(props.hasUnsavedChanges)}>
       <button data-testid="change" onClick={() => props.onSchedulesChange?.(changedSchedules)}>change</button>
       <button data-testid="save" onClick={() => void props.onSaveVersion?.()}>save</button>
-      <button data-testid="publish" onClick={() => void props.onPublish?.()}>publish</button>
+      <button data-testid="publish" onClick={() => void (props.onReviewChanges ?? props.onPublish)?.()}>publish</button>
     </div>
   ),
 }));
 
 vi.mock('../utils/services/draftService', () => ({
   saveDraft: saveDraftMock,
+  createDraftCheckpoint: vi.fn(),
+  getDraftCheckpoint: vi.fn(),
+  listDraftCheckpoints: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../utils/services/publishService', () => ({
   publishDraft: publishDraftMock,
+  StaleDraftPublishError: class StaleDraftPublishError extends Error {},
+}));
+
+vi.mock('../utils/services/scheduleReviewService', () => ({
+  createScheduleReview: createScheduleReviewMock,
+}));
+
+vi.mock('../utils/services/masterScheduleService', () => ({
+  getMasterSchedule: vi.fn(),
+  getMasterScheduleEntry: vi.fn(),
+  getVersionContent: vi.fn(),
 }));
 
 import { ScheduleEditorWorkspace } from '../components/workspaces/ScheduleEditorWorkspace';
@@ -108,6 +123,8 @@ describe('ScheduleEditorWorkspace', () => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     saveDraftMock.mockReset();
     publishDraftMock.mockReset();
+    createScheduleReviewMock.mockReset();
+    createScheduleReviewMock.mockResolvedValue({ id: 'review-1' });
     toast.success.mockReset();
     toast.error.mockReset();
     toast.warning.mockReset();
@@ -209,14 +226,40 @@ describe('ScheduleEditorWorkspace', () => {
   });
 
   it('blocks publish when the latest draft save fails', async () => {
-    saveDraftMock.mockRejectedValue(new Error('save failed'));
+    saveDraftMock
+      .mockResolvedValueOnce('draft-1')
+      .mockRejectedValueOnce(new Error('save failed'));
     renderWorkspace();
 
     const publishButton = container?.querySelector('[data-testid="publish"]');
     publishButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushPromises();
 
+    const note = container?.querySelector('#schedule-review-publish-note') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    valueSetter?.call(note, 'Test schedule changes');
+    note.dispatchEvent(new Event('input', { bubbles: true }));
+    await flushPromises();
+
+    const readyForReview = Array.from(container?.querySelectorAll('button') ?? [])
+      .find(button => button.textContent?.includes('Ready for review'));
+    readyForReview?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    const confirmPublish = container?.querySelector('aside footer button:last-child') as HTMLButtonElement;
+    await vi.waitFor(() => {
+      expect(confirmPublish.textContent).toContain('Publish new version');
+      expect(confirmPublish.disabled).toBe(false);
+    });
+    confirmPublish?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
     expect(publishDraftMock).not.toHaveBeenCalled();
+    expect(createScheduleReviewMock).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      draftId: 'draft-1',
+      plannerNote: 'Test schedule changes',
+    }));
     expect(toast.error).toHaveBeenCalledWith('Publish Failed', 'Save the draft successfully before publishing.');
   });
 
@@ -230,6 +273,42 @@ describe('ScheduleEditorWorkspace', () => {
     await flushPromises();
 
     expect(publishDraftMock).not.toHaveBeenCalled();
-    expect(toast.warning).toHaveBeenCalled();
+    const confirmPublish = Array.from(container?.querySelectorAll('button') ?? [])
+      .find(button => button.textContent?.includes('Publish new version')) as HTMLButtonElement;
+    expect(confirmPublish.disabled).toBe(true);
+  });
+
+  it('does not mark edits made during review submission as reviewed', async () => {
+    let resolveReview!: (value: { id: string }) => void;
+    const reviewPromise = new Promise<{ id: string }>(resolve => { resolveReview = resolve; });
+    saveDraftMock.mockResolvedValue('draft-1');
+    createScheduleReviewMock.mockReturnValue(reviewPromise);
+    renderWorkspace();
+
+    container?.querySelector('[data-testid="publish"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    const readyForReview = Array.from(container?.querySelectorAll('button') ?? [])
+      .find(button => button.textContent?.includes('Ready for review'));
+    readyForReview?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await vi.waitFor(() => expect(createScheduleReviewMock).toHaveBeenCalledOnce());
+
+    flushSync(() => {
+      container?.querySelector('[data-testid="change"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    resolveReview({ id: 'review-1' });
+
+    await vi.waitFor(() => expect(toast.warning).toHaveBeenCalledWith(
+      'Review Snapshot Outdated',
+      'The schedule changed during submission. Review the latest changes and submit again.',
+    ));
+    expect(saveDraftMock).toHaveBeenLastCalledWith(
+      'user-1',
+      expect.objectContaining({ status: 'draft' }),
+    );
+    const confirmPublish = container?.querySelector('aside footer button:last-child') as HTMLButtonElement;
+    expect(confirmPublish.disabled).toBe(true);
   });
 });

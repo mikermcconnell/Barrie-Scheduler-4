@@ -172,7 +172,13 @@ async function copyRouteToDraftAndOpenEditor(
             dayType: result.content.metadata.dayType,
             status: 'draft',
             createdBy: userId,
-            basedOn: { type: 'master', id: result.entry.id },
+            basedOn: {
+                type: 'master',
+                id: result.entry.id,
+                sourceVersion: result.entry.currentVersion,
+                sourceTeamId: teamId,
+                sourceUpdatedAt: result.entry.updatedAt,
+            },
             content: result.content,
         });
 

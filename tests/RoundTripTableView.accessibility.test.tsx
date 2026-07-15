@@ -263,7 +263,7 @@ describe('RoundTripTableView accessibility polish', () => {
     expect(container?.textContent).toContain('Master compare tool');
   });
 
-  it('does not freeze the first schedule column in the combined view', () => {
+  it('keeps block identity and key metrics visible while the schedule scrolls horizontally', () => {
     flushSync(() => {
       root?.render(
         <RoundTripTableView
@@ -318,12 +318,52 @@ describe('RoundTripTableView accessibility polish', () => {
       );
     });
 
-    const stickyCells = Array.from(container?.querySelectorAll('th, td') ?? []).filter((element) => {
-      const className = element.getAttribute('class') ?? '';
-      return className.includes('sticky left-0') || className.includes('sticky left-14');
+    const blockHeader = Array.from(container?.querySelectorAll('th') ?? []).find(
+      header => header.textContent?.trim() === 'Block'
+    );
+    const cycleHeader = Array.from(container?.querySelectorAll('th') ?? []).find(
+      header => header.textContent?.trim() === 'Cycle'
+    );
+    const blockCell = Array.from(container?.querySelectorAll('tbody td') ?? []).find(
+      cell => cell.textContent?.includes('10-1')
+    );
+
+    expect(blockHeader?.className).toContain('sticky left-0');
+    expect(blockCell?.className).toContain('sticky left-0');
+    expect(cycleHeader?.className).toContain('sticky right-0');
+  });
+
+  it('provides larger, descriptive minute adjustment controls', () => {
+    flushSync(() => {
+      root?.render(
+        <RoundTripTableView
+          schedules={[
+            {
+              routeName: '10 (Weekday) (North)',
+              stops: ['North Terminal', 'Downtown'],
+              stopIds: {},
+              trips: [{
+                id: 'north-trip', blockId: '10-1', direction: 'North', tripNumber: 1, rowId: 1,
+                startTime: 420, endTime: 450, recoveryTime: 5, travelTime: 30, cycleTime: 35,
+                stops: { 'North Terminal': '7:00 AM', Downtown: '7:30 AM' },
+                arrivalTimes: { 'North Terminal': '7:00 AM', Downtown: '7:30 AM' },
+                recoveryTimes: { Downtown: 5 }, stopMinutes: { 'North Terminal': 420, Downtown: 450 }
+              }]
+            },
+            { routeName: '10 (Weekday) (South)', stops: ['Downtown'], stopIds: {}, trips: [] }
+          ] as any}
+          onCellEdit={vi.fn()}
+          onTimeAdjust={vi.fn()}
+          onRecoveryEdit={vi.fn()}
+        />
+      );
     });
 
-    expect(stickyCells).toHaveLength(0);
+    const earlierButton = container?.querySelector('button[aria-label="Move North Terminal departure 1 minute earlier"]');
+    const recoveryButton = container?.querySelector('button[aria-label="Increase Downtown recovery by 1 minute"]');
+
+    expect(earlierButton?.className).toContain('w-5');
+    expect(recoveryButton?.className).toContain('w-5');
   });
 
   it('places round-trip connection icons using the saved route connection type', () => {

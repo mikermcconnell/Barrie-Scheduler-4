@@ -59,7 +59,7 @@ vi.mock('../utils/services/dataService', () => ({
   downloadFileContent: vi.fn(),
 }));
 
-import { saveDraft } from '../utils/services/draftService';
+import { createDraftCheckpoint, saveDraft } from '../utils/services/draftService';
 
 describe('draftService.saveDraft', () => {
   beforeEach(() => {
@@ -114,5 +114,24 @@ describe('draftService.saveDraft', () => {
     expect(deleteObjectMock).toHaveBeenCalledWith({
       path: 'users/user-1/draftSchedules/draft-1_old.json',
     });
+  });
+
+  it('saves a named checkpoint as immutable content and metadata', async () => {
+    const checkpointId = await createDraftCheckpoint('user-1', 'draft-1', ' Before PM peak ', {
+      northTable: { routeName: '10 (Weekday) (North)', stops: [], stopIds: {}, trips: [] },
+      southTable: { routeName: '10 (Weekday) (South)', stops: [], stopIds: {}, trips: [] },
+      metadata: { routeNumber: '10', dayType: 'Weekday', uploadedAt: '2026-03-11T10:00:00Z' },
+    });
+
+    expect(checkpointId).toBe('generated-draft');
+    expect(uploadBytesMock).toHaveBeenCalledWith(
+      { path: 'users/user-1/draftSchedules/draft-1_checkpoints/generated-draft.json' },
+      expect.anything(),
+      { contentType: 'application/json' },
+    );
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'generated-draft' }),
+      expect.objectContaining({ name: 'Before PM peak', createdBy: 'user-1' }),
+    );
   });
 });

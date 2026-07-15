@@ -77,6 +77,7 @@ export interface MasterScheduleEntry {
     publishedFromDraft?: string;
     effectiveDate?: string;
     notes?: string;
+    publishNote?: string;
 }
 
 export interface MasterScheduleVersion {
@@ -88,6 +89,7 @@ export interface MasterScheduleVersion {
     uploaderName: string;
     source: UploadSource;
     tripCount: number;
+    publishNote?: string;
 }
 
 export interface MasterScheduleContent {

@@ -163,7 +163,11 @@ function calculateEffectiveMultipliers(
 const SERVICE_LEVEL_OPTIONS: HolidayServiceLevel[] = ['No Service', 'Sunday', 'Saturday', 'Weekday'];
 
 interface MasterScheduleBrowserProps {
-    onCopyToDraft?: (content: MasterScheduleContent, routeIdentity: RouteIdentity) => void;
+    onCopyToDraft?: (
+        content: MasterScheduleContent,
+        routeIdentity: RouteIdentity,
+        source: { version: number; teamId: string }
+    ) => void;
     onClose?: () => void;
 }
 
@@ -370,8 +374,11 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 return;
             }
             if (onCopyToDraft) {
-                onCopyToDraft(result.content, routeIdentity);
-                toast?.success('Draft Created', 'Opening in Schedule Editor...');
+                onCopyToDraft(result.content, routeIdentity, {
+                    version: result.entry.currentVersion,
+                    teamId: scheduleReadTeamId,
+                });
+                toast?.success('Editable Copy Opened', 'The editor will save this as a draft.');
             } else {
                 toast?.error('Copy to Draft not configured');
             }

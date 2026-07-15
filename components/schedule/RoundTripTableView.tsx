@@ -12,6 +12,7 @@ import {
     ChevronDown,
     ChevronUp,
     Plus,
+    MoreHorizontal,
     Trash2,
     ArrowUpDown
 } from 'lucide-react';
@@ -557,9 +558,11 @@ export interface RoundTripTableViewProps {
     masterBaseline?: MasterRouteTable[] | null;
     compareBaselineLabel?: string;
     highlightedTripId?: string | null;
+    visibleTripIds?: string[] | null;
     toolbarSlot?: React.ReactNode;
     toolbarMode?: 'inline' | 'sidebar';
     reviewToolsSlot?: React.ReactNode;
+    onInputError?: (message: string) => void;
 }
 
 // --- Component ---
@@ -631,9 +634,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     masterBaseline,
     compareBaselineLabel,
     highlightedTripId,
+    visibleTripIds,
     toolbarSlot,
     toolbarMode = 'inline',
-    reviewToolsSlot
+    reviewToolsSlot,
+    onInputError,
 }) => {
     // Sort state: 'blockFlow' (default), 'blockId', 'endTime', 'startTime' (first departure), or a stop name
     const [sortColumn, setSortColumn] = useState<string>('blockFlow');
@@ -842,6 +847,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         return comparison?.status === 'matched' ? comparison.masterTrip : undefined;
     }, [getTripComparison]);
 
+    const visibleTripIdSet = useMemo(() => (
+        visibleTripIds == null ? null : new Set(visibleTripIds)
+    ), [visibleTripIds]);
+
     const roundTripData = useMemo(() => {
         const pairs: RoundTripPair[] = [];
         const routeGroups: Record<string, { north?: MasterRouteTable; south?: MasterRouteTable }> = {};
@@ -888,7 +897,17 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 trips: []
             };
 
-            const combined = buildRoundTripView(northTable, southTable);
+            const fullCombined = buildRoundTripView(northTable, southTable);
+            const blockBoundaries = buildDynamicBlockBoundaries(fullCombined.rows);
+            const combined = visibleTripIdSet
+                ? {
+                    ...fullCombined,
+                    rows: fullCombined.rows.filter(row => (
+                        row.trips.some(trip => visibleTripIdSet.has(trip.id))
+                    )),
+                }
+                : fullCombined;
+            if (visibleTripIdSet && combined.rows.length === 0) return;
             const northTripOrder = new Map<string, number>();
             northTable.trips.forEach((trip, idx) => {
                 northTripOrder.set(trip.id, idx + 1);
@@ -897,11 +916,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             southTable.trips.forEach((trip, idx) => {
                 southTripOrder.set(trip.id, idx + 1);
             });
-            const blockBoundaries = buildDynamicBlockBoundaries(combined.rows);
             pairs.push({ north: northTable, south: southTable, combined, northTripOrder, southTripOrder, blockBoundaries });
         });
         return pairs;
-    }, [schedules]);
+    }, [schedules, visibleTripIdSet]);
 
     const compareRowsForCombined = useCallback((
         combined: RoundTripTable,
@@ -1158,7 +1176,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         }
         const formatted = parseTimeInput(value, originalValue);
         if (formatted) onCellEdit(addr.tripId, col, formatted);
-    }, [onCellEdit, schedules]);
+        else onInputError?.('Enter a valid time, such as 6:30 AM.');
+    }, [onCellEdit, onInputError, schedules]);
 
     const handleGridNudge = useCallback((addr: { tripId: string; stopName: string; cellType: string }, delta: number) => {
         if (addr.cellType === 'recovery') {
@@ -1210,7 +1229,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         gridNav.clearActiveCell();
     }, [sortColumn]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (roundTripData.length === 0) return <div className="text-center p-8 text-gray-400">No matching North/South pairs found.</div>;
+    if (roundTripData.length === 0) {
+        return (
+            <div className="text-center p-8 text-gray-400">
+                {visibleTripIdSet ? 'No matching changed trips to show.' : 'No matching North/South pairs found.'}
+            </div>
+        );
+    }
 
     return (
         <div
@@ -1512,109 +1537,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                         <div className={`${useSidebarTools ? 'px-2 py-1' : 'px-3 py-2'} border-b border-gray-200 flex-shrink-0 bg-gray-50`}>
                             <div className="flex flex-wrap items-center gap-2">
                                 {!useSidebarTools && (
-                                    <>
-                                    <button
-                                        onClick={() => setFocusMode(v => !v)}
-                                        className={`px-2 py-1 rounded text-xs font-semibold border ${focusMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
-                                        title="Focus mode prioritizes schedule grid space"
-                                    >
-                                        Focus
-                                    </button>
-                                    <button
-                                        onClick={() => setTimepointOnly(v => !v)}
-                                        className={`px-2 py-1 rounded text-xs font-semibold border ${timepointOnly ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
-                                    >
-                                        Timepoints
-                                    </button>
-                                    {!readOnly && (
-                                    <button
-                                        onClick={() => setShowActionsCol(v => !v)}
-                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showActionsCol ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
-                                    >
-                                        Actions
-                                    </button>
-                                    )}
-                                    <button
-                                        onClick={() => setShowRowNumberCol(v => !v)}
-                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showRowNumberCol ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
-                                    >
-                                        Row #
-                                    </button>
-                                    <select
-                                        value={density}
-                                        onChange={(e) => setDensity(e.target.value as DensityMode)}
-                                        className="text-xs bg-white border border-gray-300 rounded px-2 py-1 text-gray-700"
-                                        title="Density"
-                                    >
-                                        <option value="ultra">Ultra</option>
-                                        <option value="compact">Compact</option>
-                                        <option value="comfortable">Comfortable</option>
-                                    </select>
-                                    {toolbarSlot}
-                                    <button
-                                        onClick={() => setShowDirectionLegend(v => !v)}
-                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showDirectionLegend ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
-                                    >
-                                        Legend
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowConnections(v => !v)}
-                                        aria-pressed={showConnections}
-                                        aria-label={connectionToggleAriaLabel}
-                                        title={connectionToggleAriaLabel}
-                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showConnections ? 'bg-green-50 text-green-700 border-green-200' : 'bg-white text-gray-700 border-gray-300'}`}
-                                    >
-                                        {connectionToggleLabel}
-                                    </button>
-                                    </>
-                                )}
-                                {!useSidebarTools && (hasMasterBaseline || hasGeneratedBaseline) && (
-                                    <>
-                                        <label
-                                            className="flex items-center gap-1 text-xs font-semibold text-gray-600"
-                                            title="Choose which schedule the visible deltas compare against"
-                                        >
-                                            Compare against
-                                            <select
-                                                aria-label="Compare against"
-                                                value={compareMode}
-                                                onChange={(e) => setCompareMode(e.target.value as CompareMode)}
-                                                className={`rounded border px-2 py-1 text-xs font-semibold ${
-                                                    isMasterMode
-                                                        ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                                                        : isGeneratedCompareMode
-                                                            ? 'border-green-200 bg-green-50 text-green-700'
-                                                            : 'border-gray-300 bg-white text-gray-700'
-                                                }`}
-                                            >
-                                                <option value="none">None</option>
-                                                {hasGeneratedBaseline && (
-                                                    <option value="generated">Generated baseline</option>
-                                                )}
-                                                {hasMasterBaseline && (
-                                                    <option value="master">Published master</option>
-                                                )}
-                                            </select>
-                                        </label>
-                                        {isMasterMode && masterShiftLabel && (
-                                            <span
-                                                className="px-2 py-1 rounded text-xs font-semibold border bg-indigo-50 text-indigo-700 border-indigo-200"
-                                                title={`Detected global time offset used to align current trips to ${baselineLabel} during comparison`}
-                                            >
-                                                {masterShiftLabel}
-                                            </span>
-                                        )}
-                                        {isGeneratedCompareMode && onResetOriginals && (
-                                            <button
-                                                onClick={onResetOriginals}
-                                                className="px-2 py-1 rounded text-xs font-semibold border bg-white text-gray-700 border-gray-300 hover:bg-red-50 hover:text-red-700 hover:border-red-200"
-                                                title="Revert schedule to the generated baseline"
-                                            >
-                                                Reset to Generated
-                                            </button>
-                                        )}
-                                    </>
+                                    <details className="relative">
+                                        <summary className="cursor-pointer list-none rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
+                                            View options
+                                        </summary>
+                                        <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+                                            {viewTools}
+                                        </div>
+                                    </details>
                                 )}
 
                                 {/* Always-visible summary */}
@@ -1875,7 +1805,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         {/* Row # header - spans 2 rows */}
                                         {showRowNum && <th rowSpan={2} className="p-1 border-b border-gray-200 bg-gray-100 text-xs font-mono font-medium text-gray-600 text-center align-middle">#</th>}
                                         {showActions && <th rowSpan={2} className="p-2 border-b border-gray-200 bg-gray-100 text-xs font-medium text-gray-600 uppercase text-center align-middle"></th>}
-                                        <th rowSpan={2} className={`p-2 border-b border-gray-200 bg-gray-100 ${densityClass.header} font-semibold text-gray-700 uppercase tracking-wide text-center align-middle`}>Block</th>
+                                        <th rowSpan={2} className={`sticky left-0 z-50 p-2 border-b border-r border-gray-200 bg-gray-100 ${densityClass.header} font-semibold text-gray-700 uppercase tracking-wide text-center align-middle shadow-[2px_0_4px_rgba(15,23,42,0.08)]`}>Block</th>
                                         {northDisplayStops.map((stop, i) => {
                                             const isLastStop = i === lastNorthStopIdx;
                                             const isMergedTerminusStop = isLastStop && hasMergedTerminus;
@@ -1924,12 +1854,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 </th>
                                             );
                                         })}
-                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Travel Time">Travel</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-l border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Travel Time">Travel</th>}
                                         {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Time Band">Band</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Recovery Time">Rec</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`sticky right-[104px] z-50 py-1 px-1 border-b border-l border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap shadow-[-2px_0_4px_rgba(15,23,42,0.06)]`} title="Recovery Time">Rec</th>}
                                         {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Recovery Ratio">Ratio</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Headway">Hdwy</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Cycle Time">Cycle</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`sticky right-[54px] z-50 py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Headway">Hdwy</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`sticky right-0 z-50 py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Cycle Time">Cycle</th>}
                                         {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Trip Number">Trip #</th>}
                                     </tr>
                                     {/* Sub-headers Row */}
@@ -1979,7 +1909,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 sortTime: getRowSortTime(row),
                                                 sortBlockId: row.blockId || '',
                                             })),
-                                            ...(isMasterMode ? routeComparisonSummary.removedMasterTrips.map(entry => ({
+                                            ...(isMasterMode && !visibleTripIdSet ? routeComparisonSummary.removedMasterTrips.map(entry => ({
                                                 type: 'removed' as const,
                                                 entry,
                                                 sortTime: entry.masterTrip.startTime,
@@ -2034,7 +1964,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     </td>
                                                                 )}
                                                                 {showActions && <td className="p-1 border-r border-gray-100 bg-slate-100" />}
-                                                                <td className="relative p-1.5 border-r border-gray-100 bg-slate-100 text-center text-xs font-medium">
+                                                                <td className="sticky left-0 z-30 relative p-1.5 border-r border-gray-200 bg-slate-100 text-center text-xs font-medium shadow-[2px_0_4px_rgba(15,23,42,0.08)]">
                                                                     <div className="flex min-h-6 items-center justify-center gap-1 whitespace-nowrap">
                                                                         <span className="line-through">{masterTrip.blockId || '—'}</span>
                                                                         <span
@@ -2200,7 +2130,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 {/* Actions Column */}
                                                 {showActions && (
                                                     <td className="p-1 border-r border-gray-100 bg-white group-hover:bg-gray-100 z-20">
-                                                        <div className="flex items-center justify-center gap-0.5">
+                                                        <div className="flex items-center justify-center gap-1 opacity-40 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                                                             {onMenuOpen && actionTrip && (
                                                                 <button
                                                                     onClick={(e) => {
@@ -2216,36 +2146,37 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             afterTripId: afterTripId ?? undefined,
                                                                             rowTripIds,
                                                                             tripOptions,
-                                                                            menuLabel: 'Trip actions',
+                                                                            menuLabel: `Block ${row.blockId} round trip`,
+                                                                            deleteLabel: 'Delete round trip',
                                                                             hideTripSpecificActions: true,
                                                                             quickAddActionsOnly: true
                                                                         });
                                                                     }}
-                                                                    className="inline-flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-white transition-colors hover:bg-black"
-                                                                    title="Trip actions"
-                                                                    aria-label="Trip actions"
+                                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-800 text-white transition-colors hover:bg-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                                                    title="Round trip actions"
+                                                                    aria-label={`Actions for block ${row.blockId} round trip`}
                                                                 >
-                                                                    <Plus size={12} />
+                                                                    <MoreHorizontal size={14} />
                                                                 </button>
                                                             )}
                                                             {!onMenuOpen && onAddTrip && addTripReference && (
                                                                 <button
                                                                     onClick={() => onAddTrip(addTripReference.id, 'after')}
-                                                                    className="p-1 rounded hover:bg-green-50 text-gray-600 hover:text-green-700 transition-colors"
+                                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 transition-colors hover:bg-green-50 hover:text-green-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-300"
                                                                     title="Add trip"
                                                                     aria-label="Add trip"
                                                                 >
-                                                                    <Plus size={12} />
+                                                                    <Plus size={14} />
                                                                 </button>
                                                             )}
-                                                            {onDeleteTrip && rowTripIds.length > 0 && (
+                                                            {!onMenuOpen && onDeleteTrip && rowTripIds.length > 0 && (
                                                                 <button
                                                                     onClick={() => onDeleteTrip(rowTripIds, { treatAsRoundTrip: true })}
-                                                                    className="p-1 rounded hover:bg-red-50 text-gray-600 hover:text-red-600 transition-colors"
+                                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
                                                                     title="Delete round trip"
                                                                     aria-label="Delete round trip"
                                                                 >
-                                                                    <Trash2 size={12} />
+                                                                    <Trash2 size={14} />
                                                                 </button>
                                                             )}
                                                         </div>
@@ -2253,7 +2184,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 )}
 
                                                 {/* Block ID */}
-                                                <td className={`p-2 border-r border-gray-100 ${primaryChangeMeta?.blockClass || 'bg-white'} group-hover:bg-gray-100 font-medium text-xs text-gray-700 text-center`}>
+                                                <td className={`sticky left-0 z-30 p-2 border-r border-gray-200 ${primaryChangeMeta?.blockClass || rowBg} group-hover:bg-blue-50 font-semibold text-xs text-gray-800 text-center shadow-[2px_0_4px_rgba(15,23,42,0.08)]`}>
                                                     <div className="flex flex-col items-center gap-0.5">
                                                         <span>{row.blockId}</span>
                                                         {rowMarkerChangeKinds.map(kind => (
@@ -2349,7 +2280,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     <React.Fragment key={`n-${stop}`}>
                                                         {showArrRCols && (
                                                             <td
-                                                                className={`p-0 relative ${showConnections && northArrivalConnections.length > 0 ? 'h-14' : 'h-10'} group/arr ${gridNav.isCellActive(rowIdx, arrGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                                className={`p-0 relative ${showConnections && northArrivalConnections.length > 0 ? 'h-14' : 'h-11'} group/arr ${gridNav.isCellActive(rowIdx, arrGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                                 title={arrCellRef}
                                                                 data-grid-row={rowIdx}
                                                                 data-grid-col={arrGridCol}
@@ -2359,8 +2290,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     {onTimeAdjust && northTrip && northArrivalAtStop && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(northTrip.id, `${stop}__ARR`, -1)}
-                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/arr:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 transition-all"
+                                                                            className="absolute left-0 top-0 bottom-0 w-5 opacity-40 group-hover/arr:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 transition-all"
                                                                             title="-1 min"
+                                                                            aria-label={`Move ${stop} arrival 1 minute earlier`}
                                                                         >
                                                                             <ChevronDown size={10} />
                                                                         </button>
@@ -2372,6 +2304,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             if (northTrip && val && onCellEdit) {
                                                                                 const formatted = parseTimeInput(val, northArrivalAtStop);
                                                                                 if (formatted) onCellEdit(northTrip.id, `${stop}__ARR`, formatted);
+                                                                                else onInputError?.('Enter a valid time, such as 6:30 AM.');
                                                                             }
                                                                         }}
                                                                         disabled={readOnly || !northTrip}
@@ -2402,8 +2335,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     {onTimeAdjust && northTrip && northArrivalAtStop && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(northTrip.id, `${stop}__ARR`, 1)}
-                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/arr:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 transition-all"
+                                                                            className="absolute right-0 top-0 bottom-0 w-5 opacity-40 group-hover/arr:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 transition-all"
                                                                             title="+1 min"
+                                                                            aria-label={`Move ${stop} arrival 1 minute later`}
                                                                         >
                                                                             <ChevronUp size={10} />
                                                                         </button>
@@ -2413,7 +2347,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                         )}
                                                         {showArrRCols && (
                                                             <td
-                                                                className={`p-0 relative h-8 group/rec text-center font-mono text-xs text-gray-700 font-medium ${gridNav.isCellActive(rowIdx, recGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                                className={`p-0 relative h-11 group/rec text-center font-mono text-xs text-gray-700 font-medium ${gridNav.isCellActive(rowIdx, recGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                                 title={rCellRef}
                                                                 data-grid-row={rowIdx}
                                                                 data-grid-col={recGridCol}
@@ -2429,8 +2363,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                 e.stopPropagation();
                                                                                 onRecoveryEdit(northTrip.id, stop, -1);
                                                                             }}
-                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
+                                                                            className="absolute left-0 top-0 bottom-0 w-5 opacity-40 group-hover/rec:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="-1 min recovery"
+                                                                            aria-label={`Reduce ${stop} recovery by 1 minute`}
                                                                         >
                                                                             <ChevronDown size={10} />
                                                                         </button>
@@ -2462,8 +2397,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                 e.stopPropagation();
                                                                                 onRecoveryEdit(northTrip.id, stop, 1);
                                                                             }}
-                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
+                                                                            className="absolute right-0 top-0 bottom-0 w-5 opacity-40 group-hover/rec:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="+1 min recovery"
+                                                                            aria-label={`Increase ${stop} recovery by 1 minute`}
                                                                         >
                                                                             <ChevronUp size={10} />
                                                                         </button>
@@ -2502,7 +2438,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                                             return (
                                                             <td
-                                                                className={`p-0 relative ${showConnections && departureConnections.length > 0 ? 'h-14' : 'h-10'} group/cell ${i === 0 ? 'bg-white border-l border-dashed border-gray-100' : ''} ${gridNav.isCellActive(rowIdx, depGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                                className={`p-0 relative ${showConnections && departureConnections.length > 0 ? 'h-14' : 'h-11'} group/cell ${i === 0 ? 'bg-white border-l border-dashed border-gray-100' : ''} ${gridNav.isCellActive(rowIdx, depGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                                 title={depCellRef}
                                                                 data-grid-row={rowIdx}
                                                                 data-grid-col={depGridCol}
@@ -2512,8 +2448,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     {onTimeAdjust && northTrip && canAdjustNorthDep && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(northTrip.id, stop, -1)}
-                                                                            className="absolute left-0 top-0 bottom-0 w-4 opacity-40 group-hover/cell:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                                                                            className="absolute left-0 top-0 bottom-0 w-5 opacity-40 group-hover/cell:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
                                                                             title="-1 min"
+                                                                            aria-label={`Move ${stop} departure 1 minute earlier`}
                                                                         >
                                                                             <ChevronDown size={12} />
                                                                         </button>
@@ -2545,6 +2482,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                         const originalValue = getDepartureDisplayTime(northTrip, stop, combined.routeName, false);
                                                                                         const formatted = parseTimeInput(val, originalValue);
                                                                                         if (formatted) onCellEdit(northTrip.id, stop, formatted);
+                                                                                        else onInputError?.('Enter a valid time, such as 6:30 AM.');
                                                                                     }
                                                                                 }}
                                                                                 disabled={readOnly || !northTrip}
@@ -2570,8 +2508,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     {onTimeAdjust && northTrip && canAdjustNorthDep && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(northTrip.id, stop, 1)}
-                                                                            className="absolute right-0 top-0 bottom-0 w-4 opacity-40 group-hover/cell:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                                                                            className="absolute right-0 top-0 bottom-0 w-5 opacity-40 group-hover/cell:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
                                                                             title="+1 min"
+                                                                            aria-label={`Move ${stop} departure 1 minute later`}
                                                                         >
                                                                             <ChevronUp size={12} />
                                                                         </button>
@@ -2651,7 +2590,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     <React.Fragment key={`s-${stop}`}>
                                                         {hasRecovery && (
                                                             <td
-                                                                className={`p-0 relative ${showConnections && southArrivalConnections.length > 0 ? 'h-14' : 'h-10'} group/arr ${gridNav.isCellActive(rowIdx, sArrGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                                className={`p-0 relative ${showConnections && southArrivalConnections.length > 0 ? 'h-14' : 'h-11'} group/arr ${gridNav.isCellActive(rowIdx, sArrGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                                 title={arrCellRef}
                                                                 data-grid-row={rowIdx}
                                                                 data-grid-col={sArrGridCol}
@@ -2661,8 +2600,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     {onTimeAdjust && southTrip && southArrivalAtStop && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(southTrip.id, `${stop}__ARR`, -1)}
-                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/arr:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 transition-all"
+                                                                            className="absolute left-0 top-0 bottom-0 w-5 opacity-40 group-hover/arr:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 transition-all"
                                                                             title="-1 min"
+                                                                            aria-label={`Move ${stop} arrival 1 minute earlier`}
                                                                         >
                                                                             <ChevronDown size={10} />
                                                                         </button>
@@ -2675,6 +2615,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                 const originalValue = getStopValue(southTrip.arrivalTimes, stop) || getStopValue(southTrip.stops, stop);
                                                                                 const formatted = parseTimeInput(val, originalValue);
                                                                                 if (formatted) onCellEdit(southTrip.id, `${stop}__ARR`, formatted);
+                                                                                else onInputError?.('Enter a valid time, such as 6:30 AM.');
                                                                             }
                                                                         }}
                                                                         disabled={readOnly || !southTrip}
@@ -2705,8 +2646,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     {onTimeAdjust && southTrip && southArrivalAtStop && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(southTrip.id, `${stop}__ARR`, 1)}
-                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/arr:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 transition-all"
+                                                                            className="absolute right-0 top-0 bottom-0 w-5 opacity-40 group-hover/arr:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 transition-all"
                                                                             title="+1 min"
+                                                                            aria-label={`Move ${stop} arrival 1 minute later`}
                                                                         >
                                                                             <ChevronUp size={10} />
                                                                         </button>
@@ -2716,7 +2658,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                         )}
                                                         {hasRecovery && (
                                                             <td
-                                                                className={`p-0 relative h-8 group/rec text-center font-mono text-xs text-gray-700 font-medium ${gridNav.isCellActive(rowIdx, sRecGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                                className={`p-0 relative h-11 group/rec text-center font-mono text-xs text-gray-700 font-medium ${gridNav.isCellActive(rowIdx, sRecGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                                 title={rCellRef}
                                                                 data-grid-row={rowIdx}
                                                                 data-grid-col={sRecGridCol}
@@ -2732,8 +2674,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                 e.stopPropagation();
                                                                                 onRecoveryEdit(southTrip.id, stop, -1);
                                                                             }}
-                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
+                                                                            className="absolute left-0 top-0 bottom-0 w-5 opacity-40 group-hover/rec:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="-1 min recovery"
+                                                                            aria-label={`Reduce ${stop} recovery by 1 minute`}
                                                                         >
                                                                             <ChevronDown size={10} />
                                                                         </button>
@@ -2765,8 +2708,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                 e.stopPropagation();
                                                                                 onRecoveryEdit(southTrip.id, stop, 1);
                                                                             }}
-                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
+                                                                            className="absolute right-0 top-0 bottom-0 w-5 opacity-40 group-hover/rec:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="+1 min recovery"
+                                                                            aria-label={`Increase ${stop} recovery by 1 minute`}
                                                                         >
                                                                             <ChevronUp size={10} />
                                                                         </button>
@@ -2805,7 +2749,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                                             return (
                                                         <td
-                                                            className={`p-0 relative ${showConnections && departureConnections.length > 0 ? 'h-14' : 'h-10'} group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''} ${gridNav.isCellActive(rowIdx, sDepGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
+                                                            className={`p-0 relative ${showConnections && departureConnections.length > 0 ? 'h-14' : 'h-11'} group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''} ${gridNav.isCellActive(rowIdx, sDepGridCol) ? 'ring-2 ring-blue-500 ring-inset z-10' : ''}`}
                                                             title={depCellRef}
                                                             data-grid-row={rowIdx}
                                                             data-grid-col={sDepGridCol}
@@ -2815,8 +2759,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                 {onTimeAdjust && southTrip && canAdjustSouthDep && (
                                                                     <button
                                                                         onClick={() => onTimeAdjust(southTrip.id, stop, -1)}
-                                                                        className="absolute left-0 top-0 bottom-0 w-4 opacity-40 group-hover/cell:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all"
+                                                                        className="absolute left-0 top-0 bottom-0 w-5 opacity-40 group-hover/cell:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all"
                                                                         title="-1 min"
+                                                                        aria-label={`Move ${stop} departure 1 minute earlier`}
                                                                     >
                                                                         <ChevronDown size={12} />
                                                                     </button>
@@ -2829,6 +2774,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             const originalValue = getStopValue(southTrip.arrivalTimes, stop) || getStopValue(southTrip.stops, stop);
                                                                             const formatted = parseTimeInput(val, originalValue);
                                                                             if (formatted) onCellEdit(southTrip.id, stop, formatted);
+                                                                            else onInputError?.('Enter a valid time, such as 6:30 AM.');
                                                                         }
                                                                     }}
                                                                     disabled={readOnly || !southTrip}
@@ -2852,8 +2798,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                 {onTimeAdjust && southTrip && canAdjustSouthDep && (
                                                                     <button
                                                                         onClick={() => onTimeAdjust(southTrip.id, stop, 1)}
-                                                                        className="absolute right-0 top-0 bottom-0 w-4 opacity-40 group-hover/cell:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all"
+                                                                        className="absolute right-0 top-0 bottom-0 w-5 opacity-40 group-hover/cell:opacity-100 focus:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all"
                                                                         title="+1 min"
+                                                                        aria-label={`Move ${stop} departure 1 minute later`}
                                                                     >
                                                                         <ChevronUp size={12} />
                                                                     </button>
@@ -2883,7 +2830,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 {/* Metrics Columns */}
                                                 {showMetaCols && (
                                                     <>
-                                                        <td className="p-2 text-center text-sm font-semibold text-gray-700 border-l border-gray-100" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalTravel}</td>
+                                                        <td className="p-2 text-center text-sm font-semibold text-gray-700 border-l border-gray-200" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalTravel}</td>
                                                         {(() => {
                                                             const displayBand = northTrip?.assignedBand || southTrip?.assignedBand || '-';
                                                             const bandTone = useSidebarTools
@@ -2904,15 +2851,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                 </td>
                                                             );
                                                         })()}
-                                                        <td className="p-2 text-center text-sm text-gray-700" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalRec}</td>
+                                                        <td className={`sticky right-[104px] z-20 p-2 text-center text-sm text-gray-700 border-l border-gray-200 ${rowBg} group-hover:bg-blue-50 shadow-[-2px_0_4px_rgba(15,23,42,0.06)]`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalRec}</td>
 
                                                         <td className={`p-2 text-center text-sm font-semibold ${ratio > 25 ? 'text-amber-700' : ratio < 10 ? 'text-red-700' : 'text-gray-700'}`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
                                                             {ratio.toFixed(0)}%
                                                         </td>
 
-                                                        <td className={`p-1 text-center text-sm ${targetHeadway && typeof headway === 'number' && headway !== targetHeadway
+                                                        <td className={`sticky right-[54px] z-20 p-1 text-center text-sm ${targetHeadway && typeof headway === 'number' && headway !== targetHeadway
                                                             ? 'text-amber-700 bg-amber-50 font-bold ring-1 ring-inset ring-amber-300'
-                                                            : 'text-gray-700'
+                                                            : `text-gray-700 ${rowBg} group-hover:bg-blue-50`
                                                             }`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
                                                             <div className="leading-tight">
                                                                 <div>{headway}</div>
@@ -2922,9 +2869,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             </div>
                                                         </td>
 
-                                                        <td className={`p-1 text-center text-sm font-semibold ${targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime
+                                                        <td className={`sticky right-0 z-20 p-1 text-center text-sm font-semibold ${targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime
                                                             ? 'text-amber-700 bg-amber-50 font-bold ring-1 ring-inset ring-amber-300'
-                                                            : 'text-gray-800'
+                                                            : `text-gray-800 ${rowBg} group-hover:bg-blue-50`
                                                             }`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
                                                             <div className="leading-tight">
                                                                 <div>{Math.round(displayCycleTime)}</div>

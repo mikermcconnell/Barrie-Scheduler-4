@@ -52,6 +52,8 @@ Main areas:
 - Round-trip schedule display → `components/schedule/`
 - GTFS import → `components/GTFSImport.tsx`, `utils/gtfs/`
 - Draft and publish workflow → `utils/services/draftService.ts`, `utils/services/publishService.ts`
+
+The Schedule Editor is organized around compare → change → review → publish. `components/workspaces/ScheduleEditorWorkspace.tsx` loads the immutable source-master baseline, owns autosave/checkpoints and the review drawer, and passes edit state into `components/ScheduleEditor.tsx`. Pure change and operational-issue detection lives in `utils/schedule/scheduleReview.ts`; ready-for-review creates a team-visible immutable snapshot through `utils/services/scheduleReviewService.ts`; and publish enforcement is repeated in `utils/services/publishService.ts` so stale/unverifiable master copies, drafts not marked ready for review, blocking schedule issues, and missing/oversized publish notes cannot bypass the UI gate. `utils/services/masterScheduleService.ts` rechecks the expected source version inside its transaction and uses unique upload paths so concurrent publishers cannot overwrite or delete one another's payload.
 - Connection setup and optimization → `components/NewSchedule/connections/`, `utils/connections/`
 - Public timetable/report output → `components/Reports/`, `utils/reports/`
 

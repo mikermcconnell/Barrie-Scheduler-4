@@ -22,7 +22,7 @@ import type { SiblingDraft } from './ScheduleEditorWorkspace';
 import { SystemDraftList } from '../layout/SystemDraftList';
 import { TeamManagement } from '../TeamManagement';
 import type { MasterScheduleContent } from '../../utils/masterScheduleTypes';
-import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../../utils/schedule/scheduleTypes';
+import type { DraftBasedOn, DraftSchedule, DraftStatus, SystemDraft } from '../../utils/schedule/scheduleTypes';
 import { buildMasterContentFromTables } from '../../utils/schedule/scheduleDraftAdapter';
 import { getAllDrafts, getDraft, deleteDraft, duplicateDraft } from '../../utils/services/draftService';
 import { getSystemDraft, duplicateSystemDraft } from '../../utils/services/systemDraftService';
@@ -214,6 +214,7 @@ export const FixedRouteWorkspace: React.FC = () => {
     const [currentEditorDraftId, setCurrentEditorDraftId] = useState<string | null>(null);
     const [currentEditorDraftName, setCurrentEditorDraftName] = useState<string | undefined>(undefined);
     const [currentEditorDraftUpdatedAt, setCurrentEditorDraftUpdatedAt] = useState<Date | null>(null);
+    const [currentEditorDraftStatus, setCurrentEditorDraftStatus] = useState<DraftStatus>('draft');
 
     // System draft state (new model - all routes for a day type)
     const [activeSystemDraft, setActiveSystemDraft] = useState<SystemDraft | null>(null);
@@ -302,6 +303,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                 setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
                 setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
                 setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+                setCurrentEditorDraftStatus(fullDraft.status);
                 setEditorInitialContent(nextEditorState.initialContent);
                 setEditorBasedOn(nextEditorState.basedOn);
                 setViewMode('editor');
@@ -431,6 +433,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                 setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
                 setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
                 setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+                setCurrentEditorDraftStatus(fullDraft.status);
                 setEditorInitialContent(nextEditorState.initialContent);
                 setEditorBasedOn(nextEditorState.basedOn);
             } catch (error) {
@@ -473,6 +476,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                     setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
                     setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
                     setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+                    setCurrentEditorDraftStatus(fullDraft.status);
                     setEditorInitialContent(nextEditorState.initialContent);
                     setEditorBasedOn(nextEditorState.basedOn);
                 } catch (error) {
@@ -536,6 +540,7 @@ export const FixedRouteWorkspace: React.FC = () => {
         setCurrentEditorDraftId(null);
         setCurrentEditorDraftName(undefined);
         setCurrentEditorDraftUpdatedAt(null);
+        setCurrentEditorDraftStatus('draft');
         setViewMode('editor');
     };
 
@@ -556,6 +561,7 @@ export const FixedRouteWorkspace: React.FC = () => {
         setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
         setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
         setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+        setCurrentEditorDraftStatus(draft.status);
         setEditorInitialContent(nextEditorState.initialContent);
         setEditorBasedOn(nextEditorState.basedOn);
         setViewMode('editor');
@@ -586,6 +592,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                         content: draft.content,
                         basedOn: draft.basedOn,
                         updatedAt: draft.updatedAt,
+                        status: draft.status,
                     });
                 }
             }
@@ -597,6 +604,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                 setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
                 setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
                 setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+                setCurrentEditorDraftStatus(loadedDrafts.find(draft => draft.id === nextEditorState.currentEditorDraftId)?.status ?? 'draft');
                 setEditorInitialContent(nextEditorState.initialContent);
                 setEditorBasedOn(nextEditorState.basedOn);
                 setViewMode('editor');
@@ -620,6 +628,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                 setCurrentEditorDraftId(draftId);
                 setCurrentEditorDraftName(draft.name);
                 setCurrentEditorDraftUpdatedAt(draft.updatedAt);
+                setCurrentEditorDraftStatus(draft.status);
                 setEditorInitialContent(draft.content);
                 setEditorBasedOn(draft.basedOn);
             }
@@ -799,8 +808,13 @@ export const FixedRouteWorkspace: React.FC = () => {
                     {viewMode === 'master' && (
                         <Suspense fallback={<WorkspacePanelLoading label="Loading Master Schedule..." />}>
                             <MasterScheduleBrowser
-                                onCopyToDraft={(content, routeIdentity) => {
-                                    openEditorWorkspace(content, { type: 'master', id: routeIdentity });
+                                onCopyToDraft={(content, routeIdentity, source) => {
+                                    openEditorWorkspace(content, {
+                                        type: 'master',
+                                        id: routeIdentity,
+                                        sourceVersion: source.version,
+                                        sourceTeamId: source.teamId,
+                                    });
                                 }}
                                 onClose={() => setViewMode('dashboard')}
                             />
@@ -815,6 +829,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                                 basedOn={editorBasedOn}
                                 currentDraftName={currentEditorDraftName}
                                 currentDraftUpdatedAt={currentEditorDraftUpdatedAt || undefined}
+                                currentDraftStatus={currentEditorDraftStatus}
                                 onClose={() => setViewMode('dashboard')}
                                 onOpenDrafts={() => setViewMode('drafts')}
                                 onNewDraft={() => setViewMode(isFeatureEnabled('fixedMasterSchedule') ? 'master' : 'drafts')}

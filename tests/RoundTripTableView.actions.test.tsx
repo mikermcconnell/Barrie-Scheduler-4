@@ -44,6 +44,7 @@ describe('RoundTripTableView row actions', () => {
       onMenuOpen?: (...args: any[]) => void;
       onRecoveryEdit?: (...args: any[]) => void;
       originalSchedules?: any[];
+      visibleTripIds?: string[] | null;
     }
   ) => {
     flushSync(() => {
@@ -57,6 +58,7 @@ describe('RoundTripTableView row actions', () => {
           onDeleteTrip={props?.onDeleteTrip}
           onMenuOpen={props?.onMenuOpen}
           onRecoveryEdit={props?.onRecoveryEdit}
+          visibleTripIds={props?.visibleTripIds}
         />
       );
     });
@@ -230,6 +232,71 @@ describe('RoundTripTableView row actions', () => {
     expect(renderedRowIndexes.size).toBeLessThan(100);
   });
 
+  it('shows the complete paired row when either current trip is listed', () => {
+    const onMenuOpen = vi.fn();
+    const schedules = [
+      {
+        routeName: '10 (Weekday) (North)',
+        stops: ['North Terminal'],
+        stopIds: { 'North Terminal': '1001' },
+        trips: [
+          {
+            id: 'north-1', blockId: '10-1', direction: 'North', tripNumber: 1, rowId: 1,
+            startTime: 420, endTime: 450, recoveryTime: 0, travelTime: 30, cycleTime: 30,
+            stops: { 'North Terminal': '7:00 AM' }, arrivalTimes: { 'North Terminal': '7:00 AM' },
+            stopMinutes: { 'North Terminal': 420 }
+          },
+          {
+            id: 'north-2', blockId: '10-2', direction: 'North', tripNumber: 3, rowId: 3,
+            startTime: 480, endTime: 510, recoveryTime: 0, travelTime: 30, cycleTime: 30,
+            stops: { 'North Terminal': '8:00 AM' }, arrivalTimes: { 'North Terminal': '8:00 AM' },
+            stopMinutes: { 'North Terminal': 480 }
+          }
+        ]
+      },
+      {
+        routeName: '10 (Weekday) (South)',
+        stops: ['South Terminal'],
+        stopIds: { 'South Terminal': '2001' },
+        trips: [
+          {
+            id: 'south-1', blockId: '10-1', direction: 'South', tripNumber: 2, rowId: 2,
+            startTime: 455, endTime: 485, recoveryTime: 0, travelTime: 30, cycleTime: 30,
+            stops: { 'South Terminal': '7:35 AM' }, arrivalTimes: { 'South Terminal': '7:35 AM' },
+            stopMinutes: { 'South Terminal': 455 }
+          },
+          {
+            id: 'south-2', blockId: '10-2', direction: 'South', tripNumber: 4, rowId: 4,
+            startTime: 515, endTime: 545, recoveryTime: 0, travelTime: 30, cycleTime: 30,
+            stops: { 'South Terminal': '8:35 AM' }, arrivalTimes: { 'South Terminal': '8:35 AM' },
+            stopMinutes: { 'South Terminal': 515 }
+          }
+        ]
+      }
+    ];
+
+    render(schedules, { visibleTripIds: ['south-2'], onMenuOpen });
+
+    const rows = Array.from(container?.querySelectorAll('tbody tr') ?? []);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain('10-2');
+    expect(rows[0]?.textContent).toContain('8:35');
+    expect(container?.textContent).not.toContain('10-1');
+
+    const tripActionsButton = rows[0]?.querySelector('button[aria-label*="Actions for block"]');
+    tripActionsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(onMenuOpen).toHaveBeenCalledWith(expect.objectContaining({
+      rowTripIds: ['north-2', 'south-2']
+    }));
+  });
+
+  it('shows a calm empty state when the changed-trip list is empty', () => {
+    render(editableRecoverySchedules(), { visibleTripIds: [] });
+
+    expect(container?.textContent).toContain('No matching changed trips to show.');
+    expect(container?.querySelector('table')).toBeNull();
+  });
+
   it('uses the row northbound trip when adding from the combined row', () => {
     const onMenuOpen = vi.fn();
 
@@ -283,7 +350,7 @@ describe('RoundTripTableView row actions', () => {
       { onMenuOpen }
     );
 
-    const addButton = container?.querySelector('button[aria-label="Trip actions"]') as HTMLButtonElement | null;
+    const addButton = container?.querySelector('button[aria-label*="Actions for block"]') as HTMLButtonElement | null;
     expect(addButton).not.toBeNull();
 
     addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -352,7 +419,7 @@ describe('RoundTripTableView row actions', () => {
       { onMenuOpen }
     );
 
-    const editButtons = Array.from(container?.querySelectorAll('button[aria-label="Trip actions"]') ?? []);
+    const editButtons = Array.from(container?.querySelectorAll('button[aria-label*="Actions for block"]') ?? []);
     expect(editButtons.length).toBeGreaterThan(1);
 
     const southOnlyEdit = editButtons.find(
@@ -377,7 +444,7 @@ describe('RoundTripTableView row actions', () => {
     );
   });
 
-  it('keeps the delete round-trip button visible beside the new trip actions button', () => {
+  it('moves the destructive round-trip action into the contextual menu', () => {
     const onDeleteTrip = vi.fn();
     const onMenuOpen = vi.fn();
 
@@ -431,11 +498,16 @@ describe('RoundTripTableView row actions', () => {
       { onDeleteTrip, onMenuOpen }
     );
 
-    const tripActionsButton = container?.querySelector('button[aria-label="Trip actions"]') as HTMLButtonElement | null;
+    const tripActionsButton = container?.querySelector('button[aria-label*="Actions for block"]') as HTMLButtonElement | null;
     const deleteButton = container?.querySelector('button[aria-label="Delete round trip"]') as HTMLButtonElement | null;
 
     expect(tripActionsButton).not.toBeNull();
-    expect(deleteButton).not.toBeNull();
+    expect(deleteButton).toBeNull();
+    tripActionsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(onMenuOpen).toHaveBeenCalledWith(expect.objectContaining({
+      rowTripIds: ['north-trip', 'south-trip'],
+      deleteLabel: 'Delete round trip',
+    }));
   });
 
   it('deletes the whole round-trip row from the row actions button', () => {

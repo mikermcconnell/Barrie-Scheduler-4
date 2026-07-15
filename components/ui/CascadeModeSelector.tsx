@@ -21,18 +21,18 @@ interface CascadeModeSelectorProps {
 
 const modeConfig: Record<CascadeMode, { label: string; description: string; icon: React.ReactNode }> = {
     always: {
-        label: 'Cascade On',
-        description: 'Cascade to later cells and trips',
+        label: 'Following Trips',
+        description: 'Update this trip and later trips in the block',
         icon: <Zap size={14} />
     },
     'within-trip': {
-        label: 'This Trip Only',
-        description: 'Cascade to later cells in this trip only',
+        label: 'Current Round Trip',
+        description: 'Update later cells in this round trip; merged routes may continue through the block',
         icon: <ArrowRight size={14} />
     },
     none: {
-        label: 'Cascade Off',
-        description: 'Edit only this cell',
+        label: 'Single Cell',
+        description: 'Edit only the selected cell',
         icon: <Target size={14} />
     }
 };

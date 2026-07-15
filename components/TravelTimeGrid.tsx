@@ -39,6 +39,15 @@ interface TravelTimeGridProps {
     segmentNames?: string[];
 }
 
+interface PendingBulkAdjustment {
+    kind: 'travel' | 'recovery';
+    fromStop: string;
+    toStop: string;
+    delta: number;
+    routeName: string;
+    affectedTripCount: number;
+}
+
 // Clean, professional heatmap colors
 const getTravelColor = (minutes: number): string => {
     if (minutes === 0) return 'bg-gray-50 text-gray-300';
@@ -65,6 +74,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
     const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [showDeltas, setShowDeltas] = useState(true);
+    const [pendingBulkAdjustment, setPendingBulkAdjustment] = useState<PendingBulkAdjustment | null>(null);
     const displaySegmentNames = useMemo(
         () => (segmentNames || []).filter(segmentName => !isStationaryTravelSegment(segmentName)),
         [segmentNames]
@@ -106,6 +116,10 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
             }
 
             const stopPairs = rawPairs.filter(p => !p.isStationary);
+            const stopPairsWithTripCounts = stopPairs.map(pair => ({
+                ...pair,
+                affectedTripCount: table.trips.filter(trip => !!resolveGridSegmentTimes(trip, pair.from, pair.to)).length
+            }));
 
             // hour -> stopPairIndex -> first trip found
             const hourlyData: Record<number, Record<number, { travel: number; recovery: number; tripId: string; travelDelta: number | null; recoveryDelta: number | null }>> = {};
@@ -118,7 +132,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                     let firstVisibleDataMinute: number | null = null;
                     const originalTrip = originalTripLookup.get(getTripLineageLookupKey(table.routeName, trip));
 
-                    stopPairs.forEach((pair, filteredIdx) => {
+                    stopPairsWithTripCounts.forEach((pair, filteredIdx) => {
                         const segment = resolveGridSegmentTimes(trip, pair.from, pair.to);
                         if (!segment) return;
 
@@ -174,7 +188,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
             return {
                 routeName: table.routeName,
                 baseName,
-                stopPairs,
+                stopPairs: stopPairsWithTripCounts,
                 hourlyData,
                 hours: Array.from(
                     { length: Math.max(25, Math.max(0, ...Object.keys(hourlyData).map(Number)) + 1) },
@@ -237,6 +251,27 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
 
         return summary;
     }, [bands, analysis, displaySegmentNames]);
+
+    const applyPendingBulkAdjustment = () => {
+        if (!pendingBulkAdjustment) return;
+
+        if (pendingBulkAdjustment.kind === 'travel') {
+            onBulkAdjust?.(
+                pendingBulkAdjustment.fromStop,
+                pendingBulkAdjustment.toStop,
+                pendingBulkAdjustment.delta,
+                pendingBulkAdjustment.routeName
+            );
+        } else {
+            onRecoveryAdjust?.(
+                pendingBulkAdjustment.toStop,
+                pendingBulkAdjustment.delta,
+                pendingBulkAdjustment.routeName
+            );
+        }
+
+        setPendingBulkAdjustment(null);
+    };
 
     if (schedules.length === 0) {
         return (
@@ -404,6 +439,46 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                 </div>
             </div>
 
+            {pendingBulkAdjustment && (
+                <div
+                    role="dialog"
+                    aria-labelledby="bulk-adjustment-preview-title"
+                    aria-describedby="bulk-adjustment-preview-description"
+                    className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm"
+                >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h3 id="bulk-adjustment-preview-title" className="text-sm font-bold text-gray-900">
+                                Review bulk adjustment
+                            </h3>
+                            <p id="bulk-adjustment-preview-description" className="mt-1 text-sm text-gray-700">
+                                <span className="font-semibold">{pendingBulkAdjustment.routeName}</span>
+                                {' · '}{pendingBulkAdjustment.fromStop} → {pendingBulkAdjustment.toStop}
+                                {' · '}{pendingBulkAdjustment.kind === 'travel' ? 'Travel time' : 'Recovery'}
+                                {' '}{pendingBulkAdjustment.delta > 0 ? '+' : ''}{pendingBulkAdjustment.delta} minute
+                                {' · '}{pendingBulkAdjustment.affectedTripCount} affected {pendingBulkAdjustment.affectedTripCount === 1 ? 'trip' : 'trips'}
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setPendingBulkAdjustment(null)}
+                                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={applyPendingBulkAdjustment}
+                                className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-700"
+                            >
+                                Apply
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {routeGrids.map((grid, gridIdx) => {
                 const routeColor = getRouteColor(grid.baseName);
                 const textColor = getRouteTextColor(grid.baseName);
@@ -446,20 +521,44 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                         </div>
                                                         <div className="flex items-center gap-1">
                                                             <div className="flex border border-gray-200 rounded overflow-hidden bg-white">
-                                                                <button onClick={() => onBulkAdjust?.(pair.from, pair.to, -1, grid.routeName)} className="px-1 py-0.5 hover:bg-gray-100 text-gray-500" title="-1 travel">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setPendingBulkAdjustment({ kind: 'travel', fromStop: pair.from, toStop: pair.to, delta: -1, routeName: grid.routeName, affectedTripCount: pair.affectedTripCount })}
+                                                                    className="px-1 py-0.5 hover:bg-gray-100 text-gray-500"
+                                                                    title="-1 travel"
+                                                                    aria-label={`Preview decrease travel time by 1 minute for ${pair.from} to ${pair.to} on ${grid.routeName}`}
+                                                                >
                                                                     <Minus size={10} />
                                                                 </button>
                                                                 <span className="px-1 text-[8px] font-bold text-gray-400 border-x border-gray-100">T</span>
-                                                                <button onClick={() => onBulkAdjust?.(pair.from, pair.to, 1, grid.routeName)} className="px-1 py-0.5 hover:bg-gray-100 text-gray-500" title="+1 travel">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setPendingBulkAdjustment({ kind: 'travel', fromStop: pair.from, toStop: pair.to, delta: 1, routeName: grid.routeName, affectedTripCount: pair.affectedTripCount })}
+                                                                    className="px-1 py-0.5 hover:bg-gray-100 text-gray-500"
+                                                                    title="+1 travel"
+                                                                    aria-label={`Preview increase travel time by 1 minute for ${pair.from} to ${pair.to} on ${grid.routeName}`}
+                                                                >
                                                                     <Plus size={10} />
                                                                 </button>
                                                             </div>
                                                             <div className="flex border border-indigo-200 rounded overflow-hidden bg-indigo-50">
-                                                                <button onClick={() => onRecoveryAdjust?.(pair.to, -1, grid.routeName)} className="px-1 py-0.5 hover:bg-indigo-100 text-indigo-500" title="-1 recovery">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setPendingBulkAdjustment({ kind: 'recovery', fromStop: pair.from, toStop: pair.to, delta: -1, routeName: grid.routeName, affectedTripCount: pair.affectedTripCount })}
+                                                                    className="px-1 py-0.5 hover:bg-indigo-100 text-indigo-500"
+                                                                    title="-1 recovery"
+                                                                    aria-label={`Preview decrease recovery by 1 minute after ${pair.from} to ${pair.to} on ${grid.routeName}`}
+                                                                >
                                                                     <Minus size={10} />
                                                                 </button>
                                                                 <span className="px-1 text-[8px] font-bold text-indigo-500 border-x border-indigo-200">R</span>
-                                                                <button onClick={() => onRecoveryAdjust?.(pair.to, 1, grid.routeName)} className="px-1 py-0.5 hover:bg-indigo-100 text-indigo-500" title="+1 recovery">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setPendingBulkAdjustment({ kind: 'recovery', fromStop: pair.from, toStop: pair.to, delta: 1, routeName: grid.routeName, affectedTripCount: pair.affectedTripCount })}
+                                                                    className="px-1 py-0.5 hover:bg-indigo-100 text-indigo-500"
+                                                                    title="+1 recovery"
+                                                                    aria-label={`Preview increase recovery by 1 minute after ${pair.from} to ${pair.to} on ${grid.routeName}`}
+                                                                >
                                                                     <Plus size={10} />
                                                                 </button>
                                                             </div>

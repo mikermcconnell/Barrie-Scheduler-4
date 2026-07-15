@@ -79,12 +79,21 @@ vi.mock('../utils/services/dataService', () => ({
 import { buildRouteIdentity } from '../utils/masterScheduleTypes';
 import {
   deleteRouteMap,
+  getMasterScheduleEntry,
   getMasterSchedule,
   getRouteMapUrl,
+  normalizePublishNote,
   prepareUpload,
   uploadRouteMap,
   uploadToMasterSchedule,
 } from '../utils/services/masterScheduleService';
+
+describe('normalizePublishNote', () => {
+  it('removes markup, normalizes whitespace, and caps the stored note', () => {
+    expect(normalizePublishNote('  Peak <b>update</b>\n reviewed  ')).toBe('Peak update reviewed');
+    expect(normalizePublishNote('x'.repeat(550))).toHaveLength(500);
+  });
+});
 
 const northTable: MasterRouteTable = {
   routeName: '2 Weekday North',
@@ -197,7 +206,57 @@ describe('prepareUpload', () => {
   });
 });
 
+describe('getMasterScheduleEntry', () => {
+  it('loads metadata without downloading schedule content', async () => {
+    getDocMock.mockResolvedValueOnce({
+      exists: () => true,
+      id: '2-Weekday',
+      data: () => makeEntryData(4),
+    });
+
+    await expect(getMasterScheduleEntry('team-1', '2-Weekday')).resolves.toMatchObject({
+      id: '2-Weekday', currentVersion: 4, routeNumber: '2', dayType: 'Weekday',
+    });
+    expect(getBytesMock).not.toHaveBeenCalled();
+    expect(getDownloadURLMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('uploadToMasterSchedule', () => {
+  it('rejects a source-version race before uploading a payload', async () => {
+    getDocMock.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => makeEntryData(5),
+    });
+
+    await expect(uploadToMasterSchedule(
+      'team-1', 'user-1', 'Planner', northTable as any, southTable as any,
+      '2', 'Weekday', 'draft', { expectedCurrentVersion: 4 },
+    )).rejects.toThrow('expected master v4, found v5');
+
+    expect(uploadBytesMock).not.toHaveBeenCalled();
+    expect(runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a cross-team source version inside the target publish transaction', async () => {
+    getDocMock.mockResolvedValueOnce({ exists: () => false, data: (): undefined => undefined });
+    transactionGetMock
+      .mockResolvedValueOnce({ exists: () => false, data: (): undefined => undefined })
+      .mockResolvedValueOnce({ exists: () => true, data: () => makeEntryData(6) });
+
+    await expect(uploadToMasterSchedule(
+      'team-1', 'user-1', 'Planner', northTable as any, southTable as any,
+      '2', 'Weekday', 'draft', {
+        expectedCurrentVersion: 0,
+        expectedSource: { teamId: 'source-team', routeIdentity: '2-Weekday', version: 5 },
+      },
+    )).rejects.toThrow('Source version conflict: expected v5, found v6');
+
+    expect(uploadBytesMock).toHaveBeenCalledOnce();
+    expect(deleteObjectMock).toHaveBeenCalledOnce();
+    expect(transactionSetMock).not.toHaveBeenCalled();
+  });
+
   it('increments the version, uploads the content, and writes the master entry', async () => {
     getDocMock.mockResolvedValueOnce({
       exists: () => true,
@@ -218,7 +277,13 @@ describe('uploadToMasterSchedule', () => {
       '2',
       'Weekday',
       'draft',
-      { cycleMode: 'Floating' }
+      {
+        cycleMode: 'Floating',
+        publishNote: '  <b>Peak</b> update  ',
+        expectedCurrentVersion: 4,
+        publishedBy: 'user-1',
+        publishedFromDraft: 'draft-1',
+      }
     );
 
     expect(result.currentVersion).toBe(5);
@@ -228,7 +293,7 @@ describe('uploadToMasterSchedule', () => {
     expect(uploadBytesMock).toHaveBeenCalledTimes(1);
     const [storageRefArg, contentBytes, options] = uploadBytesMock.mock.calls[0];
     expect(storageRefArg).toEqual({
-      path: 'teams/team-1/masterSchedules/2-Weekday_v5.json',
+      path: expect.stringMatching(/^teams\/team-1\/masterSchedules\/2-Weekday_v5_[a-z0-9-]+\.json$/),
     });
     expect(options).toEqual({ contentType: 'application/json' });
 
@@ -251,11 +316,12 @@ describe('uploadToMasterSchedule', () => {
       }),
       expect.objectContaining({
         versionNumber: 5,
-        storagePath: 'teams/team-1/masterSchedules/2-Weekday_v5.json',
+        storagePath: expect.stringMatching(/^teams\/team-1\/masterSchedules\/2-Weekday_v5_[a-z0-9-]+\.json$/),
         createdBy: 'user-1',
         uploaderName: 'Planner',
         source: 'draft',
         tripCount: 0,
+        publishNote: 'Peak update',
       })
     );
     expect(transactionSetMock).toHaveBeenCalledWith(
@@ -266,13 +332,18 @@ describe('uploadToMasterSchedule', () => {
         routeNumber: '2',
         dayType: 'Weekday',
         currentVersion: 5,
-        storagePath: 'teams/team-1/masterSchedules/2-Weekday_v5.json',
+        storagePath: expect.stringMatching(/^teams\/team-1\/masterSchedules\/2-Weekday_v5_[a-z0-9-]+\.json$/),
         tripCount: 0,
         northStopCount: 2,
         southStopCount: 2,
         updatedBy: 'user-1',
         uploaderName: 'Planner',
         source: 'draft',
+        publishNote: 'Peak update',
+        publishedAt: 'server-timestamp',
+        publishedBy: 'user-1',
+        publishedFromDraft: 'draft-1',
+        status: 'published',
       })
     );
   });
@@ -345,7 +416,7 @@ describe('uploadToMasterSchedule', () => {
     ).rejects.toThrow('transaction failed');
 
     expect(deleteObjectMock).toHaveBeenCalledWith({
-      path: 'teams/team-1/masterSchedules/2-Weekday_v1.json',
+      path: expect.stringMatching(/^teams\/team-1\/masterSchedules\/2-Weekday_v1_[a-z0-9-]+\.json$/),
     });
   });
 

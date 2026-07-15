@@ -402,4 +402,111 @@ describe('TravelTimeGrid', () => {
     expect(container?.textContent).toContain('0r');
     expect(container?.textContent).toContain('-1');
   });
+
+  it('previews a bulk travel adjustment and counts only trips that serve the segment', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const onBulkAdjust = vi.fn();
+    const segmentSchedules = [{
+      routeName: '2 (Weekday) (North)',
+      stops: ['A', 'B', 'C'],
+      stopIds: {},
+      trips: [
+        {
+          id: 'serves-a-b',
+          startTime: 420,
+          endTime: 450,
+          stops: { A: '7:00 AM', B: '7:10 AM', C: '7:30 AM' },
+          arrivalTimes: { A: '7:00 AM', B: '7:10 AM', C: '7:30 AM' },
+          stopMinutes: { A: 420, B: 430, C: 450 }
+        },
+        {
+          id: 'also-serves-a-b',
+          startTime: 480,
+          endTime: 492,
+          stops: { A: '8:00 AM', B: '8:12 AM', C: '' },
+          arrivalTimes: { A: '8:00 AM', B: '8:12 AM', C: '' },
+          stopMinutes: { A: 480, B: 492 }
+        },
+        {
+          id: 'does-not-serve-a-b',
+          startTime: 540,
+          endTime: 555,
+          stops: { A: '', B: '9:00 AM', C: '9:15 AM' },
+          arrivalTimes: { A: '', B: '9:00 AM', C: '9:15 AM' },
+          stopMinutes: { B: 540, C: 555 }
+        }
+      ]
+    }] as any;
+
+    flushSync(() => {
+      root?.render(<TravelTimeGrid schedules={segmentSchedules} onBulkAdjust={onBulkAdjust} />);
+    });
+
+    const previewButton = container?.querySelector(
+      'button[aria-label="Preview increase travel time by 1 minute for A to B on 2 (Weekday) (North)"]'
+    ) as HTMLButtonElement | null;
+
+    flushSync(() => {
+      previewButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onBulkAdjust).not.toHaveBeenCalled();
+    expect(container?.querySelector('[role="dialog"]')?.textContent).toContain('A → B');
+    expect(container?.querySelector('[role="dialog"]')?.textContent).toContain('Travel time +1 minute');
+    expect(container?.querySelector('[role="dialog"]')?.textContent).toContain('2 affected trips');
+
+    const cancelButton = Array.from(container?.querySelectorAll('[role="dialog"] button') || [])
+      .find(button => button.textContent === 'Cancel') as HTMLButtonElement | undefined;
+    flushSync(() => {
+      cancelButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onBulkAdjust).not.toHaveBeenCalled();
+    expect(container?.querySelector('[role="dialog"]')).toBeNull();
+
+    flushSync(() => {
+      previewButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const applyButton = Array.from(container?.querySelectorAll('[role="dialog"] button') || [])
+      .find(button => button.textContent === 'Apply') as HTMLButtonElement | undefined;
+    flushSync(() => {
+      applyButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onBulkAdjust).toHaveBeenCalledOnce();
+    expect(onBulkAdjust).toHaveBeenCalledWith('A', 'B', 1, '2 (Weekday) (North)');
+    expect(container?.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('previews recovery changes before applying them', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const onRecoveryAdjust = vi.fn();
+
+    flushSync(() => {
+      root?.render(<TravelTimeGrid schedules={schedules} onRecoveryAdjust={onRecoveryAdjust} />);
+    });
+
+    const previewButton = container?.querySelector(
+      'button[aria-label="Preview decrease recovery by 1 minute after A to B on 2 (Weekday) (North)"]'
+    ) as HTMLButtonElement | null;
+    flushSync(() => {
+      previewButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onRecoveryAdjust).not.toHaveBeenCalled();
+    expect(container?.querySelector('[role="dialog"]')?.textContent).toContain('Recovery -1 minute');
+    expect(container?.querySelector('[role="dialog"]')?.textContent).toContain('1 affected trip');
+
+    const applyButton = Array.from(container?.querySelectorAll('[role="dialog"] button') || [])
+      .find(button => button.textContent === 'Apply') as HTMLButtonElement | undefined;
+    flushSync(() => {
+      applyButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onRecoveryAdjust).toHaveBeenCalledWith('B', -1, '2 (Weekday) (North)');
+  });
 });

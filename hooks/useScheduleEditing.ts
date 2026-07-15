@@ -18,6 +18,7 @@ import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blo
 import { getRouteConfig, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { createTripLineageId } from '../utils/schedule/tripLineage';
 import { isMergedRouteBase } from '../utils/schedule/mergedRouteContinuity';
+import { summarizeScheduleEditImpact, type ScheduleEditImpact } from '../utils/schedule/scheduleEditImpact';
 
 export type CascadeMode = 'always' | 'within-trip' | 'none';
 
@@ -25,6 +26,8 @@ export interface UseScheduleEditingOptions {
     cascadeMode?: CascadeMode;
     logAction?: (type: string, message: string, details: object) => void;
     showSuccessToast?: (msg: string) => void;
+    onEditImpact?: (impact: ScheduleEditImpact) => void;
+    onEditNotice?: (message: string) => void;
 }
 
 export interface UseScheduleEditingResult {
@@ -194,6 +197,8 @@ export function useScheduleEditing(
         cascadeMode = 'always',
         logAction,
         showSuccessToast,
+        onEditImpact,
+        onEditNotice,
     } = options;
 
     const reassignBlocksForRelatedTables = useCallback((
@@ -363,7 +368,8 @@ export function useScheduleEditing(
             reassignBlocksForRelatedTables(newScheds, baseName);
         }
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange, cascadeMode, logAction, reassignBlocksForRelatedTables, getOrderedBlockTrips, cascadeWithinRoundTripRow]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, cascadeMode, logAction, reassignBlocksForRelatedTables, getOrderedBlockTrips, cascadeWithinRoundTripRow, onEditImpact]);
 
     const handleRecoveryEdit = useCallback((tripId: string, stopName: string, delta: number) => {
         const newScheds = deepCloneSchedules(schedules);
@@ -378,6 +384,9 @@ export function useScheduleEditing(
         const maxRec = Math.max(0, trip.travelTime - 1);
         const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
         const actualDelta = newRec - oldRec;
+        if (newRec !== oldRec + delta) {
+            onEditNotice?.(`Recovery must stay between 0 and ${maxRec} minutes.`);
+        }
 
         trip.recoveryTimes = setTripStopValue(trip.recoveryTimes, stopName, newRec);
         trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
@@ -418,7 +427,8 @@ export function useScheduleEditing(
             reassignBlocksForRelatedTables(newScheds, baseName);
         }
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange, cascadeMode, reassignBlocksForRelatedTables, getOrderedBlockTrips, cascadeWithinRoundTripRow]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, cascadeMode, reassignBlocksForRelatedTables, getOrderedBlockTrips, cascadeWithinRoundTripRow, onEditImpact, onEditNotice]);
 
     const handleTimeAdjust = useCallback((tripId: string, stopName: string, delta: number) => {
         const result = findTableAndTrip(schedules, tripId);

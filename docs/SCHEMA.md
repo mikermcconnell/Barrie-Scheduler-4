@@ -10,6 +10,7 @@
 firebase/
 ├── users/{userId}/                       # Profile; teamId is the active-team pointer
 │   ├── draftSchedules/{draftId}          # Working schedule copies
+│   │   └── checkpoints/{checkpointId}    # Immutable named restore points
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
 │   └── files/{fileId}                    # Uploaded file metadata; owner-write, scheduler-admin read for support
 │
@@ -18,6 +19,7 @@ firebase/
 │   ├── platformConfig/default            # Team-specific platform / hub configuration
 │   ├── masterSchedules/{routeIdentity}/  # Published schedules
 │   │   ├── versions/{versionId}          # Version history
+│   ├── scheduleReviews/{reviewId}         # Team-visible bounded review metadata/status
 │   ├── connectionLibrary/default         # Shared connection targets used by app services
 │   ├── publicTimetable/default           # Team-managed brochure content defaults
 │   ├── routeConnectionConfigs/{routeIdentity} # Per-route connection settings
@@ -56,11 +58,13 @@ firebase/
 storage/
 ├── users/{userId}/
 │   ├── draftSchedules/{draftId}_{timestamp}.json
+│   ├── draftSchedules/{draftId}_checkpoints/{checkpointId}.json
 │   ├── newScheduleProjects/{projectId}_{timestamp}.json
 │   └── files/{timestamp}_{safeName}
 │
 └── teams/{teamId}/
-    ├── masterSchedules/{routeIdentity}/{versionId}_{timestamp}.json
+    ├── masterSchedules/{routeIdentity}_v{version}_{nonce}.json
+    ├── scheduleReviews/{reviewId}/{creatorId}/schedule.json
     ├── routeMaps/{safeName}
     ├── transitAppData/{allPaths}
     ├── performanceData/{allPaths}
@@ -181,6 +185,10 @@ interface DraftBasedOn {
   type: 'master' | 'gtfs' | 'generated' | 'legacy';
   id?: string;
   importedAt?: Timestamp;
+  sourceVersion?: number;       // Master version copied; absent on legacy drafts
+  sourceTeamId?: string;
+  sourceLabel?: string;
+  sourceUpdatedAt?: Timestamp;
 }
 
 interface DraftSchedule {
@@ -201,6 +209,10 @@ interface DraftSchedule {
   createdBy: string;
 }
 ```
+
+Named checkpoints store `name`, `storagePath`, `createdAt`, and `createdBy` under
+`users/{userId}/draftSchedules/{draftId}/checkpoints/{checkpointId}`. Their full
+`MasterScheduleContent` payload is immutable in Cloud Storage at the path above.
 
 ### PlatformConfig (`teams/{teamId}/platformConfig/default`)
 
@@ -380,6 +392,7 @@ interface MasterScheduleEntry {
   publishedAt?: Timestamp;
   publishedBy?: string;
   publishedFromDraft?: string;   // Draft ID if published from draft
+  publishNote?: string;          // Sanitized planner note for the current version
 
   // Operational
   effectiveDate?: string;
@@ -399,6 +412,7 @@ interface MasterScheduleVersion {
   uploaderName: string;
   source: UploadSource;
   tripCount: number;
+  publishNote?: string;          // Immutable note captured for this version
 }
 ```
 

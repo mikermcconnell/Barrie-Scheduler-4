@@ -1,10 +1,11 @@
-import type { DraftBasedOn, DraftSchedule } from '../schedule/scheduleTypes';
+import type { DraftBasedOn, DraftSchedule, DraftStatus } from '../schedule/scheduleTypes';
 import type { MasterScheduleContent } from '../masterScheduleTypes';
 
 export interface EditorDraftSession {
     id: string;
     name?: string;
     updatedAt?: Date;
+    status?: DraftStatus;
 }
 
 export interface OpenDraftEditorState {
@@ -24,6 +25,7 @@ export interface SiblingDraftCandidate {
     content?: MasterScheduleContent;
     basedOn?: DraftBasedOn;
     updatedAt?: Date;
+    status?: DraftStatus;
 }
 
 export interface InitialSiblingEditorState extends OpenDraftEditorState {

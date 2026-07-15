@@ -5,14 +5,31 @@ import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { ScheduleEditor } from '../ScheduleEditor';
+import {
+    ScheduleReviewPanel,
+    type ScheduleReviewChange as ScheduleReviewPanelChange,
+    type ScheduleReviewIssue as ScheduleReviewPanelIssue,
+} from '../schedule/ScheduleReviewPanel';
 import type { AutoSaveStatus } from '../../hooks/useAutoSave';
 import type { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
-import type { MasterScheduleContent } from '../../utils/masterScheduleTypes';
-import type { DraftBasedOn } from '../../utils/schedule/scheduleTypes';
+import type { MasterScheduleContent, RouteIdentity } from '../../utils/masterScheduleTypes';
+import type { DraftBasedOn, DraftCheckpoint, DraftStatus } from '../../utils/schedule/scheduleTypes';
 import { buildMasterContentFromTables, buildTablesFromContent } from '../../utils/schedule/scheduleDraftAdapter';
-import { saveDraft } from '../../utils/services/draftService';
+import {
+    createDraftCheckpoint,
+    getDraftCheckpoint,
+    listDraftCheckpoints,
+    saveDraft,
+} from '../../utils/services/draftService';
 import { buildDuplicateDraftName } from '../../utils/services/draftNaming';
-import { publishDraft } from '../../utils/services/publishService';
+import { publishDraft, StaleDraftPublishError } from '../../utils/services/publishService';
+import { createScheduleReview } from '../../utils/services/scheduleReviewService';
+import { getMasterSchedule, getMasterScheduleEntry, getVersionContent } from '../../utils/services/masterScheduleService';
+import {
+    assessDraftFreshness,
+    buildScheduleReview,
+    type DraftFreshness,
+} from '../../utils/schedule/scheduleReview';
 import {
     buildRouteBaselineFromGTFSFeed,
     fetchGTFSFeed,
@@ -40,6 +57,7 @@ interface ScheduleEditorWorkspaceProps {
     currentDraftId?: string;
     currentDraftName?: string;
     currentDraftUpdatedAt?: Date;
+    currentDraftStatus?: DraftStatus;
     onSwitchDraft?: (draftId: string) => void;
 }
 
@@ -54,6 +72,7 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     currentDraftId,
     currentDraftName,
     currentDraftUpdatedAt,
+    currentDraftStatus = 'draft',
     onSwitchDraft
 }) => {
     const { user } = useAuth();
@@ -80,6 +99,18 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     const [lastSaved, setLastSaved] = useState<Date | null>(currentDraftUpdatedAt || null);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [isPublishing, setIsPublishing] = useState(false);
+    const [isReviewOpen, setIsReviewOpen] = useState(false);
+    const [isReviewWorking, setIsReviewWorking] = useState(false);
+    const [publishNote, setPublishNote] = useState('');
+    const [draftStatus, setDraftStatus] = useState<DraftStatus>(currentDraftStatus);
+    const [freshness, setFreshness] = useState<DraftFreshness>({ status: 'not-master-derived' });
+    const [baselineContent, setBaselineContent] = useState<MasterScheduleContent | null>(
+        basedOn?.type === 'master' && !currentDraftId ? initialContent : null
+    );
+    const [reviewFocusTripId, setReviewFocusTripId] = useState<string | null>(null);
+    const [showChangedOnly, setShowChangedOnly] = useState(false);
+    const [reviewChangeIndex, setReviewChangeIndex] = useState(-1);
+    const [checkpoints, setCheckpoints] = useState<DraftCheckpoint[]>([]);
     const [compareBaseline, setCompareBaseline] = useState<MasterRouteTable[] | null>(null);
     const [compareBaselineLabel, setCompareBaselineLabel] = useState<string | undefined>(undefined);
     const [routeSearch, setRouteSearch] = useState('');
@@ -99,6 +130,8 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     const schedulesRef = useRef(schedules);
     const draftIdRef = useRef<string | null>(currentDraftId || null);
     const draftNameRef = useRef(initialDraftName);
+    const draftStatusRef = useRef<DraftStatus>(currentDraftStatus);
+    const initialMasterDraftSaveStartedRef = useRef(false);
 
     const currentSibling = siblingDrafts?.find(d => d.id === currentDraftId);
 
@@ -119,6 +152,26 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     }, [draftName]);
 
     useEffect(() => {
+        draftStatusRef.current = draftStatus;
+    }, [draftStatus]);
+
+    useEffect(() => {
+        if (!isReviewOpen || !userId || !draftId) return;
+        let cancelled = false;
+        void listDraftCheckpoints(userId, draftId)
+            .then(items => {
+                if (!cancelled) setCheckpoints(items);
+            })
+            .catch(error => {
+                console.error('Failed to load draft checkpoints:', error);
+                if (!cancelled) setCheckpoints([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [draftId, isReviewOpen, userId]);
+
+    useEffect(() => {
         onDraftMetadataChange?.({
             id: draftId,
             name: draftName,
@@ -130,6 +183,37 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
         let cancelled = false;
 
         const loadCompareBaseline = async () => {
+            if (basedOn?.type === 'master' && basedOn.id) {
+                const routeIdentity = basedOn.id as RouteIdentity;
+                const sourceTeamId = basedOn.sourceTeamId || team?.id;
+                if (!sourceTeamId) return;
+
+                try {
+                    const [sourceBaseline, currentMaster] = await Promise.all([
+                        basedOn.sourceVersion
+                            ? getVersionContent(sourceTeamId, routeIdentity, basedOn.sourceVersion)
+                            : getMasterSchedule(sourceTeamId, routeIdentity).then(result => result?.content ?? null),
+                        getMasterScheduleEntry(sourceTeamId, routeIdentity),
+                    ]);
+                    if (cancelled) return;
+                    const effectiveBaseline = sourceBaseline || (!currentDraftId ? initialContent : null);
+                    setBaselineContent(effectiveBaseline);
+                    setCompareBaseline(effectiveBaseline ? buildTablesFromContent(effectiveBaseline) : null);
+                    setCompareBaselineLabel(
+                        basedOn.sourceVersion ? `Published Master v${basedOn.sourceVersion}` : 'Published Master'
+                    );
+                    setFreshness(assessDraftFreshness({ basedOn }, currentMaster));
+                } catch (error) {
+                    console.error('Failed to load published master comparison:', error);
+                    if (!cancelled) {
+                        setCompareBaseline(null);
+                        setBaselineContent(null);
+                        setFreshness({ status: 'unknown', routeIdentity: basedOn.id, reason: 'master-missing' });
+                    }
+                }
+                return;
+            }
+
             const shouldUseGtfsBaseline = (
                 basedOn?.type === 'gtfs'
                 || (
@@ -142,6 +226,8 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                 if (!cancelled) {
                     setCompareBaseline(null);
                     setCompareBaselineLabel(undefined);
+                    setBaselineContent(null);
+                    setFreshness({ status: 'not-master-derived' });
                 }
                 return;
             }
@@ -163,12 +249,14 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                 if (!cancelled) {
                     setCompareBaseline(baseline);
                     setCompareBaselineLabel(baseline ? 'GTFS' : undefined);
+                    setBaselineContent(null);
                 }
             } catch (error) {
                 console.error('Failed to load GTFS compare baseline for editor draft:', error);
                 if (!cancelled) {
                     setCompareBaseline(null);
                     setCompareBaselineLabel(undefined);
+                    setBaselineContent(null);
                 }
             }
         };
@@ -178,7 +266,7 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
         return () => {
             cancelled = true;
         };
-    }, [basedOn?.type, draftName, initialContent]);
+    }, [basedOn, currentDraftId, draftName, initialContent, team?.id]);
 
     // Auto-expand the current route's group
     useEffect(() => {
@@ -187,7 +275,10 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
         }
     }, [currentDraftId, currentSibling]);
 
-    const saveDraftNow = useCallback(async (options?: { suppressStatusUpdates?: boolean }): Promise<string | null> => {
+    const saveDraftNow = useCallback(async (options?: {
+        suppressStatusUpdates?: boolean;
+        statusOverride?: DraftStatus;
+    }): Promise<string | null> => {
         const activeUser = userRef.current;
         if (!activeUser) {
             if (mountedRef.current && !options?.suppressStatusUpdates) {
@@ -219,7 +310,7 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                 name: draftNameRef.current,
                 routeNumber: buildResult.routeNumber,
                 dayType: buildResult.dayType,
-                status: 'draft',
+                status: options?.statusOverride ?? draftStatusRef.current,
                 createdBy: activeUser.uid,
                 basedOn,
                 content: buildResult.content
@@ -247,6 +338,22 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
             return null;
         }
     }, [basedOn]);
+
+    // Copying a master creates a real draft immediately, even before the first edit.
+    useEffect(() => {
+        if (
+            basedOn?.type !== 'master'
+            || currentDraftId
+            || draftIdRef.current
+            || !userId
+            || initialMasterDraftSaveStartedRef.current
+        ) return;
+
+        initialMasterDraftSaveStartedRef.current = true;
+        void saveDraftNow().then(savedId => {
+            if (savedId) toast?.success('Draft Created', 'Your editable copy is saved.');
+        });
+    }, [basedOn?.type, currentDraftId, saveDraftNow, toast, userId]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -287,6 +394,10 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
         previousDraftNameRef.current = draftName;
 
         changeVersionRef.current += 1;
+        if (draftStatusRef.current !== 'draft') {
+            draftStatusRef.current = 'draft';
+            setDraftStatus('draft');
+        }
         const isDirty = changeVersionRef.current > savedVersionRef.current;
 
         if (saveTimerRef.current) {
@@ -352,6 +463,140 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
         }
     };
 
+    const activeBuildResult = useMemo(() => buildMasterContentFromTables(schedules), [schedules]);
+    const scheduleReview = useMemo(() => (
+        activeBuildResult
+            ? buildScheduleReview(activeBuildResult.content, baselineContent)
+            : null
+    ), [activeBuildResult, baselineContent]);
+    const reviewPanelIssues = useMemo<ScheduleReviewPanelIssue[]>(() => (
+        (scheduleReview?.issues ?? []).map(issue => ({
+            id: issue.id,
+            severity: issue.severity,
+            title: issue.message,
+            rowId: issue.location.tripId,
+            rowLabel: issue.location.blockId ? `Block ${issue.location.blockId}` : undefined,
+        }))
+    ), [scheduleReview]);
+    const currentTripIds = useMemo(() => new Set(
+        schedules.flatMap(table => table.trips.map(trip => trip.id))
+    ), [schedules]);
+    const reviewPanelChanges = useMemo<ScheduleReviewPanelChange[]>(() => (
+        (scheduleReview?.changes ?? []).map(change => ({
+            id: change.id,
+            title: change.message,
+            rowId: change.location.tripId && currentTripIds.has(change.location.tripId)
+                ? change.location.tripId
+                : undefined,
+            rowLabel: change.location.blockId ? `Block ${change.location.blockId}` : undefined,
+        }))
+    ), [currentTripIds, scheduleReview]);
+    const changedTripIds = useMemo(() => (
+        [...new Set(reviewPanelChanges.flatMap(change => change.rowId ? [change.rowId] : []))]
+    ), [reviewPanelChanges]);
+
+    const handleNextChange = useCallback(() => {
+        if (changedTripIds.length === 0) return;
+        const nextIndex = (reviewChangeIndex + 1) % changedTripIds.length;
+        setReviewChangeIndex(nextIndex);
+        setReviewFocusTripId(changedTripIds[nextIndex]);
+    }, [changedTripIds, reviewChangeIndex]);
+    const baselineTripCount = useMemo(() => (
+        baselineContent
+            ? (baselineContent.northTable?.trips.length ?? 0) + (baselineContent.southTable?.trips.length ?? 0)
+            : undefined
+    ), [baselineContent]);
+
+    const handleCreateCheckpoint = async () => {
+        if (!user || !activeBuildResult) return;
+        const savedDraftId = await saveDraftNow();
+        if (!savedDraftId) {
+            toast?.error('Checkpoint Failed', 'Save the draft before creating a checkpoint.');
+            return;
+        }
+        const defaultName = `Before publish · ${new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+        const name = window.prompt('Checkpoint name', defaultName)?.trim();
+        if (!name) return;
+
+        setIsReviewWorking(true);
+        try {
+            await createDraftCheckpoint(user.uid, savedDraftId, name, activeBuildResult.content);
+            setCheckpoints(await listDraftCheckpoints(user.uid, savedDraftId));
+            toast?.success('Checkpoint Created', name);
+        } catch (error) {
+            console.error('Checkpoint creation failed:', error);
+            toast?.error('Checkpoint Failed', 'Unable to save this recovery point.');
+        } finally {
+            setIsReviewWorking(false);
+        }
+    };
+
+    const handleRestoreCheckpoint = async (checkpointId: string) => {
+        if (!user || !draftId) return;
+        const checkpoint = await getDraftCheckpoint(user.uid, draftId, checkpointId);
+        if (!checkpoint?.content) {
+            toast?.error('Restore Failed', 'Checkpoint content is unavailable.');
+            return;
+        }
+        if (!window.confirm(`Restore “${checkpoint.name}”? Your current draft will remain available through undo until you leave the editor.`)) {
+            return;
+        }
+        setSchedules(buildTablesFromContent(checkpoint.content));
+        setReviewFocusTripId(null);
+        setIsReviewOpen(false);
+        toast?.success('Checkpoint Restored', checkpoint.name);
+    };
+
+    const handleReadyForReview = async () => {
+        if (!user || !team || !activeBuildResult) {
+            toast?.warning('Team Required', 'Join a team before submitting a schedule for review.');
+            return;
+        }
+        if (!scheduleReview?.publishReady) {
+            toast?.warning('Resolve Critical Issues', 'Fix blocking schedule issues before review.');
+            return;
+        }
+        const versionAtSubmission = changeVersionRef.current;
+        setIsReviewWorking(true);
+        const savedDraftId = await saveDraftNow({ statusOverride: 'ready_for_review' });
+        if (!savedDraftId) {
+            setIsReviewWorking(false);
+            toast?.error('Review Submission Failed', 'Save the draft before submitting it for review.');
+            return;
+        }
+        try {
+            await createScheduleReview({
+                teamId: team.id,
+                userId: user.uid,
+                plannerName: user.displayName || user.email || 'Planner',
+                routeNumber: activeBuildResult.routeNumber,
+                dayType: activeBuildResult.dayType,
+                draftId: savedDraftId,
+                sourceVersion: basedOn?.type === 'master' ? (basedOn.sourceVersion ?? 0) : 0,
+                plannerNote: publishNote.trim(),
+                schedule: activeBuildResult.content,
+                sourceSchedule: baselineContent,
+            });
+            if (changeVersionRef.current !== versionAtSubmission) {
+                await saveDraftNow({ statusOverride: 'draft', suppressStatusUpdates: true });
+                toast?.warning(
+                    'Review Snapshot Outdated',
+                    'The schedule changed during submission. Review the latest changes and submit again.'
+                );
+                return;
+            }
+            draftStatusRef.current = 'ready_for_review';
+            setDraftStatus('ready_for_review');
+            toast?.success('Ready for Review', 'The draft is saved for review.');
+        } catch (error) {
+            console.error('Schedule review submission failed:', error);
+            await saveDraftNow({ statusOverride: 'draft', suppressStatusUpdates: true });
+            toast?.error('Review Submission Failed', 'Unable to create the team review snapshot.');
+        } finally {
+            setIsReviewWorking(false);
+        }
+    };
+
     const handlePublish = async () => {
         if (!user || !team) {
             toast?.warning('Team Required', 'Join a team to publish schedules');
@@ -361,6 +606,29 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
             toast?.warning('Permission Required', 'Only team owners and admins can publish master schedules.');
             return;
         }
+        if (!scheduleReview?.publishReady) {
+            toast?.warning('Resolve Critical Issues', 'Fix blocking schedule issues before publishing.');
+            setIsReviewOpen(true);
+            return;
+        }
+        if (basedOn?.type === 'master' && freshness.status !== 'current') {
+            toast?.warning(
+                freshness.status === 'stale' ? 'Master Has Changed' : 'Source Master Unverified',
+                'Start from the latest master schedule before publishing.'
+            );
+            setIsReviewOpen(true);
+            return;
+        }
+        if (!publishNote.trim()) {
+            toast?.warning('Publish Note Required', 'Briefly describe why the schedule changed.');
+            setIsReviewOpen(true);
+            return;
+        }
+        if (draftStatusRef.current !== 'ready_for_review') {
+            toast?.warning('Review Confirmation Required', 'Mark the draft ready for review before publishing.');
+            setIsReviewOpen(true);
+            return;
+        }
 
         const savedDraftId = await saveDraftNow();
         if (!savedDraftId) {
@@ -368,13 +636,14 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
             return;
         }
 
-        const buildResult = buildMasterContentFromTables(schedules);
+        const buildResult = activeBuildResult;
         if (!buildResult) {
             toast?.error('Publish Failed', 'This draft contains multiple routes/day types.');
             return;
         }
 
         setIsPublishing(true);
+        setIsReviewWorking(true);
         try {
             await publishDraft({
                 teamId: team.id,
@@ -385,20 +654,29 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                     name: draftNameRef.current,
                     routeNumber: buildResult.routeNumber,
                     dayType: buildResult.dayType,
-                    status: 'ready_for_review',
+                    status: draftStatusRef.current,
                     createdAt: new Date(),
                     updatedAt: new Date(),
                     createdBy: user.uid,
                     basedOn,
                     content: buildResult.content
-                }
+                },
+                publishNote: publishNote.trim(),
             });
             toast?.success('Published', `Route ${buildResult.routeNumber} published`);
+            setPublishNote('');
+            setIsReviewOpen(false);
         } catch (error) {
             console.error('Publish failed:', error);
-            toast?.error('Publish Failed', 'Unable to publish schedule');
+            if (error instanceof StaleDraftPublishError) {
+                setFreshness(error.freshness);
+                toast?.error('Master Has Changed', error.message);
+            } else {
+                toast?.error('Publish Failed', 'Unable to publish schedule');
+            }
         } finally {
             setIsPublishing(false);
+            setIsReviewWorking(false);
         }
     };
 
@@ -593,6 +871,9 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                     originalSchedules={initialTables}
                     masterBaseline={compareBaseline}
                     compareBaselineLabel={compareBaselineLabel}
+                    initialShowDeltas={basedOn?.type === 'master'}
+                    highlightedTripId={reviewFocusTripId}
+                    visibleTripIds={showChangedOnly ? changedTripIds : null}
                     draftName={draftName}
                     onRenameDraft={setDraftName}
                     onOpenDrafts={onOpenDrafts}
@@ -608,16 +889,70 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                     undo={undo}
                     redo={redo}
                     hideAutoSave={false}
-                    onPublish={handlePublish}
                     publishDisabled={!user || !team || !canManageTeam}
                     isPublishing={isPublishing}
-                    hideSidebar={!!hasSiblings}
+                    sourceLabel={compareBaselineLabel}
+                    changeCount={scheduleReview?.changeCounts.totalChanges ?? 0}
+                    warningCount={(scheduleReview?.issueCounts.error ?? 0) + (scheduleReview?.issueCounts.warning ?? 0)}
+                    onReviewChanges={() => setIsReviewOpen(true)}
+                    reviewChangesDisabled={!scheduleReview}
+                    hideSidebar
                     teamId={team?.id}
                     userId={user?.uid}
                     uploaderName={user?.displayName || user?.email || 'Unknown'}
                     showSuccessToast={(msg) => toast?.success('Success', msg)}
                 />
             </div>
+            <ScheduleReviewPanel
+                isOpen={isReviewOpen}
+                onClose={() => setIsReviewOpen(false)}
+                sourceMasterLabel={basedOn?.sourceLabel || (basedOn?.type === 'master' ? 'Published Master' : 'Loaded schedule')}
+                sourceMasterVersion={basedOn?.sourceVersion}
+                baselineTripCount={baselineTripCount}
+                changeCounts={{
+                    added: scheduleReview?.changeCounts.new ?? 0,
+                    removed: scheduleReview?.changeCounts.removed ?? 0,
+                    retimed: (scheduleReview?.changeCounts.retimed ?? 0)
+                        + (scheduleReview?.changeCounts.extended ?? 0)
+                        + (scheduleReview?.changeCounts.shortened ?? 0),
+                    blockChanged: scheduleReview?.blockChangedCount ?? 0,
+                }}
+                changes={reviewPanelChanges}
+                issues={reviewPanelIssues}
+                onJumpToRow={tripId => setReviewFocusTripId(tripId)}
+                onNextChange={handleNextChange}
+                showChangedOnly={showChangedOnly}
+                onShowChangedOnlyChange={setShowChangedOnly}
+                publishNote={publishNote}
+                onPublishNoteChange={setPublishNote}
+                isStale={basedOn?.type === 'master' && freshness.status !== 'current'}
+                staleMessage={freshness.status === 'stale'
+                    ? `This draft started from v${freshness.sourceVersion}; v${freshness.currentVersion} is now published.`
+                    : basedOn?.type === 'master' && freshness.status !== 'current'
+                        ? 'The source master version could not be verified. Start from the latest published master.'
+                        : undefined}
+                onCreateCheckpoint={handleCreateCheckpoint}
+                checkpointDisabled={!draftId || !activeBuildResult}
+                checkpoints={checkpoints.map(checkpoint => ({
+                    id: checkpoint.id,
+                    name: checkpoint.name,
+                    createdAtLabel: checkpoint.createdAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
+                }))}
+                onRestoreCheckpoint={handleRestoreCheckpoint}
+                onReadyForReview={handleReadyForReview}
+                readyForReviewDisabled={!scheduleReview?.publishReady || draftStatus === 'ready_for_review'}
+                onPublish={handlePublish}
+                publishDisabled={
+                    !user
+                    || !team
+                    || !canManageTeam
+                    || !scheduleReview?.publishReady
+                    || draftStatus !== 'ready_for_review'
+                    || (basedOn?.type === 'master' && freshness.status !== 'current')
+                    || !publishNote.trim()
+                }
+                isWorking={isReviewWorking || isPublishing}
+            />
         </div>
     );
 };

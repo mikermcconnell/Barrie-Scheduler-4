@@ -7,7 +7,23 @@ export type DraftBasedOn = {
     type: 'master' | 'gtfs' | 'generated' | 'legacy';
     id?: string;
     importedAt?: Date;
+    /** Immutable master version copied into this draft. Older drafts may not have it. */
+    sourceVersion?: number;
+    sourceTeamId?: string;
+    sourceLabel?: string;
+    /** Master update time at the moment the draft was created (display/audit metadata). */
+    sourceUpdatedAt?: Date;
 };
+
+export interface DraftCheckpoint {
+    id: string;
+    draftId: string;
+    name: string;
+    content?: MasterScheduleContent;
+    storagePath: string;
+    createdAt: Date;
+    createdBy: string;
+}
 
 export interface DraftSchedule {
     id: string;

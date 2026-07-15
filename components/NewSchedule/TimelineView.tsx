@@ -19,6 +19,7 @@ interface TimelineViewProps {
     onTripTimeChange?: (tripId: string, newStartTime: number, newDuration: number) => void;
     onTripSelect?: (tripId: string) => void;
     selectedTripId?: string | null;
+    editScopeLabel?: string;
 }
 
 interface TripBar {
@@ -53,7 +54,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     schedules,
     onTripTimeChange,
     onTripSelect,
-    selectedTripId
+    selectedTripId,
+    editScopeLabel,
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const blockLabelsRef = useRef<HTMLDivElement>(null);
@@ -349,6 +351,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                         <Clock size={16} />
                         Timeline View
                     </h3>
+                    {editScopeLabel && (
+                        <span className="rounded bg-blue-50 px-2 py-1 text-xs font-medium text-blue-800">
+                            {editScopeLabel}
+                        </span>
+                    )}
                     {overlaps.size > 0 && (
                         <span className="flex items-center gap-1 text-xs text-red-600 bg-red-50 px-2 py-1 rounded">
                             <AlertTriangle size={12} />
