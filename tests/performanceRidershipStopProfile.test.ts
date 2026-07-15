@@ -13,6 +13,7 @@ function heatmap(
     routeId: string,
     direction: string,
     stops: Array<{ id: string; name?: string; index: number; cells: Array<[number, number] | null> }>,
+    trips?: Array<{ time: string; block: string }>,
 ): RouteRidershipHeatmap {
     const tripCount = Math.max(0, ...stops.map(stop => stop.cells.length));
     return {
@@ -20,9 +21,9 @@ function heatmap(
         routeName: `Route ${routeId}`,
         direction,
         trips: Array.from({ length: tripCount }, (_, index) => ({
-            terminalDepartureTime: `${8 + index}:00`,
+            terminalDepartureTime: trips?.[index]?.time ?? `${8 + index}:00`,
             tripName: `Trip ${index + 1}`,
-            block: '1',
+            block: trips?.[index]?.block ?? '1',
             direction,
         })),
         stops: stops.map(stop => ({
@@ -144,18 +145,42 @@ describe('buildRidershipStopProfiles', () => {
         });
     });
 
-    it('omits ambiguous legacy zero loads instead of presenting missing APC as zero', () => {
+    it('preserves equal daily weighting when legacy and count-backed load profiles are mixed', () => {
+        const result = buildRidershipStopProfiles([
+            day('2026-07-07', [heatmap('10', 'CW', [{ id: 'A', index: 1, cells: [[1, 0]] }])], [
+                loadProfile('10', 'CW', [{ id: 'A', index: 1, load: 10 }]),
+            ]),
+            day('2026-07-08', [heatmap('10', 'CW', [{ id: 'A', index: 1, cells: [[1, 0]] }])], [
+                loadProfile('10', 'CW', [{ id: 'A', index: 1, load: 30, count: 3 }]),
+            ]),
+        ]);
+
+        expect(result.options[0].rows[0]).toMatchObject({
+            averageLoad: 20,
+            loadObservationCount: null,
+            loadEstimated: true,
+            loadSource: 'mixed',
+        });
+    });
+
+    it('uses block inference instead of presenting an ambiguous legacy zero as observed load', () => {
         const result = buildRidershipStopProfiles([
             day('2026-07-07', [heatmap('10', 'CW', [{ id: 'A', index: 1, cells: [[1, 0]] }])], [
                 loadProfile('10', 'CW', [{ id: 'A', index: 1, load: 0 }]),
             ]),
         ]);
 
-        expect(result.options[0]).toMatchObject({ hasEstimatedLoad: true });
+        expect(result.options[0]).toMatchObject({
+            hasEstimatedLoad: true,
+            hasBlockInferredLoad: true,
+            blockInferenceAssumedEmptyAnchor: true,
+        });
         expect(result.options[0].rows[0]).toMatchObject({
-            averageLoad: null,
+            averageLoad: 1,
             loadObservationCount: null,
             loadEstimated: true,
+            loadSource: 'block-inferred',
+            blockInferredLoadCount: 1,
         });
     });
 
@@ -202,7 +227,7 @@ describe('buildRidershipStopProfiles', () => {
         ]);
     });
 
-    it('keeps absent and explicitly unobserved load null rather than turning it into zero', () => {
+    it('fills absent and explicitly unobserved load from block passenger deltas', () => {
         const result = buildRidershipStopProfiles([
             day('2026-07-07', [heatmap('10', 'CW', [
                 { id: 'A', index: 1, cells: [[1, 0]] },
@@ -211,10 +236,10 @@ describe('buildRidershipStopProfiles', () => {
         ]);
 
         expect(result.options[0].rows).toEqual([
-            expect.objectContaining({ stopId: 'A', averageLoad: null, loadObservationCount: 0 }),
-            expect.objectContaining({ stopId: 'B', averageLoad: null, loadObservationCount: null }),
+            expect.objectContaining({ stopId: 'A', averageLoad: 1, loadSource: 'block-inferred' }),
+            expect.objectContaining({ stopId: 'B', averageLoad: 2, loadSource: 'block-inferred' }),
         ]);
-        expect(result.options[0].peakAverageLoad).toBeNull();
+        expect(result.options[0].peakAverageLoad).toMatchObject({ stopId: 'B', value: 2, estimated: true });
     });
 
     it('chooses the busiest option by raw boardings with deterministic ties', () => {
@@ -237,5 +262,196 @@ describe('buildRidershipStopProfiles', () => {
 
         expect(result.options[0]).toMatchObject({ serviceDays: 1, totalBoardings: 10, totalAlightings: 2 });
         expect(result.options[0].rows[0]).toMatchObject({ boardings: 10, alightings: 2 });
+    });
+
+    it('carries a loop terminal residual into the next chronological trip on the same block', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [heatmap('10', 'Loop', [
+            { id: 'A', index: 1, cells: [[5, 0], [1, 0]] },
+            { id: 'B', index: 2, cells: [[0, 2], [0, 0]] },
+            { id: 'A', index: 3, cells: [[0, 1], [0, 3]] },
+        ])])]);
+
+        const option = result.options[0];
+        expect(option).toMatchObject({
+            hasBlockInferredLoad: true,
+            blockInferenceAssumedEmptyAnchor: true,
+            invalidBlockInferenceChainCount: 0,
+        });
+        expect(option.rows).toEqual([
+            expect.objectContaining({
+                stopId: 'A', occurrenceIndex: 0, averageLoad: 4,
+                loadSource: 'block-inferred', blockInferredLoadCount: 2,
+            }),
+            expect.objectContaining({ stopId: 'B', averageLoad: 3 }),
+            expect.objectContaining({ stopId: 'A', occurrenceIndex: 1, averageLoad: 1 }),
+        ]);
+    });
+
+    it('resets the assumed-empty anchor for separate blocks', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [heatmap('10', 'Loop', [
+            { id: 'A', index: 1, cells: [[5, 0], [5, 0]] },
+        ], [
+            { time: '08:00', block: '1' },
+            { time: '09:00', block: '2' },
+        ])])]);
+
+        expect(result.options[0].rows[0]).toMatchObject({ averageLoad: 5, blockInferredLoadCount: 2 });
+    });
+
+    it('orders block trips by terminal departure time before carrying load', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [heatmap('10', 'Loop', [
+            { id: 'A', index: 1, cells: [[0, 3], [5, 0]] },
+        ], [
+            { time: '25:00', block: '1' },
+            { time: '24:00', block: '1' },
+        ])])]);
+
+        expect(result.options[0]).toMatchObject({ invalidBlockInferenceChainCount: 0 });
+        expect(result.options[0].rows[0]).toMatchObject({ averageLoad: 3.5, blockInferredLoadCount: 2 });
+    });
+
+    it('uses the minimum feasible starting load when cumulative block drift becomes negative', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [heatmap('10', 'Loop', [
+            { id: 'A', index: 1, cells: [[2, 0], [0, 4]] },
+        ])])]);
+
+        expect(result.options[0]).toMatchObject({
+            hasBlockInferredLoad: true,
+            blockInferenceAssumedEmptyAnchor: false,
+            blockInferenceUsesMinimumFeasibleAnchor: true,
+            invalidBlockInferenceChainCount: 0,
+        });
+        expect(result.options[0].rows[0]).toMatchObject({
+            averageLoad: 2,
+            loadSource: 'block-inferred',
+            blockInferredLoadCount: 2,
+        });
+    });
+
+    it('rejects rather than clamps a minimum-anchored block whose load range exceeds the cap', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [heatmap('10', 'Loop', [
+            { id: 'A', index: 1, cells: [[0, 10]] },
+            { id: 'B', index: 2, cells: [[66, 0]] },
+        ])])]);
+
+        expect(result.options[0]).toMatchObject({
+            hasBlockInferredLoad: false,
+            blockInferenceUsesMinimumFeasibleAnchor: false,
+            invalidBlockInferenceChainCount: 1,
+        });
+        expect(result.options[0].rows).toEqual([
+            expect.objectContaining({ stopId: 'A', averageLoad: null, loadSource: 'none' }),
+            expect.objectContaining({ stopId: 'B', averageLoad: null, loadSource: 'none' }),
+        ]);
+    });
+
+    it('does not fill profile gaps when any stop has a usable daily load', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [heatmap('10', 'Loop', [
+            { id: 'A', index: 1, cells: [[0, 10]] },
+            { id: 'B', index: 2, cells: [[66, 0]] },
+        ])], [loadProfile('10', 'Loop', [{ id: 'A', index: 1, load: 20, count: 2 }])])]);
+
+        expect(result.options[0]).toMatchObject({
+            hasBlockInferredLoad: false,
+            blockInferenceAssumedEmptyAnchor: false,
+            blockInferenceUsesMinimumFeasibleAnchor: false,
+            invalidBlockInferenceChainCount: 0,
+        });
+        expect(result.options[0].rows).toEqual([
+            expect.objectContaining({
+                stopId: 'A', averageLoad: 20, loadObservationCount: 2,
+                loadEstimated: false, loadSource: 'observed', blockInferredLoadCount: 0,
+            }),
+            expect.objectContaining({
+                stopId: 'B', averageLoad: null, loadObservationCount: null,
+                loadEstimated: false, loadSource: 'none', blockInferredLoadCount: 0,
+            }),
+        ]);
+    });
+
+    it('infers an all-missing day without filling gaps on a separate observed day', () => {
+        const result = buildRidershipStopProfiles([
+            day('2026-07-07', [heatmap('10', 'Loop', [
+                { id: 'A', index: 1, cells: [[5, 0]] },
+                { id: 'B', index: 2, cells: [[1, 0]] },
+            ])], [loadProfile('10', 'Loop', [{ id: 'A', index: 1, load: 20, count: 2 }])]),
+            day('2026-07-08', [heatmap('10', 'Loop', [
+                { id: 'A', index: 1, cells: [[2, 0]] },
+                { id: 'B', index: 2, cells: [[1, 0]] },
+            ])]),
+        ]);
+
+        expect(result.options[0]).toMatchObject({
+            hasBlockInferredLoad: true,
+            blockInferenceAssumedEmptyAnchor: true,
+            invalidBlockInferenceChainCount: 0,
+        });
+        expect(result.options[0].rows).toEqual([
+            expect.objectContaining({
+                stopId: 'A', averageLoad: 14, loadSource: 'mixed',
+                loadObservationCount: null, blockInferredLoadCount: 1,
+            }),
+            expect.objectContaining({
+                stopId: 'B', averageLoad: 3, loadSource: 'block-inferred',
+                loadObservationCount: null, blockInferredLoadCount: 1,
+            }),
+        ]);
+    });
+
+    it('keeps identical block IDs on separate routes independent', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [
+            heatmap('10', 'Loop', [{ id: 'A', index: 1, cells: [[5, 0]] }], [
+                { time: '08:00', block: '1' },
+            ]),
+            heatmap('20', 'Loop', [{ id: 'B', index: 1, cells: [[0, 2]] }], [
+                { time: '08:00', block: '1' },
+            ]),
+        ])]);
+
+        const route10 = result.options.find(option => option.routeId === '10')!;
+        const route20 = result.options.find(option => option.routeId === '20')!;
+        expect(route10.rows[0]).toMatchObject({ averageLoad: 5 });
+        expect(route20.rows[0]).toMatchObject({ averageLoad: 0 });
+        expect(route20).toMatchObject({
+            blockInferenceAssumedEmptyAnchor: false,
+            blockInferenceUsesMinimumFeasibleAnchor: true,
+        });
+    });
+
+    it('produces the same route inference when other routes are filtered out', () => {
+        const route10 = heatmap('10', 'Loop', [{ id: 'A', index: 1, cells: [[5, 0]] }], [
+            { time: '08:00', block: '1' },
+        ]);
+        const route20 = heatmap('20', 'Loop', [{ id: 'B', index: 1, cells: [[0, 2]] }], [
+            { time: '08:00', block: '1' },
+        ]);
+
+        const allRoutes = buildRidershipStopProfiles([day('2026-07-07', [route10, route20])]);
+        const filteredRoute = buildRidershipStopProfiles([day('2026-07-07', [route20])]);
+
+        expect(allRoutes.options.find(option => option.routeId === '20')?.rows)
+            .toEqual(filteredRoute.options[0].rows);
+    });
+
+    it('suppresses a whole same-route block when either direction has usable daily load', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [
+            heatmap('10', 'CW', [{ id: 'A', index: 1, cells: [[2, 0]] }], [
+                { time: '08:00', block: '1' },
+            ]),
+            heatmap('10', 'CCW', [{ id: 'B', index: 1, cells: [[1, 0]] }], [
+                { time: '09:00', block: '1' },
+            ]),
+        ], [loadProfile('10', 'CCW', [{ id: 'B', index: 1, load: 20, count: 2 }])])]);
+
+        const missingDirection = result.options.find(option => option.direction === 'CW')!;
+        const observedDirection = result.options.find(option => option.direction === 'CCW')!;
+        expect(missingDirection).toMatchObject({
+            hasBlockInferredLoad: false,
+            blockInferenceAssumedEmptyAnchor: false,
+            blockInferenceUsesMinimumFeasibleAnchor: false,
+            invalidBlockInferenceChainCount: 0,
+        });
+        expect(missingDirection.rows[0]).toMatchObject({ averageLoad: null, loadSource: 'none' });
+        expect(observedDirection.rows[0]).toMatchObject({ averageLoad: 20, loadSource: 'observed' });
     });
 });
