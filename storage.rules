@@ -181,7 +181,16 @@ service firebase.storage {
     // Team performance data (STREETS summaries)
     match /teams/{teamId}/performanceData/{allPaths=**} {
       allow read: if canAccessWorkspace(teamId, 'workspaceOperations') || canSupportReadTeamData(teamId);
-      allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+      allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
+    }
+
+    // Compact Load Profiles read models. Normal reads go through the backend,
+    // which enforces operationsLoadProfiles and shared-source authorization.
+    // Team members may still publish these views through the existing manual
+    // import flow until all performance publishing moves server-side.
+    match /teams/{teamId}/performanceViews/load-profiles/{allPaths=**} {
+      allow read: if canSupportReadTeamData(teamId);
+      allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team Transit On Demand pickup map data

@@ -942,7 +942,7 @@ describe('extendTripPlanner', () => {
       'Rose Street': 0
     });
     expect(preview.updatedTrip.recoveryTime).toBe(5);
-    expect(preview.updatedTrip.cycleTime).toBe(64);
+    expect(preview.updatedTrip.cycleTime).toBe(59);
     expect(preview.blockConflict).toBeNull();
   });
 
@@ -1014,6 +1014,53 @@ describe('extendTripPlanner', () => {
     expect(preview.blockConflict?.tripId).toBe('next-block-trip');
   });
 
+  it('does not double-count terminal recovery already included in an extended trip end time', () => {
+    const schedulesWithIncludedRecovery = [{
+      routeName: '5 (Weekday) (North)',
+      stops: ['Terminal', 'Stop B', 'Stop C'],
+      stopIds: { Terminal: '1', 'Stop B': '2', 'Stop C': '3' },
+      trips: [
+        {
+          id: 'template', blockId: '5-1', direction: 'North', tripNumber: 1, rowId: 1,
+          startTime: 360, endTime: 380, recoveryTime: 0, travelTime: 20, cycleTime: 20,
+          stops: { Terminal: '6:00 AM', 'Stop B': '6:10 AM', 'Stop C': '6:20 AM' },
+          arrivalTimes: { Terminal: '6:00 AM', 'Stop B': '6:10 AM', 'Stop C': '6:20 AM' },
+          stopMinutes: { Terminal: 360, 'Stop B': 370, 'Stop C': 380 },
+        },
+        {
+          id: 'short', blockId: '5-2', direction: 'North', tripNumber: 2, rowId: 2,
+          startTime: 370, endTime: 390, recoveryTime: 10, recoveryTimes: { 'Stop C': 10 },
+          travelTime: 10, cycleTime: 20, endTimeIncludesRecovery: true,
+          stops: { 'Stop B': '6:10 AM', 'Stop C': '6:30 AM' },
+          arrivalTimes: { 'Stop B': '6:10 AM', 'Stop C': '6:20 AM' },
+          stopMinutes: { 'Stop B': 370, 'Stop C': 390 }, startStopIndex: 1,
+        },
+        {
+          id: 'next', blockId: '5-2', direction: 'South', tripNumber: 3, rowId: 3,
+          startTime: 395, endTime: 415, recoveryTime: 0, travelTime: 20, cycleTime: 20,
+          stops: { Terminal: '6:35 AM', 'Stop B': '6:45 AM', 'Stop C': '6:55 AM' },
+          arrivalTimes: { Terminal: '6:35 AM', 'Stop B': '6:45 AM', 'Stop C': '6:55 AM' },
+          stopMinutes: { Terminal: 395, 'Stop B': 405, 'Stop C': 415 },
+        },
+      ],
+    }] as any;
+
+    const context = buildExtendTripModalContext(schedulesWithIncludedRecovery, 'short');
+    const preview = buildExtendTripPreview(context!, { mode: 'earlier', stopName: 'Terminal' });
+
+    expect(preview.updatedTrip.endTime).toBe(390);
+    expect(preview.blockConflict).toBeNull();
+
+    const applied = applyExtendTripResultToSchedules(
+      schedulesWithIncludedRecovery,
+      context!,
+      { mode: 'earlier', stopName: 'Terminal' }
+    );
+    const updated = applied.schedules[0].trips.find((trip: any) => trip.id === 'short');
+    expect(updated?.endTimeIncludesRecovery).toBe(true);
+    expect(updated?.cycleTime).toBe((updated?.travelTime || 0) + (updated?.recoveryTime || 0));
+  });
+
   it('allows a later extension to consume the updated trip recovery before the next same-block trip', () => {
     const schedulesWithSlackRecovery = [
       {
@@ -1080,10 +1127,11 @@ describe('extendTripPlanner', () => {
     });
     const updatedTrip = preview.schedules[0].trips.find((trip: any) => trip.id === 'north-short');
 
-    expect(preview.updatedTrip.endTime).toBe(386);
+    expect(preview.updatedTrip.endTime).toBe(388);
     expect(preview.blockConflict).toBeNull();
     expect(updatedTrip?.recoveryTime).toBe(2);
     expect(updatedTrip?.cycleTime).toBe(28);
+    expect(updatedTrip?.endTimeIncludesRecovery).toBe(true);
     expect(updatedTrip?.recoveryTimes).toEqual({
       College: 2
     });

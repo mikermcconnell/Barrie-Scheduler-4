@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import type { RidershipStopProfileChartOption } from '../components/Performance/RidershipStopProfileChart';
 
+type RidershipStopProfileRow = RidershipStopProfileChartOption['rows'][number];
+
 vi.mock('../components/Analytics/AnalyticsShared', () => ({
     ChartCard: ({ title, subtitle, headerExtra, children }: { title: string; subtitle: string; headerExtra?: React.ReactNode; children: React.ReactNode }) => (
         <section><h2>{title}</h2><p>{subtitle}</p>{headerExtra}{children}</section>
@@ -41,12 +43,16 @@ function option(overrides: Partial<RidershipStopProfileChartOption> = {}): Rider
         serviceDays: 2,
         multipleStopPatterns: false,
         hasEstimatedLoad: false,
+        hasBlockInferredLoad: false,
+        blockInferenceAssumedEmptyAnchor: false,
+        blockInferenceUsesMinimumFeasibleAnchor: false,
+        invalidBlockInferenceChainCount: 0,
         busiestBoardingStop: { stopId: '100', stopName: 'Downtown Terminal', value: 30 },
         busiestAlightingStop: { stopId: '200', stopName: 'Georgian College', value: 32 },
         peakAverageLoad: { stopId: '200', stopName: 'Georgian College', value: 20, loadObservationCount: 8, estimated: false },
         rows: [
-            { stopId: '100', stopName: 'Downtown Terminal', routeStopIndex: 0, isTimepoint: true, boardings: 30, alightings: 4, servedDays: 2, averageLoad: 12, loadObservationCount: 10, loadEstimated: false },
-            { stopId: '200', stopName: 'Georgian College', routeStopIndex: 1, isTimepoint: true, boardings: 15, alightings: 32, servedDays: 2, averageLoad: 20, loadObservationCount: 8, loadEstimated: false },
+            { stopId: '100', stopName: 'Downtown Terminal', routeStopIndex: 0, isTimepoint: true, boardings: 30, alightings: 4, servedDays: 2, averageLoad: 12, loadObservationCount: 10, loadEstimated: false, loadSource: 'observed', blockInferredLoadCount: 0 },
+            { stopId: '200', stopName: 'Georgian College', routeStopIndex: 1, isTimepoint: true, boardings: 15, alightings: 32, servedDays: 2, averageLoad: 20, loadObservationCount: 8, loadEstimated: false, loadSource: 'observed', blockInferredLoadCount: 0 },
         ],
         ...overrides,
     };
@@ -110,6 +116,56 @@ describe('RidershipStopProfileChart', () => {
         expect(estimatedLine?.getAttribute('data-stroke-dasharray')).toBe('6 4');
     });
 
+    it('clearly discloses block-inferred loads and invalid block chains', () => {
+        const inferredRows = option().rows.map((row): RidershipStopProfileRow => ({
+            ...row,
+            loadObservationCount: null,
+            loadEstimated: true,
+            loadSource: 'block-inferred' as const,
+            blockInferredLoadCount: 4,
+        }));
+        render([option({
+            rows: inferredRows,
+            hasEstimatedLoad: true,
+            hasBlockInferredLoad: true,
+            blockInferenceAssumedEmptyAnchor: true,
+            invalidBlockInferenceChainCount: 2,
+        })]);
+
+        expect(container.textContent).toContain('Block-inferred load:');
+        expect(container.textContent).toContain('same route and block');
+        expect(container.textContent).toContain('first observed trip in each block is assumed empty');
+        expect(container.textContent).toContain('2 block chains were omitted');
+        expect(container.textContent).toContain('outside the plausible range');
+        expect(container.textContent).toContain('Georgian College · Block-inferred');
+        expect(container.querySelector('[data-chart-name="Average onboard (includes block inference)"]')).not.toBeNull();
+    });
+
+    it('discloses the minimum-feasible block anchor as a lower-bound estimate', () => {
+        render([option({
+            rows: option().rows.map(row => ({ ...row, loadEstimated: true, loadSource: 'block-inferred' as const, blockInferredLoadCount: 2 })),
+            hasEstimatedLoad: true,
+            hasBlockInferredLoad: true,
+            blockInferenceUsesMinimumFeasibleAnchor: true,
+        })]);
+
+        expect(container.textContent).toContain('smallest starting load that keeps the full block non-negative');
+        expect(container.textContent).toContain('lower-bound estimate');
+    });
+
+    it('discloses both zero and minimum-feasible anchors when a period contains both', () => {
+        render([option({
+            rows: option().rows.map(row => ({ ...row, loadEstimated: true, loadSource: 'block-inferred' as const, blockInferredLoadCount: 2 })),
+            hasEstimatedLoad: true,
+            hasBlockInferredLoad: true,
+            blockInferenceAssumedEmptyAnchor: true,
+            blockInferenceUsesMinimumFeasibleAnchor: true,
+        })]);
+
+        expect(container.textContent).toContain('Some blocks start from an assumed-empty first trip');
+        expect(container.textContent).toContain('those values are lower-bound estimates');
+    });
+
     it('does not name a zero-activity stop as the busiest stop', () => {
         render([option({ rows: option().rows.map(row => ({ ...row, boardings: 0 })) })]);
 
@@ -122,7 +178,7 @@ describe('RidershipStopProfileChart', () => {
         expect(container.textContent).toContain('No stop-level ridership data');
         expect(container.textContent).toContain('Try a different date, day type, or route filter.');
 
-        render([option({ rows: option().rows.map(row => ({ ...row, averageLoad: null, loadObservationCount: null })) })]);
+        render([option({ rows: option().rows.map((row): RidershipStopProfileRow => ({ ...row, averageLoad: null, loadObservationCount: null })) })]);
         expect(container.textContent).toContain('Average onboard load is unavailable; boarding and alighting activity is shown.');
     });
 

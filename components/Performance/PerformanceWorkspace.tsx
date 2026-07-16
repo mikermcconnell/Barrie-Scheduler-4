@@ -11,10 +11,11 @@ import type {
     PerformanceTab,
     DayType,
 } from '../../utils/performanceDataTypes';
-import { PerformanceFilterBar, filterDailySummaries, type TimeRange } from './PerformanceFilterBar';
+import { PerformanceFilterBar, filterDailySummaries, getPerformanceDateWindow, type TimeRange } from './PerformanceFilterBar';
 import { PerformanceScopeProvider } from './performanceScope';
 import { resolveFilteredScope } from '../../utils/performanceDataScope';
 import { addDaysToISODate } from '../../utils/performanceDateUtils';
+import { getPriorStopActivityPeriod } from '../../utils/performanceStopActivity';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { PerformanceImportHealthPanel } from './PerformanceImportHealthPanel';
 import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
@@ -25,6 +26,7 @@ import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
     onReimport: () => void;
+    canReimport?: boolean;
     onBack: () => void;
     teamId?: string;
     requestingTeamId?: string;
@@ -114,7 +116,7 @@ const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
 const PerformancePanelError: React.FC<{ onRetry: () => void }> = ({ onRetry }) => (
     <div role="alert" className="mx-auto flex min-h-[280px] max-w-xl flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 px-6 text-center">
         <h3 className="font-bold text-red-900">Performance details could not be loaded</h3>
-        <p className="mt-2 text-sm text-red-800">No incident conclusions are shown from the incomplete fallback data.</p>
+        <p className="mt-2 text-sm text-red-800">The dashboard will not substitute incomplete overview data. Try the request again.</p>
         <button type="button" onClick={onRetry} className="mt-4 min-h-11 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400">
             Try again
         </button>
@@ -122,11 +124,19 @@ const PerformancePanelError: React.FC<{ onRetry: () => void }> = ({ onRetry }) =
 );
 
 const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
+const LOAD_PROFILE_TIME_RANGES: TimeRange[] = [
+    'past-three-months',
+    'past-month',
+    'past-week',
+    'yesterday',
+    'single-day',
+];
 
 function resolveDetailDateRange(
     metadata: PerformanceMetadata | null | undefined,
     timeRange: TimeRange,
     selectedDate: string | null,
+    includeComparisonPeriod = false,
 ): PerformanceDataLoadOptions['dateRange'] | undefined {
     const end = metadata?.dateRange?.end;
     if (!end) return undefined;
@@ -134,14 +144,24 @@ function resolveDetailDateRange(
     if (timeRange === 'all') return undefined;
     if (timeRange === 'single-day') {
         const date = selectedDate || end;
-        return { start: date, end: date };
+        return {
+            start: includeComparisonPeriod ? (addDaysToISODate(date, -7) || date) : date,
+            end: date,
+        };
     }
     if (timeRange === 'yesterday') {
-        const start = addDaysToISODate(end, -7) || end;
+        const start = addDaysToISODate(end, includeComparisonPeriod ? -8 : -7) || end;
         return { start, end };
     }
 
-    const daysBack = timeRange === 'past-week' ? 6 : 29;
+    const currentDaysBack = timeRange === 'past-week'
+        ? 6
+        : timeRange === 'past-month'
+            ? 29
+            : 89;
+    const daysBack = includeComparisonPeriod
+        ? ((currentDaysBack + 1) * 2) - 1
+        : currentDaysBack;
     return { start: addDaysToISODate(end, -daysBack) || end, end };
 }
 
@@ -152,6 +172,7 @@ function detailModeForTab(tab: PerformanceTab): PerformanceDetailMode {
 export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     data,
     onReimport,
+    canReimport = true,
     onBack,
     teamId,
     requestingTeamId,
@@ -170,13 +191,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const timeRange = timeRanges[activeTab] ?? 'past-week';
     const tabBarRef = useRef<HTMLDivElement>(null);
     const detailOptions = useMemo<PerformanceDataLoadOptions | undefined>(() => ({
-        dateRange: resolveDetailDateRange(metadata, timeRange, selectedDate),
+        dateRange: resolveDetailDateRange(metadata, timeRange, selectedDate, activeTab === 'ridership'),
         detailMode: detailModeForTab(activeTab),
     }), [activeTab, metadata, selectedDate, timeRange]);
     const shouldLoadDetailData = !!teamId && !!metadata && (
         activeTab !== 'overview'
         || timeRange === 'all'
         || timeRange === 'past-month'
+        || timeRange === 'past-three-months'
         || timeRange === 'yesterday'
         || timeRange === 'single-day'
     );
@@ -193,7 +215,11 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const isCurrentDetailLoading = shouldLoadDetailData && detailQuery.isFetching && !detailData;
     const detailsReady = !shouldLoadDetailData || !!detailData;
     const workspaceData = detailData ?? data;
-    const allowedTimeRanges = detailsReady ? undefined : OVERVIEW_ONLY_TIME_RANGES;
+    const allowedTimeRanges = activeTab === 'load-profiles'
+        ? LOAD_PROFILE_TIME_RANGES
+        : detailsReady
+            ? undefined
+            : OVERVIEW_ONLY_TIME_RANGES;
     const showImportHealthPanel = !import.meta.env.PROD
         && detailsReady
         && isFeatureEnabled('operationsImportHealth');
@@ -235,6 +261,18 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         const dailySummaries = filterDailySummaries(workspaceData.dailySummaries, timeRange, dayTypeFilter, selectedDate);
         return withFilteredMetadata(workspaceData, dailySummaries);
     }, [workspaceData, timeRange, dayTypeFilter, selectedDate]);
+
+    const ridershipComparisonPeriod = useMemo(() => {
+        if (activeTab !== 'ridership' || timeRange === 'all') return null;
+        const currentWindow = getPerformanceDateWindow(
+            workspaceData.dailySummaries,
+            timeRange,
+            selectedDate,
+        );
+        return currentWindow
+            ? getPriorStopActivityPeriod(workspaceData.dailySummaries, currentWindow, dayTypeFilter)
+            : null;
+    }, [activeTab, dayTypeFilter, selectedDate, timeRange, workspaceData.dailySummaries]);
 
     useEffect(() => {
         if (timeRange !== 'single-day') return;
@@ -316,7 +354,13 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                 if (isCurrentDetailLoading) return <PerformancePanelLoading label="Loading ridership details..." />;
                 return (
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
-                        <RidershipModule data={filteredData} />
+                        <RidershipModule
+                            data={filteredData}
+                            comparisonDays={ridershipComparisonPeriod?.days ?? []}
+                            comparisonRange={ridershipComparisonPeriod
+                                ? { start: ridershipComparisonPeriod.startDate, end: ridershipComparisonPeriod.endDate }
+                                : null}
+                        />
                     </PerformanceScopeProvider>
                 );
             case 'load-profiles':
@@ -373,13 +417,15 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                             ))}
                         </select>
                     )}
-                    <button
-                        onClick={onReimport}
-                        className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                    >
-                        <RefreshCw size={14} />
-                        Re-import
-                    </button>
+                    {canReimport && (
+                        <button
+                            onClick={onReimport}
+                            className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                        >
+                            <RefreshCw size={14} />
+                            Re-import
+                        </button>
+                    )}
                 </div>
             </div>
 

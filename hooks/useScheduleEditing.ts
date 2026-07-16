@@ -14,7 +14,11 @@ import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterSchedu
 import { validateRouteTable } from '../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
 import { deepCloneSchedules, findTableAndTrip } from '../utils/schedule/scheduleEditorUtils';
-import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
+import {
+    getOperationalSortTime,
+    reassignBlocksForTables,
+    MatchConfigPresets,
+} from '../utils/blocks/blockAssignmentCore';
 import { getRouteConfig, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { createTripLineageId } from '../utils/schedule/tripLineage';
 import { isMergedRouteBase } from '../utils/schedule/mergedRouteContinuity';
@@ -62,8 +66,10 @@ const compareBlockTripOrder = (
     a: { trip: MasterTrip; table: MasterRouteTable },
     b: { trip: MasterTrip; table: MasterRouteTable }
 ): number => {
-    if (a.trip.startTime !== b.trip.startTime) return a.trip.startTime - b.trip.startTime;
-    if (a.trip.endTime !== b.trip.endTime) return a.trip.endTime - b.trip.endTime;
+    const startDelta = getOperationalSortTime(a.trip.startTime) - getOperationalSortTime(b.trip.startTime);
+    if (startDelta !== 0) return startDelta;
+    const endDelta = getOperationalSortTime(a.trip.endTime) - getOperationalSortTime(b.trip.endTime);
+    if (endDelta !== 0) return endDelta;
     if (a.trip.direction !== b.trip.direction) return a.trip.direction === 'North' ? -1 : 1;
     if ((a.trip.tripNumber ?? 0) !== (b.trip.tripNumber ?? 0)) return (a.trip.tripNumber ?? 0) - (b.trip.tripNumber ?? 0);
     return a.trip.id.localeCompare(b.trip.id);
@@ -78,7 +84,17 @@ const getTrueBaseRoute = (routeName: string): string => {
     return parsed.suffixIsDirection ? parsed.baseRoute : stripped;
 };
 
-const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+const MIDNIGHT_ROLLOVER_THRESHOLD = 240; // 4:00 AM operational day boundary
+
+const getServiceDay = (routeName: string): string | null =>
+    routeName.match(/\((Weekday|Saturday|Sunday)\)/i)?.[1]?.toLowerCase() ?? null;
+
+const getClockDelta = (fromMinutes: number, toMinutes: number): number => {
+    let delta = toMinutes - fromMinutes;
+    if (delta > 720) delta -= 1440;
+    if (delta < -720) delta += 1440;
+    return delta;
+};
 
 const stripNumberedStopSuffix = (stopName: string): string => stopName.replace(/\s*\(\d+\)\s*$/, '');
 
@@ -204,10 +220,11 @@ export function useScheduleEditing(
     const reassignBlocksForRelatedTables = useCallback((
         tables: MasterRouteTable[],
         baseName: string,
+        serviceDay: string | null,
     ) => {
         const relatedTables = tables.filter(t => {
             const tBase = getTrueBaseRoute(t.routeName);
-            return tBase === baseName;
+            return tBase === baseName && getServiceDay(t.routeName) === serviceDay;
         });
 
         if (relatedTables.length === 0) return;
@@ -228,9 +245,13 @@ export function useScheduleEditing(
     const getOrderedBlockTrips = useCallback((
         tables: MasterRouteTable[],
         baseName: string,
-        blockId: string
+        blockId: string,
+        serviceDay: string | null,
     ): { trip: MasterTrip; table: MasterRouteTable }[] => {
-        const relatedTables = tables.filter(t => getTrueBaseRoute(t.routeName) === baseName);
+        const relatedTables = tables.filter(t =>
+            getTrueBaseRoute(t.routeName) === baseName
+            && getServiceDay(t.routeName) === serviceDay
+        );
         const allBlockTrips: { trip: MasterTrip; table: MasterRouteTable }[] = [];
 
         relatedTables.forEach(relatedTable => {
@@ -248,11 +269,12 @@ export function useScheduleEditing(
         tables: MasterRouteTable[],
         currentTrip: MasterTrip,
         baseName: string,
+        serviceDay: string | null,
         deltaMinutes: number
     ) => {
         if (deltaMinutes === 0 || currentTrip.direction !== 'North') return;
 
-        const orderedTrips = getOrderedBlockTrips(tables, baseName, currentTrip.blockId);
+        const orderedTrips = getOrderedBlockTrips(tables, baseName, currentTrip.blockId, serviceDay);
         const currentIndex = orderedTrips.findIndex(item => item.trip.id === currentTrip.id);
         if (currentIndex === -1) return;
 
@@ -278,7 +300,6 @@ export function useScheduleEditing(
         if (oldValue === val) return;
 
         const oldTime = TimeUtils.toMinutes(oldValue);
-        const newTime = TimeUtils.toMinutes(val);
         const colIdx = table.stops.indexOf(stopName);
 
         if (logAction && oldValue !== val) {
@@ -294,7 +315,12 @@ export function useScheduleEditing(
         if (isArrivalEdit) {
             trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, stopName, val);
             if (cascadeMode !== 'none') {
-                trip.stops = setTripStopValue(trip.stops, stopName, val);
+                const recoveryAtStop = getTripStopValue(trip.recoveryTimes, stopName) || 0;
+                trip.stops = setTripStopValue(
+                    trip.stops,
+                    stopName,
+                    recoveryAtStop > 0 ? TimeUtils.addMinutes(val, recoveryAtStop) : val,
+                );
             }
         } else {
             trip.stops = setTripStopValue(trip.stops, stopName, val);
@@ -319,8 +345,13 @@ export function useScheduleEditing(
             }
         }
 
-        if (cascadeMode !== 'none' && oldTime !== null && newTime !== null && colIdx !== -1) {
-            const delta = newTime - oldTime;
+        const acceptedValue = isArrivalEdit
+            ? getTripStopValue(trip.arrivalTimes, stopName)
+            : getDisplayedDepartureAtStop(trip, stopName);
+        const acceptedTime = TimeUtils.toMinutes(acceptedValue);
+
+        if (cascadeMode !== 'none' && oldTime !== null && acceptedTime !== null && colIdx !== -1) {
+            const delta = getClockDelta(oldTime, acceptedTime);
             if (delta !== 0) {
                 for (let i = colIdx + 1; i < table.stops.length; i++) {
                     const nextStop = table.stops[i];
@@ -341,16 +372,21 @@ export function useScheduleEditing(
             }
         }
 
+        const terminalStopWasUpdatedAsDeparture = colIdx === table.stops.length - 1
+            && (!isArrivalEdit || cascadeMode !== 'none');
+        if (terminalStopWasUpdatedAsDeparture) trip.endTimeIncludesRecovery = true;
+
         const oldEndTime = trip.endTime;
         recalculateTrip(trip, table.stops);
         const newEndTime = trip.endTime;
         const deltaEnd = newEndTime - oldEndTime;
         const baseName = getTrueBaseRoute(table.routeName);
+        const serviceDay = getServiceDay(table.routeName);
 
         const shouldCascadeWholeBlock = cascadeMode === 'always' || (isMergedRouteBase(baseName) && cascadeMode !== 'none');
 
         if (deltaEnd !== 0 && shouldCascadeWholeBlock) {
-            const allBlockTrips = getOrderedBlockTrips(newScheds, baseName, trip.blockId);
+            const allBlockTrips = getOrderedBlockTrips(newScheds, baseName, trip.blockId, serviceDay);
             const startIdx = allBlockTrips.findIndex(item => item.trip.id === trip.id);
 
             if (startIdx !== -1) {
@@ -360,12 +396,12 @@ export function useScheduleEditing(
                 }
             }
         } else if (deltaEnd !== 0 && cascadeMode === 'within-trip') {
-            cascadeWithinRoundTripRow(newScheds, trip, baseName, deltaEnd);
+            cascadeWithinRoundTripRow(newScheds, trip, baseName, serviceDay, deltaEnd);
         }
 
         newScheds.forEach(t => validateRouteTable(t));
         if (!isMergedRouteBase(baseName)) {
-            reassignBlocksForRelatedTables(newScheds, baseName);
+            reassignBlocksForRelatedTables(newScheds, baseName, serviceDay);
         }
         onSchedulesChange(newScheds);
         onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
@@ -391,6 +427,18 @@ export function useScheduleEditing(
         trip.recoveryTimes = setTripStopValue(trip.recoveryTimes, stopName, newRec);
         trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
 
+        const arrivalAtEditedStop = getTripStopValue(trip.arrivalTimes, stopName);
+        const arrivalMinutes = TimeUtils.toMinutes(arrivalAtEditedStop);
+        if (arrivalMinutes !== null) {
+            trip.stops = setTripStopValue(trip.stops, stopName, TimeUtils.fromMinutes(arrivalMinutes + newRec));
+        } else {
+            const departureMinutes = TimeUtils.toMinutes(getTripStopValue(trip.stops, stopName));
+            if (departureMinutes !== null) {
+                trip.stops = setTripStopValue(trip.stops, stopName, TimeUtils.fromMinutes(departureMinutes + actualDelta));
+            }
+        }
+        if (isTerminalRecoveryEdit) trip.endTimeIncludesRecovery = true;
+
         if (!isTerminalRecoveryEdit && cascadeMode !== 'none') {
             for (let i = stopIdx + 1; i < table.stops.length; i++) {
                 const nextStop = table.stops[i];
@@ -406,11 +454,12 @@ export function useScheduleEditing(
         recalculateTrip(trip, table.stops);
         validateRouteTable(table);
         const baseName = getTrueBaseRoute(table.routeName);
+        const serviceDay = getServiceDay(table.routeName);
 
         const shouldCascadeWholeBlock = cascadeMode === 'always' || (isMergedRouteBase(baseName) && cascadeMode !== 'none');
 
         if (actualDelta !== 0 && shouldCascadeWholeBlock) {
-            const allBlockTrips = getOrderedBlockTrips(newScheds, baseName, trip.blockId);
+            const allBlockTrips = getOrderedBlockTrips(newScheds, baseName, trip.blockId, serviceDay);
             const startIdx = allBlockTrips.findIndex(item => item.trip.id === trip.id);
 
             if (startIdx !== -1) {
@@ -420,11 +469,11 @@ export function useScheduleEditing(
                 }
             }
         } else if (actualDelta !== 0 && cascadeMode === 'within-trip') {
-            cascadeWithinRoundTripRow(newScheds, trip, baseName, actualDelta);
+            cascadeWithinRoundTripRow(newScheds, trip, baseName, serviceDay, actualDelta);
         }
 
         if (!isTerminalRecoveryEdit && !isMergedRouteBase(baseName)) {
-            reassignBlocksForRelatedTables(newScheds, baseName);
+            reassignBlocksForRelatedTables(newScheds, baseName, serviceDay);
         }
         onSchedulesChange(newScheds);
         onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
@@ -489,11 +538,13 @@ export function useScheduleEditing(
         if (!result) return;
 
         const { table, trip } = result;
+        const newLineageId = createTripLineageId();
+        const duplicateToken = newLineageId.replace(/[^a-zA-Z0-9_-]/g, '-');
 
         const newTrip: MasterTrip = {
             ...JSON.parse(JSON.stringify(trip)),
-            id: `${trip.id}-dup-${Date.now()}`,
-            lineageId: createTripLineageId(),
+            id: `${trip.id}-dup-${duplicateToken}`,
+            lineageId: newLineageId,
             deltaSourceTripId: undefined,
             deltaSourceLineageId: undefined,
             deltaSourceRouteName: undefined,
@@ -507,19 +558,31 @@ export function useScheduleEditing(
             if (newTrip.stops[stop]) {
                 newTrip.stops[stop] = TimeUtils.addMinutes(newTrip.stops[stop], 1);
             }
+        });
+        Object.keys(newTrip.arrivalTimes || {}).forEach(stop => {
             if (newTrip.arrivalTimes?.[stop]) {
                 newTrip.arrivalTimes[stop] = TimeUtils.addMinutes(newTrip.arrivalTimes[stop], 1);
             }
+        });
+        Object.keys(newTrip.stopMinutes || {}).forEach(stop => {
+            if (newTrip.stopMinutes?.[stop] !== undefined) newTrip.stopMinutes[stop] += 1;
         });
 
         const tripIndex = table.trips.findIndex(t => t.id === tripId);
         table.trips.splice(tripIndex + 1, 0, newTrip);
 
-        table.trips.sort((a, b) => a.startTime - b.startTime);
+        table.trips.sort((a, b) => (
+            getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+            || a.id.localeCompare(b.id)
+        ));
         table.trips.forEach((t, i) => { t.tripNumber = i + 1; });
 
         validateRouteTable(table);
-        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
+        reassignBlocksForRelatedTables(
+            newScheds,
+            getTrueBaseRoute(table.routeName),
+            getServiceDay(table.routeName),
+        );
 
         if (logAction) {
             logAction('add', `Duplicated trip from Block ${newTrip.blockId || 'new'}`, {

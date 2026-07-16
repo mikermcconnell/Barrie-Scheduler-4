@@ -14,6 +14,11 @@ import { buildRouteIdentity } from '../masterScheduleTypes';
 import type { DraftSchedule, SystemDraftRoute } from '../schedule/scheduleTypes';
 import type { DayType, MasterScheduleContent, MasterScheduleEntry, RouteIdentity } from '../masterScheduleTypes';
 import { assessDraftFreshness, buildScheduleReview, type DraftFreshness } from '../schedule/scheduleReview';
+import {
+    getLatestScheduleReviewForDraft,
+    loadScheduleReviewPayload,
+    scheduleReviewContentMatches,
+} from './scheduleReviewService';
 
 export interface PublishDraftParams {
     teamId: string;
@@ -71,20 +76,52 @@ export const publishDraft = async ({
         throw new Error('Draft contains blocking schedule issues and cannot be published.');
     }
 
-    const routeNumber = draft.routeNumber || draft.content.metadata?.routeNumber;
-    const dayType = (draft.dayType || draft.content.metadata?.dayType) as DayType;
+    const contentRouteNumber = draft.content.metadata?.routeNumber?.trim();
+    const contentDayType = draft.content.metadata?.dayType;
+    const topLevelRouteNumber = draft.routeNumber?.trim();
+    const topLevelDayType = draft.dayType;
 
-    if (!routeNumber || !dayType) {
+    if (!contentRouteNumber || !contentDayType) {
         throw new Error('Draft routeNumber and dayType are required to publish.');
+    }
+    if (topLevelRouteNumber && topLevelRouteNumber !== contentRouteNumber) {
+        throw new Error('Draft routeNumber does not match its schedule content.');
+    }
+    if (topLevelDayType && topLevelDayType !== contentDayType) {
+        throw new Error('Draft dayType does not match its schedule content.');
+    }
+    if (!(['Weekday', 'Saturday', 'Sunday'] as string[]).includes(contentDayType)) {
+        throw new Error('Draft dayType is invalid.');
+    }
+
+    const routeNumber = contentRouteNumber;
+    const dayType = contentDayType as DayType;
+
+    if (draft.basedOn?.type === 'master' && !draft.basedOn.sourceVersion) {
+        throw new Error('Master-derived draft is missing its source version. Start from the latest master schedule.');
+    }
+    if (!draft.id) {
+        throw new Error('Draft ID is required to verify review status.');
+    }
+    const latestReview = await getLatestScheduleReviewForDraft(teamId, draft.id);
+    if (!latestReview || (latestReview.status !== 'ready_for_review' && latestReview.status !== 'approved')) {
+        throw new Error('Draft does not have a current review snapshot and cannot be published.');
+    }
+    const reviewedPayload = await loadScheduleReviewPayload(latestReview);
+    if (!scheduleReviewContentMatches(reviewedPayload.schedule, draft.content)) {
+        throw new Error('Draft changed after its latest review snapshot. Submit it for review again before publishing.');
+    }
+    const expectedReviewSourceVersion = draft.basedOn?.type === 'master'
+        ? draft.basedOn.sourceVersion
+        : 0;
+    if (expectedReviewSourceVersion === undefined || latestReview.sourceVersion !== expectedReviewSourceVersion) {
+        throw new Error('Draft review snapshot does not match its source master version. Submit it for review again.');
     }
 
     const routeIdentity = buildRouteIdentity(routeNumber, dayType);
     let expectedCurrentVersion: number | undefined;
     let expectedSource: { teamId: string; routeIdentity: RouteIdentity; version: number } | undefined;
     if (draft.basedOn?.type === 'master') {
-        if (!draft.basedOn.sourceVersion) {
-            throw new Error('Master-derived draft is missing its source version. Start from the latest master schedule.');
-        }
         const sourceRouteIdentity = (draft.basedOn.id || routeIdentity) as RouteIdentity;
         if (sourceRouteIdentity !== routeIdentity) {
             throw new Error('Draft source route does not match the route being published.');
@@ -111,7 +148,9 @@ export const publishDraft = async ({
             expectedSource = {
                 teamId: sourceTeamId,
                 routeIdentity: sourceRouteIdentity,
-                version: draft.basedOn.sourceVersion,
+                version: allowStaleSource
+                    ? currentMaster!.currentVersion
+                    : draft.basedOn.sourceVersion,
             };
         }
     }

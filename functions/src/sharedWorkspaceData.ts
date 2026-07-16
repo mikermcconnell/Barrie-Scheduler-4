@@ -2,6 +2,7 @@ import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import type {
   DailySummary,
+  LoadProfileMonthlyView,
   PerformanceDataLoadOptions,
   PerformanceDataSummary,
   PerformanceDetailMode,
@@ -9,6 +10,11 @@ import type {
 } from './types';
 import { PERFORMANCE_SCHEMA_VERSION } from './types';
 import { filterPerformanceSummaryByRoute } from './performanceRouteFilter';
+import {
+  buildLoadProfilePeakTrips,
+  hydrateLoadProfileMonthlyViews,
+  isLoadProfileMonthlyView,
+} from './performanceLoadProfileView';
 
 type SharedWorkspace =
   | 'transitAppMetadata'
@@ -117,6 +123,52 @@ export function canReadOperatorDwell(
   return accessLevel === 'admin' || accessLevel === 'internal';
 }
 
+export function canReadLoadProfiles(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  if (!member) return false;
+  const accessLevel = typeof member.accessLevel === 'string'
+    ? member.accessLevel
+    : (member.role === 'owner' || member.role === 'admin' ? 'internal' : 'planner');
+  const operationsOverride = member.workspaceOverrides?.workspaceOperations;
+  const loadProfilesOverride = member.workspaceOverrides?.operationsLoadProfiles;
+  const operationsAllowed = typeof operationsOverride === 'boolean'
+    ? operationsOverride
+    : ['production', 'planner', 'admin', 'internal'].includes(accessLevel);
+  const loadProfilesAllowed = typeof loadProfilesOverride === 'boolean'
+    ? loadProfilesOverride
+    : accessLevel === 'admin' || accessLevel === 'internal';
+  return operationsAllowed && loadProfilesAllowed;
+}
+
+async function assertCanReadLoadProfiles(
+  uid: string,
+  requestingTeamId: string,
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): Promise<void> {
+  if (decoded.schedulerAdmin !== true) {
+    if (!canReadLoadProfiles(member, decoded)) {
+      throw Object.assign(new Error('Load Profiles access is required.'), { status: 403 });
+    }
+    return;
+  }
+
+  if (member) return;
+  const supportSnap = await getDb().doc(`developerSupportSessions/${uid}`).get();
+  const support = supportSnap.data();
+  const expiresAtMs = support?.expiresAt?.toMillis?.();
+  if (!supportSnap.exists
+      || support?.teamId !== requestingTeamId
+      || (support?.mode !== 'inspect' && support?.mode !== 'edit')
+      || typeof expiresAtMs !== 'number'
+      || expiresAtMs <= Date.now()) {
+    throw Object.assign(new Error('An active support session for this team is required.'), { status: 403 });
+  }
+}
+
 export function redactOperatorDwellEvidence(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const summary = value as PerformanceDataSummary;
@@ -167,6 +219,7 @@ function normalizePerformanceMetadata(data: admin.firestore.DocumentData): Perfo
     routeStoragePaths: readStringRecord(data.routeStoragePaths),
     monthlyStoragePaths: readStringRecord(data.monthlyStoragePaths),
     routeMonthlyStoragePaths: readNestedStringRecord(data.routeMonthlyStoragePaths),
+    loadProfileMonthlyStoragePaths: readStringRecord(data.loadProfileMonthlyStoragePaths),
   };
 }
 
@@ -190,6 +243,37 @@ function isDateRange(value: unknown): value is { start: string; end: string } {
     && !Array.isArray(value)
     && typeof (value as { start?: unknown }).start === 'string'
     && typeof (value as { end?: unknown }).end === 'string';
+}
+
+function isStrictDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+export function assertValidLoadProfilesRequest(payload: SharedWorkspacePayload): void {
+  if (payload.routeId !== undefined && payload.routeId !== null) {
+    if (typeof payload.routeId !== 'string'
+        || !/^(all|[A-Za-z0-9][A-Za-z0-9 ._/-]{0,31})$/.test(payload.routeId)) {
+      throw Object.assign(new Error('Load Profiles route is invalid.'), { status: 400 });
+    }
+  }
+
+  if (payload.dateRange === undefined) {
+    throw Object.assign(new Error('Load Profiles requires a bounded date range.'), { status: 400 });
+  }
+  if (!isDateRange(payload.dateRange)
+      || !isStrictDate(payload.dateRange.start)
+      || !isStrictDate(payload.dateRange.end)
+      || payload.dateRange.start > payload.dateRange.end) {
+    throw Object.assign(new Error('Load Profiles dates must be a valid start and end date.'), { status: 400 });
+  }
+  const startMs = Date.parse(`${payload.dateRange.start}T00:00:00.000Z`);
+  const endMs = Date.parse(`${payload.dateRange.end}T00:00:00.000Z`);
+  const inclusiveDays = Math.floor((endMs - startMs) / 86_400_000) + 1;
+  if (inclusiveDays > 120) {
+    throw Object.assign(new Error('Load Profiles date ranges cannot exceed 120 days.'), { status: 400 });
+  }
 }
 
 function dateInRange(date: string, range?: { start: string; end: string }): boolean {
@@ -220,6 +304,7 @@ export function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailM
     ...day,
     byStop: [],
     byTrip: [],
+    loadProfilePeakTrips: undefined,
     loadProfiles: [],
     ridershipHeatmaps: undefined,
     byOperatorDwell: undefined,
@@ -252,7 +337,13 @@ export function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailM
         missedTrips: trimMissedTrips(day, false),
       };
     case 'load-profiles':
-      return { ...base, loadProfiles: day.loadProfiles, missedTrips: trimMissedTrips(day, false) };
+      return {
+        ...base,
+        loadProfilePeakTrips: day.loadProfilePeakTrips ?? buildLoadProfilePeakTrips(day.byTrip),
+        loadProfiles: day.loadProfiles,
+        runtimePatterns: undefined,
+        missedTrips: trimMissedTrips(day, false),
+      };
     case 'operator-dwell':
       return {
         ...base,
@@ -365,6 +456,73 @@ async function loadMonthlyPerformanceSummary(
   );
 }
 
+function routeMatches(routeId: string | undefined, selectedRouteId: string): boolean {
+  const normalizedRouteId = (routeId || '').trim().toUpperCase();
+  const normalizedSelectedRouteId = selectedRouteId.trim().toUpperCase();
+  if (normalizedRouteId === normalizedSelectedRouteId) return true;
+  const match = normalizedRouteId.match(/^(2|7|12)[AB]$/);
+  return !!match && match[1] === normalizedSelectedRouteId;
+}
+
+async function loadLoadProfileMonthlyView(
+  sourceTeamId: string,
+  metadata: PerformanceMetadata,
+  routeId?: string | null,
+  options?: PerformanceDataLoadOptions,
+): Promise<PerformanceDataSummary | null> {
+  const paths = metadata.loadProfileMonthlyStoragePaths;
+  if (!paths || Object.keys(paths).length === 0) return null;
+
+  const months = Object.keys(paths)
+    .filter(month => monthOverlapsRange(month, options?.dateRange))
+    .sort();
+  if (months.length === 0) {
+    return hydrateLoadProfileMonthlyViews([], {
+      ...metadata,
+      dateRange: options?.dateRange ?? metadata.dateRange,
+      dayCount: 0,
+      totalRecords: 0,
+    });
+  }
+
+  const expectedPrefix = `teams/${sourceTeamId}/performanceViews/load-profiles/`;
+  for (const month of months) {
+    const path = paths[month];
+    if (!/^\d{4}-\d{2}$/.test(month)
+        || !path.startsWith(expectedPrefix)
+        || !/^\d+-\d{4}-\d{2}\.json$/.test(path.slice(expectedPrefix.length))) {
+      throw new Error('Stored Load Profiles view path is invalid.');
+    }
+  }
+
+  const downloaded = await Promise.all(
+    months.map(async month => ({
+      month,
+      view: await readStorageJson<unknown>(paths[month]),
+    })),
+  );
+  if (downloaded.some(({ month, view }) => !isLoadProfileMonthlyView(view) || view.month !== month)) {
+    throw new Error('Stored Load Profiles view has an unsupported or invalid schema.');
+  }
+
+  const selectedRouteId = routeId && routeId !== 'all' ? routeId : null;
+  const views = downloaded.map(({ view }) => ({
+    ...(view as LoadProfileMonthlyView),
+    dailySummaries: (view as LoadProfileMonthlyView).dailySummaries
+      .filter(day => dateInRange(day.date, options?.dateRange))
+      .map(day => ({
+        ...day,
+        loadProfiles: selectedRouteId
+          ? day.loadProfiles.filter(profile => routeMatches(profile.routeId, selectedRouteId))
+          : day.loadProfiles,
+        loadProfilePeakTrips: selectedRouteId
+          ? day.loadProfilePeakTrips.filter(trip => routeMatches(trip.routeId, selectedRouteId))
+          : day.loadProfilePeakTrips,
+      })),
+  }));
+  return hydrateLoadProfileMonthlyViews(views, metadata);
+}
+
 async function getPerformanceData(
   sourceTeamId: string,
   routeId?: string | null,
@@ -372,6 +530,12 @@ async function getPerformanceData(
 ): Promise<PerformanceDataSummary | null> {
   const metadata = await getPerformanceMetadata(sourceTeamId);
   if (!metadata) return null;
+
+  if (options?.detailMode === 'load-profiles'
+      && metadata.loadProfileMonthlyStoragePaths
+      && Object.keys(metadata.loadProfileMonthlyStoragePaths).length > 0) {
+    return loadLoadProfileMonthlyView(sourceTeamId, metadata, routeId, options);
+  }
 
   const monthlySummary = metadata.monthlyStoragePaths
     ? await loadMonthlyPerformanceSummary(metadata, routeId, options)
@@ -457,6 +621,17 @@ export const sharedWorkspaceData = onRequest(
         && payload.detailMode === 'operator-dwell';
       if (operatorDwellRequested && !operatorDwellAllowed) {
         throw Object.assign(new Error('Dwell Incident Review access is required.'), { status: 403 });
+      }
+      const loadProfilesRequested = payload.workspace === 'performanceData'
+        && payload.detailMode === 'load-profiles';
+      if (loadProfilesRequested) {
+        assertValidLoadProfilesRequest(payload);
+        await assertCanReadLoadProfiles(
+          decoded.uid,
+          payload.requestingTeamId,
+          requestingMember,
+          decoded,
+        );
       }
 
       const loadedData = await loadWorkspaceData({

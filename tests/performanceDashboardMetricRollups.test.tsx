@@ -8,16 +8,16 @@ vi.mock('../components/Analytics/AnalyticsShared', () => ({
   ChartCard: ({ title, children }: { title: string; children?: React.ReactNode }) => <section><h3>{title}</h3>{children}</section>,
 }));
 
-vi.mock('../components/Performance/RidershipHeatmapSection', () => ({ RidershipHeatmapSection: () => null }));
-vi.mock('../components/Performance/StopActivityMap', () => ({ StopActivityMap: () => null }));
-vi.mock('../components/Performance/TodPickupSection', () => ({ TodPickupSection: () => null }));
+vi.mock('../components/Performance/RidershipHeatmapSection', () => ({ RidershipHeatmapSection: (): null => null }));
+vi.mock('../components/Performance/StopActivityMap', () => ({ StopActivityMap: (): null => null }));
+vi.mock('../components/Performance/TodPickupSection', () => ({ TodPickupSection: (): null => null }));
 
 vi.mock('recharts', () => {
   const Chart = ({ data, children }: { data?: unknown; children?: React.ReactNode }) => (
     <div data-chart={data ? JSON.stringify(data) : undefined}>{children}</div>
   );
   const Pass = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
-  const Empty = () => null;
+  const Empty = (): null => null;
   return {
     AreaChart: Chart, BarChart: Chart, LineChart: Chart, ScatterChart: Chart, ComposedChart: Chart,
     ResponsiveContainer: Pass, Area: Pass, Bar: Pass,

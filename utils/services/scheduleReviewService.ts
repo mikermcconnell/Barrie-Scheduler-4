@@ -9,6 +9,7 @@ import {
     serverTimestamp,
     setDoc,
     updateDoc,
+    where,
 } from 'firebase/firestore';
 import {
     deleteObject,
@@ -282,6 +283,28 @@ export const listScheduleReviews = async (
     return snapshot.docs.map(review => parseMetadata(review.id, review.data()));
 };
 
+/**
+ * Returns the newest review created for one draft. Filtering by draft ID first
+ * avoids relying on the bounded team-wide review list at the publish boundary.
+ */
+export const getLatestScheduleReviewForDraft = async (
+    teamIdInput: string,
+    draftIdInput: string,
+): Promise<ScheduleReviewMetadata | null> => {
+    const teamId = assertDocumentId(teamIdInput, 'Team ID');
+    const draftId = assertDocumentId(draftIdInput, 'Draft ID');
+    const snapshot = await getDocs(query(
+        collection(db, 'teams', teamId, REVIEWS_COLLECTION),
+        where('draftId', '==', draftId),
+    ));
+    const reviews = snapshot.docs.map(review => parseMetadata(review.id, review.data()));
+    reviews.sort((left, right) => {
+        const createdDifference = right.createdAt.getTime() - left.createdAt.getTime();
+        return createdDifference !== 0 ? createdDifference : right.id.localeCompare(left.id);
+    });
+    return reviews[0] ?? null;
+};
+
 export const loadScheduleReviewPayload = async (
     metadata: Pick<ScheduleReviewMetadata,
         'teamId' | 'id' | 'createdBy' | 'storagePath' | 'payloadBytes'
@@ -320,6 +343,41 @@ export const loadScheduleReviewPayload = async (
         throw new Error('Schedule review payload does not match its metadata.');
     }
     return payload;
+};
+
+const canonicalizeJsonValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+        return value.map(item => canonicalizeJsonValue(item));
+    }
+    if (value && typeof value === 'object') {
+        if (value instanceof Date) return value.toJSON();
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+                .filter(([, item]) => item !== undefined)
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([key, item]) => [key, canonicalizeJsonValue(item)]),
+        );
+    }
+    return value;
+};
+
+export const scheduleReviewContentMatches = (
+    reviewedSchedule: MasterScheduleContent,
+    draftSchedule: MasterScheduleContent,
+): boolean => {
+    // uploadedAt is regenerated whenever editor tables are serialized. It is
+    // storage metadata, not schedule content, so it must not invalidate an
+    // otherwise identical immutable review snapshot.
+    const withoutGeneratedTimestamp = (schedule: MasterScheduleContent): MasterScheduleContent => ({
+        ...schedule,
+        metadata: {
+            ...schedule.metadata,
+            uploadedAt: '',
+        },
+    });
+
+    return JSON.stringify(canonicalizeJsonValue(withoutGeneratedTimestamp(reviewedSchedule)))
+        === JSON.stringify(canonicalizeJsonValue(withoutGeneratedTimestamp(draftSchedule)));
 };
 
 export const updateScheduleReviewStatus = async (

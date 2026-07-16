@@ -77,10 +77,18 @@ vi.mock('../components/contexts/ToastContext', () => ({
 
 vi.mock('../components/ScheduleEditor', () => ({
   ScheduleEditor: (props: any) => (
-    <div data-testid="editor-shell" data-status={props.autoSaveStatus} data-unsaved={String(props.hasUnsavedChanges)}>
+    <div
+      data-testid="editor-shell"
+      data-status={props.autoSaveStatus}
+      data-unsaved={String(props.hasUnsavedChanges)}
+      data-include-removed={String(props.includeRemovedMasterTripsWhenFiltered)}
+      data-draft-name={props.draftName}
+    >
       <button data-testid="change" onClick={() => props.onSchedulesChange?.(changedSchedules)}>change</button>
       <button data-testid="save" onClick={() => void props.onSaveVersion?.()}>save</button>
       <button data-testid="publish" onClick={() => void (props.onReviewChanges ?? props.onPublish)?.()}>publish</button>
+      <button data-testid="close" onClick={() => void props.onClose?.()}>close</button>
+      <button data-testid="duplicate" onClick={() => void props.onDuplicateDraft?.()}>duplicate</button>
     </div>
   ),
 }));
@@ -228,6 +236,7 @@ describe('ScheduleEditorWorkspace', () => {
   it('blocks publish when the latest draft save fails', async () => {
     saveDraftMock
       .mockResolvedValueOnce('draft-1')
+      .mockResolvedValueOnce('draft-1')
       .mockRejectedValueOnce(new Error('save failed'));
     renderWorkspace();
 
@@ -260,7 +269,10 @@ describe('ScheduleEditorWorkspace', () => {
       draftId: 'draft-1',
       plannerNote: 'Test schedule changes',
     }));
-    expect(toast.error).toHaveBeenCalledWith('Publish Failed', 'Save the draft successfully before publishing.');
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith(
+      'Publish Failed',
+      'Save the draft successfully before publishing.',
+    ));
   });
 
   it('blocks publish for team members without manage permissions', async () => {
@@ -310,5 +322,262 @@ describe('ScheduleEditorWorkspace', () => {
     );
     const confirmPublish = container?.querySelector('aside footer button:last-child') as HTMLButtonElement;
     expect(confirmPublish.disabled).toBe(true);
+  });
+
+  it('serializes overlapping saves and reuses the ID created by the first save', async () => {
+    let resolveFirstSave!: (draftId: string) => void;
+    saveDraftMock
+      .mockReturnValueOnce(new Promise<string>(resolve => { resolveFirstSave = resolve; }))
+      .mockResolvedValueOnce('created-draft');
+    renderWorkspace({
+      currentDraftId: undefined,
+      currentDraftName: undefined,
+      basedOn: { type: 'master', id: '10-Weekday', sourceVersion: 1 },
+    });
+
+    await vi.waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1));
+    container?.querySelector('[data-testid="save"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    expect(saveDraftMock).toHaveBeenCalledTimes(1);
+
+    resolveFirstSave('created-draft');
+    await vi.waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2));
+    expect(saveDraftMock).toHaveBeenNthCalledWith(
+      2,
+      'user-1',
+      expect.objectContaining({ id: 'created-draft' }),
+    );
+  });
+
+  it('does not rename the current draft when duplicate creation fails', async () => {
+    saveDraftMock.mockRejectedValueOnce(new Error('duplicate failed'));
+    renderWorkspace();
+
+    container?.querySelector('[data-testid="duplicate"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith(
+      'Duplicate Failed',
+      'Unable to duplicate the current draft.',
+    ));
+
+    expect(saveDraftMock).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ id: undefined, name: 'Existing Draft (Copy)' }),
+    );
+    expect(container?.querySelector('[data-testid="editor-shell"]')?.getAttribute('data-draft-name'))
+      .toBe('Existing Draft');
+  });
+
+  it('does not persist ready-for-review status when snapshot creation fails', async () => {
+    saveDraftMock.mockResolvedValue('draft-1');
+    createScheduleReviewMock.mockRejectedValueOnce(new Error('snapshot failed'));
+    renderWorkspace();
+
+    container?.querySelector('[data-testid="publish"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    const readyForReview = Array.from(container?.querySelectorAll('button') ?? [])
+      .find(button => button.textContent?.includes('Ready for review'));
+    readyForReview?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith(
+      'Review Submission Failed',
+      'Unable to create the team review snapshot.',
+    ));
+    expect(saveDraftMock).toHaveBeenCalledTimes(1);
+    expect(saveDraftMock).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ status: 'draft' }),
+    );
+  });
+
+  it('guards review submission against double clicks before the save finishes', async () => {
+    let resolveSave!: (draftId: string) => void;
+    saveDraftMock.mockReturnValueOnce(new Promise<string>(resolve => { resolveSave = resolve; }));
+    renderWorkspace();
+    container?.querySelector('[data-testid="publish"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    const readyForReview = Array.from(container?.querySelectorAll('button') ?? [])
+      .find(button => button.textContent?.includes('Ready for review'));
+    readyForReview?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    readyForReview?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(saveDraftMock).toHaveBeenCalledTimes(1);
+    resolveSave('draft-1');
+    await flushPromises();
+  });
+
+  it('guards publishing against double clicks while the pre-publish save is pending', async () => {
+    let resolvePublishSave!: (draftId: string) => void;
+    saveDraftMock
+      .mockResolvedValueOnce('draft-1')
+      .mockResolvedValueOnce('draft-1')
+      .mockReturnValueOnce(new Promise<string>(resolve => { resolvePublishSave = resolve; }))
+      .mockResolvedValueOnce('draft-1');
+    publishDraftMock.mockResolvedValue({ routeIdentity: '10-Weekday' });
+    renderWorkspace();
+
+    container?.querySelector('[data-testid="publish"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    const note = container?.querySelector('#schedule-review-publish-note') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    valueSetter?.call(note, 'Reviewed PM change');
+    note.dispatchEvent(new Event('input', { bubbles: true }));
+    const readyForReview = Array.from(container?.querySelectorAll('button') ?? [])
+      .find(button => button.textContent?.includes('Ready for review'));
+    readyForReview?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    const confirmPublish = container?.querySelector('aside footer button:last-child') as HTMLButtonElement;
+    await vi.waitFor(() => expect(confirmPublish.disabled).toBe(false));
+    confirmPublish.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    confirmPublish.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    expect(saveDraftMock).toHaveBeenCalledTimes(3);
+    expect(publishDraftMock).not.toHaveBeenCalled();
+
+    resolvePublishSave('draft-1');
+    await vi.waitFor(() => expect(publishDraftMock).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(4));
+    expect(saveDraftMock).toHaveBeenLastCalledWith(
+      'user-1',
+      expect.objectContaining({ status: 'draft' }),
+    );
+  });
+
+  it('waits for a successful save before closing the editor', async () => {
+    let resolveSave!: (draftId: string) => void;
+    const onClose = vi.fn();
+    saveDraftMock.mockReturnValueOnce(new Promise<string>(resolve => { resolveSave = resolve; }));
+    renderWorkspace({ onClose });
+
+    container?.querySelector('[data-testid="close"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    expect(onClose).not.toHaveBeenCalled();
+
+    resolveSave('draft-1');
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it('saves edits made during the first navigation save before closing', async () => {
+    let resolveFirstSave!: (draftId: string) => void;
+    let resolveSecondSave!: (draftId: string) => void;
+    const onClose = vi.fn();
+    saveDraftMock
+      .mockReturnValueOnce(new Promise<string>(resolve => { resolveFirstSave = resolve; }))
+      .mockReturnValueOnce(new Promise<string>(resolve => { resolveSecondSave = resolve; }));
+    renderWorkspace({ onClose });
+
+    container?.querySelector('[data-testid="close"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await vi.waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1));
+    flushSync(() => {
+      container?.querySelector('[data-testid="change"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    resolveFirstSave('draft-1');
+
+    await vi.waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2));
+    expect(onClose).not.toHaveBeenCalled();
+    resolveSecondSave('draft-1');
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it('preserves source metadata and a stable uploaded timestamp across saves', async () => {
+    saveDraftMock.mockResolvedValue('draft-1');
+    renderWorkspace({
+      initialContent: {
+        ...initialContent,
+        metadata: {
+          ...initialContent.metadata,
+          cycleMode: 'Floating',
+          effectiveDate: '2026-09-01',
+          notes: 'Fall service',
+        },
+      } as any,
+    });
+
+    const saveButton = container?.querySelector('[data-testid="save"]');
+    saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await vi.waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2));
+
+    const firstMetadata = saveDraftMock.mock.calls[0][1].content.metadata;
+    const secondMetadata = saveDraftMock.mock.calls[1][1].content.metadata;
+    expect(firstMetadata).toMatchObject({
+      uploadedAt: '2026-03-11T10:00:00Z',
+      cycleMode: 'Floating',
+      effectiveDate: '2026-09-01',
+      notes: 'Fall service',
+    });
+    expect(secondMetadata).toEqual(firstMetadata);
+  });
+
+  it('warns on browser or tab close while schedule changes are unsaved', async () => {
+    saveDraftMock.mockResolvedValue('draft-1');
+    renderWorkspace();
+    await flushPromises();
+    flushSync(() => {
+      container?.querySelector('[data-testid="change"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(
+      container?.querySelector('[data-testid="editor-shell"]')?.getAttribute('data-unsaved')
+    ).toBe('true'));
+
+    const dirtyUnload = new Event('beforeunload', { cancelable: true });
+    expect(window.dispatchEvent(dirtyUnload)).toBe(false);
+    expect(dirtyUnload.defaultPrevented).toBe(true);
+
+    container?.querySelector('[data-testid="save"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await vi.waitFor(() => expect(
+      container?.querySelector('[data-testid="editor-shell"]')?.getAttribute('data-unsaved')
+    ).toBe('false'));
+    const savedUnload = new Event('beforeunload', { cancelable: true });
+    expect(window.dispatchEvent(savedUnload)).toBe(true);
+    expect(savedUnload.defaultPrevented).toBe(false);
+  });
+
+  it('includes removed master rows when the changed-only filter is active', async () => {
+    saveDraftMock.mockResolvedValue('draft-1');
+    renderWorkspace({
+      currentDraftId: undefined,
+      basedOn: { type: 'master', id: '10-Weekday', sourceVersion: 1 },
+      initialContent: {
+        ...initialContent,
+        northTable: {
+          ...initialContent.northTable,
+          trips: [{
+            id: 'removed-trip', blockId: '10-1', direction: 'North', tripNumber: 1, rowId: 1,
+            startTime: 360, endTime: 390, recoveryTime: 5, travelTime: 30, cycleTime: 35,
+            stops: { 'Stop 1': '6:00 AM' }, stopMinutes: { 'Stop 1': 360 },
+          }],
+        },
+      } as any,
+    });
+    flushSync(() => {
+      container?.querySelector('[data-testid="change"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    container?.querySelector('[data-testid="publish"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    let changedOnlyButton: Element | undefined;
+    await vi.waitFor(() => {
+      changedOnlyButton = Array.from(container?.querySelectorAll('button') ?? [])
+        .find(button => button.textContent?.includes('Changed rows only'));
+      expect(changedOnlyButton).toBeTruthy();
+    });
+    changedOnlyButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(container?.querySelector('[data-testid="editor-shell"]')?.getAttribute('data-include-removed'))
+      .toBe('true');
   });
 });

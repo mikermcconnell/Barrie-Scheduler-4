@@ -81,6 +81,30 @@ describe('buildScheduleReview', () => {
         expect(review.publishReady).toBe(false);
     });
 
+    it('blocks publishing when the next trip starts during separate terminal recovery', () => {
+        const current = content(
+            [trip('north-recovery', 'North', 360, {
+                endTime: 390,
+                endTimeIncludesRecovery: false,
+                recoveryTime: 5,
+                recoveryTimes: { Terminal: 5 },
+                stopMinutes: { Terminal: 390 },
+            })],
+            [trip('south-overlap', 'South', 393, { blockId: '1' })],
+        );
+
+        const review = buildScheduleReview(current);
+
+        expect(review.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                kind: 'block-overlap',
+                severity: 'error',
+                message: expect.stringContaining('overlap by 2 min'),
+            }),
+        ]));
+        expect(review.publishReady).toBe(false);
+    });
+
     it('blocks publishing when trip or stop timing is impossible', () => {
         const current = content([
             trip('invalid', 'North', 400, {
@@ -92,6 +116,58 @@ describe('buildScheduleReview', () => {
         const review = buildScheduleReview(current);
         expect(review.issues).toEqual(expect.arrayContaining([
             expect.objectContaining({ kind: 'invalid-timing', severity: 'error' }),
+        ]));
+        expect(review.publishReady).toBe(false);
+    });
+
+    it('reviews legacy post-midnight block order using the 4:00 AM operational day', () => {
+        const current = content(
+            [trip('before-midnight', 'North', 1410, {
+                endTime: 1435,
+                blockId: 'night',
+                stopMinutes: { Terminal: 1435 },
+            })],
+            [trip('after-midnight', 'South', 20, {
+                startTime: 20,
+                endTime: 50,
+                blockId: 'night',
+                stopMinutes: { Terminal: 50 },
+            })],
+        );
+
+        const review = buildScheduleReview(current);
+
+        expect(review.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'block-overlap' }),
+        ]));
+        expect(review.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'invalid-timing' }),
+        ]));
+    });
+
+    it('detects an overlap that crosses midnight in legacy clock-minute data', () => {
+        const current = content(
+            [trip('before-midnight', 'North', 1410, {
+                endTime: 20,
+                blockId: 'night',
+                stopMinutes: { Terminal: 20 },
+                endTimeIncludesRecovery: true,
+            })],
+            [trip('after-midnight', 'South', 15, {
+                startTime: 15,
+                endTime: 45,
+                blockId: 'night',
+                stopMinutes: { Terminal: 45 },
+            })],
+        );
+
+        const review = buildScheduleReview(current);
+
+        expect(review.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                kind: 'block-overlap',
+                message: expect.stringContaining('overlap by 5 min'),
+            }),
         ]));
         expect(review.publishReady).toBe(false);
     });

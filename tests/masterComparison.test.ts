@@ -39,6 +39,51 @@ const makeTable = (
 });
 
 describe('buildMasterComparison', () => {
+    it('matches legacy post-midnight clock times to adjacent late-night master trips', () => {
+        const current = [makeTable('10 (North)', [
+            makeTrip('draft-after-midnight', 'North', 1, { endTime: 31 }),
+        ])];
+        const master = [makeTable('10 (North)', [
+            makeTrip('master-before-midnight', 'North', 1439, { endTime: 1469 }),
+        ])];
+
+        const detailed = buildDetailedMasterComparison(current, master);
+        const comparison = detailed.currentTripComparisons.get(
+            buildTripKey('North', 'draft-after-midnight', '10 (North)')
+        );
+
+        expect(comparison?.status).toBe('matched');
+        expect(comparison?.status === 'matched' ? comparison.masterTrip.id : null)
+            .toBe('master-before-midnight');
+        expect(detailed.removedMasterTrips).toHaveLength(0);
+    });
+
+    it('orders removed trips by service day and finds cross-midnight replacement hints', () => {
+        const current = [makeTable('10 (North)', [
+            makeTrip('possible-after-midnight', 'North', 20, { endTime: 50 }),
+        ])];
+        const master = [makeTable('10 (North)', [
+            makeTrip('removed-late-night', 'North', 120, { endTime: 150 }),
+            makeTrip('removed-evening', 'North', 1380, { endTime: 1410 }),
+            makeTrip('removed-near-midnight', 'North', 1430, { endTime: 1460 }),
+        ])];
+
+        const detailed = buildDetailedMasterComparison(current, master);
+
+        expect(detailed.removedMasterTrips.map(entry => entry.masterTrip.id)).toEqual([
+            'removed-evening',
+            'removed-near-midnight',
+            'removed-late-night',
+        ]);
+        const nearMidnight = detailed.removedMasterTrips.find(
+            entry => entry.masterTrip.id === 'removed-near-midnight'
+        );
+        expect(nearMidnight?.possibleReplacements[0]).toEqual(expect.objectContaining({
+            currentTripId: 'possible-after-midnight',
+            diffMinutes: 30,
+        }));
+    });
+
     it('prefers exact same-direction trip IDs even when times drift outside fallback threshold', () => {
         const current = [
             makeTable('10 (North)', [makeTrip('1001', 'North', 380)]),

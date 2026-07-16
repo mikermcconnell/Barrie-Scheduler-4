@@ -46,6 +46,11 @@ const buildSchedules = (): MasterRouteTable[] => ([
           'Stop 2': '7:25 AM',
           'Stop 3': '8:00 AM',
         },
+        stopMinutes: {
+          'Stop 1': 420,
+          'Stop 2': 450,
+          'Stop 3': 480,
+        },
       },
       {
         id: 'north-trip-2',
@@ -101,8 +106,8 @@ const buildSchedules = (): MasterRouteTable[] => ([
   },
 ]) as any;
 
-const Harness: React.FC = () => {
-  const [schedules, setSchedules] = useState<MasterRouteTable[]>(buildSchedules());
+const Harness: React.FC<{ initialSchedules?: MasterRouteTable[] }> = ({ initialSchedules }) => {
+  const [schedules, setSchedules] = useState<MasterRouteTable[]>(initialSchedules ?? buildSchedules());
   const [cascadeMode, setCascadeMode] = useState<CascadeMode>('always');
   const { handleCellEdit, handleRecoveryEdit, handleDuplicateTrip } = useScheduleEditing(schedules, setSchedules, { cascadeMode });
 
@@ -119,6 +124,12 @@ const Harness: React.FC = () => {
       </button>
       <button data-testid="edit-departure-mid" onClick={() => handleCellEdit('north-trip', 'Stop 2', '7:33 AM')}>
         edit departure mid
+      </button>
+      <button data-testid="edit-departure-beyond-limit" onClick={() => handleCellEdit('north-trip', 'Stop 2', '9:30 AM')}>
+        edit departure beyond recovery limit
+      </button>
+      <button data-testid="edit-terminal-departure" onClick={() => handleCellEdit('north-trip', 'Stop 3', '8:03 AM')}>
+        edit terminal departure
       </button>
       <button data-testid="edit-recovery" onClick={() => handleRecoveryEdit('north-trip', 'Stop 2', 2)}>
         edit recovery
@@ -250,6 +261,22 @@ describe('useScheduleEditing cascade modes', () => {
     expect(laterNorthTrip.stops['Stop 1']).toBe('8:40 AM');
   });
 
+  it('preserves recovery when a cascading arrival edit moves the departure', () => {
+    const arrivalButton = container?.querySelector('[data-testid="edit-arrival-mid"]') as HTMLButtonElement | null;
+
+    flushSync(() => arrivalButton?.click());
+
+    const schedules = getState();
+    const northTrip = schedules[0].trips[0];
+    const southTrip = schedules[1].trips[0];
+
+    expect(northTrip.arrivalTimes['Stop 2']).toBe('7:27 AM');
+    expect(northTrip.recoveryTimes['Stop 2']).toBe(5);
+    expect(northTrip.stops['Stop 2']).toBe('7:32 AM');
+    expect(northTrip.stops['Stop 3']).toBe('8:02 AM');
+    expect(southTrip.stops['Stop A']).toBe('8:07 AM');
+  });
+
   it('turns cascading off for departure edits without mutating arrival or recovery', () => {
     const modeNoneButton = container?.querySelector('[data-testid="mode-none"]') as HTMLButtonElement | null;
     const departureButton = container?.querySelector('[data-testid="edit-departure-mid"]') as HTMLButtonElement | null;
@@ -293,9 +320,64 @@ describe('useScheduleEditing cascade modes', () => {
     const laterNorthTrip = schedules[0].trips[1];
 
     expect(northTrip.recoveryTimes['Stop 3']).toBe(2);
+    expect(northTrip.stops['Stop 3']).toBe('8:02 AM');
+    expect(northTrip.endTime).toBe(482);
+    expect(northTrip.cycleTime).toBe(62);
+    expect(northTrip.travelTime).toBe(55);
+    expect(northTrip.endTimeIncludesRecovery).toBe(true);
     expect(southTrip.stops['Stop A']).toBe('8:07 AM');
     expect(southTrip.stops['Stop B']).toBe('8:37 AM');
     expect(laterNorthTrip.stops['Stop 1']).toBe('8:40 AM');
+  });
+
+  it('cascades the accepted departure delta when recovery is clamped', () => {
+    const editButton = container?.querySelector('[data-testid="edit-departure-beyond-limit"]') as HTMLButtonElement | null;
+
+    flushSync(() => editButton?.click());
+
+    const schedules = getState();
+    const northTrip = schedules[0].trips[0];
+    const southTrip = schedules[1].trips[0];
+
+    expect(northTrip.recoveryTimes['Stop 2']).toBe(54);
+    expect(northTrip.stops['Stop 2']).toBe('8:19 AM');
+    expect(northTrip.stops['Stop 3']).toBe('8:49 AM');
+    expect(southTrip.stops['Stop A']).toBe('8:54 AM');
+  });
+
+  it('preserves keyed recovery when a cascaded arrival edit moves the departure', () => {
+    const editButton = container?.querySelector('[data-testid="edit-arrival-mid"]') as HTMLButtonElement | null;
+    flushSync(() => editButton?.click());
+
+    const schedules = getState();
+    const northTrip = schedules[0].trips[0];
+    const southTrip = schedules[1].trips[0];
+
+    expect(northTrip.arrivalTimes['Stop 2']).toBe('7:27 AM');
+    expect(northTrip.stops['Stop 2']).toBe('7:32 AM');
+    expect(northTrip.recoveryTimes['Stop 2']).toBe(5);
+    expect(northTrip.stops['Stop 3']).toBe('8:02 AM');
+    expect(southTrip.stops['Stop A']).toBe('8:07 AM');
+  });
+
+  it('marks an edited terminal departure as already including terminal recovery', () => {
+    const initialSchedules = buildSchedules();
+    const trip = initialSchedules[0].trips[0];
+    trip.endTimeIncludesRecovery = false;
+    trip.recoveryTimes = { 'Stop 2': 5, 'Stop 3': 2 };
+    trip.recoveryTime = 7;
+    trip.arrivalTimes = { ...trip.arrivalTimes, 'Stop 3': '7:58 AM' };
+
+    flushSync(() => {
+      root?.render(<Harness key="terminal-flag" initialSchedules={initialSchedules} />);
+    });
+    const editButton = container?.querySelector('[data-testid="edit-terminal-departure"]') as HTMLButtonElement | null;
+    flushSync(() => editButton?.click());
+
+    const updatedTrip = getState()[0].trips[0];
+    expect(updatedTrip.stops['Stop 3']).toBe('8:03 AM');
+    expect(updatedTrip.endTime).toBe(483);
+    expect(updatedTrip.endTimeIncludesRecovery).toBe(true);
   });
 
   it('keeps travel and cycle metrics consistent after a cascaded edit', () => {
@@ -312,6 +394,31 @@ describe('useScheduleEditing cascade modes', () => {
     expect(northTrip.endTime).toBe(485);
     expect(northTrip.travelTime).toBe(55);
     expect(northTrip.cycleTime).toBe(60);
+  });
+
+  it('does not cascade a weekday edit into the same route and block on Saturday', () => {
+    const saturdayTables = buildSchedules().map(table => ({
+      ...table,
+      routeName: table.routeName.replace('(Weekday)', '(Saturday)'),
+      trips: table.trips.map(trip => ({
+        ...trip,
+        id: `sat-${trip.id}`,
+      })),
+    }));
+
+    flushSync(() => {
+      root?.render(<Harness key="day-scope" initialSchedules={[...buildSchedules(), ...saturdayTables]} />);
+    });
+    const editButton = container?.querySelector('[data-testid="edit-departure"]') as HTMLButtonElement | null;
+    flushSync(() => editButton?.click());
+
+    const schedules = getState();
+    const saturdayNorth = schedules.find((table: any) => table.routeName === '10 (Saturday) (North)');
+    const saturdaySouth = schedules.find((table: any) => table.routeName === '10 (Saturday) (South)');
+
+    expect(saturdayNorth.trips[0].stops['Stop 1']).toBe('7:00 AM');
+    expect(saturdayNorth.trips[1].stops['Stop 1']).toBe('8:40 AM');
+    expect(saturdaySouth.trips[0].stops['Stop A']).toBe('8:05 AM');
   });
 
   it('assigns duplicated trips a new lineage and clears delta source anchors', () => {
@@ -331,6 +438,58 @@ describe('useScheduleEditing cascade modes', () => {
     expect(duplicatedTrip.deltaSourceTripId).toBeUndefined();
     expect(duplicatedTrip.deltaSourceLineageId).toBeUndefined();
     expect(duplicatedTrip.deltaSourceRouteName).toBeUndefined();
+    expect(duplicatedTrip.stopMinutes).toEqual({
+      'Stop 1': 421,
+      'Stop 2': 451,
+      'Stop 3': 481,
+    });
+  });
+
+  it('creates unique duplicate IDs even when actions occur in the same millisecond', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123456789);
+    const duplicateButton = () => container?.querySelector('[data-testid="duplicate-trip"]') as HTMLButtonElement | null;
+
+    flushSync(() => duplicateButton()?.click());
+    flushSync(() => duplicateButton()?.click());
+
+    const duplicateIds = getState()[0].trips
+      .map((trip: any) => trip.id)
+      .filter((id: string) => id.startsWith('north-trip-dup-'));
+    expect(duplicateIds).toHaveLength(2);
+    expect(new Set(duplicateIds).size).toBe(2);
+    nowSpy.mockRestore();
+  });
+
+  it('keeps post-midnight duplicates after late-evening trips in operational order', () => {
+    const initialSchedules = buildSchedules();
+    const table = initialSchedules[0];
+    const trip = table.trips[0];
+    Object.assign(trip, {
+      startTime: 30,
+      endTime: 60,
+      stops: { 'Stop 1': '12:30 AM', 'Stop 2': '12:45 AM', 'Stop 3': '1:00 AM' },
+      arrivalTimes: { 'Stop 1': '12:30 AM', 'Stop 2': '12:40 AM', 'Stop 3': '1:00 AM' },
+      stopMinutes: { 'Stop 1': 1470, 'Stop 2': 1485, 'Stop 3': 1500 },
+    });
+    table.trips = [{
+      ...structuredClone(trip),
+      id: 'late-evening',
+      startTime: 1410,
+      endTime: 1440,
+      stops: { 'Stop 1': '11:30 PM', 'Stop 2': '11:45 PM', 'Stop 3': '12:00 AM' },
+      arrivalTimes: { 'Stop 1': '11:30 PM', 'Stop 2': '11:40 PM', 'Stop 3': '12:00 AM' },
+      stopMinutes: { 'Stop 1': 1410, 'Stop 2': 1425, 'Stop 3': 1440 },
+    }, trip];
+
+    flushSync(() => {
+      root?.render(<Harness key="overnight-duplicate" initialSchedules={initialSchedules} />);
+    });
+    flushSync(() => (container?.querySelector('[data-testid="duplicate-trip"]') as HTMLButtonElement | null)?.click());
+
+    const ids = getState()[0].trips.map((candidate: any) => candidate.id);
+    expect(ids[0]).toBe('late-evening');
+    expect(ids[1]).toBe('north-trip');
+    expect(ids[2]).toMatch(/^north-trip-dup-/);
   });
 });
 

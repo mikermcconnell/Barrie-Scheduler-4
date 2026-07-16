@@ -40,6 +40,19 @@ function formatMetric(value: number): string {
     return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
+function loadSourceLabel(row: RidershipStopProfileRow): string {
+    switch (row.loadSource) {
+        case 'block-inferred':
+            return 'Block-inferred onboard';
+        case 'mixed':
+            return 'Average onboard (mixed estimate)';
+        case 'legacy':
+            return 'Average onboard (historical estimate)';
+        default:
+            return 'Average onboard';
+    }
+}
+
 function MetricSummary({ label, value, detail }: { label: string; value: string; detail?: string }) {
     return (
         <div className="min-w-0 px-4 py-3 first:pl-0 last:pr-0">
@@ -62,7 +75,7 @@ function FlowTooltip({ active, payload }: { active?: boolean; payload?: Array<{ 
                 <p className="flex justify-between gap-6 text-gray-600"><span>Boardings</span><strong className="text-cyan-700">{formatMetric(row.boardings)}</strong></p>
                 <p className="flex justify-between gap-6 text-gray-600"><span>Alightings</span><strong className="text-violet-700">{formatMetric(row.alightings)}</strong></p>
                 {row.averageLoad !== null && (
-                    <p className="flex justify-between gap-6 text-gray-600"><span>Average onboard{row.loadEstimated ? ' (estimated)' : ''}</span><strong className="text-slate-800">{formatMetric(row.averageLoad)}</strong></p>
+                    <p className="flex justify-between gap-6 text-gray-600"><span>{loadSourceLabel(row)}</span><strong className="text-slate-800">{formatMetric(row.averageLoad)}</strong></p>
                 )}
                 {row.loadObservationCount !== null && (
                     <p className="flex justify-between gap-6 text-gray-400"><span>Load observations</span><span>{row.loadObservationCount.toLocaleString()}</span></p>
@@ -177,7 +190,13 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
                     <div className="mb-4 grid grid-cols-2 divide-x divide-y divide-gray-100 border-y border-gray-100 sm:grid-cols-4 sm:divide-y-0">
                         <MetricSummary label="Busiest boarding" value={hasBoardings && busiestBoarding ? busiestBoarding.stopName : '—'} detail={hasBoardings && busiestBoarding ? `${formatMetric(busiestBoarding.boardings)} · ${activityUnit}` : 'No boarding activity'} />
                         <MetricSummary label="Busiest alighting" value={hasAlightings && busiestAlighting ? busiestAlighting.stopName : '—'} detail={hasAlightings && busiestAlighting ? `${formatMetric(busiestAlighting.alightings)} · ${activityUnit}` : 'No alighting activity'} />
-                        <MetricSummary label="Peak average onboard" value={peakLoad ? formatMetric(peakLoad.averageLoad ?? 0) : '—'} detail={peakLoad?.stopName || 'Load unavailable'} />
+                        <MetricSummary
+                            label="Peak average onboard"
+                            value={peakLoad ? formatMetric(peakLoad.averageLoad ?? 0) : '—'}
+                            detail={peakLoad
+                                ? `${peakLoad.stopName}${peakLoad.loadSource === 'block-inferred' ? ' · Block-inferred' : peakLoad.loadSource === 'mixed' ? ' · Mixed estimate' : ''}`
+                                : 'Load unavailable'}
+                        />
                         <MetricSummary label="Observed service days" value={selected.serviceDays.toLocaleString()} detail={isAverage ? 'Average denominator' : 'Selected date'} />
                     </div>
 
@@ -188,9 +207,25 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
                             <p className="sr-only" role="img" aria-label={accessibleSummary}>{accessibleSummary}</p>
                             {!hasLoad && <p className="mb-2 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-500">Average onboard load is unavailable; boarding and alighting activity is shown.</p>}
                             {!hasBars && <p className="mb-2 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-500">No boarding or alighting activity was recorded; available load observations are shown.</p>}
-                            {selected.hasEstimatedLoad && (
+                            {selected.hasEstimatedLoad && !selected.hasBlockInferredLoad && (
                                 <p className="mb-2 rounded-md border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                                     <strong>Estimated weighting:</strong> historical load averages do not include observation counts; legacy zeroes are omitted because missing APC and true zero cannot be distinguished.
+                                </p>
+                            )}
+                            {selected.hasBlockInferredLoad && (
+                                <p className="mb-2 rounded-md border border-sky-100 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                                    <strong>Block-inferred load:</strong> calculated from boardings minus alightings across consecutive trips on the same route and block.{' '}
+                                    {selected.blockInferenceUsesMinimumFeasibleAnchor && selected.blockInferenceAssumedEmptyAnchor
+                                        ? 'Some blocks start from an assumed-empty first trip. Where a zero start would produce a negative load, the calculation instead uses the smallest starting load that keeps the full block non-negative; those values are lower-bound estimates.'
+                                        : selected.blockInferenceUsesMinimumFeasibleAnchor
+                                            ? 'Where a zero start would produce a negative load, the calculation uses the smallest starting load that keeps the full block non-negative. This is a lower-bound estimate.'
+                                            : 'The first observed trip in each block is assumed empty.'}{' '}
+                                    These values are estimates rather than verified APC loads.
+                                </p>
+                            )}
+                            {selected.invalidBlockInferenceChainCount > 0 && (
+                                <p className="mb-2 rounded-md border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                                    <strong>Inference unavailable:</strong> {selected.invalidBlockInferenceChainCount.toLocaleString()} block {selected.invalidBlockInferenceChainCount === 1 ? 'chain was' : 'chains were'} omitted because the passenger changes produced a load outside the plausible range.
                                 </p>
                             )}
                             <div
@@ -211,13 +246,13 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
                                             <Legend verticalAlign="top" height={32} wrapperStyle={{ fontSize: 11, color: '#4b5563' }} />
                                             {hasBoardings && <Bar yAxisId="activity" dataKey="boardings" name="Boardings" fill="#06b6d4" radius={[3, 3, 0, 0]} maxBarSize={22} />}
                                             {hasAlightings && <Bar yAxisId="activity" dataKey="alightings" name="Alightings" fill="#8b5cf6" radius={[3, 3, 0, 0]} maxBarSize={22} />}
-                                            {hasLoad && <Line yAxisId="load" type="linear" dataKey="averageLoad" name={selected.hasEstimatedLoad ? 'Average onboard (contains estimates)' : 'Average onboard'} stroke="#164e63" strokeWidth={2.5} strokeDasharray={selected.hasEstimatedLoad ? '6 4' : undefined} dot={{ r: 2.5, fill: '#164e63', strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />}
+                                            {hasLoad && <Line yAxisId="load" type="linear" dataKey="averageLoad" name={selected.hasBlockInferredLoad ? 'Average onboard (includes block inference)' : selected.hasEstimatedLoad ? 'Average onboard (contains estimates)' : 'Average onboard'} stroke="#164e63" strokeWidth={2.5} strokeDasharray={selected.hasEstimatedLoad ? '6 4' : undefined} dot={{ r: 2.5, fill: '#164e63', strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />}
                                         </ComposedChart>
                                     </ResponsiveContainer>
                                 </div>
                             </div>
                             <ol className="mt-1 grid gap-x-4 gap-y-1 border-t border-gray-100 pt-3 text-[11px] text-gray-500 sm:grid-cols-2 lg:grid-cols-3" aria-label="Stop sequence key">
-                                {rows.map(stop => <li key={stopRowKey(stop)} className="truncate"><span className="mr-1 font-semibold text-gray-700">{stop.stopNumber}.</span>{stop.stopName}<span className="sr-only">: {formatMetric(stop.boardings)} boardings, {formatMetric(stop.alightings)} alightings{stop.averageLoad === null ? ', average onboard unavailable' : `, ${formatMetric(stop.averageLoad)} average onboard${stop.loadEstimated ? ' estimated' : ''}`}.</span></li>)}
+                                {rows.map(stop => <li key={stopRowKey(stop)} className="truncate"><span className="mr-1 font-semibold text-gray-700">{stop.stopNumber}.</span>{stop.stopName}<span className="sr-only">: {formatMetric(stop.boardings)} boardings, {formatMetric(stop.alightings)} alightings{stop.averageLoad === null ? ', average onboard unavailable' : `, ${formatMetric(stop.averageLoad)} ${loadSourceLabel(stop).toLowerCase()}`}.</span></li>)}
                             </ol>
                         </>
                     )}

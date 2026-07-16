@@ -66,7 +66,7 @@ interface GapAnalysis {
     priority: number;
 }
 
-const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+const OPERATIONAL_DAY_START = 240; // 4:00 AM
 
 // ============ CONNECTION STATUS CHECK ============
 
@@ -490,24 +490,30 @@ function findClosestTargetTime(
     let closest: number | null = null;
     let minDiff = Infinity;
 
-    for (const targetTime of targetTimes) {
-        let diff: number;
+    for (const rawTargetTime of targetTimes) {
+        const targetCandidates = rawTargetTime >= 1440
+            ? [rawTargetTime]
+            : [rawTargetTime - 1440, rawTargetTime, rawTargetTime + 1440];
 
-        if (connectionType === 'meet_departing') {
-            // Look for targets AFTER the trip time (bus arrives, then target departs)
-            diff = targetTime - tripTime;
-            // Only consider targets within reasonable range (0-60 min ahead)
-            if (diff >= -10 && diff < 60 && Math.abs(diff) < minDiff) {
-                minDiff = Math.abs(diff);
-                closest = targetTime;
-            }
-        } else {
-            // Look for targets BEFORE the trip time (target arrives, then bus departs)
-            diff = tripTime - targetTime;
-            // Only consider targets within reasonable range (0-60 min behind)
-            if (diff >= -10 && diff < 60 && Math.abs(diff) < minDiff) {
-                minDiff = Math.abs(diff);
-                closest = targetTime;
+        for (const targetTime of targetCandidates) {
+            let diff: number;
+
+            if (connectionType === 'meet_departing') {
+                // Look for targets AFTER the trip time (bus arrives, then target departs)
+                diff = targetTime - tripTime;
+                // Only consider targets within reasonable range (0-60 min ahead)
+                if (diff >= -10 && diff < 60 && Math.abs(diff) < minDiff) {
+                    minDiff = Math.abs(diff);
+                    closest = targetTime;
+                }
+            } else {
+                // Look for targets BEFORE the trip time (target arrives, then bus departs)
+                diff = tripTime - targetTime;
+                // Only consider targets within reasonable range (0-60 min behind)
+                if (diff >= -10 && diff < 60 && Math.abs(diff) < minDiff) {
+                    minDiff = Math.abs(diff);
+                    closest = targetTime;
+                }
             }
         }
     }
@@ -583,7 +589,7 @@ function getTripStopArrivalTime(trip: MasterTrip, stopName: string): number | nu
 function normalizeTripMinutes(rawMinutes: number, tripStartTime: number): number {
     if (rawMinutes >= 1440) return rawMinutes;
     if (tripStartTime >= 1440) return rawMinutes + 1440;
-    if (tripStartTime < MIDNIGHT_ROLLOVER_THRESHOLD) return rawMinutes + 1440;
+    if (tripStartTime < OPERATIONAL_DAY_START) return rawMinutes + 1440;
     return rawMinutes;
 }
 

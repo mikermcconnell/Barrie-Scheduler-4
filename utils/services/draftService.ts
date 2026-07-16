@@ -27,8 +27,15 @@ import { getMasterScheduleEntry } from './masterScheduleService';
 
 const DRAFTS_COLLECTION = 'draftSchedules';
 
-const draftStoragePath = (userId: string, draftId: string, timestamp: number) =>
-    `users/${userId}/${DRAFTS_COLLECTION}/${draftId}_${timestamp}.json`;
+const createStorageWriteToken = (): string => {
+    const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2);
+    return `${Date.now()}_${randomPart}`;
+};
+
+const draftStoragePath = (userId: string, draftId: string, writeToken: string) =>
+    `users/${userId}/${DRAFTS_COLLECTION}/${draftId}_${writeToken}.json`;
 
 const checkpointStoragePath = (userId: string, draftId: string, checkpointId: string) =>
     `users/${userId}/${DRAFTS_COLLECTION}/${draftId}_checkpoints/${checkpointId}.json`;
@@ -59,8 +66,7 @@ export const saveDraft = async (
         }
     }
 
-    const timestamp = Date.now();
-    const storagePath = draftStoragePath(userId, draftId, timestamp);
+    const storagePath = draftStoragePath(userId, draftId, createStorageWriteToken());
     const storageRef = ref(storage, storagePath);
     const contentJson = JSON.stringify({ content: draft.content });
 
@@ -85,7 +91,16 @@ export const saveDraft = async (
         docData.createdAt = serverTimestamp();
     }
 
-    await setDoc(draftRef, docData, { merge: true });
+    try {
+        await setDoc(draftRef, docData, { merge: true });
+    } catch (error) {
+        try {
+            await deleteObject(storageRef);
+        } catch (cleanupError) {
+            console.warn('Failed to clean up unsaved draft storage file:', cleanupError);
+        }
+        throw error;
+    }
 
     if (isUpdate && previousStoragePath && previousStoragePath !== storagePath) {
         try {

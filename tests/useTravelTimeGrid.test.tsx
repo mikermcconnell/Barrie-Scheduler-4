@@ -21,6 +21,7 @@ vi.mock('../utils/parsers/masterScheduleParser', async () => {
 
 vi.mock('../utils/blocks/blockAssignmentCore', () => ({
   reassignBlocksForTables: reassignBlocksForTablesMock,
+  getOperationalSortTime: (minutes: number) => minutes < 240 ? minutes + 1440 : minutes,
   MatchConfigPresets: {
     editor: { mode: 'editor' },
     merged: { mode: 'merged' }
@@ -256,8 +257,8 @@ describe('useTravelTimeGrid', () => {
     expect(calculateGridTravelMinutes(trip, 'A', 'B')).toBe(35);
     expect(southTrip.stops.A).toBe('8:15 AM');
     expect(southTrip.stops.B).toBe('8:45 AM');
-    expect(laterNorthTrip.stops.A).toBe('9:20 AM');
-    expect(laterNorthTrip.stops.B).toBe('9:50 AM');
+    expect(laterNorthTrip.stops.A).toBe('9:25 AM');
+    expect(laterNorthTrip.stops.B).toBe('9:55 AM');
   });
 
   it('applies bulk travel adjustments with the same destination-forward shift behavior as single-trip edits', () => {
@@ -445,5 +446,84 @@ describe('useTravelTimeGrid', () => {
     expect(fullTrip.stops.C).toBe('7:31 AM');
     expect(shortTurnTrip.stops.C).toBe('7:40 AM');
     expect(shortTurnTrip.stops.D).toBe('7:50 AM');
+
+    flushSync(() => {
+      root?.render(
+        <Harness schedules={latest!} onChange={next => { latest = next; }} onReady={value => { api = value; }} />
+      );
+    });
+    flushSync(() => api!.handleBulkAdjustRecoveryTime('B', 1, '7 (Weekday) (North)'));
+
+    const recoveryNorth = latest?.find(table => table.routeName === '7 (Weekday) (North)');
+    const recoveryFullTrip = recoveryNorth?.trips.find((trip: any) => trip.id === 'full-trip');
+    const recoveryShortTurn = recoveryNorth?.trips.find((trip: any) => trip.id === 'short-turn-trip');
+    expect(recoveryFullTrip.recoveryTimes.B).toBe(1);
+    expect(recoveryShortTurn.recoveryTimes?.B).toBeUndefined();
+    expect(recoveryShortTurn.recoveryTime).toBe(0);
+  });
+
+  it('clamps a negative single-trip adjustment before the segment becomes negative', () => {
+    const schedules = buildSchedules();
+    let latest: any[] | null = null;
+    let api: HarnessApi | null = null;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(
+        <Harness schedules={schedules} onChange={next => { latest = next; }} onReady={value => { api = value; }} />
+      );
+    });
+
+    flushSync(() => api!.handleSingleTripTravelAdjust('north-trip', 'B', -50, '2 (Weekday) (North)'));
+
+    const north = latest?.find(table => table.routeName === '2 (Weekday) (North)');
+    const south = latest?.find(table => table.routeName === '2 (Weekday) (South)');
+    expect(north.trips[0].arrivalTimes.B).toBe('7:00 AM');
+    expect(north.trips[0].stops.C).toBe('7:30 AM');
+    expect(calculateGridTravelMinutes(north.trips[0], 'A', 'B')).toBe(0);
+    expect(south.trips[0].stops.A).toBe('7:40 AM');
+  });
+
+  it('keeps terminal recovery metrics consistent and limits the cascade to the selected day', () => {
+    const schedules = buildSchedules();
+    schedules[0].trips.push({
+      id: 'north-trip-later', blockId: '2-1', direction: 'North', tripNumber: 3, rowId: 3,
+      startTime: 560, endTime: 620, recoveryTime: 0, travelTime: 60, cycleTime: 60,
+      stops: { A: '9:20 AM', B: '9:50 AM', C: '10:20 AM' },
+      arrivalTimes: { A: '9:20 AM', B: '9:50 AM', C: '10:20 AM' },
+    });
+    schedules.push(...buildSchedules().map(table => ({
+      ...structuredClone(table),
+      routeName: table.routeName.replace('(Weekday)', '(Saturday)'),
+      trips: table.trips.map((trip: any) => ({ ...structuredClone(trip), id: `sat-${trip.id}` })),
+    })));
+
+    let latest: any[] | null = null;
+    let api: HarnessApi | null = null;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(
+        <Harness schedules={schedules} onChange={next => { latest = next; }} onReady={value => { api = value; }} />
+      );
+    });
+
+    flushSync(() => api!.handleSingleRecoveryAdjust('north-trip', 'C', 2, '2 (Weekday) (North)'));
+
+    const weekdayNorth = latest?.find(table => table.routeName === '2 (Weekday) (North)');
+    const weekdaySouth = latest?.find(table => table.routeName === '2 (Weekday) (South)');
+    const saturdayNorth = latest?.find(table => table.routeName === '2 (Saturday) (North)');
+    const trip = weekdayNorth.trips.find((candidate: any) => candidate.id === 'north-trip');
+
+    expect(trip.stops.C).toBe('8:02 AM');
+    expect(trip.endTime).toBe(482);
+    expect(trip.cycleTime).toBe(62);
+    expect(trip.travelTime).toBe(57);
+    expect(trip.endTimeIncludesRecovery).toBe(true);
+    expect(weekdaySouth.trips[0].stops.A).toBe('8:12 AM');
+    expect(weekdayNorth.trips.find((candidate: any) => candidate.id === 'north-trip-later').stops.A).toBe('9:22 AM');
+    expect(saturdayNorth.trips[0].stops.C).toBe('8:00 AM');
   });
 });

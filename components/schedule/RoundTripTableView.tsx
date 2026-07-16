@@ -7,7 +7,7 @@
  * Extracted from ScheduleEditor.tsx for maintainability.
  */
 
-import React, { useEffect, useMemo, useState, useCallback, useRef, useId } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef, useId } from 'react';
 import {
     ChevronDown,
     ChevronUp,
@@ -110,11 +110,6 @@ function getStep4BandToneClasses(band: string): { cell: string; badge: string } 
         badge: 'bg-gray-100 text-gray-700 ring-gray-200',
     };
 }
-
-const VIRTUAL_ROW_THRESHOLD = 80;
-const VIRTUAL_ROW_HEIGHT = 34;
-const VIRTUAL_OVERSCAN_ROWS = 8;
-const VIRTUAL_FALLBACK_VIEWPORT_ROWS = 28;
 
 type VisibleTripChangeKind = Exclude<TripChangeKind, 'removed' | 'unchanged'>;
 type RowMarkerChangeKind = Extract<VisibleTripChangeKind, 'review'>;
@@ -559,6 +554,7 @@ export interface RoundTripTableViewProps {
     compareBaselineLabel?: string;
     highlightedTripId?: string | null;
     visibleTripIds?: string[] | null;
+    includeRemovedMasterTripsWhenFiltered?: boolean;
     toolbarSlot?: React.ReactNode;
     toolbarMode?: 'inline' | 'sidebar';
     reviewToolsSlot?: React.ReactNode;
@@ -635,6 +631,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     compareBaselineLabel,
     highlightedTripId,
     visibleTripIds,
+    includeRemovedMasterTripsWhenFiltered = false,
     toolbarSlot,
     toolbarMode = 'inline',
     reviewToolsSlot,
@@ -653,7 +650,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [isReviewSidebarOpen, setIsReviewSidebarOpen] = useState(true);
     const [isReviewSidebarExpanded, setIsReviewSidebarExpanded] = useState(false);
     const effectiveConnectionLibrary = showConnections ? connectionLibrary : null;
-    const connectionToggleLabel = showConnections ? 'Connections on' : 'Connections off';
     const connectionToggleAriaLabel = showConnections ? 'Hide schedule connections' : 'Show schedule connections';
     const [compareMode, setCompareMode] = useState<CompareMode>(() => (
         masterBaseline && masterBaseline.length > 0
@@ -663,9 +659,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 : 'none'
     ));
     const [compareReviewFocusTripId, setCompareReviewFocusTripId] = useState<string | null>(null);
-    const tableScrollRef = useRef<HTMLDivElement>(null);
-    const [tableScrollTop, setTableScrollTop] = useState(0);
-
     useEffect(() => {
         if (!highlightedTripId) return;
         const highlightedRow = document.querySelector('tr[data-highlighted-row="true"]');
@@ -676,7 +669,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
     useEffect(() => {
         setTimepointOnly(initialTimepointOnly);
-    }, [initialTimepointOnly, schedules]);
+    }, [initialTimepointOnly]);
 
     const hasGeneratedBaseline = !!originalSchedules && originalSchedules.length > 0;
     const hasMasterBaseline = !!masterBaseline && masterBaseline.length > 0;
@@ -795,7 +788,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                     })),
                 };
             })
-            .sort((a, b) => a.startTime - b.startTime);
+            .sort((a, b) => (
+                getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+            ));
     }, [currentTripComparisons, currentTripLookup, isMasterMode]);
 
     useEffect(() => {
@@ -907,7 +902,20 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                     )),
                 }
                 : fullCombined;
-            if (visibleTripIdSet && combined.rows.length === 0) return;
+            const routeTableNames = [group.north?.routeName, group.south?.routeName]
+                .filter((routeName): routeName is string => !!routeName);
+            const hasRemovedMasterTrips = includeRemovedMasterTripsWhenFiltered
+                && isMasterMode
+                && buildMasterComparisonChangeSummary(
+                    schedules,
+                    detailedMasterComparison,
+                    { routeNames: routeTableNames }
+                ).removedMasterTrips.length > 0;
+            if (
+                visibleTripIdSet
+                && combined.rows.length === 0
+                && !hasRemovedMasterTrips
+            ) return;
             const northTripOrder = new Map<string, number>();
             northTable.trips.forEach((trip, idx) => {
                 northTripOrder.set(trip.id, idx + 1);
@@ -919,7 +927,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             pairs.push({ north: northTable, south: southTable, combined, northTripOrder, southTripOrder, blockBoundaries });
         });
         return pairs;
-    }, [schedules, visibleTripIdSet]);
+    }, [
+        detailedMasterComparison,
+        includeRemovedMasterTripsWhenFiltered,
+        isMasterMode,
+        schedules,
+        visibleTripIdSet,
+    ]);
 
     const compareRowsForCombined = useCallback((
         combined: RoundTripTable,
@@ -938,7 +952,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
             const northTrip = row.trips.find(t => t.direction === 'North');
             const southTrip = row.trips.find(t => t.direction === 'South');
-            return northTrip?.startTime ?? southTrip?.startTime ?? null;
+            const startTime = northTrip?.startTime ?? southTrip?.startTime;
+            return startTime === undefined ? null : getOperationalSortTime(startTime);
         };
 
         if (sortColumn === 'blockFlow') {
@@ -1051,6 +1066,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         ?? [...combined.rows].sort((a, b) => compareRowsForCombined(combined, a, b))
     ), [compareRowsForCombined, sortedRowsByCombinedKey]);
 
+    const getDisplayedSortedRows = useCallback((combined: RoundTripTable): RoundTripTable['rows'] => {
+        const sortedRows = getSortedRows(combined);
+        if (!filter?.search) return sortedRows;
+
+        return sortedRows.filter(row => (
+            matchesSearch(row.blockId, [...combined.northStops, ...combined.southStops], filter.search)
+        ));
+    }, [filter?.search, getSortedRows]);
+
     // --- Grid Navigation Setup ---
     // Compute navigable columns for Excel-like keyboard navigation
     const primaryPair = roundTripData[0] || null;
@@ -1113,8 +1137,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const gridSortedRows = useMemo(() => {
         if (!primaryPair) return [];
         const { combined } = primaryPair;
-        return getSortedRows(combined);
-    }, [getSortedRows, primaryPair]);
+        return getDisplayedSortedRows(combined);
+    }, [getDisplayedSortedRows, primaryPair]);
 
     // Resolve key stop label for Block Flow dropdown
     const keyStopLabel = useMemo(() => {
@@ -1144,6 +1168,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             };
         });
     }, [gridSortedRows, gridColumns]);
+    const gridRowIdentity = useMemo(() => (
+        gridRows.map(row => `${row.northTripId || ''}|${row.southTripId || ''}`).join('||')
+    ), [gridRows]);
+    const gridColumnIdentity = useMemo(() => (
+        gridColumns.map(column => `${column.direction}|${column.stopName}|${column.cellType}`).join('||')
+    ), [gridColumns]);
 
     // Grid nav callbacks
     const handleGridCopy = useCallback((addr: { tripId: string; stopName: string; cellType: string }) => {
@@ -1224,10 +1254,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         });
     }, [gridNav]);
 
-    // Clear active cell when sort changes (row indices shift)
-    useEffect(() => {
+    // Clear active state whenever sorting, filtering, or visible columns change.
+    // Otherwise keyboard actions can target the trip that previously occupied
+    // the same row/column index.
+    useLayoutEffect(() => {
         gridNav.clearActiveCell();
-    }, [sortColumn]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [gridColumnIdentity, gridRowIdentity, sortColumn]); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (roundTripData.length === 0) {
         return (
@@ -1383,6 +1415,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                     <div className="flex items-center gap-1">
                         <ArrowUpDown size={12} className="text-gray-600" />
                         <select
+                            aria-label="Sort schedule rows"
                             value={sortColumn}
                             onChange={(e) => setSortColumn(e.target.value)}
                             className="text-xs md:text-sm bg-transparent border-none text-gray-700 cursor-pointer hover:text-gray-900 pr-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
@@ -1418,6 +1451,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                 </button>
                                 <button
                                     onClick={() => setTimepointOnly(v => !v)}
+                                    aria-pressed={timepointOnly}
                                     className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${timepointOnly ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                                 >
                                     Timepoints
@@ -1741,8 +1775,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                         {/* Main Table Area */}
                         <div className={useSidebarTools ? 'flex flex-1 min-h-0 overflow-hidden' : 'flex flex-1 min-h-0'}>
                             <div
-                                ref={tableScrollRef}
-                                onScroll={(event) => setTableScrollTop(event.currentTarget.scrollTop)}
                                 className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0"
                             >
 
@@ -1893,61 +1925,69 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         // Keep the displayed row order stable while editing so
                                         // repeated +/- nudges stay on the same block instead of
                                         // jumping to a different row after a live re-sort.
-                                        const sortedRows = getSortedRows(combined);
+                                        const sortedRows = getDisplayedSortedRows(combined);
                                         const rowHeadways = getRoundTripDisplayedHeadways(sortedRows, combined);
                                         const displayedHeadwayValues = Object.values(rowHeadways);
                                         const rowIndexByKey = new Map(sortedRows.map((row, index) => [getRoundTripRowKey(row), index]));
-                                        const getRowSortTime = (row: RoundTripTable['rows'][number]): number => {
-                                            const northTrip = row.trips.find(t => t.direction === 'North');
-                                            const southTrip = row.trips.find(t => t.direction === 'South');
-                                            return northTrip?.startTime ?? southTrip?.startTime ?? 0;
-                                        };
-                                        const displayRows = [
-                                            ...sortedRows.map(row => ({
-                                                type: 'current' as const,
-                                                row,
-                                                sortTime: getRowSortTime(row),
-                                                sortBlockId: row.blockId || '',
-                                            })),
-                                            ...(isMasterMode && !visibleTripIdSet ? routeComparisonSummary.removedMasterTrips.map(entry => ({
+                                        const removedEntries = isMasterMode
+                                            && (!visibleTripIdSet || includeRemovedMasterTripsWhenFiltered)
+                                            ? routeComparisonSummary.removedMasterTrips
+                                            : [];
+                                        const currentDisplayRows = sortedRows.map(row => ({
+                                            type: 'current' as const,
+                                            row,
+                                            sortRow: row,
+                                        }));
+                                        const removedDisplayRows = removedEntries.map(entry => ({
                                                 type: 'removed' as const,
                                                 entry,
-                                                sortTime: entry.masterTrip.startTime,
-                                                sortBlockId: entry.masterTrip.blockId || '',
-                                            })) : []),
-                                        ].sort((a, b) => {
-                                            const timeDiff = getOperationalSortTime(a.sortTime) - getOperationalSortTime(b.sortTime);
-                                            if (timeDiff !== 0) return timeDiff;
-                                            const blockDiff = compareBlockIds(a.sortBlockId, b.sortBlockId);
-                                            if (blockDiff !== 0) return blockDiff;
-                                            if (a.type !== b.type) return a.type === 'removed' ? -1 : 1;
-                                            return 0;
-                                        });
+                                                sortRow: {
+                                                    blockId: entry.masterTrip.blockId,
+                                                    trips: [entry.masterTrip],
+                                                    northStops: combined.northStops,
+                                                    southStops: combined.southStops,
+                                                    totalTravelTime: entry.masterTrip.travelTime,
+                                                    totalRecoveryTime: entry.masterTrip.recoveryTime,
+                                                    totalCycleTime: entry.masterTrip.cycleTime,
+                                                    pairIndex: Number.MAX_SAFE_INTEGER,
+                                                },
+                                            }))
+                                            .sort((a, b) => compareRowsForCombined(combined, a.sortRow, b.sortRow));
 
-                                        const shouldVirtualize = displayRows.length > VIRTUAL_ROW_THRESHOLD;
-                                        const viewportRows = tableScrollRef.current?.clientHeight
-                                            ? Math.ceil(tableScrollRef.current.clientHeight / VIRTUAL_ROW_HEIGHT)
-                                            : VIRTUAL_FALLBACK_VIEWPORT_ROWS;
-                                        const startIndex = shouldVirtualize
-                                            ? Math.max(0, Math.floor(tableScrollTop / VIRTUAL_ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS)
-                                            : 0;
-                                        const endIndex = shouldVirtualize
-                                            ? Math.min(displayRows.length, startIndex + viewportRows + VIRTUAL_OVERSCAN_ROWS * 2)
-                                            : displayRows.length;
-                                        const visibleRows = displayRows.slice(startIndex, endIndex);
-                                        const spacerColSpan = Math.max(1, columnMapping.length);
-                                        const topSpacerHeight = shouldVirtualize ? startIndex * VIRTUAL_ROW_HEIGHT : 0;
-                                        const bottomSpacerHeight = shouldVirtualize ? (displayRows.length - endIndex) * VIRTUAL_ROW_HEIGHT : 0;
+                                        // Keep the stable cached order of current rows while edits are
+                                        // in progress. Removed master rows are the only items inserted
+                                        // into that order, using the planner's selected sort.
+                                        const displayRows: Array<
+                                            (typeof currentDisplayRows)[number] | (typeof removedDisplayRows)[number]
+                                        > = [];
+                                        let currentIndex = 0;
+                                        let removedIndex = 0;
+                                        while (
+                                            currentIndex < currentDisplayRows.length
+                                            || removedIndex < removedDisplayRows.length
+                                        ) {
+                                            const currentItem = currentDisplayRows[currentIndex];
+                                            const removedItem = removedDisplayRows[removedIndex];
+                                            if (!currentItem) {
+                                                displayRows.push(removedItem);
+                                                removedIndex += 1;
+                                            } else if (!removedItem) {
+                                                displayRows.push(currentItem);
+                                                currentIndex += 1;
+                                            } else if (
+                                                compareRowsForCombined(combined, removedItem.sortRow, currentItem.sortRow) <= 0
+                                            ) {
+                                                displayRows.push(removedItem);
+                                                removedIndex += 1;
+                                            } else {
+                                                displayRows.push(currentItem);
+                                                currentIndex += 1;
+                                            }
+                                        }
 
                                         return (
                                             <>
-                                                {topSpacerHeight > 0 && (
-                                                    <tr aria-hidden="true">
-                                                        <td colSpan={spacerColSpan} style={{ height: topSpacerHeight, padding: 0, border: 0 }} />
-                                                    </tr>
-                                                )}
-                                                {visibleRows.map((item, visibleRowIdx) => {
-                                                    const displayRowIdx = startIndex + visibleRowIdx;
+                                                {displayRows.map((item, displayRowIdx) => {
                                                     if (item.type === 'removed') {
                                                         const { masterTrip, reason } = item.entry;
                                                         const displayRowNum = displayRowIdx + 1;
@@ -1996,7 +2036,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     const rowIdx = rowIndexByKey.get(getRoundTripRowKey(row)) ?? displayRowIdx;
                                         const northTrip = row.trips.find(t => t.direction === 'North');
                                         const southTrip = row.trips.find(t => t.direction === 'South');
-                                        const lastTrip = [...row.trips].sort((a, b) => a.startTime - b.startTime).pop();
+                                        const lastTrip = [...row.trips].sort((a, b) => (
+                                            getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+                                        )).pop();
                                         const addTripReference = northTrip ?? lastTrip ?? southTrip;
                                         const actionTrip = lastTrip ?? northTrip ?? southTrip;
                                         const actionStops = actionTrip?.direction === 'South' ? combined.southStops : combined.northStops;
@@ -2053,11 +2095,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const tripEndTime = northTrip?.endTime || southTrip?.endTime || 0;
                                         const isGrayedOut = filter ? shouldGrayOutTrip(tripStartTime, tripEndTime, filter) : false;
                                         const isHighlighted = filter ? shouldHighlightTrip(totalTravel, totalRec, typeof headway === 'number' ? headway : null, filter) : false;
-                                        const matchesSearchFilter = filter ? matchesSearch(row.blockId, [...combined.northStops, ...combined.southStops], filter.search) : true;
-
                                         const grayOutClass = isGrayedOut ? 'opacity-40' : '';
                                         const filterHighlightClass = isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-200' : '';
-                                        const searchHideClass = !matchesSearchFilter ? 'hidden' : '';
                                         const isRecentlyAddedRow = !!highlightedTripId && row.trips.some(trip => trip.id === highlightedTripId);
                                         const isCompareReviewFocusedRow = !!compareReviewFocusTripId && row.trips.some(trip => trip.id === compareReviewFocusTripId);
                                         const rowBlockBoundary = blockBoundaries.get(row.blockId);
@@ -2108,7 +2147,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         return (
                                             <tr
                                                 key={uniqueRowKey}
-                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${primaryChangeMeta?.rowClass || ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
+                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${primaryChangeMeta?.rowClass || ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
                                                 data-highlighted-row={isRecentlyAddedRow ? 'true' : 'false'}
                                                 data-row-trip-ids={`|${rowTripIds.join('|')}|`}
                                                 title={compareReason}
@@ -2888,11 +2927,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             </tr>
                                         );
                                                 })}
-                                                {bottomSpacerHeight > 0 && (
-                                                    <tr aria-hidden="true">
-                                                        <td colSpan={spacerColSpan} style={{ height: bottomSpacerHeight, padding: 0, border: 0 }} />
-                                                    </tr>
-                                                )}
                                             </>
                                         );
                                     })()}

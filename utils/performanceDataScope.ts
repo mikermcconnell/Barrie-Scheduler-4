@@ -4,7 +4,7 @@ export function getPerformanceScopeLabel(scope: PerformanceDataScope): string {
   return scope === 'yesterday' ? "Yesterday's Data" : 'Combined Days';
 }
 
-export function resolveFilteredScope(timeRange: 'all' | 'yesterday' | 'past-week' | 'past-month' | 'single-day'): PerformanceDataScope {
+export function resolveFilteredScope(timeRange: 'all' | 'yesterday' | 'past-week' | 'past-month' | 'past-three-months' | 'single-day'): PerformanceDataScope {
   return timeRange === 'yesterday' || timeRange === 'single-day' ? 'yesterday' : 'combined';
 }
 

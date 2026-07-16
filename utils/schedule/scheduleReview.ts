@@ -2,6 +2,7 @@ import type { MasterScheduleContent, MasterScheduleEntry } from '../masterSchedu
 import type { MasterRouteTable, MasterTrip } from '../parsers/masterScheduleParser';
 import type { DraftBasedOn, DraftSchedule } from './scheduleTypes';
 import { validateMergedRouteBlockContinuity } from './mergedRouteContinuity';
+import { getOperationalSortTime } from '../blocks/blockAssignmentCore';
 import {
     buildDetailedMasterComparison,
     buildMasterComparisonChangeSummary,
@@ -75,6 +76,48 @@ const locationFor = (table: MasterRouteTable, trip: MasterTrip): ScheduleReviewL
     startTime: trip.startTime,
 });
 
+const getActiveEndStopName = (table: MasterRouteTable, trip: MasterTrip): string | null => {
+    const endIndex = Math.min(table.stops.length - 1, trip.endStopIndex ?? table.stops.length - 1);
+    for (let index = endIndex; index >= 0; index -= 1) {
+        const stopName = table.stops[index];
+        if (trip.stops?.[stopName] || trip.stopMinutes?.[stopName] !== undefined) return stopName;
+    }
+    return table.stops[endIndex] ?? null;
+};
+
+const getOccupiedEndTime = (table: MasterRouteTable, trip: MasterTrip): number => {
+    const terminalStop = getActiveEndStopName(table, trip);
+    if (!terminalStop) return trip.endTime;
+
+    const terminalRecovery = trip.recoveryTimes?.[terminalStop]
+        ?? (trip.recoveryTimes && Object.keys(trip.recoveryTimes).length > 0 ? 0 : trip.recoveryTime)
+        ?? 0;
+    const legacyDepartureIncludesRecovery = trip.endTimeIncludesRecovery === undefined
+        && trip.recoveryTimes !== undefined
+        && Object.prototype.hasOwnProperty.call(trip.recoveryTimes, terminalStop)
+        && trip.stopMinutes?.[terminalStop] === trip.endTime
+        && trip.arrivalTimes?.[terminalStop] === undefined;
+    const includesRecovery = trip.endTimeIncludesRecovery ?? legacyDepartureIncludesRecovery;
+
+    return trip.endTime + (includesRecovery ? 0 : Math.max(0, terminalRecovery));
+};
+
+const normalizeTripTime = (trip: MasterTrip, minutes: number): number => {
+    const operationalStart = getOperationalSortTime(trip.startTime);
+    let adjusted = getOperationalSortTime(minutes);
+    // Legacy schedules can store a trip crossing the 4:00 AM service boundary
+    // with clock minutes on both sides. Only treat a large backwards jump as
+    // a rollover so genuinely invalid small reversals remain review errors.
+    if (adjusted < operationalStart - 720) adjusted += 1440;
+    return adjusted;
+};
+
+const getOperationalStartTime = (trip: MasterTrip): number => getOperationalSortTime(trip.startTime);
+const getOperationalEndTime = (trip: MasterTrip): number => normalizeTripTime(trip, trip.endTime);
+const getOperationalOccupiedEndTime = (table: MasterRouteTable, trip: MasterTrip): number => (
+    normalizeTripTime(trip, getOccupiedEndTime(table, trip))
+);
+
 const changeLabel = (kind: ScheduleReviewChange['kind']): string => ({
     new: 'Trip added',
     extended: 'Trip extended',
@@ -98,7 +141,8 @@ const median = (values: number[]): number | null => {
 
 const sortByLocation = <T extends { id: string; location: ScheduleReviewLocation }>(a: T, b: T): number =>
     a.location.direction.localeCompare(b.location.direction)
-    || (a.location.startTime ?? Number.MAX_SAFE_INTEGER) - (b.location.startTime ?? Number.MAX_SAFE_INTEGER)
+    || (a.location.startTime === undefined ? Number.MAX_SAFE_INTEGER : getOperationalSortTime(a.location.startTime))
+        - (b.location.startTime === undefined ? Number.MAX_SAFE_INTEGER : getOperationalSortTime(b.location.startTime))
     || (a.location.blockId || '').localeCompare(b.location.blockId || '', undefined, { numeric: true })
     || a.id.localeCompare(b.id);
 
@@ -177,7 +221,7 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
                 || !Number.isFinite(trip.endTime)
                 || !Number.isFinite(trip.travelTime)
                 || !Number.isFinite(trip.recoveryTime)
-                || trip.endTime < trip.startTime
+                || getOperationalEndTime(trip) < getOperationalStartTime(trip)
                 || trip.travelTime < 0
                 || trip.recoveryTime < 0;
             const activeStart = Math.max(0, trip.startStopIndex ?? 0);
@@ -185,7 +229,8 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
             const orderedStopMinutes = table.stops
                 .slice(activeStart, activeEnd + 1)
                 .map(stop => trip.stopMinutes?.[stop])
-                .filter((minute): minute is number => typeof minute === 'number');
+                .filter((minute): minute is number => typeof minute === 'number')
+                .map(minute => normalizeTripTime(trip, minute));
             const nonMonotonicStops = orderedStopMinutes.some((minute, index) => index > 0 && minute < orderedStopMinutes[index - 1]);
             if (invalidCoreTiming || nonMonotonicStops) {
                 issues.push({
@@ -215,17 +260,21 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
         });
 
         byBlock.forEach(blockTrips => {
-            const sorted = [...blockTrips].sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id));
+            const sorted = [...blockTrips].sort((a, b) => (
+                getOperationalStartTime(a) - getOperationalStartTime(b) || a.id.localeCompare(b.id)
+            ));
             for (let index = 1; index < sorted.length; index += 1) {
                 const previous = sorted[index - 1];
                 const current = sorted[index];
-                if (current.startTime < previous.endTime || current.isOverlap) {
+                const previousOccupiedEnd = getOperationalOccupiedEndTime(table, previous);
+                const currentStart = getOperationalStartTime(current);
+                if (currentStart < previousOccupiedEnd || current.isOverlap) {
                     const id = `issue:block-overlap:${direction}:${current.id}`;
                     if (!overlapIds.has(id)) {
                         overlapIds.add(id);
                         issues.push({
                             id, kind: 'block-overlap', severity: 'error',
-                            message: `Block ${current.blockId}: trips overlap by ${Math.max(0, previous.endTime - current.startTime)} min`,
+                            message: `Block ${current.blockId}: trips overlap by ${Math.max(0, previousOccupiedEnd - currentStart)} min`,
                             location: locationFor(table, current),
                         });
                     }
@@ -233,11 +282,13 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
             }
         });
 
-        const sortedDirection = [...table.trips].sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id));
+        const sortedDirection = [...table.trips].sort((a, b) => (
+            getOperationalStartTime(a) - getOperationalStartTime(b) || a.id.localeCompare(b.id)
+        ));
         for (let index = 1; index < sortedDirection.length; index += 1) {
             const previous = sortedDirection[index - 1];
             const current = sortedDirection[index];
-            const gap = current.startTime - previous.endTime;
+            const gap = getOperationalStartTime(current) - getOperationalEndTime(previous);
             if (gap > 90) {
                 issues.push({
                     id: `issue:service-gap:${direction}:${current.id}`,
@@ -250,7 +301,7 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
 
         const headways = sortedDirection
             .slice(1)
-            .map((trip, index) => trip.startTime - sortedDirection[index].startTime)
+            .map((trip, index) => getOperationalStartTime(trip) - getOperationalStartTime(sortedDirection[index]))
             .filter(value => value > 0 && value <= 180);
         const medianHeadway = headways.length >= 3 ? median(headways) : null;
         if (medianHeadway !== null) {
@@ -289,17 +340,22 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
         allByBlock.set(trip.blockId, [...(allByBlock.get(trip.blockId) || []), { table, trip }]);
     }));
     allByBlock.forEach(blockEntries => {
-        const sorted = [...blockEntries].sort((a, b) => a.trip.startTime - b.trip.startTime || a.trip.id.localeCompare(b.trip.id));
+        const sorted = [...blockEntries].sort((a, b) => (
+            getOperationalStartTime(a.trip) - getOperationalStartTime(b.trip)
+            || a.trip.id.localeCompare(b.trip.id)
+        ));
         for (let index = 1; index < sorted.length; index += 1) {
             const previous = sorted[index - 1].trip;
             const { table, trip: current } = sorted[index];
             const direction = current.direction || directionOf(table);
             const id = `issue:block-overlap:${direction}:${current.id}`;
-            if (current.startTime < previous.endTime && !overlapIds.has(id)) {
+            const previousOccupiedEnd = getOperationalOccupiedEndTime(sorted[index - 1].table, previous);
+            const currentStart = getOperationalStartTime(current);
+            if (currentStart < previousOccupiedEnd && !overlapIds.has(id)) {
                 overlapIds.add(id);
                 issues.push({
                     id, kind: 'block-overlap', severity: 'error',
-                    message: `Block ${current.blockId}: trips overlap by ${previous.endTime - current.startTime} min`,
+                    message: `Block ${current.blockId}: trips overlap by ${previousOccupiedEnd - currentStart} min`,
                     location: locationFor(table, current),
                 });
             }

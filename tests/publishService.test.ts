@@ -8,6 +8,9 @@ const {
   uploadToMasterScheduleMock,
   getMasterScheduleEntryMock,
   buildRouteIdentityMock,
+  getLatestScheduleReviewForDraftMock,
+  loadScheduleReviewPayloadMock,
+  scheduleReviewContentMatchesMock,
 } = vi.hoisted(() => ({
   docMock: vi.fn(),
   setDocMock: vi.fn(),
@@ -15,6 +18,9 @@ const {
   uploadToMasterScheduleMock: vi.fn(),
   getMasterScheduleEntryMock: vi.fn(),
   buildRouteIdentityMock: vi.fn((routeNumber: string, dayType: string) => `${routeNumber}-${dayType}`),
+  getLatestScheduleReviewForDraftMock: vi.fn(),
+  loadScheduleReviewPayloadMock: vi.fn(),
+  scheduleReviewContentMatchesMock: vi.fn(),
 }));
 
 vi.mock('firebase/firestore', () => ({
@@ -38,6 +44,12 @@ vi.mock('../utils/masterScheduleTypes', () => ({
   buildRouteIdentity: buildRouteIdentityMock,
 }));
 
+vi.mock('../utils/services/scheduleReviewService', () => ({
+  getLatestScheduleReviewForDraft: getLatestScheduleReviewForDraftMock,
+  loadScheduleReviewPayload: loadScheduleReviewPayloadMock,
+  scheduleReviewContentMatches: scheduleReviewContentMatchesMock,
+}));
+
 import { publishDraft, publishSystemDraft } from '../utils/services/publishService';
 
 const makeTable = (routeName: string): MasterRouteTable => ({
@@ -54,6 +66,9 @@ beforeEach(() => {
   uploadToMasterScheduleMock.mockReset();
   getMasterScheduleEntryMock.mockReset();
   buildRouteIdentityMock.mockClear();
+  getLatestScheduleReviewForDraftMock.mockReset();
+  loadScheduleReviewPayloadMock.mockReset();
+  scheduleReviewContentMatchesMock.mockReset();
 
   docMock.mockImplementation((_db: unknown, ...pathParts: string[]) => ({
     path: pathParts.join('/'),
@@ -73,11 +88,19 @@ beforeEach(() => {
     uploaderName: 'Tester',
     source: 'draft',
   });
+  getLatestScheduleReviewForDraftMock.mockResolvedValue({
+    id: 'review-1',
+    status: 'ready_for_review',
+    sourceVersion: 0,
+  });
+  loadScheduleReviewPayloadMock.mockResolvedValue({ schedule: {} });
+  scheduleReviewContentMatchesMock.mockReturnValue(true);
 
 });
 
 describe('publishDraft', () => {
   it('rejects a stale master-derived draft unless the planner explicitly overrides it', async () => {
+    getLatestScheduleReviewForDraftMock.mockResolvedValue({ id: 'review-1', status: 'ready_for_review', sourceVersion: 3 });
     getMasterScheduleEntryMock.mockResolvedValue({ id: '10-Weekday', currentVersion: 4 });
     const draft = {
       id: 'draft-123', routeNumber: '10', dayType: 'Weekday',
@@ -184,6 +207,44 @@ describe('publishDraft', () => {
     expect(uploadToMasterScheduleMock).not.toHaveBeenCalled();
   });
 
+  it('rejects top-level route and day values that disagree with schedule content', async () => {
+    const content = {
+      northTable: makeTable('10 (Weekday) (North)'),
+      southTable: makeTable('10 (Weekday) (South)'),
+      metadata: { routeNumber: '10', dayType: 'Weekday', uploadedAt: '2026-04-08T10:00:00Z' },
+    };
+
+    await expect(publishDraft({
+      teamId: 'team-1', userId: 'user-1', publisherName: 'Tester', publishNote: 'PM update',
+      draft: { id: 'draft-1', routeNumber: '2', dayType: 'Weekday', status: 'ready_for_review', content } as any,
+    })).rejects.toThrow('routeNumber does not match');
+    await expect(publishDraft({
+      teamId: 'team-1', userId: 'user-1', publisherName: 'Tester', publishNote: 'PM update',
+      draft: { id: 'draft-1', routeNumber: '10', dayType: 'Sunday', status: 'ready_for_review', content } as any,
+    })).rejects.toThrow('dayType does not match');
+    expect(uploadToMasterScheduleMock).not.toHaveBeenCalled();
+  });
+
+  it('requires the latest valid review snapshot to match the published content', async () => {
+    const content = {
+      northTable: makeTable('10 (Weekday) (North)'),
+      southTable: makeTable('10 (Weekday) (South)'),
+      metadata: { routeNumber: '10', dayType: 'Weekday', uploadedAt: '2026-04-08T10:00:00Z' },
+    };
+    const draft = {
+      id: 'draft-1', routeNumber: '10', dayType: 'Weekday', status: 'ready_for_review', content,
+    } as any;
+
+    getLatestScheduleReviewForDraftMock.mockResolvedValueOnce(null);
+    await expect(publishDraft({ teamId: 'team-1', userId: 'user-1', publisherName: 'Tester', draft, publishNote: 'PM update' }))
+      .rejects.toThrow('current review snapshot');
+
+    scheduleReviewContentMatchesMock.mockReturnValueOnce(false);
+    await expect(publishDraft({ teamId: 'team-1', userId: 'user-1', publisherName: 'Tester', draft, publishNote: 'PM update' }))
+      .rejects.toThrow('changed after its latest review snapshot');
+    expect(uploadToMasterScheduleMock).not.toHaveBeenCalled();
+  });
+
   it('blocks master-derived drafts whose source version cannot be verified', async () => {
     const content = {
       northTable: makeTable('10 (Weekday) (North)'),
@@ -198,6 +259,7 @@ describe('publishDraft', () => {
       .rejects.toThrow('missing its source version');
 
     draft.basedOn.sourceVersion = 3;
+    getLatestScheduleReviewForDraftMock.mockResolvedValue({ id: 'review-1', status: 'ready_for_review', sourceVersion: 3 });
     getMasterScheduleEntryMock.mockResolvedValue(null);
     await expect(publishDraft({ teamId: 'team-1', userId: 'user-1', publisherName: 'Tester', draft, publishNote: 'PM update' }))
       .rejects.toThrow('source master could not be verified');
@@ -205,6 +267,7 @@ describe('publishDraft', () => {
   });
 
   it('separates cross-team source freshness from target-team concurrency', async () => {
+    getLatestScheduleReviewForDraftMock.mockResolvedValue({ id: 'review-1', status: 'ready_for_review', sourceVersion: 5 });
     getMasterScheduleEntryMock
       .mockResolvedValueOnce({ id: '10-Weekday', currentVersion: 5 })
       .mockResolvedValueOnce(null);
@@ -232,7 +295,36 @@ describe('publishDraft', () => {
     );
   });
 
+  it('uses the verified current source version for an explicit stale cross-team override', async () => {
+    getLatestScheduleReviewForDraftMock.mockResolvedValue({ id: 'review-1', status: 'approved', sourceVersion: 4 });
+    getMasterScheduleEntryMock
+      .mockResolvedValueOnce({ id: '10-Weekday', currentVersion: 6 })
+      .mockResolvedValueOnce(null);
+    const draft = {
+      id: 'draft-1', routeNumber: '10', dayType: 'Weekday', status: 'ready_for_review',
+      basedOn: { type: 'master', id: '10-Weekday', sourceVersion: 4, sourceTeamId: 'source-team' },
+      content: {
+        northTable: makeTable('10 (Weekday) (North)'),
+        southTable: makeTable('10 (Weekday) (South)'),
+        metadata: { routeNumber: '10', dayType: 'Weekday', uploadedAt: '2026-04-08T10:00:00Z' },
+      },
+    } as any;
+
+    await expect(publishDraft({
+      teamId: 'team-1', userId: 'user-1', publisherName: 'Tester', draft,
+      publishNote: 'Approved stale shared source', allowStaleSource: true,
+    })).resolves.toMatchObject({ routeIdentity: '10-Weekday' });
+    expect(uploadToMasterScheduleMock).toHaveBeenCalledWith(
+      'team-1', 'user-1', 'Tester', expect.anything(), expect.anything(), '10', 'Weekday', 'draft',
+      expect.objectContaining({
+        expectedCurrentVersion: 0,
+        expectedSource: { teamId: 'source-team', routeIdentity: '10-Weekday', version: 6 },
+      }),
+    );
+  });
+
   it('rejects a source route identity that differs from the published route', async () => {
+    getLatestScheduleReviewForDraftMock.mockResolvedValue({ id: 'review-1', status: 'ready_for_review', sourceVersion: 3 });
     const draft = {
       id: 'draft-1', routeNumber: '10', dayType: 'Weekday', status: 'ready_for_review',
       basedOn: { type: 'master', id: '2-Weekday', sourceVersion: 3 },

@@ -157,7 +157,11 @@ vi.mock('../components/NewSchedule/TripContextMenu', () => ({
 }));
 
 vi.mock('../components/ui/CascadeModeSelector', () => ({
-  CascadeModeSelector: (): null => null
+  CascadeModeSelector: (props: { onChange?: (mode: string) => void }) => (
+    <button data-testid="cascade-within-trip" onClick={() => props.onChange?.('within-trip')}>
+      Current round trip
+    </button>
+  )
 }));
 
 import { ScheduleEditor } from '../components/ScheduleEditor';
@@ -385,6 +389,27 @@ describe('ScheduleEditor interactions', () => {
       { mode: 'editor' }
     );
     expect(onSchedulesChangeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('shifts only the paired return trip for timeline edits in current-round-trip mode', async () => {
+    renderEditor();
+    await flushPromises();
+
+    flushSync(() => {
+      container?.querySelector('[data-testid="cascade-within-trip"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      container?.querySelector('[data-testid="switch-timeline"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    flushSync(() => {
+      container?.querySelector('[data-testid="timeline-change"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const updated = onSchedulesChangeMock.mock.calls.at(-1)?.[0];
+    expect(updated[0].trips[0].startTime).toBe(430);
+    expect(updated[1].trips[0].startTime).toBe(465);
+    expect(updated[1].trips[0].stops['Stop 1']).toBe('7:45 AM');
   });
 
   it('preserves post-midnight operational timing after a timeline trip edit', async () => {

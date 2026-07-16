@@ -3,9 +3,17 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseMasterScheduleV2 } from '../utils/parsers/masterScheduleParserV2';
-import { adaptV2ToV1 } from '../utils/parsers/parserAdapter';
+import { adaptV2ToV1, normalizeTimeForSort } from '../utils/parsers/parserAdapter';
 
 const FIXTURE_PATH = path.join(__dirname, 'fixtures/master_schedule.xlsx');
+
+describe('parser adapter operational ordering', () => {
+    it('treats service before 4:00 AM as the prior operational evening', () => {
+        expect(normalizeTimeForSort(225)).toBe(1665);
+        expect(normalizeTimeForSort(239)).toBe(1679);
+        expect(normalizeTimeForSort(240)).toBe(240);
+    });
+});
 
 describe('Master Schedule Parser (Golden Master)', () => {
     it('should match the golden snapshot for the entire schedule', () => {
@@ -18,6 +26,9 @@ describe('Master Schedule Parser (Golden Master)', () => {
 
         // 3. Run Adapter Logic (since this is what the UI uses)
         const adaptedTables = adaptV2ToV1(v2Result);
+
+        const route400Weekday = adaptedTables.find(table => table.routeName === '400 (Weekday)');
+        expect(route400Weekday?.trips.find(trip => trip.id === '400-T-5')?.endTimeIncludesRecovery).toBe(true);
 
         // 4. Create a deterministic output object
         // We sort routes to ensure stability if array order changes slightly

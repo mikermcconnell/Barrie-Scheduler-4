@@ -5,21 +5,37 @@ import type { StopMetrics } from '../../utils/performanceDataTypes';
 import { findStopCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
 import {
-  getStopActivityBreakdown,
+  getStopActivityChange,
   getStopRouteActivityBreakdown,
   getStopActivityValue,
+  getRouteScopedStopActivityBreakdown,
   hasHourlyDataForStops,
   matchesStopSearch,
 } from '../../utils/performanceStopActivity';
 import { HeatmapDotLayer, LassoControl, MapBase, RouteOverlay, toGeoJSON, pointInPolygon } from '../shared';
 
-interface StopActivityMapProps { stops: StopMetrics[]; }
+interface StopActivityMapProps {
+  stops: StopMetrics[];
+  comparisonStops?: StopMetrics[];
+  currentDayCount?: number;
+  comparisonDayCount?: number;
+  comparisonRange?: { start: string; end: string } | null;
+}
 type ViewMode = 'total' | 'boardings' | 'alightings';
+type MapMode = 'activity' | 'change';
+type ChangeFocus = 'all' | 'increase' | 'decrease';
 type CoordinateSource = 'gtfs' | 'streets' | 'none';
 interface EnrichedStop extends StopMetrics {
   activity: number;
   filteredBoardings: number;
   filteredAlightings: number;
+  comparisonBoardings: number;
+  comparisonAlightings: number;
+  currentPerDay: number;
+  comparisonPerDay: number;
+  changePerDay: number;
+  changePercent: number | null;
+  changeColor?: string;
   coordSource: CoordinateSource;
 }
 interface RenderedStop extends EnrichedStop { bin: number; sortKey: number; }
@@ -27,6 +43,10 @@ interface HoverInfo { stopId: string; latitude: number; longitude: number; }
 
 const BARRIE_CENTER: [number, number] = [44.38, -79.69];
 const OUTLINE_COLOR = '#374151';
+const CHANGE_INCREASE_COLOR = '#0891b2';
+const CHANGE_DECREASE_COLOR = '#ea580c';
+const CHANGE_STABLE_COLOR = '#9ca3af';
+const STABLE_CHANGE_PER_DAY = 0.5;
 const STOP_CIRCLE_LAYER_ID = 'stop-activity-circles';
 const BINS = [
   { fill: 'transparent', fillOpacity: 0, radius: 3, label: 'Zero' },
@@ -76,37 +96,75 @@ function hasUsableBarrieCoords(lat: number, lon: number): boolean {
     && lon <= BARRIE_COORD_BOUNDS.maxLon;
 }
 
-const Legend = () => (
+function formatShortRange(range: { start: string; end: string } | null | undefined): string {
+  if (!range) return 'prior period';
+  const formatter = new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const start = formatter.format(new Date(`${range.start}T12:00:00Z`));
+  const end = formatter.format(new Date(`${range.end}T12:00:00Z`));
+  return range.start === range.end ? start : `${start}–${end}`;
+}
+
+const Legend = ({ mapMode, comparisonRange, unavailableStops, unavailableReason }: { mapMode: MapMode; comparisonRange?: { start: string; end: string } | null; unavailableStops: number; unavailableReason: 'hourly' | 'route' }) => (
   <div className="absolute bottom-6 left-2 z-[1000] bg-white/95 rounded-lg shadow-md border border-gray-200 px-2.5 py-2 text-[10px] pointer-events-auto">
-    <div className="font-bold text-gray-600 mb-1 text-[11px]">Activity</div>
-    {BINS.map((bin, i) => (
-      <div key={i} className="flex items-center gap-1.5 py-[1px]">
-        <span className="inline-block w-3 h-3 rounded-full border" style={{ backgroundColor: bin.fill === 'transparent' ? 'white' : bin.fill, borderColor: OUTLINE_COLOR, borderWidth: i === 0 ? 1.5 : 1, opacity: i === 0 ? 0.5 : bin.fillOpacity + 0.1 }} />
-        <span className="text-gray-500">{bin.label}</span>
-      </div>
-    ))}
+    <div className="font-bold text-gray-600 mb-1 text-[11px]">{mapMode === 'change' ? 'Activity change' : 'Activity'}</div>
+    {mapMode === 'change' ? (
+      <>
+        <div className="mb-1.5 max-w-36 text-[9px] leading-tight text-gray-400">Compared with {formatShortRange(comparisonRange)} · size shows absolute change/day</div>
+        {[
+          { color: CHANGE_INCREASE_COLOR, label: 'Increase' },
+          { color: CHANGE_DECREASE_COLOR, label: 'Decrease' },
+          { color: CHANGE_STABLE_COLOR, label: 'Little change' },
+        ].map(item => <div key={item.label} className="flex items-center gap-1.5 py-[1px]"><span className="inline-block w-3 h-3 rounded-full border border-gray-600" style={{ backgroundColor: item.color }} /><span className="text-gray-500">{item.label}</span></div>)}
+      </>
+    ) : BINS.map((bin, i) => (
+        <div key={i} className="flex items-center gap-1.5 py-[1px]">
+          <span className="inline-block w-3 h-3 rounded-full border" style={{ backgroundColor: bin.fill === 'transparent' ? 'white' : bin.fill, borderColor: OUTLINE_COLOR, borderWidth: i === 0 ? 1.5 : 1, opacity: i === 0 ? 0.5 : bin.fillOpacity + 0.1 }} />
+          <span className="text-gray-500">{bin.label}</span>
+        </div>
+      ))}
+    {unavailableStops > 0 && <div className="mt-1.5 max-w-36 border-t border-gray-100 pt-1 text-[9px] leading-tight text-amber-700">{unavailableStops} stop{unavailableStops === 1 ? '' : 's'} hidden because reliable {unavailableReason === 'hourly' ? 'hourly' : 'route-specific'} data is unavailable.</div>}
   </div>
 );
 
-const LassoSummaryPanel = ({ selected, onClose }: { selected: EnrichedStop[]; onClose: () => void }) => {
+function formatSigned(value: number, maximumFractionDigits = 1): string {
+  const rounded = Math.abs(value) < 0.05 ? 0 : value;
+  return `${rounded > 0 ? '+' : ''}${rounded.toLocaleString(undefined, { maximumFractionDigits })}`;
+}
+
+function formatChangePercentLabel(stop: Pick<EnrichedStop, 'changePercent' | 'currentPerDay'>): string {
+  if (stop.changePercent !== null) return `${formatSigned(stop.changePercent)}%`;
+  return stop.currentPerDay > 0 ? 'New activity' : 'No activity in either period';
+}
+
+const LassoSummaryPanel = ({ selected, mapMode, onClose }: { selected: EnrichedStop[]; mapMode: MapMode; onClose: () => void }) => {
   const totalB = selected.reduce((s, x) => s + x.filteredBoardings, 0);
   const totalA = selected.reduce((s, x) => s + x.filteredAlightings, 0);
-  return <div className="absolute top-2 left-2 z-[1000] bg-white/95 rounded-lg shadow-lg border border-gray-200 w-80 p-3 pointer-events-auto"><div className="flex items-start justify-between"><div><div className="font-bold text-sm">Lasso Selection</div><div className="text-[10px] text-gray-400">{selected.length} stops selected</div></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600">x</button></div><div className="grid grid-cols-3 gap-2 mt-3 text-center"><div><div className="text-xs font-bold text-cyan-600">{totalB.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Boardings</div></div><div><div className="text-xs font-bold text-purple-600">{totalA.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Alightings</div></div><div><div className="text-xs font-bold text-gray-800">{(totalB + totalA).toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Total</div></div></div></div>;
+  const currentPerDay = selected.reduce((sum, stop) => sum + stop.currentPerDay, 0);
+  const comparisonPerDay = selected.reduce((sum, stop) => sum + stop.comparisonPerDay, 0);
+  const changePerDay = currentPerDay - comparisonPerDay;
+  return <div className="absolute top-2 left-2 z-[1000] bg-white/95 rounded-lg shadow-lg border border-gray-200 w-80 p-3 pointer-events-auto"><div className="flex items-start justify-between"><div><div className="font-bold text-sm">Lasso Selection</div><div className="text-[10px] text-gray-400">{selected.length} stops selected</div></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close lasso summary">x</button></div>{mapMode === 'change' ? <div className="grid grid-cols-3 gap-2 mt-3 text-center"><div><div className="text-xs font-bold text-gray-800">{currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Current/day</div></div><div><div className="text-xs font-bold text-gray-600">{comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Prior/day</div></div><div><div className={`text-xs font-bold ${changePerDay > 0 ? 'text-cyan-700' : changePerDay < 0 ? 'text-orange-700' : 'text-gray-500'}`}>{formatSigned(changePerDay)}</div><div className="text-[9px] text-gray-400 uppercase">Change/day</div></div></div> : <div className="grid grid-cols-3 gap-2 mt-3 text-center"><div><div className="text-xs font-bold text-cyan-600">{totalB.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Boardings</div></div><div><div className="text-xs font-bold text-purple-600">{totalA.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Alightings</div></div><div><div className="text-xs font-bold text-gray-800">{(totalB + totalA).toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Total</div></div></div>}</div>;
 };
 
-const DetailPanel = ({ stop, rank, total, activeHours, onClose }: { stop: EnrichedStop; rank: number; total: number; activeHours: number[] | null; onClose: () => void }) => {
+const DetailPanel = ({ stop, rank, total, activeHours, mapMode, currentDayCount, comparisonDayCount, onClose }: { stop: EnrichedStop; rank: number; total: number; activeHours: number[] | null; mapMode: MapMode; currentDayCount: number; comparisonDayCount: number; onClose: () => void }) => {
   const routeRows = getStopRouteActivityBreakdown(stop, activeHours);
   const hourlyData = Array.from({ length: 24 }, (_, h) => ({ b: stop.hourlyBoardings?.[h] || 0, a: stop.hourlyAlightings?.[h] || 0 }));
   const maxHourly = Math.max(...hourlyData.map((d) => d.b + d.a), 1);
-  return <div className="absolute top-2 left-2 z-[1000] bg-white/95 rounded-lg shadow-lg border border-gray-200 w-72 pointer-events-auto"><div className="flex items-start justify-between px-3 pt-2.5 pb-1"><div><div className="font-bold text-sm leading-tight">{stop.stopName}</div><div className="text-[10px] text-gray-400">Stop {stop.stopId} · #{rank} of {total}</div></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600">x</button></div><div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100 text-center"><div><div className="text-xs font-bold text-cyan-600">{stop.filteredBoardings.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Boardings</div></div><div><div className="text-xs font-bold text-purple-600">{stop.filteredAlightings.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Alightings</div></div><div><div className="text-xs font-bold text-gray-800">{(stop.filteredBoardings + stop.filteredAlightings).toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Total</div></div></div><div className="px-3 py-2 border-t border-gray-100"><div className="text-[9px] text-gray-400 uppercase mb-1">Ridership by Route</div><table className="w-full text-[10px]"><tbody>{routeRows.slice(0, 6).map((row) => <tr key={row.routeId}><td className="py-0.5 text-gray-700 font-semibold">Route {row.routeId}</td><td className="py-0.5 text-right text-gray-700 tabular-nums">{row.total.toLocaleString()}</td></tr>)}</tbody></table></div><div className="px-3 py-2 border-t border-gray-100"><div className="text-[9px] text-gray-400 uppercase mb-1">Hourly Pattern</div><svg width="100%" height="40" viewBox="0 0 240 40" preserveAspectRatio="none">{hourlyData.map((d, h) => { const barH = ((d.b + d.a) / maxHourly) * 36; return <rect key={h} x={h * 10} y={40 - barH} width="8" height={barH} rx="1" fill={d.b + d.a > 0 ? '#06b6d4' : '#e5e7eb'} opacity="0.8" />; })}</svg></div></div>;
+  return <div className="absolute top-2 left-2 z-[1000] bg-white/95 rounded-lg shadow-lg border border-gray-200 w-72 pointer-events-auto"><div className="flex items-start justify-between px-3 pt-2.5 pb-1"><div><div className="font-bold text-sm leading-tight">{stop.stopName}</div><div className="text-[10px] text-gray-400">Stop {stop.stopId} · #{rank} of {total}</div></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close stop details">x</button></div>{mapMode === 'change' ? <><div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100 text-center"><div><div className="text-xs font-bold text-gray-800">{stop.currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Current/day</div></div><div><div className="text-xs font-bold text-gray-600">{stop.comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Prior/day</div></div><div><div className={`text-xs font-bold ${stop.changePerDay > 0 ? 'text-cyan-700' : stop.changePerDay < 0 ? 'text-orange-700' : 'text-gray-500'}`}>{formatSigned(stop.changePerDay)}</div><div className="text-[9px] text-gray-400 uppercase">Change/day</div></div></div><div className="px-3 py-2 border-t border-gray-100 text-[10px] text-gray-500"><div className="flex justify-between"><span>Percentage change</span><strong className="text-gray-700">{formatChangePercentLabel(stop)}</strong></div><div className="mt-1 flex justify-between"><span>Service days compared</span><strong className="text-gray-700">{currentDayCount} vs {comparisonDayCount}</strong></div></div></> : <><div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100 text-center"><div><div className="text-xs font-bold text-cyan-600">{stop.filteredBoardings.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Boardings</div></div><div><div className="text-xs font-bold text-purple-600">{stop.filteredAlightings.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Alightings</div></div><div><div className="text-xs font-bold text-gray-800">{(stop.filteredBoardings + stop.filteredAlightings).toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Total</div></div></div><div className="px-3 py-2 border-t border-gray-100"><div className="text-[9px] text-gray-400 uppercase mb-1">Ridership by Route</div><table className="w-full text-[10px]"><tbody>{routeRows.slice(0, 6).map((row) => <tr key={row.routeId}><td className="py-0.5 text-gray-700 font-semibold">Route {row.routeId}</td><td className="py-0.5 text-right text-gray-700 tabular-nums">{row.total.toLocaleString()}</td></tr>)}</tbody></table></div><div className="px-3 py-2 border-t border-gray-100"><div className="text-[9px] text-gray-400 uppercase mb-1">Hourly Pattern</div><svg width="100%" height="40" viewBox="0 0 240 40" preserveAspectRatio="none">{hourlyData.map((d, h) => { const barH = ((d.b + d.a) / maxHourly) * 36; return <rect key={h} x={h * 10} y={40 - barH} width="8" height={barH} rx="1" fill={d.b + d.a > 0 ? '#06b6d4' : '#e5e7eb'} opacity="0.8" />; })}</svg></div></>}</div>;
 };
 
-export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
+export const StopActivityMap: React.FC<StopActivityMapProps> = ({
+  stops,
+  comparisonStops = [],
+  currentDayCount = 1,
+  comparisonDayCount = 0,
+  comparisonRange = null,
+}) => {
   const mapRef = useRef<MapRef | null>(null);
   const hasFittedRef = useRef(false);
   const playHourRef = useRef(5);
   const [mapReady, setMapReady] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [mapMode, setMapMode] = useState<MapMode>('activity');
   const [viewMode, setViewMode] = useState<ViewMode>('total');
   const [selectedRoute, setSelectedRoute] = useState('all');
   const [selectedStop, setSelectedStop] = useState<EnrichedStop | null>(null);
@@ -121,8 +179,32 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
   const [lassoMode, setLassoMode] = useState(false);
   const [lassoSelection, setLassoSelection] = useState<EnrichedStop[] | null>(null);
   const [bottomNFilter, setBottomNFilter] = useState<number | null>(null);
+  const [changeFocus, setChangeFocus] = useState<ChangeFocus>('all');
 
-  const enrichedStops = useMemo(() => stops.map((stop) => {
+  const currentStopMap = useMemo(() => new Map(stops.map(stop => [stop.stopId, stop])), [stops]);
+  const comparisonStopMap = useMemo(() => new Map(comparisonStops.map(stop => [stop.stopId, stop])), [comparisonStops]);
+  const combinedStops = useMemo(() => {
+    if (mapMode === 'activity') return stops;
+    const stopIds = new Set([...currentStopMap.keys(), ...comparisonStopMap.keys()]);
+    return Array.from(stopIds).map(stopId => {
+      const current = currentStopMap.get(stopId);
+      const comparison = comparisonStopMap.get(stopId);
+      const base = current ?? comparison!;
+      const routes = Array.from(new Set([...(current?.routes ?? []), ...(comparison?.routes ?? [])]))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      return {
+        ...base,
+        boardings: current?.boardings ?? 0,
+        alightings: current?.alightings ?? 0,
+        hourlyBoardings: current?.hourlyBoardings,
+        hourlyAlightings: current?.hourlyAlightings,
+        routeBreakdown: current?.routeBreakdown,
+        routes,
+        routeCount: routes.length,
+      };
+    });
+  }, [comparisonStopMap, currentStopMap, mapMode, stops]);
+  const enrichedStops = useMemo(() => combinedStops.map((stop) => {
     const gtfs = findStopCoords(stop.stopId, stop.stopName);
     if (gtfs) {
       return { ...stop, lat: gtfs.lat, lon: gtfs.lon, coordSource: 'gtfs' as const };
@@ -133,8 +215,13 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     }
 
     return { ...stop, lat: Number.NaN, lon: Number.NaN, coordSource: 'none' as const };
-  }), [stops]);
-  const hasHourlyData = useMemo(() => hasHourlyDataForStops(enrichedStops), [enrichedStops]);
+  }), [combinedStops]);
+  const currentHasHourlyData = useMemo(() => hasHourlyDataForStops(stops), [stops]);
+  const comparisonHasHourlyData = useMemo(() => hasHourlyDataForStops(comparisonStops), [comparisonStops]);
+  const hasHourlyData = mapMode === 'change'
+    ? currentHasHourlyData && comparisonHasHourlyData
+    : currentHasHourlyData;
+  const canCompare = comparisonDayCount > 0 && comparisonStops.length > 0;
   const availableRoutes = useMemo(() => Array.from(new Set(enrichedStops.flatMap((stop) => stop.routes || []))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [enrichedStops]);
   const routeShapes = useMemo(() => { try { return loadGtfsRouteShapes(); } catch { return []; } }, []);
   const routeFilteredStops = useMemo(() => {
@@ -142,14 +229,66 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     if (selectedRoute !== 'all') result = result.filter((stop) => stop.routes?.includes(selectedRoute));
     return result;
   }, [enrichedStops, selectedRoute]);
-  const filteredStops = useMemo(() => {
+  const { filteredStops, unavailableScopedStopCount } = useMemo(() => {
     const result = routeFilteredStops.filter((stop) => hasUsableBarrieCoords(stop.lat, stop.lon));
-    return result.map((stop) => {
-      const filtered = getStopActivityBreakdown(stop, activeHours);
-      return { ...stop, filteredBoardings: filtered.boardings, filteredAlightings: filtered.alightings, activity: getStopActivityValue(stop, viewMode, activeHours) };
-    }) as EnrichedStop[];
-  }, [activeHours, routeFilteredStops, viewMode]);
-  const displayedStops = useMemo(() => bottomNFilter === null ? filteredStops : [...filteredStops.filter((stop) => stop.activity > 0)].sort((a, b) => a.activity - b.activity).slice(0, bottomNFilter), [bottomNFilter, filteredStops]);
+    let unavailableCount = 0;
+    const resolvedStops = result.flatMap((stop): EnrichedStop[] => {
+      const currentStop = currentStopMap.get(stop.stopId);
+      const comparisonStop = comparisonStopMap.get(stop.stopId);
+      const resolvePeriod = (periodStop: StopMetrics | undefined) => {
+        if (!periodStop) return { boardings: 0, alightings: 0 };
+        if (selectedRoute !== 'all' && !periodStop.routes?.includes(selectedRoute)) {
+          return { boardings: 0, alightings: 0 };
+        }
+        return getRouteScopedStopActivityBreakdown(periodStop, selectedRoute, activeHours);
+      };
+      const filtered = resolvePeriod(currentStop);
+      const comparison = resolvePeriod(comparisonStop);
+      if (!filtered || (mapMode === 'change' && !comparison)) {
+        unavailableCount += 1;
+        return [];
+      }
+      const effectiveComparison = comparison ?? { boardings: 0, alightings: 0 };
+      const currentValue = getStopActivityValue(filtered, viewMode, null);
+      const { currentPerDay, comparisonPerDay, changePerDay, changePercent } = getStopActivityChange(
+        filtered,
+        effectiveComparison,
+        viewMode,
+        null,
+        currentDayCount,
+        comparisonDayCount,
+      );
+      const changeColor = Math.abs(changePerDay) < STABLE_CHANGE_PER_DAY
+        ? CHANGE_STABLE_COLOR
+        : changePerDay > 0
+          ? CHANGE_INCREASE_COLOR
+          : CHANGE_DECREASE_COLOR;
+      return [{
+        ...stop,
+        filteredBoardings: filtered.boardings,
+        filteredAlightings: filtered.alightings,
+        comparisonBoardings: effectiveComparison.boardings,
+        comparisonAlightings: effectiveComparison.alightings,
+        currentPerDay,
+        comparisonPerDay,
+        changePerDay,
+        changePercent,
+        changeColor,
+        activity: mapMode === 'change' ? Math.abs(changePerDay) : currentValue,
+      } as EnrichedStop];
+    });
+    return { filteredStops: resolvedStops, unavailableScopedStopCount: unavailableCount };
+  }, [activeHours, comparisonDayCount, comparisonStopMap, currentDayCount, currentStopMap, mapMode, routeFilteredStops, selectedRoute, viewMode]);
+  const displayedStops = useMemo(() => {
+    if (mapMode === 'change') {
+      if (changeFocus === 'increase') return [...filteredStops].filter(stop => stop.changePerDay > 0).sort((a, b) => b.changePerDay - a.changePerDay).slice(0, 25);
+      if (changeFocus === 'decrease') return [...filteredStops].filter(stop => stop.changePerDay < 0).sort((a, b) => a.changePerDay - b.changePerDay).slice(0, 25);
+      return filteredStops;
+    }
+    return bottomNFilter === null
+      ? filteredStops
+      : [...filteredStops.filter((stop) => stop.activity > 0)].sort((a, b) => a.activity - b.activity).slice(0, bottomNFilter);
+  }, [bottomNFilter, changeFocus, filteredStops, mapMode]);
   const rankedDisplayedStops = useMemo(() => [...displayedStops].sort((a, b) => b.activity - a.activity), [displayedStops]);
   const searchResults = useMemo(() => !searchQuery.trim() ? [] : filteredStops.filter((stop) => matchesStopSearch(stop, searchQuery)).sort((a, b) => b.activity - a.activity).slice(0, 8), [filteredStops, searchQuery]);
   const renderedStops = useMemo(() => {
@@ -233,6 +372,21 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     }, 800);
     return () => clearInterval(timer);
   }, [isPlaying]);
+  useEffect(() => {
+    if (!canCompare && mapMode === 'change') setMapMode('activity');
+  }, [canCompare, mapMode]);
+  useEffect(() => {
+    if (selectedRoute !== 'all' && !availableRoutes.includes(selectedRoute)) {
+      setSelectedRoute('all');
+    }
+  }, [availableRoutes, selectedRoute]);
+  useEffect(() => {
+    if (mapMode === 'change' && activeHours !== null && !hasHourlyData) {
+      setActiveHours(null);
+      setActivePreset(null);
+      setIsPlaying(false);
+    }
+  }, [activeHours, hasHourlyData, mapMode]);
   useEffect(() => { setHoverInfo(null); setLassoSelection(null); }, [displayedStops]);
   useEffect(() => {
     if (!selectedStop) return;
@@ -255,17 +409,20 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
           <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onFocus={() => setSearchFocused(true)} onBlur={() => setTimeout(() => setSearchFocused(false), 200)} placeholder="Search stops..." className="w-48 px-2.5 py-1.5 text-xs bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-cyan-400 focus:border-cyan-400" />
           {searchFocused && searchResults.length > 0 && <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">{searchResults.map((stop) => <button key={stop.stopId} onMouseDown={() => flyToStop(stop)} onMouseEnter={() => setSearchPreviewStopId(stop.stopId)} onMouseLeave={() => setSearchPreviewStopId(null)} className="w-full text-left px-3 py-1.5 hover:bg-cyan-50 border-b border-gray-50 last:border-b-0"><span className="text-xs font-medium text-gray-800">{stop.stopName}</span><span className="text-[10px] text-gray-400 ml-1.5">#{stop.stopId}</span><span className="text-[10px] text-gray-400 float-right">{stop.activity.toLocaleString()}</span></button>)}</div>}
         </div>
+        <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">
+          {(['activity', 'change'] as MapMode[]).map(mode => <button key={mode} type="button" disabled={mode === 'change' && !canCompare} onClick={() => setMapMode(mode)} title={mode === 'change' && !canCompare ? 'No prior-period stop data is available' : undefined} className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${mapMode === mode ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>{mode}</button>)}
+        </div>
         <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['total', 'boardings', 'alightings'] as ViewMode[]).map((mode) => <button key={mode} onClick={() => setViewMode(mode)} className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors ${viewMode === mode ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>{mode === 'total' ? 'Total' : mode === 'boardings' ? 'Board' : 'Alight'}</button>)}</div>
         {availableRoutes.length > 0 && <select value={selectedRoute} onChange={(e) => setSelectedRoute(e.target.value)} className="px-2 py-1.5 text-xs bg-white border border-gray-300 rounded-md shadow-sm pointer-events-auto focus:outline-none focus:ring-1 focus:ring-cyan-400"><option value="all">All Routes</option>{availableRoutes.map((route) => <option key={route} value={route}>Route {route}</option>)}</select>}
         <button onClick={() => setShowRouteLines((p) => !p)} className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${showRouteLines ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Routes</button>
         <button onClick={toggleLassoMode} className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${lassoMode ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Lasso</button>
-        <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto"><button onClick={() => setBottomNFilter(null)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === null ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>All</button>{[10, 25].map((n) => <button key={n} onClick={() => setBottomNFilter(bottomNFilter === n ? null : n)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === n ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}>Low {n}</button>)}</div>
+        {mapMode === 'change' ? <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['all', 'increase', 'decrease'] as ChangeFocus[]).map(focus => <button key={focus} type="button" onClick={() => setChangeFocus(focus)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${changeFocus === focus ? focus === 'increase' ? 'bg-cyan-50 text-cyan-700' : focus === 'decrease' ? 'bg-orange-50 text-orange-700' : 'bg-gray-100 text-gray-700' : 'text-gray-500 hover:bg-gray-50'}`}>{focus === 'all' ? 'All' : focus === 'increase' ? 'Top 25 Up' : 'Top 25 Down'}</button>)}</div> : <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto"><button onClick={() => setBottomNFilter(null)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === null ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>All</button>{[10, 25].map((n) => <button key={n} onClick={() => setBottomNFilter(bottomNFilter === n ? null : n)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === n ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}>Low {n}</button>)}</div>}
         <div className="flex-1" />
         <button onClick={toggleFullscreen} className="bg-white border border-gray-300 rounded-md px-2 py-1.5 shadow-sm hover:bg-gray-50 transition-colors text-xs font-medium text-gray-600 pointer-events-auto">{isFullscreen ? 'Exit' : 'Fullscreen'}</button>
       </div>
       {hasHourlyData && <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 rounded-lg shadow-md border border-gray-200 px-3 py-2 pointer-events-auto" style={{ minWidth: 420 }}><div className="flex items-center gap-1.5 mb-1.5"><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Time of Day</span><div className="flex-1" /><button onClick={() => { setActiveHours(null); setActivePreset(null); setIsPlaying(false); }} className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${activeHours === null ? 'bg-cyan-100 text-cyan-700' : 'text-gray-400 hover:text-gray-600'}`} title="All Day" aria-label="All Day">All Day</button>{HOUR_PRESETS.map((preset) => <button key={preset.label} onClick={() => { setActiveHours([...preset.hours]); setActivePreset(preset.label); setIsPlaying(false); }} className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${activePreset === preset.label ? 'bg-cyan-100 text-cyan-700' : 'text-gray-400 hover:text-gray-600'}`} title={`${preset.label}: ${preset.detail}`} aria-label={`${preset.label}: ${preset.detail}`}>{preset.label}</button>)}</div><div className="flex items-center gap-2"><button onClick={() => { if (isPlaying) setIsPlaying(false); else { playHourRef.current = 4; setActivePreset(null); setIsPlaying(true); } }} className="w-6 h-6 flex items-center justify-center rounded-full bg-cyan-100 text-cyan-700 hover:bg-cyan-200 flex-shrink-0">{isPlaying ? '||' : '>'}</button><input type="range" min={0} max={23} value={activeHours?.length === 1 ? activeHours[0] : 12} onChange={(e) => { const hour = parseInt(e.target.value, 10); setActiveHours([hour]); setActivePreset(null); setIsPlaying(false); }} className="flex-1 h-1 accent-cyan-500" /><span className="text-xs font-bold text-gray-700 w-16 text-right tabular-nums">{activeHours === null ? 'All' : activeHours.length === 1 ? `${activeHours[0].toString().padStart(2, '0')}:00` : activePreset || `${activeHours[0]}-${activeHours[activeHours.length - 1]}h`}</span></div></div>}
-      <Legend />
-      {lassoSelection ? <LassoSummaryPanel selected={lassoSelection} onClose={clearLassoSelection} /> : selectedStop ? <DetailPanel stop={selectedStop} rank={selectedRank} total={rankedDisplayedStops.length} activeHours={activeHours} onClose={() => setSelectedStop(null)} /> : null}
+      <Legend mapMode={mapMode} comparisonRange={comparisonRange} unavailableStops={unavailableScopedStopCount} unavailableReason={activeHours === null ? 'route' : 'hourly'} />
+      {lassoSelection ? <LassoSummaryPanel selected={lassoSelection} mapMode={mapMode} onClose={clearLassoSelection} /> : selectedStop ? <DetailPanel stop={selectedStop} rank={selectedRank} total={rankedDisplayedStops.length} activeHours={activeHours} mapMode={mapMode} currentDayCount={currentDayCount} comparisonDayCount={comparisonDayCount} onClose={() => setSelectedStop(null)} /> : null}
       <div className={isFullscreen ? 'flex-1 w-full min-h-0' : 'h-[750px] w-full rounded-lg overflow-hidden'}>
         <MapBase mapRef={mapRef} latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={13} showNavigation={true} onLoad={handleMapLoad} interactiveLayerIds={[STOP_CIRCLE_LAYER_ID]} onMouseMove={handleMapMouseMove} onMouseLeave={handleMapMouseLeave} onClick={handleMapClick} style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}>
           {routeShapesForDisplay.length > 0 && <RouteOverlay shapes={routeShapesForDisplay} opacity={selectedRoute === 'all' ? 0.65 : 0.85} weight={selectedRoute === 'all' ? 2.5 : 4} dashed={false} idPrefix="stop-activity-routes" />}
@@ -276,6 +433,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
               lat: stop.lat,
               lon: stop.lon,
               value: stop.activity,
+              color: mapMode === 'change' ? stop.changeColor : undefined,
             }))}
             bins={BINS}
             outlineColor={OUTLINE_COLOR}
@@ -285,9 +443,27 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
           {previewRing && <Source id="stop-activity-preview-src" type="geojson" data={previewRing}><Layer id="stop-activity-preview-layer" type="circle" paint={{ 'circle-radius': ['*', ['get', 'radiusBase'], zoomScaleExpr] as mapboxgl.Expression, 'circle-color': '#3b82f6', 'circle-opacity': 0.12, 'circle-stroke-color': '#3b82f6', 'circle-stroke-width': 2.5 }} /></Source>}
           {lassoRing && <Source id="stop-activity-lasso-src" type="geojson" data={lassoRing}><Layer id="stop-activity-lasso-layer" type="circle" paint={{ 'circle-radius': ['*', ['get', 'radiusBase'], zoomScaleExpr] as mapboxgl.Expression, 'circle-color': '#f59e0b', 'circle-opacity': 0.2, 'circle-stroke-color': '#f59e0b', 'circle-stroke-width': 2.5 }} /></Source>}
           <LassoControl active={lassoMode} onComplete={handleLassoComplete} onClear={clearLassoSelection} />
-          {hoveredStop && !lassoMode && <Popup longitude={hoverInfo?.longitude ?? hoveredStop.lon} latitude={hoverInfo?.latitude ?? hoveredStop.lat} closeButton={false} closeOnClick={false} anchor="bottom" offset={8}><div style={{ fontSize: 12, lineHeight: 1.4 }}><strong>{hoveredStop.stopName}</strong> <span style={{ color: '#9ca3af' }}>({hoveredStop.stopId})</span><br />Boardings: {hoveredStop.filteredBoardings.toLocaleString()}<br />Alightings: {hoveredStop.filteredAlightings.toLocaleString()}<br />Activity: {(hoveredStop.filteredBoardings + hoveredStop.filteredAlightings).toLocaleString()}</div></Popup>}
+          {hoveredStop && !lassoMode && <Popup longitude={hoverInfo?.longitude ?? hoveredStop.lon} latitude={hoverInfo?.latitude ?? hoveredStop.lat} closeButton={false} closeOnClick={false} anchor="bottom" offset={8}><div style={{ fontSize: 12, lineHeight: 1.4 }}><strong>{hoveredStop.stopName}</strong> <span style={{ color: '#9ca3af' }}>({hoveredStop.stopId})</span>{mapMode === 'change' ? <><br />Current/day: {hoveredStop.currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}<br />Prior/day: {hoveredStop.comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}<br />Change/day: {formatSigned(hoveredStop.changePerDay)}{hoveredStop.changePercent === null ? '' : ` (${formatSigned(hoveredStop.changePercent)}%)`}</> : <><br />Boardings: {hoveredStop.filteredBoardings.toLocaleString()}<br />Alightings: {hoveredStop.filteredAlightings.toLocaleString()}<br />Activity: {(hoveredStop.filteredBoardings + hoveredStop.filteredAlightings).toLocaleString()}</>}</div></Popup>}
         </MapBase>
-        {routeFilteredStops.length > 0 && filteredStops.length === 0 && (
+        {activeHours !== null && unavailableScopedStopCount > 0 && filteredStops.length === 0 && (
+          <div className="absolute inset-x-6 bottom-6 z-[1000] rounded-xl border border-amber-200 bg-white/95 p-4 shadow-lg">
+            <div className="text-sm font-bold text-amber-900">Comparable hourly stop data is unavailable</div>
+            <p className="mt-1 text-sm text-amber-800">
+              {mapMode === 'change'
+                ? 'No stops have matching hourly activity for both comparison periods in the current route scope.'
+                : 'No stops have hourly activity in the current route scope.'}
+            </p>
+            <button type="button" onClick={() => { setActiveHours(null); setActivePreset(null); setIsPlaying(false); }} className="mt-3 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-50">Return to All Day</button>
+          </div>
+        )}
+        {activeHours === null && selectedRoute !== 'all' && unavailableScopedStopCount > 0 && filteredStops.length === 0 && (
+          <div className="absolute inset-x-6 bottom-6 z-[1000] rounded-xl border border-amber-200 bg-white/95 p-4 shadow-lg">
+            <div className="text-sm font-bold text-amber-900">Route-specific stop activity is unavailable</div>
+            <p className="mt-1 text-sm text-amber-800">The stop data does not contain a reliable breakdown for Route {selectedRoute}, so all-route activity has not been substituted.</p>
+            <button type="button" onClick={() => setSelectedRoute('all')} className="mt-3 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-50">Show All Routes</button>
+          </div>
+        )}
+        {routeFilteredStops.length > 0 && filteredStops.length === 0 && unavailableScopedStopCount === 0 && (
           <div className="absolute inset-x-6 bottom-6 z-[1000] rounded-xl border border-amber-200 bg-white/95 p-4 shadow-lg">
             <div className="text-sm font-bold text-amber-900">No mappable stops found for the ridership map</div>
             <p className="mt-1 text-sm text-amber-800">

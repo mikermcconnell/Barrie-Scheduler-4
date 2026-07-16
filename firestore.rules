@@ -175,7 +175,7 @@ service cloud.firestore {
       // Performance Data
       match /performanceData/{docId} {
         allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
-        allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+        allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
       }
 
       // Transit On Demand pickup map data

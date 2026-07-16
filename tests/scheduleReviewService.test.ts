@@ -13,6 +13,7 @@ const {
   serverTimestampMock,
   setDocMock,
   updateDocMock,
+  whereMock,
   storageRefMock,
   uploadBytesMock,
   deleteObjectMock,
@@ -28,6 +29,7 @@ const {
   serverTimestampMock: vi.fn(() => 'server-timestamp'),
   setDocMock: vi.fn(),
   updateDocMock: vi.fn(),
+  whereMock: vi.fn(),
   storageRefMock: vi.fn(),
   uploadBytesMock: vi.fn(),
   deleteObjectMock: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock('firebase/firestore', () => ({
   serverTimestamp: serverTimestampMock,
   setDoc: setDocMock,
   updateDoc: updateDocMock,
+  where: whereMock,
 }));
 
 vi.mock('firebase/storage', () => ({
@@ -62,7 +65,9 @@ vi.mock('../utils/firebase', () => ({
 import {
   buildScheduleReviewSummary,
   createScheduleReview,
+  getLatestScheduleReviewForDraft,
   loadScheduleReviewPayload,
+  scheduleReviewContentMatches,
   updateScheduleReviewStatus,
 } from '../utils/services/scheduleReviewService';
 
@@ -114,6 +119,7 @@ describe('scheduleReviewService', () => {
     deleteObjectMock.mockResolvedValue(undefined);
     setDocMock.mockResolvedValue(undefined);
     updateDocMock.mockResolvedValue(undefined);
+    whereMock.mockImplementation((...args: unknown[]) => ({ where: args }));
   });
 
   it('builds a deterministic bounded summary from the schedule and source', () => {
@@ -221,6 +227,65 @@ describe('scheduleReviewService', () => {
       { path: 'teams/team-1/scheduleReviews/review-1/planner-1/schedule.json' },
       10 * 1024 * 1024,
     );
+  });
+
+  it('finds the newest review for a draft without relying on the team list limit', async () => {
+    getDocsMock.mockResolvedValue({
+      docs: [
+        {
+          id: 'review-old',
+          data: () => ({
+            schemaVersion: 1, teamId: 'team-1', draftId: 'draft-1', routeNumber: '10', dayType: 'Weekday',
+            sourceVersion: 1, status: 'ready_for_review', plannerNote: '', summary: {}, storagePath: 'old',
+            payloadBytes: 10, createdBy: 'planner-1', createdByName: 'Planner',
+            createdAt: new Date('2026-07-14T00:00:00Z'), updatedAt: new Date('2026-07-14T00:00:00Z'),
+          }),
+        },
+        {
+          id: 'review-new',
+          data: () => ({
+            schemaVersion: 1, teamId: 'team-1', draftId: 'draft-1', routeNumber: '10', dayType: 'Weekday',
+            sourceVersion: 1, status: 'approved', plannerNote: '', summary: {}, storagePath: 'new',
+            payloadBytes: 10, createdBy: 'planner-1', createdByName: 'Planner',
+            createdAt: new Date('2026-07-15T00:00:00Z'), updatedAt: new Date('2026-07-15T00:00:00Z'),
+          }),
+        },
+      ],
+    });
+
+    await expect(getLatestScheduleReviewForDraft('team-1', 'draft-1'))
+      .resolves.toMatchObject({ id: 'review-new', status: 'approved' });
+    expect(whereMock).toHaveBeenCalledWith('draftId', '==', 'draft-1');
+  });
+
+  it('treats regenerated upload timestamps as the same reviewed schedule content', () => {
+    const reviewed = makeSchedule();
+    const savedAgain = {
+      ...makeSchedule(),
+      metadata: {
+        ...makeSchedule().metadata,
+        uploadedAt: '2026-07-16T12:34:56.000Z',
+      },
+    };
+
+    expect(scheduleReviewContentMatches(reviewed, savedAgain)).toBe(true);
+    savedAgain.northTable.trips[0].startTime += 1;
+    expect(scheduleReviewContentMatches(reviewed, savedAgain)).toBe(false);
+  });
+
+  it('compares review content independent of object key order', () => {
+    const schedule = makeSchedule();
+    const reordered = {
+      metadata: { uploadedAt: schedule.metadata?.uploadedAt, dayType: 'Weekday', routeNumber: '10' },
+      southTable: schedule.southTable,
+      northTable: schedule.northTable,
+    } as MasterScheduleContent;
+
+    expect(scheduleReviewContentMatches(schedule, reordered)).toBe(true);
+    expect(scheduleReviewContentMatches(schedule, {
+      ...reordered,
+      metadata: { ...reordered.metadata!, routeNumber: '2' },
+    })).toBe(false);
   });
 
   it('writes only manager-review status fields through the status API', async () => {

@@ -407,6 +407,11 @@ export function masterTripToMatching(
     const recoveryTimes = (trip.recoveryTimes && Object.keys(trip.recoveryTimes).length > 0)
         ? trip.recoveryTimes
         : (trip.recoveryTime ? { [lastStopName]: trip.recoveryTime } : undefined);
+    const hasLegacyKeyedTerminalRecovery = trip.endTimeIncludesRecovery === undefined
+        && trip.recoveryTimes !== undefined
+        && Object.prototype.hasOwnProperty.call(trip.recoveryTimes, lastStopName)
+        && trip.stopMinutes?.[lastStopName] === trip.endTime
+        && trip.arrivalTimes?.[lastStopName] === undefined;
 
     return {
         id: trip.id,
@@ -420,7 +425,9 @@ export function masterTripToMatching(
         firstStopId,
         lastStopId,
         recoveryTimes,
-        endTimeIncludesRecovery: trip.endTimeIncludesRecovery,
+        // Older V2-adapted drafts predate this flag. Their keyed terminal recovery
+        // accompanies a stored departure time, so endTime already includes it.
+        endTimeIncludesRecovery: trip.endTimeIncludesRecovery ?? (hasLegacyKeyedTerminalRecovery ? true : undefined),
         routeName: table.routeName
     };
 }

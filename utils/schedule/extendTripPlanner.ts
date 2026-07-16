@@ -328,7 +328,20 @@ const buildRecoveryTimesForActiveRange = (
   return Object.keys(mappedRecoveryTimes).length > 0 ? mappedRecoveryTimes : undefined;
 };
 
-const getOccupiedEndTime = (trip: MasterTrip, table: MasterRouteTable): number => trip.endTime + getTripTerminalRecoveryMinutes(trip, table);
+const tripEndIncludesTerminalRecovery = (trip: MasterTrip, table: MasterRouteTable): boolean => {
+  const terminalStopName = getTerminalStopName(trip, table);
+  if (!terminalStopName) return !!trip.endTimeIncludesRecovery;
+  const legacyDepartureIncludesRecovery = trip.endTimeIncludesRecovery === undefined
+    && trip.recoveryTimes !== undefined
+    && Object.prototype.hasOwnProperty.call(trip.recoveryTimes, terminalStopName)
+    && trip.stopMinutes?.[terminalStopName] === trip.endTime
+    && trip.arrivalTimes?.[terminalStopName] === undefined;
+  return trip.endTimeIncludesRecovery ?? legacyDepartureIncludesRecovery;
+};
+
+const getOccupiedEndTime = (trip: MasterTrip, table: MasterRouteTable): number => (
+  trip.endTime + (tripEndIncludesTerminalRecovery(trip, table) ? 0 : getTripTerminalRecoveryMinutes(trip, table))
+);
 
 const rangesOverlap = (
   startA: number,
@@ -344,6 +357,8 @@ const setTripRecoveryTime = (
 ): void => {
   const nextTerminalRecoveryTime = Math.max(0, recoveryTime);
   const terminalStopName = table.stops[getActiveEndIndex(trip, table.stops)];
+  const previousTerminalRecoveryTime = getTripTerminalRecoveryMinutes(trip, table);
+  const previouslyIncludedRecovery = tripEndIncludesTerminalRecovery(trip, table);
   const nextRecoveryTimes = { ...(trip.recoveryTimes ?? {}) } as Record<string, number>;
 
   if (terminalStopName) {
@@ -358,9 +373,36 @@ const setTripRecoveryTime = (
   ) as Record<string, number>;
   const nextRecoveryTime = Object.values(normalizedRecoveryTimes).reduce((sum, minutes) => sum + minutes, 0);
 
+  let includesTerminalRecovery = false;
+  if (terminalStopName) {
+    const rawArrival = getTripArrivalMinute(trip, terminalStopName);
+    let normalizedArrival = rawArrival;
+    while (normalizedArrival !== null && normalizedArrival < trip.endTime - 720) normalizedArrival += 1440;
+
+    if (normalizedArrival !== null) {
+      const nextDeparture = normalizedArrival + nextTerminalRecoveryTime;
+      const stopKey = resolveTripStopKey(trip.stops, terminalStopName) ?? terminalStopName;
+      trip.stops[stopKey] = TimeUtils.fromMinutes(nextDeparture);
+      trip.stopMinutes = { ...(trip.stopMinutes ?? {}), [stopKey]: nextDeparture };
+      trip.endTime = nextDeparture;
+      includesTerminalRecovery = true;
+    } else if (previouslyIncludedRecovery) {
+      const recoveryDelta = nextTerminalRecoveryTime - previousTerminalRecoveryTime;
+      const stopKey = resolveTripStopKey(trip.stops, terminalStopName) ?? terminalStopName;
+      const departure = getTripMinute(trip, terminalStopName);
+      if (departure !== null) trip.stops[stopKey] = TimeUtils.fromMinutes(departure + recoveryDelta);
+      if (trip.stopMinutes?.[stopKey] !== undefined) trip.stopMinutes[stopKey] += recoveryDelta;
+      trip.endTime += recoveryDelta;
+      includesTerminalRecovery = true;
+    }
+  }
+
   trip.recoveryTime = nextRecoveryTime;
-  trip.cycleTime = trip.travelTime + nextRecoveryTime;
   trip.recoveryTimes = Object.keys(normalizedRecoveryTimes).length > 0 ? normalizedRecoveryTimes : undefined;
+  trip.endTimeIncludesRecovery = includesTerminalRecovery;
+  const cycleSpan = Math.max(0, trip.endTime - trip.startTime);
+  trip.cycleTime = includesTerminalRecovery ? cycleSpan : cycleSpan + nextTerminalRecoveryTime;
+  trip.travelTime = Math.max(0, trip.cycleTime - nextRecoveryTime);
 };
 
 const absorbAdjacentRecoveryForUpdatedTrip = (
@@ -492,6 +534,18 @@ export const applyExtendTripResultToSchedules = (
     nextEndIndex
   );
   const nextRecoveryTime = Object.values(nextRecoveryTimes ?? {}).reduce((sum, minutes) => sum + Math.max(0, minutes || 0), 0);
+  const terminalRecoveryTime = nextEndStopName
+    ? getTripRecoveryMinutes({ ...trip, recoveryTimes: nextRecoveryTimes } as MasterTrip, nextEndStopName)
+    : 0;
+  const rawTerminalArrivalTime = nextEndStopName
+    ? getTripArrivalMinute({ ...trip, arrivalTimes: nextArrivalTimes } as MasterTrip, nextEndStopName)
+    : null;
+  let terminalArrivalTime = rawTerminalArrivalTime;
+  while (terminalArrivalTime !== null && terminalArrivalTime < nextEndTime - 720) terminalArrivalTime += 1440;
+  const terminalDepartureIncludesRecovery = terminalArrivalTime !== null
+    && terminalRecoveryTime > 0
+    && nextEndTime - terminalArrivalTime === terminalRecoveryTime;
+  const nextCycleSpan = Math.max(0, nextEndTime - nextStartTime);
 
   trip.stops = nextStops;
   trip.arrivalTimes = nextArrivalTimes;
@@ -501,9 +555,12 @@ export const applyExtendTripResultToSchedules = (
   trip.endStopIndex = nextEndIndex < lastStopIndex ? nextEndIndex : undefined;
   trip.startTime = nextStartTime;
   trip.endTime = nextEndTime;
-  trip.travelTime = Math.max(0, nextEndTime - nextStartTime);
   trip.recoveryTime = nextRecoveryTime;
-  trip.cycleTime = trip.travelTime + nextRecoveryTime;
+  trip.endTimeIncludesRecovery = terminalDepartureIncludesRecovery;
+  trip.cycleTime = terminalDepartureIncludesRecovery
+    ? nextCycleSpan
+    : nextCycleSpan + terminalRecoveryTime;
+  trip.travelTime = Math.max(0, trip.cycleTime - nextRecoveryTime);
 
   newSchedules.forEach(routeTable => {
     routeTable.trips.sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));

@@ -73,6 +73,7 @@ storage/
     ├── performanceData/{timestamp}-report.json
     ├── performanceData/months/{timestamp}-{YYYY-MM}.json
     ├── performanceData/months/{timestamp}-route-{routeId}-{YYYY-MM}.json
+    ├── performanceViews/load-profiles/{generation}-{YYYY-MM}.json
     ├── performanceImports/raw/{timestamp}.csv
     ├── parking/{month}_{timestamp}.json
     ├── odMatrixData/{allPaths}
@@ -84,9 +85,14 @@ storage/
 - `storageMode`: `monthly` for current chunked performance history, or older `monolithic` data
 - `monthlyStoragePaths`: month → full monthly performance summary JSON
 - `routeMonthlyStoragePaths`: route → month → route-scoped monthly summary JSON
+- `loadProfileMonthlyStoragePaths`: month → compact versioned Load Profiles view JSON
 - `overviewStoragePath`: lightweight recent overview payload for dashboard first-load
 - `reportStoragePath`: report-focused snapshot used by the daily email
 - `storagePath`: legacy full performance summary pointer used by older imports only
+
+Load Profiles view schema v1 stores only date/day type, route-direction load profiles, reliable stop-level observation counts, compact positive peak-load trip candidates, data-quality fields, and the source performance schema version. It preserves `occurrenceIndex` when available. The files are not directly readable by ordinary members; `sharedWorkspaceData` validates the metadata-owned team path and enforces `workspaceOperations` plus `operationsLoadProfiles` before returning a bounded date/route-filtered response. Team owners/admins publish performance metadata and Storage generations; ordinary members have read-only dashboard access. Writers upload every monthly view before replacing the metadata pointer. Existing history can be prepared with `functions/scripts/backfill-load-profile-views.mjs`; the script is dry-run by default and uses a transaction so a stale backfill cannot replace a newer import.
+
+The full monthly performance archives still include load-profile fields for legacy consumers and are readable through the broader Operations access rule. The compact-view permission is therefore the supported UI/API boundary, not complete field-level secrecy, until the remaining performance readers move behind backend-filtered views.
 
 Partner teams, such as WATT, can use read-only shared data sources instead of copied JSON. `teams/{teamId}.dataSourceTeamIds.transitApp` and `.performance` may point at a source team such as Barrie Transit. The app reads shared Transit App and STREETS data through the `sharedWorkspaceData` Cloud Function, which verifies the signed-in user belongs to the requesting team and that the requesting team is explicitly configured to read from the source team. Imports and writes still target the current team only.
 

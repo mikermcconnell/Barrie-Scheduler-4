@@ -53,7 +53,9 @@ These legacy thresholds remain fixed until Barrie Transit completes operational 
 - Scheduled and observed arrival/departure, raw dwell, and effective dwell.
 - Boardings, alightings, wheelchair activity, reliable departure load, vehicle, route, direction, block, and operator when available.
 - Same-trip impact, later-trip carryover, threshold milestone, zero-recovery milestone, and observation confidence.
-- Timeline first; map only when useful coordinates exist.
+- Map first when useful coordinates exist. Treat the map as the spatial incident timeline: show the incident-trip remainder before later block trips, label only the dwell origin and meaningful carryover/recovery milestones by default, and keep other observed stops available through selection.
+- Keep the default map overlays compact: incident identity, a small outcome summary, and a whole-story/same-trip/later-trips phase control. Scheduled/observed times, passenger context, vehicle details, method, and data confidence belong in progressive disclosure rather than separate dashboard cards.
+- When useful coordinates are unavailable, keep the same incident-detail shell and replace the map with a concise evidence fallback; do not switch to a different detail experience.
 
 ### Patterns
 

@@ -4,6 +4,73 @@
  */
 
 import { MasterRouteTable, MasterTrip } from '../../../utils/parsers/masterScheduleParser';
+import { parseRouteInfo } from '../../../utils/config/routeDirectionConfig';
+import { getOperationalSortTime } from '../../../utils/blocks/blockAssignmentCore';
+
+const OPERATIONAL_DAY_START = 240; // 4:00 AM
+
+const getServiceDay = (routeName: string): string | null =>
+    routeName.match(/\((Weekday|Saturday|Sunday)\)/i)?.[1]?.toLowerCase() ?? null;
+
+const getRouteScope = (routeName: string): string => {
+    const stripped = routeName
+        .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
+        .replace(/\s*\((North|South)\)/gi, '')
+        .replace(/\s+(North|South)\s*$/i, '')
+        .trim();
+    const parsed = parseRouteInfo(stripped);
+    return (parsed.suffixIsDirection ? parsed.baseRoute : stripped).toLowerCase();
+};
+
+const tableMatchesScope = (table: MasterRouteTable, sourceTable: MasterRouteTable): boolean =>
+    getRouteScope(table.routeName) === getRouteScope(sourceTable.routeName)
+    && getServiceDay(table.routeName) === getServiceDay(sourceTable.routeName);
+
+const getOrderedScopedBlockTrips = (
+    tables: MasterRouteTable[],
+    sourceTable: MasterRouteTable,
+    blockId: string,
+): MasterTrip[] => tables
+    .filter(table => tableMatchesScope(table, sourceTable))
+    .flatMap(table => table.trips)
+    .filter(trip => trip.blockId === blockId)
+    .sort((a, b) => (
+        getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+        || getOperationalSortTime(a.endTime) - getOperationalSortTime(b.endTime)
+        || a.tripNumber - b.tripNumber
+        || a.id.localeCompare(b.id)
+    ));
+
+const recalculateTripDerivedValues = (trip: MasterTrip, stops: string[]) => {
+    let offset = 0;
+    let lastAdjusted: number | null = null;
+    const stopMinutes: Record<string, number> = {};
+
+    stops.forEach(stop => {
+        const raw = parseTimeToMinutes(trip.stops[stop] || '');
+        if (raw === null) return;
+
+        if (lastAdjusted === null && raw < OPERATIONAL_DAY_START) offset = 1440;
+        if (lastAdjusted !== null && raw + offset < lastAdjusted - 60) offset += 1440;
+        const adjusted = raw + offset;
+        stopMinutes[stop] = adjusted;
+        lastAdjusted = adjusted;
+    });
+
+    const values = Object.values(stopMinutes);
+    if (values.length === 0) return;
+
+    trip.stopMinutes = stopMinutes;
+    trip.startTime = values[0];
+    trip.endTime = values[values.length - 1];
+    trip.recoveryTime = Object.values(trip.recoveryTimes || {}).reduce(
+        (sum, value) => sum + (value || 0),
+        0,
+    );
+    trip.cycleTime = Math.max(0, trip.endTime - trip.startTime);
+    trip.travelTime = Math.max(0, trip.cycleTime - trip.recoveryTime);
+    trip.endTimeIncludesRecovery = true;
+};
 
 /**
  * Cascade time changes to all subsequent trips in the same block.
@@ -22,22 +89,29 @@ export function cascadeTripTimes(
     // Find the edited trip and its block
     let editedTrip: MasterTrip | null = null;
     let editedBlockId: string | null = null;
+    let editedTable: MasterRouteTable | null = null;
 
     for (const table of cloned) {
         const found = table.trips.find(t => t.id === tripId);
         if (found) {
             editedTrip = found;
             editedBlockId = found.blockId;
+            editedTable = table;
             break;
         }
     }
 
-    if (!editedTrip || !editedBlockId) return cloned;
+    if (!editedTrip || !editedBlockId || !editedTable) return cloned;
 
-    // Find all trips in the same block with higher tripNumber
+    const orderedBlockTrips = getOrderedScopedBlockTrips(cloned, editedTable, editedBlockId);
+    const editedIndex = orderedBlockTrips.findIndex(trip => trip.id === editedTrip.id);
+    if (editedIndex === -1) return cloned;
+    const followingTrips = new Set(orderedBlockTrips.slice(editedIndex + 1));
+
     for (const table of cloned) {
+        if (!tableMatchesScope(table, editedTable)) continue;
         for (const trip of table.trips) {
-            if (trip.blockId === editedBlockId && trip.tripNumber > editedTrip.tripNumber) {
+            if (followingTrips.has(trip)) {
                 // Shift all times
                 trip.startTime += deltaMinutes;
                 trip.endTime += deltaMinutes;
@@ -94,6 +168,7 @@ export function updateSegmentTime(
     let editedTrip: MasterTrip | null = null;
     let stopIndex = -1;
     let allStops: string[] = [];
+    let editedTable: MasterRouteTable | null = null;
 
     for (const table of cloned) {
         const found = table.trips.find(t => t.id === tripId);
@@ -101,11 +176,12 @@ export function updateSegmentTime(
             editedTrip = found;
             allStops = table.stops;
             stopIndex = allStops.indexOf(stopName);
+            editedTable = table;
             break;
         }
     }
 
-    if (!editedTrip || stopIndex === -1) return cloned;
+    if (!editedTrip || !editedTable || stopIndex === -1) return cloned;
 
     // Update this stop and all subsequent stops in the same trip
     for (let i = stopIndex; i < allStops.length; i++) {
@@ -135,11 +211,12 @@ export function updateSegmentTime(
         }
     }
 
-    // Update trip endTime
-    editedTrip.endTime += deltaMinutes;
+    const oldEndTime = editedTrip.endTime;
+    recalculateTripDerivedValues(editedTrip, allStops);
+    const actualEndDelta = editedTrip.endTime - oldEndTime;
 
     // Cascade to subsequent trips in block
-    return cascadeTripTimes(cloned, tripId, deltaMinutes);
+    return cascadeTripTimes(cloned, tripId, actualEndDelta);
 }
 
 /**
@@ -155,24 +232,28 @@ export function endBlockAtTrip(
     // Find the trip
     let editedTrip: MasterTrip | null = null;
     let editedBlockId: string | null = null;
+    let editedTable: MasterRouteTable | null = null;
 
     for (const table of cloned) {
         const found = table.trips.find(t => t.id === tripId);
         if (found) {
             editedTrip = found;
             editedBlockId = found.blockId;
+            editedTable = table;
             break;
         }
     }
 
-    if (!editedTrip || !editedBlockId) return cloned;
+    if (!editedTrip || !editedBlockId || !editedTable) return cloned;
 
-    // Remove all trips with same blockId and higher tripNumber
+    const orderedBlockTrips = getOrderedScopedBlockTrips(cloned, editedTable, editedBlockId);
+    const editedIndex = orderedBlockTrips.findIndex(trip => trip.id === editedTrip.id);
+    if (editedIndex === -1) return cloned;
+    const tripsToRemove = new Set(orderedBlockTrips.slice(editedIndex + 1));
+
     for (const table of cloned) {
-        table.trips = table.trips.filter(trip =>
-            trip.blockId !== editedBlockId ||
-            trip.tripNumber <= editedTrip!.tripNumber
-        );
+        if (!tableMatchesScope(table, editedTable)) continue;
+        table.trips = table.trips.filter(trip => !tripsToRemove.has(trip));
     }
 
     return cloned;
@@ -191,6 +272,8 @@ export function setTripStartStop(
     for (const table of cloned) {
         const found = table.trips.find(t => t.id === tripId);
         if (found) {
+            if (startStopIndex < 0 || startStopIndex >= table.stops.length) return cloned;
+            if (parseTimeToMinutes(found.stops[table.stops[startStopIndex]] || '') === null) return cloned;
             found.startStopIndex = startStopIndex;
 
             // Clean up orphaned stops before the new start index
@@ -205,14 +288,7 @@ export function setTripStartStop(
                 });
             }
 
-            // Recalculate startTime based on new first stop
-            if (startStopIndex < stops.length) {
-                const newFirstStop = stops[startStopIndex];
-                const newStartTime = found.stopMinutes?.[newFirstStop] ?? parseTimeToMinutes(found.stops[newFirstStop] || '');
-                if (newStartTime !== null) {
-                    found.startTime = newStartTime;
-                }
-            }
+            recalculateTripDerivedValues(found, stops.slice(startStopIndex));
             break;
         }
     }
@@ -233,6 +309,8 @@ export function setTripEndStop(
     for (const table of cloned) {
         const found = table.trips.find(t => t.id === tripId);
         if (found) {
+            if (endStopIndex < 0 || endStopIndex >= table.stops.length) return cloned;
+            if (parseTimeToMinutes(found.stops[table.stops[endStopIndex]] || '') === null) return cloned;
             found.endStopIndex = endStopIndex;
 
             // Clean up orphaned stops after the new end index
@@ -247,14 +325,7 @@ export function setTripEndStop(
                 });
             }
 
-            // Recalculate endTime based on new last stop
-            if (endStopIndex < stops.length) {
-                const newLastStop = stops[endStopIndex];
-                const newEndTime = found.stopMinutes?.[newLastStop] ?? parseTimeToMinutes(found.stops[newLastStop] || '');
-                if (newEndTime !== null) {
-                    found.endTime = newEndTime;
-                }
-            }
+            recalculateTripDerivedValues(found, stops.slice(0, endStopIndex + 1));
             break;
         }
     }

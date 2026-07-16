@@ -4,7 +4,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { DwellCascadeSection } from '../components/Performance/DwellCascadeSection';
 import CascadeStorySlideOver from '../components/Performance/CascadeStorySlideOver';
+import { resolveMappedMilestoneIndex } from '../components/Performance/CascadeRouteMap';
 import type { CascadeAffectedTrip, DwellCascade, PerformanceDataSummary } from '../utils/performanceDataTypes';
+import type { TimelinePoint } from '../utils/schedule/cascadeStoryUtils';
 
 vi.mock('../components/Performance/CascadeTimelineChart', () => ({
     default: () => React.createElement('div', null, 'Mock timeline'),
@@ -14,8 +16,19 @@ vi.mock('../components/Performance/CascadeTripChain', () => ({
     default: () => React.createElement('div', null, 'Mock chain'),
 }));
 
-vi.mock('../components/Performance/CascadeRouteMap', () => ({
-    default: () => React.createElement('div', null, 'Mock map'),
+vi.mock('../components/Performance/CascadeRouteMap', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../components/Performance/CascadeRouteMap')>();
+    return {
+        ...actual,
+        default: ({ phase }: { phase: string }) => React.createElement('div', null, `Mock map · ${phase}`),
+    };
+});
+
+vi.mock('../utils/gtfs/gtfsStopLookup', () => ({
+    getAllStopsWithCoords: () => [
+        { stop_id: 'PP', stop_name: 'Park Place', lat: 44.33, lon: -79.69 },
+        { stop_id: 'DT', stop_name: 'Downtown', lat: 44.39, lon: -79.69 },
+    ],
 }));
 
 function makeAffectedTrip(overrides: Partial<CascadeAffectedTrip> = {}): CascadeAffectedTrip {
@@ -141,7 +154,7 @@ describe('dwell cascade honesty pass UI', () => {
         expect(container.textContent).toContain('Block Carryover by Route');
     });
 
-    it('marks missing same-trip observations and starts the story on a later trip when needed', () => {
+    it('uses a map-first hierarchy and keeps missing observations honest', () => {
         const cascade = makeCascade();
 
         flushSync(() => {
@@ -155,23 +168,25 @@ describe('dwell cascade honesty pass UI', () => {
             );
         });
 
-        expect(container.textContent).toContain('Dwell Incident Story');
-        expect(container.textContent).toContain('Follow the incident on the same trip first, then see whether it carried into later trips on the block.');
-        expect(container.textContent).toContain('Current traced path starts on a later trip in the same block');
-        expect(container.textContent).toContain('No same-trip observation available');
-        expect(container.textContent).toContain('Story Sections');
-        expect(container.textContent).toContain('Incident trip remainder');
-        expect(container.textContent).toContain('Later block trips');
-        expect(container.textContent).toContain('Trip Story Chain');
-        expect(container.textContent).toContain('Incident Summary');
-        expect(container.textContent).toContain('Same-Trip OTP-Late Departures');
-        expect(container.textContent).toContain('Later-Trip OTP-Late Departures');
-        expect(container.textContent).toContain('Stayed under 5 min');
-        expect(container.textContent).toContain('Data Confidence');
-        expect(container.textContent).toContain('Recovered to zero');
+        expect(container.textContent).toContain('Dwell incident review');
+        expect(container.textContent).toContain('6.0 min effective dwell');
+        expect(container.textContent).toContain('Associated-delay evidence');
+        expect(container.textContent).toContain('Same-trip affected');
+        expect(container.textContent).toContain('Later trips');
+        expect(container.textContent).toContain('OTP-late departures');
+        expect(container.textContent).toContain('Partial coverage');
+        expect(container.textContent).toContain('Whole story');
+        expect(container.textContent).toContain('Incident trip');
+        expect(container.textContent).toContain('Mock map · whole');
+        expect(container.textContent).toContain('Incident details');
+        expect(container.textContent).not.toContain('Story Sections');
+        expect(container.textContent).not.toContain('Trip Story Chain');
+        expect(container.textContent).not.toContain('Incident Summary');
+        expect(container.textContent).not.toContain('Customer Exposure');
+        expect(container.textContent).not.toContain('Route OTP Incident Impact');
     });
 
-    it('defaults the focused segment to same-trip impact when it exists', () => {
+    it('offers incident-trip and later-trip map phases when both exist', () => {
         const sameTripImpact = makeAffectedTrip({
             tripName: 'Trip-A',
             tripId: 'trip-a',
@@ -204,8 +219,76 @@ describe('dwell cascade honesty pass UI', () => {
             );
         });
 
-        expect(container.textContent).not.toContain('Current traced path starts on a later trip in the same block');
-        expect(container.textContent).toContain('Focused Same-Trip Segment');
-        expect(container.textContent).toContain('Auto-focused on the incident trip because it contains the first visible story point.');
+        expect(container.textContent).toContain('Whole story');
+        expect(container.textContent).toContain('Incident trip');
+        expect(container.textContent).toContain('Later trips');
+        expect(container.textContent).not.toContain('Focused Same-Trip Segment');
+        expect(container.textContent).not.toContain('Mock timeline');
+        expect(container.textContent).not.toContain('Mock chain');
+
+        const laterTripsButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent === 'Later trips');
+        expect(laterTripsButton).toBeTruthy();
+        flushSync(() => {
+            laterTripsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        expect(container.textContent).toContain('Mock map · later-trip');
+        expect(laterTripsButton?.getAttribute('aria-pressed')).toBe('true');
+
+        const summary = container.querySelector('summary');
+        const closeButton = container.querySelector<HTMLButtonElement>('button[aria-label="Close dwell incident review"]');
+        expect(summary).toBeTruthy();
+        expect(closeButton).toBeTruthy();
+        summary?.focus();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+        expect(document.activeElement).toBe(closeButton);
+    });
+
+    it('does not move a milestone to a different stop when the exact evidence point has no coordinates', () => {
+        const points: TimelinePoint[] = [
+            {
+                index: 0,
+                stopName: 'Unmapped transition',
+                stopId: 'missing-transition',
+                scheduledDeparture: '08:35',
+                observedDeparture: '08:40:00',
+                deviationMinutes: 5,
+                isLate: false,
+                tripIndex: 0,
+                tripName: 'Trip-B',
+                phase: 'later-trip',
+                isTripStart: true,
+            },
+            {
+                index: 1,
+                stopName: 'Mapped later stop',
+                stopId: 'mapped',
+                scheduledDeparture: '08:45',
+                observedDeparture: '08:48:00',
+                deviationMinutes: 3,
+                isLate: false,
+                tripIndex: 0,
+                tripName: 'Trip-B',
+                phase: 'later-trip',
+                isTripStart: false,
+            },
+            {
+                index: 2,
+                stopName: 'Unmapped final evidence',
+                stopId: 'missing-end',
+                scheduledDeparture: '08:55',
+                observedDeparture: '08:57:00',
+                deviationMinutes: 2,
+                isLate: false,
+                tripIndex: 0,
+                tripName: 'Trip-B',
+                phase: 'later-trip',
+                isTripStart: false,
+            },
+        ];
+
+        expect(resolveMappedMilestoneIndex(points, new Set(['mapped']), 'later-transition')).toBeNull();
+        expect(resolveMappedMilestoneIndex(points, new Set(['mapped']), 'end-of-evidence')).toBeNull();
+        expect(resolveMappedMilestoneIndex(points.slice(1, 2), new Set(['mapped']), 'later-transition')).toBe(1);
+        expect(resolveMappedMilestoneIndex(points.slice(1, 2), new Set(['mapped']), 'end-of-evidence')).toBe(1);
     });
 });

@@ -457,6 +457,17 @@ export interface TripMetrics {
   maxLoad: number;
 }
 
+/** Compact trip evidence kept by the dedicated Load Profiles read model. */
+export interface LoadProfilePeakTrip {
+  routeId: string;
+  routeName: string;
+  direction: string;
+  block: string;
+  terminalDepartureTime: string;
+  tripName: string;
+  maxLoad: number;
+}
+
 export interface LoadProfileStop {
   stopName: string;
   stopId: string;
@@ -557,6 +568,8 @@ export interface DailySummary {
   byHour: HourMetrics[];
   byStop: StopMetrics[];
   byTrip: TripMetrics[];
+  /** Compact peak-load evidence supplied by the dedicated Load Profiles view. */
+  loadProfilePeakTrips?: LoadProfilePeakTrip[];
   loadProfiles: RouteLoadProfile[];
   ridershipHeatmaps?: RouteRidershipHeatmap[];
   missedTrips?: {
@@ -592,6 +605,7 @@ export interface DailySummary {
 
 export const PERFORMANCE_SCHEMA_VERSION = 13;
 export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 4;
+export const LOAD_PROFILE_VIEW_SCHEMA_VERSION = 1;
 
 // ─── Multi-Day Summary (for trend views) ────────────────────────────
 
@@ -631,7 +645,31 @@ export interface PerformanceMetadata {
     routeStoragePaths?: Record<string, string>;
     monthlyStoragePaths?: Record<string, string>;
     routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
+    loadProfileMonthlyStoragePaths?: Record<string, string>;
   }
+
+/** One compact day in the monthly Load Profiles read model. */
+export interface LoadProfileDailyView {
+  date: string;
+  dayType: DayType;
+  loadProfiles: RouteLoadProfile[];
+  loadProfilePeakTrips: LoadProfilePeakTrip[];
+  dataQuality: DataQuality;
+  schemaVersion: number;
+}
+
+/**
+ * Versioned monthly projection used by Load Profiles instead of downloading
+ * the much larger general-purpose performance archive.
+ */
+export interface LoadProfileMonthlyView {
+  viewSchemaVersion: typeof LOAD_PROFILE_VIEW_SCHEMA_VERSION;
+  month: string;
+  dailySummaries: LoadProfileDailyView[];
+  metadata: PerformanceMetadata;
+  /** Source performance schema used to build this view. */
+  schemaVersion: number;
+}
 
 // ─── Import State (ephemeral, not stored) ───────────────────────────
 

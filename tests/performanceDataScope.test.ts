@@ -11,6 +11,7 @@ describe('performanceDataScope', () => {
     expect(resolveFilteredScope('all')).toBe('combined');
     expect(resolveFilteredScope('past-week')).toBe('combined');
     expect(resolveFilteredScope('past-month')).toBe('combined');
+    expect(resolveFilteredScope('past-three-months')).toBe('combined');
   });
 
   it('marks overview latest selected date as yesterday scope', () => {

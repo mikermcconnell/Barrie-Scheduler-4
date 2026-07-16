@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
     aggregateStopActivity,
     getStopActivityBreakdown,
+    getStopActivityChange,
     getStopRouteActivityBreakdown,
     getStopActivityValue,
+    getPriorStopActivityPeriod,
+    getRouteScopedStopActivityBreakdown,
     hasHourlyDataForStops,
     matchesStopSearch,
 } from '../utils/performanceStopActivity';
@@ -84,6 +87,45 @@ function empty24(): number[] {
 }
 
 describe('performanceStopActivity', () => {
+    it('selects the immediately preceding equivalent comparison period', () => {
+        const days = Array.from({ length: 14 }, (_, index) => {
+            const date = new Date(Date.UTC(2026, 0, 1 + index)).toISOString().slice(0, 10);
+            const dayType = index % 7 === 3 ? 'sunday' : index % 7 === 2 ? 'saturday' : 'weekday';
+            return makeDay([], { date, dayType });
+        });
+        const period = getPriorStopActivityPeriod(
+            days,
+            { start: '2026-01-08', end: '2026-01-14' },
+            'weekday',
+        );
+        expect(period?.startDate).toBe('2026-01-01');
+        expect(period?.endDate).toBe('2026-01-07');
+        expect(period?.days.every(day => day.dayType === 'weekday')).toBe(true);
+        expect(period?.days.map(day => day.date)).toEqual([
+            '2026-01-01',
+            '2026-01-02',
+            '2026-01-05',
+            '2026-01-06',
+            '2026-01-07',
+        ]);
+    });
+
+    it('compares a single day with the same weekday one week earlier', () => {
+        const prior = makeDay([], { date: '2026-01-07' });
+        const current = makeDay([], { date: '2026-01-14' });
+        const period = getPriorStopActivityPeriod(
+            [prior, current],
+            { start: current.date, end: current.date },
+            'all',
+        );
+
+        expect(period).toEqual({
+            days: [prior],
+            startDate: '2026-01-07',
+            endDate: '2026-01-07',
+        });
+    });
+
     it('adopts hourly arrays when they appear on later days', () => {
         const hBoard = empty24();
         const hAlight = empty24();
@@ -166,6 +208,30 @@ describe('performanceStopActivity', () => {
         expect(getStopActivityValue(stop, 'alightings', [7])).toBe(0);
         expect(getStopActivityValue(stop, 'total', [7])).toBe(5);
         expect(getStopActivityValue(stop, 'total', null)).toBe(140);
+    });
+
+    it('compares average daily boards, alights, and combined activity independently', () => {
+        const current = makeStop({ boardings: 60, alightings: 30 });
+        const comparison = makeStop({ boardings: 40, alightings: 40 });
+
+        expect(getStopActivityChange(current, comparison, 'boardings', null, 3, 4)).toEqual({
+            currentPerDay: 20,
+            comparisonPerDay: 10,
+            changePerDay: 10,
+            changePercent: 100,
+        });
+        expect(getStopActivityChange(current, comparison, 'alightings', null, 3, 4)).toEqual({
+            currentPerDay: 10,
+            comparisonPerDay: 10,
+            changePerDay: 0,
+            changePercent: 0,
+        });
+        expect(getStopActivityChange(current, comparison, 'total', null, 3, 4)).toEqual({
+            currentPerDay: 30,
+            comparisonPerDay: 20,
+            changePerDay: 10,
+            changePercent: 50,
+        });
     });
 
     it('matches stop search case-insensitively for stop IDs', () => {
@@ -256,6 +322,57 @@ describe('performanceStopActivity', () => {
             { routeId: '10', boardings: 4, alightings: 2, total: 6 },
             { routeId: '8A', boardings: 2, alightings: 1, total: 3 },
         ]);
+    });
+
+    it('scopes a shared stop to the selected route instead of returning all-route activity', () => {
+        const stop = makeStop({
+            boardings: 30,
+            alightings: 15,
+            routes: ['8A', '10'],
+            routeBreakdown: [
+                { routeId: '8A', boardings: 10, alightings: 4 },
+                { routeId: '10', boardings: 20, alightings: 11 },
+            ],
+        });
+
+        expect(getRouteScopedStopActivityBreakdown(stop, '8A', null)).toEqual({
+            boardings: 10,
+            alightings: 4,
+        });
+        expect(getRouteScopedStopActivityBreakdown(stop, '10', null)).toEqual({
+            boardings: 20,
+            alightings: 11,
+        });
+    });
+
+    it('does not substitute all-day totals when comparable hourly stop data is missing', () => {
+        const sharedWithoutHourly = makeStop({
+            boardings: 30,
+            alightings: 15,
+            routes: ['8A', '10'],
+            routeBreakdown: [
+                { routeId: '8A', boardings: 10, alightings: 4 },
+                { routeId: '10', boardings: 20, alightings: 11 },
+            ],
+        });
+
+        expect(getRouteScopedStopActivityBreakdown(sharedWithoutHourly, 'all', [7])).toBeNull();
+        expect(getRouteScopedStopActivityBreakdown(sharedWithoutHourly, '8A', [7])).toBeNull();
+    });
+
+    it('uses a single-route stop total as a safe legacy fallback', () => {
+        const stop = makeStop({
+            boardings: 12,
+            alightings: 7,
+            routes: ['10'],
+            routeBreakdown: undefined,
+        });
+
+        expect(getRouteScopedStopActivityBreakdown(stop, '10', null)).toEqual({
+            boardings: 12,
+            alightings: 7,
+        });
+        expect(getRouteScopedStopActivityBreakdown(stop, '8A', null)).toBeNull();
     });
 
     it('backfills route breakdown from load profiles when legacy stop rows do not include routeBreakdown', () => {

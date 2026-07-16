@@ -112,4 +112,56 @@ describe('connectionOptimizer stop event semantics', () => {
       meetsConnection: true
     });
   });
+
+  it('matches connections before 4:00 AM on the continued operational evening', () => {
+    const overnightLibrary: ConnectionLibrary = {
+      ...buildLibrary(),
+      targets: [{
+        id: 'overnight-departure',
+        name: 'Overnight departure',
+        type: 'manual',
+        stopCode: '9003',
+        defaultEventType: 'departure',
+        times: [{ id: 'overnight', time: 230, daysActive: ['Weekday'], enabled: true }],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }]
+    };
+    const overnightSchedules: MasterRouteTable[] = [{
+      ...schedules[0],
+      trips: [{
+        ...schedules[0].trips[0],
+        id: 'overnight-trip',
+        startTime: 225,
+        endTime: 235,
+        recoveryTime: 0,
+        recoveryTimes: {},
+        stops: { 'Allandale Waterfront GO': '3:45 AM' },
+        stopMinutes: undefined,
+        arrivalTimes: { 'Allandale Waterfront GO': '3:45 AM' }
+      }]
+    }];
+    const config: RouteConnectionConfig = {
+      routeIdentity: '11-Weekday',
+      optimizationMode: 'hybrid',
+      connections: [{
+        id: 'overnight-connection',
+        targetId: 'overnight-departure',
+        connectionType: 'meet_departing',
+        bufferMinutes: 3,
+        stopCode: '9003',
+        priority: 1,
+        enabled: true
+      }]
+    };
+
+    const result = checkConnections(overnightSchedules, config, overnightLibrary);
+
+    expect(result.gaps[0]).toMatchObject({
+      tripTime: 1665,
+      targetTime: 1670,
+      gapMinutes: 5,
+      meetsConnection: true
+    });
+  });
 });

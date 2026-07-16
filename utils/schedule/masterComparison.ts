@@ -1,5 +1,6 @@
 import type { MasterRouteTable, MasterTrip } from '../parsers/masterScheduleParser';
 import { extractDirectionFromName, parseRouteInfo } from '../config/routeDirectionConfig';
+import { getOperationalSortTime } from '../blocks/blockAssignmentCore';
 
 type DirectionKey = 'North' | 'South';
 export type MasterComparisonMatchMethod = 'lineage' | 'trip-id' | 'time-shift';
@@ -213,10 +214,10 @@ const scorePotentialMatch = (
     masterTrip: MasterTrip,
     shiftMinutes: number,
 ): { score: number; startDiff: number } => {
-    const adjustedStart = currentTrip.startTime - shiftMinutes;
-    const adjustedEnd = currentTrip.endTime - shiftMinutes;
-    const startDiff = Math.abs(adjustedStart - masterTrip.startTime);
-    const endDiff = Math.abs(adjustedEnd - masterTrip.endTime);
+    const adjustedStart = getOperationalSortTime(currentTrip.startTime) - shiftMinutes;
+    const adjustedEnd = getOperationalSortTime(currentTrip.endTime) - shiftMinutes;
+    const startDiff = Math.abs(adjustedStart - getOperationalSortTime(masterTrip.startTime));
+    const endDiff = Math.abs(adjustedEnd - getOperationalSortTime(masterTrip.endTime));
     const travelDiff = Math.abs((currentTrip.travelTime || 0) - (masterTrip.travelTime || 0));
     const blockPenalty = currentTrip.blockId && masterTrip.blockId && currentTrip.blockId !== masterTrip.blockId ? 3 : 0;
     const stopPatternPenalty = getStopPatternPenalty(currentTrip, masterTrip);
@@ -228,10 +229,14 @@ const scorePotentialMatch = (
 };
 
 export const classifyMatchedTripChange = (currentTrip: MasterTrip, masterTrip: MasterTrip): TripChangeKind => {
-    const extendsEarlier = currentTrip.startTime < masterTrip.startTime;
-    const extendsLater = currentTrip.endTime > masterTrip.endTime;
-    const startsLater = currentTrip.startTime > masterTrip.startTime;
-    const endsEarlier = currentTrip.endTime < masterTrip.endTime;
+    const currentStart = getOperationalSortTime(currentTrip.startTime);
+    const currentEnd = getOperationalSortTime(currentTrip.endTime);
+    const masterStart = getOperationalSortTime(masterTrip.startTime);
+    const masterEnd = getOperationalSortTime(masterTrip.endTime);
+    const extendsEarlier = currentStart < masterStart;
+    const extendsLater = currentEnd > masterEnd;
+    const startsLater = currentStart > masterStart;
+    const endsEarlier = currentEnd < masterEnd;
 
     const startStopExtended = (
         currentTrip.startStopIndex !== undefined
@@ -430,8 +435,12 @@ export const buildDetailedMasterComparison = (
 
     currentByBucket.forEach((currentBucket, bucketKey) => {
         const dir = currentBucket.direction;
-        const masterTrips = [...(masterByBucket.get(bucketKey)?.trips || [])].sort((a, b) => a.startTime - b.startTime);
-        const currentTrips = [...currentBucket.trips].sort((a, b) => a.startTime - b.startTime);
+        const masterTrips = [...(masterByBucket.get(bucketKey)?.trips || [])].sort((a, b) => (
+            getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+        ));
+        const currentTrips = [...currentBucket.trips].sort((a, b) => (
+            getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+        ));
 
         if (masterTrips.length === 0 || currentTrips.length === 0) return;
         const exactIdQueues = new Map<string, MasterTrip[]>();
@@ -484,14 +493,16 @@ export const buildDetailedMasterComparison = (
         const currentByExactStart = new Map<number, MasterTrip[]>();
         const masterByExactStart = new Map<number, MasterTrip[]>();
         remainingCurrentTrips.forEach(currentTrip => {
-            const currentQueue = currentByExactStart.get(currentTrip.startTime) || [];
+            const operationalStart = getOperationalSortTime(currentTrip.startTime);
+            const currentQueue = currentByExactStart.get(operationalStart) || [];
             currentQueue.push(currentTrip);
-            currentByExactStart.set(currentTrip.startTime, currentQueue);
+            currentByExactStart.set(operationalStart, currentQueue);
         });
         remainingMasterTrips.forEach(masterTrip => {
-            const masterQueue = masterByExactStart.get(masterTrip.startTime) || [];
+            const operationalStart = getOperationalSortTime(masterTrip.startTime);
+            const masterQueue = masterByExactStart.get(operationalStart) || [];
             masterQueue.push(masterTrip);
-            masterByExactStart.set(masterTrip.startTime, masterQueue);
+            masterByExactStart.set(operationalStart, masterQueue);
         });
 
         currentByExactStart.forEach((currentQueue, startTime) => {
@@ -618,7 +629,7 @@ export const buildDetailedMasterComparison = (
                     a.score - b.score
                     || a.diffMinutes - b.diffMinutes
                     || Math.abs(a.shiftMinutes) - Math.abs(b.shiftMinutes)
-                    || a.masterTrip.startTime - b.masterTrip.startTime
+                    || getOperationalSortTime(a.masterTrip.startTime) - getOperationalSortTime(b.masterTrip.startTime)
                 ));
 
             if (candidates.length === 0) {
@@ -677,12 +688,13 @@ export const buildDetailedMasterComparison = (
                 routeName: currentRouteNamesByTripKey.get(buildTripKeyForBucket(bucketKey, currentTrip.id)) || direction,
                 startTime: currentTrip.startTime,
                 endTime: currentTrip.endTime,
-                diffMinutes: currentTrip.startTime - masterTrip.startTime,
+                diffMinutes: getOperationalSortTime(currentTrip.startTime)
+                    - getOperationalSortTime(masterTrip.startTime),
             }))
             .filter(candidate => Math.abs(candidate.diffMinutes) <= POSSIBLE_REPLACEMENT_WINDOW)
             .sort((a, b) => (
                 Math.abs(a.diffMinutes) - Math.abs(b.diffMinutes)
-                || a.startTime - b.startTime
+                || getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
             ))
             .slice(0, 2);
     };
@@ -706,7 +718,10 @@ export const buildDetailedMasterComparison = (
             }
         });
     });
-    removedMasterTrips.sort((a, b) => a.masterTrip.startTime - b.masterTrip.startTime);
+    removedMasterTrips.sort((a, b) => (
+        getOperationalSortTime(a.masterTrip.startTime)
+        - getOperationalSortTime(b.masterTrip.startTime)
+    ));
 
     currentByBucket.forEach((currentBucket, bucketKey) => {
         const dir = currentBucket.direction;

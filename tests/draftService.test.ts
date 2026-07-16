@@ -116,6 +116,26 @@ describe('draftService.saveDraft', () => {
     });
   });
 
+  it('removes a newly uploaded blob when draft metadata cannot be committed', async () => {
+    setDocMock.mockRejectedValueOnce(new Error('permission denied'));
+
+    await expect(saveDraft('user-1', {
+      name: 'Draft 1',
+      routeNumber: '10',
+      dayType: 'Weekday',
+      status: 'draft',
+      createdBy: 'user-1',
+      content: {
+        northTable: { routeName: '10 (Weekday) (North)', stops: [], stopIds: {}, trips: [] },
+        southTable: { routeName: '10 (Weekday) (South)', stops: [], stopIds: {}, trips: [] },
+        metadata: { routeNumber: '10', dayType: 'Weekday', uploadedAt: '2026-03-11T10:00:00Z' },
+      },
+    } as any)).rejects.toThrow('permission denied');
+
+    expect(uploadBytesMock).toHaveBeenCalledOnce();
+    expect(deleteObjectMock).toHaveBeenCalledWith(uploadBytesMock.mock.calls[0][0]);
+  });
+
   it('saves a named checkpoint as immutable content and metadata', async () => {
     const checkpointId = await createDraftCheckpoint('user-1', 'draft-1', ' Before PM peak ', {
       northTable: { routeName: '10 (Weekday) (North)', stops: [], stopIds: {}, trips: [] },

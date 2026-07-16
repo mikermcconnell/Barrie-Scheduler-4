@@ -256,9 +256,10 @@ describe('TeamContext invite links', () => {
         joinedAt: new Date(), displayName: 'Lane User', email: 'lane.user@example.com',
       })
       .mockResolvedValueOnce(null);
+    const supportSessionStartedAt = new Date();
     createDeveloperSupportSessionMock.mockResolvedValue({
-      startedAt: new Date('2026-07-14T14:00:00Z'),
-      expiresAt: new Date('2026-07-14T14:30:00Z'),
+      startedAt: supportSessionStartedAt,
+      expiresAt: new Date(supportSessionStartedAt.getTime() + 30 * 60 * 1000),
       reason: 'Selected from the active team menu',
     });
 

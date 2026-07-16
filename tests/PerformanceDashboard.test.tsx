@@ -66,7 +66,7 @@ describe('PerformanceDashboard', () => {
 
   beforeEach(() => {
     onCloseSpy.mockClear();
-    useTeamMock.mockReturnValue({ team: { id: 'team-1' } });
+    useTeamMock.mockReturnValue({ team: { id: 'team-1' }, canManageTeam: true });
     useAuthMock.mockReturnValue({ user: { uid: 'user-1' } });
     usePerformanceMetadataQueryMock.mockReturnValue({
       data: null,
@@ -220,6 +220,17 @@ describe('PerformanceDashboard', () => {
     expect(container.textContent).toContain('Mock Performance Import');
     expect(container.textContent).not.toContain('STREETS AVL Data');
     expect(container.textContent).not.toContain('Mock Performance Workspace');
+  });
+
+  it('does not open performance import for a non-manager', async () => {
+    useTeamMock.mockReturnValue({ team: { id: 'team-1' }, canManageTeam: false });
+
+    flushSync(() => {
+      root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
+    });
+
+    await vi.waitFor(() => expect(container.textContent).toContain('STREETS AVL Data'));
+    expect(container.textContent).not.toContain('Mock Performance Import');
   });
 
   it('returns to the outer workspace when backing out of an auto-opened dashboard', async () => {

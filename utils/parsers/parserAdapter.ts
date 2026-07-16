@@ -127,21 +127,21 @@ const createTable = (routeName: string, dayType: string, direction: string, stop
 
 /**
  * Normalizes a time value for sorting purposes.
- * Times between 12:00 AM (0 minutes) and 3:30 AM (210 minutes) are treated as 
+ * Times between 12:00 AM and 4:00 AM are treated as
  * "next day" times by adding 1440 minutes (24 hours), ensuring they sort 
  * AFTER late-night times like 11:51 PM.
  * 
  * This fixes the issue where after-midnight trips were being sorted before
  * late-night trips (e.g., Route 7 ending at 12:29 AM appearing before 11:51 PM).
  */
-const MIDNIGHT_THRESHOLD = 210; // 3:30 AM in minutes
+const OPERATIONAL_DAY_START = 240; // 4:00 AM in minutes
 const MINUTES_IN_DAY = 1440; // 24 * 60
 
 export const normalizeTimeForSort = (minutes: number | null): number => {
     if (minutes === null) return 0;
     if (minutes >= MINUTES_IN_DAY) return minutes;
-    // Times from 12:00 AM (0) to 3:30 AM (210) are considered "next day"
-    if (minutes <= MIDNIGHT_THRESHOLD) {
+    // Times before the 4:00 AM service-day boundary are considered "next day".
+    if (minutes < OPERATIONAL_DAY_START) {
         return minutes + MINUTES_IN_DAY;
     }
     return minutes;
@@ -303,6 +303,9 @@ const convertTrip = (trip: BlockedTrip, stops: StopInfo[]): MasterTrip => {
 
     // Use remappedRecovery to include both explicit and inferred recoveries
     const totalRecovery = Object.values(remappedRecovery).reduce((a, b) => a + b, 0);
+    const lastTimedStop = [...stops]
+        .reverse()
+        .find(stop => !stop.isRecovery && trip.times[stop.name]);
 
     return {
         id: `${trip.routeName}-T-${trip.rowIndex}`,  // Include route name for unique IDs across routes
@@ -321,6 +324,9 @@ const convertTrip = (trip: BlockedTrip, stops: StopInfo[]): MasterTrip => {
         travelTime: cycleTime - totalRecovery,
         stops: stopRecord,
         stopMinutes: Object.keys(stopMinutes).length > 0 ? stopMinutes : undefined,
+        // The V2 parser reads the departure column for ARR -> R -> DEP stops.
+        // Tell later block reassignment not to add that final recovery a second time.
+        endTimeIncludesRecovery: lastTimedStop?.departureColumnIndex !== undefined,
         isOverlap: false, // Calculated later if needed
         isTightRecovery: (totalRecovery < 5),
     };
