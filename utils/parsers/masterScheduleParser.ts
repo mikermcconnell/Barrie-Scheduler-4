@@ -1,7 +1,12 @@
 
 import * as XLSX from 'xlsx';
 import { extractDirectionFromName } from '../config/routeDirectionConfig';
-import { buildBlocksBidirectional, TripForMatching, MatchConfigPresets } from '../blocks/blockAssignmentCore';
+import {
+    buildBlocksBidirectional,
+    getOperationalSortTime,
+    TripForMatching,
+    MatchConfigPresets
+} from '../blocks/blockAssignmentCore';
 
 // --- Types ---
 
@@ -198,7 +203,7 @@ const applyDayOffset = (
     return { adjusted, offset: nextOffset };
 };
 
-const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+const MIDNIGHT_ROLLOVER_THRESHOLD = 240; // 4:00 AM service-day boundary
 
 // Helper for handling midnight crossover - calculates duration when trip may cross midnight
 const getTripDuration = (startTime: number, endTime: number): number => {
@@ -587,7 +592,9 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
                     routeName: `${sheetName}${dayLabel} (North)${northDest}`, // e.g. "400 (Saturday) (North) (To RVH)"
                     stops: northCols.map(c => c.name),
                     stopIds: northStopIds,
-                    trips: rawTrips.filter(t => t.direction === 'North').sort((a, b) => a.startTime - b.startTime) // Sort by TIME
+                    trips: rawTrips.filter(t => t.direction === 'North').sort((a, b) => (
+                        getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+                    ))
                 };
                 if (tableNorth.trips.length > 0) tables.push(validateRouteTable(tableNorth));
             }
@@ -597,7 +604,9 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
                     routeName: `${sheetName}${dayLabel} (South)${southDest}`,
                     stops: southCols.map(c => c.name),
                     stopIds: southStopIds,
-                    trips: rawTrips.filter(t => t.direction === 'South').sort((a, b) => a.startTime - b.startTime) // Sort by TIME
+                    trips: rawTrips.filter(t => t.direction === 'South').sort((a, b) => (
+                        getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+                    ))
                 };
                 if (tableSouth.trips.length > 0) tables.push(validateRouteTable(tableSouth));
             }
@@ -640,8 +649,12 @@ export const buildRoundTripView = (
     const rows: RoundTripRow[] = [];
 
     Object.entries(blockGroups).forEach(([blockId, trips]) => {
-        // Sort trips by start time to maintain chronological sequence
-        const sortedTrips = trips.sort((a, b) => a.startTime - b.startTime);
+        // Treat service after midnight as the continuation of the prior
+        // evening. Older saved schedules may store those trips as 0-239
+        // minutes, while newer imports can preserve values above 1440.
+        const sortedTrips = [...trips].sort((a, b) => (
+            getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+        ));
 
         // Pair by chronological direction alternation within each block.
         // Walk through trips in time order: each North followed by the next South forms a pair.
@@ -672,7 +685,7 @@ export const buildRoundTripView = (
         pairedRows.sort((a, b) => {
             const aTime = a.nTrip?.startTime ?? a.sTrip?.startTime ?? 0;
             const bTime = b.nTrip?.startTime ?? b.sTrip?.startTime ?? 0;
-            return aTime - bTime;
+            return getOperationalSortTime(aTime) - getOperationalSortTime(bTime);
         });
 
         // Reassign pairIndex after sorting
@@ -718,7 +731,7 @@ export const buildRoundTripView = (
     rows.sort((a, b) => {
         const aStart = a.trips[0]?.startTime ?? 0;
         const bStart = b.trips[0]?.startTime ?? 0;
-        return aStart - bStart;
+        return getOperationalSortTime(aStart) - getOperationalSortTime(bStart);
     });
 
     // Extract route name (remove direction suffix)

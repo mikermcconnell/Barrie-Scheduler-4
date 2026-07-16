@@ -41,6 +41,7 @@ import { downloadFileContent } from './dataService';
 const MAX_VERSIONS = 5;
 const ROUTE_MAP_PATH = (teamId: string, routeNumber: string) => `teams/${teamId}/routeMaps/${routeNumber}`;
 const LEGACY_ROUTE_MAP_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'PNG', 'JPG', 'JPEG', 'GIF', 'WEBP'];
+export const MAX_PUBLISH_NOTE_LENGTH = 500;
 
 // ============ HELPER FUNCTIONS ============
 
@@ -55,6 +56,37 @@ function timestampToDate(timestamp: Timestamp | Date): Date {
 function optionalTimestampToDate(timestamp?: Timestamp | Date): Date | undefined {
     if (!timestamp) return undefined;
     return timestampToDate(timestamp);
+}
+
+export function normalizePublishNote(value?: string): string | undefined {
+    if (!value) return undefined;
+    const normalized = value.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    return normalized ? normalized.slice(0, MAX_PUBLISH_NOTE_LENGTH) : undefined;
+}
+
+function masterEntryFromSnapshot(snapshot: { id: string; data(): Record<string, any> }): MasterScheduleEntry {
+    const data = snapshot.data();
+    return {
+        id: snapshot.id,
+        routeNumber: data.routeNumber,
+        dayType: data.dayType,
+        cycleMode: data.cycleMode,
+        currentVersion: data.currentVersion,
+        storagePath: data.storagePath,
+        tripCount: data.tripCount,
+        northStopCount: data.northStopCount,
+        southStopCount: data.southStopCount,
+        updatedAt: timestampToDate(data.updatedAt),
+        updatedBy: data.updatedBy,
+        uploaderName: data.uploaderName,
+        source: data.source,
+        publishedAt: optionalTimestampToDate(data.publishedAt),
+        publishedBy: data.publishedBy,
+        publishedFromDraft: data.publishedFromDraft,
+        effectiveDate: data.effectiveDate,
+        notes: data.notes,
+        publishNote: data.publishNote,
+    };
 }
 
 function decodeStorageBytes(bytes: ArrayBuffer | Uint8Array): string {
@@ -155,19 +187,34 @@ export async function uploadToMasterSchedule(
     source: UploadSource,
     options?: {
         cycleMode?: 'Strict' | 'Floating';
+        publishNote?: string;
+        /** Reject if the master moved since the caller reviewed its source version. */
+        expectedCurrentVersion?: number;
+        expectedSource?: {
+            teamId: string;
+            routeIdentity: RouteIdentity;
+            version: number;
+        };
+        publishedBy?: string;
+        publishedFromDraft?: string;
     }
 ): Promise<MasterScheduleEntry> {
     const routeIdentity = buildRouteIdentity(routeNumber, dayType);
     const cycleMode = options?.cycleMode;
+    const publishNote = normalizePublishNote(options?.publishNote);
 
     // 1. First, get the current version number (outside transaction for storage path)
     const entryRef = doc(db, 'teams', teamId, 'masterSchedules', routeIdentity);
     const existingSnap = await getDoc(entryRef);
     const currentVersion = existingSnap.exists() ? existingSnap.data().currentVersion : 0;
+    if (options?.expectedCurrentVersion !== undefined && currentVersion !== options.expectedCurrentVersion) {
+        throw new Error(`Version conflict: expected master v${options.expectedCurrentVersion}, found v${currentVersion}`);
+    }
     const newVersion = currentVersion + 1;
 
     // 2. Prepare content and upload to Cloud Storage FIRST (before transaction)
-    const storagePath = `teams/${teamId}/masterSchedules/${routeIdentity}_v${newVersion}.json`;
+    const uploadNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const storagePath = `teams/${teamId}/masterSchedules/${routeIdentity}_v${newVersion}_${uploadNonce}.json`;
     const content: MasterScheduleContent = {
         northTable,
         southTable,
@@ -198,6 +245,22 @@ export async function uploadToMasterSchedule(
             if (freshVersion !== currentVersion) {
                 throw new Error('Version conflict: schedule was updated by another user');
             }
+            if (options?.expectedSource) {
+                const sourceRef = doc(
+                    db,
+                    'teams',
+                    options.expectedSource.teamId,
+                    'masterSchedules',
+                    options.expectedSource.routeIdentity,
+                );
+                const sourceSnapshot = await transaction.get(sourceRef);
+                const sourceVersion = sourceSnapshot.exists() ? sourceSnapshot.data().currentVersion : null;
+                if (sourceVersion !== options.expectedSource.version) {
+                    throw new Error(
+                        `Source version conflict: expected v${options.expectedSource.version}, found ${sourceVersion === null ? 'no master' : `v${sourceVersion}`}`
+                    );
+                }
+            }
 
             const tripCount = northTable.trips.length + southTable.trips.length;
 
@@ -210,7 +273,8 @@ export async function uploadToMasterSchedule(
                 createdBy: userId,
                 uploaderName,
                 source,
-                tripCount
+                tripCount,
+                ...(publishNote ? { publishNote } : {}),
             });
 
             // Update main entry
@@ -226,7 +290,14 @@ export async function uploadToMasterSchedule(
                 updatedAt: serverTimestamp(),
                 updatedBy: userId,
                 uploaderName,
-                source
+                source,
+                ...(options?.publishedBy ? {
+                    publishedAt: serverTimestamp(),
+                    publishedBy: options.publishedBy,
+                    publishedFromDraft: options.publishedFromDraft ?? null,
+                    status: 'published',
+                } : {}),
+                ...(publishNote ? { publishNote } : {}),
             });
 
             return {
@@ -242,7 +313,13 @@ export async function uploadToMasterSchedule(
                 updatedAt: new Date(),
                 updatedBy: userId,
                 uploaderName,
-                source
+                source,
+                ...(options?.publishedBy ? {
+                    publishedAt: new Date(),
+                    publishedBy: options.publishedBy,
+                    publishedFromDraft: options.publishedFromDraft,
+                } : {}),
+                publishNote,
             };
         });
     } catch (error) {
@@ -309,29 +386,16 @@ export async function getAllMasterSchedules(
     const schedulesRef = collection(db, 'teams', teamId, 'masterSchedules');
     const schedulesSnap = await getDocs(schedulesRef);
 
-    return schedulesSnap.docs.map(doc => {
-        const data = doc.data();
-        return {
-            id: doc.id,
-            routeNumber: data.routeNumber,
-            dayType: data.dayType,
-            cycleMode: data.cycleMode,
-            currentVersion: data.currentVersion,
-            storagePath: data.storagePath,
-            tripCount: data.tripCount,
-            northStopCount: data.northStopCount,
-            southStopCount: data.southStopCount,
-            updatedAt: timestampToDate(data.updatedAt),
-            updatedBy: data.updatedBy,
-            uploaderName: data.uploaderName,
-            source: data.source,
-            publishedAt: optionalTimestampToDate(data.publishedAt),
-            publishedBy: data.publishedBy,
-            publishedFromDraft: data.publishedFromDraft,
-            effectiveDate: data.effectiveDate,
-            notes: data.notes
-        };
-    });
+    return schedulesSnap.docs.map(masterEntryFromSnapshot);
+}
+
+/** Load only the current master metadata; useful for cheap stale-draft checks. */
+export async function getMasterScheduleEntry(
+    teamId: string,
+    routeIdentity: RouteIdentity,
+): Promise<MasterScheduleEntry | null> {
+    const entrySnap = await getDoc(doc(db, 'teams', teamId, 'masterSchedules', routeIdentity));
+    return entrySnap.exists() ? masterEntryFromSnapshot(entrySnap) : null;
 }
 
 // Cache for all stops (cleared on page refresh)
@@ -508,26 +572,7 @@ export async function getMasterSchedule(
     }
 
     const data = entrySnap.data();
-    const entry: MasterScheduleEntry = {
-        id: entrySnap.id,
-        routeNumber: data.routeNumber,
-        dayType: data.dayType,
-        cycleMode: data.cycleMode,
-        currentVersion: data.currentVersion,
-        storagePath: data.storagePath,
-        tripCount: data.tripCount,
-        northStopCount: data.northStopCount,
-        southStopCount: data.southStopCount,
-        updatedAt: timestampToDate(data.updatedAt),
-        updatedBy: data.updatedBy,
-        uploaderName: data.uploaderName,
-        source: data.source,
-        publishedAt: optionalTimestampToDate(data.publishedAt),
-        publishedBy: data.publishedBy,
-        publishedFromDraft: data.publishedFromDraft,
-        effectiveDate: data.effectiveDate,
-        notes: data.notes
-    };
+    const entry = masterEntryFromSnapshot(entrySnap);
 
     // Load content from Cloud Storage
     const content = await readStorageJsonContent(data.storagePath);
@@ -556,7 +601,8 @@ export async function getVersionHistory(
             createdBy: data.createdBy,
             uploaderName: data.uploaderName,
             source: data.source,
-            tripCount: data.tripCount
+            tripCount: data.tripCount,
+            publishNote: data.publishNote,
         };
     });
 }

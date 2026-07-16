@@ -1,33 +1,31 @@
-
 import React from 'react';
 import {
-    FileText,
-    Timer,
-    History,
-    Loader2,
+    CalendarDays,
+    Check,
     Cloud,
     CloudOff,
-    Check,
+    Copy,
     Download,
+    FileText,
+    FolderOpen,
+    GanttChart,
+    History,
+    Link2,
+    Loader2,
     Maximize2,
     Minimize2,
-    Undo2,
-    Redo2,
-    GanttChart,
-    Link2,
-    Sparkles,
-    FolderOpen,
+    MoreHorizontal,
     Pencil,
     Plus,
-    Copy,
-    CalendarDays
+    Redo2,
+    Sparkles,
+    Timer,
+    Undo2,
 } from 'lucide-react';
 import { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
 import { AutoSaveStatus } from '../../hooks/useAutoSave';
-import { RouteSummary } from '../RouteSummary';
 import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
 
-// Time Band type
 interface TimeBandDisplay {
     id: string;
     color: string;
@@ -45,7 +43,6 @@ interface WorkspaceHeaderProps {
     lastSaved: Date | null;
     hasUnsavedChanges: boolean;
     summaryTable: MasterRouteTable;
-    // New file management props
     draftName?: string;
     onRenameDraft?: (newName: string) => void;
     onOpenDrafts?: () => void;
@@ -53,56 +50,55 @@ interface WorkspaceHeaderProps {
     onDuplicateDraft?: () => void;
     onExport?: () => void;
     onClose?: () => void;
-    // Fullscreen
     isFullScreen?: boolean;
     onToggleFullScreen?: () => void;
-    // Time bands
     bands?: TimeBandDisplay[];
-    // Undo/Redo
     canUndo?: boolean;
     canRedo?: boolean;
     onUndo?: () => void;
     onRedo?: () => void;
-    // Hide autosave when parent handles it
     hideAutoSave?: boolean;
-    // Publish action
     onPublish?: () => void;
     publishLabel?: string;
     isPublishing?: boolean;
     publishDisabled?: boolean;
-    // Connections panel
     onOpenConnections?: () => void;
-    // AI review panel
     onOpenAiReview?: () => void;
-    // Timetable publisher shortcut
     onOpenTimetable?: () => void;
-    // Preview-specific compact mode
     hideRouteIdentity?: boolean;
-    // Compact mode used by Step 4 where secondary tools live in the review sidebar.
     compactTools?: boolean;
+    /** Label for the exact schedule this draft was copied or generated from. */
+    sourceLabel?: string;
+    /** Number of detected changes from the source schedule. */
+    changeCount?: number;
+    /** Number of warnings that still need planner attention. */
+    warningCount?: number;
+    /** Opens the review/change summary. When present, this is the single primary header action. */
+    onReviewChanges?: () => void;
+    reviewChangesDisabled?: boolean;
 }
+
+const closeParentMenu = (target: HTMLElement) => {
+    target.closest('details')?.removeAttribute('open');
+};
 
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     routeGroupName,
     dayLabel,
-    isRoundTrip,
     subView,
     onViewChange,
     onSaveVersion,
     autoSaveStatus,
     lastSaved,
     hasUnsavedChanges,
-    summaryTable,
     draftName,
     onRenameDraft,
     onOpenDrafts,
     onNewDraft,
     onDuplicateDraft,
     onExport,
-    onClose,
     isFullScreen,
     onToggleFullScreen,
-    bands,
     canUndo,
     canRedo,
     onUndo,
@@ -116,11 +112,15 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     onOpenAiReview,
     onOpenTimetable,
     hideRouteIdentity = false,
-    compactTools = false
+    compactTools = false,
+    sourceLabel,
+    changeCount,
+    warningCount,
+    onReviewChanges,
+    reviewChangesDisabled = false,
 }) => {
     const [isRenamingDraft, setIsRenamingDraft] = React.useState(false);
     const [renameDraftValue, setRenameDraftValue] = React.useState(draftName || '');
-    const exportButtonTitle = draftName ? `Export "${draftName}" to Excel` : 'Export this draft to Excel';
 
     React.useEffect(() => {
         setRenameDraftValue(draftName || '');
@@ -128,299 +128,185 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
     const handleDraftRename = () => {
         const nextName = renameDraftValue.trim();
-        if (nextName && onRenameDraft) {
-            onRenameDraft(nextName);
-        } else {
-            setRenameDraftValue(draftName || '');
-        }
+        if (nextName && onRenameDraft) onRenameDraft(nextName);
+        else setRenameDraftValue(draftName || '');
         setIsRenamingDraft(false);
     };
 
+    const menuActionClass = 'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
+    const activeViewLabel = subView === 'editor' ? 'Schedule' : subView === 'timeline' ? 'Timeline' : 'Travel Times';
+
+    const saveStatus = !hideAutoSave && (
+        <div className="flex items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-gray-600" aria-live="polite">
+            {autoSaveStatus === 'saving' && <><Loader2 size={13} className="animate-spin text-blue-500" /> Saving</>}
+            {autoSaveStatus === 'saved' && <><Cloud size={13} className="text-emerald-600" /> Saved</>}
+            {autoSaveStatus === 'error' && (
+                <>
+                    <CloudOff size={13} className="text-red-600" />
+                    <span className="text-red-700">Save error</span>
+                    <button
+                        type="button"
+                        onClick={() => onSaveVersion()}
+                        className="rounded px-1.5 py-0.5 font-bold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                    >
+                        Retry
+                    </button>
+                </>
+            )}
+            {autoSaveStatus === 'idle' && hasUnsavedChanges && <><span className="h-2 w-2 rounded-full bg-amber-400" /> Unsaved</>}
+            {autoSaveStatus === 'idle' && !hasUnsavedChanges && <><Check size={13} className="text-gray-400" /> Ready</>}
+            {lastSaved && autoSaveStatus === 'saved' && (
+                <span className="sr-only">Last saved {lastSaved.toLocaleTimeString()}</span>
+            )}
+        </div>
+    );
+
     return (
-        <div className={`bg-white border-b border-gray-200 sticky top-0 z-60 shadow-sm ${compactTools ? 'px-3 py-1' : 'px-3 md:px-4 py-2.5'}`}>
-            <div className={`flex flex-col ${compactTools ? 'gap-1.5' : 'gap-3'}`}>
-                <div className={compactTools ? 'flex flex-wrap items-center justify-between gap-2' : 'flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'}>
-                    <div className={compactTools ? 'flex min-w-0 items-center gap-2' : 'flex min-w-0 items-start gap-3'}>
-                        {!hideRouteIdentity && !compactTools && (
-                            <div
-                                className="w-11 h-11 rounded-xl flex flex-col items-center justify-center shadow-sm ring-1 ring-black/5 flex-shrink-0"
-                                style={{
-                                    backgroundColor: getRouteColor(routeGroupName),
-                                    color: getRouteTextColor(routeGroupName)
-                                }}
-                            >
-                                <span className="text-[11px] uppercase font-bold opacity-90 leading-none">Route</span>
-                                <span className="text-lg font-bold leading-none mt-0.5">{routeGroupName.replace(/\D/g, '')}</span>
-                            </div>
+        <header className={`sticky top-0 z-60 border-b border-gray-200 bg-white shadow-sm ${compactTools ? 'px-3 py-1.5' : 'px-4 py-2'}`}>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {!hideRouteIdentity && !compactTools && (
+                    <div
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-extrabold shadow-sm ring-1 ring-black/5"
+                        style={{ backgroundColor: getRouteColor(routeGroupName), color: getRouteTextColor(routeGroupName) }}
+                        aria-label={`Route ${routeGroupName}`}
+                    >
+                        {routeGroupName}
+                    </div>
+                )}
+
+                <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <h2 className="truncate text-sm font-extrabold text-gray-900">
+                            Route {routeGroupName} <span className="font-semibold text-gray-400">/</span> {dayLabel}
+                        </h2>
+                        {sourceLabel && (
+                            <span className="max-w-56 truncate rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600" title={sourceLabel}>
+                                From {sourceLabel}
+                            </span>
                         )}
+                        {typeof changeCount === 'number' && (
+                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700">
+                                {changeCount} change{changeCount === 1 ? '' : 's'}
+                            </span>
+                        )}
+                        {typeof warningCount === 'number' && warningCount > 0 && (
+                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">
+                                {warningCount} warning{warningCount === 1 ? '' : 's'}
+                            </span>
+                        )}
+                    </div>
 
-                        <div className="min-w-0">
-                            <h2 className={`${compactTools ? 'text-sm' : 'text-base md:text-lg'} font-bold text-gray-900 leading-tight truncate`}>
-                                {compactTools ? `Route ${routeGroupName} · ${dayLabel}` : `${dayLabel} Schedule`}
-                            </h2>
-
-                            {draftName && !compactTools && (
-                                <div className="mt-1">
-                                    {isRenamingDraft && onRenameDraft ? (
-                                        <input
-                                            autoFocus
-                                            value={renameDraftValue}
-                                            onChange={(e) => setRenameDraftValue(e.target.value)}
-                                            onBlur={handleDraftRename}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') handleDraftRename();
-                                                if (e.key === 'Escape') {
-                                                    setRenameDraftValue(draftName);
-                                                    setIsRenamingDraft(false);
-                                                }
-                                            }}
-                                            className="w-full max-w-[360px] rounded-md border border-blue-200 px-2.5 py-1.5 text-sm font-semibold text-gray-800 outline-none ring-2 ring-blue-100"
-                                        />
-                                    ) : (
-                                        <button
-                                            onClick={() => onRenameDraft && setIsRenamingDraft(true)}
-                                            disabled={!onRenameDraft}
-                                            className="flex max-w-full items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:cursor-default disabled:hover:bg-gray-50"
-                                            title={onRenameDraft ? 'Rename draft' : undefined}
-                                        >
-                                            <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
-                                                Draft
-                                            </span>
-                                            <span className="max-w-[320px] truncate text-gray-700">{draftName}</span>
-                                            {onRenameDraft && <Pencil size={12} className="text-gray-400 flex-shrink-0" />}
-                                        </button>
-                                    )}
-                                </div>
+                    {draftName && !compactTools && (
+                        <div className="mt-0.5">
+                            {isRenamingDraft && onRenameDraft ? (
+                                <input
+                                    autoFocus
+                                    value={renameDraftValue}
+                                    onChange={(event) => setRenameDraftValue(event.target.value)}
+                                    onBlur={handleDraftRename}
+                                    onKeyDown={(event) => {
+                                        if (event.key === 'Enter') handleDraftRename();
+                                        if (event.key === 'Escape') {
+                                            setRenameDraftValue(draftName);
+                                            setIsRenamingDraft(false);
+                                        }
+                                    }}
+                                    aria-label="Draft name"
+                                    className="w-full max-w-sm rounded-md border border-blue-200 px-2 py-1 text-xs font-semibold text-gray-800 outline-none ring-2 ring-blue-100"
+                                />
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => onRenameDraft && setIsRenamingDraft(true)}
+                                    disabled={!onRenameDraft}
+                                    className="inline-flex max-w-sm items-center gap-1 truncate text-xs font-medium text-gray-500 hover:text-gray-800 disabled:cursor-default"
+                                    title={onRenameDraft ? 'Rename draft' : undefined}
+                                >
+                                    <span className="truncate">{draftName}</span>
+                                    {onRenameDraft && <Pencil size={11} />}
+                                </button>
                             )}
                         </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-                        {/* Undo/Redo Buttons */}
-                        {onUndo && onRedo && (
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                                <button
-                                    onClick={onUndo}
-                                    disabled={!canUndo}
-                                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-600 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
-                                    title="Undo (Ctrl+Z)"
-                                >
-                                    <Undo2 size={16} />
-                                </button>
-                                <button
-                                    onClick={onRedo}
-                                    disabled={!canRedo}
-                                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-600 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
-                                    title="Redo (Ctrl+Y)"
-                                >
-                                    <Redo2 size={16} />
-                                </button>
-                            </div>
-                        )}
-
-                        {/* Fullscreen Toggle */}
-                        {onToggleFullScreen && (
-                            <button
-                                onClick={onToggleFullScreen}
-                                className="p-2 rounded-lg hover:bg-gray-100 text-gray-600 hover:text-gray-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex-shrink-0"
-                                title={isFullScreen ? 'Exit Fullscreen' : 'Fullscreen'}
-                            >
-                                {isFullScreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                            </button>
-                        )}
-
-                        {/* Save Status - compact inline */}
-                        {!hideAutoSave && (
-                            <div className="flex items-center gap-1.5 text-sm font-medium flex-shrink-0 px-2">
-                                {autoSaveStatus === 'saving' && (
-                                    <>
-                                        <Loader2 size={12} className="animate-spin text-blue-500" />
-                                        <span className="text-blue-700">Saving...</span>
-                                    </>
-                                )}
-                                {autoSaveStatus === 'saved' && (
-                                    <div className="flex items-center gap-1.5 group cursor-help relative">
-                                        <Cloud size={12} className="text-emerald-500" />
-                                        <span className="text-emerald-700">Saved</span>
-                                        {lastSaved && (
-                                            <div className="absolute top-full right-0 mt-1 bg-gray-800 text-white text-[11px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
-                                                Last saved: {lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                                {autoSaveStatus === 'error' && (
-                                    <>
-                                        <CloudOff size={12} className="text-red-500" />
-                                        <span className="text-red-600">Error</span>
-                                    </>
-                                )}
-                                {autoSaveStatus === 'idle' && hasUnsavedChanges && (
-                                    <>
-                                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                                        <span className="text-amber-600">Unsaved</span>
-                                    </>
-                                )}
-                                {autoSaveStatus === 'idle' && !hasUnsavedChanges && (
-                                    <div className="flex items-center gap-1.5 opacity-50">
-                                        <Check size={12} className="text-gray-400" />
-                                        <span className="text-gray-500">Ready</span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {!compactTools && onSaveVersion && (
-                            <button
-                                onClick={() => onSaveVersion()}
-                                className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
-                                title="Save draft now"
-                            >
-                                <History size={14} />
-                                Save now
-                            </button>
-                        )}
-
-                        {!compactTools && onOpenDrafts && (
-                            <button
-                                onClick={onOpenDrafts}
-                                className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
-                                title="Open drafts"
-                            >
-                                <FolderOpen size={14} />
-                                Drafts
-                            </button>
-                        )}
-
-                        {!compactTools && onNewDraft && (
-                            <button
-                                onClick={onNewDraft}
-                                className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
-                                title="Create a new draft"
-                            >
-                                <Plus size={14} />
-                                New draft
-                            </button>
-                        )}
-
-                        {!compactTools && onDuplicateDraft && (
-                            <button
-                                onClick={onDuplicateDraft}
-                                className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
-                                title="Duplicate the current draft"
-                            >
-                                <Copy size={14} />
-                                Duplicate
-                            </button>
-                        )}
-
-                        {!compactTools && onExport && (
-                            <button
-                                onClick={onExport}
-                                className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
-                                title={exportButtonTitle}
-                            >
-                                <Download size={14} />
-                                Export Draft
-                            </button>
-                        )}
-
-                        {!compactTools && onOpenTimetable && (
-                            <button
-                                onClick={onOpenTimetable}
-                                className="px-3 py-2 rounded-lg text-sm font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 flex items-center gap-2 flex-shrink-0"
-                                title="Open the public timetable for this route"
-                            >
-                                <CalendarDays size={14} />
-                                Timetable
-                            </button>
-                        )}
-
-                        {onPublish && (
-                            <button
-                                onClick={onPublish}
-                                disabled={publishDisabled || isPublishing}
-                                className="px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 flex-shrink-0"
-                            >
-                                {isPublishing ? 'Publishing...' : publishLabel}
-                            </button>
-                        )}
-
-                        {!compactTools && (
-                        <div className="hidden 2xl:block">
-                            <RouteSummary table={summaryTable} orientation="header" />
-                        </div>
-                        )}
-                    </div>
-                </div>
-
-                <div className={`flex flex-wrap items-center ${compactTools ? 'gap-1.5' : 'gap-2'}`}>
-                    {/* View Toggles (Segmented Control) */}
-                    <div className={`bg-gray-100/80 ${compactTools ? 'p-0.5' : 'p-1'} rounded-lg flex items-center flex-shrink-0`}>
-                        <button
-                            onClick={() => onViewChange('editor')}
-                            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} ${subView === 'editor'
-                                ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/5'
-                                : 'text-gray-600 hover:text-gray-800 hover:bg-gray-200/50'
-                                }`}
-                        >
-                            <FileText size={compactTools ? 12 : 14} /> Schedule
-                        </button>
-                        <button
-                            onClick={() => onViewChange('timeline')}
-                            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} ${subView === 'timeline'
-                                ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-black/5'
-                                : 'text-gray-600 hover:text-gray-800 hover:bg-gray-200/50'
-                                }`}
-                        >
-                            <GanttChart size={compactTools ? 12 : 14} /> Timeline
-                        </button>
-                        <button
-                            onClick={() => onViewChange('matrix')}
-                            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} ${subView === 'matrix'
-                                ? 'bg-white text-blue-700 shadow-sm ring-1 ring-black/5'
-                                : 'text-gray-600 hover:text-gray-800 hover:bg-gray-200/50'
-                                }`}
-                        >
-                            <Timer size={compactTools ? 12 : 14} /> Travel Times
-                        </button>
-                    </div>
-
-                    {onOpenConnections && (
-                        <button
-                            onClick={onOpenConnections}
-                            className={`flex items-center gap-1.5 rounded-lg font-semibold bg-green-100 text-green-800 hover:bg-green-200 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-300 flex-shrink-0 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'}`}
-                            title="Configure external connections (GO Train, College)"
-                        >
-                            <Link2 size={compactTools ? 12 : 14} /> Connections
-                        </button>
-                    )}
-
-                    {onOpenAiReview && (
-                        <button
-                            onClick={onOpenAiReview}
-                            className={`flex items-center gap-1.5 rounded-lg font-semibold bg-violet-100 text-violet-800 hover:bg-violet-200 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 flex-shrink-0 ${compactTools ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'}`}
-                            title="Open AI Review"
-                        >
-                            <Sparkles size={compactTools ? 12 : 14} /> AI Review
-                        </button>
-                    )}
-
-                    {/* Time Bands - hidden on smaller screens */}
-                    {!compactTools && bands && bands.length > 0 && (
-                        <div className="hidden xl:flex items-center gap-3 pl-2">
-                            <span className="text-[11px] font-semibold text-gray-600 uppercase tracking-wide">Time Bands</span>
-                            {bands.map(band => (
-                                <div key={band.id} className="flex items-center gap-1.5">
-                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: band.color }} />
-                                    <span className="text-sm font-semibold text-gray-700">{band.id}</span>
-                                    <span className="text-sm text-gray-600">{band.avg.toFixed(0)}m</span>
-                                </div>
-                            ))}
-                        </div>
                     )}
                 </div>
+
+                {saveStatus}
+
+                {onUndo && onRedo && (
+                    <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50 p-0.5" aria-label="Edit history">
+                        <button type="button" onClick={onUndo} disabled={!canUndo} className="rounded-md p-1.5 text-gray-600 hover:bg-white disabled:opacity-35" title="Undo (Ctrl+Z)" aria-label="Undo">
+                            <Undo2 size={15} />
+                        </button>
+                        <button type="button" onClick={onRedo} disabled={!canRedo} className="rounded-md p-1.5 text-gray-600 hover:bg-white disabled:opacity-35" title="Redo (Ctrl+Y)" aria-label="Redo">
+                            <Redo2 size={15} />
+                        </button>
+                    </div>
+                )}
+
+                <details className="relative">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
+                        {subView === 'editor' ? <FileText size={14} /> : subView === 'timeline' ? <GanttChart size={14} /> : <Timer size={14} />}
+                        {activeViewLabel}
+                    </summary>
+                    <div className="absolute right-0 top-full z-50 mt-1 w-52 rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl">
+                        <div className="px-3 py-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">View</div>
+                        {([
+                            ['editor', 'Schedule', FileText],
+                            ['timeline', 'Timeline', GanttChart],
+                            ['matrix', 'Travel Times', Timer],
+                        ] as const).map(([view, label, Icon]) => (
+                            <button
+                                key={view}
+                                type="button"
+                                onClick={(event) => { onViewChange(view); closeParentMenu(event.currentTarget); }}
+                                className={`${menuActionClass} ${subView === view ? 'bg-blue-50 text-blue-800' : ''}`}
+                                aria-current={subView === view ? 'page' : undefined}
+                            >
+                                <Icon size={15} /> {label}
+                            </button>
+                        ))}
+                    </div>
+                </details>
+
+                <details className="relative">
+                    <summary className="flex cursor-pointer list-none items-center justify-center rounded-lg border border-gray-200 bg-white p-2 text-gray-600 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300" aria-label="More schedule actions" title="More actions">
+                        <MoreHorizontal size={17} />
+                    </summary>
+                    <div className="absolute right-0 top-full z-50 mt-1 max-h-[70vh] w-60 overflow-y-auto rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl">
+                        <div className="px-3 py-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-400">Draft actions</div>
+                        {onSaveVersion && <button type="button" onClick={(event) => { onSaveVersion(); closeParentMenu(event.currentTarget); }} className={menuActionClass}><History size={15} /> Save now</button>}
+                        {onOpenDrafts && <button type="button" onClick={(event) => { onOpenDrafts(); closeParentMenu(event.currentTarget); }} className={menuActionClass}><FolderOpen size={15} /> Drafts</button>}
+                        {onNewDraft && <button type="button" onClick={(event) => { onNewDraft(); closeParentMenu(event.currentTarget); }} className={menuActionClass}><Plus size={15} /> New draft</button>}
+                        {onDuplicateDraft && <button type="button" onClick={(event) => { onDuplicateDraft(); closeParentMenu(event.currentTarget); }} className={menuActionClass}><Copy size={15} /> Duplicate</button>}
+                        {onExport && <button type="button" onClick={(event) => { onExport(); closeParentMenu(event.currentTarget); }} className={menuActionClass}><Download size={15} /> Export draft</button>}
+                        {onOpenTimetable && <button type="button" onClick={(event) => { onOpenTimetable(); closeParentMenu(event.currentTarget); }} className={menuActionClass}><CalendarDays size={15} /> Timetable</button>}
+                        {(onOpenConnections || onOpenAiReview || onToggleFullScreen) && <div className="my-1 border-t border-gray-100" />}
+                        {onOpenConnections && <button type="button" onClick={(event) => { onOpenConnections(); closeParentMenu(event.currentTarget); }} className={menuActionClass}><Link2 size={15} /> Connections</button>}
+                        {onOpenAiReview && <button type="button" onClick={(event) => { onOpenAiReview(); closeParentMenu(event.currentTarget); }} className={menuActionClass}><Sparkles size={15} /> AI review</button>}
+                        {onToggleFullScreen && <button type="button" onClick={(event) => { onToggleFullScreen(); closeParentMenu(event.currentTarget); }} className={menuActionClass}>{isFullScreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} {isFullScreen ? 'Exit fullscreen' : 'Fullscreen'}</button>}
+                    </div>
+                </details>
+
+                {onReviewChanges ? (
+                    <button
+                        type="button"
+                        onClick={onReviewChanges}
+                        disabled={reviewChangesDisabled}
+                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                    >
+                        Review Changes{typeof changeCount === 'number' && changeCount > 0 ? ` (${changeCount})` : ''}
+                    </button>
+                ) : onPublish ? (
+                    <button
+                        type="button"
+                        onClick={onPublish}
+                        disabled={publishDisabled || isPublishing}
+                        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+                    >
+                        {isPublishing ? 'Publishing…' : publishLabel}
+                    </button>
+                ) : null}
             </div>
-        </div>
+        </header>
     );
 };

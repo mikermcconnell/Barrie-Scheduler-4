@@ -510,4 +510,67 @@ describe('RoundTripTableView compare-to-master badges', () => {
         expect(text).toContain('Possible replacement');
         expect(text).toContain('+30m');
     });
+
+    it('can keep removed master trips visible while current trips are filtered', () => {
+        const currentSchedules = [{
+            routeName: '10 (North)',
+            stops: ['Terminal'],
+            stopIds: { Terminal: 'STOP-1' },
+            trips: [makeTrip('draft-current', 'North', 360)],
+        }] as any;
+        const masterBaseline = [{
+            routeName: '10 (North)',
+            stops: ['Terminal'],
+            stopIds: { Terminal: 'STOP-1' },
+            trips: [
+                makeTrip('master-current', 'North', 360),
+                makeTrip('master-removed', 'North', 500, { blockId: '10-9' }),
+            ],
+        }] as any;
+
+        flushSync(() => {
+            root?.render(
+                <RoundTripTableView
+                    schedules={currentSchedules}
+                    masterBaseline={masterBaseline}
+                    visibleTripIds={['draft-current']}
+                    includeRemovedMasterTripsWhenFiltered
+                    onCellEdit={() => {}}
+                />
+            );
+        });
+
+        expect(container?.textContent ?? '').toContain('removed from North');
+        expect(container?.textContent ?? '').toContain('10-9');
+    });
+
+    it('shows the changed-only empty state when there are no current or removed changes', () => {
+        const currentSchedules = [{
+            routeName: '10 (North)',
+            stops: ['Terminal'],
+            stopIds: { Terminal: 'STOP-1' },
+            trips: [makeTrip('draft-current', 'North', 360)],
+        }] as any;
+        const masterBaseline = [{
+            routeName: '10 (North)',
+            stops: ['Terminal'],
+            stopIds: { Terminal: 'STOP-1' },
+            trips: [makeTrip('master-current', 'North', 360)],
+        }] as any;
+
+        flushSync(() => {
+            root?.render(
+                <RoundTripTableView
+                    schedules={currentSchedules}
+                    masterBaseline={masterBaseline}
+                    visibleTripIds={[]}
+                    includeRemovedMasterTripsWhenFiltered
+                    onCellEdit={() => {}}
+                />
+            );
+        });
+
+        expect(container?.textContent ?? '').toContain('No matching changed trips to show.');
+        expect(container?.querySelector('table')).toBeNull();
+    });
 });

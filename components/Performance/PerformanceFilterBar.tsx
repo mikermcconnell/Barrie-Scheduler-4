@@ -1,11 +1,17 @@
 import React from 'react';
 import type { DailySummary, DayType } from '../../utils/performanceDataTypes';
-import { compareDateStrings } from '../../utils/performanceDateUtils';
+import { addDaysToISODate, compareDateStrings, toDateSortKey } from '../../utils/performanceDateUtils';
 
-export type TimeRange = 'all' | 'yesterday' | 'past-week' | 'past-month' | 'single-day';
+export type TimeRange = 'all' | 'yesterday' | 'past-week' | 'past-month' | 'past-three-months' | 'single-day';
+
+export interface PerformanceDateWindow {
+    start: string;
+    end: string;
+}
 
 const TIME_RANGE_LABELS: Record<TimeRange, string> = {
     all: 'All Data',
+    'past-three-months': 'Past 3 Months',
     'past-month': 'Past Month',
     'past-week': 'Past Week',
     yesterday: 'Prior Day',
@@ -85,11 +91,34 @@ export const FilterPill: React.FC<{ active: boolean; onClick: () => void; childr
     </button>
 );
 
-function formatDateYMD(d: Date): string {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+export function getPerformanceDateWindow(
+    summaries: DailySummary[],
+    timeRange: TimeRange,
+    selectedDate?: string | null,
+): PerformanceDateWindow | null {
+    const dates = [...new Set(summaries.map(summary => summary.date))].sort(compareDateStrings);
+    const latestDate = dates.at(-1);
+    if (!latestDate) return null;
+
+    if (timeRange === 'all') return { start: dates[0], end: latestDate };
+    if (timeRange === 'single-day') {
+        const date = selectedDate ?? latestDate;
+        return { start: date, end: date };
+    }
+    if (timeRange === 'yesterday') {
+        const priorDate = dates.at(-2);
+        return priorDate ? { start: priorDate, end: priorDate } : null;
+    }
+
+    const daysBack = timeRange === 'past-week'
+        ? 6
+        : timeRange === 'past-month'
+            ? 29
+            : 89;
+    return {
+        start: addDaysToISODate(latestDate, -daysBack) ?? latestDate,
+        end: latestDate,
+    };
 }
 
 export function filterDailySummaries(
@@ -98,37 +127,14 @@ export function filterDailySummaries(
     dayType: DayType | 'all',
     selectedDate?: string | null,
 ): DailySummary[] {
-    let result = summaries;
-    const latestDate = summaries
-        .map(s => s.date)
-        .sort(compareDateStrings)
-        .at(-1) ?? null;
-
-    if (timeRange === 'single-day') {
-        const targetDate = selectedDate ?? latestDate;
-        result = targetDate ? result.filter(d => d.date === targetDate) : [];
-    } else if (timeRange !== 'all') {
-        const latestStart = latestDate ? new Date(`${latestDate}T00:00:00`) : new Date();
-        latestStart.setHours(0, 0, 0, 0);
-        const latestEnd = new Date(latestStart);
-        latestEnd.setHours(23, 59, 59, 999);
-
-        if (timeRange === 'yesterday') {
-            const priorDate = summaries
-                .map(s => s.date)
-                .sort(compareDateStrings)
-                .at(-2) ?? null;
-            result = priorDate ? result.filter(d => d.date === priorDate) : [];
-        } else {
-            const daysBack = timeRange === 'past-week' ? 6 : 29;
-            const cutoff = new Date(latestStart);
-            cutoff.setDate(cutoff.getDate() - daysBack);
-            result = result.filter(d => {
-                const day = new Date(`${d.date}T12:00:00`);
-                return day >= cutoff && day <= latestEnd;
-            });
-        }
-    }
+    const window = getPerformanceDateWindow(summaries, timeRange, selectedDate);
+    if (!window) return [];
+    const startKey = toDateSortKey(window.start);
+    const endKey = toDateSortKey(window.end);
+    let result = summaries.filter(day => {
+        const dayKey = toDateSortKey(day.date);
+        return Number.isFinite(dayKey) && dayKey >= startKey && dayKey <= endKey;
+    });
 
     if (dayType !== 'all') {
         result = result.filter(d => d.dayType === dayType);

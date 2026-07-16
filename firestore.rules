@@ -129,6 +129,19 @@ service cloud.firestore {
         }
       }
 
+      // Team-visible fixed-route schedule review snapshots. Schedule content
+      // remains immutable in Storage; this document is bounded metadata only.
+      match /scheduleReviews/{reviewId} {
+        allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                       canSupportReadTeamData(teamId);
+        allow create: if (canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                          canSupportWriteTeamData(teamId)) &&
+                         isValidScheduleReviewCreate(teamId, reviewId);
+        allow update: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                         isValidScheduleReviewStatusUpdate();
+        allow delete: if canSupportWriteTeamData(teamId);
+      }
+
       // Platform configuration
       match /platformConfig/{configId} {
         allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
@@ -162,7 +175,7 @@ service cloud.firestore {
       // Performance Data
       match /performanceData/{docId} {
         allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
-        allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+        allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
       }
 
       // Transit On Demand pickup map data
@@ -336,6 +349,81 @@ service cloud.firestore {
       let member = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
       return request.auth != null &&
              (member.data.role == 'owner' || member.data.role == 'admin');
+    }
+
+    function isValidScheduleReviewSummary(summary) {
+      return summary is map &&
+             summary.keys().hasOnly([
+               'totalTrips', 'northTrips', 'southTrips',
+               'addedTrips', 'removedTrips', 'retimedTrips',
+               'extendedTrips', 'shortenedTrips', 'reviewNeededTrips',
+               'overlapTrips', 'tightRecoveryTrips', 'warningCount',
+               'blockingIssueCount', 'totalChanges'
+             ]) &&
+             summary.keys().hasAll([
+               'totalTrips', 'northTrips', 'southTrips',
+               'addedTrips', 'removedTrips', 'retimedTrips',
+               'extendedTrips', 'shortenedTrips', 'reviewNeededTrips',
+               'overlapTrips', 'tightRecoveryTrips', 'warningCount',
+               'blockingIssueCount', 'totalChanges'
+             ]) &&
+             summary.totalTrips is int && summary.totalTrips >= 0 && summary.totalTrips <= 10000 &&
+             summary.northTrips is int && summary.northTrips >= 0 &&
+             summary.southTrips is int && summary.southTrips >= 0 &&
+             summary.totalTrips == summary.northTrips + summary.southTrips &&
+             summary.addedTrips is int && summary.addedTrips >= 0 &&
+             summary.removedTrips is int && summary.removedTrips >= 0 &&
+             summary.retimedTrips is int && summary.retimedTrips >= 0 &&
+             summary.extendedTrips is int && summary.extendedTrips >= 0 &&
+             summary.shortenedTrips is int && summary.shortenedTrips >= 0 &&
+             summary.reviewNeededTrips is int && summary.reviewNeededTrips >= 0 &&
+             summary.overlapTrips is int && summary.overlapTrips >= 0 &&
+             summary.tightRecoveryTrips is int && summary.tightRecoveryTrips >= 0 &&
+             summary.warningCount is int && summary.warningCount >= 0 && summary.warningCount <= 10000 &&
+             summary.blockingIssueCount is int && summary.blockingIssueCount >= 0 && summary.blockingIssueCount <= 10000 &&
+             summary.totalChanges is int &&
+             summary.totalChanges == summary.addedTrips + summary.removedTrips +
+                                     summary.retimedTrips + summary.extendedTrips +
+                                     summary.shortenedTrips + summary.reviewNeededTrips;
+    }
+
+    function isValidScheduleReviewCreate(teamId, reviewId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+               'schemaVersion', 'teamId', 'routeNumber', 'dayType', 'draftId',
+               'sourceVersion', 'status', 'plannerNote', 'summary', 'storagePath',
+               'payloadBytes', 'createdBy', 'createdByName', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasAll([
+               'schemaVersion', 'teamId', 'routeNumber', 'dayType', 'draftId',
+               'sourceVersion', 'status', 'plannerNote', 'summary', 'storagePath',
+               'payloadBytes', 'createdBy', 'createdByName', 'createdAt', 'updatedAt'
+             ]) &&
+             data.schemaVersion == 1 &&
+             data.teamId == teamId &&
+             data.routeNumber is string && data.routeNumber.size() > 0 && data.routeNumber.size() <= 16 &&
+             data.dayType in ['Weekday', 'Saturday', 'Sunday'] &&
+             data.draftId is string && data.draftId.size() > 0 && data.draftId.size() <= 128 &&
+             data.sourceVersion is int && data.sourceVersion >= 0 && data.sourceVersion <= 1000000 &&
+             data.status == 'ready_for_review' &&
+             data.plannerNote is string && data.plannerNote.size() <= 2000 &&
+             isValidScheduleReviewSummary(data.summary) &&
+             data.payloadBytes is int && data.payloadBytes > 0 && data.payloadBytes <= 10 * 1024 * 1024 &&
+             data.createdBy == request.auth.uid &&
+             data.createdByName is string && data.createdByName.size() > 0 && data.createdByName.size() <= 200 &&
+             data.storagePath == 'teams/' + teamId + '/scheduleReviews/' + reviewId + '/' + request.auth.uid + '/schedule.json' &&
+             data.createdAt is timestamp && data.createdAt == request.time &&
+             data.updatedAt is timestamp && data.updatedAt == request.time;
+    }
+
+    function isValidScheduleReviewStatusUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'status', 'reviewedBy', 'reviewedAt', 'updatedAt'
+             ]) &&
+             request.resource.data.status in ['ready_for_review', 'approved', 'changes_requested'] &&
+             request.resource.data.reviewedBy == request.auth.uid &&
+             request.resource.data.reviewedAt is timestamp && request.resource.data.reviewedAt == request.time &&
+             request.resource.data.updatedAt is timestamp && request.resource.data.updatedAt == request.time;
     }
 
     function memberAccessLevel(teamId) {

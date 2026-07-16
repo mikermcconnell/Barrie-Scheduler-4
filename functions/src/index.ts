@@ -21,6 +21,7 @@ import {
   PERFORMANCE_SCHEMA_VERSION,
 } from './types';
 import { filterPerformanceSummaryByRoute, getAvailablePerformanceRoutes } from './performanceRouteFilter';
+import { buildLoadProfileMonthlyView } from './performanceLoadProfileView';
 
 admin.initializeApp();
 
@@ -123,6 +124,7 @@ interface ExistingPerformanceSummaryLoad {
   routeStoragePaths?: Record<string, string>;
   monthlyStoragePaths?: Record<string, string>;
   routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
+  loadProfileMonthlyStoragePaths?: Record<string, string>;
   metadata: Partial<PerformanceMetadata> | null;
   readError?: Error;
 }
@@ -298,6 +300,10 @@ function buildPerformanceMonthlyStoragePath(teamId: string, timestamp: string, m
 
 function buildPerformanceRouteMonthlyStoragePath(teamId: string, timestamp: string, routeId: string, month: string) {
   return `teams/${teamId}/performanceData/months/${timestamp}-route-${encodeURIComponent(routeId)}-${month}.json`;
+}
+
+function buildPerformanceLoadProfileMonthlyStoragePath(teamId: string, timestamp: string, month: string) {
+  return `teams/${teamId}/performanceViews/load-profiles/${timestamp}-${month}.json`;
 }
 
 function buildRawPerformanceImportStoragePath(teamId: string, timestamp: string) {
@@ -691,6 +697,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
   const routeStoragePaths = readStringRecord(meta.routeStoragePaths);
   const monthlyStoragePaths = readStringRecord(meta.monthlyStoragePaths);
   const routeMonthlyStoragePaths = readNestedStringRecord(meta.routeMonthlyStoragePaths);
+  const loadProfileMonthlyStoragePaths = readStringRecord(meta.loadProfileMonthlyStoragePaths);
   const metadata: Partial<PerformanceMetadata> = {
     importedAt: meta.importedAt?.toDate?.()?.toISOString?.(),
     importedBy: typeof meta.importedBy === 'string' ? meta.importedBy : undefined,
@@ -706,6 +713,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
     routeStoragePaths,
     monthlyStoragePaths,
     routeMonthlyStoragePaths,
+    loadProfileMonthlyStoragePaths,
   };
 
   if (monthlyStoragePaths && Object.keys(monthlyStoragePaths).length > 0) {
@@ -729,7 +737,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
         schemaVersion: PERFORMANCE_SCHEMA_VERSION,
       };
       const summary = buildPerformanceSummaryFromBase(base, dailySummaries, metadata);
-      return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, metadata };
+      return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
     } catch (error) {
       return {
         summary: null,
@@ -739,6 +747,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
         routeStoragePaths,
         monthlyStoragePaths,
         routeMonthlyStoragePaths,
+        loadProfileMonthlyStoragePaths,
         metadata,
         readError: error instanceof Error ? error : new Error(String(error)),
       };
@@ -746,14 +755,14 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
   }
 
   if (!storagePath) {
-    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, metadata };
+    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
   }
 
   try {
     const file = getBucket().file(storagePath);
     const [content] = await file.download();
     const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
-    return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, metadata };
+    return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
   } catch (error) {
     return {
       summary: null,
@@ -763,6 +772,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
       routeStoragePaths,
       monthlyStoragePaths,
       routeMonthlyStoragePaths,
+      loadProfileMonthlyStoragePaths,
       metadata,
       readError: error instanceof Error ? error : new Error(String(error)),
     };
@@ -905,6 +915,7 @@ async function savePerformanceSummary(params: {
   oldRouteStoragePaths?: Record<string, string> | null;
   oldMonthlyStoragePaths?: Record<string, string> | null;
   oldRouteMonthlyStoragePaths?: Record<string, Record<string, string>> | null;
+  oldLoadProfileMonthlyStoragePaths?: Record<string, string> | null;
   deleteOld?: boolean;
 }): Promise<string> {
   const timestamp = Date.now().toString();
@@ -914,11 +925,19 @@ async function savePerformanceSummary(params: {
   const reportJsonStr = JSON.stringify(buildPerformanceReportSummary(params.summary));
   const monthlyStoragePaths: Record<string, string> = {};
   const routeMonthlyStoragePaths: Record<string, Record<string, string>> = {};
+  const loadProfileMonthlyStoragePaths: Record<string, string> = {};
 
   await mapWithConcurrency([...buildMonthlyPerformanceSummaries(params.summary).entries()], 3, async ([month, monthSummary]) => {
     const monthPath = buildPerformanceMonthlyStoragePath(params.teamId, timestamp, month);
     await getBucket().file(monthPath).save(JSON.stringify(monthSummary), { contentType: 'application/json' });
     monthlyStoragePaths[month] = monthPath;
+  });
+  await mapWithConcurrency([...buildMonthlyPerformanceSummaries(params.summary).entries()], 3, async ([month, monthSummary]) => {
+    const monthPath = buildPerformanceLoadProfileMonthlyStoragePath(params.teamId, timestamp, month);
+    await getBucket().file(monthPath).save(JSON.stringify(buildLoadProfileMonthlyView(monthSummary)), {
+      contentType: 'application/json',
+    });
+    loadProfileMonthlyStoragePaths[month] = monthPath;
   });
   await getBucket().file(overviewStoragePath).save(overviewJsonStr, { contentType: 'application/json' });
   await getBucket().file(reportStoragePath).save(reportJsonStr, { contentType: 'application/json' });
@@ -942,6 +961,7 @@ async function savePerformanceSummary(params: {
     reportStoragePath,
     monthlyStoragePaths,
     routeMonthlyStoragePaths,
+    loadProfileMonthlyStoragePaths,
     dateRange: params.summary.metadata.dateRange,
     dayCount: params.summary.metadata.dayCount,
     totalRecords: params.summary.metadata.totalRecords,
@@ -961,12 +981,14 @@ async function savePerformanceSummary(params: {
       Object.values(params.oldRouteStoragePaths || {}).forEach(path => path && cleanupPaths.add(path));
     }
     Object.values(params.oldRouteMonthlyStoragePaths || {}).flatMap(months => Object.values(months)).forEach(path => path && cleanupPaths.add(path));
+    Object.values(params.oldLoadProfileMonthlyStoragePaths || {}).forEach(path => path && cleanupPaths.add(path));
 
     const newPaths = new Set([
       overviewStoragePath,
       reportStoragePath,
       ...Object.values(monthlyStoragePaths),
       ...Object.values(routeMonthlyStoragePaths).flatMap(months => Object.values(months)),
+      ...Object.values(loadProfileMonthlyStoragePaths),
     ]);
 
     await Promise.all([...cleanupPaths].map(async path => {
@@ -1201,6 +1223,7 @@ export const ingestPerformanceData = onRequest(
       let oldRouteStoragePaths: Record<string, string> | null = null;
       let oldMonthlyStoragePaths: Record<string, string> | null = null;
       let oldRouteMonthlyStoragePaths: Record<string, Record<string, string>> | null = null;
+      let oldLoadProfileMonthlyStoragePaths: Record<string, string> | null = null;
       let existingCleanHistoryStartDate: string | undefined;
 
       try {
@@ -1223,6 +1246,7 @@ export const ingestPerformanceData = onRequest(
         oldRouteStoragePaths = existing.routeStoragePaths ?? null;
         oldMonthlyStoragePaths = existing.monthlyStoragePaths ?? null;
         oldRouteMonthlyStoragePaths = existing.routeMonthlyStoragePaths ?? null;
+        oldLoadProfileMonthlyStoragePaths = existing.loadProfileMonthlyStoragePaths ?? null;
         existingCleanHistoryStartDate = mergeStoredPerformanceRuntimeMetadata(
           existing.summary?.metadata,
           existing.metadata,
@@ -1264,6 +1288,7 @@ export const ingestPerformanceData = onRequest(
         oldRouteStoragePaths,
         oldMonthlyStoragePaths,
         oldRouteMonthlyStoragePaths,
+        oldLoadProfileMonthlyStoragePaths,
         deleteOld: true,
       });
       console.log(`Saved ${summary.dailySummaries.length} day(s) to ${storagePath}`);
@@ -1580,6 +1605,7 @@ export const rebuildPerformanceHistory = onRequest(
         oldRouteStoragePaths: existing.routeStoragePaths ?? null,
         oldMonthlyStoragePaths: existing.monthlyStoragePaths ?? null,
         oldRouteMonthlyStoragePaths: existing.routeMonthlyStoragePaths ?? null,
+        oldLoadProfileMonthlyStoragePaths: existing.loadProfileMonthlyStoragePaths ?? null,
         deleteOld,
       });
 

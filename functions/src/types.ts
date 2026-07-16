@@ -468,6 +468,17 @@ export interface RouteLoadProfile {
   stops: LoadProfileStop[];
 }
 
+/** Minimal trip evidence retained by the dedicated load-profile read model. */
+export interface LoadProfilePeakTrip {
+  routeId: string;
+  routeName: string;
+  direction: string;
+  block: string;
+  terminalDepartureTime: string;
+  tripName: string;
+  maxLoad: number;
+}
+
 export interface RouteStopDeviationEntry {
   stopName: string;
   stopId: string;
@@ -540,6 +551,8 @@ export interface DailySummary {
   byStop: StopMetrics[];
   byTrip: TripMetrics[];
   loadProfiles: RouteLoadProfile[];
+  /** Pre-ranked compact trip rows used by the Load Profiles peak-load chart. */
+  loadProfilePeakTrips?: LoadProfilePeakTrip[];
   ridershipHeatmaps?: RouteRidershipHeatmap[];
   missedTrips?: {
     totalScheduled: number;
@@ -581,6 +594,30 @@ export interface PerformanceDataSummary {
   schemaVersion: number;
 }
 
+export const LOAD_PROFILE_VIEW_SCHEMA_VERSION = 1;
+
+/**
+ * Versioned, compact monthly read model for the Load Profiles workspace.
+ * `schemaVersion` continues to identify the underlying performance schema.
+ */
+export interface LoadProfileDailyView {
+  date: string;
+  dayType: DayType;
+  loadProfiles: RouteLoadProfile[];
+  loadProfilePeakTrips: LoadProfilePeakTrip[];
+  dataQuality: DataQuality;
+  schemaVersion: number;
+}
+
+export interface LoadProfileMonthlyView {
+  viewSchemaVersion: typeof LOAD_PROFILE_VIEW_SCHEMA_VERSION;
+  month: string;
+  dailySummaries: LoadProfileDailyView[];
+  metadata: PerformanceMetadata;
+  /** Source performance schema used to build this view. */
+  schemaVersion: number;
+}
+
 export type PerformanceDetailMode =
   | 'all'
   | 'overview'
@@ -609,4 +646,5 @@ export interface PerformanceMetadata {
   routeStoragePaths?: Record<string, string>;
   monthlyStoragePaths?: Record<string, string>;
   routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
+  loadProfileMonthlyStoragePaths?: Record<string, string>;
 }

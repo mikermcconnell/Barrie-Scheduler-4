@@ -221,4 +221,50 @@ describe('RoundTripTableView timepoint toggle', () => {
     expect(tableText).not.toContain('Cuthbert');
     expect(tableText).not.toContain('Ferndale Woods');
   });
+
+  it('preserves the planner timepoint choice when schedule data changes', () => {
+    const schedules = buildAuthoritativeSchedule();
+
+    flushSync(() => {
+      root?.render(
+        <RoundTripTableView
+          schedules={schedules}
+          useAuthoritativeTimepoints
+          initialTimepointOnly
+          condensedTimepointView
+          onCellEdit={vi.fn()}
+        />
+      );
+    });
+
+    expect(container?.textContent ?? '').not.toContain('Mapleview');
+    const timepointsButton = Array.from(container?.querySelectorAll('button') ?? []).find(
+      button => button.textContent?.trim() === 'Timepoints'
+    );
+    expect(timepointsButton?.getAttribute('aria-pressed')).toBe('true');
+
+    flushSync(() => {
+      timepointsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(timepointsButton?.getAttribute('aria-pressed')).toBe('false');
+    expect(container?.textContent ?? '').toContain('Mapleview');
+
+    const editedSchedules = schedules.map((table: any) => ({
+      ...table,
+      trips: table.trips.map((trip: any) => ({ ...trip, travelTime: trip.travelTime + 1 })),
+    }));
+    flushSync(() => {
+      root?.render(
+        <RoundTripTableView
+          schedules={editedSchedules}
+          useAuthoritativeTimepoints
+          initialTimepointOnly
+          condensedTimepointView
+          onCellEdit={vi.fn()}
+        />
+      );
+    });
+
+    expect(container?.textContent ?? '').toContain('Mapleview');
+  });
 });

@@ -52,6 +52,8 @@ Main areas:
 - Round-trip schedule display → `components/schedule/`
 - GTFS import → `components/GTFSImport.tsx`, `utils/gtfs/`
 - Draft and publish workflow → `utils/services/draftService.ts`, `utils/services/publishService.ts`
+
+The Schedule Editor is organized around compare → change → review → publish. `components/workspaces/ScheduleEditorWorkspace.tsx` loads the immutable source-master baseline, owns autosave/checkpoints and the review drawer, and passes edit state into `components/ScheduleEditor.tsx`. Pure change and operational-issue detection lives in `utils/schedule/scheduleReview.ts`; ready-for-review creates a team-visible immutable snapshot through `utils/services/scheduleReviewService.ts`; and publish enforcement is repeated in `utils/services/publishService.ts` so stale/unverifiable master copies, drafts not marked ready for review, blocking schedule issues, and missing/oversized publish notes cannot bypass the UI gate. `utils/services/masterScheduleService.ts` rechecks the expected source version inside its transaction and uses unique upload paths so concurrent publishers cannot overwrite or delete one another's payload.
 - Connection setup and optimization → `components/NewSchedule/connections/`, `utils/connections/`
 - Public timetable/report output → `components/Reports/`, `utils/reports/`
 
@@ -83,7 +85,9 @@ STREETS-style operational reporting and dashboards live in:
 - `utils/performance*.ts`
 - scheduled/server aggregation in `functions/src/aggregator.ts` and related functions files
 
-Dwell Incident Review is an incident-first operations workflow. Stored detection and exposure metrics are built by the client/server aggregators, the shared queue/pattern/operator view model lives in `utils/performanceDwellReview.ts`, and `components/Performance/OperatorDwellModule.tsx` renders the queue and patterns while incident-level same-trip and later-block evidence opens in the dwell detail drawer. The standalone aggregate cascade dashboard is legacy UI; downstream analysis belongs inside incident detail.
+Load Profiles uses a dedicated monthly read model instead of downloading the full STREETS month. The canonical compact projection is implemented in `utils/performanceLoadProfileView.ts` and mirrored in `functions/src/performanceLoadProfileView.ts`; keep their JSON contracts synchronized. Team managers using manual import and server auto-ingest publish versioned files under `teams/{teamId}/performanceViews/load-profiles/`, then atomically publish `loadProfileMonthlyStoragePaths` on the existing performance metadata document. Both same-team and shared-team UI reads go through `sharedWorkspaceData`, which enforces Operations plus Load Profiles access, filters a bounded date range and route on the server, and returns the compact projection. Full monthly files remain the legacy fallback and repair source, not the normal dashboard read path.
+
+Dwell Incident Review is an incident-first operations workflow. Stored detection and exposure metrics are built by the client/server aggregators, the shared queue/pattern/operator view model lives in `utils/performanceDwellReview.ts`, and `components/Performance/OperatorDwellModule.tsx` renders the queue and patterns while incident-level same-trip and later-block evidence opens in a map-first dwell detail view. The map acts as the spatial incident timeline with compact milestone overlays and progressive disclosure for supporting evidence. The standalone aggregate cascade dashboard is legacy UI; downstream analysis belongs inside incident detail.
 
 ### 4) Parking
 

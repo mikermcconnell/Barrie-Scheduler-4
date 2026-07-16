@@ -256,8 +256,8 @@ describe('useTravelTimeGrid', () => {
     expect(calculateGridTravelMinutes(trip, 'A', 'B')).toBe(35);
     expect(southTrip.stops.A).toBe('8:15 AM');
     expect(southTrip.stops.B).toBe('8:45 AM');
-    expect(laterNorthTrip.stops.A).toBe('9:20 AM');
-    expect(laterNorthTrip.stops.B).toBe('9:50 AM');
+    expect(laterNorthTrip.stops.A).toBe('9:25 AM');
+    expect(laterNorthTrip.stops.B).toBe('9:55 AM');
   });
 
   it('applies bulk travel adjustments with the same destination-forward shift behavior as single-trip edits', () => {
@@ -445,5 +445,47 @@ describe('useTravelTimeGrid', () => {
     expect(fullTrip.stops.C).toBe('7:31 AM');
     expect(shortTurnTrip.stops.C).toBe('7:40 AM');
     expect(shortTurnTrip.stops.D).toBe('7:50 AM');
+  });
+
+  it('keeps terminal recovery metrics consistent and limits the cascade to the selected day', () => {
+    const schedules = buildSchedules();
+    schedules[0].trips.push({
+      id: 'north-trip-later', blockId: '2-1', direction: 'North', tripNumber: 3, rowId: 3,
+      startTime: 560, endTime: 620, recoveryTime: 0, travelTime: 60, cycleTime: 60,
+      stops: { A: '9:20 AM', B: '9:50 AM', C: '10:20 AM' },
+      arrivalTimes: { A: '9:20 AM', B: '9:50 AM', C: '10:20 AM' },
+    });
+    schedules.push(...buildSchedules().map(table => ({
+      ...structuredClone(table),
+      routeName: table.routeName.replace('(Weekday)', '(Saturday)'),
+      trips: table.trips.map((trip: any) => ({ ...structuredClone(trip), id: `sat-${trip.id}` })),
+    })));
+
+    let latest: any[] | null = null;
+    let api: HarnessApi | null = null;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(
+        <Harness schedules={schedules} onChange={next => { latest = next; }} onReady={value => { api = value; }} />
+      );
+    });
+
+    flushSync(() => api!.handleSingleRecoveryAdjust('north-trip', 'C', 2, '2 (Weekday) (North)'));
+
+    const weekdayNorth = latest?.find(table => table.routeName === '2 (Weekday) (North)');
+    const weekdaySouth = latest?.find(table => table.routeName === '2 (Weekday) (South)');
+    const saturdayNorth = latest?.find(table => table.routeName === '2 (Saturday) (North)');
+    const trip = weekdayNorth.trips.find((candidate: any) => candidate.id === 'north-trip');
+
+    expect(trip.stops.C).toBe('8:02 AM');
+    expect(trip.endTime).toBe(482);
+    expect(trip.cycleTime).toBe(62);
+    expect(trip.travelTime).toBe(57);
+    expect(trip.endTimeIncludesRecovery).toBe(true);
+    expect(weekdaySouth.trips[0].stops.A).toBe('8:12 AM');
+    expect(weekdayNorth.trips.find((candidate: any) => candidate.id === 'north-trip-later').stops.A).toBe('9:22 AM');
+    expect(saturdayNorth.trips[0].stops.C).toBe('8:00 AM');
   });
 });

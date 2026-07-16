@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -27,9 +27,9 @@ vi.mock('../utils/services/newScheduleProjectService', () => ({
 import { ProjectManagerModal } from '../components/NewSchedule/ProjectManagerModal';
 
 async function flushPromises() {
-    await Promise.resolve();
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    });
 }
 
 describe('ProjectManagerModal', () => {

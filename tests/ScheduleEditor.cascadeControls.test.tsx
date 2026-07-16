@@ -140,18 +140,18 @@ describe('ScheduleEditor cascade controls', () => {
       );
     });
 
-    expect(container?.textContent).toContain('Cascade On');
+    expect(container?.textContent).toContain('Following Trips');
 
     const toggleButton = Array.from(container?.querySelectorAll('button') ?? []).find(
-      button => button.textContent?.includes('Cascade On')
+      button => button.textContent?.includes('Following Trips')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container?.textContent).toContain('This Trip Only');
-    expect(container?.textContent).toContain('Cascade Off');
+    expect(container?.textContent).toContain('Current Round Trip');
+    expect(container?.textContent).toContain('Single Cell');
   });
 
   it('shows the same cascade control when the editor is rendered through Step 4', () => {
@@ -209,6 +209,6 @@ describe('ScheduleEditor cascade controls', () => {
       );
     });
 
-    expect(container?.textContent).toContain('Cascade On');
+    expect(container?.textContent).toContain('Following Trips');
   });
 });

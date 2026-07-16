@@ -91,7 +91,7 @@ const PerformanceWorkspaceLoading: React.FC<{
 );
 
 export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onClose, autoOpen = false }) => {
-    const { team } = useTeam();
+    const { team, canManageTeam } = useTeam();
     const { user } = useAuth();
     const { canAccess } = useWorkspaceAccess();
     const [view, setView] = useState<PerformanceView>(() => (autoOpen ? 'loading' : 'landing'));
@@ -144,20 +144,20 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
             return;
         }
 
-        if (user && !usesSharedPerformanceData) {
+        if (user && canManageTeam && !usesSharedPerformanceData) {
             setImportReturnTarget('close');
             setView('import');
             return;
         }
 
         setView('landing');
-    }, [autoOpen, hasExistingData, metadataQuery.isLoading, team?.id, user, usesSharedPerformanceData, view]);
+    }, [autoOpen, canManageTeam, hasExistingData, metadataQuery.isLoading, team?.id, user, usesSharedPerformanceData, view]);
 
     const handleCardClick = () => {
         if (!team?.id) return;
         if (hasExistingData) {
             setView('workspace');
-        } else if (!usesSharedPerformanceData) {
+        } else if (canManageTeam && !usesSharedPerformanceData) {
             setImportReturnTarget('landing');
             setView('import');
         }
@@ -208,7 +208,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
         return <DashboardLoadingState label="Opening operations dashboard..." />;
     }
 
-    if (view === 'import' && user) {
+    if (view === 'import' && user && canManageTeam) {
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <Suspense fallback={<DashboardLoadingState label="Loading import tools..." />}>
@@ -243,8 +243,9 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                                 selectedRouteId={selectedRouteId}
                                 routeOptions={routeOptions}
                                 onRouteChange={setSelectedRouteId}
+                                canReimport={canManageTeam && !usesSharedPerformanceData}
                                 onReimport={() => {
-                                    if (usesSharedPerformanceData) return;
+                                    if (usesSharedPerformanceData || !canManageTeam) return;
                                     setImportReturnTarget('workspace');
                                     setView('import');
                                 }}

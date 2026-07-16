@@ -21,7 +21,7 @@ describe('WorkspaceHeader', () => {
     container = null;
   });
 
-  const renderHeader = () => {
+  const renderHeader = (overrides: Partial<React.ComponentProps<typeof WorkspaceHeader>> = {}) => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -49,6 +49,7 @@ describe('WorkspaceHeader', () => {
           onNewDraft={() => {}}
           onDuplicateDraft={() => {}}
           onExport={() => {}}
+          {...overrides}
         />
       );
     });
@@ -67,5 +68,45 @@ describe('WorkspaceHeader', () => {
     expect(saveButton).toBeTruthy();
     expect(draftsButton).toBeTruthy();
     expect(saveButton?.compareDocumentPosition(draftsButton as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows source and review counts with Review Changes as the primary action', () => {
+    let reviewCalls = 0;
+    renderHeader({
+      sourceLabel: 'Published master v12',
+      changeCount: 4,
+      warningCount: 2,
+      onReviewChanges: () => { reviewCalls += 1; },
+      onPublish: () => {},
+    });
+
+    expect(container?.textContent).toContain('From Published master v12');
+    expect(container?.textContent).toContain('4 changes');
+    expect(container?.textContent).toContain('2 warnings');
+
+    const reviewButton = Array.from(container?.querySelectorAll('button') ?? []).find(
+      button => button.textContent?.includes('Review Changes (4)')
+    ) as HTMLButtonElement | undefined;
+
+    expect(reviewButton).toBeTruthy();
+    flushSync(() => reviewButton?.click());
+    expect(reviewCalls).toBe(1);
+
+    const visiblePublishButtons = Array.from(container?.querySelectorAll('button') ?? []).filter(
+      button => button.textContent?.trim() === 'Publish'
+    );
+    expect(visiblePublishButtons).toHaveLength(0);
+  });
+
+  it('keeps schedule views available in an accessible menu', () => {
+    renderHeader();
+
+    const viewMenu = Array.from(container?.querySelectorAll('details') ?? []).find(
+      details => details.querySelector('summary')?.textContent?.includes('Schedule')
+    );
+    expect(viewMenu).toBeTruthy();
+    expect(viewMenu?.querySelector('button[aria-current="page"]')?.textContent).toContain('Schedule');
+    expect(viewMenu?.textContent).toContain('Timeline');
+    expect(viewMenu?.textContent).toContain('Travel Times');
   });
 });

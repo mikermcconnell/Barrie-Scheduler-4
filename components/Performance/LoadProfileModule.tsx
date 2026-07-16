@@ -13,7 +13,7 @@ interface LoadProfileModuleProps {
     data: PerformanceDataSummary;
 }
 
-const MIN_LOAD_PROFILE_DAYS = 5;
+const RECOMMENDED_LOAD_PROFILE_DAYS = 5;
 type SortDir = 'asc' | 'desc';
 type StopSortKey = 'stopIndex' | 'stopName' | 'tp' | 'boardings' | 'alightings' | 'avgLoad' | 'maxLoad';
 
@@ -73,10 +73,15 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
             stopName: string;
             stopId: string;
             routeStopIndex: number;
+            occurrenceIndex?: number;
             isTimepoint: boolean;
             sumBoardings: number;
             sumAlightings: number;
-            sumLoad: number;
+            sumDailyLoad: number;
+            weightedLoadSum: number;
+            loadObservationCount: number;
+            usableLoadDayCount: number;
+            hasLegacyLoad: boolean;
             maxLoad: number;
             sampleCount: number;
         };
@@ -85,12 +90,13 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
             routeName: string;
             direction: string;
             tripCount: number;
+            serviceDays: number;
             stops: Map<string, StopAccumulator>;
         };
         const profileMap = new Map<string, ProfileAccumulator>();
 
         for (const day of filtered) {
-            for (const lp of day.loadProfiles) {
+            for (const lp of day.loadProfiles ?? []) {
                 const key = `${lp.routeId}__${lp.direction}`;
                 let acc = profileMap.get(key);
                 if (!acc) {
@@ -99,31 +105,55 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                         routeName: lp.routeName,
                         direction: lp.direction,
                         tripCount: 0,
+                        serviceDays: 0,
                         stops: new Map<string, StopAccumulator>(),
                     };
                     profileMap.set(key, acc);
                 }
 
                 acc.tripCount += lp.tripCount;
+                acc.serviceDays++;
                 for (const stop of lp.stops) {
-                    const stopKey = stop.stopId || `${stop.routeStopIndex}__${stop.stopName}`;
+                    const reliableLoadCount = typeof stop.loadObservationCount === 'number'
+                        && Number.isFinite(stop.loadObservationCount)
+                        && stop.loadObservationCount > 0
+                        ? stop.loadObservationCount
+                        : null;
+                    const legacyLoadUsable = stop.loadObservationCount === undefined && stop.avgLoad > 0;
+                    const loadUsable = reliableLoadCount !== null || legacyLoadUsable;
+                    const stopKey = stop.stopId
+                        ? `${stop.stopId}__${stop.occurrenceIndex ?? 0}`
+                        : `${stop.routeStopIndex}__${stop.occurrenceIndex ?? 0}__${stop.stopName}`;
                     const existingStop = acc.stops.get(stopKey);
                     if (!existingStop) {
                         acc.stops.set(stopKey, {
                             stopName: stop.stopName,
                             stopId: stop.stopId,
                             routeStopIndex: stop.routeStopIndex,
+                            occurrenceIndex: stop.occurrenceIndex,
                             isTimepoint: stop.isTimepoint,
                             sumBoardings: stop.avgBoardings,
                             sumAlightings: stop.avgAlightings,
-                            sumLoad: stop.avgLoad,
+                            sumDailyLoad: loadUsable ? stop.avgLoad : 0,
+                            weightedLoadSum: reliableLoadCount !== null ? stop.avgLoad * reliableLoadCount : 0,
+                            loadObservationCount: reliableLoadCount ?? 0,
+                            usableLoadDayCount: loadUsable ? 1 : 0,
+                            hasLegacyLoad: legacyLoadUsable,
                             maxLoad: stop.maxLoad,
                             sampleCount: 1,
                         });
                     } else {
                         existingStop.sumBoardings += stop.avgBoardings;
                         existingStop.sumAlightings += stop.avgAlightings;
-                        existingStop.sumLoad += stop.avgLoad;
+                        if (loadUsable) {
+                            existingStop.sumDailyLoad += stop.avgLoad;
+                            existingStop.usableLoadDayCount++;
+                        }
+                        if (reliableLoadCount !== null) {
+                            existingStop.weightedLoadSum += stop.avgLoad * reliableLoadCount;
+                            existingStop.loadObservationCount += reliableLoadCount;
+                        }
+                        existingStop.hasLegacyLoad = existingStop.hasLegacyLoad || legacyLoadUsable;
                         existingStop.maxLoad = Math.max(existingStop.maxLoad, stop.maxLoad);
                         existingStop.isTimepoint = existingStop.isTimepoint || stop.isTimepoint;
                         existingStop.sampleCount++;
@@ -136,22 +166,30 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
         }
 
         return Array.from(profileMap.values())
-            .map((p): RouteLoadProfile => ({
+            .map((p): RouteLoadProfile & { serviceDays: number } => ({
                 routeId: p.routeId,
                 routeName: p.routeName,
                 direction: p.direction,
                 tripCount: p.tripCount,
+                serviceDays: p.serviceDays,
                 stops: Array.from(p.stops.values())
                     .map(s => ({
                         stopName: s.stopName,
                         stopId: s.stopId,
                         routeStopIndex: s.routeStopIndex,
+                        occurrenceIndex: s.occurrenceIndex,
                         avgBoardings: s.sampleCount > 0 ? Math.round(s.sumBoardings / s.sampleCount) : 0,
                         avgAlightings: s.sampleCount > 0 ? Math.round(s.sumAlightings / s.sampleCount) : 0,
-                        // Note: avgLoad is an unweighted average-of-averages across days. A proper weighted
-                        // average would require per-stop reliable-load-trip counts on LoadProfileStop.
-                        // Accepted approximation since same-route APC coverage is stable day-to-day.
-                        avgLoad: s.sampleCount > 0 ? Math.round(s.sumLoad / s.sampleCount) : 0,
+                        avgLoad: s.usableLoadDayCount === 0
+                            ? 0
+                            : Math.round(
+                                !s.hasLegacyLoad && s.loadObservationCount > 0
+                                    ? s.weightedLoadSum / s.loadObservationCount
+                                    : s.sumDailyLoad / s.usableLoadDayCount
+                            ),
+                        loadObservationCount: !s.hasLegacyLoad && s.loadObservationCount > 0
+                            ? s.loadObservationCount
+                            : undefined,
                         maxLoad: s.maxLoad,
                         isTimepoint: s.isTimepoint,
                     }))
@@ -181,6 +219,7 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
         () => mergedProfiles.find(p => `${p.routeId}__${p.direction}` === selectedProfile),
         [mergedProfiles, selectedProfile]
     );
+    const activeProfileDays = activeProfile?.serviceDays ?? daysWithLoadProfiles;
 
     const sortedStops = useMemo(() => {
         if (!activeProfile) return [];
@@ -250,7 +289,7 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
         const tripMap = new Map<string, { maxLoad: number; totalMaxLoad: number; count: number; routeId: string; routeName: string; direction: string; block: string; terminalDepartureTime: string; tripName: string }>();
 
         for (const day of filtered) {
-            for (const t of day.byTrip) {
+            for (const t of day.loadProfilePeakTrips ?? day.byTrip) {
                 // A zero max load means this trip had no reliable APC load observation.
                 // Do not treat missing load as an observed empty bus.
                 if (t.maxLoad <= 0) continue;
@@ -290,24 +329,21 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
 
     const chartData = useMemo(() => {
         if (!activeProfile) return [];
-        return activeProfile.stops.map(s => ({
-            name: s.stopName.length > 20 ? s.stopName.slice(0, 18) + '...' : s.stopName,
-            fullName: s.stopName,
-            boardings: Math.round(s.avgBoardings),
-            alightings: Math.round(s.avgAlightings),
-            load: Math.round(s.avgLoad),
-            maxLoad: Math.round(s.maxLoad),
-            isTimepoint: s.isTimepoint,
-        }));
+        return activeProfile.stops.map(s => {
+            const fullName = s.occurrenceIndex && s.occurrenceIndex > 0
+                ? `${s.stopName} (visit ${s.occurrenceIndex + 1})`
+                : s.stopName;
+            return {
+                name: fullName.length > 20 ? fullName.slice(0, 18) + '...' : fullName,
+                fullName,
+                boardings: Math.round(s.avgBoardings),
+                alightings: Math.round(s.avgAlightings),
+                load: Math.round(s.avgLoad),
+                maxLoad: Math.round(s.maxLoad),
+                isTimepoint: s.isTimepoint,
+            };
+        });
     }, [activeProfile]);
-
-    if (daysWithLoadProfiles < MIN_LOAD_PROFILE_DAYS) {
-        return (
-            <div className="flex items-center justify-center h-48 text-sm text-gray-400">
-                Insufficient data - need at least {MIN_LOAD_PROFILE_DAYS} days ({daysWithLoadProfiles} available for this filter)
-            </div>
-        );
-    }
 
     if (mergedProfiles.length === 0) {
         return <div className="text-center text-gray-400 py-16">No load profile data available.</div>;
@@ -315,6 +351,13 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
 
     return (
         <div className="space-y-6">
+            {activeProfileDays < RECOMMENDED_LOAD_PROFILE_DAYS && (
+                <div role="note" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    Showing {activeProfileDays} day{activeProfileDays !== 1 ? 's' : ''} of load profiles for this route and direction.
+                    {' '}Use at least {RECOMMENDED_LOAD_PROFILE_DAYS} days when comparing typical passenger loads.
+                </div>
+            )}
+
             {/* Route selector */}
             <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
@@ -344,6 +387,7 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
             {/* Data quality badges */}
             {(qualityStats.loadCapped > 0 || qualityStats.apcExcludedFromLoad > 0) && (
                 <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-xs font-semibold text-gray-500">System-wide data quality:</span>
                     {qualityStats.loadCapped > 0 && (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full bg-amber-50 text-amber-700 border border-amber-200">
                             ⚠ {qualityStats.loadCapped.toLocaleString()} records capped at {DEFAULT_LOAD_CAP} — possible APC issues
@@ -433,7 +477,7 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                     {/* Load Curve — the key Transify replacement chart */}
                     <ChartCard
                         title={`Load Profile: Route ${activeProfile.routeId} ${activeProfile.direction}`}
-                        subtitle={`${activeProfile.routeName} — avg passenger load at each stop (${activeProfile.tripCount} trips across ${filtered.length} day${filtered.length !== 1 ? 's' : ''})`}
+                        subtitle={`${activeProfile.routeName} — avg passenger load at each stop (${activeProfile.tripCount} trips across ${activeProfile.serviceDays} day${activeProfile.serviceDays !== 1 ? 's' : ''})`}
                     >
                         <ResponsiveContainer width="100%" height={350}>
                             <AreaChart data={chartData} margin={{ top: 10, right: 10, bottom: 60, left: -10 }}>
@@ -517,9 +561,12 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                                 </thead>
                                 <tbody>
                                     {sortedStops.map((s) => (
-                                        <tr key={`${s.stopId}-${s.routeStopIndex}`} className="border-b border-gray-50 hover:bg-gray-50">
+                                        <tr key={`${s.stopId}-${s.occurrenceIndex ?? 0}-${s.routeStopIndex}`} className="border-b border-gray-50 hover:bg-gray-50">
                                             <td className="py-1.5 px-2 text-gray-400">{s.routeStopIndex + 1}</td>
-                                            <td className="py-1.5 px-2 text-gray-700">{s.stopName}</td>
+                                            <td className="py-1.5 px-2 text-gray-700">
+                                                {s.stopName}
+                                                {s.occurrenceIndex && s.occurrenceIndex > 0 ? ` (visit ${s.occurrenceIndex + 1})` : ''}
+                                            </td>
                                             <td className="py-1.5 px-2 text-center">
                                                 {s.isTimepoint && <span className="text-amber-500 text-xs font-bold">TP</span>}
                                             </td>

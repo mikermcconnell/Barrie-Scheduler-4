@@ -40,6 +40,7 @@ export function usePerformanceDataQuery(
             teamId,
             requestingTeamId ?? teamId ?? '',
             metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null),
+            JSON.stringify(metadata?.loadProfileMonthlyStoragePaths ?? null),
             routeId ?? 'all',
             options?.dateRange?.start ?? '',
             options?.dateRange?.end ?? '',
@@ -47,7 +48,11 @@ export function usePerformanceDataQuery(
         ],
         queryFn: async () => {
             if (!teamId) return null;
-            return await getPerformanceData(teamId, metadata, routeId, requestingTeamId, options);
+            const result = await getPerformanceData(teamId, metadata, routeId, requestingTeamId, options);
+            if (!result && options?.detailMode) {
+                throw new Error('The requested performance details are unavailable.');
+            }
+            return result;
         },
         enabled: !!teamId && enabled,
         staleTime: PERFORMANCE_QUERY_STALE_MS,

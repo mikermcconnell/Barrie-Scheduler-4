@@ -1177,7 +1177,7 @@ export function buildReportHtml(data: ReportData): string {
     if (mt && mt.totalScheduled > 0) {
       return mt.totalMissed === 0
         ? `${num(mt.totalScheduled)} scheduled · all operated`
-        : `${num(mt.totalMissed)} missed of ${num(mt.totalScheduled)} scheduled`;
+        : `<strong style="font-weight:800;color:#dc2626;">${num(mt.totalMissed)}</strong> missed of ${num(mt.totalScheduled)} scheduled`;
     }
     return `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`;
   })();

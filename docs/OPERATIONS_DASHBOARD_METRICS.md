@@ -10,7 +10,7 @@ Use this document when changing dashboard calculations, filters, labels, imports
 
 ## Data flow
 
-`STREETS import -> parser -> daily aggregation -> stored overview/monthly summaries -> route/date/day filters -> dashboard modules`
+`STREETS import -> parser -> daily aggregation -> stored overview/monthly summaries + compact Load Profiles views -> authorized route/date/day filters -> dashboard modules`
 
 Primary calculation locations:
 
@@ -19,6 +19,9 @@ Primary calculation locations:
 - route scoping: `utils/performanceRouteFilter.ts`
 - stored overview shape: `utils/performanceOverviewSummary.ts`
 - loading and date-range trimming: `utils/performanceDataService.ts`
+- compact Load Profiles projection: `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts`
+
+The Load Profiles tab must render every valid selected range, including a single day. Fewer than five route-direction service days is a non-blocking comparison-quality note, not an empty-state rule. Multi-day average load uses `loadObservationCount` weighting when every included value has reliable counts; mixed legacy history falls back to a daily-average estimate, and ambiguous legacy zeroes are omitted. Peak-trip rankings use every compact positive-load candidate in the selected range; missing or unreliable load is never converted to an observed zero.
 
 ## Metric contracts
 
@@ -28,6 +31,7 @@ Primary calculation locations:
 | Early / on-time / late percentages | Bucket count divided by total eligible OTP observations | Multi-day, route, stop, and hour values must be weighted by observations, never by averaging stored percentages | Code-validated |
 | Boardings / total ridership | Sum of STREETS `Boardings` | This is boarding activity, not unique riders | Code-validated; APC coverage still affects confidence |
 | Alightings | Sum of STREETS `Alightings` | Presented separately from boardings; it is not subtracted from ridership | Code-validated; APC coverage still affects confidence |
+| Stop activity change | Current average activity per included service day minus the equivalent prior-period average. The map supports boardings, alightings, and combined activity. Past-week, past-month, and past-three-month views compare with the immediately preceding equal-length calendar window; single-day views compare with the same weekday one week earlier. | Circle size reflects absolute activity change per day, while colour shows increase, decrease, or little change. Percentage change is supporting context only because low-volume stops can produce unstable percentages. Route, day-type, and time-of-day filters must apply consistently to both periods. Shared stops use route-level breakdowns when a route is selected; all-route activity must not be substituted. Stops without comparable hourly data in both periods are omitted and disclosed rather than mixing hourly and all-day totals. | Code-validated with synthetic period-selection, route-scope, and hourly-availability cases; operational interpretation remains advisory |
 | Average riders per day | Total boardings divided by distinct included service dates | A/B branches combined into one route must still count each date once | Code-validated |
 | Trips observed | Distinct STREETS `TripID` values | Indicates trips represented in AVL/APC data, not necessarily scheduled trips operated | Code-validated |
 | Trips operated | GTFS scheduled trips matched to STREETS observations | Display as suspected missed-trip analysis, not a final cancellation determination | Needs route-level scheduled/matched counts before route-scoped display can be fully validated |

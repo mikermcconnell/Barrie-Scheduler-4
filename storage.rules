@@ -148,6 +148,24 @@ service firebase.storage {
       allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
     }
 
+    // Immutable schedule-review payloads. A creator may delete only an orphaned
+    // upload when the matching Firestore metadata write did not complete.
+    match /teams/{teamId}/scheduleReviews/{reviewId}/{creatorId}/schedule.json {
+      allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+        canSupportReadTeamData(teamId);
+      allow create: if request.auth != null &&
+        request.auth.uid == creatorId &&
+        (canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId)) &&
+        request.resource.contentType == 'application/json' &&
+        request.resource.size > 0 &&
+        request.resource.size <= 10 * 1024 * 1024;
+      allow update: if false;
+      allow delete: if canSupportWriteTeamData(teamId) ||
+        (request.auth != null &&
+         request.auth.uid == creatorId &&
+         !firestore.exists(/databases/(default)/documents/teams/$(teamId)/scheduleReviews/$(reviewId)));
+    }
+
     // Team route map images
     match /teams/{teamId}/routeMaps/{allPaths=**} {
       allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
@@ -163,7 +181,16 @@ service firebase.storage {
     // Team performance data (STREETS summaries)
     match /teams/{teamId}/performanceData/{allPaths=**} {
       allow read: if canAccessWorkspace(teamId, 'workspaceOperations') || canSupportReadTeamData(teamId);
-      allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+      allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
+    }
+
+    // Compact Load Profiles read models. Normal reads go through the backend,
+    // which enforces operationsLoadProfiles and shared-source authorization.
+    // Team members may still publish these views through the existing manual
+    // import flow until all performance publishing moves server-side.
+    match /teams/{teamId}/performanceViews/load-profiles/{allPaths=**} {
+      allow read: if canSupportReadTeamData(teamId);
+      allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
     }
 
     // Team Transit On Demand pickup map data

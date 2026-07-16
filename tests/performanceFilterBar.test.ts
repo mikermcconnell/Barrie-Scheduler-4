@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterDailySummaries, type TimeRange } from '../components/Performance/PerformanceFilterBar';
+import { filterDailySummaries, getPerformanceDateWindow, type TimeRange } from '../components/Performance/PerformanceFilterBar';
 import type { DailySummary, DayType } from '../utils/performanceDataTypes';
 
 function makeDay(date: string, dayType: DayType): DailySummary {
@@ -84,6 +84,22 @@ describe('filterDailySummaries', () => {
         ]);
     });
 
+    it('keeps the exact calendar window when its first service day is missing', () => {
+        const daysWithMissingBoundary = days.filter(day => day.date !== '2025-01-04');
+        expect(getPerformanceDateWindow(daysWithMissingBoundary, 'past-week')).toEqual({
+            start: '2025-01-04',
+            end: '2025-01-10',
+        });
+        expect(runRange(daysWithMissingBoundary, 'past-week')).toEqual([
+            '2025-01-05',
+            '2025-01-06',
+            '2025-01-07',
+            '2025-01-08',
+            '2025-01-09',
+            '2025-01-10',
+        ]);
+    });
+
     it('applies day type filter after time-range filtering', () => {
         expect(runRange(days, 'past-week', 'weekday')).toEqual([
             '2025-01-06',
@@ -92,6 +108,18 @@ describe('filterDailySummaries', () => {
             '2025-01-09',
             '2025-01-10',
         ]);
+    });
+
+    it('uses an inclusive 90-day window for the three-month range', () => {
+        const longRange = Array.from({ length: 100 }, (_, index) => {
+            const date = new Date(Date.UTC(2025, 0, 1 + index));
+            return makeDay(date.toISOString().slice(0, 10), 'weekday');
+        });
+
+        const result = runRange(longRange, 'past-three-months');
+        expect(result).toHaveLength(90);
+        expect(result[0]).toBe('2025-01-11');
+        expect(result.at(-1)).toBe('2025-04-10');
     });
 
     it('uses latest imported day when single-day has no explicit selectedDate', () => {

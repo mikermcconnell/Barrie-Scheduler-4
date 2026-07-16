@@ -15,6 +15,7 @@ export interface HeatmapPoint {
     lon: number;
     value: number;
     id: string;
+    color?: string;
     [key: string]: unknown;
 }
 
@@ -54,7 +55,12 @@ export const HeatmapDotLayer: React.FC<HeatmapDotLayerProps> = ({
                     : defaultAssignBin(pt.value, allValues, bins.length);
                 return {
                     type: 'Feature',
-                    properties: { id: pt.id, value: pt.value, bin },
+                    properties: {
+                        id: pt.id,
+                        value: pt.value,
+                        bin,
+                        ...(pt.color ? { color: pt.color } : {}),
+                    },
                     geometry: {
                         type: 'Point',
                         coordinates: toGeoJSON([pt.lat, pt.lon]),
@@ -78,6 +84,10 @@ export const HeatmapDotLayer: React.FC<HeatmapDotLayerProps> = ({
         return ['case', ...cases, bins[bins.length - 1].fill] as mapboxgl.Expression;
     }, [bins]);
 
+    const pointColorExpr = useMemo(() => (
+        ['case', ['has', 'color'], ['get', 'color'], colorExpr] as mapboxgl.Expression
+    ), [colorExpr]);
+
     const opacityExpr = useMemo(() => {
         const stops: (string | number)[] = [];
         bins.forEach((b, i) => { stops.push(i, b.fillOpacity); });
@@ -89,13 +99,13 @@ export const HeatmapDotLayer: React.FC<HeatmapDotLayerProps> = ({
         type: 'circle',
         paint: {
             'circle-radius': radiusExpr,
-            'circle-color': colorExpr,
+            'circle-color': pointColorExpr,
             'circle-opacity': opacityExpr,
             'circle-stroke-color': outlineColor,
             'circle-stroke-width': ['case', ['==', ['get', 'bin'], 0], 1.5, 1] as mapboxgl.Expression,
             'circle-stroke-opacity': ['case', ['==', ['get', 'bin'], 0], 0.4, 0.8] as mapboxgl.Expression,
         },
-    }), [idPrefix, radiusExpr, colorExpr, opacityExpr, outlineColor]);
+    }), [idPrefix, radiusExpr, pointColorExpr, opacityExpr, outlineColor]);
 
     if (points.length === 0) return null;
 

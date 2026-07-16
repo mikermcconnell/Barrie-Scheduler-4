@@ -11,11 +11,16 @@
 import { useCallback } from 'react';
 import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import { validateRouteTable } from '../utils/parsers/masterScheduleParser';
-import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
+import {
+    getOperationalSortTime,
+    reassignBlocksForTables,
+    MatchConfigPresets,
+} from '../utils/blocks/blockAssignmentCore';
 import { getRouteConfig, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { TimeUtils } from '../utils/timeUtils';
 import { deepCloneSchedules } from '../utils/schedule/scheduleEditorUtils';
 import { resolveGridSegmentTimes } from '../utils/schedule/travelTimeGridUtils';
+import { summarizeScheduleEditImpact, type ScheduleEditImpact } from '../utils/schedule/scheduleEditImpact';
 
 export interface UseTravelTimeGridResult {
     handleBulkAdjustTravelTime: (fromStop: string, toStop: string, delta: number, routeName: string) => void;
@@ -27,7 +32,10 @@ export interface UseTravelTimeGridResult {
 /**
  * Recalculate trip times based on stop values
  */
-const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+const MIDNIGHT_ROLLOVER_THRESHOLD = 240; // 4:00 AM operational day boundary
+
+const getServiceDay = (routeName: string): string | null =>
+    routeName.match(/\((Weekday|Saturday|Sunday)\)/i)?.[1]?.toLowerCase() ?? null;
 
 const getTrueBaseRoute = (routeName: string): string => {
     const stripped = routeName
@@ -41,7 +49,11 @@ const getTrueBaseRoute = (routeName: string): string => {
 
 const reassignBlocksForRelatedTables = (tables: MasterRouteTable[], routeName: string) => {
     const baseName = getTrueBaseRoute(routeName);
-    const relatedTables = tables.filter(table => getTrueBaseRoute(table.routeName) === baseName);
+    const serviceDay = getServiceDay(routeName);
+    const relatedTables = tables.filter(table =>
+        getTrueBaseRoute(table.routeName) === baseName
+        && getServiceDay(table.routeName) === serviceDay
+    );
     if (relatedTables.length === 0) return;
 
     const routeConfig = getRouteConfig(baseName);
@@ -121,20 +133,20 @@ const shiftTripTimes = (trip: MasterTrip, cols: string[], delta: number) => {
             trip.stopMinutes[stop] += delta;
         }
     });
+    recalculateTrip(trip, cols);
 };
 
-const cascadeNextBlockTrip = (
+const getOrderedBlockTrips = (
     tables: MasterRouteTable[],
     routeName: string,
-    tripId: string,
     blockId: string,
-    delta: number
-) => {
-    if (delta === 0) return;
-
+): Array<{ trip: MasterTrip; table: MasterRouteTable }> => {
     const baseName = getTrueBaseRoute(routeName);
-    const relatedTables = tables.filter(table => getTrueBaseRoute(table.routeName) === baseName);
-    if (relatedTables.length === 0) return;
+    const serviceDay = getServiceDay(routeName);
+    const relatedTables = tables.filter(table =>
+        getTrueBaseRoute(table.routeName) === baseName
+        && getServiceDay(table.routeName) === serviceDay
+    );
 
     const allBlockTrips: Array<{ trip: MasterTrip; table: MasterRouteTable }> = [];
     relatedTables.forEach(table => {
@@ -145,21 +157,142 @@ const cascadeNextBlockTrip = (
             });
     });
 
-    allBlockTrips.sort((a, b) => a.trip.tripNumber - b.trip.tripNumber);
+    return allBlockTrips.sort((a, b) =>
+        getOperationalSortTime(a.trip.startTime) - getOperationalSortTime(b.trip.startTime)
+        || getOperationalSortTime(a.trip.endTime) - getOperationalSortTime(b.trip.endTime)
+        || a.trip.tripNumber - b.trip.tripNumber
+        || a.trip.id.localeCompare(b.trip.id)
+    );
+};
+
+const cascadeFollowingBlockTrips = (
+    tables: MasterRouteTable[],
+    routeName: string,
+    tripId: string,
+    blockId: string,
+    delta: number
+) => {
+    if (delta === 0 || !blockId) return;
+
+    const allBlockTrips = getOrderedBlockTrips(tables, routeName, blockId);
     const startIdx = allBlockTrips.findIndex(item => item.trip.id === tripId);
     if (startIdx === -1) return;
 
-    const nextTrip = allBlockTrips[startIdx + 1];
-    if (!nextTrip) return;
+    allBlockTrips.slice(startIdx + 1).forEach(({ trip, table }) => {
+        shiftTripTimes(trip, table.stops, delta);
+    });
+};
 
-    shiftTripTimes(nextTrip.trip, nextTrip.table.stops, delta);
-    recalculateTrip(nextTrip.trip, nextTrip.table.stops);
+const applyTravelAdjustment = (
+    trip: MasterTrip,
+    table: MasterRouteTable,
+    fromStop: string,
+    toStop: string,
+    delta: number,
+) => {
+    const toIdx = table.stops.indexOf(toStop);
+    if (toIdx === -1) return;
+    const segment = resolveGridSegmentTimes(trip, fromStop, toStop);
+    if (!segment) return;
+    const acceptedDelta = Math.max(
+        -segment.travelMinutes,
+        Math.min(240 - segment.travelMinutes, delta),
+    );
+    if (acceptedDelta === 0) return;
+
+    for (let i = toIdx; i < table.stops.length; i++) {
+        const stop = table.stops[i];
+        const departure = TimeUtils.toMinutes(trip.stops[stop]);
+        if (departure !== null) trip.stops[stop] = TimeUtils.fromMinutes(departure + acceptedDelta);
+
+        const arrival = TimeUtils.toMinutes(trip.arrivalTimes?.[stop]);
+        if (arrival !== null && trip.arrivalTimes) {
+            trip.arrivalTimes[stop] = TimeUtils.fromMinutes(arrival + acceptedDelta);
+        }
+    }
+    recalculateTrip(trip, table.stops);
+};
+
+const applyRecoveryAdjustment = (
+    trip: MasterTrip,
+    table: MasterRouteTable,
+    stopName: string,
+    delta: number,
+) => {
+    const stopIdx = table.stops.indexOf(stopName);
+    if (stopIdx === -1) return;
+
+    const oldRec = trip.recoveryTimes?.[stopName] || 0;
+    const maxRec = Math.max(0, trip.travelTime - 1);
+    const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
+    const actualDelta = newRec - oldRec;
+    if (!trip.recoveryTimes) trip.recoveryTimes = {};
+    trip.recoveryTimes[stopName] = newRec;
+    trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, value) => sum + (value || 0), 0);
+
+    const arrivalAtStop = TimeUtils.toMinutes(trip.arrivalTimes?.[stopName]);
+    const departureAtStop = TimeUtils.toMinutes(trip.stops[stopName]);
+    if (arrivalAtStop !== null) {
+        trip.stops[stopName] = TimeUtils.fromMinutes(arrivalAtStop + newRec);
+    } else if (departureAtStop !== null) {
+        trip.stops[stopName] = TimeUtils.fromMinutes(departureAtStop + actualDelta);
+    }
+    if (stopIdx === table.stops.length - 1) trip.endTimeIncludesRecovery = true;
+
+    for (let i = stopIdx + 1; i < table.stops.length; i++) {
+        const stop = table.stops[i];
+        const departure = TimeUtils.toMinutes(trip.stops[stop]);
+        if (departure !== null) trip.stops[stop] = TimeUtils.fromMinutes(departure + actualDelta);
+
+        const arrival = TimeUtils.toMinutes(trip.arrivalTimes?.[stop]);
+        if (arrival !== null && trip.arrivalTimes) {
+            trip.arrivalTimes[stop] = TimeUtils.fromMinutes(arrival + actualDelta);
+        }
+    }
+    recalculateTrip(trip, table.stops);
+};
+
+const applyBulkAdjustmentsInBlockOrder = (
+    tables: MasterRouteTable[],
+    routeName: string,
+    targetTripIds: Set<string>,
+    applyAdjustment: (trip: MasterTrip, table: MasterRouteTable) => void,
+) => {
+    const targetTable = tables.find(table => table.routeName === routeName);
+    if (!targetTable) return;
+
+    const blockIds = new Set(
+        targetTable.trips
+            .filter(trip => targetTripIds.has(trip.id) && trip.blockId)
+            .map(trip => trip.blockId)
+    );
+    const processed = new Set<string>();
+
+    blockIds.forEach(blockId => {
+        let accumulatedDelta = 0;
+        getOrderedBlockTrips(tables, routeName, blockId).forEach(({ trip, table }) => {
+            if (accumulatedDelta !== 0) shiftTripTimes(trip, table.stops, accumulatedDelta);
+            if (!targetTripIds.has(trip.id)) return;
+
+            const oldEndTime = trip.endTime;
+            applyAdjustment(trip, table);
+            accumulatedDelta += trip.endTime - oldEndTime;
+            processed.add(trip.id);
+        });
+    });
+
+    targetTable.trips.forEach(trip => {
+        if (targetTripIds.has(trip.id) && !processed.has(trip.id)) {
+            applyAdjustment(trip, targetTable);
+        }
+    });
 };
 
 export function useTravelTimeGrid(
     schedules: MasterRouteTable[],
     onSchedulesChange: (schedules: MasterRouteTable[]) => void,
-    logAction?: (type: string, message: string, details: object) => void
+    logAction?: (type: string, message: string, details: object) => void,
+    onEditImpact?: (impact: ScheduleEditImpact) => void,
 ): UseTravelTimeGridResult {
 
     /**
@@ -186,33 +319,32 @@ export function useTravelTimeGrid(
             count: targetTable.trips.length
         });
 
-        targetTable.trips.forEach(trip => {
-            if (!resolveGridSegmentTimes(trip, fromStop, toStop)) return;
-
-            const oldEndTime = trip.endTime;
-            for (let i = toIdx; i < targetTable.stops.length; i++) {
-                const stop = targetTable.stops[i];
-                const t = TimeUtils.toMinutes(trip.stops[stop]);
-                if (t !== null) {
-                    trip.stops[stop] = TimeUtils.fromMinutes(t + delta);
-                }
-                if (trip.arrivalTimes?.[stop] !== undefined) {
-                    const arr = TimeUtils.toMinutes(trip.arrivalTimes[stop]);
-                    if (arr !== null) trip.arrivalTimes[stop] = TimeUtils.fromMinutes(arr + delta);
-                }
-                if (trip.stopMinutes?.[stop] !== undefined) {
-                    trip.stopMinutes[stop] += delta;
-                }
-            }
-            recalculateTrip(trip, targetTable.stops);
-            const deltaEnd = trip.endTime - oldEndTime;
-            cascadeNextBlockTrip(newScheds, routeName, trip.id, trip.blockId, deltaEnd);
-        });
+        const targetTripIds = new Set(
+            targetTable.trips
+                .filter(trip => {
+                    const segment = resolveGridSegmentTimes(trip, fromStop, toStop);
+                    if (!segment) return false;
+                    const acceptedDelta = Math.max(
+                        -segment.travelMinutes,
+                        Math.min(240 - segment.travelMinutes, delta),
+                    );
+                    return acceptedDelta !== 0;
+                })
+                .map(trip => trip.id)
+        );
+        if (targetTripIds.size === 0) return;
+        applyBulkAdjustmentsInBlockOrder(
+            newScheds,
+            routeName,
+            targetTripIds,
+            (trip, table) => applyTravelAdjustment(trip, table, fromStop, toStop, delta),
+        );
 
         newScheds.forEach(t => validateRouteTable(t));
         reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange, logAction]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, logAction, onEditImpact]);
 
     /**
      * Adjust travel time for a single trip
@@ -234,30 +366,25 @@ export function useTravelTimeGrid(
         const toIdx = targetTable.stops.indexOf(toStop);
         if (toIdx === -1) return;
 
+        const fromStop = targetTable.stops[toIdx - 1];
+        if (!fromStop) return;
+        const segment = resolveGridSegmentTimes(trip, fromStop, toStop);
+        if (!segment) return;
+        const acceptedDelta = Math.max(
+            -segment.travelMinutes,
+            Math.min(240 - segment.travelMinutes, delta),
+        );
+        if (acceptedDelta === 0) return;
         const oldEndTime = trip.endTime;
-        // Adjust the destination stop and all subsequent stops for this trip only
-        for (let i = toIdx; i < targetTable.stops.length; i++) {
-            const stop = targetTable.stops[i];
-            const t = TimeUtils.toMinutes(trip.stops[stop]);
-            if (t !== null) {
-                trip.stops[stop] = TimeUtils.fromMinutes(t + delta);
-            }
-            if (trip.arrivalTimes?.[stop] !== undefined) {
-                const arr = TimeUtils.toMinutes(trip.arrivalTimes[stop]);
-                if (arr !== null) trip.arrivalTimes[stop] = TimeUtils.fromMinutes(arr + delta);
-            }
-            if (trip.stopMinutes?.[stop] !== undefined) {
-                trip.stopMinutes[stop] += delta;
-            }
-        }
-        recalculateTrip(trip, targetTable.stops);
+        applyTravelAdjustment(trip, targetTable, fromStop, toStop, delta);
         const deltaEnd = trip.endTime - oldEndTime;
-        cascadeNextBlockTrip(newScheds, routeName, trip.id, trip.blockId, deltaEnd);
+        cascadeFollowingBlockTrips(newScheds, routeName, trip.id, trip.blockId, deltaEnd);
 
         newScheds.forEach(t => validateRouteTable(t));
         reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, onEditImpact]);
 
     /**
      * Bulk adjust recovery time for all trips at a specific stop
@@ -272,48 +399,26 @@ export function useTravelTimeGrid(
         if (!targetTable) return;
 
         const stopIdx = targetTable.stops.indexOf(stopName);
+        if (stopIdx === -1) return;
 
-        targetTable.trips.forEach(trip => {
-            const oldEndTime = trip.endTime;
-            const oldRec = trip.recoveryTimes?.[stopName] || 0;
-            const maxRec = Math.max(0, trip.travelTime - 1);
-            const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
-            const actualDelta = newRec - oldRec;
-            if (!trip.recoveryTimes) trip.recoveryTimes = {};
-            trip.recoveryTimes[stopName] = newRec;
-            trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
-
-            if (stopIdx !== -1) {
-                const arrivalAtStop = trip.arrivalTimes?.[stopName];
-                if (arrivalAtStop) {
-                    const arr = TimeUtils.toMinutes(arrivalAtStop);
-                    if (arr !== null) {
-                        trip.stops[stopName] = TimeUtils.fromMinutes(arr + newRec);
-                    }
-                }
-
-                for (let i = stopIdx + 1; i < targetTable.stops.length; i++) {
-                    const s = targetTable.stops[i];
-                    const t = TimeUtils.toMinutes(trip.stops[s]);
-                    if (t !== null) trip.stops[s] = TimeUtils.fromMinutes(t + actualDelta);
-                    if (trip.arrivalTimes?.[s]) {
-                        const arr = TimeUtils.toMinutes(trip.arrivalTimes[s]);
-                        if (arr !== null) trip.arrivalTimes[s] = TimeUtils.fromMinutes(arr + actualDelta);
-                    }
-                    if (trip.stopMinutes?.[s] !== undefined) {
-                        trip.stopMinutes[s] += actualDelta;
-                    }
-                }
-            }
-            recalculateTrip(trip, targetTable.stops);
-            const deltaEnd = trip.endTime - oldEndTime;
-            cascadeNextBlockTrip(newScheds, routeName, trip.id, trip.blockId, deltaEnd);
-        });
+        const targetTripIds = new Set(
+            targetTable.trips
+                .filter(trip => TimeUtils.toMinutes(trip.arrivalTimes?.[stopName] ?? trip.stops[stopName]) !== null)
+                .map(trip => trip.id)
+        );
+        if (targetTripIds.size === 0) return;
+        applyBulkAdjustmentsInBlockOrder(
+            newScheds,
+            routeName,
+            targetTripIds,
+            (trip, table) => applyRecoveryAdjustment(trip, table, stopName, delta),
+        );
 
         newScheds.forEach(t => validateRouteTable(t));
         reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, onEditImpact]);
 
     /**
      * Adjust recovery time for a single trip at a specific stop
@@ -332,46 +437,18 @@ export function useTravelTimeGrid(
         if (!trip) return;
 
         const stopIdx = targetTable.stops.indexOf(stopName);
+        if (stopIdx === -1) return;
 
-        // Adjust recovery for this trip
         const oldEndTime = trip.endTime;
-        const oldRec = trip.recoveryTimes?.[stopName] || 0;
-        const maxRec = Math.max(0, trip.travelTime - 1);
-        const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
-        const actualDelta = newRec - oldRec;
-        if (!trip.recoveryTimes) trip.recoveryTimes = {};
-        trip.recoveryTimes[stopName] = newRec;
-        trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
-
-        // Cascade time changes to subsequent stops
-        if (stopIdx !== -1) {
-            const arrivalAtStop = trip.arrivalTimes?.[stopName];
-            if (arrivalAtStop) {
-                const arr = TimeUtils.toMinutes(arrivalAtStop);
-                if (arr !== null) trip.stops[stopName] = TimeUtils.fromMinutes(arr + newRec);
-            }
-
-            for (let i = stopIdx + 1; i < targetTable.stops.length; i++) {
-                const s = targetTable.stops[i];
-                const t = TimeUtils.toMinutes(trip.stops[s]);
-                if (t !== null) trip.stops[s] = TimeUtils.fromMinutes(t + actualDelta);
-                if (trip.arrivalTimes?.[s]) {
-                    const arr = TimeUtils.toMinutes(trip.arrivalTimes[s]);
-                    if (arr !== null) trip.arrivalTimes[s] = TimeUtils.fromMinutes(arr + actualDelta);
-                }
-                if (trip.stopMinutes?.[s] !== undefined) {
-                    trip.stopMinutes[s] += actualDelta;
-                }
-            }
-        }
-        recalculateTrip(trip, targetTable.stops);
+        applyRecoveryAdjustment(trip, targetTable, stopName, delta);
         const deltaEnd = trip.endTime - oldEndTime;
-        cascadeNextBlockTrip(newScheds, routeName, trip.id, trip.blockId, deltaEnd);
+        cascadeFollowingBlockTrips(newScheds, routeName, trip.id, trip.blockId, deltaEnd);
 
         newScheds.forEach(t => validateRouteTable(t));
         reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
-    }, [schedules, onSchedulesChange]);
+        onEditImpact?.(summarizeScheduleEditImpact(schedules, newScheds));
+    }, [schedules, onSchedulesChange, onEditImpact]);
 
     return {
         handleBulkAdjustTravelTime,

@@ -7,7 +7,7 @@ import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import { StopActivityMap } from './StopActivityMap';
 import { TodPickupSection } from './TodPickupSection';
-import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
+import type { DailySummary, PerformanceDataSummary } from '../../utils/performanceDataTypes';
 import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
 import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
@@ -16,6 +16,8 @@ import { buildRidershipStopProfiles } from '../../utils/performanceRidershipStop
 
 interface RidershipModuleProps {
     data: PerformanceDataSummary;
+    comparisonDays?: DailySummary[];
+    comparisonRange?: { start: string; end: string } | null;
 }
 
 const ROUTE_COLORS = ['#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#22c55e', '#ec4899', '#3b82f6', '#14b8a6', '#f97316', '#6366f1', '#a855f7', '#84cc16'];
@@ -76,7 +78,7 @@ function SortableHeader({
     );
 }
 
-export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
+export const RidershipModule: React.FC<RidershipModuleProps> = ({ data, comparisonDays = [], comparisonRange = null }) => {
     const filtered = data.dailySummaries;
     const [routeSortKey, setRouteSortKey] = useState<RouteSortKey>('ridership');
     const [routeSortDir, setRouteSortDir] = useState<SortDir>('desc');
@@ -197,6 +199,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
 
     // Aggregate stop activity across filtered days (merges routes + hourly arrays)
     const stopActivity = useMemo(() => aggregateStopActivity(filtered), [filtered]);
+    const comparisonStopActivity = useMemo(() => aggregateStopActivity(comparisonDays), [comparisonDays]);
     const stopProfiles = useMemo(
         () => buildRidershipStopProfiles(filtered),
         [filtered],
@@ -230,8 +233,14 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
     return (
         <div className="space-y-6">
             {/* Stop Activity Map */}
-            <ChartCard title="Stop Activity Map" subtitle="Circle size and color reflect total boardings + alightings">
-                <StopActivityMap stops={stopActivity} />
+            <ChartCard title="Stop Activity Map" subtitle="View activity totals or compare average daily activity with the equivalent prior period">
+                <StopActivityMap
+                    stops={stopActivity}
+                    comparisonStops={comparisonStopActivity}
+                    currentDayCount={filtered.length}
+                    comparisonDayCount={comparisonDays.length}
+                    comparisonRange={comparisonRange}
+                />
             </ChartCard>
 
             <TodPickupSection />

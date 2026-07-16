@@ -40,7 +40,11 @@ import {
 } from '../utils/schedule/scheduleEditorUtils';
 import { RoundTripTableView } from './schedule/RoundTripTableView';
 import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/config/routeDirectionConfig';
-import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
+import {
+    getOperationalSortTime,
+    reassignBlocksForTables,
+    MatchConfigPresets,
+} from '../utils/blocks/blockAssignmentCore';
 import { useScheduleEditing, type CascadeMode } from '../hooks/useScheduleEditing';
 import { useTravelTimeGrid } from '../hooks/useTravelTimeGrid';
 import { CascadeModeSelector } from './ui/CascadeModeSelector';
@@ -60,7 +64,24 @@ import {
     type MasterComparisonChangeCounts,
 } from '../utils/schedule/masterComparison';
 import { openTimetablePublisher } from '../utils/reports/timetableNavigation';
+import {
+    formatScheduleEditImpact,
+    summarizeScheduleEditImpact,
+    type ScheduleEditImpact,
+} from '../utils/schedule/scheduleEditImpact';
+import { isMergedRouteBase } from '../utils/schedule/mergedRouteContinuity';
 // --- Main Editor Component ---
+
+const getRouteNameServiceDay = (routeName: string): string | null =>
+    routeName.match(/\((Weekday|Saturday|Sunday)\)/i)?.[1]?.toLowerCase() ?? null;
+
+export const resolveActiveScheduleDay = (
+    days: Record<string, unknown> | undefined,
+    requestedDay: string,
+): string => {
+    if (days?.[requestedDay]) return requestedDay;
+    return Object.keys(days || {})[0] || requestedDay;
+};
 
 export const tableMatchesActiveCompareScope = (
     baselineTable: MasterRouteTable,
@@ -76,6 +97,12 @@ export const tableMatchesActiveCompareScope = (
         parseRouteInfo(routeTable.routeName).baseRoute.trim().toUpperCase()
     )));
     if (!activeRouteKeys.has(baselineRouteKey)) {
+        return false;
+    }
+
+    const baselineDay = getRouteNameServiceDay(baselineTable.routeName);
+    const activeDays = new Set(routeTables.map(table => getRouteNameServiceDay(table.routeName)).filter(Boolean));
+    if (baselineDay && activeDays.size > 0 && !activeDays.has(baselineDay)) {
         return false;
     }
 
@@ -195,10 +222,18 @@ export interface ScheduleEditorProps {
     publishLabel?: string;
     isPublishing?: boolean;
     publishDisabled?: boolean;
+    sourceLabel?: string;
+    changeCount?: number;
+    warningCount?: number;
+    onReviewChanges?: () => void;
+    reviewChangesDisabled?: boolean;
 
     // Master comparison baseline (inline delta badges)
     masterBaseline?: MasterRouteTable[] | null;
     compareBaselineLabel?: string;
+    highlightedTripId?: string | null;
+    visibleTripIds?: string[] | null;
+    includeRemovedMasterTripsWhenFiltered?: boolean;
     // Step 4 simplified workspace: keep editor chrome light and move secondary tools into a sidebar.
     compactStep4?: boolean;
     reviewToolsSlot?: React.ReactNode;
@@ -243,12 +278,20 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     publishLabel,
     isPublishing,
     publishDisabled,
+    sourceLabel,
+    changeCount,
+    warningCount,
+    onReviewChanges,
+    reviewChangesDisabled,
     masterBaseline,
     compareBaselineLabel,
+    highlightedTripId,
+    visibleTripIds,
+    includeRemovedMasterTripsWhenFiltered = false,
     compactStep4 = false,
     reviewToolsSlot
 }) => {
-    const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+    const MIDNIGHT_ROLLOVER_THRESHOLD = 240; // 4:00 AM operational day boundary
     const effectiveHasUnsavedChanges = readOnly
         ? false
         : (hasUnsavedChanges ?? schedules.length > 0);
@@ -379,6 +422,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
     // Cascade Mode for time editing
     const [cascadeMode, setCascadeMode] = useState<CascadeMode>('always');
+    const [editImpact, setEditImpact] = useState<ScheduleEditImpact | null>(null);
+    const [editNotice, setEditNotice] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (highlightedTripId) setSubView('editor');
+    }, [highlightedTripId]);
 
     // Add Trip
     const {
@@ -409,6 +458,18 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         return () => window.clearTimeout(timeout);
     }, [recentlyAddedTripId]);
 
+    useEffect(() => {
+        if (!editImpact) return;
+        const timeout = window.setTimeout(() => setEditImpact(null), 8000);
+        return () => window.clearTimeout(timeout);
+    }, [editImpact]);
+
+    useEffect(() => {
+        if (!editNotice) return;
+        const timeout = window.setTimeout(() => setEditNotice(null), 6000);
+        return () => window.clearTimeout(timeout);
+    }, [editNotice]);
+
     // Helper to extract the true base route name (handles 2A/2B direction variants)
     const getTrueBaseRoute = (routeName: string): string => {
         // First strip (North), (South), and day type suffixes
@@ -420,6 +481,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const parsed = parseRouteInfo(stripped);
         return parsed.suffixIsDirection ? parsed.baseRoute : stripped;
     };
+
+    const getServiceDay = getRouteNameServiceDay;
 
     // Consolidate Routes
     const consolidateRoutes = (tables: MasterRouteTable[]) => {
@@ -483,7 +546,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const exportableRouteCount = useMemo(() => consolidateRoutes(exportableTables).length, [exportableTables]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Travel Time Grid Hook
-    const gridHandlers = useTravelTimeGrid(schedules, onSchedulesChange, logAction);
+    const gridHandlers = useTravelTimeGrid(schedules, onSchedulesChange, logAction, impact => {
+        if (impact.changedTripCount > 0) setEditImpact(impact);
+    });
 
     // Keep active route/day selection valid as schedules change.
     useEffect(() => {
@@ -602,12 +667,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     // Uses unified block assignment from blockAssignmentCore.ts
     const reassignBlocksForRelatedTables = (
         tables: MasterRouteTable[],
-        baseName: string
+        baseName: string,
+        serviceDay: string | null,
     ) => {
         // Find all related tables (same route, different directions)
         const relatedTables = tables.filter(t => {
             const tBase = getTrueBaseRoute(t.routeName);
-            return tBase === baseName;
+            return tBase === baseName && getServiceDay(t.routeName) === serviceDay;
         });
 
         if (relatedTables.length === 0) return;
@@ -635,6 +701,10 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         cascadeMode,
         logAction,
         showSuccessToast,
+        onEditImpact: impact => {
+            if (impact.changedTripCount > 0) setEditImpact(impact);
+        },
+        onEditNotice: setEditNotice,
     });
 
     const handleDeleteTrips = (tripIds: string[], options?: { treatAsRoundTrip?: boolean }) => {
@@ -665,6 +735,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         }
 
         onSchedulesChange(newScheds);
+        const impact = summarizeScheduleEditImpact(schedules, newScheds);
+        if (impact.changedTripCount > 0) setEditImpact(impact);
     };
 
     const handleDeleteTrip = (tripId: string) => {
@@ -722,6 +794,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     });
 
                     onSchedulesChange(newScheds);
+                    const impact = summarizeScheduleEditImpact(schedules, newScheds);
+                    if (impact.changedTripCount > 0) setEditImpact(impact);
                     showSuccessToast('Block ended - subsequent trips removed');
                 }
                 break;
@@ -737,6 +811,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     });
 
                     onSchedulesChange(newScheds);
+                    const impact = summarizeScheduleEditImpact(schedules, newScheds);
+                    if (impact.changedTripCount > 0) setEditImpact(impact);
                     showSuccessToast('Block start point updated');
                 }
                 break;
@@ -844,6 +920,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         const found = nextSchedules.flatMap(table => table.trips).find(trip => trip.id === updatedTripId) ?? null;
         onSchedulesChange(nextSchedules);
+        const impact = summarizeScheduleEditImpact(schedules, nextSchedules);
+        if (impact.changedTripCount > 0) setEditImpact(impact);
         setExtendTripModalContext(null);
         setSelectedTripId(updatedTripId);
         setSubView('editor');
@@ -879,6 +957,21 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const clampedDuration = Math.max(0, newDuration);
         const delta = newStartTime - oldStartTime;
         const durationDelta = clampedDuration - oldDuration;
+        const originalBlockId = trip.blockId;
+        const baseName = getTrueBaseRoute(table.routeName);
+        const serviceDay = getServiceDay(table.routeName);
+        const originalBlockTripIds = schedules
+            .filter(schedule =>
+                getTrueBaseRoute(schedule.routeName) === baseName
+                && getServiceDay(schedule.routeName) === serviceDay
+            )
+            .flatMap(schedule => schedule.trips)
+            .filter(candidate => candidate.blockId === originalBlockId)
+            .sort((a, b) => (
+                getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
+                || a.id.localeCompare(b.id)
+            ))
+            .map(candidate => candidate.id);
 
         // Shift all stop and arrival times by start delta.
         Object.keys(trip.stops).forEach(stop => {
@@ -922,8 +1015,47 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         // Recalculate derived values
         recalculateTrip(trip, table.stops);
+        const endDelta = trip.endTime - (oldStartTime + oldDuration);
+        const shouldCascadeFollowing = cascadeMode === 'always'
+            || (isMergedRouteBase(baseName) && cascadeMode !== 'none');
+        if (endDelta !== 0) {
+            const currentIndex = originalBlockTripIds.indexOf(tripId);
+            if (currentIndex === -1) return;
+            const shiftFollowingTrip = (followingTripId: string) => {
+                const following = findTableAndTrip(newScheds, followingTripId);
+                if (!following) return;
+                const followingTrip = following.trip;
+                Object.keys(followingTrip.stops).forEach(stop => {
+                    const minute = TimeUtils.toMinutes(followingTrip.stops[stop]);
+                    if (minute !== null) followingTrip.stops[stop] = TimeUtils.fromMinutes(minute + endDelta);
+                });
+                Object.keys(followingTrip.arrivalTimes || {}).forEach(stop => {
+                    const minute = TimeUtils.toMinutes(followingTrip.arrivalTimes?.[stop]);
+                    if (minute !== null && followingTrip.arrivalTimes) {
+                        followingTrip.arrivalTimes[stop] = TimeUtils.fromMinutes(minute + endDelta);
+                    }
+                });
+                Object.keys(followingTrip.stopMinutes || {}).forEach(stop => {
+                    if (followingTrip.stopMinutes?.[stop] !== undefined) {
+                        followingTrip.stopMinutes[stop] += endDelta;
+                    }
+                });
+                followingTrip.startTime += endDelta;
+                followingTrip.endTime += endDelta;
+                recalculateTrip(followingTrip, following.table.stops);
+                validateRouteTable(following.table);
+            };
+
+            if (shouldCascadeFollowing) {
+                originalBlockTripIds.slice(currentIndex + 1).forEach(shiftFollowingTrip);
+            } else if (cascadeMode === 'within-trip' && trip.direction === 'North') {
+                const pairedTripId = originalBlockTripIds[currentIndex + 1];
+                const pairedTrip = pairedTripId ? findTableAndTrip(newScheds, pairedTripId)?.trip : null;
+                if (pairedTrip?.direction === 'South') shiftFollowingTrip(pairedTripId);
+            }
+        }
         validateRouteTable(table);
-        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
+        reassignBlocksForRelatedTables(newScheds, baseName, serviceDay);
 
         logAction('edit', `Timeline: Moved trip to ${TimeUtils.fromMinutes(newStartTime)}`, {
             tripId,
@@ -934,6 +1066,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         });
 
         onSchedulesChange(newScheds);
+        const impact = summarizeScheduleEditImpact(schedules, newScheds);
+        if (impact.changedTripCount > 0) setEditImpact(impact);
     };
 
     // Handle trip selection from timeline
@@ -957,7 +1091,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const sanitizedDraftName = sanitizeExportFileNamePart(draftName || 'Schedule Draft');
         if (scope === 'current-route') {
             const routeLabel = sanitizeExportFileNamePart(`Route ${activeRouteGroup?.name || 'Current Route'}`);
-            const dayLabel = sanitizeExportFileNamePart(activeDay || 'Current Day');
+            const dayLabel = sanitizeExportFileNamePart(resolvedActiveDay || 'Current Day');
             return `${sanitizedDraftName || 'Schedule Draft'} - ${routeLabel} - ${dayLabel}.xlsx`;
         }
         return `${sanitizedDraftName || 'Schedule Draft'}.xlsx`;
@@ -1557,8 +1691,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
     // Active Data
     const activeRouteGroup = consolidatedRoutes[activeRouteIdx];
-    const activeRoute = activeRouteGroup?.days[activeDay] || activeRouteGroup?.days[Object.keys(activeRouteGroup?.days || {})[0]];
-    const activeRouteIdentity = activeRouteGroup ? `${activeRouteGroup.name}-${activeDay}` : null;
+    const resolvedActiveDay = resolveActiveScheduleDay(activeRouteGroup?.days, activeDay);
+    const activeRoute = activeRouteGroup?.days[resolvedActiveDay];
+    const activeRouteIdentity = activeRouteGroup ? `${activeRouteGroup.name}-${resolvedActiveDay}` : null;
 
     useEffect(() => {
         if (!teamId || !activeRouteIdentity) {
@@ -1623,15 +1758,15 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         return buildScheduleReviewSnapshot({
             draftName,
             routeGroupName: activeRouteGroup.name,
-            dayType: activeDay as DayType,
-            routeIdentity: `${activeRouteGroup.name}-${activeDay}`,
+            dayType: resolvedActiveDay as DayType,
+            routeIdentity: `${activeRouteGroup.name}-${resolvedActiveDay}`,
             routeTables: activeRouteTables,
             targetHeadwayMinutes: targetHeadway,
             targetCycleMinutes: targetCycleTime,
             masterBaseline: activeRouteMasterBaseline,
         });
     }, [
-        activeDay,
+        resolvedActiveDay,
         activeRoute,
         activeRouteGroup,
         activeRouteMasterBaseline,
@@ -1646,7 +1781,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const handleOpenTimetable = () => {
         openTimetablePublisher({
             routeNumber: activeRouteGroup.name,
-            dayType: activeDay as DayType,
+            dayType: resolvedActiveDay as DayType,
         });
     };
 
@@ -1824,7 +1959,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     >
                         <div className="text-sm font-semibold text-blue-900">Current route</div>
                         <div className="mt-1 text-xs text-blue-700">
-                            Export Route {activeRouteGroup.name} · {activeDay}
+                            Export Route {activeRouteGroup.name} · {resolvedActiveDay}
                         </div>
                         {activeRouteExportChangeSummary && activeRouteExportChangeSummary.counts.totalChanges > 0 && (
                             <div className="mt-2 text-[11px] font-medium text-blue-800">
@@ -1864,7 +1999,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 {!embedded && (
                     <WorkspaceHeader
                         routeGroupName={activeRouteGroup.name}
-                        dayLabel={activeDay}
+                        dayLabel={resolvedActiveDay}
                         isRoundTrip={!!activeRoute.combined}
                         subView={subView}
                         onViewChange={setSubView}
@@ -1892,6 +2027,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         publishLabel={publishLabel}
                         isPublishing={isPublishing}
                         publishDisabled={publishDisabled}
+                        sourceLabel={sourceLabel}
+                        changeCount={changeCount}
+                        warningCount={warningCount}
+                        onReviewChanges={onReviewChanges}
+                        reviewChangesDisabled={reviewChangesDisabled}
                         onOpenConnections={teamId && userId && !readOnly ? () => {
                             setShowAiReviewPanel(false);
                             setShowConnectionsPanel(true);
@@ -1903,6 +2043,47 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         onOpenTimetable={handleOpenTimetable}
                         compactTools={compactStep4}
                     />
+                )}
+
+                {!readOnly && editImpact && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 bg-blue-50 px-4 py-2 text-sm text-blue-900">
+                        <span className="font-semibold">{formatScheduleEditImpact(editImpact)}</span>
+                        <div className="flex items-center gap-3">
+                            {undo && canUndo && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        undo();
+                                        setEditImpact(null);
+                                    }}
+                                    className="font-bold text-blue-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                >
+                                    Undo
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => setEditImpact(null)}
+                                className="text-blue-700 hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                aria-label="Dismiss edit impact"
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {!readOnly && editNotice && (
+                    <div role="status" className="flex items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+                        <span className="font-medium">{editNotice}</span>
+                        <button
+                            type="button"
+                            onClick={() => setEditNotice(null)}
+                            className="font-semibold text-amber-800 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                        >
+                            Dismiss
+                        </button>
+                    </div>
                 )}
 
                 <div className="flex-grow flex flex-col lg:flex-row overflow-hidden">
@@ -1939,9 +2120,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                                     <div key={day} className="flex items-center gap-1">
                                                         <button
                                                             onClick={() => setActiveDay(day)}
-                                                            className={`flex-1 text-left px-3 py-1.5 rounded-xl text-sm flex items-center gap-2 border ${activeDay === day ? 'bg-blue-50 border-blue-200 font-extrabold text-blue-800 shadow-sm' : 'border-transparent text-gray-700 hover:bg-white hover:border-gray-200'}`}
+                                                            className={`flex-1 text-left px-3 py-1.5 rounded-xl text-sm flex items-center gap-2 border ${resolvedActiveDay === day ? 'bg-blue-50 border-blue-200 font-extrabold text-blue-800 shadow-sm' : 'border-transparent text-gray-700 hover:bg-white hover:border-gray-200'}`}
                                                         >
-                                                            <div className={`w-1.5 h-1.5 rounded-full ${activeDay === day ? 'bg-blue-600 ring-2 ring-blue-100' : 'bg-gray-300'}`} />
+                                                            <div className={`w-1.5 h-1.5 rounded-full ${resolvedActiveDay === day ? 'bg-blue-600 ring-2 ring-blue-100' : 'bg-gray-300'}`} />
                                                             {day}
                                                         </button>
                                                     </div>
@@ -1984,6 +2165,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 onTripTimeChange={handleTimelineTripTimeChange}
                                 onTripSelect={handleTripSelect}
                                 selectedTripId={selectedTripId}
+                                editScopeLabel={cascadeMode === 'always' || (isMergedRouteBase(activeRouteGroup.name) && cascadeMode !== 'none')
+                                    ? 'Timeline edits shift following trips in this block'
+                                    : 'Timeline edits affect the selected trip only'}
                             />
                         ) : (
                             <>
@@ -2014,10 +2198,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     readOnly={readOnly}
                                     connectionLibrary={connectionLibrary}
                                     routeConnectionConfig={activeRouteConnectionConfig}
-                                    dayType={activeDay as DayType}
+                                    dayType={resolvedActiveDay as DayType}
                                     masterBaseline={activeRouteMasterBaseline}
                                     compareBaselineLabel={compareBaselineLabel}
-                                    highlightedTripId={recentlyAddedTripId}
+                                    highlightedTripId={highlightedTripId || recentlyAddedTripId}
+                                    visibleTripIds={visibleTripIds}
+                                    includeRemovedMasterTripsWhenFiltered={includeRemovedMasterTripsWhenFiltered}
                                     toolbarSlot={!readOnly ? (
                                         <CascadeModeSelector
                                             mode={cascadeMode}
@@ -2027,6 +2213,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     ) : undefined}
                                     toolbarMode={compactStep4 ? 'sidebar' : 'inline'}
                                     reviewToolsSlot={combinedReviewToolsSlot}
+                                    onInputError={setEditNotice}
                                 />
                             </>
                         )}
@@ -2036,8 +2223,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     {showConnectionsPanel && teamId && userId && activeRouteGroup && (
                         <ConnectionsPanel
                             schedules={connectionScopeSchedules || schedules}
-                            routeIdentity={`${activeRouteGroup.name}-${activeDay}`}
-                            dayType={activeDay as 'Weekday' | 'Saturday' | 'Sunday'}
+                            routeIdentity={`${activeRouteGroup.name}-${resolvedActiveDay}`}
+                            dayType={resolvedActiveDay as 'Weekday' | 'Saturday' | 'Sunday'}
                             teamId={teamId}
                             userId={userId}
                             onLibraryChanged={setConnectionLibrary}

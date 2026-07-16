@@ -303,6 +303,9 @@ const convertTrip = (trip: BlockedTrip, stops: StopInfo[]): MasterTrip => {
 
     // Use remappedRecovery to include both explicit and inferred recoveries
     const totalRecovery = Object.values(remappedRecovery).reduce((a, b) => a + b, 0);
+    const lastTimedStop = [...stops]
+        .reverse()
+        .find(stop => !stop.isRecovery && trip.times[stop.name]);
 
     return {
         id: `${trip.routeName}-T-${trip.rowIndex}`,  // Include route name for unique IDs across routes
@@ -321,6 +324,9 @@ const convertTrip = (trip: BlockedTrip, stops: StopInfo[]): MasterTrip => {
         travelTime: cycleTime - totalRecovery,
         stops: stopRecord,
         stopMinutes: Object.keys(stopMinutes).length > 0 ? stopMinutes : undefined,
+        // The V2 parser reads the departure column for ARR -> R -> DEP stops.
+        // Tell later block reassignment not to add that final recovery a second time.
+        endTimeIncludesRecovery: lastTimedStop?.departureColumnIndex !== undefined,
         isOverlap: false, // Calculated later if needed
         isTightRecovery: (totalRecovery < 5),
     };

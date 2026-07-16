@@ -19,6 +19,9 @@ describe('Master Schedule Parser (Golden Master)', () => {
         // 3. Run Adapter Logic (since this is what the UI uses)
         const adaptedTables = adaptV2ToV1(v2Result);
 
+        const route400Weekday = adaptedTables.find(table => table.routeName === '400 (Weekday)');
+        expect(route400Weekday?.trips.find(trip => trip.id === '400-T-5')?.endTimeIncludesRecovery).toBe(true);
+
         // 4. Create a deterministic output object
         // We sort routes to ensure stability if array order changes slightly
         const snapshotData = adaptedTables.sort((a, b) => a.routeName.localeCompare(b.routeName)).map(table => ({

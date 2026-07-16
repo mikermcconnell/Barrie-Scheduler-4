@@ -30,6 +30,7 @@ Do not use `docs/plans/`, `docs/archive/`, or `docs/artifacts/` as default conte
 - Treat planning notes as history unless a durable doc confirms the behavior.
 - Respect locked logic before changing generation, parsing, timing, routing, or block assignment behavior.
 - Keep the planner in control. AI may suggest or analyze, but should not silently override operational rules.
+- Never use `--no-verify` to bypass failed checks. Fix the failure or investigate and report the blocker instead.
 
 ## Orchestrator Mode
 

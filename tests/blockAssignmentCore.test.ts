@@ -62,6 +62,20 @@ describe('blockAssignmentCore endTime handling', () => {
         expect(table.trips[1].tripNumber).toBe(2);
     });
 
+    it('keeps legacy adapted trips linked when their departure already includes terminal recovery', () => {
+        const firstTrip = createTrip('legacy-t1', 360, 395, 5);
+        firstTrip.stopMinutes = { Terminal: 395 };
+        const secondTrip = createTrip('legacy-t2', 395, 425, 0);
+        secondTrip.stopMinutes = { Terminal: 425 };
+        const table = createLoopTable([firstTrip, secondTrip]);
+
+        reassignBlocksForTables([table], '10', MatchConfigPresets.exact);
+
+        expect(table.trips[0].blockId).toBe(table.trips[1].blockId);
+        expect(table.trips[0].tripNumber).toBe(1);
+        expect(table.trips[1].tripNumber).toBe(2);
+    });
+
     it('links across ARRIVE/DEPART split terminal when stop IDs match', () => {
         const north: MasterRouteTable = {
             routeName: '12 (Weekday) (North)',
