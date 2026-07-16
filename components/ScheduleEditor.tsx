@@ -659,7 +659,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             trip.endTime = end;
             trip.stopMinutes = stopMinutes;
             trip.cycleTime = end - start;  // Full span: last departure - first departure
-            trip.travelTime = Math.max(0, trip.cycleTime - trip.recoveryTime);  // Travel = cycle - recovery
+            trip.travelTime = Math.max(0, trip.cycleTime - Math.max(0, trip.recoveryTime || 0));  // Travel = cycle - recovery
         }
     };
 
@@ -1020,7 +1020,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             || (isMergedRouteBase(baseName) && cascadeMode !== 'none');
         if (endDelta !== 0) {
             const currentIndex = originalBlockTripIds.indexOf(tripId);
-            if (currentIndex === -1) return;
             const shiftFollowingTrip = (followingTripId: string) => {
                 const following = findTableAndTrip(newScheds, followingTripId);
                 if (!following) return;
@@ -1046,9 +1045,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 validateRouteTable(following.table);
             };
 
-            if (shouldCascadeFollowing) {
+            if (currentIndex !== -1 && shouldCascadeFollowing) {
                 originalBlockTripIds.slice(currentIndex + 1).forEach(shiftFollowingTrip);
-            } else if (cascadeMode === 'within-trip' && trip.direction === 'North') {
+            } else if (currentIndex !== -1 && cascadeMode === 'within-trip' && trip.direction === 'North') {
                 const pairedTripId = originalBlockTripIds[currentIndex + 1];
                 const pairedTrip = pairedTripId ? findTableAndTrip(newScheds, pairedTripId)?.trip : null;
                 if (pairedTrip?.direction === 'South') shiftFollowingTrip(pairedTripId);
@@ -2167,7 +2166,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 selectedTripId={selectedTripId}
                                 editScopeLabel={cascadeMode === 'always' || (isMergedRouteBase(activeRouteGroup.name) && cascadeMode !== 'none')
                                     ? 'Timeline edits shift following trips in this block'
-                                    : 'Timeline edits affect the selected trip only'}
+                                    : cascadeMode === 'within-trip'
+                                        ? 'Timeline edits shift the paired return trip'
+                                        : 'Timeline edits affect the selected trip only'}
                             />
                         ) : (
                             <>

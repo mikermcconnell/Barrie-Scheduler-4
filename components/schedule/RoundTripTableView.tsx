@@ -1066,6 +1066,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         ?? [...combined.rows].sort((a, b) => compareRowsForCombined(combined, a, b))
     ), [compareRowsForCombined, sortedRowsByCombinedKey]);
 
+    const getDisplayedSortedRows = useCallback((combined: RoundTripTable): RoundTripTable['rows'] => {
+        const sortedRows = getSortedRows(combined);
+        if (!filter?.search) return sortedRows;
+
+        return sortedRows.filter(row => (
+            matchesSearch(row.blockId, [...combined.northStops, ...combined.southStops], filter.search)
+        ));
+    }, [filter?.search, getSortedRows]);
+
     // --- Grid Navigation Setup ---
     // Compute navigable columns for Excel-like keyboard navigation
     const primaryPair = roundTripData[0] || null;
@@ -1128,8 +1137,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const gridSortedRows = useMemo(() => {
         if (!primaryPair) return [];
         const { combined } = primaryPair;
-        return getSortedRows(combined);
-    }, [getSortedRows, primaryPair]);
+        return getDisplayedSortedRows(combined);
+    }, [getDisplayedSortedRows, primaryPair]);
 
     // Resolve key stop label for Block Flow dropdown
     const keyStopLabel = useMemo(() => {
@@ -1916,7 +1925,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         // Keep the displayed row order stable while editing so
                                         // repeated +/- nudges stay on the same block instead of
                                         // jumping to a different row after a live re-sort.
-                                        const sortedRows = getSortedRows(combined);
+                                        const sortedRows = getDisplayedSortedRows(combined);
                                         const rowHeadways = getRoundTripDisplayedHeadways(sortedRows, combined);
                                         const displayedHeadwayValues = Object.values(rowHeadways);
                                         const rowIndexByKey = new Map(sortedRows.map((row, index) => [getRoundTripRowKey(row), index]));
@@ -2086,11 +2095,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const tripEndTime = northTrip?.endTime || southTrip?.endTime || 0;
                                         const isGrayedOut = filter ? shouldGrayOutTrip(tripStartTime, tripEndTime, filter) : false;
                                         const isHighlighted = filter ? shouldHighlightTrip(totalTravel, totalRec, typeof headway === 'number' ? headway : null, filter) : false;
-                                        const matchesSearchFilter = filter ? matchesSearch(row.blockId, [...combined.northStops, ...combined.southStops], filter.search) : true;
-
                                         const grayOutClass = isGrayedOut ? 'opacity-40' : '';
                                         const filterHighlightClass = isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-200' : '';
-                                        const searchHideClass = !matchesSearchFilter ? 'hidden' : '';
                                         const isRecentlyAddedRow = !!highlightedTripId && row.trips.some(trip => trip.id === highlightedTripId);
                                         const isCompareReviewFocusedRow = !!compareReviewFocusTripId && row.trips.some(trip => trip.id === compareReviewFocusTripId);
                                         const rowBlockBoundary = blockBoundaries.get(row.blockId);
@@ -2141,7 +2147,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         return (
                                             <tr
                                                 key={uniqueRowKey}
-                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${primaryChangeMeta?.rowClass || ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
+                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${primaryChangeMeta?.rowClass || ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
                                                 data-highlighted-row={isRecentlyAddedRow ? 'true' : 'false'}
                                                 data-row-trip-ids={`|${rowTripIds.join('|')}|`}
                                                 title={compareReason}

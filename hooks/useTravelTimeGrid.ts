@@ -109,7 +109,7 @@ const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
         trip.endTime = end;
         trip.stopMinutes = stopMinutes;
         trip.cycleTime = end - start;
-        trip.travelTime = Math.max(0, trip.cycleTime - trip.recoveryTime);
+        trip.travelTime = Math.max(0, trip.cycleTime - Math.max(0, trip.recoveryTime || 0));
     }
 };
 
@@ -403,7 +403,7 @@ export function useTravelTimeGrid(
 
         const targetTripIds = new Set(
             targetTable.trips
-                .filter(trip => TimeUtils.toMinutes(trip.arrivalTimes?.[stopName] ?? trip.stops[stopName]) !== null)
+                .filter(trip => TimeUtils.toMinutes(trip.arrivalTimes?.[stopName] || trip.stops[stopName]) !== null)
                 .map(trip => trip.id)
         );
         if (targetTripIds.size === 0) return;

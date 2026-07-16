@@ -128,6 +128,9 @@ const Harness: React.FC<{ initialSchedules?: MasterRouteTable[] }> = ({ initialS
       <button data-testid="edit-departure-beyond-limit" onClick={() => handleCellEdit('north-trip', 'Stop 2', '9:30 AM')}>
         edit departure beyond recovery limit
       </button>
+      <button data-testid="edit-terminal-departure" onClick={() => handleCellEdit('north-trip', 'Stop 3', '8:03 AM')}>
+        edit terminal departure
+      </button>
       <button data-testid="edit-recovery" onClick={() => handleRecoveryEdit('north-trip', 'Stop 2', 2)}>
         edit recovery
       </button>
@@ -342,6 +345,41 @@ describe('useScheduleEditing cascade modes', () => {
     expect(southTrip.stops['Stop A']).toBe('8:54 AM');
   });
 
+  it('preserves keyed recovery when a cascaded arrival edit moves the departure', () => {
+    const editButton = container?.querySelector('[data-testid="edit-arrival-mid"]') as HTMLButtonElement | null;
+    flushSync(() => editButton?.click());
+
+    const schedules = getState();
+    const northTrip = schedules[0].trips[0];
+    const southTrip = schedules[1].trips[0];
+
+    expect(northTrip.arrivalTimes['Stop 2']).toBe('7:27 AM');
+    expect(northTrip.stops['Stop 2']).toBe('7:32 AM');
+    expect(northTrip.recoveryTimes['Stop 2']).toBe(5);
+    expect(northTrip.stops['Stop 3']).toBe('8:02 AM');
+    expect(southTrip.stops['Stop A']).toBe('8:07 AM');
+  });
+
+  it('marks an edited terminal departure as already including terminal recovery', () => {
+    const initialSchedules = buildSchedules();
+    const trip = initialSchedules[0].trips[0];
+    trip.endTimeIncludesRecovery = false;
+    trip.recoveryTimes = { 'Stop 2': 5, 'Stop 3': 2 };
+    trip.recoveryTime = 7;
+    trip.arrivalTimes = { ...trip.arrivalTimes, 'Stop 3': '7:58 AM' };
+
+    flushSync(() => {
+      root?.render(<Harness key="terminal-flag" initialSchedules={initialSchedules} />);
+    });
+    const editButton = container?.querySelector('[data-testid="edit-terminal-departure"]') as HTMLButtonElement | null;
+    flushSync(() => editButton?.click());
+
+    const updatedTrip = getState()[0].trips[0];
+    expect(updatedTrip.stops['Stop 3']).toBe('8:03 AM');
+    expect(updatedTrip.endTime).toBe(483);
+    expect(updatedTrip.endTimeIncludesRecovery).toBe(true);
+  });
+
   it('keeps travel and cycle metrics consistent after a cascaded edit', () => {
     const editButton = container?.querySelector('[data-testid="edit-departure"]') as HTMLButtonElement | null;
 
@@ -405,6 +443,53 @@ describe('useScheduleEditing cascade modes', () => {
       'Stop 2': 451,
       'Stop 3': 481,
     });
+  });
+
+  it('creates unique duplicate IDs even when actions occur in the same millisecond', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123456789);
+    const duplicateButton = () => container?.querySelector('[data-testid="duplicate-trip"]') as HTMLButtonElement | null;
+
+    flushSync(() => duplicateButton()?.click());
+    flushSync(() => duplicateButton()?.click());
+
+    const duplicateIds = getState()[0].trips
+      .map((trip: any) => trip.id)
+      .filter((id: string) => id.startsWith('north-trip-dup-'));
+    expect(duplicateIds).toHaveLength(2);
+    expect(new Set(duplicateIds).size).toBe(2);
+    nowSpy.mockRestore();
+  });
+
+  it('keeps post-midnight duplicates after late-evening trips in operational order', () => {
+    const initialSchedules = buildSchedules();
+    const table = initialSchedules[0];
+    const trip = table.trips[0];
+    Object.assign(trip, {
+      startTime: 30,
+      endTime: 60,
+      stops: { 'Stop 1': '12:30 AM', 'Stop 2': '12:45 AM', 'Stop 3': '1:00 AM' },
+      arrivalTimes: { 'Stop 1': '12:30 AM', 'Stop 2': '12:40 AM', 'Stop 3': '1:00 AM' },
+      stopMinutes: { 'Stop 1': 1470, 'Stop 2': 1485, 'Stop 3': 1500 },
+    });
+    table.trips = [{
+      ...structuredClone(trip),
+      id: 'late-evening',
+      startTime: 1410,
+      endTime: 1440,
+      stops: { 'Stop 1': '11:30 PM', 'Stop 2': '11:45 PM', 'Stop 3': '12:00 AM' },
+      arrivalTimes: { 'Stop 1': '11:30 PM', 'Stop 2': '11:40 PM', 'Stop 3': '12:00 AM' },
+      stopMinutes: { 'Stop 1': 1410, 'Stop 2': 1425, 'Stop 3': 1440 },
+    }, trip];
+
+    flushSync(() => {
+      root?.render(<Harness key="overnight-duplicate" initialSchedules={initialSchedules} />);
+    });
+    flushSync(() => (container?.querySelector('[data-testid="duplicate-trip"]') as HTMLButtonElement | null)?.click());
+
+    const ids = getState()[0].trips.map((candidate: any) => candidate.id);
+    expect(ids[0]).toBe('late-evening');
+    expect(ids[1]).toBe('north-trip');
+    expect(ids[2]).toMatch(/^north-trip-dup-/);
   });
 });
 

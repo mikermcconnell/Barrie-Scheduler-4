@@ -158,7 +158,7 @@ const applyDayOffset = (
     return { adjusted, offset: nextOffset };
 };
 
-const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+const MIDNIGHT_ROLLOVER_THRESHOLD = 240; // 4:00 AM service-day boundary
 
 // --- Day Type Detection ---
 

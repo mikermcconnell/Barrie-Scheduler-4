@@ -129,6 +129,62 @@ describe('TimelineView', () => {
     expect(container?.textContent).toContain('2 overlapping trips');
   });
 
+  it('does not double-count keyed terminal recovery already included in end time', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(
+        <TimelineView schedules={[{
+          routeName: '10 (Weekday) (North)', stops: ['A', 'B'], stopIds: {}, trips: [
+            {
+              id: 'trip-1', blockId: '10-1', direction: 'North', tripNumber: 1, rowId: 1,
+              startTime: 420, endTime: 450, recoveryTime: 10, recoveryTimes: { B: 10 },
+              travelTime: 20, cycleTime: 30, endTimeIncludesRecovery: true,
+              stops: { A: '7:00 AM', B: '7:30 AM' }, stopMinutes: { A: 420, B: 450 },
+            },
+            {
+              id: 'trip-2', blockId: '10-1', direction: 'South', tripNumber: 2, rowId: 2,
+              startTime: 455, endTime: 485, recoveryTime: 0, travelTime: 30, cycleTime: 30,
+              stops: { A: '7:35 AM', B: '8:05 AM' }, stopMinutes: { A: 455, B: 485 },
+            },
+          ],
+        }] as any} />
+      );
+    });
+
+    expect(container?.textContent).not.toContain('overlapping trips');
+  });
+
+  it('renders legacy post-midnight trips after late-evening trips', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(
+        <TimelineView schedules={[{
+          routeName: '10 (Weekday)', stops: ['A', 'B'], stopIds: {}, trips: [
+            {
+              id: 'evening', blockId: '10-1', direction: 'North', tripNumber: 2, rowId: 1,
+              startTime: 1410, endTime: 1430, recoveryTime: 0, travelTime: 20, cycleTime: 20,
+              stops: { A: '11:30 PM', B: '11:50 PM' },
+            },
+            {
+              id: 'after-midnight', blockId: '10-1', direction: 'South', tripNumber: 1, rowId: 2,
+              startTime: 10, endTime: 30, recoveryTime: 0, travelTime: 20, cycleTime: 20,
+              stops: { A: '12:10 AM', B: '12:30 AM' },
+            },
+          ],
+        }] as any} />
+      );
+    });
+
+    const bars = Array.from(container?.querySelectorAll('[aria-label^="Trip 10-1"]') || []);
+    expect(bars[0]?.getAttribute('aria-label')).toContain('11:30 PM');
+    expect(bars[1]?.getAttribute('aria-label')).toContain('12:10 AM (+1)');
+    expect(container?.textContent).not.toContain('overlapping trips');
+  });
+
   it('only commits dragged trip changes when the drag ends', () => {
     const onTripTimeChange = vi.fn();
 

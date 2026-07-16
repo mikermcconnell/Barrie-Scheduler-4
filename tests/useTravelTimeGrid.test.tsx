@@ -21,6 +21,7 @@ vi.mock('../utils/parsers/masterScheduleParser', async () => {
 
 vi.mock('../utils/blocks/blockAssignmentCore', () => ({
   reassignBlocksForTables: reassignBlocksForTablesMock,
+  getOperationalSortTime: (minutes: number) => minutes < 240 ? minutes + 1440 : minutes,
   MatchConfigPresets: {
     editor: { mode: 'editor' },
     merged: { mode: 'merged' }
@@ -445,6 +446,43 @@ describe('useTravelTimeGrid', () => {
     expect(fullTrip.stops.C).toBe('7:31 AM');
     expect(shortTurnTrip.stops.C).toBe('7:40 AM');
     expect(shortTurnTrip.stops.D).toBe('7:50 AM');
+
+    flushSync(() => {
+      root?.render(
+        <Harness schedules={latest!} onChange={next => { latest = next; }} onReady={value => { api = value; }} />
+      );
+    });
+    flushSync(() => api!.handleBulkAdjustRecoveryTime('B', 1, '7 (Weekday) (North)'));
+
+    const recoveryNorth = latest?.find(table => table.routeName === '7 (Weekday) (North)');
+    const recoveryFullTrip = recoveryNorth?.trips.find((trip: any) => trip.id === 'full-trip');
+    const recoveryShortTurn = recoveryNorth?.trips.find((trip: any) => trip.id === 'short-turn-trip');
+    expect(recoveryFullTrip.recoveryTimes.B).toBe(1);
+    expect(recoveryShortTurn.recoveryTimes?.B).toBeUndefined();
+    expect(recoveryShortTurn.recoveryTime).toBe(0);
+  });
+
+  it('clamps a negative single-trip adjustment before the segment becomes negative', () => {
+    const schedules = buildSchedules();
+    let latest: any[] | null = null;
+    let api: HarnessApi | null = null;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(
+        <Harness schedules={schedules} onChange={next => { latest = next; }} onReady={value => { api = value; }} />
+      );
+    });
+
+    flushSync(() => api!.handleSingleTripTravelAdjust('north-trip', 'B', -50, '2 (Weekday) (North)'));
+
+    const north = latest?.find(table => table.routeName === '2 (Weekday) (North)');
+    const south = latest?.find(table => table.routeName === '2 (Weekday) (South)');
+    expect(north.trips[0].arrivalTimes.B).toBe('7:00 AM');
+    expect(north.trips[0].stops.C).toBe('7:30 AM');
+    expect(calculateGridTravelMinutes(north.trips[0], 'A', 'B')).toBe(0);
+    expect(south.trips[0].stops.A).toBe('7:40 AM');
   });
 
   it('keeps terminal recovery metrics consistent and limits the cascade to the selected day', () => {

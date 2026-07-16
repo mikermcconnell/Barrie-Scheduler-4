@@ -8,6 +8,7 @@ import {
     type MasterRouteTable,
     type MasterTrip,
 } from '../utils/parsers/masterScheduleParser';
+import { parseMasterScheduleV2 } from '../utils/parsers/masterScheduleParserV2';
 
 const makeTrip = (
     id: string,
@@ -40,6 +41,40 @@ const makeTable = (
 });
 
 describe('buildRoundTripView overnight pairing', () => {
+    it('does not double-count terminal recovery already included in endTime', () => {
+        const base = makeTrip('north', '400-1', 'North', 600);
+        const markedDeparture: MasterTrip = {
+            ...base,
+            endTime: 630,
+            recoveryTime: 10,
+            recoveryTimes: { Terminal: 10 },
+            stopMinutes: { Terminal: 630 },
+            endTimeIncludesRecovery: true,
+        };
+        const explicitArrival: MasterTrip = {
+            ...markedDeparture,
+            endTimeIncludesRecovery: false,
+        };
+        const legacyDeparture: MasterTrip = {
+            ...markedDeparture,
+            endTimeIncludesRecovery: undefined,
+            arrivalTimes: undefined,
+        };
+        const blockEndArrival: MasterTrip = {
+            ...explicitArrival,
+            isBlockEnd: true,
+        };
+        const cycleFor = (trip: MasterTrip) => buildRoundTripView(
+            makeTable('North', [trip]),
+            makeTable('South', []),
+        ).rows[0].totalCycleTime;
+
+        expect(cycleFor(markedDeparture)).toBe(30);
+        expect(cycleFor(explicitArrival)).toBe(40);
+        expect(cycleFor(legacyDeparture)).toBe(30);
+        expect(cycleFor(blockEndArrival)).toBe(30);
+    });
+
     it('keeps a north trip before midnight paired with its south trip after midnight', () => {
         const combined = buildRoundTripView(
             makeTable('North', [
@@ -92,6 +127,28 @@ describe('buildRoundTripView overnight pairing', () => {
         expect(trip?.startTime).toBe(1665);
         expect(trip?.endTime).toBe(1675);
         expect(trip?.stopMinutes).toEqual({
+            'North Start': 1665,
+            'North End': 1675,
+        });
+    });
+
+    it('uses the 4:00 AM service-day boundary in the V2 parser', () => {
+        const workbook = XLSX.utils.book_new();
+        const sheet = XLSX.utils.aoa_to_sheet([
+            ['Stop Name', '', 'North Start', 'North End'],
+            ['Stop ID', '', '101', '102'],
+            ['Weekday', '', 225 / 1440, 235 / 1440],
+        ]);
+        XLSX.utils.book_append_sheet(workbook, sheet, '400');
+        const bytes = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+
+        const parsed = parseMasterScheduleV2(bytes);
+        const trip = parsed.routes[0]?.sections[0]?.trips[0];
+
+        expect(parsed.errors).toEqual([]);
+        expect(trip?.startTime).toBe(1665);
+        expect(trip?.endTime).toBe(1675);
+        expect(trip?.timesMinutes).toEqual({
             'North Start': 1665,
             'North End': 1675,
         });

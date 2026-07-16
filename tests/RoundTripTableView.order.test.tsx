@@ -117,12 +117,13 @@ describe('RoundTripTableView displayed row order', () => {
             makeTrip('trip-1', '10-1', 360),
             makeTrip('trip-2', '10-2', 420),
         ]);
-        const renderWithFilter = (visibleTripIds: string[] | null) => {
+        const renderWithFilter = (visibleTripIds: string[] | null, search = '') => {
             flushSync(() => {
                 root.render(
                     <RoundTripTableView
                         schedules={schedules}
                         visibleTripIds={visibleTripIds}
+                        filter={{ timeRange: { start: null, end: null }, highlight: null, search }}
                         onCellEdit={() => {}}
                     />
                 );
@@ -144,6 +145,13 @@ describe('RoundTripTableView displayed row order', () => {
         });
         const selectedCell = container.querySelector('[aria-selected="true"]');
         expect(selectedCell?.closest('tr')?.getAttribute('data-row-trip-ids')).toContain('|trip-2|');
+
+        renderWithFilter(null, '10-1');
+        region = container.querySelector('[aria-label="Round-trip schedule editor grid"]') as HTMLDivElement;
+        expect(container.querySelectorAll('tr[data-row-trip-ids]')).toHaveLength(1);
+        expect(container.querySelector('tr[data-row-trip-ids]')?.getAttribute('data-row-trip-ids'))
+            .toContain('|trip-1|');
+        expect(region.getAttribute('aria-activedescendant')).toBeNull();
     });
 
     it('uses the post-midnight south trip for actions on an overnight pair', () => {

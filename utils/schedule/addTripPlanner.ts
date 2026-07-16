@@ -83,6 +83,7 @@ export interface AddTripPreviewItem {
   travelTime: number;
   recoveryTime: number;
   terminalRecoveryTime: number;
+  endTimeIncludesRecovery?: boolean;
   cycleTime: number;
   recoveryTimes?: Record<string, number>;
   templateTripId: string | null;
@@ -484,12 +485,23 @@ const getTripTerminalRecoveryTime = (trip: MasterTrip, table: MasterRouteTable):
   getPreviewTerminalRecoveryTime(trip.recoveryTimes, trip.recoveryTime || 0, getTripTerminalStopName(trip, table))
 );
 
-const getPreviewOccupiedEndTime = (item: Pick<AddTripPreviewItem, 'endTime' | 'terminalRecoveryTime'>): number => (
-  item.endTime + Math.max(0, item.terminalRecoveryTime || 0)
+const tripEndIncludesTerminalRecovery = (trip: MasterTrip, table: MasterRouteTable): boolean => {
+  const terminalStopName = getTripTerminalStopName(trip, table);
+  if (!terminalStopName) return !!trip.endTimeIncludesRecovery;
+  const legacyDepartureIncludesRecovery = trip.endTimeIncludesRecovery === undefined
+    && trip.recoveryTimes !== undefined
+    && Object.prototype.hasOwnProperty.call(trip.recoveryTimes, terminalStopName)
+    && trip.stopMinutes?.[terminalStopName] === trip.endTime
+    && trip.arrivalTimes?.[terminalStopName] === undefined;
+  return trip.endTimeIncludesRecovery ?? legacyDepartureIncludesRecovery;
+};
+
+const getPreviewOccupiedEndTime = (item: Pick<AddTripPreviewItem, 'endTime' | 'terminalRecoveryTime' | 'endTimeIncludesRecovery'>): number => (
+  item.endTime + (item.endTimeIncludesRecovery ? 0 : Math.max(0, item.terminalRecoveryTime || 0))
 );
 
 const getTripOccupiedEndTime = (trip: MasterTrip, table: MasterRouteTable): number => (
-  trip.endTime + getTripTerminalRecoveryTime(trip, table)
+  trip.endTime + (tripEndIncludesTerminalRecovery(trip, table) ? 0 : getTripTerminalRecoveryTime(trip, table))
 );
 
 const createGeneratedTripId = (index: number): string => {
@@ -1603,8 +1615,15 @@ const buildEditedTripData = (
   const recoveryTimes = buildRecoveryTimesForEditedTrip(trip, templateTrip, table, effectiveStops, resolvedRange, fullRouteRange);
   const recoveryTime = Object.values(recoveryTimes ?? {}).reduce((sum, minutes) => sum + Math.max(0, minutes || 0), 0);
   const terminalRecoveryTime = getPreviewTerminalRecoveryTime(recoveryTimes, recoveryTime, endStopName);
-  const travelTime = Math.max(0, timing.endTime - result.startTime);
-  const cycleTime = travelTime + recoveryTime;
+  const rawTerminalArrival = TimeUtils.toMinutes(timing.arrivalTimes[endStopName]);
+  let terminalArrival = rawTerminalArrival;
+  while (terminalArrival !== null && terminalArrival < timing.endTime - 720) terminalArrival += 1440;
+  const endTimeIncludesRecovery = terminalArrival !== null
+    && terminalRecoveryTime > 0
+    && timing.endTime - terminalArrival === terminalRecoveryTime;
+  const occupiedEndTime = timing.endTime + (endTimeIncludesRecovery ? 0 : terminalRecoveryTime);
+  const cycleTime = Math.max(0, occupiedEndTime - result.startTime);
+  const travelTime = Math.max(0, cycleTime - recoveryTime);
   const platformHints = [
     getPlatformHint(routeNumberFromBase(context.routeBaseName), table, effectiveStops[0] ?? result.startStopName),
     endStopName !== (effectiveStops[0] ?? result.startStopName)
@@ -1632,6 +1651,7 @@ const buildEditedTripData = (
     stops: timing.stops,
     arrivalTimes: timing.arrivalTimes,
     stopMinutes: timing.stopMinutes,
+    endTimeIncludesRecovery,
     startStopIndex: resolvedRange.startIndex > fullRouteRange.startIndex ? resolvedRange.startIndex : undefined,
     endStopIndex: resolvedRange.endIndex < fullRouteRange.endIndex ? resolvedRange.endIndex : undefined
   };
@@ -1650,6 +1670,7 @@ const buildEditedTripData = (
     travelTime,
     recoveryTime,
     terminalRecoveryTime,
+    endTimeIncludesRecovery,
     cycleTime,
     recoveryTimes,
     templateTripId: templateTrip.id ?? null,

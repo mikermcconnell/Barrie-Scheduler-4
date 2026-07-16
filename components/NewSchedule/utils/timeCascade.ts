@@ -37,6 +37,7 @@ const getOrderedScopedBlockTrips = (
     .sort((a, b) => (
         getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime)
         || getOperationalSortTime(a.endTime) - getOperationalSortTime(b.endTime)
+        || a.tripNumber - b.tripNumber
         || a.id.localeCompare(b.id)
     ));
 

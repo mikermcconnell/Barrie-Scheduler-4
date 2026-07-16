@@ -518,7 +518,6 @@ describe('ScheduleEditorWorkspace', () => {
   });
 
   it('warns on browser or tab close while schedule changes are unsaved', async () => {
-    vi.useFakeTimers();
     saveDraftMock.mockResolvedValue('draft-1');
     renderWorkspace();
     await flushPromises();
@@ -526,14 +525,19 @@ describe('ScheduleEditorWorkspace', () => {
       container?.querySelector('[data-testid="change"]')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    await flushPromises();
+    await vi.waitFor(() => expect(
+      container?.querySelector('[data-testid="editor-shell"]')?.getAttribute('data-unsaved')
+    ).toBe('true'));
 
     const dirtyUnload = new Event('beforeunload', { cancelable: true });
     expect(window.dispatchEvent(dirtyUnload)).toBe(false);
     expect(dirtyUnload.defaultPrevented).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(10000);
-    await flushPromises();
+    container?.querySelector('[data-testid="save"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await vi.waitFor(() => expect(
+      container?.querySelector('[data-testid="editor-shell"]')?.getAttribute('data-unsaved')
+    ).toBe('false'));
     const savedUnload = new Event('beforeunload', { cancelable: true });
     expect(window.dispatchEvent(savedUnload)).toBe(true);
     expect(savedUnload.defaultPrevented).toBe(false);

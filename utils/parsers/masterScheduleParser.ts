@@ -700,16 +700,35 @@ export const buildRoundTripView = (
             const totalTravelTime = pairTrips.reduce((sum, t) => sum + t.travelTime, 0);
             const totalRecoveryTime = pairTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
 
-            // Cycle time = span from first departure to final departure (after recovery)
-            // endTime is the ARRIVAL time at final stop, so we need to add final stop recovery
+            // Cycle time spans the first departure through the vehicle's occupied end.
+            // Newer trips explicitly say whether endTime already contains recovery;
+            // older V2-adapted trips can be identified by their terminal departure data.
             const firstTrip = pairTrips[0];
             const lastTrip = pairTrips[pairTrips.length - 1];
 
-            // Get recovery at the final stop (not total trip recovery)
-            // For block-ending trips, don't include phantom recovery
-            const lastTripStops = Object.keys(lastTrip.stops);
-            const finalStopName = lastTripStops[lastTripStops.length - 1];
-            const finalStopRecovery = lastTrip.isBlockEnd ? 0 : (lastTrip.recoveryTimes?.[finalStopName] || 0);
+            const directionalStops = lastTrip.direction === 'South'
+                ? southTable.stops
+                : northTable.stops;
+            const fallbackTimedStops = Object.keys(lastTrip.stops).filter(stopName => lastTrip.stops[stopName]);
+            const finalStopIndex = lastTrip.endStopIndex ?? directionalStops.length - 1;
+            const finalStopName = directionalStops[finalStopIndex]
+                || fallbackTimedStops[fallbackTimedStops.length - 1]
+                || '';
+            const terminalRecovery = lastTrip.recoveryTimes?.[finalStopName]
+                ?? (lastTrip.recoveryTimes && Object.keys(lastTrip.recoveryTimes).length > 0
+                    ? 0
+                    : lastTrip.recoveryTime)
+                ?? 0;
+            const legacyDepartureIncludesRecovery = lastTrip.endTimeIncludesRecovery === undefined
+                && lastTrip.recoveryTimes !== undefined
+                && Object.prototype.hasOwnProperty.call(lastTrip.recoveryTimes, finalStopName)
+                && lastTrip.stopMinutes?.[finalStopName] === lastTrip.endTime
+                && lastTrip.arrivalTimes?.[finalStopName] === undefined;
+            const endTimeIncludesRecovery = lastTrip.endTimeIncludesRecovery
+                ?? legacyDepartureIncludesRecovery;
+            const finalStopRecovery = lastTrip.isBlockEnd || endTimeIncludesRecovery
+                ? 0
+                : Math.max(0, terminalRecovery);
 
             const spanTime = getTripDuration(firstTrip.startTime, lastTrip.endTime);
             const totalCycleTime = spanTime + finalStopRecovery;

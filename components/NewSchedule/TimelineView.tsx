@@ -12,7 +12,8 @@
 
 import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import { ZoomIn, ZoomOut, Clock, AlertTriangle } from 'lucide-react';
-import { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
+import { MasterRouteTable, MasterTrip } from '../../utils/parsers/masterScheduleParser';
+import { getOperationalSortTime } from '../../utils/blocks/blockAssignmentCore';
 
 interface TimelineViewProps {
     schedules: MasterRouteTable[];
@@ -30,6 +31,7 @@ interface TripBar {
     endTime: number;
     travelTime: number;
     recoveryTime: number;
+    occupiedEndTime: number;
     hasOverlap: boolean;
 }
 
@@ -50,6 +52,37 @@ const MAX_ZOOM = 3;
 const ROW_HEIGHT = 40;
 const TIME_LABEL_HEIGHT = 32;
 
+const normalizeTimelineTime = (minutes: number, referenceMinutes?: number): number => {
+    let normalized = getOperationalSortTime(minutes);
+    if (referenceMinutes !== undefined && normalized < referenceMinutes - 720) normalized += 1440;
+    return normalized;
+};
+
+const getActiveEndStopName = (table: MasterRouteTable, trip: MasterTrip): string | null => {
+    const endIndex = Math.min(trip.endStopIndex ?? table.stops.length - 1, table.stops.length - 1);
+    for (let index = endIndex; index >= 0; index -= 1) {
+        const stopName = table.stops[index];
+        if (trip.stops?.[stopName] || trip.stopMinutes?.[stopName] !== undefined) return stopName;
+    }
+    return table.stops[endIndex] ?? null;
+};
+
+const getOccupiedEndTime = (table: MasterRouteTable, trip: MasterTrip): number => {
+    const terminalStop = getActiveEndStopName(table, trip);
+    if (!terminalStop) return trip.endTime;
+
+    const terminalRecovery = trip.recoveryTimes?.[terminalStop]
+        ?? (trip.recoveryTimes && Object.keys(trip.recoveryTimes).length > 0 ? 0 : trip.recoveryTime)
+        ?? 0;
+    const legacyDepartureIncludesRecovery = trip.endTimeIncludesRecovery === undefined
+        && trip.recoveryTimes !== undefined
+        && Object.prototype.hasOwnProperty.call(trip.recoveryTimes, terminalStop)
+        && trip.stopMinutes?.[terminalStop] === trip.endTime
+        && trip.arrivalTimes?.[terminalStop] === undefined;
+    const includesRecovery = trip.endTimeIncludesRecovery ?? legacyDepartureIncludesRecovery;
+    return trip.endTime + (includesRecovery ? 0 : Math.max(0, terminalRecovery));
+};
+
 export const TimelineView: React.FC<TimelineViewProps> = ({
     schedules,
     onTripTimeChange,
@@ -66,7 +99,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     const [dragStartX, setDragStartX] = useState(0);
     const [dragOriginalStart, setDragOriginalStart] = useState(0);
     const [dragOriginalEnd, setDragOriginalEnd] = useState(0);
-    const [hoveredTripId, setHoveredTripId] = useState<string | null>(null);
     const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
     const dragMovedRef = useRef(false);
     const dragPreviewRef = useRef<DragPreview | null>(null);
@@ -78,14 +110,17 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
         schedules.forEach(table => {
             table.trips.forEach(trip => {
+                const normalizedStart = normalizeTimelineTime(trip.startTime);
+                const normalizedEnd = normalizeTimelineTime(trip.endTime, normalizedStart);
                 const bar: TripBar = {
                     id: trip.id,
                     blockId: trip.blockId,
                     direction: trip.direction || 'North',
-                    startTime: trip.startTime,
-                    endTime: trip.endTime,
+                    startTime: normalizedStart,
+                    endTime: normalizedEnd,
                     travelTime: trip.travelTime,
                     recoveryTime: trip.recoveryTime,
+                    occupiedEndTime: normalizeTimelineTime(getOccupiedEndTime(table, trip), normalizedStart),
                     hasOverlap: false
                 };
                 allTrips.push(bar);
@@ -97,9 +132,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         // Detect overlaps within each block
         const overlapsSet = new Set<string>();
         Object.values(blockMap).forEach(trips => {
-            trips.sort((a, b) => a.startTime - b.startTime);
+            trips.sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id));
             for (let i = 0; i < trips.length - 1; i++) {
-                if ((trips[i].endTime + trips[i].recoveryTime) > trips[i + 1].startTime) {
+                if (trips[i].occupiedEndTime > trips[i + 1].startTime) {
                     trips[i].hasOverlap = true;
                     trips[i + 1].hasOverlap = true;
                     overlapsSet.add(trips[i].id);
@@ -151,13 +186,13 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     }, [minHour, hourWidth]);
 
     const getTripById = useCallback((tripId: string) => {
-        for (const table of schedules) {
-            for (const trip of table.trips) {
+        for (const row of blockRows) {
+            for (const trip of row.trips) {
                 if (trip.id === tripId) return trip;
             }
         }
         return null;
-    }, [schedules]);
+    }, [blockRows]);
 
     const commitTripTimeChange = useCallback((tripId: string, startTime: number, endTime: number) => {
         if (endTime <= startTime) return;
@@ -244,7 +279,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         };
         dragPreviewRef.current = preview;
         setDragPreview(preview);
-    }, [isDragging, dragTripId, dragType, dragStartX, dragOriginalStart, dragOriginalEnd, hourWidth, getTripById]);
+    }, [isDragging, dragTripId, dragType, dragStartX, dragOriginalStart, dragOriginalEnd, hourWidth]);
 
     // Handle mouse up
     const handleMouseUp = useCallback(() => {
@@ -458,7 +493,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                         const left = timeToX(bounds.startTime);
                                         const width = timeToX(bounds.endTime) - left;
                                         const isSelected = selectedTripId === trip.id;
-                                        const isHovered = hoveredTripId === trip.id;
 
                                         return (
                                             <div
@@ -474,8 +508,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                                 aria-label={`Trip ${trip.blockId} ${trip.direction} ${formatTime(bounds.startTime)} to ${formatTime(bounds.endTime)}`}
                                                 onMouseDown={(e) => handleMouseDown(e, trip.id, 'move')}
                                                 onKeyDown={(e) => handleTripKeyDown(e, trip)}
-                                                onMouseEnter={() => setHoveredTripId(trip.id)}
-                                                onMouseLeave={() => setHoveredTripId(null)}
                                                 title={`${trip.direction}: ${formatTime(bounds.startTime)} - ${formatTime(bounds.endTime)} (${trip.travelTime} min)`}
                                             >
                                                 {/* Resize handles */}

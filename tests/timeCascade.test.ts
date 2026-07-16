@@ -132,6 +132,44 @@ describe('timeCascade', () => {
     expect(schedules[1].trips[0].startTime).toBe(395);
   });
 
+  it('uses operational chronology instead of direction-local trip numbers', () => {
+    const schedules = buildSchedules();
+    schedules[0].trips[0].tripNumber = 100;
+    schedules[1].trips[0].tripNumber = 1;
+    schedules[0].trips[1].tripNumber = 2;
+
+    const updated = cascadeTripTimes(schedules, 'n-1', 4);
+    expect(updated[1].trips[0].startTime).toBe(399);
+    expect(updated[0].trips[1].startTime).toBe(424);
+
+    const ended = endBlockAtTrip(schedules, 'n-1');
+    expect(ended[1].trips).toHaveLength(0);
+    expect(ended[0].trips.map((trip: any) => trip.id)).toEqual(['n-1', 'n-other-block']);
+  });
+
+  it('orders legacy post-midnight clock minutes after late-evening trips', () => {
+    const schedules = [{
+      routeName: 'Route 9 (Weekday)',
+      stops: ['A', 'B'],
+      trips: [
+        {
+          id: 'evening', blockId: '9-1', direction: 'North', tripNumber: 2, rowId: 1,
+          startTime: 1410, endTime: 1430, travelTime: 20, recoveryTime: 0, cycleTime: 20,
+          stops: { A: '11:30 PM', B: '11:50 PM' }, stopMinutes: { A: 1410, B: 1430 },
+        },
+        {
+          id: 'after-midnight', blockId: '9-1', direction: 'South', tripNumber: 1, rowId: 2,
+          startTime: 10, endTime: 30, travelTime: 20, recoveryTime: 0, cycleTime: 20,
+          stops: { A: '12:10 AM', B: '12:30 AM' }, stopMinutes: { A: 1450, B: 1470 },
+        },
+      ],
+    }] as any;
+
+    const updated = cascadeTripTimes(schedules, 'evening', 5);
+    expect(updated[0].trips[1].startTime).toBe(15);
+    expect(updated[0].trips[1].stops.A).toBe('12:15 AM');
+  });
+
   it('updates a segment and then cascades later trips in the same block', () => {
     const updated = updateSegmentTime(buildSchedules(), 'n-1', 'Downtown', 5);
 
@@ -252,5 +290,17 @@ describe('timeCascade', () => {
     expect(endBlockAtTrip(schedules, 'missing')).toEqual(schedules);
     expect(setTripStartStop(schedules, 'missing', 1)).toEqual(schedules);
     expect(setTripEndStop(schedules, 'missing', 1)).toEqual(schedules);
+  });
+
+  it('rejects invalid or untimed partial-trip boundaries', () => {
+    const schedules = buildSchedules();
+    schedules[0].trips[0].stops.Downtown = '';
+
+    expect(setTripStartStop(schedules, 'n-1', -1)).toEqual(schedules);
+    expect(setTripStartStop(schedules, 'n-1', 99)).toEqual(schedules);
+    expect(setTripStartStop(schedules, 'n-1', 1)).toEqual(schedules);
+    expect(setTripEndStop(schedules, 'n-1', -1)).toEqual(schedules);
+    expect(setTripEndStop(schedules, 'n-1', 99)).toEqual(schedules);
+    expect(setTripEndStop(schedules, 'n-1', 1)).toEqual(schedules);
   });
 });

@@ -2237,6 +2237,38 @@ describe('addTripPlanner', () => {
     ]);
   });
 
+  it('does not double-count terminal recovery already included in an existing trip end time', () => {
+    const context = buildContext();
+    const markRecoveryIncluded = (trip: any) => {
+      if (trip.id !== 'north-1') return;
+      trip.travelTime = 25;
+      trip.cycleTime = 30;
+      trip.recoveryTime = 5;
+      trip.recoveryTimes = { Downtown: 5 };
+      trip.endTimeIncludesRecovery = true;
+      trip.arrivalTimes = { ...trip.arrivalTimes, Downtown: '6:25 AM' };
+      trip.stopMinutes = { 'Park Place': 360, Downtown: 390 };
+    };
+    markRecoveryIncluded(context.referenceTrip);
+    context.targetTable.trips.forEach(markRecoveryIncluded);
+    context.allSchedules.flatMap(table => table.trips).forEach(markRecoveryIncluded);
+
+    const suggestions = buildAddTripSuggestions(
+      context,
+      'North',
+      392,
+      1,
+      'trip',
+      false,
+      'existing',
+      '2-WD-1',
+      { startStopName: 'Park Place', endStopName: 'Downtown' }
+    );
+
+    expect(suggestions.blockConflicts).toHaveLength(0);
+    expect(suggestions.impact.hasBlockingBlockConflict).toBe(false);
+  });
+
   it('surfaces a short same-block trailing gap and can absorb it into recovery', () => {
     const withoutAbsorb = buildAddTripSuggestions(
       build400GapContext(),
