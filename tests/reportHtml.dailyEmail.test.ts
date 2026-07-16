@@ -280,6 +280,31 @@ describe('buildReportHtml route scorecard OTP detail', () => {
   });
 });
 
+describe('buildReportHtml trips operated KPI', () => {
+  it('bolds the missed-trip count in the KPI subtitle', () => {
+    const latestDay = makeSummary({ date: '2026-04-20' });
+    latestDay.missedTrips = {
+      totalScheduled: 20,
+      totalMatched: 17,
+      totalMissed: 3,
+      missedPct: 15,
+      notPerformedCount: 3,
+      lateOver15Count: 0,
+      byRoute: [{ routeId: '2', count: 3, earliestDep: '07:00' }],
+    };
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    expect(html).toContain(
+      '<strong style="font-weight:800;color:#dc2626;">3</strong> missed of 20 scheduled',
+    );
+  });
+});
+
 describe('buildReportHtml dwell reporting', () => {
   it('adds moderate/high dwell hours to the route scorecard and boardings-by-hour table', () => {
     const latestDay = makeSummary({
