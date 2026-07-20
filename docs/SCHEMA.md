@@ -36,6 +36,12 @@ firebase/
 │   │   └── imports/{importId}            # Residential Growth import history
 │   ├── routePlanner2Projects/{projectId} # Route Planner 2 saved planning projects
 │   │   └── scenarios/{scenarioId}        # Saved editable route concepts
+│   ├── detourNotices/{noticeId}           # Team-authored route detour or stop-closure notice
+│   │   ├── overlays/{overlayId}           # Snapshotted GTFS route/direction and editable detour geometry
+│   │   └── publications/{publicationId}   # Immutable manual MyRide posting record
+│   ├── routeConceptPlannerProjects/{projectId} # Neutral complete-route concept projects
+│   │   └── alternatives/{alternativeId}  # Complete route alternatives
+│   │       └── patterns/{patternId}       # Direction, loop, or return patterns
 │   └── fleetPlan/default                 # Shared fleet-planning workbook metadata + active storage pointer
 │       └── versions/{versionId}          # Fleet Plan version history
 │
@@ -50,6 +56,8 @@ firebase/
 `teams/{teamId}/members/{userId}` is the durable source of team membership. The `userId` field must match the document ID so a collection-group query filtered to the signed-in user can safely enumerate only that user's teams. The required collection-group `userId` index is declared in `firestore.indexes.json`. `users/{userId}.teamId` selects the active team; joining an additional team does not replace an existing active-team pointer unless activation is explicitly requested.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
 `teams/{teamId}/routePlanner2Projects/{projectId}` stores Route Planner 2 project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection.
+`teams/{teamId}/detourNotices/{noticeId}` stores editable notice copy, effective schedule, map frame, workflow status, and optimistic revision. Route overlays snapshot GTFS geometry/stops so later feed changes do not rewrite saved notices. Publication records store the posted revision, generated filenames, MyRide URL, and posting audit fields; version 1 keeps PDF/PNG files as browser downloads rather than Cloud Storage objects.
+`teams/{teamId}/routeConceptPlannerProjects/{projectId}` is separate neutral Route Concept Planner storage. Its integer `revision` supports optimistic conflict detection; alternatives and their patterns are saved atomically with the root document.
 `teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
 
 ### Cloud Storage Paths
@@ -282,6 +290,25 @@ interface RoutePlanner2ProjectMetadata {
 ```
 
 Each editable route concept is stored at `teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}` using the `RoutePlanner2Scenario` shape from `utils/route-planner-2/routePlanner2Types.ts`. GTFS-imported Barrie merged A/B routes may include optional `routeFamily` metadata so directions such as 2A and 2B display as one route family while remaining independently editable scenarios. Team members and workspace permission managers can read and write these saved route plans.
+
+### RouteConceptProject (`teams/{teamId}/routeConceptPlannerProjects/{projectId}`)
+
+```typescript
+interface RouteConceptProjectMetadata {
+  id: string;
+  name: string;
+  schemaVersion: number;
+  revision: number;
+  selectedAlternativeId: string;
+  preferredAlternativeId?: string;
+  alternativeOrder: string[];
+  createdAt: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+```
+
+Complete alternatives are stored under `alternatives/{alternativeId}` and their direction/loop patterns under `patterns/{patternId}`. Saved inputs are authoritative; feasibility is derived after load. Firestore transactions compare the expected revision and commit the root, nested documents, and deletions atomically. Stale saves fail without overwriting the team version. Access requires team membership plus the `analyticsRouteConceptPlanner` workspace permission. Route Concept Planner has no Cloud Storage path and never shares Route Planner 2/Camp documents.
 
 ### FleetPlanMetadata (`teams/{teamId}/fleetPlan/default`)
 

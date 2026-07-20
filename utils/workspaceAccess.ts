@@ -26,6 +26,7 @@ export type WorkspaceAccessFeatureKey =
     | 'analyticsResidentialGrowth'
     | 'analyticsNetworkConnections'
     | 'analyticsRoutePlanner2'
+    | 'analyticsRouteConceptPlanner'
     | 'analyticsShuttlePlanner'
     | 'operationsLoadProfiles'
     | 'operationsOperatorDwell';
@@ -77,6 +78,7 @@ export const ANALYTICS_WORKSPACE_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsResidentialGrowth',
     'analyticsNetworkConnections',
     'analyticsRoutePlanner2',
+    'analyticsRouteConceptPlanner',
     'analyticsShuttlePlanner',
 ];
 

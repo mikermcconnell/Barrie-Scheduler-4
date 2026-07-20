@@ -6,6 +6,7 @@ import {
     listUnknownWorkspaceAccessKeys,
     resolveWorkspaceAccessLevel,
 } from '../utils/workspaceAccess';
+import { buildFeatureFlags, getFeatureOverrideEnvVar } from '../utils/features';
 
 const member = (overrides: Partial<TeamMember>): TeamMember => ({
     id: 'u1',
@@ -115,14 +116,33 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsCorridorHeadway');
         expect(allowed).not.toContain('analyticsNetworkConnections');
         expect(allowed).not.toContain('analyticsShuttlePlanner');
+        expect(allowed).not.toContain('analyticsRouteConceptPlanner');
     });
 
     it('lets internal users access unfinished workspaces when globally enabled', () => {
         const internal = member({ accessLevel: 'internal' });
+        const flags = buildFeatureFlags({
+            [getFeatureOverrideEnvVar('analyticsRouteConceptPlanner')]: 'true',
+        });
 
         expect(canAccessWorkspaceFeature('workspaceOndemand', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRoutePlanner2', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('workspaceParking', internal)).toBe(true);
+        expect(canAccessWorkspaceFeature('analyticsRouteConceptPlanner', internal, flags)).toBe(true);
+    });
+
+    it('keeps Route Concept Planner internal-only by profile but allows an explicit pilot override', () => {
+        const flags = buildFeatureFlags({
+            [getFeatureOverrideEnvVar('analyticsRouteConceptPlanner')]: 'true',
+        });
+        const planner = member({ accessLevel: 'planner' });
+        const pilot = member({
+            accessLevel: 'planner',
+            workspaceOverrides: { analyticsRouteConceptPlanner: true },
+        });
+
+        expect(canAccessWorkspaceFeature('analyticsRouteConceptPlanner', planner, flags)).toBe(false);
+        expect(canAccessWorkspaceFeature('analyticsRouteConceptPlanner', pilot, flags)).toBe(true);
     });
 
     it('applies explicit workspace overrides after profile defaults', () => {

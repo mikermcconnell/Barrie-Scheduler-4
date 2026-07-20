@@ -12,6 +12,7 @@ export type AnalyticsWorkspaceView =
     | 'fleet-plan-workspace'
     | 'residential-growth'
     | 'route-planner-2'
+    | 'route-concept-planner'
     | 'network-connections'
     | 'shuttle-planner';
 
@@ -29,6 +30,7 @@ const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'fleet-plan-workspace',
     'residential-growth',
     'route-planner-2',
+    'route-concept-planner',
     'network-connections',
     'shuttle-planner',
 ]);
@@ -47,6 +49,7 @@ const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = 
     'fleet-plan-workspace': 'Fleet Plan',
     'residential-growth': 'Residential Growth',
     'route-planner-2': 'Route Planner',
+    'route-concept-planner': 'Route Concept Planner',
     'network-connections': 'Network Connections',
     'shuttle-planner': 'Shuttle Planner',
 };

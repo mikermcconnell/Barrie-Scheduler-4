@@ -95,6 +95,7 @@ const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
     analyticsResidentialGrowth: 'Residential Growth',
     analyticsNetworkConnections: 'Network Connections',
     analyticsRoutePlanner2: 'Route Planner',
+    analyticsRouteConceptPlanner: 'Route Concept Planner',
     analyticsShuttlePlanner: 'Shuttle Planner',
     operationsLoadProfiles: 'Load Profiles',
     operationsOperatorDwell: 'Dwell Incident Review',

@@ -113,6 +113,12 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
         previewKind: 'analytics-card',
     },
     {
+        feature: 'analyticsRouteConceptPlanner',
+        label: 'Route Concept Planner',
+        description: 'Test complete route alternatives with GTFS and road travel times.',
+        previewKind: 'analytics-card',
+    },
+    {
         feature: 'analyticsShuttlePlanner',
         label: 'Shuttle Planner',
         description: 'Shuttle service planning workspace.',
