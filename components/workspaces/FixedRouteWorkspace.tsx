@@ -16,7 +16,8 @@ import {
     Copy,
     Smartphone,
     GraduationCap,
-    Bus
+    Bus,
+    MapPinned,
 } from 'lucide-react';
 import type { SiblingDraft } from './ScheduleEditorWorkspace';
 import { SystemDraftList } from '../layout/SystemDraftList';
@@ -82,8 +83,12 @@ const PerformanceImport = lazyWithRetry(
     () => import('../Performance/PerformanceImport').then(module => ({ default: module.PerformanceImport })),
     'fixed-performance-import'
 );
+const DetourPublisherWorkspace = lazyWithRetry(
+    () => import('./DetourPublisherWorkspace').then(module => ({ default: module.DetourPublisherWorkspace })),
+    'fixed-detour-publisher-workspace'
+);
 
-type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import';
+type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import' | 'detours';
 type AnalyticsLaunchView = AnalyticsWorkspaceView;
 
 const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<typeof isFeatureEnabled>[0]>> = {
@@ -95,6 +100,7 @@ const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<t
     drafts: 'fixedDrafts',
     'system-editor': 'fixedSystemEditor',
     'performance-import': 'fixedPerformanceImport',
+    detours: 'fixedDetours',
 };
 
 const isFixedRouteViewEnabled = (viewMode: FixedRouteViewMode): boolean => {
@@ -121,6 +127,7 @@ const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     drafts: 'Schedule Editor',
     'system-editor': 'System Draft Editor',
     'performance-import': 'Re-import STREETS Data',
+    detours: 'Detour Publisher',
 };
 
 interface DashboardCardProps {
@@ -251,6 +258,8 @@ export const FixedRouteWorkspace: React.FC = () => {
                     )}`;
                 case 'performance-import':
                     return 'Scheduled Transit · Re-import STREETS Data';
+                case 'detours':
+                    return 'Scheduled Transit · Detour Publisher';
                 default:
                     return 'Scheduled Transit';
             }
@@ -703,6 +712,16 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="Timetable Publisher" description="Generate public timetables." />
                     )}
 
+                    {isFeatureEnabled('fixedDetours') && (
+                        <DashboardCard
+                            onClick={() => setViewMode('detours')}
+                            icon={<MapPinned size={20} />}
+                            color="amber"
+                            title="Detour Publisher"
+                            description="Draw route detours and stop closures, then export MyRide-ready notices."
+                        />
+                    )}
+
                     {isFeatureEnabled('fixedAnalytics') && (
                         <DashboardCard
                             onClick={() => handleOpenPlanning('dashboard')}
@@ -1117,6 +1136,12 @@ export const FixedRouteWorkspace: React.FC = () => {
                                 )}
                             </div>
                         </div>
+                    )}
+
+                    {viewMode === 'detours' && (
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading Detour Publisher..." />}>
+                            <DetourPublisherWorkspace onClose={() => setViewMode('dashboard')} />
+                        </Suspense>
                     )}
 
                 </div>

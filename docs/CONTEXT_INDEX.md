@@ -36,12 +36,14 @@ Load feature docs only when the task is directly related, including:
 - `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
 - `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`
 - `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
+- `docs/route-concept-planner/README.md` and its contract docs for the neutral fixed-route concept-testing workspace
 - `docs/route-planner-2/README.md` and its numbered docs for current Route Planner 2 work
 - `docs/route-planner-legacy/README.md` only when historical old Route Planner background is explicitly needed
 - `docs/SHUTTLE_PLANNER_PRD.md`
 - `docs/SHUTTLE_PLANNER_UI_SPEC.md`
 - `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md`
 - `docs/NETWORK_CONNECTIONS_UI_SPEC.md`
+- `docs/DETOUR_PUBLISHER.md`
 - `docs/route-colors.md`
 
 Do not load `docs/plans/`, `docs/archive/`, `docs/artifacts/`, or `docs/route-planner-legacy/` by default.
@@ -49,6 +51,10 @@ Do not load `docs/plans/`, `docs/archive/`, `docs/artifacts/`, or `docs/route-pl
 ### Route Planner 2 note
 
 For current Route Planner 2 work, use `docs/route-planner-2/README.md` first, then its numbered docs. The old Route Planner docs have been moved under `docs/route-planner-legacy/` and are background only, not binding guidance.
+
+### Route Concept Planner note
+
+For the new neutral Route Concept Planner, use `docs/route-concept-planner/README.md` first. It is a separate internal-beta workspace; Route Planner 2 remains the working Camp tool and must not be changed as part of Route Concept Planner work.
 
 ---
 
@@ -79,11 +85,13 @@ These should stay concise, current, and safe to use as default context.
 - `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
 - `docs/DWELL_CASCADE_FEATURE.md`
 - `docs/OPERATIONS_DASHBOARD_METRICS.md`
+- `docs/route-concept-planner/README.md` and its contract docs
 - `docs/route-planner-2/README.md` and its numbered docs for current Route Planner 2 work
 - `docs/SHUTTLE_PLANNER_PRD.md`
 - `docs/SHUTTLE_PLANNER_UI_SPEC.md`
 - `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md`
 - `docs/NETWORK_CONNECTIONS_UI_SPEC.md`
+- `docs/DETOUR_PUBLISHER.md`
 - `docs/route-colors.md`
 
 These are useful, but narrower in scope and more likely to drift.

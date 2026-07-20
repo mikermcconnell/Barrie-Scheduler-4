@@ -7,9 +7,18 @@ describe('feature flags', () => {
 
     expect(flags.demoMode).toBe(false);
     expect(flags.analyticsRoutePlanner2).toBe(true);
+    expect(flags.analyticsRouteConceptPlanner).toBe(false);
     expect(flags.analyticsNetworkConnections).toBe(true);
     expect(flags.fixedAnalytics).toBe(true);
     expect(flags.workspaceParking).toBe(true);
+  });
+
+  it('keeps the Route Concept Planner disabled unless explicitly enabled', () => {
+    const flags = buildFeatureFlags({
+      [getFeatureOverrideEnvVar('analyticsRouteConceptPlanner')]: 'true',
+    });
+
+    expect(flags.analyticsRouteConceptPlanner).toBe(true);
   });
 
   it('keeps demo-tagged features visible in demo mode', () => {
