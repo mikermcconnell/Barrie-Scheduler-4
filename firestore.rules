@@ -142,6 +142,29 @@ service cloud.firestore {
         allow delete: if canSupportWriteTeamData(teamId);
       }
 
+      // Team-authored detour notices and their map/publication records.
+      match /detourNotices/{noticeId} {
+        allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportReadTeamData(teamId);
+        allow create: if (canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId)) &&
+                         isValidDetourNoticeCreate(teamId);
+        allow update: if (canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId)) &&
+                         isValidDetourNoticeUpdate(teamId);
+        allow delete: if canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId);
+
+        match /overlays/{overlayId} {
+          allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportReadTeamData(teamId);
+          allow create, update, delete: if canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId);
+        }
+
+        match /publications/{publicationId} {
+          allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportReadTeamData(teamId);
+          allow create: if (canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId)) &&
+                           isValidDetourPublicationCreate(teamId, noticeId);
+          allow update: if false;
+          allow delete: if canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId);
+        }
+      }
+
       // Platform configuration
       match /platformConfig/{configId} {
         allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
@@ -258,6 +281,36 @@ service cloud.firestore {
         match /{nestedDoc=**} {
           allow read: if canAccessWorkspace(teamId, 'analyticsCouncilIntelligence') || canSupportReadTeamData(teamId);
           allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
+        }
+      }
+
+      // Route Concept Planner projects are isolated from the working Camp Route Planner.
+      // Every nested write is coupled to the revision-checked project root so a stale
+      // client cannot silently overwrite newer team work.
+      match /routeConceptPlannerProjects/{projectId} {
+        allow read: if canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportReadTeamData(teamId);
+        allow create: if (canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportWriteTeamData(teamId)) &&
+                         isValidRouteConceptProjectCreate(teamId, projectId);
+        allow update: if (canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportWriteTeamData(teamId)) &&
+                         isValidRouteConceptProjectUpdate(teamId, projectId);
+        // Project deletion is not a shipped workflow. Deny it so stale or custom
+        // clients cannot bypass revision protection or orphan subcollections.
+        allow delete: if false;
+
+        match /alternatives/{alternativeId} {
+          allow read: if canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportReadTeamData(teamId);
+          allow create, update: if (canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportWriteTeamData(teamId)) &&
+                                  isValidRouteConceptAlternativeWrite(teamId, projectId, alternativeId);
+          allow delete: if (canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportWriteTeamData(teamId)) &&
+                           isRouteConceptChildDeleteCoupled(teamId, projectId);
+
+          match /patterns/{patternId} {
+            allow read: if canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportReadTeamData(teamId);
+            allow create, update: if (canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportWriteTeamData(teamId)) &&
+                                    isValidRouteConceptPatternWrite(teamId, projectId, alternativeId, patternId);
+            allow delete: if (canAccessWorkspace(teamId, 'analyticsRouteConceptPlanner') || canSupportWriteTeamData(teamId)) &&
+                             isRouteConceptChildDeleteCoupled(teamId, projectId);
+          }
         }
       }
 
@@ -501,6 +554,164 @@ service cloud.firestore {
               feature == 'analyticsTransitApp') ||
              (accessLevel == 'parking' &&
               feature == 'workspaceParking');
+    }
+
+    function isValidRouteConceptProjectCreate(teamId, projectId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+               'id', 'teamId', 'schemaVersion', 'revision', 'name', 'status',
+               'selectedAlternativeId', 'preferredAlternativeId',
+               'alternativeOrder', 'alternativeCount',
+               'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.keys().hasAll([
+               'id', 'teamId', 'schemaVersion', 'revision', 'name', 'status',
+               'selectedAlternativeId', 'alternativeOrder', 'alternativeCount',
+               'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.id == projectId && data.teamId == teamId &&
+             data.schemaVersion == 1 && data.revision == 1 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.status in ['local-saved', 'archived'] &&
+             data.selectedAlternativeId is string && data.selectedAlternativeId.size() <= 128 &&
+             (!data.keys().hasAny(['preferredAlternativeId']) ||
+               (data.preferredAlternativeId is string && data.preferredAlternativeId.size() <= 128)) &&
+             data.alternativeOrder is list && data.alternativeOrder.size() <= 50 &&
+             data.alternativeCount is int && data.alternativeCount == data.alternativeOrder.size() &&
+             data.createdAt is timestamp && data.createdAt == request.time &&
+             data.updatedAt is timestamp && data.updatedAt == request.time &&
+             data.createdBy == request.auth.uid && data.updatedBy == request.auth.uid;
+    }
+
+    function isValidRouteConceptProjectUpdate(teamId, projectId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+               'id', 'teamId', 'schemaVersion', 'revision', 'name', 'status',
+               'selectedAlternativeId', 'preferredAlternativeId',
+               'alternativeOrder', 'alternativeCount',
+               'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.keys().hasAll([
+               'id', 'teamId', 'schemaVersion', 'revision', 'name', 'status',
+               'selectedAlternativeId', 'alternativeOrder', 'alternativeCount',
+               'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.id == projectId && data.teamId == teamId &&
+             data.schemaVersion == 1 && resource.data.schemaVersion == 1 &&
+             data.revision is int && data.revision == resource.data.revision + 1 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.status in ['local-saved', 'archived'] &&
+             data.selectedAlternativeId is string && data.selectedAlternativeId.size() <= 128 &&
+             (!data.keys().hasAny(['preferredAlternativeId']) ||
+               (data.preferredAlternativeId is string && data.preferredAlternativeId.size() <= 128)) &&
+             data.alternativeOrder is list && data.alternativeOrder.size() <= 50 &&
+             data.alternativeCount is int && data.alternativeCount == data.alternativeOrder.size() &&
+             data.createdAt == resource.data.createdAt && data.createdBy == resource.data.createdBy &&
+             data.updatedAt is timestamp && data.updatedAt == request.time &&
+             data.updatedBy == request.auth.uid;
+    }
+
+    function routeConceptRootAfter(teamId, projectId) {
+      return getAfter(/databases/$(database)/documents/teams/$(teamId)/routeConceptPlannerProjects/$(projectId));
+    }
+
+    function isValidRouteConceptAlternativeWrite(teamId, projectId, alternativeId) {
+      let data = request.resource.data;
+      let root = routeConceptRootAfter(teamId, projectId);
+      return existsAfter(/databases/$(database)/documents/teams/$(teamId)/routeConceptPlannerProjects/$(projectId)) &&
+             root.data.updatedBy == request.auth.uid && root.data.updatedAt == request.time &&
+             alternativeId in root.data.alternativeOrder &&
+             data.keys().hasOnly(['id', 'teamId', 'projectId', 'schemaVersion', 'payload', 'updatedAt', 'updatedBy']) &&
+             data.keys().hasAll(['id', 'teamId', 'projectId', 'schemaVersion', 'payload', 'updatedAt', 'updatedBy']) &&
+             data.id == alternativeId && data.teamId == teamId && data.projectId == projectId &&
+             data.schemaVersion == 1 && isValidRouteConceptAlternativePayload(data.payload, alternativeId) &&
+             data.updatedAt is timestamp && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function isValidRouteConceptPatternWrite(teamId, projectId, alternativeId, patternId) {
+      let data = request.resource.data;
+      let root = routeConceptRootAfter(teamId, projectId);
+      let alternativePath = /databases/$(database)/documents/teams/$(teamId)/routeConceptPlannerProjects/$(projectId)/alternatives/$(alternativeId);
+      let alternative = getAfter(alternativePath);
+      return existsAfter(/databases/$(database)/documents/teams/$(teamId)/routeConceptPlannerProjects/$(projectId)) &&
+             existsAfter(alternativePath) &&
+             root.data.updatedBy == request.auth.uid && root.data.updatedAt == request.time &&
+             alternativeId in root.data.alternativeOrder &&
+             patternId in alternative.data.payload.patternOrder &&
+             data.keys().hasOnly(['id', 'teamId', 'projectId', 'alternativeId', 'schemaVersion', 'payload', 'updatedAt', 'updatedBy']) &&
+             data.keys().hasAll(['id', 'teamId', 'projectId', 'alternativeId', 'schemaVersion', 'payload', 'updatedAt', 'updatedBy']) &&
+             data.id == patternId && data.teamId == teamId && data.projectId == projectId && data.alternativeId == alternativeId &&
+             data.schemaVersion == 1 && isValidRouteConceptPatternPayload(data.payload, patternId) &&
+             data.updatedAt is timestamp && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function isValidRouteConceptAlternativePayload(payload, alternativeId) {
+      return payload is map &&
+             payload.keys().hasOnly([
+               'id', 'name', 'status', 'structure', 'patternOrder', 'service',
+               'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             payload.keys().hasAll([
+               'id', 'name', 'status', 'structure', 'patternOrder', 'service',
+               'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             payload.id == alternativeId && payload.patternOrder is list;
+    }
+
+    function isValidRouteConceptPatternPayload(payload, patternId) {
+      return payload is map &&
+             payload.keys().hasOnly([
+               'id', 'name', 'role', 'alignment', 'stops', 'segmentFingerprints',
+               'runtimeEvidence', 'runtimeOverrides', 'source', 'notes',
+               'createdAt', 'updatedAt'
+             ]) &&
+             payload.keys().hasAll([
+               'id', 'name', 'role', 'alignment', 'stops', 'runtimeEvidence',
+               'runtimeOverrides', 'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             payload.id == patternId;
+    }
+
+    function isRouteConceptChildDeleteCoupled(teamId, projectId) {
+      let rootPath = /databases/$(database)/documents/teams/$(teamId)/routeConceptPlannerProjects/$(projectId);
+      return existsAfter(rootPath) && exists(rootPath) &&
+              getAfter(rootPath).data.updatedBy == request.auth.uid &&
+              getAfter(rootPath).data.updatedAt == request.time &&
+              getAfter(rootPath).data.revision == get(rootPath).data.revision + 1;
+    }
+
+    function isValidDetourNoticeCreate(teamId) {
+      let data = request.resource.data;
+      return data.teamId == teamId &&
+             data.revision == 1 && data.status == 'draft' &&
+             data.createdBy == request.auth.uid && data.updatedBy == request.auth.uid &&
+             data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidDetourNoticeUpdate(teamId) {
+      let data = request.resource.data;
+      let isContentSave = data.revision is int && data.revision == resource.data.revision + 1;
+      let isMarkPosted = data.revision == resource.data.revision &&
+                         data.status == 'posted' && data.latestPostedRevision == data.revision &&
+                         data.diff(resource.data).affectedKeys().hasOnly([
+                           'status', 'latestPostedRevision', 'updatedAt', 'updatedBy'
+                         ]);
+      return data.teamId == teamId && data.teamId == resource.data.teamId &&
+             data.createdAt == resource.data.createdAt && data.createdBy == resource.data.createdBy &&
+             data.updatedBy == request.auth.uid && data.updatedAt is timestamp &&
+             (isContentSave || isMarkPosted);
+    }
+
+    function isValidDetourPublicationCreate(teamId, noticeId) {
+      let data = request.resource.data;
+      let notice = getAfter(/databases/$(database)/documents/teams/$(teamId)/detourNotices/$(noticeId));
+      return notice != null && notice.data.status == 'posted' &&
+             data.noticeId == noticeId && data.revision == notice.data.revision &&
+             data.exportedBy == request.auth.uid && data.postedBy == request.auth.uid &&
+             data.exportedAt is timestamp && data.postedAt is timestamp &&
+             data.myRideUrl is string && data.myRideUrl.size() <= 2000 &&
+             data.myRideUrl.matches('https://(www[.])?myridebarrie[.]ca/.*') &&
+             data.filenames is map;
     }
 
     function canAccessWorkspace(teamId, feature) {

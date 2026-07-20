@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Map, { NavigationControl, ScaleControl, MapRef } from 'react-map-gl/mapbox';
-import type { MapMouseEvent } from 'react-map-gl/mapbox';
+import type { MapMouseEvent, ViewStateChangeEvent } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { getClientMapboxToken } from '../../utils/mapboxToken';
 
@@ -52,6 +52,7 @@ export interface MapBaseProps {
     onMouseMove?: (e: MapMouseEvent) => void;
     onMouseLeave?: (e: MapMouseEvent) => void;
     onClick?: (e: MapMouseEvent) => void;
+    onMoveEnd?: (e: ViewStateChangeEvent) => void;
 }
 
 export const MapBase: React.FC<MapBaseProps> = ({
@@ -72,6 +73,7 @@ export const MapBase: React.FC<MapBaseProps> = ({
     onMouseMove,
     onMouseLeave,
     onClick,
+    onMoveEnd,
 }) => {
     const [mapFailed, setMapFailed] = useState(false);
     const isMountedRef = useRef(true);
@@ -154,6 +156,7 @@ export const MapBase: React.FC<MapBaseProps> = ({
                 onMouseMove={onMouseMove}
                 onMouseLeave={onMouseLeave}
                 onClick={onClick}
+                onMoveEnd={onMoveEnd}
                 onError={handleMapError}
             >
                 {showNavigation && <NavigationControl position="bottom-right" />}

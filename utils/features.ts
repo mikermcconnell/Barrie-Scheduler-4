@@ -19,6 +19,7 @@ export const FEATURE_DEFINITIONS = {
     fixedPerformanceImport: { defaultEnabled: true, hideInDemoMode: false },
     fixedSystemEditor: { defaultEnabled: true, hideInDemoMode: false },
     fixedLocalAiReview: { defaultEnabled: false, hideInDemoMode: false },
+    fixedDetours: { defaultEnabled: false, hideInDemoMode: false },
 
     analyticsTransitApp: { defaultEnabled: true, hideInDemoMode: false },
     analyticsOdMatrix: { defaultEnabled: true, hideInDemoMode: true },
@@ -29,6 +30,7 @@ export const FEATURE_DEFINITIONS = {
     analyticsResidentialGrowth: { defaultEnabled: true, hideInDemoMode: true },
     analyticsNetworkConnections: { defaultEnabled: true, hideInDemoMode: true },
     analyticsRoutePlanner2: { defaultEnabled: true, hideInDemoMode: true },
+    analyticsRouteConceptPlanner: { defaultEnabled: false, hideInDemoMode: true },
     analyticsShuttlePlanner: { defaultEnabled: true, hideInDemoMode: true },
     analyticsCouncilIntelligence: { defaultEnabled: true, hideInDemoMode: true },
 

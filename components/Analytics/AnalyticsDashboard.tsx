@@ -81,6 +81,10 @@ const RoutePlanner2Workspace = lazyWithRetry(
     () => import('./RoutePlanner2Workspace').then(module => ({ default: module.RoutePlanner2Workspace })),
     'analytics-route-planner-2-workspace'
 );
+const RouteConceptPlannerWorkspace = lazyWithRetry(
+    () => import('./RouteConceptPlannerWorkspace').then(module => ({ default: module.RouteConceptPlannerWorkspace })),
+    'analytics-route-concept-planner-workspace'
+);
 const NetworkConnectionsWorkspace = lazyWithRetry(
     () => import('./NetworkConnectionsWorkspace').then(module => ({ default: module.NetworkConnectionsWorkspace })),
     'analytics-network-connections-workspace'
@@ -175,6 +179,7 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'fleet-plan-workspace': 'analyticsFleetPlan',
     'residential-growth': 'analyticsResidentialGrowth',
     'route-planner-2': 'analyticsRoutePlanner2',
+    'route-concept-planner': 'analyticsRouteConceptPlanner',
     'network-connections': 'analyticsNetworkConnections',
     'shuttle-planner': 'analyticsShuttlePlanner',
     'council-intelligence': 'analyticsCouncilIntelligence',
@@ -699,6 +704,25 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         );
     }
 
+    if (view === 'route-concept-planner') {
+        return (
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsRouteConceptPlanner" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Route Concept Planner..." />}>
+                        <RouteConceptPlannerWorkspace
+                            onBack={() => setView('dashboard')}
+                            userId={user?.uid ?? null}
+                            teamId={team.id}
+                        />
+                    </Suspense>
+                </div>
+            </div>
+        );
+    }
+
     if (view === 'network-connections') {
         return (
             <div className="flex h-full flex-col overflow-hidden">
@@ -876,6 +900,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                             hasData={false}
                             underConstruction={isFeatureUnderConstruction('analyticsCouncilIntelligence')}
                             onClick={() => setView('council-intelligence')}
+                        />
+                    )}
+                    {canAccess('analyticsRouteConceptPlanner') && (
+                        <AnalyticsCard
+                            color="cyan"
+                            icon={<Route size={20} />}
+                            title="Route Concept Planner"
+                            description="Test complete route alternatives with GTFS, road travel times, and service assumptions."
+                            hasData={false}
+                            underConstruction={isFeatureUnderConstruction('analyticsRouteConceptPlanner')}
+                            onClick={() => setView('route-concept-planner')}
                         />
                     )}
                 </div>
