@@ -35,6 +35,10 @@ firebase/
 │   ├── residentialGrowth/{docId}         # Monthly issued/occupied residential growth datasets
 │   │   └── imports/{importId}            # Residential Growth import history
 │   ├── routePlanner2Projects/{projectId} # Route Planner 2 saved planning projects
+│   ├── councilIntelligence/default       # Council Intelligence pilot metadata/source health
+│   │   ├── meetings/{meetingId}          # Bounded official meeting text, topics, hashes, status
+│   │   ├── councillors/{profileId}       # Evidence-counted mover/seconder/recorded-vote profile
+│   │   └── registers/{registerId}         # Transit-relevant decisions/actions/funding/deadlines
 │   │   └── scenarios/{scenarioId}        # Saved editable route concepts
 │   └── fleetPlan/default                 # Shared fleet-planning workbook metadata + active storage pointer
 │       └── versions/{versionId}          # Fleet Plan version history
@@ -50,6 +54,8 @@ firebase/
 `teams/{teamId}/members/{userId}` is the durable source of team membership. The `userId` field must match the document ID so a collection-group query filtered to the signed-in user can safely enumerate only that user's teams. The required collection-group `userId` index is declared in `firestore.indexes.json`. `users/{userId}.teamId` selects the active team; joining an additional team does not replace an existing active-team pointer unless activation is explicitly requested.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
 `teams/{teamId}/routePlanner2Projects/{projectId}` stores Route Planner 2 project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection.
+
+`teams/{teamId}/councilIntelligence/default` stores the Council Intelligence 90-day pilot window, last sync timestamp, and bounded source-health counts. Its `meetings` subcollection stores normalized eSCRIBE meeting metadata, official source links, extraction status, content hash, transit topics, and bounded plain text; external HTML is never rendered. `councillors` stores evidence counts and only treats explicitly named recorded votes as votes—movers and seconders remain separate signals. `registers` stores transit-relevant official-record summaries with confidence and source links. Reads require `analyticsCouncilIntelligence`; refresh is performed by a scheduled Function or an authenticated owner/admin callable.
 `teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
 
 ### Cloud Storage Paths
@@ -900,3 +906,4 @@ Routes like 2A+2B share a downtown terminus:
 | Shift, Requirement, TOD day/zone types | `utils/demandTypes.ts` |
 | RideCo/MVT parser result and import report types | `utils/parsers/csvParsers.ts` |
 | Parking import, revenue import, settings, summaries, and flags | `utils/parking/parkingTypes.ts` |
+| Council meetings, items, motions, votes, evidence, actions, and funding | `utils/council/types.ts` |

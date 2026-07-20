@@ -6,7 +6,7 @@
  */
 
 import React, { Suspense, useState, useEffect, useCallback } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Landmark } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -84,6 +84,10 @@ const RoutePlanner2Workspace = lazyWithRetry(
 const NetworkConnectionsWorkspace = lazyWithRetry(
     () => import('./NetworkConnectionsWorkspace').then(module => ({ default: module.NetworkConnectionsWorkspace })),
     'analytics-network-connections-workspace'
+);
+const CouncilIntelligenceWorkspace = lazyWithRetry(
+    () => import('./CouncilIntelligenceWorkspace').then(module => ({ default: module.CouncilIntelligenceWorkspace })),
+    'analytics-council-intelligence-workspace'
 );
 
 interface AnalyticsCardProps {
@@ -173,6 +177,7 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'route-planner-2': 'analyticsRoutePlanner2',
     'network-connections': 'analyticsNetworkConnections',
     'shuttle-planner': 'analyticsShuttlePlanner',
+    'council-intelligence': 'analyticsCouncilIntelligence',
 };
 
 const AnalyticsFeatureNotice: React.FC<{ feature: Parameters<typeof isFeatureUnderConstruction>[0] }> = ({ feature }) => {
@@ -198,7 +203,7 @@ const AnalyticsPanelLoading: React.FC<{ label?: string }> = ({ label = 'Loading 
 );
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose, initialView = 'dashboard', routePrefix }) => {
-    const { team } = useTeam();
+    const { team, teamRole } = useTeam();
     const { user } = useAuth();
     const toast = useToast();
     const [view, setView] = useState<AnalyticsView>('dashboard');
@@ -733,6 +738,26 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         );
     }
 
+    if (view === 'council-intelligence') {
+        return (
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsCouncilIntelligence" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Council Intelligence..." />}>
+                        <CouncilIntelligenceWorkspace
+                            onBack={() => setView('dashboard')}
+                            teamId={team.id}
+                            userId={user?.uid ?? null}
+                            canRefresh={teamRole === 'owner' || teamRole === 'admin'}
+                        />
+                    </Suspense>
+                </div>
+            </div>
+        );
+    }
+
     // Main dashboard with cards
     return (
         <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -842,9 +867,19 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                             onClick={() => setView('route-planner-2')}
                         />
                     )}
+                    {canAccess('analyticsCouncilIntelligence') && (
+                        <AnalyticsCard
+                            color="violet"
+                            icon={<Landmark size={20} />}
+                            title="Council Intelligence"
+                            description="Review council and committee meetings, decisions, votes, and transit-related actions with source-linked evidence."
+                            hasData={false}
+                            underConstruction={isFeatureUnderConstruction('analyticsCouncilIntelligence')}
+                            onClick={() => setView('council-intelligence')}
+                        />
+                    )}
                 </div>
             </div>
         </div>
     );
 };
-

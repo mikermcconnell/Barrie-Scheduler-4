@@ -67,4 +67,18 @@ describe('workspace access preview', () => {
         expect(preview.analyticsCards).toEqual([]);
         expect(preview.operationsTools).toEqual([]);
     });
+
+    it('shows Council Intelligence to planners but not Transit App-only partners', () => {
+        const plannerPreview = buildWorkspaceAccessPreview({
+            accessLevel: 'planner',
+            flags: allFeaturesEnabled,
+        });
+        const partnerPreview = buildWorkspaceAccessPreview({
+            accessLevel: 'transit-app-only',
+            flags: allFeaturesEnabled,
+        });
+
+        expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('Council Intelligence');
+        expect(partnerPreview.analyticsCards.map(card => card.label)).not.toContain('Council Intelligence');
+    });
 });

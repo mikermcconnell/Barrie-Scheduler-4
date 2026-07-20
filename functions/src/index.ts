@@ -6,6 +6,7 @@ export { sendDailyReport, testDailyReport, testStaleReportAlert } from './dailyR
 export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
 export { developerSupportAccess } from './developerSupportAccess';
+export { refreshCouncilIntelligence, scheduledCouncilIntelligenceSync } from './councilIntelligence';
 import {
   decodeExcelRequestBody,
   parseIssuanceListingBuffer,

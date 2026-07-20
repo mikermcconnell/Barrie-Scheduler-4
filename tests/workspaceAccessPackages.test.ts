@@ -6,6 +6,12 @@ import {
 } from '../utils/workspaceAccessPackages';
 
 describe('workspace access packages', () => {
+    it('includes Council Intelligence in the Barrie planner package', () => {
+        const selection = buildWorkspaceSelectionFromPackage('barrie-planner');
+
+        expect(selection.analyticsCouncilIntelligence).toBe(true);
+    });
+
     it('includes the WATT-style Transit App plus STREETS dashboard package', () => {
         const pkg = getWorkspaceAccessPackage('transit-app-streets');
         const selection = buildWorkspaceSelectionFromPackage('transit-app-streets');
@@ -17,6 +23,7 @@ describe('workspace access packages', () => {
         expect(selection.workspaceFixedRoute).toBe(false);
         expect(selection.workspaceOndemand).toBe(false);
         expect(selection.workspaceParking).toBe(false);
+        expect(selection.analyticsCouncilIntelligence).toBe(false);
     });
 
     it('keeps internal developer access as the only full-access package', () => {
@@ -27,4 +34,3 @@ describe('workspace access packages', () => {
         expect(nonDeveloperPackages.every(pkg => pkg.accessLevel !== 'internal')).toBe(true);
     });
 });
-

@@ -13,7 +13,8 @@ export type AnalyticsWorkspaceView =
     | 'residential-growth'
     | 'route-planner-2'
     | 'network-connections'
-    | 'shuttle-planner';
+    | 'shuttle-planner'
+    | 'council-intelligence';
 
 const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'dashboard',
@@ -31,6 +32,7 @@ const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'route-planner-2',
     'network-connections',
     'shuttle-planner',
+    'council-intelligence',
 ]);
 
 const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = {
@@ -49,6 +51,7 @@ const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = 
     'route-planner-2': 'Route Planner',
     'network-connections': 'Network Connections',
     'shuttle-planner': 'Shuttle Planner',
+    'council-intelligence': 'Council Intelligence',
 };
 
 const normalizeHashParts = (value: string): string[] =>

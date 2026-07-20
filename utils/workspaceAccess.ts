@@ -27,6 +27,7 @@ export type WorkspaceAccessFeatureKey =
     | 'analyticsNetworkConnections'
     | 'analyticsRoutePlanner2'
     | 'analyticsShuttlePlanner'
+    | 'analyticsCouncilIntelligence'
     | 'operationsLoadProfiles'
     | 'operationsOperatorDwell';
 
@@ -78,6 +79,7 @@ export const ANALYTICS_WORKSPACE_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsNetworkConnections',
     'analyticsRoutePlanner2',
     'analyticsShuttlePlanner',
+    'analyticsCouncilIntelligence',
 ];
 
 export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
@@ -103,6 +105,7 @@ const PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     'analyticsFleetPlan',
     'analyticsResidentialGrowth',
     'analyticsRoutePlanner2',
+    'analyticsCouncilIntelligence',
 ];
 
 const EXTERNAL_PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
@@ -198,4 +201,3 @@ export function canAccessWorkspaceFeature(
 export function listUnknownWorkspaceAccessKeys(): string[] {
     return WORKSPACE_ACCESS_FEATURES.filter((feature) => !(feature in FEATURE_DEFINITIONS));
 }
-

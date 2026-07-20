@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import optimizeApiHandler from './api/optimize';
 import performanceQueryApiHandler from './api/performance-query';
 import localAiReviewApiHandler from './api/local-ai-review';
+import councilIntelligenceApiHandler from './api/council-intelligence';
 import AdmZip from 'adm-zip';
 import {
   authenticateFirebaseRequest,
@@ -187,6 +188,12 @@ export default defineConfig(({ mode }) => {
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ error: 'Internal Server Error', message: error.message }));
           }
+          return;
+        }
+
+        // Localhost-only Council Intelligence official-source preview.
+        if (req.url?.startsWith('/api/council-intelligence') && req.method === 'GET') {
+          await councilIntelligenceApiHandler(req as any, attachJsonResponseHelpers(res));
           return;
         }
 

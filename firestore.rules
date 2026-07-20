@@ -249,6 +249,18 @@ service cloud.firestore {
         }
       }
 
+      // Council and committee meeting intelligence root document.
+      match /councilIntelligence/{docId} {
+        allow read: if canAccessWorkspace(teamId, 'analyticsCouncilIntelligence') || canSupportReadTeamData(teamId);
+        allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
+
+        // Meetings, councillors, registers, and their nested evidence.
+        match /{nestedDoc=**} {
+          allow read: if canAccessWorkspace(teamId, 'analyticsCouncilIntelligence') || canSupportReadTeamData(teamId);
+          allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
+        }
+      }
+
       // Future team-scoped collections inherit support-session access without
       // granting a permanent global bypass. Existing ordinary-user rules above
       // remain authoritative for members and shared sources.
@@ -465,6 +477,7 @@ service cloud.firestore {
                 'analyticsFleetPlan',
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
+                'analyticsCouncilIntelligence',
                 'operationsLoadProfiles',
                 'operationsOperatorDwell'
               ])) ||
@@ -477,7 +490,8 @@ service cloud.firestore {
                 'analyticsStudentPass',
                 'analyticsFleetPlan',
                 'analyticsResidentialGrowth',
-                'analyticsRoutePlanner2'
+                'analyticsRoutePlanner2',
+                'analyticsCouncilIntelligence'
               ])) ||
              (accessLevel == 'production' &&
               (feature in ['workspaceFixedRoute', 'workspaceOperations'])) ||

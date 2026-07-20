@@ -18,7 +18,7 @@ Primary app shells today:
 - **Dashboard & Reporting** - STREETS-backed performance dashboards and operational reporting
 - **Parking** - shared department parking-code import, monthly usage summaries, and plate-level pattern review
 
-Adjacent planning-data workspaces include Route Planner 2, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, and related exploratory tools.
+Adjacent planning-data workspaces include Route Planner 2, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, Council Intelligence, and related exploratory tools. Council Intelligence is a transit-first, evidence-led internal pilot: official named votes and sourced statements may inform profiles, while missing evidence stays unknown and AI or procedural signals must never be presented as official councillor votes.
 
 Use this document for the overall product frame and the fixed-route core workflow. Use feature-specific product briefs and UI specs for narrower planning-data modules when those tasks are directly relevant.
 

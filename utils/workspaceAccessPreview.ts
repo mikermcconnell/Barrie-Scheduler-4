@@ -118,6 +118,12 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
         description: 'Shuttle service planning workspace.',
         previewKind: 'analytics-card',
     },
+    {
+        feature: 'analyticsCouncilIntelligence',
+        label: 'Council Intelligence',
+        description: 'Council and committee meeting records, decisions, votes, and transit-related actions.',
+        previewKind: 'analytics-card',
+    },
 ];
 
 const OPERATIONS_TOOLS: WorkspacePreviewItem[] = [

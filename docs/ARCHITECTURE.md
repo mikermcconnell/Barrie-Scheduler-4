@@ -113,6 +113,7 @@ Notable areas:
 - Network Connections → `components/Analytics/NetworkConnectionsWorkspace.tsx`, `utils/network-connections/`
 - student-pass planning → `components/Analytics/StudentPass*`
 - Residential Growth → `components/Analytics/ResidentialGrowthWorkspace.tsx`, `utils/residential-growth/`; imports monthly Issuance Listing and Certificate of Occupancy Excel reports, maps issued/planned and occupied/completed residential units as separate Mapbox tabs, and stores team-scoped planning datasets.
+- Council Intelligence → `components/Analytics/CouncilIntelligenceWorkspace.tsx`, `utils/council/`, and `functions/src/councilIntelligence.ts`; provides a feature-flagged 90-day Barrie eSCRIBE pilot with deterministic meeting parsing, evidence-aware councillor signals, team-scoped Firestore reads, an owner/admin manual refresh, and a six-hour server-side sync.
 
 ---
 
@@ -273,6 +274,7 @@ Representative coverage areas in `tests/`:
 - **Workspace/UI flows** → selected tests for Add Trip, Extend Trip, resume, connections, and performance import behavior
 - **On-Demand imports** → `rideCoParser.test.ts` covers RideCo/MVT row detection, Excel numeric times, workbook-sheet selection, and skipped-column reports
 - **Route Planner 2** → route authoring, road snapping, map export, stop-time labels, and workspace local-state tests cover the current map-first workflow
+- **Council Intelligence** → deterministic source parsing, named-vote honesty, pilot-window filtering, source allowlisting, workspace access, routing, and Firestore boundary tests cover the initial pilot
 
 Do not assume every large UI surface has deep coverage. For fragile planner-facing workflows, manual verification is still important.
 
