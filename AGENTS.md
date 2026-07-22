@@ -1,67 +1,56 @@
 # AGENTS.md instructions for Scheduler 4
 
-Primary agent entrypoint for this repository.
+Primary agent contract for this repository.
 
-Use this file to understand the repo's agent contract before loading deeper project context.
+Read this file first. Then read `docs/CONTEXT_INDEX.md`, which routes tasks to the smallest relevant set of product, architecture, schema, feature, and historical context.
 
-## Read Next
+## Authority and context
 
-1. `docs/CONTEXT_INDEX.md`
-   Canonical context load order and document tiers.
-2. `docs/rules/LOCKED_LOGIC.md`
-   Durable behavioral constraints for schedule logic.
-3. `docs/PRODUCT_VISION.md`
-   Product scope, decision framework, and anti-patterns.
-4. `docs/ARCHITECTURE.md`
-   Current source layout and major data flow.
-5. `docs/SCHEMA.md`
-   Firestore, storage, and type-location reference.
+- Higher-priority system, developer, and user instructions override this file.
+- `AGENTS.md` owns repository-wide agent workflow and safety rules.
+- `docs/CONTEXT_INDEX.md` owns context routing, document tiers, and source-of-truth precedence.
+- `docs/rules/LOCKED_LOGIC.md` owns non-negotiable schedule behavior.
+- `docs/PRODUCT_VISION.md` owns durable product intent and decision principles.
+- `docs/ARCHITECTURE.md` and `docs/SCHEMA.md` describe current implementation structure and data contracts.
+- Feature docs govern only their named feature and cannot override locked logic or product boundaries.
+- `ORCHESTRATOR.md` is compact recovery memory, not an independent source of truth.
 
-Load `ORCHESTRATOR.md` when you are operating in orchestrator mode, delegating work to subagents, recovering from compacted context, or you need the repo's living summary of architecture, conventions, fragile areas, and current state. Treat it as durable working memory that supports Tier 1 docs, not as a replacement for them.
+When docs and implementation disagree, verify current code, tests, and persisted data as appropriate. Treat the mismatch as documentation drift to resolve; do not silently change locked behavior to match an implementation accident.
 
-Load `.claude/CLAUDE.md` only as a tool-specific workflow supplement or when working in danger-zone files that need its verification guidance.
-Load `.claude/context.md` only when the task touches locked schedule behavior or needs historical implementation notes.
-For Route Planner, Shuttle Planner, Network Connections, and other planning-data tasks, load the matching feature docs named in `docs/CONTEXT_INDEX.md` instead of scanning `docs/` blindly.
-Do not use `docs/plans/`, `docs/archive/`, or `docs/artifacts/` as default context.
+## Repository principles
 
-## Repo Principles
+- Load only the context required for the task. Do not scan `docs/` broadly when the context index names a narrower source.
+- Keep durable decisions in the appropriate durable or feature document, not only in dated plans or handoffs.
+- Treat `docs/plans/`, `docs/superpowers/plans/`, `docs/archive/`, `docs/artifacts/`, and legacy feature folders as history unless a current authoritative document explicitly incorporates the decision.
+- Respect locked logic before changing generation, parsing, timing, routing, block assignment, or schedule-editor behavior.
+- Keep the planner in control. AI may suggest or analyze, but must not silently override operational rules.
+- Never use `--no-verify` to bypass failed checks. Fix the failure or investigate and report the blocker.
+- Preserve unrelated user changes in a dirty working tree.
 
-- Keep durable decisions in Tier 1 docs, not in dated plan files.
-- Treat planning notes as history unless a durable doc confirms the behavior.
-- Respect locked logic before changing generation, parsing, timing, routing, or block assignment behavior.
-- Keep the planner in control. AI may suggest or analyze, but should not silently override operational rules.
-- Never use `--no-verify` to bypass failed checks. Fix the failure or investigate and report the blocker instead.
+## Orchestrator mode
 
-## Orchestrator Mode
-
-In this repo, default to orchestrator mode for non-trivial repository work unless the user explicitly asks for direct implementation or higher-priority instructions require otherwise.
+For non-trivial repository work, default to orchestrator mode unless the user explicitly requests direct implementation or higher-priority instructions require otherwise.
 
 In orchestrator mode:
 
-- Understand the codebase enough to work safely before changing it. If repo understanding is incomplete, first inspect the structure, entry points, module boundaries, conventions, dependencies, test patterns, and fragile or non-obvious areas.
-- During that initial mapping pass, do not make changes unless the user asked for them.
-- Treat this thread as working memory, but do not rely on thread memory alone for important repo knowledge.
-- Prefer delegating implementation work to subagents when delegation is available, appropriate, and permitted.
-- Give each subagent a clear prompt with the goal, owned files, forbidden files, conventions to follow, and verification steps.
-- If the user gives multiple independent implementation tasks, delegate them in parallel when practical.
-- Review subagent output before reporting back. Incorporate what you learn into your understanding of the repo.
-- Preserve durable memory in repo files. Update `ORCHESTRATOR.md` when architecture, conventions, fragile areas, or other lasting repo understanding changes in a way future work should know.
-- Keep `AGENTS.md` as the top-level agent contract, Tier 1 docs as the durable source of truth for behavior and architecture, and `ORCHESTRATOR.md` as the living memory that helps future orchestrator work recover context quickly.
+- Map the relevant entry points, module boundaries, conventions, tests, and fragile areas before changing code.
+- During an initial mapping pass, do not make changes unless the user asked for them.
+- Use `ORCHESTRATOR.md` when delegating, recovering from compacted context, or orienting across multiple workspaces.
+- Delegate bounded work when delegation is available, appropriate, and permitted. Give each subagent a clear goal, owned files, forbidden files, conventions, and verification steps.
+- Review delegated work before reporting completion.
+- Update the authoritative product, architecture, schema, locked-logic, or feature document when durable behavior changes. Update `ORCHESTRATOR.md` only when a compact cross-cutting convention or fragile-area pointer would help future orchestration.
 
-## Skills
+## Tool-specific supplements
 
-A skill is a set of local instructions stored in a `SKILL.md` file. The skills below are intended to be visible and portable with this repository.
+- Load `.claude/CLAUDE.md` only for Claude-specific workflow guidance or its extra danger-zone verification table.
+- Load `.claude/context.md` only for detailed historical implementation notes about locked schedule behavior.
+- Neither `.claude` file overrides this contract or the durable docs.
 
-### Available skills
+## Repository skills
 
-- feature-delivery-loop: Plan and deliver product features in an existing codebase with a disciplined delivery loop: audit the current state, compare docs to code, choose the next highest-value milestone, implement it, verify it, and continue iteratively. Use for both new and partially implemented features when the user asks to build a feature, add a module, wire a prototype, continue a feature, proceed, keep going, implement the next step, move a feature from prototype to usable functionality, or asks "where are we at" on feature work. (file: C:/Users/Mike McConnell/.codex/skills/feature-delivery-loop/SKILL.md)
-- docs-content-audit: Audit repository Markdown and agent-facing documentation for best-practice context hygiene, load order, portability, drift, contradictions, and durable-vs-archive separation. Use when reviewing README, AGENTS.md, context index files, product vision, architecture docs, schema docs, plan folders, or any request to assess whether docs are current, agent-friendly, or at best-practice level, and when cleaning up those docs afterward. (file: C:/Users/Mike McConnell/.codex/skills/docs-content-audit/SKILL.md)
+Repository-portable skills use paths relative to this checkout:
 
-### How to use skills
+- `feature-delivery-loop` — audit, plan, implement, verify, and continue feature delivery. (file: ./.codex/skills/feature-delivery-loop/SKILL.md)
+- `doc-review` — audit context documentation for staleness, contradictions, paths, and context hygiene. (file: ./.agents/skills/doc-review/SKILL.md)
 
-- Discovery: The list above is the skills available in this repository. Skill bodies live on disk at the listed paths.
-- Trigger rules: If the user names a skill, or the task clearly matches a skill description shown above, use that skill for that turn.
-- Missing or blocked: If a named skill is not listed or its `SKILL.md` cannot be read, say so briefly and continue with the best fallback.
-- Progressive disclosure: After deciding to use a skill, open its `SKILL.md` and read only enough to follow the workflow.
-- Context hygiene: Keep context small. Only load extra files directly needed for the request.
-- Safety and fallback: If a skill cannot be applied cleanly, state the issue, pick the next-best approach, and continue.
+Additional scoped and auto-activated skills live under `.agents/skills/`. Use a skill when the task matches its description, and read its complete `SKILL.md` before acting. If a named skill is unavailable, state that briefly and continue with the safest fallback.

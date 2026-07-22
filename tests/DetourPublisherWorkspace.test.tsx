@@ -48,14 +48,48 @@ vi.mock('../utils/route-planner-2/routePlanner2GtfsClient', () => ({
             { lat: 44.39, lng: -79.70, sequence: 1 },
             { lat: 44.38, lng: -79.68, sequence: 2 },
         ],
+    }, {
+        id: 'pattern-8b-short', routeId: 'route-8b', routeShortName: '8B', routeLongName: 'Crosstown',
+        serviceId: 'weekday', dayTypeLabel: 'Weekday', directionId: 0, tripHeadsign: 'Short turn',
+        tripCount: 30, stopCount: 1, shapePointCount: 1,
+        stops: [{ stopId: 'a', gtfsStopId: 'a', stopCode: '101', name: 'First', lat: 44.39, lng: -79.70, sequence: 1 }],
+        shapePoints: [{ lat: 44.39, lng: -79.70, sequence: 1 }],
+    }, {
+        id: 'pattern-7a-saturday', routeId: 'route-7a', routeShortName: '7A', routeLongName: 'Grove',
+        serviceId: 'saturday', dayTypeLabel: 'Saturday', directionId: 0, tripHeadsign: 'Downtown',
+        tripCount: 20, stopCount: 2, shapePointCount: 2, stops: [], shapePoints: [],
     }]),
 }));
 vi.mock('../components/detours/DetourMapCanvas', () => ({
     DetourMapCanvas: React.forwardRef(function MockMap(
-        { overlay }: { overlay: { routeSnapshot: { routeShortName: string } } },
+        { overlay, publicationMode, onAddTemporaryStop, onSelectItem, onSelectClosureStart, onSelectClosureEnd }: {
+            overlay: {
+                routeSnapshot: { routeShortName: string };
+                stopImpacts: Array<{ id: string; temporaryStopCode?: string }>;
+                streetLabels?: Array<{ streetName: string }>;
+            };
+            publicationMode?: boolean;
+            onAddTemporaryStop: (coordinate: { latitude: number; longitude: number }) => void;
+            onSelectItem?: (selection: { type: 'stop-impact'; id: string }) => void;
+            onSelectClosureStart: (anchor: { segmentIndex: number; fraction: number; coordinate: { latitude: number; longitude: number } }) => void;
+            onSelectClosureEnd: (anchor: { segmentIndex: number; fraction: number; coordinate: { latitude: number; longitude: number } }) => void;
+        },
         _ref,
     ) {
-        return <div data-testid="detour-map">Map for {overlay.routeSnapshot.routeShortName}</div>;
+        React.useImperativeHandle(_ref, () => ({
+            captureImage: async () => 'data:image/png;base64,map',
+            fitToNotice: vi.fn(),
+        }));
+        const temporary = overlay.stopImpacts.find(impact => impact.id.startsWith('temporary-'));
+        return <div data-testid="detour-map" data-publication-mode={String(Boolean(publicationMode))}>
+            Map for {overlay.routeSnapshot.routeShortName}
+            <button type="button" onClick={() => onSelectClosureStart({ segmentIndex: 0, fraction: 0, coordinate: { latitude: 44.39, longitude: -79.70 } })}>Mock closure start</button>
+            <button type="button" onClick={() => onSelectClosureEnd({ segmentIndex: 0, fraction: 1, coordinate: { latitude: 44.38, longitude: -79.68 } })}>Mock closure end</button>
+            <button type="button" onClick={() => onAddTemporaryStop({ latitude: 44.39, longitude: -79.68 })}>Mock add temporary stop</button>
+            {temporary && <button type="button" onClick={() => onSelectItem?.({ type: 'stop-impact', id: temporary.id })}>Mock select temporary stop</button>}
+            {temporary?.temporaryStopCode && <span>Temporary code {temporary.temporaryStopCode}</span>}
+            {(overlay.streetLabels?.length ?? 0) > 0 && <span>Street labels {overlay.streetLabels?.map(label => label.streetName).join(',')}</span>}
+        </div>;
     }),
 }));
 vi.mock('../components/detours/DetourNoticePreview', () => ({
@@ -99,18 +133,131 @@ describe('DetourPublisherWorkspace', () => {
         act(() => findButton(container, 'New detour')?.click());
         expect(container.textContent).toContain('Routes and tools');
         expect(container.textContent).toContain('Add a route to start mapping');
+        expect(container.textContent).not.toContain('MyRide summary');
+        expect(container.textContent).toContain('Start time (optional)');
+        expect((container.querySelector('input[type="time"]') as HTMLInputElement | null)?.value).toBe('');
     });
 
     it('imports a current GTFS pattern into the editable notice', async () => {
         await act(async () => root.render(<DetourPublisherWorkspace onClose={vi.fn()} />));
         await flush();
         act(() => findButton(container, 'New detour')?.click());
-        act(() => findButton(container, 'Choose GTFS route')?.click());
+        act(() => findButton(container, 'Choose route')?.click());
         await flush();
-        const pattern = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Route 8B'));
-        expect(pattern).toBeTruthy();
-        act(() => pattern?.click());
+        expect(container.textContent).not.toContain('Route 7A');
+        expect(Array.from(container.querySelectorAll('button')).filter(button => button.textContent?.includes('Route 8B'))).toHaveLength(1);
+        const route = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Route 8B'));
+        expect(route?.textContent).toContain('Full route · 2 stops');
+        act(() => route?.click());
         expect(container.textContent).toContain('Map for 8B');
         expect(container.textContent).toContain('Southbound');
+        expect(container.querySelector('[data-testid="detour-map"]')?.getAttribute('data-publication-mode')).toBe('false');
+        act(() => findButton(container, 'Public view')?.click());
+        expect(container.querySelector('[data-testid="detour-map"]')?.getAttribute('data-publication-mode')).toBe('true');
+        expect(container.textContent).toContain('Line anchors and editing handles are hidden.');
+        act(() => findButton(container, 'Return to editing')?.click());
+        expect(container.querySelector('[data-testid="detour-map"]')?.getAttribute('data-publication-mode')).toBe('false');
+    });
+
+    it('edits a temporary stop code from the right sidebar', async () => {
+        await act(async () => root.render(<DetourPublisherWorkspace onClose={vi.fn()} />));
+        await flush();
+        act(() => findButton(container, 'New detour')?.click());
+        act(() => findButton(container, 'Choose route')?.click());
+        await flush();
+        const route = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Route 8B'));
+        act(() => route?.click());
+        act(() => findButton(container, 'Mock add temporary stop')?.click());
+        act(() => findButton(container, 'Mock select temporary stop')?.click());
+
+        const code = container.querySelector('input[placeholder="e.g. 959"]') as HTMLInputElement;
+        expect(code).toBeTruthy();
+        act(() => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(code, '959');
+            code.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(container.textContent).toContain('Temporary code 959');
+        expect(container.textContent).toContain('Stop status');
+        act(() => findButton(container, 'Remove temporary stop')?.click());
+        expect(container.textContent).not.toContain('Temporary code 959');
+        expect(container.textContent).not.toContain('Remove temporary stop');
+    });
+
+    it('returns to authoring mode when the preview closes', async () => {
+        await act(async () => root.render(<DetourPublisherWorkspace onClose={vi.fn()} />));
+        await flush();
+        act(() => findButton(container, 'New detour')?.click());
+        act(() => findButton(container, 'Choose route')?.click());
+        await flush();
+        const route = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Route 8B'));
+        act(() => route?.click());
+
+        await act(async () => findButton(container, 'Preview & export')?.click());
+        await flush();
+        expect(container.textContent).toContain('Notice preview');
+        expect(container.querySelector('[data-testid="detour-map"]')?.getAttribute('data-publication-mode')).toBe('true');
+        act(() => (container.querySelector('[aria-label="Close preview and return to editing"]') as HTMLButtonElement | null)?.click());
+        expect(container.textContent).not.toContain('Notice preview');
+        expect(container.querySelector('[data-testid="detour-map"]')?.getAttribute('data-publication-mode')).toBe('false');
+    });
+
+    it('authors public street labels and exposes invalidated closure labels for reconfirmation', async () => {
+        await act(async () => root.render(<DetourPublisherWorkspace onClose={vi.fn()} />));
+        await flush();
+        act(() => findButton(container, 'New detour')?.click());
+        act(() => findButton(container, 'Choose route')?.click());
+        await flush();
+        act(() => Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Route 8B'))?.click());
+        act(() => findButton(container, 'Mock closure start')?.click());
+        act(() => findButton(container, 'Mock closure end')?.click());
+        await flush();
+
+        const enterStreet = (placeholder: string, value: string) => {
+            const input = container.querySelector(`input[placeholder="${placeholder}"]`) as HTMLInputElement;
+            act(() => {
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+            act(() => (input.parentElement?.querySelector('button') as HTMLButtonElement | null)?.click());
+        };
+
+        enterStreet('Closed-section street', 'Shanty Bay Rd');
+        enterStreet('Detour street', 'Blake St');
+        expect(container.textContent).toContain('Street labels Shanty Bay Rd,Blake St');
+        expect(container.textContent).not.toContain('Generic public labels are currently in use.');
+
+        act(() => findButton(container, 'Mock closure end')?.click());
+        expect(container.textContent).toContain('Pending review');
+        expect(container.textContent).toContain('NO SERVICE ON');
+        act(() => findButton(container, 'Confirm')?.click());
+        expect(container.textContent).not.toContain('Generic public labels are currently in use.');
+    });
+
+    it('adds a street label on demand and positions it without consuming line clicks', async () => {
+        await act(async () => root.render(<DetourPublisherWorkspace onClose={vi.fn()} />));
+        await flush();
+        act(() => findButton(container, 'New detour')?.click());
+        act(() => findButton(container, 'Choose route')?.click());
+        await flush();
+        act(() => Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Route 8B'))?.click());
+        act(() => findButton(container, 'Mock closure start')?.click());
+        act(() => findButton(container, 'Mock closure end')?.click());
+        await flush();
+
+        const input = container.querySelector('input[placeholder="Detour street"]') as HTMLInputElement;
+        act(() => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, 'Blake St');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        act(() => (input.parentElement?.querySelector('button') as HTMLButtonElement | null)?.click());
+        expect(container.textContent).toContain('Street labels Blake St');
+
+        const slider = container.querySelector('input[aria-label="Street label position along path"]') as HTMLInputElement;
+        expect(slider.value).toBe('50');
+        act(() => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(slider, '75');
+            slider.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect((container.querySelector('input[aria-label="Street label position along path"]') as HTMLInputElement).value).toBe('75');
     });
 });

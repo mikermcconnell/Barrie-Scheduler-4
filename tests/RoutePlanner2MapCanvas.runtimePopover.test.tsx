@@ -363,6 +363,10 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
           source: 'fallback',
         }),
       ]),
+      expect.objectContaining({
+        requestKind: 'background',
+        failures: [expect.objectContaining({ code: 'segment-limit' })],
+      }),
     );
     expect(onSegmentRuntimeEstimates.mock.calls[0]?.[0]).toHaveLength(351);
   });

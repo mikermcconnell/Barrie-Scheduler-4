@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDetourNotice, createDetourRouteOverlay } from '../utils/detours/detourFactory';
 import { deriveDetourState } from '../utils/detours/detourSchedule';
 import { validateDetourNotice } from '../utils/detours/detourValidation';
+import { normalizeDetourOverlayJunctions } from '../utils/detours/detourAuthoring';
 import type { DetourRouteOverlay } from '../utils/detours/detourTypes';
 
 const overlay = (): DetourRouteOverlay => ({
@@ -12,6 +13,7 @@ const overlay = (): DetourRouteOverlay => ({
     },
     closureStart: { segmentIndex: 0, fraction: 0.2, coordinate: { latitude: 44.38, longitude: -79.69 } },
     closureEnd: { segmentIndex: 0, fraction: 0.8, coordinate: { latitude: 44.39, longitude: -79.68 } },
+    closureWaypoints: [],
     closureGeometry: { coordinates: [], source: 'gtfs', manualRoutingAcknowledged: false },
     detourWaypoints: [{ latitude: 44.38, longitude: -79.69 }, { latitude: 44.39, longitude: -79.68 }],
     detourGeometry: {
@@ -26,11 +28,11 @@ const overlay = (): DetourRouteOverlay => ({
 describe('detour domain', () => {
     it('creates a Toronto-scoped draft with stable defaults', () => {
         const notice = createDetourNotice({ teamId: 'team-a', userId: 'user-a', now: new Date('2026-07-16T16:30:00Z') });
-        expect(notice.schedule).toMatchObject({ timeZone: 'America/Toronto', startDate: '2026-07-16', startTime: '12:30' });
+        expect(notice.schedule).toMatchObject({ timeZone: 'America/Toronto', startDate: '2026-07-16', startTime: '' });
         expect(notice.status).toBe('draft');
         expect(notice.revision).toBe(0);
         const emptyOverlay = createDetourRouteOverlay('8a-north', overlay().routeSnapshot, notice.createdAt);
-        expect(emptyOverlay).toMatchObject({ closureStart: null, closureEnd: null, detourWaypoints: [], labels: [], busSuitabilityConfirmed: false });
+        expect(emptyOverlay).toMatchObject({ closureStart: null, closureEnd: null, closureWaypoints: [], detourWaypoints: [], labels: [], busSuitabilityConfirmed: false });
     });
 
     it('separates export blockers from advisories', () => {
@@ -45,6 +47,40 @@ describe('detour domain', () => {
         expect(result.canExport).toBe(true);
     });
 
+    it('normalizes legacy path endpoints to shared diversion and rejoin junctions', () => {
+        const route = overlay();
+        route.routeSnapshot.originalGeometry = [
+            { latitude: 44.38, longitude: -79.70 },
+            { latitude: 44.39, longitude: -79.67 },
+        ];
+        route.closureGeometry.coordinates = [
+            { latitude: 44.381, longitude: -79.691 },
+            { latitude: 44.389, longitude: -79.679 },
+        ];
+        route.detourWaypoints = [
+            { latitude: 44.382, longitude: -79.692 },
+            { latitude: 44.388, longitude: -79.678 },
+        ];
+        route.detourGeometry.coordinates = [...route.detourWaypoints];
+
+        const normalized = normalizeDetourOverlayJunctions(route);
+        expect(normalized.closureGeometry.coordinates[0]).toEqual(route.closureStart?.coordinate);
+        expect(normalized.closureGeometry.coordinates.at(-1)).toEqual(route.closureEnd?.coordinate);
+        expect(normalized.detourWaypoints[0]).toEqual(route.closureStart?.coordinate);
+        expect(normalized.detourGeometry.coordinates.at(-1)).toEqual(route.closureEnd?.coordinate);
+    });
+
+    it('allows date-only effective schedules and validates partial recurring hours', () => {
+        const notice = createDetourNotice({ teamId: 'team-a', userId: 'user-a' });
+        Object.assign(notice, { title: 'Detour', publicDetails: 'Details' });
+        notice.overlays = [overlay()];
+        notice.schedule.end = { mode: 'fixed', date: notice.schedule.startDate, time: '' };
+        expect(validateDetourNotice(notice).errors).toEqual([]);
+
+        notice.schedule.recurrence = { mode: 'weekly', days: ['monday'], startTime: '08:00', endTime: '' };
+        expect(validateDetourNotice(notice).errors.map(item => item.code)).toContain('recurrence-time-pair-required');
+    });
+
     it('blocks unreviewed impacts and unconfirmed manual routing', () => {
         const notice = createDetourNotice({ teamId: 'team-a', userId: 'user-a' });
         Object.assign(notice, { title: 'Detour', publicSummary: 'Summary', publicDetails: 'Details' });
@@ -57,6 +93,31 @@ describe('detour domain', () => {
             'manual-routing-unacknowledged', 'stop-impacts-unreviewed',
         ]));
         expect(result.canExport).toBe(false);
+    });
+
+    it('blocks export until an edited closed section is reviewed', () => {
+        const notice = createDetourNotice({ teamId: 'team-a', userId: 'user-a' });
+        Object.assign(notice, { title: 'Detour', publicDetails: 'Details' });
+        const route = overlay();
+        route.closureGeometry.source = 'manual';
+        route.closureGeometry.manualRoutingAcknowledged = false;
+        notice.overlays = [route];
+
+        expect(validateDetourNotice(notice).errors.map(item => item.code)).toContain('closure-routing-unacknowledged');
+        route.closureGeometry.manualRoutingAcknowledged = true;
+        expect(validateDetourNotice(notice).errors.map(item => item.code)).not.toContain('closure-routing-unacknowledged');
+    });
+
+    it('blocks export when legacy route geometries do not meet at shared junctions', () => {
+        const notice = createDetourNotice({ teamId: 'team-a', userId: 'user-a' });
+        Object.assign(notice, { title: 'Detour', publicDetails: 'Details' });
+        const route = overlay();
+        route.detourGeometry.coordinates[0] = { latitude: 44.381, longitude: -79.691 };
+        notice.overlays = [route];
+        expect(validateDetourNotice(notice).errors.map(item => item.code)).toContain('junctions-disconnected');
+
+        notice.overlays = [normalizeDetourOverlayJunctions(route)];
+        expect(validateDetourNotice(notice).errors.map(item => item.code)).not.toContain('junctions-disconnected');
     });
 
     it('does not apply route-detour gates to a stop-closure context overlay', () => {
@@ -88,5 +149,15 @@ describe('detour domain', () => {
         expect(deriveDetourState(notice, new Date('2026-07-20T11:00:00Z')).lifecycle).toBe('upcoming');
         expect(deriveDetourState(notice, new Date('2026-07-20T13:00:00Z'))).toMatchObject({ lifecycle: 'active', updateNeeded: true });
         expect(deriveDetourState(notice, new Date('2026-07-23T00:00:00Z')).lifecycle).toBe('expired');
+    });
+
+    it('treats blank times as the full selected date', () => {
+        const notice = createDetourNotice({ teamId: 'team-a', userId: 'user-a' });
+        notice.status = 'posted';
+        notice.schedule.startDate = '2026-07-20';
+        notice.schedule.startTime = '';
+        notice.schedule.end = { mode: 'fixed', date: '2026-07-20', time: '' };
+        expect(deriveDetourState(notice, new Date('2026-07-20T04:00:00Z')).lifecycle).toBe('active');
+        expect(deriveDetourState(notice, new Date('2026-07-21T04:00:00Z')).lifecycle).toBe('expired');
     });
 });

@@ -3,6 +3,7 @@ import {
     doc,
     getDoc,
     getDocs,
+    limit,
     orderBy,
     query,
     serverTimestamp,
@@ -10,10 +11,12 @@ import {
 } from 'firebase/firestore';
 
 import { db } from '../firebase';
-import type { RoutePlanner2Project, RoutePlanner2ProjectStatus, RoutePlanner2Scenario } from './routePlanner2Types';
+import type { RoutePlanner2Project, RoutePlanner2ProjectStatus, RoutePlanner2RuntimeSnapshot, RoutePlanner2Scenario } from './routePlanner2Types';
+import { prepareRoutePlanner2ProjectRuntimeForSave, ROUTE_PLANNER_RUNTIME_SNAPSHOT_LIMIT } from './routePlanner2RuntimeSnapshots';
 
 const PROJECTS_COLLECTION = 'routePlanner2Projects';
 const SCENARIOS_COLLECTION = 'scenarios';
+const RUNTIME_SNAPSHOTS_COLLECTION = 'runtimeSnapshots';
 
 export interface RoutePlanner2SavedProjectSummary {
     id: string;
@@ -95,6 +98,19 @@ function scenariosRef(teamId: string, projectId: string) {
     return collection(db, 'teams', teamId, PROJECTS_COLLECTION, projectId, SCENARIOS_COLLECTION);
 }
 
+function runtimeSnapshotsRef(teamId: string, projectId: string, scenarioId: string) {
+    return collection(
+        db,
+        'teams',
+        teamId,
+        PROJECTS_COLLECTION,
+        projectId,
+        SCENARIOS_COLLECTION,
+        scenarioId,
+        RUNTIME_SNAPSHOTS_COLLECTION,
+    );
+}
+
 function normalizeLoadedProject(
     summary: RoutePlanner2SavedProjectSummary,
     scenarios: RoutePlanner2Scenario[],
@@ -136,10 +152,21 @@ export async function loadRoutePlanner2Project(
 
     const summary = summaryFromDoc(projectSnapshot.id, projectSnapshot.data() as Record<string, unknown>);
     const scenarioSnapshot = await getDocs(scenariosRef(teamId, projectId));
-    const scenarios = scenarioSnapshot.docs.map((docSnap) => ({
-        id: docSnap.id,
-        ...(docSnap.data() as Omit<RoutePlanner2Scenario, 'id'>),
-    })) as RoutePlanner2Scenario[];
+    const scenarios = await Promise.all(scenarioSnapshot.docs.map(async (docSnap) => {
+        const runtimeSnapshotDocs = await getDocs(query(
+            runtimeSnapshotsRef(teamId, projectId, docSnap.id),
+            orderBy('decidedAt', 'desc'),
+            limit(ROUTE_PLANNER_RUNTIME_SNAPSHOT_LIMIT),
+        ));
+        return {
+            id: docSnap.id,
+            ...(docSnap.data() as Omit<RoutePlanner2Scenario, 'id'>),
+            runtimeSnapshots: runtimeSnapshotDocs.docs.map((snapshotDoc) => ({
+                id: snapshotDoc.id,
+                ...(snapshotDoc.data() as Omit<RoutePlanner2RuntimeSnapshot, 'id'>),
+            })),
+        } as RoutePlanner2Scenario;
+    }));
 
     return normalizeLoadedProject(summary, scenarios);
 }
@@ -150,18 +177,29 @@ export async function saveRoutePlanner2Project(
     project: RoutePlanner2Project,
 ): Promise<RoutePlanner2Project> {
     const now = new Date().toISOString();
+    const preparedProject = prepareRoutePlanner2ProjectRuntimeForSave(project, userId, now);
     const savedProject: RoutePlanner2Project = {
-        ...project,
+        ...preparedProject,
         status: project.status === 'archived' ? 'archived' : 'local-saved',
         createdAt: project.createdAt || now,
         updatedAt: now,
-        scenarios: project.scenarios.map((scenario) => ({ ...scenario })),
+        scenarios: preparedProject.scenarios.map((scenario) => ({
+            ...scenario,
+            runtimeSnapshots: scenario.runtimeSnapshots?.slice(0, ROUTE_PLANNER_RUNTIME_SNAPSHOT_LIMIT),
+        })),
     };
 
     const batch = writeBatch(db);
     const rootRef = projectRef(teamId, savedProject.id);
     const existingScenarios = await getDocs(scenariosRef(teamId, savedProject.id));
     const nextScenarioIds = new Set(savedProject.scenarios.map((scenario) => scenario.id));
+    const existingRuntimeSnapshots = new Map<string, Awaited<ReturnType<typeof getDocs>>>();
+    await Promise.all(existingScenarios.docs.map(async (scenarioDoc) => {
+        existingRuntimeSnapshots.set(
+            scenarioDoc.id,
+            await getDocs(runtimeSnapshotsRef(teamId, savedProject.id, scenarioDoc.id)),
+        );
+    }));
 
     batch.set(rootRef, stripUndefinedDeep({
         id: savedProject.id,
@@ -179,14 +217,27 @@ export async function saveRoutePlanner2Project(
 
     savedProject.scenarios.forEach((scenario) => {
         const scenarioRef = doc(db, 'teams', teamId, PROJECTS_COLLECTION, savedProject.id, SCENARIOS_COLLECTION, scenario.id);
+        const { runtimeSnapshots = [], ...scenarioData } = scenario;
+        const snapshotsToSave = runtimeSnapshots.slice(0, ROUTE_PLANNER_RUNTIME_SNAPSHOT_LIMIT);
         batch.set(scenarioRef, stripUndefinedDeep({
-            ...scenario,
+            ...scenarioData,
             updatedAt: scenario.updatedAt || now,
         }));
+        const nextSnapshotIds = new Set(snapshotsToSave.map((snapshot) => snapshot.id));
+        snapshotsToSave.forEach((snapshot) => {
+            batch.set(
+                doc(runtimeSnapshotsRef(teamId, savedProject.id, scenario.id), snapshot.id),
+                stripUndefinedDeep(snapshot),
+            );
+        });
+        existingRuntimeSnapshots.get(scenario.id)?.docs.forEach((snapshotDoc) => {
+            if (!nextSnapshotIds.has(snapshotDoc.id)) batch.delete(snapshotDoc.ref);
+        });
     });
 
     existingScenarios.docs.forEach((docSnap) => {
         if (!nextScenarioIds.has(docSnap.id)) {
+            existingRuntimeSnapshots.get(docSnap.id)?.docs.forEach((snapshotDoc) => batch.delete(snapshotDoc.ref));
             batch.delete(docSnap.ref);
         }
     });
@@ -199,6 +250,11 @@ export async function deleteRoutePlanner2SavedProject(teamId: string, projectId:
     const batch = writeBatch(db);
     const scenarioSnapshot = await getDocs(scenariosRef(teamId, projectId));
 
+    const runtimeSnapshotDocs = await Promise.all(scenarioSnapshot.docs.map((scenarioDoc) =>
+        getDocs(runtimeSnapshotsRef(teamId, projectId, scenarioDoc.id)),
+    ));
+
+    runtimeSnapshotDocs.forEach((snapshot) => snapshot.docs.forEach((docSnap) => batch.delete(docSnap.ref)));
     scenarioSnapshot.docs.forEach((docSnap) => batch.delete(docSnap.ref));
     batch.delete(projectRef(teamId, projectId));
 

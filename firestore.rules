@@ -269,6 +269,12 @@ service cloud.firestore {
         match /scenarios/{scenarioId} {
           allow read: if canAccessWorkspace(teamId, 'analyticsRoutePlanner2') || canSupportReadTeamData(teamId);
           allow write: if canAccessWorkspace(teamId, 'analyticsRoutePlanner2') || canSupportWriteTeamData(teamId);
+
+          // Bounded planner decisions for Mapbox runtime refreshes.
+          match /runtimeSnapshots/{snapshotId} {
+            allow read: if canAccessWorkspace(teamId, 'analyticsRoutePlanner2') || canSupportReadTeamData(teamId);
+            allow write: if canAccessWorkspace(teamId, 'analyticsRoutePlanner2') || canSupportWriteTeamData(teamId);
+          }
         }
       }
 

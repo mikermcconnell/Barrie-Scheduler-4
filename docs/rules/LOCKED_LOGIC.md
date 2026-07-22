@@ -4,8 +4,8 @@ Read this before changing core schedule behavior.
 
 This is the durable, tool-agnostic summary of non-negotiable rules.
 
-Use `.claude/CLAUDE.md` for repo workflow and verification expectations.
-Use `.claude/context.md` only for detailed compatibility and historical implementation notes.
+Use `AGENTS.md` for repository-wide workflow and verification expectations.
+Use `.claude/CLAUDE.md` only as a Claude-specific supplement or for its extra danger-zone verification table. Use `.claude/context.md` only for detailed historical implementation notes.
 
 ---
 
@@ -23,7 +23,9 @@ Do not switch to sum-then-round.
 
 ### 2. Trip pairing
 
-Schedule rows represent paired north/south trips, not separate same-direction stacks.
+For bidirectional fixed-route schedules, paired table rows represent the two complementary directions (historically north/south), not separate same-direction stacks.
+
+Loop-route planning chains are an explicit exception: keep them keyed as `Loop` and do not coerce them to `North` or `South` merely to satisfy paired-table assumptions.
 
 ### 3. Cycle time
 
@@ -68,7 +70,7 @@ If you touch these, read `.claude/CLAUDE.md` danger zones and the detailed notes
 - Runtime: for STREETS-derived stop-to-stop planning proxies, use observed departure-to-departure time when the downstream stop has an observed departure; fall back to downstream arrival at terminal/end-of-trip points so terminal recovery stays separate
 - Recovery: buffer between trips
 - Cycle Time: total vehicle operating period
-- Trip Pair: northbound + southbound trip
+- Trip Pair: the two complementary directional trips in a bidirectional schedule row; loop chains remain `Loop`
 - Block: chain of trips operated by one bus
 - Time Band: period with characteristic travel times
 
@@ -79,3 +81,4 @@ If you touch these, read `.claude/CLAUDE.md` danger zones and the detailed notes
 - Do not change locked behavior without explicit approval.
 - Do not use archived plan files as the sole justification for current behavior.
 - Do not assume old file paths in docs are still valid without checking `docs/ARCHITECTURE.md` or `docs/SCHEMA.md`.
+- Do not let tool-specific supplements override `AGENTS.md` or this durable summary.

@@ -151,7 +151,11 @@ export function buildMyRideCopyPackage(notice: DetourExportNoticeInput): MyRideC
   const routeLabel = formatDetourRouteLabel(notice.routes);
   const effective = formatDetourEffectiveSchedule(notice.effectiveSchedule);
   const details = sanitizeDetourPlainText(notice.publicDetails);
-  const summary = sanitizeDetourPlainText(notice.publicSummary ?? `${routeLabel} is operating on a temporary detour. ${effective}.`);
+  const effectiveSentence = effective.endsWith('.') ? effective : `${effective}.`;
+  const generatedSummary = notice.noticeType === 'stop-closure'
+    ? `${routeLabel || 'Barrie Transit service'} has a temporary stop closure. ${effectiveSentence}`
+    : `${routeLabel || 'Barrie Transit service'} is operating on a temporary detour. ${effectiveSentence}`;
+  const summary = sanitizeDetourPlainText(notice.publicSummary?.trim() || generatedSummary);
   const impacts: string[] = [];
   if ((notice.stopCounts?.closed ?? 0) > 0) impacts.push(`${notice.stopCounts?.closed} closed stop${notice.stopCounts?.closed === 1 ? '' : 's'}`);
   if ((notice.stopCounts?.temporary ?? 0) > 0) impacts.push(`${notice.stopCounts?.temporary} temporary stop${notice.stopCounts?.temporary === 1 ? '' : 's'}`);

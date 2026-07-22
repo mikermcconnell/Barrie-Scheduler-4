@@ -183,10 +183,13 @@ Projects are saved under:
 ```text
 teams/{teamId}/routePlanner2Projects/{projectId}
 teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}
+teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}/runtimeSnapshots/{snapshotId}
 ```
 
-`utils/route-planner-2/routePlanner2ProjectPersistence.ts` owns Firebase access. The workspace calls that service instead of importing Firestore directly. Firestore rules allow team members and workspace permission managers to read/write saved route plans. Large geometry or analysis artifacts can move to Firebase Storage later if the Firestore document sizes become a concern.
-Deleting a saved route plan must go through the same persistence service so the project document and its `scenarios` subcollection are removed together.
+`utils/route-planner-2/routePlanner2ProjectPersistence.ts` owns Firebase access. The workspace calls that service instead of importing Firestore directly. Firestore rules allow Route Planner 2 workspace users and support sessions to read/write saved route plans. Runtime decision history is bounded to the latest 12 snapshots per scenario and stored in a nested subcollection so scenario documents do not grow without limit. Large geometry or analysis artifacts can move to Firebase Storage later if the Firestore document sizes become a concern.
+Deleting a saved route plan must go through the same persistence service so the project document, its `scenarios` subcollection, and nested runtime snapshots are removed together.
+
+Saved Mapbox runtime is an accepted planning input. Background road snapping may populate an unsaved draft, but it must not replace an accepted runtime. An explicit refresh bypasses the short-lived client cache, stages a before/after comparison, and updates the scenario only after planner acceptance. Rejecting the candidate records the decision without changing runtime; provider failures retain the accepted runtime.
 
 ## Integration Rules
 

@@ -77,12 +77,19 @@ interface RoutePlanner2Scenario {
   runtimeSourceMode?: RoutePlanner2RuntimeSourceMode;
   runtimeEstimates?: RoutePlanner2SegmentRuntime[];
   runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
+  runtimeLocked?: boolean;
+  runtimeAcceptedAt?: string;
+  runtimeAcceptedBy?: string;
+  acceptedRuntimeSnapshotId?: string;
+  runtimeSnapshots?: RoutePlanner2RuntimeSnapshot[];
   notes: string;
   feasibility?: RoutePlanner2FeasibilitySummary;
   createdAt: string;
   updatedAt: string;
 }
 ```
+
+`runtimeSnapshots` is hydrated from the nested Firestore `runtimeSnapshots` subcollection and is capped at 12 newest decisions. Each snapshot records the Mapbox profile, calculation and decision timestamps, planner decision (`accepted` or `rejected`), previous and candidate totals, path fingerprint, and segment estimates. `runtimeLocked` prevents applying a staged refresh; manual segment overrides remain the highest-priority source regardless of lock state.
 
 `routeShape` defaults to `one-way` for new local draft routes and for older saved local data that does not yet include the field.
 

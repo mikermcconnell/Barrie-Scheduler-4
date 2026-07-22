@@ -8,6 +8,7 @@ import {
     buildRoutePlanner2FallbackRoadSnapResult,
     snapRoutePlanner2ScenarioToRoad,
     type RoutePlanner2RoadLabelGeometry,
+    type RoutePlanner2RoadSnapFailure,
     type RoutePlanner2RoadSnapProgress,
 } from '../../../utils/route-planner-2/routePlanner2RoadSnap';
 import {
@@ -81,7 +82,15 @@ interface RoutePlanner2MapCanvasProps {
     }) => void;
     onMoveLineWaypoint: (waypointId: string, coordinate: { lat: number; lng: number }) => void;
     onDeleteLineWaypoint: (waypointId: string) => void;
-    onSegmentRuntimeEstimates: (estimates: RoutePlanner2SegmentRuntime[]) => void;
+    onSegmentRuntimeEstimates: (
+        estimates: RoutePlanner2SegmentRuntime[],
+        context: {
+            requestKind: 'background' | 'refresh';
+            calculatedAt: string;
+            failures: RoutePlanner2RoadSnapFailure[];
+        },
+    ) => void;
+    runtimeRefreshRequest?: { scenarioId: string; requestId: number } | null;
     onSetSegmentRuntimeOverride?: (segmentId: string, runtimeMinutes: number) => void;
     onClearSegmentRuntimeOverride?: (segmentId: string) => void;
     metricItems?: Array<{ label: string; value: string; detail?: string; description?: string; onClick?: () => void }>;
@@ -1445,6 +1454,7 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     onMoveLineWaypoint,
     onDeleteLineWaypoint,
     onSegmentRuntimeEstimates,
+    runtimeRefreshRequest = null,
     onSetSegmentRuntimeOverride,
     onClearSegmentRuntimeOverride,
     metricItems = [],
@@ -1875,6 +1885,8 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
         }
 
         const fallbackResult = buildRoutePlanner2FallbackRoadSnapResult(scenario);
+        const isExplicitRefresh = runtimeRefreshRequest?.scenarioId === scenario.id;
+        const requestKind = isExplicitRefresh ? 'refresh' : 'background';
         setSnappedCoordinates(fallbackResult.coordinates);
         setSnappedSegmentGeometries(fallbackResult.segmentGeometries);
         setRoadBuildProgress(fallbackResult.segmentGeometries.length > 0
@@ -1892,13 +1904,21 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             setRoadBuildProgress(fallbackResult.segmentGeometries.length > 0
                 ? { totalSegments: fallbackResult.segmentGeometries.length, completedSegments: fallbackResult.segmentGeometries.length }
                 : null);
-            onSegmentRuntimeEstimates(fallbackResult.segmentEstimates);
+            onSegmentRuntimeEstimates(fallbackResult.segmentEstimates, {
+                requestKind,
+                calculatedAt: new Date().toISOString(),
+                failures: [{
+                    code: 'segment-limit',
+                    message: 'This route is too large for an automatic Mapbox refresh. The accepted runtime was retained.',
+                }],
+            });
             return () => controller.abort();
         }
 
         snapRoutePlanner2ScenarioToRoad(scenario, {
             concurrency: 3,
             signal: controller.signal,
+            forceRefresh: isExplicitRefresh,
             onProgress: (progress) => {
                 if (controller.signal.aborted) return;
                 setRoadBuildProgress(progress);
@@ -1918,15 +1938,27 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             setRoadBuildProgress(result.segmentGeometries.length > 0
                 ? { totalSegments: result.segmentGeometries.length, completedSegments: result.segmentGeometries.length }
                 : null);
-            onSegmentRuntimeEstimates(result.segmentEstimates);
+            onSegmentRuntimeEstimates(result.segmentEstimates, {
+                requestKind,
+                calculatedAt: new Date().toISOString(),
+                failures: result.failures,
+            });
         }).catch((error) => {
             if (controller.signal.aborted) return;
             console.error('Route Planner 2 road snap failed', error);
             setRoadBuildProgress(null);
+            onSegmentRuntimeEstimates(fallbackResult.segmentEstimates, {
+                requestKind,
+                calculatedAt: new Date().toISOString(),
+                failures: [{
+                    code: 'network',
+                    message: 'Mapbox could not complete the refresh. The accepted runtime was retained.',
+                }],
+            });
         });
 
         return () => controller.abort();
-    }, [roadBuildKey, onSegmentRuntimeEstimates, activeDragPreview]);
+    }, [roadBuildKey, onSegmentRuntimeEstimates, activeDragPreview, runtimeRefreshRequest?.requestId, runtimeRefreshRequest?.scenarioId]);
 
     function getSelectionPoint(event: PointerEvent<HTMLElement>): RoutePlanner2SelectionPoint {
         const rect = event.currentTarget.getBoundingClientRect();

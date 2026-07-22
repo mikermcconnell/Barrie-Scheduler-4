@@ -1,131 +1,125 @@
 # Context Index
 
-Canonical entrypoint for repository context.
+Canonical context router for Scheduler 4. `AGENTS.md` is the repository contract; use this file second to select only the context required for the task.
 
-Use this file to decide what to load first and what to ignore unless explicitly needed.
+## Minimal bootstrap
 
----
-
-## Default Read Order
+Always start with:
 
 1. `AGENTS.md`
-   Top-level agent contract and repo-specific usage rules.
-2. `docs/rules/LOCKED_LOGIC.md`
-   Core non-negotiable behavior and safety constraints.
-3. `docs/PRODUCT_VISION.md`
-   Product scope, target users, anti-patterns, and decision framework.
-4. `docs/ARCHITECTURE.md`
-   Component map, data flow, and current source file layout.
-5. `docs/SCHEMA.md`
-   Firestore structure, storage layout, and type locations.
+2. `docs/CONTEXT_INDEX.md`
 
-Load `ORCHESTRATOR.md` when working in orchestrator mode, delegating implementation work, recovering from compacted context, or when you need the repo's living summary of architecture, conventions, fragile areas, and current repo state. It supports Tier 1 docs and should not replace them.
+Do not load every durable document by default. Continue with the task routes below.
 
-Load `.claude/CLAUDE.md` only as a tool-specific workflow supplement or when working in danger-zone files that need its extra verification guidance.
-Load `.claude/context.md` only when the task touches locked schedule behavior or you need detailed historical implementation notes.
+## Authority and precedence
 
-Load `docs/IMPLEMENTATION_PLAN.md` only when roadmap status matters.
+Different sources are authoritative for different questions:
 
-Load feature docs only when the task is directly related, including:
-- `docs/CONNECTIONS_FEATURE.md`
-- `docs/AUTO_INGEST_SETUP.md`
-- `docs/OD_WORKSPACE_GUIDE.md`
-- `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
-- `docs/DWELL_CASCADE_FEATURE.md`
-- `docs/OPERATIONS_DASHBOARD_METRICS.md`
-- `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
-- `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`
-- `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
-- `docs/route-concept-planner/README.md` and its contract docs for the neutral fixed-route concept-testing workspace
-- `docs/route-planner-2/README.md` and its numbered docs for current Route Planner 2 work
-- `docs/route-planner-legacy/README.md` only when historical old Route Planner background is explicitly needed
-- `docs/SHUTTLE_PLANNER_PRD.md`
-- `docs/SHUTTLE_PLANNER_UI_SPEC.md`
-- `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md`
-- `docs/NETWORK_CONNECTIONS_UI_SPEC.md`
-- `docs/DETOUR_PUBLISHER.md`
-- `docs/route-colors.md`
+1. Higher-priority system, developer, and user instructions govern the current task.
+2. `AGENTS.md` governs repository-wide agent workflow and safety.
+3. `docs/rules/LOCKED_LOGIC.md` governs non-negotiable schedule behavior.
+4. `docs/PRODUCT_VISION.md` governs durable product intent, boundaries, and decision principles.
+5. Feature product contracts govern their named feature without overriding locked logic or product boundaries.
+6. `docs/ARCHITECTURE.md` and `docs/SCHEMA.md` describe current implementation structure and persisted/type contracts.
+7. Feature architecture, data-model, and test docs provide narrower implementation guidance.
+8. `ORCHESTRATOR.md` is recovery memory and a pointer map; it never overrides the sources above.
+9. Plans, handoffs, checklists, and archives are supporting evidence, not default authority.
 
-Do not load `docs/plans/`, `docs/archive/`, `docs/artifacts/`, or `docs/route-planner-legacy/` by default.
+For implementation facts, verify current code and tests. For persisted-state questions, inspect the actual stored source of truth when access is available. A mismatch between implementation and durable intent is documentation or code drift to investigate, not permission to bypass locked behavior.
 
-### Route Planner 2 note
+## Task routing
 
-For current Route Planner 2 work, use `docs/route-planner-2/README.md` first, then its numbered docs. The old Route Planner docs have been moved under `docs/route-planner-legacy/` and are background only, not binding guidance.
+| Task | Load next |
+|------|-----------|
+| Schedule generation, parsing, timing, block assignment, routing, or Schedule Editor behavior | `docs/rules/LOCKED_LOGIC.md`, then the relevant architecture/feature docs and danger-zone skill |
+| Product design, feature scope, or prioritization | `docs/PRODUCT_VISION.md`, then the matching product brief or feature contract |
+| Code ownership, entry points, module boundaries, or major data flow | `docs/ARCHITECTURE.md` |
+| Firestore, Storage, authentication, security rules, or TypeScript type locations | `docs/SCHEMA.md`; also load `docs/ARCHITECTURE.md` when flow ownership matters |
+| Current delivery status | Verify current code, tests, and the active issue/task source; use `docs/IMPLEMENTATION_PLAN.md` only for its explicitly dated historical snapshot |
+| Orchestration, delegation, multi-workspace changes, or compacted-context recovery | `ORCHESTRATOR.md` after loading the authoritative docs relevant to the task |
+| Claude-specific workflow or extra danger-zone verification guidance | `.claude/CLAUDE.md` |
+| Historical detail about locked schedule implementation | `.claude/context.md` |
+| Documentation audit | `.agents/skills/doc-review/SKILL.md` and this index |
 
-### Route Concept Planner note
+## Feature routing
 
-For the new neutral Route Concept Planner, use `docs/route-concept-planner/README.md` first. It is a separate internal-beta workspace; Route Planner 2 remains the working Camp tool and must not be changed as part of Route Concept Planner work.
+Load feature docs only when the task directly touches that feature.
 
----
+### Fixed-route scheduling and operations
 
-## Document Tiers
+- New Schedule Step 2: `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`, `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`, and `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
+- Connections: `docs/CONNECTIONS_FEATURE.md`
+- Schedule Editor verification history: `docs/SCHEDULE_EDITOR_TEST_SUMMARY.md` only when point-in-time test history is relevant
+- GTFS/STREETS auto-ingest: `docs/AUTO_INGEST_SETUP.md`
+- Dwell Incident Review: `docs/DWELL_CASCADE_FEATURE.md`
+- Operations metrics and schemas: `docs/OPERATIONS_DASHBOARD_METRICS.md`
+- Detour Publisher: `docs/DETOUR_PUBLISHER.md`
+- Route colors: `docs/route-colors.md`
 
-### Tier 1: Durable context
+### Planning-data workspaces
 
-- `AGENTS.md`
-- `docs/rules/LOCKED_LOGIC.md`
-- `docs/PRODUCT_VISION.md`
-- `docs/ARCHITECTURE.md`
-- `docs/SCHEMA.md`
+- Route Planner 2: `docs/route-planner-2/README.md`, then its numbered docs
+- Route Concept Planner: `docs/route-concept-planner/README.md`, then its product and technical contracts
+- Shuttle Planner: `docs/SHUTTLE_PLANNER_PRD.md` and `docs/SHUTTLE_PLANNER_UI_SPEC.md`
+- Network Connections: `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md` and `docs/NETWORK_CONNECTIONS_UI_SPEC.md`
+- OD workspace: `docs/OD_WORKSPACE_GUIDE.md`
+- Residential Growth: `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
+- Transit App data validation: `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md`
 
-These should stay concise, current, and safe to use as default context.
+### Important route-planning boundaries
 
-### Tier 2: Operational reference
+- Route Planner 2 is the current Camp route-planning tool.
+- Route Concept Planner is a separate neutral internal-beta workspace. Do not change Route Planner 2 as part of Route Concept Planner work.
+- `docs/route-planner-legacy/` is historical background only. Remaining `utils/route-planner/` code supports legacy-dependent features and is not the Route Planner 2 implementation.
+
+## Document tiers
+
+Tiers describe authority and expected stability, not a mandatory load sequence.
+
+### Tier 1: durable sources
+
+- `AGENTS.md` — repository contract
+- `docs/CONTEXT_INDEX.md` — context router and precedence
+- `docs/rules/LOCKED_LOGIC.md` — locked schedule behavior
+- `docs/PRODUCT_VISION.md` — product intent and boundaries
+- `docs/ARCHITECTURE.md` — current component and data-flow map
+- `docs/SCHEMA.md` — current persistence and type-location reference
+
+Keep these current and free of dated implementation chatter.
+
+### Tier 2: operational and feature reference
 
 - `ORCHESTRATOR.md`
 - `.claude/CLAUDE.md`
 - `.claude/context.md`
-- `docs/IMPLEMENTATION_PLAN.md`
-- `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
-- `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`
-- `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
-- `docs/CONNECTIONS_FEATURE.md`
-- `docs/AUTO_INGEST_SETUP.md`
-- `docs/OD_WORKSPACE_GUIDE.md`
-- `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
-- `docs/DWELL_CASCADE_FEATURE.md`
-- `docs/OPERATIONS_DASHBOARD_METRICS.md`
-- `docs/route-concept-planner/README.md` and its contract docs
-- `docs/route-planner-2/README.md` and its numbered docs for current Route Planner 2 work
-- `docs/SHUTTLE_PLANNER_PRD.md`
-- `docs/SHUTTLE_PLANNER_UI_SPEC.md`
-- `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md`
-- `docs/NETWORK_CONNECTIONS_UI_SPEC.md`
-- `docs/DETOUR_PUBLISHER.md`
-- `docs/route-colors.md`
+- the current product, workflow, architecture, data, and operations references listed under Feature routing, excluding documents explicitly assigned Tier 3 below
 
-These are useful, but narrower in scope and more likely to drift.
+These are useful within their scope, but some are more likely to drift and should be checked against current code and tests.
 
-### Tier 3: Archive and working notes
+### Tier 3: history, status snapshots, and supporting artifacts
 
 - `docs/plans/`
+- `docs/superpowers/plans/`
 - `docs/archive/`
 - `docs/artifacts/`
 - `docs/route-planner-legacy/`
+- `docs/IMPLEMENTATION_PLAN.md` — March 2026 delivery snapshot, not a current roadmap
+- `docs/DWELL_CASCADE_PLAN.md` — historical plan; use `docs/DWELL_CASCADE_FEATURE.md` for current behavior
+- `docs/SCHEDULE_EDITOR_TEST_SUMMARY.md` — point-in-time verification summary, not the current test source of truth
 
-These files are implementation history, working plans, design notes, or supporting artifacts. They may include:
+These may contain useful rationale, manual test notes, install commands, superseded implementation details, or exported artifacts. Do not use them as the sole basis for current behavior.
 
-- agent-specific instructions
-- commit commands
-- manual test checklists
-- package install steps
-- superseded implementation details
-- exported PDFs, DOCX files, screenshots, or sample inputs
+## Update and verification rules
 
-They are not reliable default context.
+- If behavior or constraints change, update the appropriate Tier 1 or feature contract in the same change.
+- If storage, collections, security boundaries, or type locations change, update `docs/SCHEMA.md`.
+- If component ownership, entry points, or major data flow changes, update `docs/ARCHITECTURE.md`.
+- If product boundaries or decision principles change, update `docs/PRODUCT_VISION.md`.
+- If locked schedule behavior changes with explicit approval, update `docs/rules/LOCKED_LOGIC.md` and its focused tests.
+- If a feature ships or becomes durable, move the lasting outcome into a Tier 1 or Tier 2 source instead of leaving it only in a plan or handoff.
+- Keep `ORCHESTRATOR.md` compact: record cross-cutting conventions and fragile-area pointers, not full feature specifications or transient CI state.
+- Run `npm run docs:check` after changing context documentation. Also run any feature-specific verification required by the touched area.
 
----
+## Compatibility note
 
-## Update Rules
-
-- If a change alters behavior or constraints, update Tier 1 docs.
-- If a change alters storage, collections, or type locations, update `docs/SCHEMA.md`.
-- If a change alters component ownership or major data flow, update `docs/ARCHITECTURE.md`.
-- If a feature ships or becomes durable enough to guide future work, copy the durable outcome into Tier 1 or Tier 2 docs instead of leaving it only in `docs/plans/`.
-- Keep `docs/plans/` as history, not as the main source of truth.
-
----
-
-## Compatibility Note
-
-`AGENTS.md` is the repo's top-level agent contract. Treat `docs/rules/LOCKED_LOGIC.md` as the durable behavior summary, `.claude/CLAUDE.md` as the Claude-specific workflow supplement, and `.claude/context.md` as the detailed historical companion during the transition.
+`.claude/CLAUDE.md` and `.claude/context.md` remain available as tool-specific and historical supplements. They do not replace `AGENTS.md`, this index, or the durable locked-logic summary.

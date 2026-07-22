@@ -1,6 +1,6 @@
 # Architecture
 
-> Last reviewed: June 18, 2026
+> Last reviewed: July 22, 2026
 > Load order: start with `AGENTS.md`, then `docs/CONTEXT_INDEX.md`, before using this file as agent context.
 
 ## Overview
@@ -16,11 +16,22 @@ This file is a navigation guide, not an exhaustive file inventory. Use it to und
 For locked schedule behavior, read `docs/rules/LOCKED_LOGIC.md` first.
 For collections, storage paths, and type locations, use `docs/SCHEMA.md`.
 
+### Stack summary
+
+- React + TypeScript single-page application built with Vite
+- Firebase Authentication, Firestore, Cloud Storage, and Cloud Functions
+- Vitest for unit/integration tests, with selected browser smoke coverage
+- Mapbox for map-first planning surfaces
+- Excel/PDF import and export tooling for planner-facing workflows
+- Capacitor for the Android application shell
+
+Use `package.json`, `firebase.json`, and `functions/package.json` for current dependency versions and runtime configuration; do not copy patch versions into durable architecture guidance.
+
 ---
 
 ## Top-level app shape
 
-`App.tsx` is the main shell. It uses hash-based navigation and lazy-loads three top-level app views:
+`App.tsx` is the main shell. It uses hash-based navigation and lazy-loads five top-level app views:
 
 - **On-Demand** → `components/workspaces/OnDemandWorkspace.tsx`
 - **Fixed Route** → `components/workspaces/FixedRouteWorkspace.tsx`
@@ -38,6 +49,15 @@ Common app-wide infrastructure:
 - named workspace access packages → `utils/workspaceAccessPackages.ts`, used by Team Management for safer onboarding presets
 - Expiring developer support sessions → `utils/developerPreview.ts` and `utils/services/developerSupportSessionService.ts`, applied in `components/contexts/TeamContext.tsx`
 
+Planning Data has a second routing and permission-registration layer beneath the top-level `#planning` hash:
+
+- nested view names, labels, hash parsing, and hash building → `utils/workspaces/analyticsWorkspaceRouting.ts`
+- nested view-to-feature permission mapping and workspace composition → `components/Analytics/AnalyticsDashboard.tsx`
+- feature definitions and build availability → `utils/features.ts`
+- user/team access keys and access profiles → `utils/workspaceAccess.ts`
+
+When adding or renaming a Planning Data workspace, update all four registration points and the focused routing/access tests. A card or component alone does not make a workspace routable or accessible.
+
 ---
 
 ## Major product areas
@@ -52,6 +72,7 @@ Main areas:
 - Round-trip schedule display → `components/schedule/`
 - GTFS import → `components/GTFSImport.tsx`, `utils/gtfs/`
 - Draft and publish workflow → `utils/services/draftService.ts`, `utils/services/publishService.ts`
+- System-wide GTFS drafts and multi-route editing → `utils/services/systemDraftService.ts`, `components/workspaces/SystemDraftEditorWorkspace.tsx`; this is a parallel user-scoped draft flow, not a replacement for single-route `draftSchedules`
 
 The Schedule Editor is organized around compare → change → review → publish. `components/workspaces/ScheduleEditorWorkspace.tsx` loads the immutable source-master baseline, owns autosave/checkpoints and the review drawer, and passes edit state into `components/ScheduleEditor.tsx`. Pure change and operational-issue detection lives in `utils/schedule/scheduleReview.ts`; ready-for-review creates a team-visible immutable snapshot through `utils/services/scheduleReviewService.ts`; and publish enforcement is repeated in `utils/services/publishService.ts` so stale/unverifiable master copies, drafts not marked ready for review, blocking schedule issues, and missing/oversized publish notes cannot bypass the UI gate. `utils/services/masterScheduleService.ts` rechecks the expected source version inside its transaction and uses unique upload paths so concurrent publishers cannot overwrite or delete one another's payload.
 - Connection setup and optimization → `components/NewSchedule/connections/`, `utils/connections/`

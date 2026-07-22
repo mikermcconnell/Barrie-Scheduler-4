@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { DailySummary, PerformanceDataSummary } from '../utils/performanceDataTypes';
+import type {
+  DailySummary,
+  PerformanceDataSummary,
+  TripStopSegmentObservation,
+} from '../utils/performanceDataTypes';
 import { buildPerformanceOverviewSummary } from '../utils/performanceOverviewSummary';
 
-function buildDay(date: string, index: number): DailySummary {
+function buildDay(date: string, index: number, tripRuntimeEntries = 0): DailySummary {
   return {
     date,
     dayType: 'weekday',
@@ -52,9 +56,16 @@ function buildDay(date: string, index: number): DailySummary {
       }],
     },
     tripStopSegmentRuntimes: {
-      entries: [],
+      entries: Array.from({ length: tripRuntimeEntries }, (_, tripIndex) => ({
+        tripId: `trip-runtime-${tripIndex}`,
+        tripName: `Trip runtime ${tripIndex}`,
+        routeId: '1',
+        direction: 'North',
+        terminalDepartureTime: '08:00',
+        segments: [] as TripStopSegmentObservation[],
+      })),
       totalObservations: 0,
-      tripsWithData: 0,
+      tripsWithData: tripRuntimeEntries,
     },
     dataQuality: {
       totalRecords: 100 + index,
@@ -81,7 +92,7 @@ describe('buildPerformanceOverviewSummary', () => {
         buildDay('2026-03-05', 5),
         buildDay('2026-03-06', 6),
         buildDay('2026-03-07', 7),
-        buildDay('2026-03-08', 8),
+        buildDay('2026-03-08', 8, 1),
       ],
       metadata: {
         importedAt: '2026-03-09T12:00:00.000Z',
@@ -110,6 +121,8 @@ describe('buildPerformanceOverviewSummary', () => {
     expect(overview.dailySummaries.every(day => day.loadProfiles.length === 0)).toBe(true);
     expect(overview.dailySummaries.every(day => day.ridershipHeatmaps === undefined)).toBe(true);
     expect(overview.dailySummaries.every(day => day.tripStopSegmentRuntimes === undefined)).toBe(true);
+    expect(overview.dailySummaries.slice(0, -1).every(day => day.hasTripStopSegmentRuntimes === false)).toBe(true);
+    expect(overview.dailySummaries.at(-1)?.hasTripStopSegmentRuntimes).toBe(true);
     expect(overview.dailySummaries.every(day => (day.missedTrips?.trips?.length ?? 0) === 0)).toBe(true);
     expect(overview.dailySummaries.every(day => day.byRouteHour?.length === 1)).toBe(true);
   });

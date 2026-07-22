@@ -528,6 +528,8 @@ function buildPerformanceOverviewSummary(summary: PerformanceDataSummary): Perfo
     .slice(-7)
     .map<PerformanceDataSummary['dailySummaries'][number]>(day => ({
       ...day,
+      hasTripStopSegmentRuntimes: day.hasTripStopSegmentRuntimes
+        ?? ((day.tripStopSegmentRuntimes?.entries.length ?? 0) > 0),
       byStop: [],
       loadProfiles: [],
       missedTrips: day.missedTrips

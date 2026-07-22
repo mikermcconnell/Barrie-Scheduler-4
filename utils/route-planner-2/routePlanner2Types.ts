@@ -17,6 +17,15 @@ export type RoutePlanner2SegmentConfidence = 'high' | 'medium' | 'low' | 'missin
 export type RoutePlanner2WarningSeverity = 'info' | 'warning' | 'blocking';
 export type RoutePlanner2RuntimeRouteFilterMode = 'all-matching' | 'selected';
 export type RoutePlanner2RuntimeSourceMode = 'gtfs' | 'mapbox';
+export type RoutePlanner2RuntimeSnapshotDecision = 'accepted' | 'rejected';
+export type RoutePlanner2RuntimeFailureCode =
+    | 'missing-token'
+    | 'authentication'
+    | 'rate-limit'
+    | 'no-route'
+    | 'network'
+    | 'invalid-response'
+    | 'segment-limit';
 export type RoutePlanner2RouteFamilyDirectionRole = 'out' | 'back';
 export type RoutePlanner2PlanningPeriod = 'all-day' | 'am-peak' | 'midday' | 'pm-peak' | 'evening';
 
@@ -71,6 +80,11 @@ export interface RoutePlanner2Scenario {
     runtimeRouteFilter?: RoutePlanner2RuntimeRouteFilter;
     runtimeEstimates?: RoutePlanner2SegmentRuntime[];
     runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
+    runtimeLocked?: boolean;
+    runtimeAcceptedAt?: string;
+    runtimeAcceptedBy?: string;
+    acceptedRuntimeSnapshotId?: string;
+    runtimeSnapshots?: RoutePlanner2RuntimeSnapshot[];
     notes: string;
     feasibility?: RoutePlanner2FeasibilitySummary;
     createdAt: string;
@@ -167,6 +181,23 @@ export interface RoutePlanner2SegmentRuntime {
     pathFingerprint?: string;
     updatedAt?: string;
     fallbackReason?: string;
+    fallbackCode?: RoutePlanner2RuntimeFailureCode;
+}
+
+export interface RoutePlanner2RuntimeSnapshot {
+    id: string;
+    decision: RoutePlanner2RuntimeSnapshotDecision;
+    provider: 'mapbox';
+    profile: 'mapbox/driving';
+    calculatedAt: string;
+    decidedAt: string;
+    decidedBy?: string;
+    pathFingerprint: string;
+    previousTotalRuntimeMinutes: number | null;
+    candidateTotalRuntimeMinutes: number | null;
+    segmentRuntimeMinutes: number;
+    totalDurationSeconds?: number;
+    segmentEstimates: RoutePlanner2SegmentRuntime[];
 }
 
 export interface RoutePlanner2SegmentRuntimeRouteBreakdown {

@@ -2,7 +2,8 @@
 
 > Source of truth for product decisions. Read this before planning significant features.
 > Scheduler 4 is a transit planning platform with a fixed-route scheduling core.
-> Keep roadmap status and dated delivery history in `docs/IMPLEMENTATION_PLAN.md`, not here.
+> `docs/IMPLEMENTATION_PLAN.md` is a dated delivery-history snapshot, not the current roadmap; verify current status from code, tests, and the active issue/task source.
+> Use `docs/rules/LOCKED_LOGIC.md` for canonical schedule behavior, `docs/ARCHITECTURE.md` for current code ownership and data flow, and `docs/SCHEMA.md` for persisted data and type contracts.
 
 ---
 
@@ -111,51 +112,34 @@ RideCo/MVT imports are planner-reviewed before they replace the active shifts. T
 ## Architectural Principles
 
 ### 1. Draft → Publish Workflow
-- All edits happen on **drafts** (team-scoped, ephemeral)
+- Schedule edits happen on **working drafts**; current draft persistence is user-scoped, while review and published master state are team-scoped
 - Publishing creates **immutable master schedule** (versioned)
 - Never modify master schedules directly
+- The canonical persisted shapes and version paths live in `docs/SCHEMA.md`
 
-### 2. Segment-Based Timing (Locked)
-- Individual segment runtimes rounded before summing
-- Prevents cumulative timing drift
-- **DO NOT** change to sum-then-round
+### 2. Locked Schedule Behavior
+- Segment timing, trip pairing, cycle-time semantics, block assignment, and post-midnight ordering are defined in `docs/rules/LOCKED_LOGIC.md`
+- Do not restate or reinterpret those formulas in feature plans; load the canonical rule before changing schedule behavior
 
-### 3. Gap-Based Block Assignment (Locked)
-- Trips chained by time gap, not array index
-- Critical for merged routes (2A+2B) where GTFS lacks explicit recovery
-- **DO NOT** use expectedStart + recovery for matching
-
-### 4. Team-Based Multi-Tenancy
-- All data scoped to `teams/{teamId}/`
+### 3. Team-Based Multi-Tenancy
+- Operational workspace data is team-scoped unless `docs/SCHEMA.md` documents an intentional user-scoped or global record
 - No ordinary user cross-team data access; only explicit partner data-source links and global-admin support access may cross team/user boundaries
 - Invitation-based team membership
+- Exact collections, support-session boundaries, and data-source pointers live in `docs/SCHEMA.md`
 
-### 5. AI as Assistant, Not Authority
+### 4. AI as Assistant, Not Authority
 - Gemini provides suggestions for schedule optimization
 - Transit On Demand uses fast full regenerate and a richer multi-phase refine path before human review
 - Planner always has final say
 
 ---
 
-## Fixed-Route Data Model (Simplified)
+## Data and domain references
 
-```
-Team
-├── DraftSchedule (editable, temporary)
-│   ├── route, dayType, status
-│   └── content: { northTable, southTable, metadata }
-│
-├── MasterSchedule (published, immutable)
-│   ├── route_dayType identifier
-│   └── versioned content + history
-│
-└── ConnectionLibrary (optimization targets)
-```
-
-**Trip** = Single direction journey (Park Place → Downtown)
-**Block** = Chain of trips operated by one bus all day
-**Round-Trip** = Paired North + South trips (one bus cycle)
-**Cycle Time** = first departure → last arrival + final recovery
+- Firestore collections, Storage paths, draft/master versioning, and TypeScript type locations: `docs/SCHEMA.md`
+- Current component ownership and end-to-end data flow: `docs/ARCHITECTURE.md`
+- Canonical timing, pairing, block, and cycle semantics: `docs/rules/LOCKED_LOGIC.md`
+- Route- and workspace-specific contracts: the matching feature docs listed in `docs/CONTEXT_INDEX.md`
 
 ---
 
@@ -170,27 +154,17 @@ Team
 
 ---
 
-## Feature Priorities
+## Product capabilities and future direction
 
-### Must Have (Core)
-- CSV runtime import and parsing
-- Schedule generation with time bands
-- Schedule editing
-- Master schedule publishing through the Draft → Publish workflow
-- GTFS import with block assignment, including system-wide import
-- Connection library and optimization
+Current maintained fixed-route capabilities include CSV runtime import, time-band schedule generation, schedule editing, Draft → Publish, GTFS import and block assignment, connection optimization, conflict review, version history, Excel/PDF outputs, public timetable brochure generation, and schedule regression tests.
 
-### Should Have (Operations)
-- Platform conflict detection
-- Excel/PDF export
-- Version history
-- Interlining for 8A/8B once a safe replacement design is ready
+Future candidates include:
 
-### Nice to Have (Enhancements)
-- Public timetable brochure generator
-- Real-time GTFS export
-- Multi-route scenario comparison
-- Automated regression testing for schedules
+- interlining for 8A/8B after a safe replacement design is approved
+- real-time GTFS export
+- broader multi-route scenario comparison
+
+This is product direction, not delivery status. Verify current status from code, tests, and the active issue/task source; `docs/IMPLEMENTATION_PLAN.md` is a dated historical snapshot.
 
 ---
 
@@ -218,13 +192,9 @@ Team
 
 ## Locked Logic Reference
 
-Read `docs/rules/LOCKED_LOGIC.md` first.
+Read `docs/rules/LOCKED_LOGIC.md` before changing schedule behavior. Use `AGENTS.md` for universal workflow and verification expectations.
 
-Use `.claude/CLAUDE.md` for repo workflow, verification expectations, and danger zones.
-Use `.claude/context.md` only when detailed historical implementation notes are needed for core schedule behavior:
-- Segment rounding approach
-- Block assignment algorithm for merged routes
-- ARR/R/DEP column handling at merged terminuses
+`.claude/CLAUDE.md` and `.claude/context.md` are optional tool-specific and historical supplements; they do not override the durable rule summary.
 
 ---
 

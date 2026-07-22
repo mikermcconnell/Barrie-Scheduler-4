@@ -1,172 +1,124 @@
 # ORCHESTRATOR.md
 
-Living memory for future orchestrator work in Scheduler 4.
+Compact recovery memory for orchestrating non-trivial work in Scheduler 4.
 
-## 1) Purpose and update rules
+## Purpose and authority
 
-Use this file as compact durable memory for:
-- current repo shape
-- workspace boundaries
-- risky areas
-- operating assumptions that future orchestrator work should know quickly
+Use this file to recover the repo shape, cross-cutting conventions, fragile areas, and the next authoritative document to load. Do not use it as a feature specification, release log, test-status page, or replacement for Tier 1 docs.
 
-Update this file when:
-- architecture changes in a durable way
-- workspace ownership changes
-- a high-risk area is discovered or retired
-- a cross-cutting convention becomes important for future work
+Authority and context routing live in:
 
-Keep it:
-- concise
-- practical
-- current
-- easy to skim after context recovery
+- `AGENTS.md` — repository contract
+- `docs/CONTEXT_INDEX.md` — task routing and precedence
+- `docs/rules/LOCKED_LOGIC.md` — non-negotiable schedule behavior
+- `docs/PRODUCT_VISION.md` — product intent and boundaries
+- `docs/ARCHITECTURE.md` — current code ownership and data flow
+- `docs/SCHEMA.md` — persistence and type contracts
 
-Do not use this file for dated handoffs, release notes, or plan chatter.
+Update this file only when a durable cross-cutting convention, workspace boundary, fragile area, or recovery pointer changes. Verify its statements against current code and authoritative docs before relying on them.
 
-## 2) Current app shape
+## Current app shape
 
-Scheduler 4 is a Barrie Transit planning platform with a fixed-route scheduling core plus adjacent planning and operations tools.
+Scheduler 4 is a Barrie Transit planning platform with a fixed-route scheduling core and adjacent planning, analytics, operations, on-demand, and parking tools.
 
-Top-level app shells in `App.tsx`:
-- On-Demand
-- Fixed Route
-- Operations
-- Parking
-- Planning Data
+Top-level shells in `App.tsx` are On-Demand, Fixed Route, Operations, Parking, and Planning Data. `index.tsx` is the mount point. Navigation is hash-based rather than router-library based.
 
-The app uses hash-based navigation rather than a router library. The top-level shell lives in `App.tsx`, with `index.tsx` as the mount point. Planning Data nested workspaces use `utils/workspaces/analyticsWorkspaceRouting.ts` for deep links such as `#planning/route-planner-2` and, when opened inside Scheduled Transit, `#fixed/analytics/route-planner-2`. The home-screen "Where you left off" card uses `utils/workspaces/fixedRouteResumeState.ts`; despite the legacy file name, Route Planner 2 also updates this state so the card can resume the latest route-planning project.
-
-Workspace visibility is controlled by `utils/workspaceAccess.ts`, `hooks/useWorkspaceAccess.ts`, and `components/contexts/TeamContext.tsx`. Existing global feature flags still control build-wide availability; workspace access profiles (`none`, `production`, `planner`, `external-planner`, `transit-app-only`, `parking`, `admin`, `internal`) control what each team member sees, with optional `workspaceOverrides` for exact allow/block changes. Named onboarding packages live in `utils/workspaceAccessPackages.ts`; use these from Team Management instead of hand-picking profile/checkbox combinations when setting up users or partner teams. `Transit App + STREETS Dashboard` is the WATT-style package: base `transit-app-only` plus `workspaceOperations: true`. For ordinary users, `TeamContext` enumerates the signed-in user's membership documents and the header provides a one-click membership switcher; `users/{uid}.teamId` may only point to an existing team membership. For scheduler administrators, the same dropdown lists every team and selecting a non-member team starts an expiring read-only inspection session without changing membership or `users/{uid}.teamId`; explicit cross-team editing remains in Team Management and requires a reason. Pending invite links add membership without silently replacing an existing active team. Scheduler administrators can start an expiring, team-scoped support session from Team Management: `inspect` is read-only and `edit` requires a reason, is audited, defaults to 30 minutes, and is capped at 60 minutes. The synthetic developer-support `useTeam()` surface never changes `users/{uid}.teamId`; `actualTeam` remains the developer's home identity. `parking` users see only the Parking workspace by default. Signed-in ordinary users with no usable team are held in a blocking Team Management setup flow, except when another known membership is available through the header switcher; scheduler administrators may open the command center without a home team. `App.tsx` exposes Planning Data as a top-level view when the user has at least one analytics workspace, so Transit App-only external users can enter the app without Scheduled Transit access.
-
-Cross-team team lookup requires the Firebase Auth claim `schedulerAdmin: true`; do not infer global authority from a team role or the `internal` access profile. A scheduler administrator automatically receives the `internal` workspace profile on their own team, regardless of saved profile overrides. Cross-team reads/writes additionally require the active support session to match the target team, and only edit mode permits writes. Team owners/admins continue to manage their own teams normally. External agencies such as Ontario Northland, Lane Transit, or WATT should be separate partner teams. Use Team Management's access packages and invite links for onboarding.
-
-Scheduler administrators have an intentional read-only exception for user-uploaded File Manager files through **All uploads**. New uploads snapshot their team/uploader attribution; legacy files use a labelled current-profile fallback. Another user's user-scoped upload cannot be changed or deleted. Developer edit is a separate time-limited team session and must not be treated as permanent impersonation.
-
-Team Management has an admin-only Data Sources tab for partner teams. It writes `teams/{teamId}.dataSourceTeamIds.transitApp` and/or `.performance` so a team like WATT can read Barrie Transit App and STREETS dashboard/reporting data without copying Storage files. Shared reads go through the `sharedWorkspaceData` Cloud Function, which verifies the user is a member of the requesting team and that the source-team pointer is explicitly configured. Do not make WATT users direct Barrie members just to view shared analytics data.
-
-Partner teams with Scheduled Transit access can view published master schedules from a source team without copying schedule JSON. `dataSourceTeamIds.masterSchedules` is the explicit pointer; when absent, the Master Schedule Browser falls back to `dataSourceTeamIds.performance` if the partner team has no local schedules. Firebase rules allow this as read-only access only for members of the requesting team who also have Fixed Route workspace access.
-
-Team Management is a command-center UI with a scheduler-admin team picker rail and separate Users, Access, Uploads, Data Sources, and Developer Tools tabs. Keep ordinary access editing package-first, hide workspace checkbox overrides behind advanced disclosure, keep upload review in Uploads, and keep expiring Inspect/Developer edit actions in Developer Tools. Do not reintroduce permanent edit-as-user access.
+Planning Data deep-link handling is centralized in `utils/workspaces/analyticsWorkspaceRouting.ts`. The home-screen resume card uses `utils/workspaces/fixedRouteResumeState.ts`; despite the legacy name, Route Planner 2 also updates it.
 
 This is a domain-heavy monolith:
-- UI lives in `components/`
-- domain logic lives in `utils/`
-- persistence and backend helpers are split across Firebase services, `api/`, and `functions/src/`
 
-## 3) Workspace and domain boundaries
+- UI: `components/`
+- domain logic: `utils/`
+- request handlers: `api/`
+- Firebase backend: `functions/src/`
+
+Use `docs/ARCHITECTURE.md` for the current component and workspace map.
+
+## Access and team boundaries
+
+Workspace visibility flows through `utils/workspaceAccess.ts`, `hooks/useWorkspaceAccess.ts`, and `components/contexts/TeamContext.tsx`. Named onboarding packages live in `utils/workspaceAccessPackages.ts`; prefer packages over hand-built profile/override combinations.
+
+Cross-team authority requires the Firebase Auth claim `schedulerAdmin: true`; never infer it from a team role or an `internal` workspace profile. Cross-team inspection/editing uses an expiring, audited, team-scoped support session. Inspection is read-only; edit requires an explicit reason. Do not reintroduce permanent impersonation or rewrite `users/{uid}.teamId` to simulate support access.
+
+Partner agencies should be separate teams. Explicit `dataSourceTeamIds` pointers and the `sharedWorkspaceData` Cloud Function provide scoped read-only sharing for Transit App, performance, and published master-schedule data. Do not add partner users directly to Barrie merely to share analytics.
+
+Scheduler administrators have a deliberate read-only exception for user-uploaded files through **All uploads**. Another user's user-scoped upload cannot be changed or deleted.
+
+See `docs/ARCHITECTURE.md` for access flow and `docs/SCHEMA.md` for claims, support sessions, source pointers, and security boundaries.
+
+## Workspace boundaries
 
 ### On-Demand
-Owns shift generation, optimization, validation, and saved-schedule workflows for demand-responsive planning.
 
-TOD slot math is centralized in `utils/demandConstants.ts` through the active slot-grid helpers (`SLOT_MINUTES`, `TIME_SLOTS_PER_DAY`, `hoursToSlots`, `minutesToSlotsCeil`, `slotDurationToHours`, `slotToMinutes`, `formatSlotToTime`). The active app grid is 5 minutes. Legacy saved TOD schedules without `slotGranularityMinutes` are treated as 15-minute data and converted on load by `utils/onDemandGridMigration.ts`; new saves include `slotGranularityMinutes: 5`.
+On-Demand owns demand-responsive requirements, shifts, optimization, validation, and saved schedules.
 
-TOD shift rules use a max of 5 consecutive driving hours before lunch is required for non-straight shifts; the old fixed 45-minute / 4th-to-6th-hour break rule should not be reintroduced. New manual drivers can be placeholders until a shift time is set, and changeoff penalties are skipped for configured on-site handoff locations.
-
-On-Demand imports accept Master requirements and RideCo/MVT shifts independently; a single uploaded or file-manager-selected file auto-processes. RideCo/MVT parsing lives in `utils/parsers/csvParsers.ts` and supports CSV/workbook sheets, Excel numeric times, shift-header-relative row fallback, overnight service, day-type counts, skipped-column diagnostics, and a review/apply step before shifts replace the active draft.
+- Slot math is centralized in `utils/demandConstants.ts`. New saves use a 5-minute grid; legacy records without `slotGranularityMinutes` may represent 15-minute data and migrate through `utils/onDemandGridMigration.ts`.
+- Non-straight shifts require lunch after at most five consecutive driving hours. Do not restore the old fixed 45-minute / fourth-to-sixth-hour break rule.
+- Master requirements and RideCo/MVT imports are independently supported and planner-reviewed before replacing active shifts.
 
 ### Fixed Route
-Owns the core fixed-route workflow:
-- CSV/runtime import
-- New Schedule wizard
-- schedule editing
-- GTFS import
-- draft management
-- publish to master schedules
-- timetable/report outputs
-- route-level connection setup and optimization
+
+Fixed Route owns runtime import, the New Schedule wizard, schedule editing, GTFS import, draft management, publish-to-master, reports/timetables, and connection optimization.
+
+Load `docs/rules/LOCKED_LOGIC.md` for behavioral constraints and the matching fixed-route feature docs from `docs/CONTEXT_INDEX.md` before changing these workflows.
 
 ### Operations
-Owns STREETS-style performance dashboards, imports, summaries, and reporting.
 
-STREETS performance history is now stored as monthly Storage chunks instead of one giant all-route JSON file. Metadata lives at `teams/{teamId}/performanceData/metadata` with `storageMode: 'monthly'`, `monthlyStoragePaths`, and `routeMonthlyStoragePaths`; `overviewStoragePath` and `reportStoragePath` remain the fast dashboard/email entry points. The old `storagePath` monolithic file is legacy fallback only. Keep server auto-ingest (`functions/src/index.ts`) and client manual import (`utils/performanceDataService.ts`) behavior aligned when changing this pipeline.
+Operations owns STREETS-backed imports, dashboards, summaries, and reporting.
 
-Load Profiles has a separate versioned monthly read model under `teams/{teamId}/performanceViews/load-profiles/`, published through metadata field `loadProfileMonthlyStoragePaths`. Keep `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts` contract-identical. Same-team and partner reads both go through `sharedWorkspaceData`; do not restore direct browser reads or silently turn load/schema failures into empty data. The endpoint requires Operations and Load Profiles access, rejects unbounded/oversized date ranges, validates source-owned paths and route scope, and requires an active support session for nonmember scheduler-admin inspection. Performance publishing is owner/admin-only. Backfill is dry-run-first through `functions/scripts/backfill-load-profile-views.mjs`; never let an older backfill pointer replace a newer import generation.
-
-Residual access note: the legacy/full monthly performance archives still contain load-profile fields and remain readable to members with the broader Operations workspace because other current tools consume those summaries directly. Until every performance reader is moved behind filtered backend views, `operationsLoadProfiles` controls the supported UI/API path but is not a strict confidentiality boundary for users who already have Operations data access.
-
-Operations metric definitions and validation status live in `docs/OPERATIONS_DASHBOARD_METRICS.md`. Performance schema v10 corrects full-day OTP eligibility for stop/hour rollups, midnight OTP deviation, server/client route-hour and stop-breakdown parity, and exclusion of in-between rows from operational totals. Schema v11 adds reliable stop-level load observation counts for exact multi-day Passenger Flow weighting. Schema v12 adds deterministic dwell-incident IDs, incident operating/passenger context, and route/operator eligible-timepoint exposure for scope-correct Dwell Incident Review rates. Schema v13 adds occurrence-aware load-profile and ridership-heatmap stops so repeated loop visits remain separate while shifted stop positions still align. Older stored days remain readable but require rebuild or re-import for the newer calculations.
-
-Operations Dashboard should not eagerly load all STREETS detail history after the 7-day overview. Detail tabs request date-range and tab-specific slices through `usePerformanceDataQuery`/`getPerformanceData`; partner-team reads must pass the same `dateRange` and `detailMode` through `sharedWorkspaceData`.
-
-The Ridership tab also includes a Transit On Demand pickup map. TOD pickup uploads are separate from STREETS performance data: metadata lives at `teams/{teamId}/todPickupData/metadata`, aggregated monthly JSON lives under `teams/{teamId}/todPickupData/`, and replacing an upload replaces only the selected month. Stored TOD pickup data is aggregated by stop ID when present, otherwise pickup name plus rounded coordinates, or coordinates alone. Raw rider/request rows and address columns should not be persisted. Imports are limited to CSV files under 5 MB and 25,000 rows. All team members can view TOD map data and import metadata; upload controls are owner/admin-only.
+- Performance history uses monthly Storage chunks with Firestore metadata and route/month pointers; the old monolithic path is fallback only.
+- Load Profiles uses a separate compact monthly read model. Keep `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts` contract-identical.
+- Same-team and partner detail reads use bounded, access-checked backend views; do not restore broad direct browser reads or convert load/schema failures into empty data.
+- Canonical metric and schema-version behavior lives in `docs/OPERATIONS_DASHBOARD_METRICS.md`. Older stored summaries may require rebuild or re-import after schema changes.
 
 ### Parking
-Owns shared parking-code and parking-revenue review. `components/workspaces/ParkingWorkspace.tsx` opens to a card dashboard at `#parking`, similar to Fixed Route Operations, with separate Plate Monitor (`#parking/plate-monitor`) and Parking Lot Data (`#parking/lot-data`) workspaces. Parking Lot Data uses a Route Planner-style full-screen map shell for Parking Revenue analytics: it imports and auto-saves HotSpot app and QR revenue workbooks as source-aware monthly datasets, ships with bundled City ParkingLatLong mappings in `utils/parking/parkingDefaultLocations.ts` as default reviewed lot coordinates/spaces, can refresh those mappings from newer City lat/lng workbooks through `utils/parking/parkingLocationWorkbook.ts`, uses `Amount` as revenue, stores normalized revenue payloads under `teams/{teamId}/parking/revenue/`, and uses reviewed `settings.revenueLocations` to map HotSpot/QR IDs to physical locations with lat/lng. Parking Revenue settings include editable lot categories managed through `utils/parking/parkingCategories.ts`; seeded categories are Downtown, Waterfront, Hybrid, Marina, Hospital, and Allandale GO. Bundled City ParkingLatLong locations are now categorized by City parking area: regular downtown lots/on-street as Downtown, waterfront lots/on-street as Waterfront, Spirit Catcher/Simcoe Street/Marina North as Hybrid, Marina Lot as Marina, Gallie Court/Quarry Ridge as Hospital, and Cumberland St as Allandale GO. H-Block is Downtown; legacy H-Block defaults from Hospital migrate to Downtown. Revenue analytics support year/month/category/uploader/day/source/hour filters, recent import history by `importedBy`, category comparisons across revenue, sessions, average stay, revenue per known space, and estimated utilization, single-month daily trend views, monthly utilization trends, and estimated utilization based on paid parking minutes divided by known spaces × imported active days × selected hour window. Map display can group multiple source IDs for the same physical lot, but must not merge distinct nearby lots or on-street parking areas just because their coordinates are close. Public City of Barrie parking GIS locations from `utils/parking/publicParkingLocations.ts` are a map-only fallback until reviewed coordinates are saved; they must not overwrite `settings.revenueLocations` unless a planner explicitly applies and saves them. Public-source matches are shown as normal City-source pins, not as user-facing unmapped warnings. Revenue imports replace only matching source/month combinations. The older department-code usage import remains in Parking Lot Data: it requires discount-code family mappings before saving, replaces matching month(s), and derives department month-over-month summaries. Plate Monitor reviews plate-level pattern flags, evidence, and indicator thresholds, and includes annual department reporting with months as rows, department-code/color columns, annual totals, and a department-total pie chart. Annual matrix cells and every total show both discount value and raw-row use count, and open exact raw-observation drilldowns with Excel and PDF export. Department code editability lives in a modal manager: each department can edit its name, color, short code, active years, year format (`2026` or `26`), manual yearly code overrides, an `ignoreData` option that excludes that department's rows from Parking usage summaries and plate analysis, and an `ignoreFlags` option that suppresses plate-level indicators for that department. Matching helpers live in `utils/parking/parkingCodeRules.ts`; flag analysis lives in `utils/parking/parkingAggregation.ts`; revenue parsing/analytics live in `utils/parking/parkingRevenue.ts`. Metadata/settings live at `teams/{teamId}/parking/default`. Parking contains license plates, so workspace access is limited by default to the `parking`, `admin`, and `internal` profiles; users with Parking workspace access can read, export, import, and maintain Parking settings.
 
-### Planning-data / analytics surfaces
-The repo also contains planning-data tools, mostly under `components/Analytics/` and related `utils/` folders, including:
-- Transit App analytics
-- OD analysis
-- Legacy Route Planner workspace has been removed; `docs/route-planner-legacy/` is historical background only, and remaining `utils/route-planner/` code is legacy support used by Shuttle Planner.
-- Route Planner 2, a fresh restart shell in `components/Analytics/RoutePlanner2Workspace.tsx` with current source-of-truth docs in `docs/route-planner-2/`; v1 is a team-saveable blank-concept operational feasibility workspace and intentionally excludes coverage analysis and downstream schedule handoff
-- Shuttle Planner
-- Network Connections
-- student-pass planning
-- Residential Growth, a Planning Data workspace that imports monthly Issuance Listing and Certificate of Occupancy Excel files, geocodes Barrie addresses with Mapbox, and maps issued/planned versus occupied/completed residential units as separate tabs.
-- Council Intelligence, a feature-flagged Planning Data pilot for Barrie eSCRIBE records from a rolling 90-day window. `functions/src/councilIntelligence.ts` owns allowlisted server-side discovery/refresh; `utils/council/` owns deterministic parsing and evidence rules; `utils/council/councilIntelligenceService.ts` owns team-scoped reads. Named recorded votes are official evidence; movers/seconders are signals only, and generic “Carried” must never create individual votes.
+Parking owns parking-code usage, revenue review, map/location settings, and plate-pattern analysis. Parking data contains licence plates; preserve its restricted workspace boundary and use `docs/SCHEMA.md` for the current storage and access contract.
 
-Fleet Plan is a team-shared analytics surface backed by `teams/{teamId}/fleetPlan/default` plus version metadata under `versions/{versionNumber}` and immutable JSON payloads in Storage. Reads are team-member scoped; writes are owner/admin scoped and use loaded-version conflict detection. Saves are validation-gated for duplicate/missing unit numbers, invalid years, and broken lifecycle timelines. Blocking issues can be fixed in a planner-approved resolver modal; Gemma 4 suggestions come from `api/fleet-plan-ai-resolver.ts` and are constrained to allowed deterministic fix IDs. Missing retirement years are warnings only for buses already in service, not future purchasing rows; the resolver defaults those warnings to a retirement year 13 years after first in service.
+### Planning Data
 
-### Domain folders worth knowing first
-- `utils/schedule/`
-- `utils/blocks/`
-- `utils/parsers/`
-- `utils/gtfs/`
-- `utils/connections/`
-- `utils/platform/`
-- `utils/newSchedule/`
-- `utils/transit-app/`
-- `utils/od-matrix/`
-- `utils/route-planner-2/`
-- `utils/route-planner/` (legacy support only; do not use for Route Planner 2)
-- `utils/shuttle/`
+Planning Data includes Transit App analytics, OD analysis, Route Planner 2, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Council Intelligence, Fleet Plan, and related tools.
 
-## 4) Persistence and runtime model
+Important boundaries:
 
-The repo is Firebase-centered:
-- Firestore stores metadata and indexes
-- Firebase Storage stores large JSON/blob payloads
-- Firebase Auth is the primary auth layer
+- Route Planner 2 is the current Camp tool. `docs/route-planner-2/README.md` routes to its product, workflow, architecture, data, runtime, and test contracts.
+- Route Concept Planner is a separate neutral internal-beta workspace. Keep it isolated from Route Planner 2 and load `docs/route-concept-planner/README.md` plus its contracts.
+- The removed legacy Route Planner is historical. Remaining `utils/route-planner/` code is legacy support used by Shuttle Planner, not Route Planner 2.
+- Council Intelligence must distinguish official named votes from movers, seconders, procedural signals, and unknown evidence.
+- Fleet Plan is team-shared and versioned; writes are owner/admin-only and validation/conflict gated.
+- Transit App schema and data-quality cautions live in `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md`; re-import saved data when that checklist or schema contract says regeneration is required.
 
-Common pattern:
-- Firestore = lightweight document state
-- Storage = full content, large payloads, or versioned artifacts
+## Persistence and server model
 
-Runtime surfaces are intentionally mixed:
-- Vite dev middleware in `vite.config.ts`
-- canonical request handlers in `api/`
-- Firebase Cloud Functions in `functions/src/`
+The application is Firebase-centered:
 
-Prefer one shared implementation per server concern when practical. If a canonical `api/` handler already exists, prefer delegating local/dev behavior to it rather than duplicating request logic elsewhere.
+- Firestore stores metadata, indexes, and bounded document state.
+- Firebase Storage stores large JSON/blob payloads and immutable/versioned artifacts.
+- Firebase Auth is the primary identity layer.
 
-Production auth safety: `components/contexts/AuthContext.tsx` blocks Codex-style local dev accounts (`codex.dev.*@example.com`) on non-local hosts and signs them out immediately. Keep dev auto-login restricted to localhost only; do not let `VITE_DEV_AUTH_*` values affect `transitscheduler.ca`.
+Runtime surfaces are intentionally mixed between Vite development middleware, canonical handlers in `api/`, and Firebase Functions in `functions/src/`. Prefer one shared implementation per server concern; local/dev adapters should delegate to canonical handlers when practical.
 
-## 5) Locked logic and cross-cutting conventions
+Production auth blocks Codex-style local development accounts on non-local hosts. Keep dev auto-login and `VITE_DEV_AUTH_*` behavior restricted to localhost.
 
-Read `docs/rules/LOCKED_LOGIC.md` before changing schedule generation, parsing, timing, routing, or block assignment behavior.
+Use `docs/SCHEMA.md` for exact collections, Storage paths, access rules, and type locations.
+
+## Cross-cutting schedule conventions
+
+Read `docs/rules/LOCKED_LOGIC.md` before changing schedule generation, parsing, timing, routing, block assignment, or Schedule Editor behavior.
 
 High-value reminders:
-- Fixed-route work follows **draft → publish**. Do not treat master schedules as editable working copies.
-- Segment rounding, gap-based block assignment, trip pairing, cycle-time semantics, and post-midnight ordering are locked behavior.
+
+- Fixed-route work follows Draft → Publish; master schedules are not editable working copies.
 - AI suggests; planners decide.
-- New Schedule Step 2 is an internal workflow, not a hard human decision gate. Step 3 and Step 4 should still trust the approved runtime contract, but the UX may auto-approve on continue instead of forcing a separate approval decision.
-- In New Schedule Step 2, loop-route planning chains must stay keyed as `Loop` in `canonicalDirectionStops`; do not coerce loop master/fallback stops into `North` or `South`, or full-pattern runtime matching for routes such as 10/11 can return no data.
-- STREETS runtime imports keep normal and detour observed patterns separate. Step 2 should prefer normal-pattern evidence, fall back to detour-pattern runtimes only when normal evidence is unavailable, and warn planners before approval. Stop-order resolution is normal-only by default, but the New Schedule Step 2 performance path explicitly passes `runtimePatternStrategy: 'detour-fallback'` so detour-only routes such as Route 12 can resolve a usable stop order when no normal trips exist.
-- New Schedule performance mode should prefer route-scoped performance files for Step 2 loading. The All routes option remains available for comparison, but default/loading behavior should avoid fetching the full performance JSON when route-scoped files exist.
-- In New Schedule Step 1, the performance-data load picker groups A/B direction suffixes under the full base route (for example 7A + 7B appear as Route 7). Variant routes such as 8A and 8B remain separate route choices.
-- New Schedule Step 4 exposes Compare to Master as a local planner review panel, not a header toggle. It loads the published master on demand, shows warning-only summary counts, and can show/hide editor deltas without blocking publish.
-- The standalone Schedule Editor is a controlled tweak workflow: master-derived drafts retain their exact source version, default to master deltas, surface edit impact, support changed-row review and named checkpoints, and block publish when the source is stale/unverifiable or operational errors remain. Ready-for-review creates an immutable team review snapshot. Publishing requires the draft to be saved as ready for review plus a sanitized note of at most 500 characters; keep these checks in `utils/services/publishService.ts`, not only in disabled UI controls. Pass the reviewed source version into the master transaction, and keep master payload upload paths unique per attempt so concurrent publishers cannot overwrite or delete the winning payload.
-- Schedule Editor mutations and block cascades must be scoped to both the base route and service day; merged directional variants such as 2A/2B remain one route chain within that day. Use the 4:00 AM operational boundary for display, pairing, and edit order. Editor draft saves are serialized, and in-app navigation must await the latest save; do not key the mounted editor by a draft ID that is assigned by its first save.
-- V2 master-schedule imports use departure values for ARR -> R -> DEP stops. `parserAdapter.ts` must carry that fact through `endTimeIncludesRecovery` so Schedule Editor block reassignment does not add terminal recovery twice; `blockAssignmentCore.ts` retains a narrow fallback for older saved V2 trips with keyed terminal recovery and matching terminal `stopMinutes`. Every occupied-end consumer—including review, timeline, round-trip metrics, and add/extend conflict checks—must respect this flag. Keep parsers, comparisons, timeline ordering, and connection matching aligned to the 4:00 AM operational boundary.
-- New Schedule Step 4 also exposes Regularize Headway as a planner-applied review tool. It snaps trips to the target headway by shifting trip times and rebalancing terminal recovery only; it must not alter travel times or segment runtimes, and overlap/tight-recovery warnings require planner review.
-- Brand-new added trips should not inherit delta-source fallback from template trips; compare-to-master deltas should only render when a real original/reference match exists.
+- New Schedule Step 2 produces an approved runtime contract consumed by later steps. Load the three Step 2 documents named in `docs/CONTEXT_INDEX.md` for normal/detour evidence, loop keys, stop-order resolution, and route-scoped loading rules.
+- Schedule Editor uses compare → change → review → publish. Source-version checks, ready-for-review state, publish-note validation, and operational blockers must be enforced in services, not only disabled UI controls.
+- Schedule Editor mutations and block cascades are scoped by base route and service day. Preserve the 4:00 AM operational boundary, serialized saves, and navigation waits for the latest save.
+- V2 occupied-end calculations must consistently respect whether terminal departure already includes recovery; keep parsers, block assignment, comparisons, timeline order, connection matching, and add/extend checks aligned.
 
-When a task touches these areas, load the matching Tier 1 or Tier 2 docs first instead of relying on memory.
+## Fragile areas
 
-## 6) Known fragile / high-risk areas
+Core schedule danger zones:
 
-Treat these as danger zones:
 - `utils/schedule/scheduleGenerator.ts`
 - `utils/blocks/blockAssignmentCore.ts`
 - `utils/timeUtils.ts`
@@ -176,97 +128,37 @@ Treat these as danger zones:
 - `components/ScheduleEditor.tsx`
 - `components/schedule/RoundTripTableView.tsx`
 
-Also be careful in very large orchestration files and workspaces such as:
+Large orchestration surfaces that deserve narrow edits and focused verification:
+
 - `components/workspaces/OnDemandWorkspace.tsx`
 - `components/workspaces/FixedRouteWorkspace.tsx`
 - `components/MasterScheduleBrowser.tsx`
 - `components/Analytics/TransitAppMap.tsx`
 - `utils/transit-app/transitAppAggregator.ts`
 
-## 7) Current durable cautions
+Mirrored implementations that must stay behaviorally synchronized:
 
-These are worth remembering, but should still be verified before relying on them:
-- The working tree may already contain unrelated edits; do not assume a clean baseline.
-- Build output has shown large bundle/chunk warnings.
-- The test suite has known student-pass timeout failures; do not treat a partial red test run as proof that unrelated work is broken.
-- Performance/import flows and New Schedule Step 2 are active areas of recent hardening; verify behavior directly when changing them.
-- Server-side STREETS auto-ingest enriches stored performance summaries with GTFS-based `missedTrips` in `functions/src/gtfsScheduleIndex.ts`. The Cloud Functions package uses copied GTFS assets under `functions/src/gtfs/` and `functions/src/data/gtfsTripIndex.json`; keep these synced with the root `gtfs/` and `data/gtfsTripIndex.json` files whenever the bundled GTFS feed/index changes, or daily emails may lose missed-trip coverage.
-- Transit App OD pair logic is centralized in `utils/transit-app/transitAppOdPairs.ts`; keep the Canada coordinate guard, uncapped default pair retention, `America/Toronto` timezone conversion, and shared OD time-filter definitions in sync with `TransitAppMap`/`DemandModule`.
-- Transit App OD display summaries and map display helpers use `utils/transit-app/transitAppOdDisplay.ts`; selected-zone totals must be based on all filtered flows touching the zone, not just the visible Top N map slice, peak-period labels should only appear when positive hourly bins exist, and the OD route-corridor filter should evaluate all GTFS shape variants for the selected route.
-- Transit App OD Coverage Gap Analysis is Barrie-only before top-N selection, uses shared Barrie analysis bounds from `utils/transit-app/transitAppGeo.ts`, evaluates all bundled GTFS shape variants, groups merged `2A/2B`, `7A/7B`, and `12A/12B` as route keys `2`, `7`, and `12`, and passes one `coverageStatus` to both the map and table.
-- Transit App transfer analysis schema v3 keeps full rankable transfer lists, exact pair time-band counts, exact `America/Toronto` transfer time buckets, service-name-first agency classification, GTFS stop-ID disambiguation for same-name transfer stops, and total wait minutes for weighted summaries. Scope filtering is centralized in `utils/transit-app/transitAppTransferScope.ts` with numbered-route-only Barrie route hints; UI ranking helpers live in `utils/transit-app/transitAppTransferUiMetrics.ts`; and `TransfersModule` applies display caps after scope/time-band filters. Existing saved imports need reimport to regenerate uncapped transfer summaries and exact time-band counts.
-- Transit App Stop Analysis schema v2 filters coverage-gap endpoints to the Barrie analysis bounds, records invalid/out-of-scope endpoint exclusions, uses exact `America/Toronto` time buckets, reports total cluster count before the saved top-150 cap, normalizes stop mention case/whitespace, and falls back to an exact GTFS nearest-stop scan for far endpoints. Existing saved imports need reimport to regenerate stop proximity summaries.
-- Transit App Heatmap schema v2 keeps weekday overnight separate from evening, stores one hotspot callout per non-empty atlas slice, uses exact `America/Toronto` season/day/time buckets, and avoids all-season map fallback when a selected atlas slice is missing. Existing saved imports need reimport to regenerate heatmap summaries.
-- Transit App GTFS normalization merges Barrie GTFS `2A/2B`, `7A/7B`, and `12A/12B` into Transit App route keys `2`, `7`, and `12`; keep `8A` and `8B` separate.
-- Transit App Route Performance schema v3 joins observed trip legs to engagement months using exact `America/Toronto` local month, not the raw UTC timestamp month; weekday/weekend scores use daypart-specific observed-leg counts; stale scorecard rows compare against the median for that route's own latest month; table sorting keeps N/A score values last. Existing saved imports need reimport to regenerate corrected route-performance summaries.
-- Transit App Service Gaps schema v2 is Barrie-scope only: filter out regional/non-Barrie transit legs before comparing to bundled Barrie GTFS supply, use average app requests per service day/hour for demand-vs-supply, use exact Toronto-local minutes for span-start/span-end demand, and save the full gap register. Existing saved imports need reimport to regenerate service-gap summaries.
-- Dwell cascade logic exists in both `utils/schedule/dwellCascadeComputer.ts` and `functions/src/dwellCascadeComputer.ts`; keep them behaviorally synced and run the cascade/function sync tests when changing it.
-- Dwell Incident Review is incident-first, read-only, and map-first: use `utils/performanceDwellReview.ts` as the shared queue/pattern/operator model; use the incident map as the spatial timeline; show same-trip impact before later block carryover; label only the origin and meaningful carryover/recovery milestones by default; keep supporting context in progressive disclosure; keep minor events out of reportable metrics; and treat operator identity as context rather than a fault leaderboard. The old aggregate cascade section is not the primary product surface. Shared performance responses require `operationsOperatorDwell` for dwell-detail requests and redact operator/cascade evidence from broader responses when that access is absent.
-- Passenger Flow by Stop may use route-local block-inferred loads only when a same-route block chain has no usable load-profile stops in any direction it touches that day. Daily load profiles are stop-averaged rather than trip-specific, so do not use them as block anchors or mix an independently anchored inferred trajectory into a chain with load evidence. Group by route plus block so route-scoped loading cannot re-anchor an interlined cross-route fragment. Inference carries `boardings - alightings` through the route-local service-day block and preserves repeated stop occurrences. It uses a zero anchor when feasible; otherwise it adds the smallest starting load needed to keep the entire block non-negative and discloses that result as a lower-bound estimate. Omit whole block chains whose inferred range exceeds the configured plausible-load cap. Keep all inferred values visibly distinct from verified APC load. Existing heatmaps key trip columns by terminal departure time, so same-time trip collisions remain a stored-summary limitation until a future schema adds stable trip identity.
-- Public timetable content is now team-managed config, not only static copy in the component.
-- Detour Publisher is a Scheduled Transit subworkspace at `#fixed/detours`. Its domain lives under `utils/detours/`, its dedicated map/preview components under `components/detours/`, and team data under `teams/{teamId}/detourNotices`. Keep GTFS use read-only, keep Mapbox routing advisory, require planner stop-impact and bus-suitability confirmation, and leave MyRide upload manual until a supported vendor integration exists. Load `docs/DETOUR_PUBLISHER.md` before changing the workflow or export contract.
-- Route Concept Planner is a separate internal-beta workspace for neutral, complete-route feasibility testing. Keep Route Planner 2/Camp unchanged and isolated: the new workspace owns neutral types, authoring/calculation logic, and revision-safe persistence at `teams/{teamId}/routeConceptPlannerProjects/{projectId}` with nested alternatives/patterns. Approved reuse is limited to GTFS, Mapbox, and map capabilities behind neutral adapters. Runtime priority is confirmed manual override, matching scheduled GTFS, Mapbox, labelled fallback, then missing. It reports complete runtime, cycle, minimum versus tested buses, recovery, and uniform-frequency daily estimates; it does not generate schedules, edit GTFS, include Camp/address manifests, or export PDFs in v1. Load `docs/route-concept-planner/README.md` for the full contract.
-- Route Planner 2 can import one or more full GTFS route patterns as local editable planning-copy scenarios through `utils/route-planner-2/routePlanner2GtfsImport.ts`; imports filter out partial patterns, keep scheduled segment runtimes as high-confidence evidence by time band when available, and do not create fixed-route schedule drafts or edit GTFS feeds. GTFS imports attach optional route-family metadata for Barrie merged A/B routes 2A+2B, 7A+7B, and 12A+12B so the picker/sidebar show one family with editable Out/Back direction concepts; keep 8A and 8B separate. Family summaries are derived in `utils/route-planner-2/routePlanner2Summary.ts`: combined runtime is the sum of ready direction runtimes, cycle window uses selected GTFS `block_id` scheduled cycle windows when available and otherwise shared buses × frequency, recovery is cycle minus combined runtime, and the direction scenarios keep separate labels/stops/shapes/runtimes.
-- Route Planner 2 supports local stop-range reassignment between route concepts through `reassignRoutePlanner2StopRange`; copied/moved stops get new local IDs, insertion position is planner-controlled, and stale runtime evidence/line anchors are cleaned when stop order changes.
-- Route Planner 2 runtime estimates use priority-protected segment evidence: planner manual overrides outrank observed evidence, blended observed+scheduled evidence, scheduled proxies, Mapbox estimates, and distance fallback. Evidence derivation lives in `utils/route-planner-2/routePlanner2RuntimeEvidence.ts` and depends on local scenario stops plus performance/schedule indexes, not legacy Route Planner modules. For Route Planner 2 GTFS segment runtimes, use the stop-to-stop `buildCorridorSpeedIndex` index; the map/corridor chunk index is for corridor visualization and will not reliably match adjacent stop pairs. Same-minute adjacent GTFS stop times are valid scheduled evidence and are kept at a 1-minute minimum rather than being treated as missing, but imported GTFS route-level totals should preserve the median first-stop-to-last-stop elapsed runtime for the selected band so dense stop interpolation does not inflate runtime or understate recovery. GTFS-imported scheduled runtimes are selected by service day/planning period, and when period-specific evidence is missing the planner preserves imported full-day GTFS runtimes instead of clearing them to Mapbox/fallback; the UI must disclose the band actually in use.
-- Route Planner 2 GTFS patterns that start and end at the same stop are already complete loops; feasibility should not double them as one-way out-and-back routes. Use the loop trip runtime against the selected scheduled cycle window to calculate recovery.
-- Route Planner 2 stop-card and map-label kids/travel-time summaries live in `utils/route-planner-2/routePlanner2StopTimes.ts`; kids counts prefer imported `riderCount` and fall back to source rows for older saved/imported stops. Cached Barrie POI search suggestions live in `utils/route-planner-2/routePlanner2PopularPlaces.ts` and are checked before Mapbox for non-civic-address queries.
-- Route Planner 2 custom concepts can use scheduled GTFS corridor runtime evidence when the custom stops match GTFS stops but are not adjacent in GTFS. The resolver finds route-specific GTFS paths between the matched stops, aggregates scheduled runtime over the full path, and supports runtime-panel filtering between all matching routes and selected routes. Corridor estimates are labeled as scheduled GTFS corridor estimates with matched route names.
-- In Route Planner 2 GTFS runtime filtering, an explicit Selected routes choice overrides the imported source route, while All matching broadens the match to every scheduled route that follows the corridor. Stop-range reassignment should preserve period-specific GTFS runtime estimates and manual overrides when copied/moved in the same direction.
-- Route Planner 2 stop-range reassignment now has a pre-apply transfer preview for runtime impact, carried scheduled/manual evidence, connector gaps, duplicate join-stop warnings, and reversed-direction evidence drops. When a one-way target route is extended by prepending before its start terminal or appending after its end terminal, the terminal role moves to the new outer transferred stop so feasibility includes the transferred section.
-- Route Planner 2 routes now carry a planner-controlled runtime source mode: `gtfs` allows scheduled GTFS runtime evidence to outrank Mapbox, while `mapbox` ignores GTFS runtime evidence and uses Mapbox/drawn-route estimates, then fallback assumptions. Manual overrides still outrank automatic sources.
-- New blank/custom Route Planner 2 scenarios default to `runtimeSourceMode: 'mapbox'`; GTFS-imported scenarios default to `runtimeSourceMode: 'gtfs'` so their first runtime estimate uses scheduled GTFS stop times. Planners can still switch runtime source mode from the Advanced source panel.
-- Route Planner 2 GTFS imports also seed service assumptions from the selected pattern when available: first/last trip start, median scheduled headway, day type, and distinct `block_id` count as `targetBuses`. Feasibility uses `targetBuses * frequency` as the scheduled cycle window so existing services such as three buses at 30-minute frequency are reflected before edits.
-- Route Planner 2 map overlays are zone-owned. Keep the full stop order in the review rail; the map should show only a compact stop summary with a `Review stops` action so bulk address imports do not cover controls or metrics.
-- Route Planner 2 uses a full-screen map shell: project identity lives in a small floating chip; primary actions, route concepts, and the runtime source overlay toggle live in a collapsible left sidebar; and GTFS/address imports open as right-side map drawers instead of page-centred modals. The right-side review panel mirrors the left sidebar with collapsed/expanded states, includes a top save action, and owns draw-route guidance/address search/route type controls so the map stays clear. The map should not show a duplicate stop-review tray because stop order lives in the review rail.
-- Route Planner 2 map PDF export is screenshot-first for the map: capture the app map and embed it in the PDF instead of redrawing the map with jsPDF primitives. Export-only map labels should use inline SVG text with explicit centered baselines before `html2canvas` capture. The PDF header, KPI cards, and legend should stay sharp vector jsPDF text/shapes with `baseline: 'middle'`; do not rasterize an SVG header into a PNG because it blurs the header.
-- Route Planner 2 road-name labels come from Mapbox Directions step names collected during road snapping. They are planner-toggleable on the map and automatically shown during map PDF capture; keep them as map symbols with halos rather than permanent HTML overlays so dense routes can stay uncluttered.
-- Route Planner 2 large camp routes must avoid unbounded React/HTML map overlays and list rendering. Interactive stop labels are capped, large stop sets render through Mapbox symbol/circle layers, the stop-order rail is virtualized, only selected/high-priority stops stay as draggable HTML markers, and automatic road snapping is skipped for extremely large segment counts.
-- Route Planner 2 map authoring uses mouse-position shortcuts: `1` adds a stop at the current pointer location, and `2` adds a bend at the pointer location on the nearest route segment. Blank map clicks do not add stops. Route-line clicks select a segment and open the segment popover, which also supports manual travel-time overrides; saved overrides remain planner-controlled and outrank automatic runtime sources.
-- Route Planner 2 selected stops include curb-side repair controls in the right review rail: **Flip side** reflects/nudges the stop across the inferred street line when a stable reference exists, N/S/E/W nudges move it in small 4 m increments, and suspicious Mapbox detours surface a stop-side warning that directs planners to the available repair controls. Box/Lasso-selected stops and bend anchors can also be nudged in 4 m increments from the selection menu.
-- Route Planner 2 planner edits are undoable/redoable from the sidebar and keyboard shortcuts. Background runtime estimates and save status updates should not create undo history entries.
-- Route Planner 2 road snapping/runtime estimation is a staged background build: imported or bulk-added stops render immediately with fallback geometry, then Mapbox segment snapping runs through a bounded queue with progress instead of firing all segment requests at once. Keep this non-blocking behavior for address-import route creation.
-- Route Planner 2 address geocoding prefers `/api/route-planner-geocode` in production and falls back to direct client Mapbox search when needed. Manual-review rows include safe diagnostics for query, geocoder source, response status, token-present boolean, result count, top result, and confidence rejection reason; never expose token values.
-- Route Planner 2 address import collapses apartment unit-style addresses to one base building stop for route planning, for example `1009-49 Coulter St` and `1407-49 Coulter St` become `49 Coulter St`; normal civic ranges such as `37-41 Johnson St` and `309-339 Essa Rd` must remain ranges.
-- Route Planner 2 address import can create visible bus start/end terminal stops and order imported address stops between them using Mapbox road travel time. The fixed-endpoint optimizer lives in `utils/route-planner-2/routePlanner2StopOptimization.ts`; it should fail rather than silently use fallback geometry when exact road-time data is unavailable.
-- Route Planner 2 operator PDF export is an operator route card, not a planner report: include a Map PDF-style captured overview, focused stop-to-stop segment maps before each matching direction segment when available, a stop checklist with roles/next-stop runtimes, route-phase labels, large operator action badges for turn-by-turn steps, and explicit field-review flags for planning-alignment fallback, turnaround safety, missing runtimes, stop placement, turns, road restrictions, construction, and supervisor approval.
-- Route Planner 2 saved projects use team-scoped Firestore through `utils/route-planner-2/routePlanner2ProjectPersistence.ts`: project metadata lives at `teams/{teamId}/routePlanner2Projects/{projectId}`, with editable route concepts under `scenarios/{scenarioId}`. Firestore rules allow team members and workspace permission managers to read/write these docs. The workspace should not import Firestore directly.
-- Route Planner 2 out-and-back routes automatically mark the far end stop as the `turnaround` stop when the planner selects Out and back. Planners can still adjust stop roles, but the route type control should not require a separate "mark turnaround" action.
-- Route Planner 2 one-way shuttle patterns can create a separate editable reverse route concept with **Create back direction**. The source concept is labeled `Out`; the generated concept is labeled `Back`, reverses stop order and bends, clears runtime estimates/overrides, and remains a one-way route.
+- STREETS client import and server auto-ingest
+- `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts`
+- `utils/schedule/dwellCascadeComputer.ts` and `functions/src/dwellCascadeComputer.ts`
+- root bundled GTFS assets/indexes and the copies used by Functions for missed-trip enrichment
 
-## 8) Guidance for future subagents
+Use the relevant `.agents/skills/` danger-zone skill and focused tests before calling changes complete.
 
-Default orchestrator behavior:
-- do not implement directly unless explicitly instructed
-- delegate scoped implementation tasks when delegation is available and appropriate
-- give each subagent a clear goal, owned files, forbidden files, conventions to follow, and verification steps
+## Durable feature cautions and pointers
 
-When scoping work:
-- prefer one subagent per distinct task
-- keep write ownership narrow
-- avoid overlapping file ownership unless necessary
+- Dwell Incident Review is incident-first, read-only, and map-first. Current UX and metric rules live in `docs/DWELL_CASCADE_FEATURE.md` and `docs/OPERATIONS_DASHBOARD_METRICS.md`.
+- Passenger Flow inferred loads must remain visibly distinct from verified APC values. The canonical fallback and rejection rules live in `docs/OPERATIONS_DASHBOARD_METRICS.md`.
+- Public timetable content is team-managed configuration. Its persistence contract lives in `docs/SCHEMA.md`.
+- Detour Publisher uses GTFS read-only and Mapbox routing as advisory input; planners confirm stop impacts and bus suitability. Load `docs/DETOUR_PUBLISHER.md` for the workflow and export contract.
+- Route Concept Planner runtime priority, feasibility boundaries, and persistence live in its product/technical contracts and `docs/SCHEMA.md`.
+- Route Planner 2 accepted Mapbox runtime is planner-controlled state: background work must not silently overwrite it. Explicit refresh, lock, accept/keep behavior, bounded `runtimeSnapshots` history, persistence permissions, and tests are canonical in `docs/route-planner-2/04-architecture.md` through `07-test-strategy.md` and `docs/SCHEMA.md`.
 
-By default, do not treat these as source of truth:
-- `.tmp/`
-- `.worktrees/`
-- `temp/`
-- `docs/plans/`
-- `docs/archive/`
+## Guidance for future orchestrators
 
-If a task touches locked logic, high-risk schedule code, or a fragile workspace, require explicit verification before calling it done.
-
-## 9) Source-of-truth docs
-
-Primary durable sources:
-- `AGENTS.md`
-- `docs/CONTEXT_INDEX.md`
-- `docs/rules/LOCKED_LOGIC.md`
-- `docs/PRODUCT_VISION.md`
-- `docs/ARCHITECTURE.md`
-- `docs/SCHEMA.md`
-
-For Route Concept Planner work, load `docs/route-concept-planner/README.md` and its contract docs. For Route Planner 2/Camp work, load `docs/route-planner-2/README.md` and its numbered docs. Treat `docs/route-planner-legacy/` as historical background only.
-Use feature briefs/specs only when relevant.
-Use plan/archive content only as historical context unless a durable doc confirms the behavior.
-
-If this file drifts from reality, update it from current code and Tier 1 docs rather than from old plans.
+- Scope one owner per distinct task when practical and avoid overlapping write ownership.
+- Give delegated work explicit goals, owned/forbidden files, conventions, and verification.
+- Preserve unrelated edits and verify the actual working tree before planning changes.
+- Do not treat `.tmp/`, `.worktrees/`, `temp/`, plans, archives, artifacts, or legacy docs as current authority.
+- When a task touches locked logic, high-risk schedule code, security boundaries, or a fragile workspace, require focused verification before completion.
+- Update authoritative docs from current code, tests, persisted contracts, and approved product decisions. Keep this file as a compact pointer map.

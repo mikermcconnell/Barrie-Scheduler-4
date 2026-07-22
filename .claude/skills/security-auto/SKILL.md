@@ -55,20 +55,22 @@ This skill auto-activates when you modify security-sensitive code.
 
 ```bash
 # Find potential secrets
-grep -rn "apiKey\|secret\|password\|token" --include="*.ts" --include="*.tsx"
+rg -n -g '*.ts' -g '*.tsx' "apiKey|secret|password|token" .
 
 # Find dangerous patterns
-grep -rn "dangerouslySetInnerHTML\|eval(" --include="*.ts" --include="*.tsx"
+rg -n -g '*.ts' -g '*.tsx' "dangerouslySetInnerHTML|eval\(" .
 
 # Find console.logs that might leak data
-grep -rn "console.log" --include="*.ts" --include="*.tsx"
+rg -n -g '*.ts' -g '*.tsx' "console\.log" .
 ```
 
 ## Environment Variables
 
 Required for production:
 - `VITE_FIREBASE_*` - Firebase config
-- `ANTHROPIC_API_KEY` - Claude API (server-side only!)
+- `GEMINI_API_KEY` - Gemini optimization and parsing API key (server-side only)
+
+Optional, feature-specific client configuration includes `VITE_MAPBOX_TOKEN`. Use `.env.example` as the current environment-variable reference.
 
 **Never commit:**
 - `.env` files with real values

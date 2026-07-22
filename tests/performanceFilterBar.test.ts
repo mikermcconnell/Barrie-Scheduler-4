@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { filterDailySummaries, getPerformanceDateWindow, type TimeRange } from '../components/Performance/PerformanceFilterBar';
+import {
+    filterDailySummaries,
+    getPerformanceDateWindow,
+    type PerformanceDateWindow,
+    type TimeRange,
+} from '../components/Performance/PerformanceFilterBar';
 import type { DailySummary, DayType } from '../utils/performanceDataTypes';
 
 function makeDay(date: string, dayType: DayType): DailySummary {
@@ -50,8 +55,9 @@ function runRange(
     timeRange: TimeRange,
     dayType: DayType | 'all' = 'all',
     selectedDate?: string | null,
+    customDateRange?: PerformanceDateWindow | null,
 ) {
-    return filterDailySummaries(summaries, timeRange, dayType, selectedDate).map(d => d.date);
+    return filterDailySummaries(summaries, timeRange, dayType, selectedDate, customDateRange).map(d => d.date);
 }
 
 describe('filterDailySummaries', () => {
@@ -128,5 +134,29 @@ describe('filterDailySummaries', () => {
 
     it('filters to explicit selectedDate for single-day', () => {
         expect(runRange(days, 'single-day', 'all', '2025-01-06')).toEqual(['2025-01-06']);
+    });
+
+    it('uses inclusive custom start and end dates', () => {
+        const customRange = { start: '2025-01-03', end: '2025-01-06' };
+        expect(getPerformanceDateWindow(days, 'custom', null, customRange)).toEqual(customRange);
+        expect(runRange(days, 'custom', 'all', null, customRange)).toEqual([
+            '2025-01-03',
+            '2025-01-04',
+            '2025-01-05',
+            '2025-01-06',
+        ]);
+    });
+
+    it('combines a custom range with the shared day type filter', () => {
+        expect(runRange(days, 'custom', 'weekday', null, {
+            start: '2025-01-03',
+            end: '2025-01-06',
+        })).toEqual(['2025-01-03', '2025-01-06']);
+    });
+
+    it('rejects incomplete, invalid, and reversed custom ranges', () => {
+        expect(runRange(days, 'custom', 'all', null, null)).toEqual([]);
+        expect(runRange(days, 'custom', 'all', null, { start: '', end: '2025-01-06' })).toEqual([]);
+        expect(runRange(days, 'custom', 'all', null, { start: '2025-01-07', end: '2025-01-06' })).toEqual([]);
     });
 });

@@ -35,6 +35,11 @@ Recommended coverage:
 - imported shape simplification and waypoint ownership
 - large-route virtualization/windowing and label-selection limits
 - fallback road-snap segment estimates when Mapbox snapping is skipped or unavailable
+- saved accepted runtime remains unchanged during background road snapping and failed refreshes
+- explicit refresh bypasses the route cache, stages old/new totals, and changes runtime only after acceptance
+- accepted/rejected snapshot history is bounded and runtime lock blocks acceptance
+- Mapbox failure categories are sanitized and never expose tokens
+- segment runtimes retain the locked round-each-segment-before-summing behavior
 
 ## Component Tests
 

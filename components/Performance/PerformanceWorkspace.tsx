@@ -11,7 +11,7 @@ import type {
     PerformanceTab,
     DayType,
 } from '../../utils/performanceDataTypes';
-import { PerformanceFilterBar, filterDailySummaries, getPerformanceDateWindow, type TimeRange } from './PerformanceFilterBar';
+import { PerformanceFilterBar, filterDailySummaries, getPerformanceDateWindow, type PerformanceDateWindow, type TimeRange } from './PerformanceFilterBar';
 import { PerformanceScopeProvider } from './performanceScope';
 import { resolveFilteredScope } from '../../utils/performanceDataScope';
 import { addDaysToISODate } from '../../utils/performanceDateUtils';
@@ -123,25 +123,31 @@ const PerformancePanelError: React.FC<{ onRetry: () => void }> = ({ onRetry }) =
     </div>
 );
 
-const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
-const LOAD_PROFILE_TIME_RANGES: TimeRange[] = [
-    'past-three-months',
-    'past-month',
-    'past-week',
-    'yesterday',
-    'single-day',
-];
-
 function resolveDetailDateRange(
     metadata: PerformanceMetadata | null | undefined,
     timeRange: TimeRange,
     selectedDate: string | null,
+    customDateRange: PerformanceDateWindow | null,
     includeComparisonPeriod = false,
 ): PerformanceDataLoadOptions['dateRange'] | undefined {
     const end = metadata?.dateRange?.end;
     if (!end) return undefined;
 
     if (timeRange === 'all') return undefined;
+    if (timeRange === 'custom') {
+        if (!customDateRange?.start || !customDateRange.end || customDateRange.start > customDateRange.end) {
+            return undefined;
+        }
+        if (!includeComparisonPeriod) return customDateRange;
+        const startMs = Date.parse(`${customDateRange.start}T00:00:00Z`);
+        const endMs = Date.parse(`${customDateRange.end}T00:00:00Z`);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return customDateRange;
+        const calendarDays = Math.round((endMs - startMs) / (24 * 60 * 60 * 1000)) + 1;
+        return {
+            start: addDaysToISODate(customDateRange.start, -calendarDays) || customDateRange.start,
+            end: customDateRange.end,
+        };
+    }
     if (timeRange === 'single-day') {
         const date = selectedDate || end;
         return {
@@ -184,23 +190,26 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const { canAccess } = useWorkspaceAccess();
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
     const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
-    const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({});
+    const [timeRange, setTimeRangeState] = useState<TimeRange>('past-week');
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
+    const [customDateRange, setCustomDateRange] = useState<PerformanceDateWindow | null>(null);
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
 
-    const timeRange = timeRanges[activeTab] ?? 'past-week';
     const tabBarRef = useRef<HTMLDivElement>(null);
+    const hasValidCustomRange = timeRange !== 'custom'
+        || !!(customDateRange?.start && customDateRange.end && customDateRange.start <= customDateRange.end);
     const detailOptions = useMemo<PerformanceDataLoadOptions | undefined>(() => ({
-        dateRange: resolveDetailDateRange(metadata, timeRange, selectedDate, activeTab === 'ridership'),
+        dateRange: resolveDetailDateRange(metadata, timeRange, selectedDate, customDateRange, activeTab === 'ridership'),
         detailMode: detailModeForTab(activeTab),
-    }), [activeTab, metadata, selectedDate, timeRange]);
-    const shouldLoadDetailData = !!teamId && !!metadata && (
+    }), [activeTab, customDateRange, metadata, selectedDate, timeRange]);
+    const shouldLoadDetailData = !!teamId && !!metadata && hasValidCustomRange && (
         activeTab !== 'overview'
         || timeRange === 'all'
         || timeRange === 'past-month'
         || timeRange === 'past-three-months'
         || timeRange === 'yesterday'
         || timeRange === 'single-day'
+        || timeRange === 'custom'
     );
     const detailQuery = usePerformanceDataQuery(
         teamId,
@@ -215,11 +224,6 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const isCurrentDetailLoading = shouldLoadDetailData && detailQuery.isFetching && !detailData;
     const detailsReady = !shouldLoadDetailData || !!detailData;
     const workspaceData = detailData ?? data;
-    const allowedTimeRanges = activeTab === 'load-profiles'
-        ? LOAD_PROFILE_TIME_RANGES
-        : detailsReady
-            ? undefined
-            : OVERVIEW_ONLY_TIME_RANGES;
     const showImportHealthPanel = !import.meta.env.PROD
         && detailsReady
         && isFeatureEnabled('operationsImportHealth');
@@ -247,20 +251,37 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         [workspaceData.dailySummaries]
     );
     const latestAvailableDate = availableDates.at(-1) ?? null;
+    const minAvailableDate = metadata?.dateRange.start || availableDates[0];
+    const maxAvailableDate = metadata?.dateRange.end || latestAvailableDate || undefined;
 
     const setTimeRange = useCallback((tr: TimeRange) => {
-        setTimeRanges(prev => ({ ...prev, [activeTab]: tr }));
+        if (tr === 'custom') {
+            setCustomDateRange(previous => previous ?? (maxAvailableDate
+                ? {
+                    start: [addDaysToISODate(maxAvailableDate, -6) || maxAvailableDate, minAvailableDate]
+                        .filter((date): date is string => !!date)
+                        .sort()
+                        .at(-1) || maxAvailableDate,
+                    end: maxAvailableDate,
+                }
+                : null));
+        }
+        setTimeRangeState(tr);
         if (tr === 'single-day') {
             setSelectedDate(prev => prev ?? latestAvailableDate);
-            return;
         }
-        setSelectedDate(null);
-    }, [activeTab, latestAvailableDate]);
+    }, [latestAvailableDate, maxAvailableDate, minAvailableDate]);
 
     const filteredData = useMemo((): PerformanceDataSummary => {
-        const dailySummaries = filterDailySummaries(workspaceData.dailySummaries, timeRange, dayTypeFilter, selectedDate);
+        const dailySummaries = filterDailySummaries(
+            workspaceData.dailySummaries,
+            timeRange,
+            dayTypeFilter,
+            selectedDate,
+            customDateRange,
+        );
         return withFilteredMetadata(workspaceData, dailySummaries);
-    }, [workspaceData, timeRange, dayTypeFilter, selectedDate]);
+    }, [workspaceData, timeRange, dayTypeFilter, selectedDate, customDateRange]);
 
     const ridershipComparisonPeriod = useMemo(() => {
         if (activeTab !== 'ridership' || timeRange === 'all') return null;
@@ -268,28 +289,18 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
             workspaceData.dailySummaries,
             timeRange,
             selectedDate,
+            customDateRange,
         );
         return currentWindow
             ? getPriorStopActivityPeriod(workspaceData.dailySummaries, currentWindow, dayTypeFilter)
             : null;
-    }, [activeTab, dayTypeFilter, selectedDate, timeRange, workspaceData.dailySummaries]);
+    }, [activeTab, customDateRange, dayTypeFilter, selectedDate, timeRange, workspaceData.dailySummaries]);
 
     useEffect(() => {
         if (timeRange !== 'single-day') return;
         if (selectedDate && availableDates.includes(selectedDate)) return;
         setSelectedDate(latestAvailableDate);
     }, [timeRange, selectedDate, availableDates, latestAvailableDate]);
-
-    useEffect(() => {
-        if (detailsReady || shouldLoadDetailData) return;
-        if (activeTab !== 'overview') {
-            setActiveTab('overview');
-        }
-        if (!OVERVIEW_ONLY_TIME_RANGES.includes(timeRange)) {
-            setTimeRanges(prev => ({ ...prev, overview: 'past-week' }));
-            setSelectedDate(null);
-        }
-    }, [activeTab, detailsReady, shouldLoadDetailData, timeRange]);
 
     useEffect(() => {
         if (tabs.some(tab => tab.id === activeTab)) return;
@@ -519,13 +530,16 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                         onTimeRangeChange={setTimeRange}
                         selectedDate={selectedDate}
                         onSelectedDateChange={setSelectedDate}
-                            availableDates={availableDates}
-                            dayTypeFilter={dayTypeFilter}
-                            onDayTypeChange={setDayTypeFilter}
-                            availableDayTypes={availableDayTypes}
-                            filteredDayCount={filteredData.dailySummaries.length}
-                            allowedTimeRanges={allowedTimeRanges}
-                        />
+                        customDateRange={customDateRange}
+                        onCustomDateRangeChange={setCustomDateRange}
+                        availableDates={availableDates}
+                        minAvailableDate={minAvailableDate}
+                        maxAvailableDate={maxAvailableDate}
+                        dayTypeFilter={dayTypeFilter}
+                        onDayTypeChange={setDayTypeFilter}
+                        availableDayTypes={availableDayTypes}
+                        filteredDayCount={filteredData.dailySummaries.length}
+                    />
                     </div>
                 )}
 

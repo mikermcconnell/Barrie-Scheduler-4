@@ -145,21 +145,27 @@ Notes:
 | Library UI | `components/NewSchedule/connections/ConnectionLibraryPanel.tsx` |
 | Add target modal | `components/NewSchedule/connections/AddTargetModal.tsx` |
 
-## Known Issues (Feb 2026 Review)
+## February 2026 Review Items
+
+C4, C7, and C8 from the February review are resolved in the current implementation. C9 remains a review item; verify its status against current code before planning work from this document.
 
 | ID | Issue | Severity | Status | Details |
 |----|-------|----------|--------|---------|
-| **C4** | Stop code not validated against known stops | Medium | Open | Only checks non-empty; doesn't verify against GTFS stop list. `AddTargetModal.tsx:183` |
-| **C7** | Panel edits don't refresh editor indicators | High | Open | `ConnectionsPanel` maintains local state and doesn't notify parent `ScheduleEditor`. Indicators only update after closing/reopening panel. Fix: add `onLibraryChanged` callback prop. |
-| **C8** | Route-based target resync only in panel lifecycle | Medium | Open | Derivation/resync from master schedules happens in `ConnectionsPanel` local state, not wired to editor state. |
+| **C4** | Stop code validation | Medium | Resolved | `AddTargetModal` validates manual and selected stop codes against the loaded schedule stop IDs when that reference set is available. |
+| **C7** | Panel-to-editor state synchronization | High | Resolved | `ConnectionsPanel` reports library and route-config changes through callbacks; `ScheduleEditor` consumes both for in-session indicator refresh. |
+| **C8** | Route-based target resync | Medium | Resolved | Route targets are refreshed from source master-schedule timestamps, persisted to the library, and synchronized to editor state. |
 | **C9** | GO GTFS import is all-or-nothing | Medium | Open | The chooser bulk-imports all four GO station/direction templates at once. Add scope controls so planners can import only the station/direction they actually need. |
 
-### Untested Areas
+### Test Coverage Pointers
 
-There is baseline utility coverage in `tests/connectionUtils.test.ts`, but important gaps remain:
-- `utils/connections/connectionUtils.ts` - broaden day filtering and stop-code matching cases
-- `AddTargetModal.tsx` - validation (required stop code, unique name, enabled time/day)
-- Panel → Editor sync (C7 regression guard)
+Relevant coverage includes:
+
+- `tests/connectionUtils.test.ts` for connection utilities
+- `tests/AddTargetModal.test.tsx` for add-target validation and behavior
+- `tests/ConnectionLibraryPanel.test.tsx` for the library panel
+- `tests/routeConnectionDefaults.test.ts` and `tests/RouteConnectionPanel.test.tsx` for route-connection defaults and display
+
+When changing panel-to-editor synchronization, add or update a focused regression test for the callback flow.
 
 ---
 

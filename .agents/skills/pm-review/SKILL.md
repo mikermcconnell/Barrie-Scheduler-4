@@ -29,8 +29,8 @@ Act as a product manager reviewing implementation plans to ensure:
    - Read `docs/CONTEXT_INDEX.md` (load order and doc tiers)
    - Read `docs/PRODUCT_VISION.md` (product goals, anti-patterns)
    - Read `docs/rules/LOCKED_LOGIC.md` (locked logic summary)
-   - Read `.Codex/context.md` if detailed implementation notes are needed
-   - Read `.Codex/AGENTS.md` (development patterns)
+   - Read `.claude/context.md` if detailed implementation notes are needed
+   - Read `AGENTS.md` (repository contract and development patterns)
    - Review the current plan or proposed changes
 
 2. **Analyze Plan Against Vision**
@@ -173,7 +173,7 @@ update PRODUCT_VISION.md first with stakeholder approval, then re-plan.
 
 ### Integration Notes
 
-- Run `/pm-review` after using EnterPlanMode and before ExitPlanMode
+- Run `/pm-review` after drafting a complex plan and before requesting approval
 - For smaller changes, use judgment - not every edit needs PM review
 - When score < 7, address concerns before proceeding
 - Update PRODUCT_VISION.md if business requirements have genuinely changed

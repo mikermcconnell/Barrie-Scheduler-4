@@ -97,6 +97,7 @@ function makeSummary(params: {
   importedAt: string;
   runtimeLogicVersion?: number;
   cleanHistoryStartDate?: string;
+  overviewStoragePath?: string;
   dailySummaries: DailySummary[];
 }): PerformanceDataSummary {
   const dates = params.dailySummaries.map(day => day.date).sort();
@@ -113,6 +114,7 @@ function makeSummary(params: {
       totalRecords: 0,
       runtimeLogicVersion: params.runtimeLogicVersion,
       cleanHistoryStartDate: params.cleanHistoryStartDate,
+      overviewStoragePath: params.overviewStoragePath,
     },
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
@@ -182,6 +184,57 @@ describe('buildPerformanceImportHealth', () => {
     expect(result.checks.find(check => check.id === 'history-consistency')?.status).toBe('healthy');
     expect(result.checks.find(check => check.id === 'history-consistency')?.summary)
       .toContain('retained older day records');
+  });
+
+  it('does not treat detail stripped from a legacy compact overview as missing import data', () => {
+    const day = makeDay({
+      date: '2026-07-20',
+      schemaVersion: 9,
+      tripEntries: 2,
+      stopEntries: 4,
+    });
+    day.segmentRuntimes = undefined;
+    day.stopSegmentRuntimes = undefined;
+    day.tripStopSegmentRuntimes = undefined;
+
+    const summary = makeSummary({
+      importedAt: '2026-07-21T08:48:47Z',
+      runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
+      overviewStoragePath: 'teams/example/performanceData/overview.json',
+      dailySummaries: [day],
+    });
+
+    const result = buildPerformanceImportHealth(summary, {
+      now: new Date('2026-07-21T16:00:00Z'),
+    });
+
+    expect(result.checks.find(check => check.id === 'trip-linked-runtimes')).toBeUndefined();
+    expect(result.checks.find(check => check.id === 'history-consistency')?.summary)
+      .toContain('Stored history uses schema v9');
+  });
+
+  it('uses compact availability markers after overview runtime detail is stripped', () => {
+    const day = makeDay({ date: '2026-07-20', tripEntries: 2, stopEntries: 4 });
+    day.hasTripStopSegmentRuntimes = true;
+    day.segmentRuntimes = undefined;
+    day.stopSegmentRuntimes = undefined;
+    day.tripStopSegmentRuntimes = undefined;
+
+    const summary = makeSummary({
+      importedAt: '2026-07-21T08:48:47Z',
+      runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
+      overviewStoragePath: 'teams/example/performanceData/overview.json',
+      dailySummaries: [day],
+    });
+
+    const result = buildPerformanceImportHealth(summary, {
+      now: new Date('2026-07-21T16:00:00Z'),
+    });
+
+    expect(result.checks.find(check => check.id === 'trip-linked-runtimes')).toMatchObject({
+      status: 'healthy',
+      summary: 'All of the last 1 day include trip-linked stop runtimes.',
+    });
   });
 });
 

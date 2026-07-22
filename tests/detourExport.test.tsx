@@ -46,6 +46,15 @@ describe('detour public copy', () => {
     );
   });
 
+  it('formats blank effective times as date-only copy', () => {
+    expect(formatDetourEffectiveSchedule({
+      ...notice.effectiveSchedule,
+      startTime: '',
+      endTime: '',
+      recurrence: { days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'], startTime: '', endTime: '' },
+    })).toBe('July 18, 2026 to August 1, 2026; applies Monday to Friday');
+  });
+
   it('supports open-ended notices and builds accessible MyRide copy', () => {
     const copy = buildMyRideCopyPackage({
       ...notice,
@@ -57,6 +66,13 @@ describe('detour public copy', () => {
     expect(copy.accessibleDetails).toContain('until further notice');
     expect(copy.altText).toContain('3 closed stops and 2 temporary stops');
     expect(copy.title).not.toContain('<');
+  });
+
+  it('generates MyRide summary copy when no custom summary exists', () => {
+    const copy = buildMyRideCopyPackage({ ...notice, publicSummary: '' });
+    expect(copy.summary).toContain('is operating on a temporary detour');
+    expect(copy.summary).toContain('July 18, 2026');
+    expect(copy.summary).not.toContain('p.m..');
   });
 });
 
@@ -71,7 +87,11 @@ describe('detour PDF and preview', () => {
     const commands = ((doc.internal as unknown as { pages: string[][] }).pages[1] ?? []).join('\n');
     expect(commands).toContain('BARRIE TRANSIT');
     expect(commands).toContain('Livingstone Avenue Detour');
+    expect(commands).toContain('Routes not shown are on regular routing.');
     expect(commands).toContain('MAP LEGEND');
+    expect(commands).toContain('Service Barrie 705-726-4242');
+    expect(commands).toContain('servicebarrie@barrie.ca');
+    expect(commands).toContain('barrie.ca/TransitNotices');
   });
 
   it('rejects missing or malformed map captures with a typed error', () => {
@@ -85,10 +105,33 @@ describe('detour PDF and preview', () => {
     );
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(html).not.toContain('<script>');
-    expect(html).toContain('Active stop');
-    expect(html).toContain('Active routing');
-    expect(html).toContain('Out-of-service routing');
-    expect(html).toContain('Closed stop');
-    expect(html).toContain('Temporary stop');
+    expect(html).toContain('Active Stops');
+    expect(html).toContain('Active Routing');
+    expect(html).toContain('Out of Service Routing');
+    expect(html).toContain('Out-of-Service Stops');
+    expect(html).toContain('Temporary Stops');
+    expect(html.match(/data-legend-item="true"/g)).toHaveLength(5);
+    expect(html.match(/flex min-w-0 flex-col items-center gap-2 text-center/g)).toHaveLength(5);
+    expect(html).toContain('Effective Date');
+    expect(html).toContain('For More Information Contact');
+    expect(html).toContain('data-contact-icon="phone"');
+    expect(html).toContain('data-contact-icon="email"');
+    expect(html).toContain('data-contact-icon="website"');
+    expect(html).toContain('data-warning-icon="true"');
+    expect(html).toContain('h-[82px] w-[82px]');
+  });
+
+  it('renders the supplied transit logo in branded previews and PDFs', () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const html = renderToStaticMarkup(
+      <DetourNoticePreview notice={notice} brandAssets={{ transitLogoDataUrl: png }} />,
+    );
+    expect(html).toContain('alt="Barrie Transit"');
+    expect(html).toContain(png);
+
+    const doc = createDetourPdf({ notice, mapImageDataUrl: png, brandAssets: { transitLogoDataUrl: png } });
+    const commands = ((doc.internal as unknown as { pages: string[][] }).pages[1] ?? []).join('\n');
+    expect(commands).not.toContain('BARRIE TRANSIT');
+    expect(doc.getNumberOfPages()).toBe(1);
   });
 });

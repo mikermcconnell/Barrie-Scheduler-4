@@ -8,6 +8,8 @@ const DEFAULT_REPORT_MISSED_TRIP_DETAIL_DAY_COUNT = 7;
 function buildOverviewDay(day: DailySummary): DailySummary {
   return {
     ...day,
+    hasTripStopSegmentRuntimes: day.hasTripStopSegmentRuntimes
+      ?? ((day.tripStopSegmentRuntimes?.entries.length ?? 0) > 0),
     byStop: [],
     loadProfiles: [],
     missedTrips: day.missedTrips

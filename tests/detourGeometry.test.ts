@@ -10,7 +10,11 @@ import {
     addDetourControlPoint,
     addDetourWaypoint,
     deleteDetourControlPoint,
+    deleteDetourGeometryAnchor,
     deleteDetourWaypoint,
+    insertDetourControlPointOnLine,
+    insertDetourGeometryAnchor,
+    moveDetourGeometryAnchor,
     moveDetourControlPoint,
     moveDetourMapItem,
     moveDetourWaypoint,
@@ -100,6 +104,40 @@ describe('detour authoring', () => {
         expect(deleteDetourControlPoint(moved, 1)).toEqual(controls);
     });
 
+    it('inserts clicked detour anchors in displayed line order', () => {
+        const geometry = [point(0, 0), point(1, 0), point(2, 1), point(3, 1)];
+        const controls = [geometry[0], geometry[3]];
+        const first = insertDetourControlPointOnLine(controls, geometry, point(0.5, 0.1));
+        expect(first).toMatchObject({ index: 1, coordinate: point(0.5, 0) });
+        const second = insertDetourControlPointOnLine(first!.waypoints, geometry, point(2.5, 1.1));
+        expect(second?.index).toBe(2);
+        expect(second?.waypoints).toEqual([geometry[0], point(0.5, 0), point(2.5, 1), geometry[3]]);
+        expect(insertDetourControlPointOnLine(controls, geometry, point(0.00001, 0))).toBeNull();
+    });
+
+    it('deforms neighboring closure geometry with a moved anchor instead of creating a one-point spike', () => {
+        const geometry = [point(0, 0), point(1, 0), point(2, 1), point(3, 1)];
+        const inserted = insertDetourGeometryAnchor([], geometry, point(1.5, 0.6));
+        expect(inserted?.anchors[0]?.longitude).toBeCloseTo(1.55);
+        expect(inserted?.anchors[0]?.latitude).toBeCloseTo(0.55);
+        expect(inserted?.geometry).toHaveLength(5);
+        expect(insertDetourGeometryAnchor([], geometry, point(0.00001, 0))).toBeNull();
+
+        const moved = moveDetourGeometryAnchor(inserted!.anchors, inserted!.geometry, 0, point(1.5, 1.2));
+        expect(moved?.anchors[0]).toEqual(point(1.5, 1.2));
+        expect(moved?.geometry).toContainEqual(point(1.5, 1.2));
+        expect(moved?.geometry[1]).not.toEqual(geometry[1]);
+        expect(moved?.geometry[2]).not.toEqual(geometry[2]);
+        expect(moved?.geometry[0]).toEqual(geometry[0]);
+        expect(moved?.geometry.at(-1)).toEqual(geometry.at(-1));
+
+        const deleted = deleteDetourGeometryAnchor(moved!.anchors, moved!.geometry, 0);
+        expect(deleted?.anchors).toEqual([]);
+        expect(deleted?.geometry).toHaveLength(geometry.length);
+        expect(deleted?.geometry[0]).toEqual(geometry[0]);
+        expect(deleted?.geometry.at(-1)).toEqual(geometry.at(-1));
+    });
+
     it('moves temporary stops without mutating the original item', () => {
         const items = [{ id: 'temp', name: 'Temporary', position: point(-79.69, 44.38) }];
         const moved = moveDetourMapItem(items, 'temp', point(-79.68, 44.39));
@@ -117,5 +155,25 @@ describe('detour authoring', () => {
         expect(result.requiresAcknowledgement).toBe(true);
         expect(result.warning).toContain('bus suitability');
         expect(result.geometry).toEqual([point(-79.70, 44.38), point(-79.69, 44.39)]);
+    });
+
+    it('preserves Mapbox road names as unconfirmed detour-label inputs', async () => {
+        const fetchImpl = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                code: 'Ok',
+                routes: [{
+                    geometry: { coordinates: [[-79.7002, 44.3802], [-79.695, 44.385], [-79.6898, 44.3898]] },
+                    legs: [{ steps: [{ name: 'Blake St', geometry: { coordinates: [[-79.70, 44.38], [-79.69, 44.39]] } }] }],
+                }],
+            }),
+        }) as unknown as typeof fetch;
+        const result = await snapDetourWaypointsToRoad([point(-79.70, 44.38), point(-79.69, 44.39)], {
+            token: 'street-label-test-token',
+            fetchImpl,
+        });
+        expect(result.geometry[0]).toEqual(point(-79.70, 44.38));
+        expect(result.geometry.at(-1)).toEqual(point(-79.69, 44.39));
+        expect(result.roadLabels).toEqual([{ name: 'Blake St', geometry: [point(-79.70, 44.38), point(-79.69, 44.39)] }]);
     });
 });

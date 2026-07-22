@@ -1,6 +1,6 @@
 ---
 name: pm-review-auto
-description: Auto-activates during plan mode or when creating implementation plans. Performs lightweight product alignment check before ExitPlanMode.
+description: Auto-activates during plan mode or when creating implementation plans. Performs a lightweight product alignment check before plan approval.
 ---
 
 # Automatic PM Review
@@ -10,10 +10,10 @@ This skill auto-activates during implementation planning to catch misalignment e
 ## Trigger Conditions
 
 Activate when:
-- Using `EnterPlanMode` for feature implementation
-- Writing to a plan file (`.Codex/plan.md` or similar)
-- About to call `ExitPlanMode`
-- Creating TodoWrite lists with 5+ implementation tasks
+- Entering a planning workflow for feature implementation
+- Writing or materially revising an implementation plan
+- About to request approval for a plan
+- Creating a plan with five or more implementation tasks
 
 ## Quick Alignment Check
 
@@ -73,12 +73,12 @@ Recommend full `/pm-review` when:
 Quick-read before finalizing plans:
 - `docs/PRODUCT_VISION.md` - Section "Decision Framework"
 - `docs/rules/LOCKED_LOGIC.md` - Locked logic summary
-- `.Codex/context.md` - Detailed compatibility notes
-- `.Codex/AGENTS.md` - Development patterns
+- `.claude/context.md` - Detailed compatibility notes
+- `AGENTS.md` - Repository contract and development patterns
 
-## Integration with ExitPlanMode
+## Integration with plan completion
 
-Before calling ExitPlanMode, ensure:
+Before presenting a plan for approval, ensure:
 1. Quick check completed (above)
 2. Any ⚠ warnings addressed or acknowledged
 3. Locked logic impacts documented in plan

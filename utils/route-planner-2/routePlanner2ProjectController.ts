@@ -203,6 +203,11 @@ export function duplicateRoutePlanner2Scenario(
                 ]),
             )
             : undefined,
+        runtimeLocked: false,
+        runtimeAcceptedAt: undefined,
+        runtimeAcceptedBy: undefined,
+        acceptedRuntimeSnapshotId: undefined,
+        runtimeSnapshots: undefined,
         feasibility: source.feasibility
             ? {
                 ...source.feasibility,
@@ -254,6 +259,11 @@ export function createRoutePlanner2BackDirection(
         turnaroundStopId: undefined,
         runtimeEstimates: undefined,
         runtimeOverrides: undefined,
+        runtimeLocked: false,
+        runtimeAcceptedAt: undefined,
+        runtimeAcceptedBy: undefined,
+        acceptedRuntimeSnapshotId: undefined,
+        runtimeSnapshots: undefined,
         feasibility: undefined,
         notes: source.notes ? `${source.notes}\n\nBack direction generated from ${outName}.` : `Back direction generated from ${outName}.`,
         createdAt: now,

@@ -8,29 +8,30 @@ user_invocable: true
 
 ## Purpose
 
-Systematically audit all project context documentation to ensure it accurately reflects the current codebase. Catches stale references, missing coverage, contradictions, and structural issues before they cause incorrect Codex behavior.
+Systematically audit all project context documentation to ensure it accurately reflects the current codebase. Catches stale references, missing coverage, contradictions, and structural issues before they cause incorrect agent behavior.
 
 ## When to Use
 
 - After major refactors or feature additions
 - After removing features or files
 - Periodically (monthly) as a health check
-- When Codex makes mistakes that suggest stale documentation
+- When an agent makes mistakes that suggest stale documentation
 - After reorganizing file structure
 
 ## Documentation Inventory
 
 Audit these files in order of priority:
 
-### Tier 1 — Critical (directly controls Codex behavior)
+### Tier 1 — Critical (directly controls agent behavior)
 
 | File | Purpose |
 |------|---------|
 | `docs/CONTEXT_INDEX.md` | Canonical load order and doc tiers |
-| `.Codex/AGENTS.md` | Project instructions, danger zones, task patterns |
+| `AGENTS.md` | Project instructions and repository contract |
 | `docs/rules/LOCKED_LOGIC.md` | Durable locked logic summary |
-| `.Codex/context.md` | Detailed compatibility copy of locked logic |
-| `~/.Codex/projects/.../memory/MEMORY.md` | Cross-session learnings |
+| `.claude/context.md` | Detailed compatibility copy of locked logic |
+
+Tool-managed cross-session memory may be consulted when available, but it is not portable repository context and must not replace the files above.
 
 ### Tier 2 — High (referenced during planning and feature work)
 
@@ -39,7 +40,7 @@ Audit these files in order of priority:
 | `docs/PRODUCT_VISION.md` | Product goals, user personas, feature scope |
 | `docs/ARCHITECTURE.md` | Component map, data flow, stack description |
 | `docs/SCHEMA.md` | Firestore collections, TypeScript types, storage paths |
-| `docs/IMPLEMENTATION_PLAN.md` | Roadmap phases, completion status |
+| `docs/IMPLEMENTATION_PLAN.md` | Historical March 2026 delivery snapshot |
 
 ### Tier 3 — Reference (consulted for specific features)
 
@@ -56,9 +57,10 @@ Audit these files in order of priority:
 
 | Location | Count |
 |----------|-------|
-| `.Codex/skills/*/SKILL.md` | All skill files |
-| `.Codex/commands/*.md` | All command files |
-| `.Codex/agents/*.AGENT.md` | All agent files |
+| `.agents/skills/*/SKILL.md` | Portable skill sources |
+| `.claude/skills/*/SKILL.md` | Claude-specific skill adapters |
+| `.claude/commands/*.md` | Claude-specific commands |
+| `.claude/agents/*.AGENT.md` | Claude-specific agents |
 
 ## Audit Checks
 
@@ -99,16 +101,16 @@ Search documentation for references to known removed items:
 - `interlineNext`, `interlinePrev`, interline functions
 - `ScheduleTweakerWorkspace`
 - `DraftManagerModal`, `ScenarioComparisonModal`, `SaveErrorBoundary`, `PlatformSummary`
-- Any other items listed in MEMORY.md "Key Removals" section
+- Any other removed items recorded in available tool-managed memory
 
 ```bash
 # Quick grep across all docs
-grep -ri "interline\|tweaker\|DraftManager\|ScenarioComparison\|SaveErrorBoundary\|PlatformSummary" .Codex/ docs/
+rg -n -i "interline|tweaker|DraftManager|ScenarioComparison|SaveErrorBoundary|PlatformSummary" .agents .claude docs -g '*.md'
 ```
 
 ### Check 4: Locked Logic Validation
 
-For each locked rule in `docs/rules/LOCKED_LOGIC.md` and `.Codex/context.md`:
+For each locked rule in `docs/rules/LOCKED_LOGIC.md` and `.claude/context.md`:
 
 1. **Verify the source file exists** at the documented path
 2. **Verify the locked logic still matches the code** — read the relevant lines
@@ -117,7 +119,7 @@ For each locked rule in `docs/rules/LOCKED_LOGIC.md` and `.Codex/context.md`:
 
 ### Check 5: Danger Zone Coverage
 
-For each file in AGENTS.md Section 8 (Danger Zones):
+For each file in `.claude/CLAUDE.md` Section 8 (Danger Zones):
 
 1. **Verify the file exists** at the stated path
 2. **Verify the test command works** (or at least that the test file exists)
@@ -130,15 +132,15 @@ Check for contradictions between documents:
 
 | Check | Files to Compare |
 |-------|-----------------|
-| Stack description | AGENTS.md vs ARCHITECTURE.md vs package.json |
-| Feature status | PRODUCT_VISION.md vs IMPLEMENTATION_PLAN.md vs AGENTS.md "Current Project State" |
-| Known issues | AGENTS.md vs CONNECTIONS_FEATURE.md vs MEMORY.md |
-| File structure | ARCHITECTURE.md vs REORGANIZATION_LOG.md vs actual `ls` |
-| Test inventory | AGENTS.md danger zones vs MEMORY.md test coverage vs actual test files |
+| Stack description | `.claude/CLAUDE.md` vs ARCHITECTURE.md vs package.json |
+| Feature status | PRODUCT_VISION.md and feature docs vs current code/tests |
+| Known issues | Feature docs vs current code/tests |
+| File structure | ARCHITECTURE.md vs actual repository tree |
+| Test inventory | `.claude/CLAUDE.md` danger zones vs actual test files |
 
 ### Check 7: Skill File Health
 
-For each skill in `.Codex/skills/`:
+For each portable skill in `.agents/skills/` and each tool adapter in `.claude/skills/`:
 
 1. **Verify referenced files/functions still exist**
 2. **Check for stale trigger conditions** (e.g., referencing removed features)
@@ -166,7 +168,7 @@ Produce a structured report with these sections:
 - Last review: [date or "first review"]
 
 ## Critical Issues (Fix Immediately)
-Issues that will cause incorrect Codex behavior:
+Issues that will cause incorrect agent behavior:
 - [ ] [FILE:LINE] Description of issue
 
 ## Stale References (Fix Soon)

@@ -214,16 +214,30 @@ export function buildPerformanceImportHealth(
       ? `All stored days use the current schema v${PERFORMANCE_SCHEMA_VERSION}.`
       : retainedLegacyHistoryIsInformational
         ? `Current import metadata is on schema v${PERFORMANCE_SCHEMA_VERSION}; retained older day records are kept for dashboard continuity.`
-        : `Stored history mixes schema versions ${schemaVersions.join(', ')}. ${pluralize(legacyDayCount, 'day')} are older than the current schema v${PERFORMANCE_SCHEMA_VERSION}.`,
+        : schemaVersions.length === 1
+          ? `Stored history uses schema v${schemaVersions[0]}. ${pluralize(legacyDayCount, 'day')} are older than the current schema v${PERFORMANCE_SCHEMA_VERSION}. Rebuild or re-import with the current pipeline to upgrade them.`
+          : `Stored history mixes schema versions ${schemaVersions.join(', ')}. ${pluralize(legacyDayCount, 'day')} are older than the current schema v${PERFORMANCE_SCHEMA_VERSION}.`,
   });
   overallStatus = maxStatus(overallStatus, schemaStatus);
 
   const recentDays = [...data.dailySummaries]
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-14);
-  const recentTripRuntimeDays = recentDays.filter(
-    day => (day.tripStopSegmentRuntimes?.entries.length ?? 0) > 0,
-  ).length;
+  const hasCompactAvailabilityMarkers = recentDays.some(
+    day => typeof day.hasTripStopSegmentRuntimes === 'boolean',
+  );
+  const isLegacyCompactOverview = !hasCompactAvailabilityMarkers
+    && !!data.metadata?.overviewStoragePath
+    && recentDays.length > 0
+    && recentDays.every(day => (
+      day.segmentRuntimes === undefined
+      && day.stopSegmentRuntimes === undefined
+      && day.tripStopSegmentRuntimes === undefined
+    ));
+  const recentTripRuntimeDays = recentDays.filter(day => (
+    day.hasTripStopSegmentRuntimes
+    ?? ((day.tripStopSegmentRuntimes?.entries.length ?? 0) > 0)
+  )).length;
   const tripRuntimeStatus: ImportHealthStatus =
     recentDays.length === 0
       ? 'critical'
@@ -232,19 +246,21 @@ export function buildPerformanceImportHealth(
         : recentTripRuntimeDays === 0
           ? 'warning'
           : 'warning';
-  checks.push({
-    id: 'trip-linked-runtimes',
-    label: 'Trip-linked stop runtimes',
-    status: tripRuntimeStatus,
-    summary: recentDays.length === 0
-      ? 'No stored days are available to check trip-linked stop runtimes.'
-      : recentTripRuntimeDays === recentDays.length
-        ? `All of the last ${pluralize(recentDays.length, 'day')} include trip-linked stop runtimes.`
-        : recentTripRuntimeDays === 0
-          ? `None of the last ${pluralize(recentDays.length, 'day')} include trip-linked stop runtimes, so stop-order resolution and strict Step 2 checks will be limited.`
-          : `Only ${recentTripRuntimeDays} of the last ${recentDays.length} days include trip-linked stop runtimes, so some routes may have weak stop-order evidence.`,
-  });
-  overallStatus = maxStatus(overallStatus, tripRuntimeStatus);
+  if (!isLegacyCompactOverview) {
+    checks.push({
+      id: 'trip-linked-runtimes',
+      label: 'Trip-linked stop runtimes',
+      status: tripRuntimeStatus,
+      summary: recentDays.length === 0
+        ? 'No stored days are available to check trip-linked stop runtimes.'
+        : recentTripRuntimeDays === recentDays.length
+          ? `All of the last ${pluralize(recentDays.length, 'day')} include trip-linked stop runtimes.`
+          : recentTripRuntimeDays === 0
+            ? `None of the last ${pluralize(recentDays.length, 'day')} include trip-linked stop runtimes, so stop-order resolution and strict Step 2 checks will be limited.`
+            : `Only ${recentTripRuntimeDays} of the last ${recentDays.length} days include trip-linked stop runtimes, so some routes may have weak stop-order evidence.`,
+    });
+    overallStatus = maxStatus(overallStatus, tripRuntimeStatus);
+  }
 
   const headline = overallStatus === 'healthy'
     ? 'Imports look healthy'

@@ -13,6 +13,7 @@
     "test:smoke": "npm run build && node scripts/browserSmoke.mjs",
     "build": "vite build",
     "build:prod": "node scripts/build-production.mjs",
+    "docs:check": "node scripts/checkDocumentationContext.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "preview": "vite preview",

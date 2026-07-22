@@ -1,4 +1,8 @@
-import type { RoutePlanner2Scenario, RoutePlanner2SegmentRuntime } from './routePlanner2Types';
+import type {
+    RoutePlanner2RuntimeFailureCode,
+    RoutePlanner2Scenario,
+    RoutePlanner2SegmentRuntime,
+} from './routePlanner2Types';
 import { buildRoutePlanner2StopSegmentPaths } from './routePlanner2Segments';
 
 import { getClientMapboxToken } from '../mapboxToken';
@@ -10,6 +14,12 @@ export interface RoutePlanner2RoadSnapResult {
     durationSeconds?: number;
     distanceMeters?: number;
     roadLabels?: RoutePlanner2RoadLabelGeometry[];
+    failure?: RoutePlanner2RoadSnapFailure;
+}
+
+export interface RoutePlanner2RoadSnapFailure {
+    code: RoutePlanner2RuntimeFailureCode;
+    message: string;
 }
 
 export interface RoutePlanner2RoadLabelGeometry {
@@ -27,6 +37,7 @@ export interface RoutePlanner2ScenarioRoadSnapResult extends RoutePlanner2RoadSn
         source: RoutePlanner2RoadSnapSource;
         roadLabels?: RoutePlanner2RoadLabelGeometry[];
     }>;
+    failures: RoutePlanner2RoadSnapFailure[];
 }
 
 export interface RoutePlanner2RoadSnapProgress {
@@ -65,6 +76,7 @@ interface SnapOptions {
     concurrency?: number;
     signal?: AbortSignal;
     onProgress?: (progress: RoutePlanner2RoadSnapProgress) => void;
+    forceRefresh?: boolean;
 }
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -175,6 +187,7 @@ async function fetchRoadSegment(
     token: string | null,
     fetchImpl: typeof fetch,
     signal?: AbortSignal,
+    forceRefresh = false,
 ): Promise<RoutePlanner2RoadSnapResult> {
     if (signal?.aborted) throw new DOMException('Route snap cancelled.', 'AbortError');
 
@@ -183,20 +196,54 @@ async function fetchRoadSegment(
     }
 
     const cacheKey = buildSegmentCacheKey(from, to);
-    const cached = getCachedSegment(cacheKey);
+    const cached = forceRefresh ? null : getCachedSegment(cacheKey);
     if (cached) return cached;
 
-    if (!token) return { coordinates: [from, to], source: 'fallback', distanceMeters: distanceMetersBetween(from, to) };
+    if (!token) return {
+        coordinates: [from, to],
+        source: 'fallback',
+        distanceMeters: distanceMetersBetween(from, to),
+        failure: { code: 'missing-token', message: 'Mapbox access is unavailable. The accepted runtime was retained.' },
+    };
 
     try {
         const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full&steps=true&access_token=${token}`;
         const response = signal ? await fetchImpl(url, { signal }) : await fetchImpl(url);
-        if (!response.ok) throw new Error(`Mapbox returned ${response.status}`);
+        if (!response.ok) {
+            const failureCode: RoutePlanner2RuntimeFailureCode = response.status === 401 || response.status === 403
+                ? 'authentication'
+                : response.status === 429
+                    ? 'rate-limit'
+                    : 'network';
+            return {
+                coordinates: [from, to],
+                source: 'fallback',
+                distanceMeters: distanceMetersBetween(from, to),
+                failure: {
+                    code: failureCode,
+                    message: failureCode === 'authentication'
+                        ? 'Mapbox authorization failed. The accepted runtime was retained.'
+                        : failureCode === 'rate-limit'
+                            ? 'Mapbox request capacity was reached. The accepted runtime was retained.'
+                            : 'Mapbox could not complete the request. The accepted runtime was retained.',
+                },
+            };
+        }
 
         const data = await response.json() as MapboxDirectionsResponse;
         const coordinates = data.routes?.[0]?.geometry?.coordinates;
         if (data.code !== 'Ok' || !coordinates?.length) {
-            throw new Error(`Mapbox returned code ${data.code ?? 'unknown'}`);
+            return {
+                coordinates: [from, to],
+                source: 'fallback',
+                distanceMeters: distanceMetersBetween(from, to),
+                failure: {
+                    code: data.code === 'NoRoute' || data.code === 'NoSegment' ? 'no-route' : 'invalid-response',
+                    message: data.code === 'NoRoute' || data.code === 'NoSegment'
+                        ? 'Mapbox could not find a usable road route for one or more segments. The accepted runtime was retained.'
+                        : 'Mapbox returned an incomplete route. The accepted runtime was retained.',
+                },
+            };
         }
 
         const route = data.routes[0];
@@ -211,7 +258,12 @@ async function fetchRoadSegment(
         return result;
     } catch {
         if (signal?.aborted) throw new DOMException('Route snap cancelled.', 'AbortError');
-        return { coordinates: [from, to], source: 'fallback', distanceMeters: distanceMetersBetween(from, to) };
+        return {
+            coordinates: [from, to],
+            source: 'fallback',
+            distanceMeters: distanceMetersBetween(from, to),
+            failure: { code: 'network', message: 'Mapbox could not be reached. The accepted runtime was retained.' },
+        };
     }
 }
 
@@ -249,7 +301,14 @@ export async function snapRoutePlanner2WaypointsToRoad(
         : getMapboxToken();
     const fetchImpl = options.fetchImpl ?? fetch;
     const segmentResults = await Promise.all(
-        waypoints.slice(1).map((to, index) => fetchRoadSegment(waypoints[index], to, token, fetchImpl, options.signal)),
+        waypoints.slice(1).map((to, index) => fetchRoadSegment(
+            waypoints[index],
+            to,
+            token,
+            fetchImpl,
+            options.signal,
+            options.forceRefresh,
+        )),
     );
     const durationSeconds = segmentResults.every((result) => typeof result.durationSeconds === 'number')
         ? segmentResults.reduce((sum, result) => sum + (result.durationSeconds ?? 0), 0)
@@ -265,6 +324,7 @@ export async function snapRoutePlanner2WaypointsToRoad(
         durationSeconds,
         distanceMeters,
         roadLabels,
+        failure: segmentResults.find((result) => result.failure)?.failure,
     };
 }
 
@@ -302,8 +362,9 @@ function buildSegmentRuntimeEstimate(
         pathFingerprint: segment.pathFingerprint,
         updatedAt: now,
         fallbackReason: source === 'fallback'
-            ? 'Mapbox travel time was unavailable; using distance and default speed.'
+            ? result?.failure?.message ?? 'Mapbox travel time was unavailable; using distance and default speed.'
             : undefined,
+        fallbackCode: source === 'fallback' ? result?.failure?.code : undefined,
     };
 }
 
@@ -334,6 +395,7 @@ export function buildRoutePlanner2FallbackRoadSnapResult(scenario: RoutePlanner2
         distanceMeters: distanceMetersForPath(coordinates),
         segmentEstimates,
         segmentGeometries,
+        failures: [],
     };
 }
 
@@ -377,6 +439,7 @@ export async function snapRoutePlanner2ScenarioToRoad(
     const results = segmentResults.map((item) => item.result);
     const segmentEstimates = segmentResults.map((item) => item.segmentEstimate);
     const segmentGeometries = segmentResults.map((item) => item.segmentGeometry);
+    const failures = segmentResults.flatMap((item) => item.result.failure ? [item.result.failure] : []);
 
     return {
         coordinates: stitchSegmentCoordinates(results.map((result) => result.coordinates)),
@@ -387,5 +450,6 @@ export async function snapRoutePlanner2ScenarioToRoad(
         distanceMeters: distanceMetersForPath(stitchSegmentCoordinates(results.map((result) => result.coordinates))),
         segmentEstimates,
         segmentGeometries,
+        failures,
     };
 }

@@ -53,16 +53,20 @@ Production note: Transit On Demand optimization should use the Firebase/Cloud Ru
 ├── functions/               # Firebase Functions and ops scripts
 ├── tests/                   # Vitest coverage
 ├── docs/                    # Durable docs, feature briefs, runbooks, plans, archive
-└── .claude/                 # Tool-specific workflow and compatibility context
+├── .agents/                 # Portable repository skills
+├── .codex/                  # Codex-specific repository skills
+└── .claude/                 # Claude-specific workflow and compatibility context
 ```
 
 Detailed file ownership lives in `docs/ARCHITECTURE.md`. Use the summary above only as a starting point.
 
 ## Documentation
 
-Start with these durable docs:
+For agent work, start with only these two files:
 - [AGENTS.md](AGENTS.md) - Primary agent entrypoint and repo instruction contract
 - [Context Index](docs/CONTEXT_INDEX.md) - Canonical load order, document tiers, and what not to load by default
+
+The Context Index routes each task to the smallest useful set of additional documents. Durable references include:
 - [Locked Logic](docs/rules/LOCKED_LOGIC.md) - Durable behavioral constraints
 - [Product Vision](docs/PRODUCT_VISION.md) - Overall product framing, with fixed-route as the core workflow
 - [Architecture](docs/ARCHITECTURE.md) - System design and source file layout
@@ -77,6 +81,8 @@ Load these only when relevant:
 - [Plans Directory](docs/plans/README.md) - Historical plans, not default context
 - [Archive](docs/archive/README.md) - Historical notes that should not drive current implementation
 - [Artifacts](docs/artifacts/README.md) - Supporting files and examples, not default context
+
+Run `npm run docs:check` after changing agent-facing Markdown. It validates required context files, repository-relative links, portable paths, and skill frontmatter.
 
 ## Fixed-Route Routes Supported
 

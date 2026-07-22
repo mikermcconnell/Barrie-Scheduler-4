@@ -49,6 +49,25 @@ function addWrappedText(doc: jsPDF, text: string, x: number, y: number, width: n
   return y + visible.length * lineHeight;
 }
 
+function drawPhoneIcon(doc: jsPDF, x: number, y: number): void {
+  doc.line(x, y - 7, x + 2, y - 5);
+  doc.line(x + 2, y - 5, x + 4, y - 1);
+  doc.line(x + 4, y - 1, x + 8, y + 1);
+  doc.line(x + 8, y + 1, x + 10, y - 1);
+}
+
+function drawMailIcon(doc: jsPDF, x: number, y: number): void {
+  doc.rect(x, y - 7, 11, 8);
+  doc.line(x, y - 7, x + 5.5, y - 3);
+  doc.line(x + 11, y - 7, x + 5.5, y - 3);
+}
+
+function drawGlobeIcon(doc: jsPDF, x: number, y: number): void {
+  doc.circle(x + 5, y - 3, 5);
+  doc.line(x, y - 3, x + 10, y - 3);
+  doc.line(x + 5, y - 8, x + 5, y + 2);
+}
+
 /** Builds a one-page letter PDF. All chrome and copy remain vector; only the supplied map is raster. */
 export function createDetourPdf(input: DetourPdfInput): jsPDF {
   assertImageDataUrl(input.mapImageDataUrl);
@@ -63,13 +82,13 @@ export function createDetourPdf(input: DetourPdfInput): jsPDF {
   doc.setFontSize(21);
   if (input.brandAssets?.transitLogoDataUrl) {
     assertImageDataUrl(input.brandAssets.transitLogoDataUrl);
-    doc.addImage(input.brandAssets.transitLogoDataUrl, imageFormat(input.brandAssets.transitLogoDataUrl), 28, 10, 118, 30, undefined, 'FAST');
+    doc.addImage(input.brandAssets.transitLogoDataUrl, imageFormat(input.brandAssets.transitLogoDataUrl), 24, 7, 106, 41, undefined, 'FAST');
   } else {
     doc.text('BARRIE TRANSIT', 28, 28);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(notice.noticeType === 'stop-closure' ? 'STOP CLOSURE' : 'DETOUR NOTICE', 28, 44);
   }
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(notice.noticeType === 'stop-closure' ? 'STOP CLOSURE' : 'DETOUR NOTICE', 28, 44);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(17);
   const title = sanitizeDetourPlainText(notice.title);
@@ -78,11 +97,11 @@ export function createDetourPdf(input: DetourPdfInput): jsPDF {
   doc.setDrawColor('#EF4444');
   doc.setFillColor('#FFFFFF');
   doc.setLineWidth(2.5);
-  doc.triangle(warningX, 10, warningX - 15, 45, warningX + 15, 45, 'FD');
+  doc.triangle(warningX, 7, warningX - 18, 49, warningX + 18, 49, 'FD');
   doc.setTextColor('#EF4444');
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.text('!', warningX, 39, { align: 'center' });
+  doc.setFontSize(22);
+  doc.text('!', warningX, 42, { align: 'center' });
 
   const mapX = 28;
   const mapY = 76;
@@ -139,6 +158,7 @@ export function createDetourPdf(input: DetourPdfInput): jsPDF {
   doc.setTextColor(INK);
   doc.setFontSize(10);
   y = addWrappedText(doc, notice.publicDetails, panelX, y, panelW, 13, 13) + 13;
+  y = addWrappedText(doc, 'Routes not shown are on regular routing.', panelX, y, panelW, 13, 2) + 13;
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(BRAND_BLUE);
@@ -181,7 +201,16 @@ export function createDetourPdf(input: DetourPdfInput): jsPDF {
     doc.addImage(input.brandAssets.cityLogoDataUrl, imageFormat(input.brandAssets.cityLogoDataUrl), 28, 553, 42, 18, undefined, 'FAST');
     footerTextX = 78;
   }
-  doc.text('Service Barrie 705-726-4242  |  servicebarrie@barrie.ca  |  barrie.ca/TransitNotices', footerTextX, 568);
+  doc.setDrawColor(MUTED);
+  doc.setLineWidth(1);
+  drawPhoneIcon(doc, footerTextX, 568);
+  doc.text('Service Barrie 705-726-4242', footerTextX + 15, 568);
+  const emailX = footerTextX + 165;
+  drawMailIcon(doc, emailX, 568);
+  doc.text('servicebarrie@barrie.ca', emailX + 15, 568);
+  const websiteX = emailX + 160;
+  drawGlobeIcon(doc, websiteX, 568);
+  doc.text('barrie.ca/TransitNotices', websiteX + 15, 568);
   doc.text(`Revision ${Math.max(1, Math.trunc(notice.revision || 1))}`, width - 28, 568, { align: 'right' });
   doc.setFontSize(7);
   doc.text(sanitizeDetourPlainText(input.mapAttribution ?? 'Map data © Mapbox © OpenStreetMap'), 28, 535);

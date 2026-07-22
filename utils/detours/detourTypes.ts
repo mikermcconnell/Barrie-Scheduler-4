@@ -29,6 +29,19 @@ export interface DetourMapLabel {
     position: DetourCoordinate;
 }
 
+export type DetourStreetLabelPath = 'closure' | 'detour';
+
+/** Public, path-aware street wording kept separate from free-form map callouts. */
+export interface DetourStreetLabel {
+    id: string;
+    path: DetourStreetLabelPath;
+    streetName: string;
+    position: DetourCoordinate;
+    source: 'mapbox' | 'planner';
+    confirmed: boolean;
+    visible: boolean;
+}
+
 export interface DetourGtfsStopSnapshot {
     stopId: string;
     stopCode?: string;
@@ -64,6 +77,7 @@ export interface DetourStopImpact {
     suggestedStatus?: DetourStopImpactStatus;
     reviewed: boolean;
     temporaryStopName?: string;
+    temporaryStopCode?: string;
     temporaryStopPosition?: DetourCoordinate;
     replacementStopId?: string;
     riderInstructions?: string;
@@ -74,10 +88,16 @@ export interface DetourRouteOverlay {
     routeSnapshot: DetourGtfsRouteSnapshot;
     closureStart: DetourRouteAnchorSnapshot | null;
     closureEnd: DetourRouteAnchorSnapshot | null;
+    /** Sparse planner-created interior control points for the public closed-section line. */
+    closureWaypoints: DetourCoordinate[];
     closureGeometry: DetourLineGeometry;
     /** Planner-authored control points; distinct from dense road-snapped geometry vertices. */
     detourWaypoints: DetourCoordinate[];
     detourGeometry: DetourLineGeometry;
+    /** Optional planner placement for the public route-number label, snapped to the detour line. */
+    routeLabelPosition?: DetourCoordinate;
+    /** Confirmed labels publish as NO SERVICE ON or DETOUR VIA wording. */
+    streetLabels?: DetourStreetLabel[];
     labels: DetourMapLabel[];
     stopImpacts: DetourStopImpact[];
     busSuitabilityConfirmed: boolean;

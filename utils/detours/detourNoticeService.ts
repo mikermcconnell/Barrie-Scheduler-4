@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { createDetourNotice } from './detourFactory';
+import { normalizeDetourOverlayJunctions } from './detourAuthoring';
 import type {
     DetourNotice,
     DetourNoticeSummary,
@@ -96,12 +97,14 @@ const stripUndefined = <T>(value: T): T => {
     return value;
 };
 
-const parseOverlay = (id: string, data: DocumentData): DetourRouteOverlay => ({
-    ...(data as Omit<DetourRouteOverlay, 'id' | 'createdAt' | 'updatedAt'>),
-    id,
-    createdAt: asDate(data.createdAt),
-    updatedAt: asDate(data.updatedAt),
-});
+const parseOverlay = (id: string, data: DocumentData): DetourRouteOverlay => normalizeDetourOverlayJunctions({
+        ...(data as Omit<DetourRouteOverlay, 'id' | 'createdAt' | 'updatedAt'>),
+        id,
+        closureWaypoints: Array.isArray(data.closureWaypoints) ? data.closureWaypoints : [],
+        streetLabels: Array.isArray(data.streetLabels) ? data.streetLabels : [],
+        createdAt: asDate(data.createdAt),
+        updatedAt: asDate(data.updatedAt),
+    });
 
 const parsePublication = (id: string, data: DocumentData): DetourPublication => ({
     ...(data as Omit<DetourPublication, 'id' | 'exportedAt' | 'postedAt'>),

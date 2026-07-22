@@ -67,6 +67,41 @@ describe('Route Planner 2 road snap', () => {
     expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('access_token=test-token'));
   });
 
+  it('bypasses the route cache only for an explicit refresh', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        code: 'Ok',
+        routes: [{
+          duration: 180,
+          distance: 1200,
+          geometry: { type: 'LineString', coordinates: [[-79.701, 44.381], [-79.681, 44.391]] },
+        }],
+      }),
+    } as Response));
+    const waypoints: [number, number][] = [[-79.701, 44.381], [-79.681, 44.391]];
+
+    await snapRoutePlanner2WaypointsToRoad(waypoints, { token: 'cache-refresh-token', fetchImpl });
+    await snapRoutePlanner2WaypointsToRoad(waypoints, { token: 'cache-refresh-token', fetchImpl });
+    await snapRoutePlanner2WaypointsToRoad(waypoints, { token: 'cache-refresh-token', fetchImpl, forceRefresh: true });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('classifies provider failures without exposing credentials', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 401 } as Response));
+
+    const result = await snapRoutePlanner2WaypointsToRoad([[-79.702, 44.382], [-79.682, 44.392]], {
+      token: 'secret-token-value',
+      fetchImpl,
+      forceRefresh: true,
+    });
+
+    expect(result.source).toBe('fallback');
+    expect(result.failure).toEqual({ code: 'authentication', message: 'Mapbox authorization failed. The accepted runtime was retained.' });
+    expect(JSON.stringify(result)).not.toContain('secret-token-value');
+  });
+
   it('returns segment runtime estimates for stop-to-stop paths with line waypoints', async () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-04-29T12:00:00.000Z' });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Start', lat: 44.38, lng: -79.7 });

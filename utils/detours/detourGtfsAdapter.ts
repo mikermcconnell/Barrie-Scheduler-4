@@ -29,6 +29,40 @@ function isLoopPattern(pattern: RoutePlanner2GtfsImportPattern): boolean {
     return Math.hypot(latMetres, lngMetres) <= 35;
 }
 
+function compareFullWeekdayPatterns(
+    first: RoutePlanner2GtfsImportPattern,
+    second: RoutePlanner2GtfsImportPattern,
+): number {
+    return second.stopCount - first.stopCount
+        || second.tripCount - first.tripCount
+        || second.shapePointCount - first.shapePointCount
+        || first.id.localeCompare(second.id);
+}
+
+/** Returns one complete weekday planning pattern for each public route number. */
+export function selectDetourWeekdayRoutes(
+    patterns: RoutePlanner2GtfsImportPattern[],
+): RoutePlanner2GtfsImportPattern[] {
+    const patternsByRoute = new Map<string, RoutePlanner2GtfsImportPattern[]>();
+
+    patterns.forEach((pattern) => {
+        if (pattern.dayTypeLabel.trim().toLowerCase() !== 'weekday') return;
+        const routeKey = pattern.routeShortName.trim().toUpperCase();
+        if (!routeKey) return;
+        const routePatterns = patternsByRoute.get(routeKey) ?? [];
+        routePatterns.push(pattern);
+        patternsByRoute.set(routeKey, routePatterns);
+    });
+
+    return Array.from(patternsByRoute.values())
+        .map(routePatterns => [...routePatterns].sort(compareFullWeekdayPatterns)[0]!)
+        .sort((first, second) => first.routeShortName.localeCompare(
+            second.routeShortName,
+            undefined,
+            { numeric: true, sensitivity: 'base' },
+        ));
+}
+
 export function getDetourPatternDirectionLabel(pattern: RoutePlanner2GtfsImportPattern): string {
     const familyDirection = pattern.routeFamily?.directionLabel?.trim();
     if (familyDirection) return familyDirection;
@@ -85,6 +119,7 @@ export function createDetourOverlayFromGtfsPattern(
         routeSnapshot,
         closureStart: null,
         closureEnd: null,
+        closureWaypoints: [],
         closureGeometry: {
             coordinates: [],
             source: 'manual',
@@ -96,6 +131,7 @@ export function createDetourOverlayFromGtfsPattern(
             source: 'manual',
             manualRoutingAcknowledged: false,
         },
+        streetLabels: [],
         labels: [],
         stopImpacts: routeSnapshot.stops.map(stop => ({
             id: `${options.id ?? pattern.id}-stop-${stop.stopId}`,

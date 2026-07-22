@@ -16,22 +16,21 @@ export interface CreateDetourNoticeOptions {
     now?: Date;
 }
 
-const localDateParts = (date: Date): { date: string; time: string } => {
+const localDate = (date: Date): string => {
     const parts = new Intl.DateTimeFormat('en-CA', {
         timeZone: DETOUR_TIME_ZONE,
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     }).formatToParts(date);
     const get = (type: Intl.DateTimeFormatPartTypes): string => parts.find(part => part.type === type)?.value ?? '';
-    return { date: `${get('year')}-${get('month')}-${get('day')}`, time: `${get('hour')}:${get('minute')}` };
+    return `${get('year')}-${get('month')}-${get('day')}`;
 };
 
 export const createDefaultDetourSchedule = (now = new Date()): DetourEffectiveSchedule => {
-    const local = localDateParts(now);
     return {
         timeZone: DETOUR_TIME_ZONE,
-        startDate: local.date,
-        startTime: local.time,
+        startDate: localDate(now),
+        startTime: '',
         end: { mode: 'until-further-notice' },
         recurrence: { mode: 'continuous' },
     };
@@ -80,9 +79,11 @@ export const createDetourRouteOverlay = (
     routeSnapshot,
     closureStart: null,
     closureEnd: null,
+    closureWaypoints: [],
     closureGeometry: { coordinates: [], source: 'gtfs', manualRoutingAcknowledged: false },
     detourWaypoints: [],
     detourGeometry: { coordinates: [], source: 'road-snapped', manualRoutingAcknowledged: false },
+    streetLabels: [],
     labels: [],
     stopImpacts: [],
     busSuitabilityConfirmed: false,

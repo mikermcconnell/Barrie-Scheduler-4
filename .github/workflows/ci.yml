@@ -125,6 +125,10 @@ jobs:
 
           targets="functions:routePlannerGeocode,hosting"
 
+          if grep -Eq '^functions/' <<< "$changed_files"; then
+            targets="functions,hosting"
+          fi
+
           if grep -Eq '^(firestore\.rules|firebase\.json)$' <<< "$changed_files"; then
             targets="${targets},firestore:rules"
           fi

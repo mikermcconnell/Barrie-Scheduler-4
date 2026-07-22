@@ -133,7 +133,7 @@ const isMergedRoute = lastNorthStop === firstSouthStop;
 
 ### Block Assignment - Gap-Based Chaining (LOCKED)
 
-**File:** `blockAssignmentCore.ts:105-162` (`findNextTrip`)
+**File:** `utils/blocks/blockAssignmentCore.ts` (`findNextTrip`)
 
 Blocks must chain trips by **time continuity**, not by index. Each block represents a single bus operating throughout the day.
 

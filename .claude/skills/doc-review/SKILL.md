@@ -39,7 +39,7 @@ Audit these files in order of priority:
 | `docs/PRODUCT_VISION.md` | Product goals, user personas, feature scope |
 | `docs/ARCHITECTURE.md` | Component map, data flow, stack description |
 | `docs/SCHEMA.md` | Firestore collections, TypeScript types, storage paths |
-| `docs/IMPLEMENTATION_PLAN.md` | Roadmap phases, completion status |
+| `docs/IMPLEMENTATION_PLAN.md` | Historical March 2026 delivery snapshot |
 
 ### Tier 3 — Reference (consulted for specific features)
 
@@ -103,7 +103,7 @@ Search documentation for references to known removed items:
 
 ```bash
 # Quick grep across all docs
-grep -ri "interline\|tweaker\|DraftManager\|ScenarioComparison\|SaveErrorBoundary\|PlatformSummary" .claude/ docs/
+rg -n -i "interline|tweaker|DraftManager|ScenarioComparison|SaveErrorBoundary|PlatformSummary" .claude docs -g '*.md'
 ```
 
 ### Check 4: Locked Logic Validation
@@ -131,10 +131,10 @@ Check for contradictions between documents:
 | Check | Files to Compare |
 |-------|-----------------|
 | Stack description | CLAUDE.md vs ARCHITECTURE.md vs package.json |
-| Feature status | PRODUCT_VISION.md vs IMPLEMENTATION_PLAN.md vs CLAUDE.md "Current Project State" |
-| Known issues | CLAUDE.md vs CONNECTIONS_FEATURE.md vs MEMORY.md |
-| File structure | ARCHITECTURE.md vs REORGANIZATION_LOG.md vs actual `ls` |
-| Test inventory | CLAUDE.md danger zones vs MEMORY.md test coverage vs actual test files |
+| Feature status | PRODUCT_VISION.md and feature docs vs current code/tests |
+| Known issues | Feature docs vs current code/tests |
+| File structure | ARCHITECTURE.md vs actual repository tree |
+| Test inventory | CLAUDE.md danger zones vs actual test files |
 
 ### Check 7: Skill File Health
 

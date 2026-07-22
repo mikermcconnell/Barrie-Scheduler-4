@@ -578,6 +578,8 @@ export interface DailySummary {
   segmentRuntimes?: DailySegmentRuntimes;
   stopSegmentRuntimes?: DailyStopSegmentRuntimes;
   tripStopSegmentRuntimes?: DailyTripStopSegmentRuntimes;
+  /** Compact import-health marker retained when detailed trip runtime arrays are stripped. */
+  hasTripStopSegmentRuntimes?: boolean;
   runtimePatterns?: DailyRuntimePattern[];
   routeStopDeviations?: RouteStopDeviationProfile[];
   byRouteHour?: RouteHourMetrics[];

@@ -17,6 +17,7 @@ import {
     Clipboard,
     Copy,
     Download,
+    Eye,
     FileImage,
     FileText,
     Link2,
@@ -45,17 +46,33 @@ import {
 } from '../detours/DetourMapCanvas';
 import { DetourNoticePreview } from '../detours/DetourNoticePreview';
 import { createDetourNotice } from '../../utils/detours/detourFactory';
-import { createDetourOverlayFromGtfsPattern } from '../../utils/detours/detourGtfsAdapter';
 import {
+    createDetourOverlayFromGtfsPattern,
+    selectDetourWeekdayRoutes,
+} from '../../utils/detours/detourGtfsAdapter';
+import {
+    deleteDetourGeometryAnchor,
     deleteDetourControlPoint,
+    insertDetourControlPointOnLine,
+    insertDetourGeometryAnchor,
+    moveDetourGeometryAnchor,
     moveDetourControlPoint,
+    normalizeDetourOverlayJunctions,
     snapDetourWaypointsToRoad,
 } from '../../utils/detours/detourAuthoring';
 import {
+    findNearestRouteAnchor,
     splitDetourRoute,
     suggestBypassedStopIds,
     type DetourRouteAnchor,
 } from '../../utils/detours/detourGeometry';
+import {
+    createPlannerStreetLabel,
+    mergeDetourStreetSuggestions,
+    pathCoordinateAtFraction,
+    pathFractionAtCoordinate,
+    snapStreetLabelToPath,
+} from '../../utils/detours/detourStreetLabels';
 import {
     deleteDetourNotice,
     duplicateDetourNotice,
@@ -73,6 +90,7 @@ import type {
     DetourNoticeSummary,
     DetourNoticeType,
     DetourRouteOverlay,
+    DetourStreetLabelPath,
     DetourStopImpactStatus,
 } from '../../utils/detours/detourTypes';
 import {
@@ -87,6 +105,7 @@ import {
 import { loadRoutePlanner2GtfsImportPatterns } from '../../utils/route-planner-2/routePlanner2GtfsClient';
 import type { RoutePlanner2GtfsImportPattern } from '../../utils/route-planner-2/routePlanner2GtfsImport';
 import { useUnsavedChangesWarning } from '../../hooks/useUnsavedChangesWarning';
+import barrieTransitLogoDataUrl from '../../assets/branding/barrie-transit-logo-white.png?inline';
 
 interface DetourPublisherWorkspaceProps {
     onClose: () => void;
@@ -104,6 +123,10 @@ const DAYS: Array<{ id: DetourDay; label: string }> = [
     { id: 'saturday', label: 'Sat' },
     { id: 'sunday', label: 'Sun' },
 ];
+
+const DETOUR_BRAND_ASSETS = {
+    transitLogoDataUrl: barrieTransitLogoDataUrl,
+} as const;
 
 function cx(...classes: Array<string | false | null | undefined>): string {
     return classes.filter(Boolean).join(' ');
@@ -126,9 +149,9 @@ function getSummaryState(summary: DetourNoticeSummary, now = new Date()): Exclud
     }).formatToParts(now);
     const get = (part: Intl.DateTimeFormatPartTypes) => local.find(item => item.type === part)?.value ?? '';
     const current = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
-    const start = `${summary.schedule.startDate}T${summary.schedule.startTime}`;
+    const start = `${summary.schedule.startDate}T${summary.schedule.startTime || '00:00'}`;
     if (current < start) return 'upcoming';
-    if (summary.schedule.end.mode === 'fixed' && current > `${summary.schedule.end.date}T${summary.schedule.end.time}`) return 'expired';
+    if (summary.schedule.end.mode === 'fixed' && current > `${summary.schedule.end.date}T${summary.schedule.end.time || '23:59'}`) return 'expired';
     return 'active';
 }
 
@@ -193,12 +216,15 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
     const [mapMode, setMapMode] = useState<DetourMapMode>('select');
     const [mapSelection, setMapSelection] = useState<DetourMapSelection>(null);
     const [snappingOverlayId, setSnappingOverlayId] = useState<string | null>(null);
+    const [streetLabelLookupOverlayId, setStreetLabelLookupOverlayId] = useState<string | null>(null);
     const [showRoutePicker, setShowRoutePicker] = useState(false);
     const [patterns, setPatterns] = useState<RoutePlanner2GtfsImportPattern[]>([]);
     const [patternsLoading, setPatternsLoading] = useState(false);
     const [patternQuery, setPatternQuery] = useState('');
-    const [patternDay, setPatternDay] = useState('All');
+    const [closedStreetName, setClosedStreetName] = useState('');
+    const [detourStreetName, setDetourStreetName] = useState('');
     const [showPreview, setShowPreview] = useState(false);
+    const [publicMapPreview, setPublicMapPreview] = useState(false);
     const [mapImage, setMapImage] = useState<string>('');
     const [exporting, setExporting] = useState(false);
     const [lastExport, setLastExport] = useState<{ pdf: string; png: string } | null>(null);
@@ -206,6 +232,8 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
     const [postUrl, setPostUrl] = useState('');
     const [validationVisible, setValidationVisible] = useState(false);
     const mapRef = useRef<DetourMapCanvasHandle | null>(null);
+    const snapRequestVersionRef = useRef(new Map<string, number>());
+    const streetSuggestionRequestRef = useRef(new Set<string>());
     const previewRef = useRef<HTMLDivElement | null>(null);
     useUnsavedChangesWarning(dirty, 'You have unsaved detour notice changes. Leave anyway?');
 
@@ -267,6 +295,7 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         setFuture([]);
         setDirty(true);
         setMapImage('');
+        setPublicMapPreview(false);
         setLastExport(null);
         setValidationVisible(false);
         setScreen('editor');
@@ -283,6 +312,7 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
             setFuture([]);
             setDirty(false);
             setMapImage('');
+            setPublicMapPreview(false);
             setLastExport(null);
             setValidationVisible(false);
             setScreen('editor');
@@ -332,13 +362,12 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         if (showRoutePicker && patterns.length === 0 && !patternsLoading) void loadPatterns();
     }, [loadPatterns, patterns.length, patternsLoading, showRoutePicker]);
 
-    const visiblePatterns = useMemo(() => patterns.filter(pattern => {
+    const weekdayRoutes = useMemo(() => selectDetourWeekdayRoutes(patterns), [patterns]);
+    const visibleRoutes = useMemo(() => weekdayRoutes.filter(pattern => {
         const query = patternQuery.trim().toLowerCase();
         const matchesQuery = !query || `${pattern.routeShortName} ${pattern.routeLongName ?? ''} ${pattern.tripHeadsign ?? ''}`.toLowerCase().includes(query);
-        const matchesDay = patternDay === 'All' || pattern.dayTypeLabel === patternDay;
-        return matchesQuery && matchesDay;
-    }).slice(0, 100), [patternDay, patternQuery, patterns]);
-    const patternDays = useMemo(() => ['All', ...new Set(patterns.map(pattern => pattern.dayTypeLabel))], [patterns]);
+        return matchesQuery;
+    }), [patternQuery, weekdayRoutes]);
 
     const addPattern = useCallback((pattern: RoutePlanner2GtfsImportPattern) => {
         const duplicate = notice?.overlays.some(overlay => overlay.routeSnapshot.routeId === pattern.routeId
@@ -375,9 +404,12 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
 
     const resnapOverlay = useCallback(async (overlayId: string, waypoints: DetourCoordinate[]) => {
         if (waypoints.length < 2) return;
+        const requestVersion = (snapRequestVersionRef.current.get(overlayId) ?? 0) + 1;
+        snapRequestVersionRef.current.set(overlayId, requestVersion);
         setSnappingOverlayId(overlayId);
         try {
             const result = await snapDetourWaypointsToRoad(waypoints);
+            if (snapRequestVersionRef.current.get(overlayId) !== requestVersion) return;
             updateOverlay(overlayId, overlay => ({
                 ...overlay,
                 detourGeometry: {
@@ -385,16 +417,55 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                     source: result.source === 'mapbox' ? 'road-snapped' : 'manual',
                     manualRoutingAcknowledged: !result.requiresAcknowledgement,
                 },
+                streetLabels: mergeDetourStreetSuggestions(
+                    (overlay.streetLabels ?? []).map(label => label.path === 'detour' && label.confirmed
+                        ? snapStreetLabelToPath(label, result.geometry)
+                        : label),
+                    result.roadLabels ?? [],
+                ),
                 busSuitabilityConfirmed: false,
                 updatedAt: new Date(),
             }), false);
         } catch (error) {
+            if (snapRequestVersionRef.current.get(overlayId) !== requestVersion) return;
             console.error('Road snapping failed', error);
             toast?.warning('Manual path retained', 'Road snapping failed. Review and acknowledge the manual path before export.');
         } finally {
-            setSnappingOverlayId(null);
+            if (snapRequestVersionRef.current.get(overlayId) === requestVersion) setSnappingOverlayId(null);
         }
     }, [toast, updateOverlay]);
+
+    const refreshStreetSuggestions = useCallback(async (overlayId: string, waypoints: DetourCoordinate[], force = false) => {
+        if (waypoints.length < 2) return;
+        if (!force && streetSuggestionRequestRef.current.has(overlayId)) return;
+        streetSuggestionRequestRef.current.add(overlayId);
+        setStreetLabelLookupOverlayId(overlayId);
+        try {
+            const result = await snapDetourWaypointsToRoad(waypoints);
+            if (!result.roadLabels?.length) return;
+            updateOverlay(overlayId, overlay => ({
+                ...overlay,
+                streetLabels: mergeDetourStreetSuggestions(overlay.streetLabels ?? [], result.roadLabels ?? []),
+                updatedAt: new Date(),
+            }), false);
+        } catch (error) {
+            console.error('Street-name suggestions failed', error);
+        } finally {
+            setStreetLabelLookupOverlayId(current => current === overlayId ? null : current);
+        }
+    }, [updateOverlay]);
+
+    useEffect(() => {
+        if (notice?.type !== 'route-detour' || !activeOverlay) return;
+        if (snappingOverlayId === activeOverlay.id) return;
+        const hasDetourLabel = (activeOverlay.streetLabels ?? []).some(label => label.path === 'detour');
+        const lookupWaypoints = activeOverlay.detourWaypoints.length >= 2
+            ? activeOverlay.detourWaypoints
+            : [activeOverlay.detourGeometry.coordinates[0], activeOverlay.detourGeometry.coordinates.at(-1)]
+                .filter((point): point is DetourCoordinate => Boolean(point));
+        if (hasDetourLabel || lookupWaypoints.length < 2) return;
+        void refreshStreetSuggestions(activeOverlay.id, lookupWaypoints);
+    }, [activeOverlay, notice?.type, refreshStreetSuggestions, snappingOverlayId]);
 
     const applyClosureAnchor = useCallback((kind: 'start' | 'end', anchor: DetourRouteAnchor) => {
         if (!activeOverlay) return;
@@ -414,11 +485,27 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                     split.bypassed,
                 ));
                 const temporary = activeOverlay.stopImpacts.filter(impact => impact.status === 'temporary' && !impact.sourceStop);
-                nextOverlay = {
+                const priorWaypoints = activeOverlay.detourWaypoints.length >= 2
+                    ? activeOverlay.detourWaypoints
+                    : [nextStart.coordinate, nextEnd.coordinate];
+                const detourWaypoints = [
+                    nextStart.coordinate,
+                    ...priorWaypoints.slice(1, -1),
+                    nextEnd.coordinate,
+                ];
+                nextOverlay = normalizeDetourOverlayJunctions({
                     ...nextOverlay,
+                    closureWaypoints: [],
                     closureGeometry: { coordinates: split.bypassed, source: 'gtfs', manualRoutingAcknowledged: true },
-                    detourWaypoints: [nextStart.coordinate, nextEnd.coordinate],
-                    detourGeometry: { coordinates: [nextStart.coordinate, nextEnd.coordinate], source: 'manual', manualRoutingAcknowledged: false },
+                    detourWaypoints,
+                    detourGeometry: {
+                        coordinates: activeOverlay.detourGeometry.coordinates,
+                        source: 'manual',
+                        manualRoutingAcknowledged: false,
+                    },
+                    streetLabels: (activeOverlay.streetLabels ?? []).map(label => label.path === 'closure'
+                        ? { ...snapStreetLabelToPath(label, split.bypassed), confirmed: false }
+                        : label),
                     stopImpacts: [
                         ...activeOverlay.routeSnapshot.stops.map(stop => ({
                             id: `${activeOverlay.id}-stop-${stop.stopId}`,
@@ -430,7 +517,7 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                         ...temporary,
                     ],
                     busSuitabilityConfirmed: false,
-                };
+                });
             }
         }
         updateOverlay(activeOverlay.id, () => nextOverlay);
@@ -449,8 +536,28 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         void resnapOverlay(activeOverlay.id, next);
     }, [activeOverlay, resnapOverlay, updateOverlay]);
 
+    const insertWaypointOnLine = useCallback((coordinate: DetourCoordinate) => {
+        if (!activeOverlay) return;
+        const result = insertDetourControlPointOnLine(
+            activeOverlay.detourWaypoints,
+            activeOverlay.detourGeometry.coordinates,
+            coordinate,
+        );
+        if (!result) return;
+        updateOverlay(activeOverlay.id, overlay => ({ ...overlay, detourWaypoints: result.waypoints }));
+        setMapSelection({ type: 'waypoint', index: result.index });
+        void resnapOverlay(activeOverlay.id, result.waypoints);
+    }, [activeOverlay, resnapOverlay, updateOverlay]);
+
     const moveWaypoint = useCallback((index: number, coordinate: DetourCoordinate) => {
         if (!activeOverlay) return;
+        const isStartJunction = index === 0;
+        const isEndJunction = index === activeOverlay.detourWaypoints.length - 1;
+        if (isStartJunction || isEndJunction) {
+            const anchor = findNearestRouteAnchor(activeOverlay.routeSnapshot.originalGeometry, coordinate);
+            if (anchor) applyClosureAnchor(isStartJunction ? 'start' : 'end', anchor);
+            return;
+        }
         const next = moveDetourControlPoint(activeOverlay.detourWaypoints, index, coordinate);
         updateOverlay(activeOverlay.id, overlay => ({ ...overlay, detourWaypoints: next }));
         void resnapOverlay(activeOverlay.id, next);
@@ -461,7 +568,148 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         const next = deleteDetourControlPoint(activeOverlay.detourWaypoints, index);
         updateOverlay(activeOverlay.id, overlay => ({ ...overlay, detourWaypoints: next }));
         void resnapOverlay(activeOverlay.id, next);
-    }, [activeOverlay, resnapOverlay, updateOverlay]);
+    }, [activeOverlay, applyClosureAnchor, resnapOverlay, updateOverlay]);
+
+    const moveRouteLabel = useCallback((coordinate: DetourCoordinate) => {
+        if (!activeOverlay) return;
+        const anchor = findNearestRouteAnchor(activeOverlay.detourGeometry.coordinates, coordinate);
+        if (!anchor) return;
+        updateOverlay(activeOverlay.id, overlay => ({
+            ...overlay,
+            routeLabelPosition: anchor.coordinate,
+            updatedAt: new Date(),
+        }));
+    }, [activeOverlay, updateOverlay]);
+
+    const addStreetLabel = useCallback((path: DetourStreetLabelPath, streetName: string) => {
+        if (!activeOverlay) return;
+        const geometry = path === 'closure'
+            ? activeOverlay.closureGeometry.coordinates
+            : activeOverlay.detourGeometry.coordinates;
+        const label = createPlannerStreetLabel(path, streetName, geometry);
+        if (!label) return;
+        updateOverlay(activeOverlay.id, overlay => ({
+            ...overlay,
+            streetLabels: [...(overlay.streetLabels ?? []), label],
+            updatedAt: new Date(),
+        }));
+        setMapSelection({ type: 'street-label', id: label.id });
+        if (path === 'closure') setClosedStreetName('');
+        else setDetourStreetName('');
+        setMapMode('select');
+    }, [activeOverlay, updateOverlay]);
+
+    const moveStreetLabel = useCallback((labelId: string, coordinate: DetourCoordinate) => {
+        if (!activeOverlay) return;
+        updateOverlay(activeOverlay.id, overlay => ({
+            ...overlay,
+            streetLabels: (overlay.streetLabels ?? []).map(label => {
+                if (label.id !== labelId) return label;
+                const geometry = label.path === 'closure'
+                    ? overlay.closureGeometry.coordinates
+                    : overlay.detourGeometry.coordinates;
+                return snapStreetLabelToPath({ ...label, position: coordinate }, geometry);
+            }),
+            updatedAt: new Date(),
+        }));
+    }, [activeOverlay, updateOverlay]);
+
+    const addClosureWaypoint = useCallback((coordinate: DetourCoordinate) => {
+        if (!activeOverlay) return;
+        const result = insertDetourGeometryAnchor(
+            activeOverlay.closureWaypoints,
+            activeOverlay.closureGeometry.coordinates,
+            coordinate,
+        );
+        if (!result) return;
+        updateOverlay(activeOverlay.id, overlay => ({
+            ...overlay,
+            closureWaypoints: result.anchors,
+            closureGeometry: {
+                coordinates: result.geometry,
+                source: 'manual',
+                manualRoutingAcknowledged: false,
+            },
+            streetLabels: (overlay.streetLabels ?? []).map(label => label.path === 'closure'
+                ? snapStreetLabelToPath(label, result.geometry)
+                : label),
+            updatedAt: new Date(),
+        }));
+        setMapSelection({ type: 'closure-waypoint', index: result.anchorIndex });
+    }, [activeOverlay, updateOverlay]);
+
+    const moveClosureWaypoint = useCallback((index: number, coordinate: DetourCoordinate) => {
+        if (!activeOverlay) return;
+        const result = moveDetourGeometryAnchor(
+            activeOverlay.closureWaypoints,
+            activeOverlay.closureGeometry.coordinates,
+            index,
+            coordinate,
+        );
+        if (!result) return;
+        updateOverlay(activeOverlay.id, overlay => ({
+            ...overlay,
+            closureWaypoints: result.anchors,
+            closureGeometry: {
+                coordinates: result.geometry,
+                source: 'manual',
+                manualRoutingAcknowledged: false,
+            },
+            streetLabels: (overlay.streetLabels ?? []).map(label => label.path === 'closure'
+                ? snapStreetLabelToPath(label, result.geometry)
+                : label),
+            updatedAt: new Date(),
+        }));
+    }, [activeOverlay, updateOverlay]);
+
+    const removeClosureWaypoint = useCallback((index: number) => {
+        if (!activeOverlay) return;
+        const result = deleteDetourGeometryAnchor(
+            activeOverlay.closureWaypoints,
+            activeOverlay.closureGeometry.coordinates,
+            index,
+        );
+        if (!result) return;
+        updateOverlay(activeOverlay.id, overlay => ({
+            ...overlay,
+            closureWaypoints: result.anchors,
+            closureGeometry: {
+                coordinates: result.geometry,
+                source: 'manual',
+                manualRoutingAcknowledged: false,
+            },
+            streetLabels: (overlay.streetLabels ?? []).map(label => label.path === 'closure'
+                ? snapStreetLabelToPath(label, result.geometry)
+                : label),
+            updatedAt: new Date(),
+        }));
+        setMapSelection(null);
+    }, [activeOverlay, updateOverlay]);
+
+    const resetClosureGeometry = useCallback(() => {
+        if (!activeOverlay?.closureStart || !activeOverlay.closureEnd) return;
+        const split = splitDetourRoute(
+            activeOverlay.routeSnapshot.originalGeometry,
+            activeOverlay.closureStart,
+            activeOverlay.closureEnd,
+            activeOverlay.routeSnapshot.isLoop,
+        );
+        if (!split) return;
+        updateOverlay(activeOverlay.id, overlay => ({
+            ...overlay,
+            closureWaypoints: [],
+            closureGeometry: {
+                coordinates: split.bypassed,
+                source: 'gtfs',
+                manualRoutingAcknowledged: true,
+            },
+            streetLabels: (overlay.streetLabels ?? []).map(label => label.path === 'closure'
+                ? snapStreetLabelToPath(label, split.bypassed)
+                : label),
+            updatedAt: new Date(),
+        }));
+        setMapSelection(null);
+    }, [activeOverlay, updateOverlay]);
 
     const addTemporaryStop = useCallback((coordinate: DetourCoordinate) => {
         if (!activeOverlay) return;
@@ -477,6 +725,16 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
             }],
         }));
         setMapMode('select');
+    }, [activeOverlay, updateOverlay]);
+
+    const removeTemporaryStop = useCallback((impactId: string) => {
+        if (!activeOverlay) return;
+        updateOverlay(activeOverlay.id, overlay => ({
+            ...overlay,
+            stopImpacts: overlay.stopImpacts.filter(impact => impact.id !== impactId || Boolean(impact.sourceStop)),
+            updatedAt: new Date(),
+        }));
+        setMapSelection(null);
     }, [activeOverlay, updateOverlay]);
 
     const addStopClosureReplacement = useCallback((coordinate: DetourCoordinate) => {
@@ -581,18 +839,25 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         });
     }, [commitNotice]);
 
-    const captureMap = useCallback((): string | null => {
-        const captured = mapRef.current?.captureImage('image/png') ?? null;
+    const captureMap = useCallback(async (): Promise<string | null> => {
+        const captured = await mapRef.current?.captureImage('image/png') ?? null;
         if (captured) setMapImage(captured);
         return captured;
     }, []);
 
-    const openPreview = useCallback(() => {
+    const openPreview = useCallback(async () => {
         if (!notice) return;
-        captureMap();
+        setPublicMapPreview(true);
+        await captureMap();
         setValidationVisible(true);
         setShowPreview(true);
     }, [captureMap, notice]);
+
+    const closePreview = useCallback(() => {
+        setShowPreview(false);
+        setPublicMapPreview(false);
+        setMapMode('select');
+    }, []);
 
     const exportPackage = useCallback(async () => {
         if (!notice || !exportNotice) return;
@@ -606,14 +871,18 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
             toast?.warning('Save before exporting', 'Save the current revision so the exported notice can be tracked.');
             return;
         }
-        const captured = mapImage || captureMap();
+        const captured = mapImage || await captureMap();
         if (!captured) {
             toast?.error('Map capture failed', 'Wait for the map to finish loading and try again.');
             return;
         }
         setExporting(true);
         try {
-            const pdf = downloadDetourPdf({ notice: exportNotice, mapImageDataUrl: captured });
+            const pdf = downloadDetourPdf({
+                notice: exportNotice,
+                mapImageDataUrl: captured,
+                brandAssets: DETOUR_BRAND_ASSETS,
+            });
             await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)));
             const pngResult = await captureDetourNoticePng(previewRef.current, exportNotice);
             downloadBlob(pngResult.blob, pngResult.filename);
@@ -788,6 +1057,21 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
     const selectedLabel = activeOverlay && mapSelection?.type === 'label'
         ? activeOverlay.labels.find(label => label.id === mapSelection.id) ?? null
         : null;
+    const selectedStreetLabel = activeOverlay && mapSelection?.type === 'street-label'
+        ? (activeOverlay.streetLabels ?? []).find(label => label.id === mapSelection.id) ?? null
+        : null;
+    const selectedStreetLabelGeometry = selectedStreetLabel && activeOverlay
+        ? selectedStreetLabel.path === 'closure'
+            ? activeOverlay.closureGeometry.coordinates
+            : activeOverlay.detourGeometry.coordinates
+        : [];
+    const selectedStreetLabelPercent = selectedStreetLabel
+        ? Math.round(pathFractionAtCoordinate(selectedStreetLabelGeometry, selectedStreetLabel.position) * 100)
+        : 50;
+    const pendingStreetLabels = (activeOverlay?.streetLabels ?? []).filter(label => !label.confirmed);
+    const publicStreetLabels = (activeOverlay?.streetLabels ?? []).filter(label => label.confirmed && label.visible && label.streetName.trim());
+    const hasPublicClosureStreet = publicStreetLabels.some(label => label.path === 'closure');
+    const hasPublicDetourStreet = publicStreetLabels.some(label => label.path === 'detour');
     const weeklyRecurrence = notice.schedule.recurrence.mode === 'weekly'
         ? notice.schedule.recurrence
         : null;
@@ -826,14 +1110,18 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                         ))}
                     </div>
                     {activeOverlay && notice.type === 'route-detour' && (
-                        <div className="mt-5 grid grid-cols-2 gap-2">
-                            <ToolButton active={mapMode === 'select'} onClick={() => setMapMode('select')} icon={<MousePointer2 />} label="Select" />
-                            <ToolButton active={mapMode === 'closure-start'} onClick={() => setMapMode('closure-start')} icon={<Archive />} label="Start closure" />
-                            <ToolButton active={mapMode === 'closure-end'} onClick={() => setMapMode('closure-end')} icon={<Archive />} label="End closure" />
-                            <ToolButton active={mapMode === 'add-waypoint'} disabled={activeOverlay.detourWaypoints.length < 2} onClick={() => setMapMode('add-waypoint')} icon={<Route />} label="Add bend" />
-                            <ToolButton active={mapMode === 'add-temporary-stop'} onClick={() => setMapMode('add-temporary-stop')} icon={<MapPin />} label="Temp stop" />
-                            <ToolButton onClick={addPresetLabel} icon={<FileText />} label="Add callout" />
-                            <ToolButton onClick={() => mapRef.current?.fitToNotice()} icon={<RefreshCw />} label="Fit map" />
+                        <div className="mt-5">
+                            <div className="grid grid-cols-2 gap-2">
+                                <ToolButton active={mapMode === 'select'} onClick={() => setMapMode('select')} icon={<MousePointer2 />} label="Select" />
+                                <ToolButton active={mapMode === 'closure-start'} onClick={() => setMapMode('closure-start')} icon={<Archive />} label="Start closure" />
+                                <ToolButton active={mapMode === 'closure-end'} onClick={() => setMapMode('closure-end')} icon={<Archive />} label="End closure" />
+                                <ToolButton active={mapMode === 'add-waypoint'} disabled={activeOverlay.detourWaypoints.length < 2} onClick={() => setMapMode('add-waypoint')} icon={<Route />} label="Add bend" />
+                                <ToolButton active={mapMode === 'add-temporary-stop'} onClick={() => setMapMode('add-temporary-stop')} icon={<MapPin />} label="Temp stop" />
+                                <ToolButton onClick={addPresetLabel} icon={<FileText />} label="Add callout" />
+                                <ToolButton onClick={() => mapRef.current?.fitToNotice()} icon={<RefreshCw />} label="Fit map" />
+                                <ToolButton active={publicMapPreview} onClick={() => setPublicMapPreview(current => !current)} icon={<Eye />} label="Public view" />
+                            </div>
+                            <p className="mt-3 rounded-lg bg-slate-50 p-2 text-[11px] font-semibold leading-relaxed text-slate-600">In Select mode, click the orange-outlined detour or red closed section to add an anchor. Drag diamonds to reshape lines, or drag the violet dot to reposition the route label.</p>
                         </div>
                     )}
                     {activeOverlay && notice.type === 'stop-closure' && (
@@ -842,13 +1130,84 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                             <ToolButton active={mapMode === 'add-temporary-stop'} onClick={() => setMapMode('add-temporary-stop')} icon={<MapPin />} label="Place replacement" />
                             <ToolButton onClick={addPresetLabel} icon={<FileText />} label="Add callout" />
                             <ToolButton onClick={() => mapRef.current?.fitToNotice()} icon={<RefreshCw />} label="Fit map" />
+                            <ToolButton active={publicMapPreview} onClick={() => setPublicMapPreview(current => !current)} icon={<Eye />} label="Public view" />
                         </div>
+                    )}
+                    {activeOverlay && publicMapPreview && (
+                        <div role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] font-semibold leading-relaxed text-amber-900">
+                            <div className="flex items-start gap-2"><Eye className="mt-0.5 h-4 w-4 shrink-0" /><span><strong>Public view is on.</strong> Line anchors and editing handles are hidden.</span></div>
+                            <button type="button" onClick={() => { setPublicMapPreview(false); setMapMode('select'); }} className="mt-2 w-full rounded-md border border-amber-300 bg-white px-2 py-1.5 font-black text-amber-900">Return to editing</button>
+                        </div>
+                    )}
+                    {activeOverlay && notice.type === 'route-detour' && (
+                        <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3" aria-label="Street labels">
+                            <div className="text-[11px] font-black uppercase tracking-wide text-slate-600">Street labels</div>
+                            <p className="mt-1 text-[10px] font-semibold leading-relaxed text-slate-500">Use public wording that distinguishes unavailable service from the replacement path.</p>
+                            {(!hasPublicClosureStreet || !hasPublicDetourStreet) && (
+                                <div role="status" className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-[10px] font-semibold leading-relaxed text-amber-900">
+                                    Generic public labels are currently in use. {!hasPublicClosureStreet && !hasPublicDetourStreet ? 'Add or confirm both street labels.' : !hasPublicClosureStreet ? 'Add or reconfirm the no-service street.' : 'Add or confirm a detour street.'}
+                                </div>
+                            )}
+                            <div className="mt-3 space-y-2">
+                                <div className="flex gap-1">
+                                    <input value={closedStreetName} onChange={event => setClosedStreetName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') addStreetLabel('closure', closedStreetName); }} placeholder="Closed-section street" className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-red-400" />
+                                    <button type="button" disabled={!closedStreetName.trim() || activeOverlay.closureGeometry.coordinates.length < 2} onClick={() => addStreetLabel('closure', closedStreetName)} className="rounded-md bg-red-600 px-2 text-[10px] font-black text-white disabled:opacity-40">Add label</button>
+                                </div>
+                                <div className="flex gap-1">
+                                    <input value={detourStreetName} onChange={event => setDetourStreetName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') addStreetLabel('detour', detourStreetName); }} placeholder="Detour street" className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-orange-400" />
+                                    <button type="button" disabled={!detourStreetName.trim() || activeOverlay.detourGeometry.coordinates.length < 2} onClick={() => addStreetLabel('detour', detourStreetName)} className="rounded-md bg-slate-900 px-2 text-[10px] font-black text-white disabled:opacity-40">Add label</button>
+                                </div>
+                            </div>
+                            {pendingStreetLabels.length > 0 && (
+                                <div className="mt-3 border-t border-slate-200 pt-2">
+                                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Pending review</div>
+                                    <div className="mt-1 space-y-1">
+                                        {pendingStreetLabels.map(label => (
+                                            <div key={label.id} className="rounded-md border border-slate-200 bg-white p-2">
+                                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-700"><span className={cx('h-2 w-2 rounded-full', label.path === 'closure' ? 'bg-red-500' : 'bg-orange-500')} /><span className="min-w-0 flex-1 truncate">{label.path === 'closure' ? 'NO SERVICE ON' : 'DETOUR VIA'} · {label.streetName}</span></div>
+                                                <div className="mt-2 grid grid-cols-2 gap-1">
+                                                    <button type="button" onClick={() => {
+                                                        updateOverlay(activeOverlay.id, overlay => ({ ...overlay, streetLabels: (overlay.streetLabels ?? []).map(item => item.id === label.id ? { ...item, confirmed: true, visible: true } : item) }));
+                                                        setMapSelection({ type: 'street-label', id: label.id });
+                                                    }} className="rounded-md bg-slate-900 px-2 py-1 text-[10px] font-black text-white">Confirm</button>
+                                                    <button type="button" onClick={() => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, streetLabels: (overlay.streetLabels ?? []).filter(item => item.id !== label.id) }))} className="rounded-md border border-slate-200 px-2 py-1 text-[10px] font-black text-slate-600">Dismiss</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {streetLabelLookupOverlayId === activeOverlay.id && <div className="mt-2 flex items-center gap-2 text-[10px] font-bold text-blue-700"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Finding street names</div>}
+                            {streetLabelLookupOverlayId !== activeOverlay.id && activeOverlay.detourGeometry.coordinates.length >= 2 && (
+                                <button type="button" onClick={() => {
+                                    const lookupWaypoints = activeOverlay.detourWaypoints.length >= 2 ? activeOverlay.detourWaypoints : [activeOverlay.detourGeometry.coordinates[0]!, activeOverlay.detourGeometry.coordinates.at(-1)!];
+                                    void refreshStreetSuggestions(activeOverlay.id, lookupWaypoints, true);
+                                }} className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-black text-slate-600 hover:border-blue-300 hover:text-blue-700"><RefreshCw className="mr-1 inline h-3 w-3" />Find street names</button>
+                            )}
+                            {(activeOverlay.streetLabels ?? []).some(label => label.confirmed) && (
+                                <div className="mt-3 space-y-1 border-t border-slate-200 pt-2">
+                                    {(activeOverlay.streetLabels ?? []).filter(label => label.confirmed).map(label => (
+                                        <button key={label.id} type="button" onClick={() => setMapSelection({ type: 'street-label', id: label.id })} className="flex w-full items-center gap-2 rounded-md bg-white px-2 py-1.5 text-left text-[10px] font-bold text-slate-700 hover:bg-blue-50">
+                                            <span className={cx('h-2 w-2 rounded-full', label.path === 'closure' ? 'bg-red-500' : 'bg-orange-500')} />
+                                            <span className="min-w-0 flex-1 truncate">{label.path === 'closure' ? 'NO SERVICE ON' : 'DETOUR VIA'} · {label.streetName}</span>
+                                            {!label.visible && <span className="text-slate-400">Hidden</span>}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </section>
                     )}
                     {activeOverlay && (
                         <div className="mt-5 space-y-3 border-t border-slate-100 pt-4">
                             <label className="flex items-start gap-2 text-xs font-semibold text-slate-700"><input type="checkbox" checked={activeOverlay.busSuitabilityConfirmed} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, busSuitabilityConfirmed: event.target.checked }))} className="mt-0.5" />Replacement path checked for bus suitability</label>
                             {activeOverlay.detourGeometry.source === 'manual' && (
                                 <label className="flex items-start gap-2 text-xs font-semibold text-amber-800"><input type="checkbox" checked={activeOverlay.detourGeometry.manualRoutingAcknowledged} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, detourGeometry: { ...overlay.detourGeometry, manualRoutingAcknowledged: event.target.checked } }))} className="mt-0.5" />Manual routing reviewed</label>
+                            )}
+                            {activeOverlay.closureGeometry.source === 'manual' && (
+                                <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-2">
+                                    <label className="flex items-start gap-2 text-xs font-semibold text-red-800"><input type="checkbox" checked={activeOverlay.closureGeometry.manualRoutingAcknowledged} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, closureGeometry: { ...overlay.closureGeometry, manualRoutingAcknowledged: event.target.checked } }))} className="mt-0.5" />Edited closed section reviewed against the actual road closure</label>
+                                    <button type="button" onClick={resetClosureGeometry} className="w-full rounded-md border border-red-200 bg-white px-2 py-1.5 text-[11px] font-black text-red-700">Reset closed line to GTFS</button>
+                                </div>
                             )}
                             {snappingOverlayId === activeOverlay.id && <div className="flex items-center gap-2 text-xs font-bold text-blue-700"><Loader2 className="h-4 w-4 animate-spin" /> Snapping to roads</div>}
                             {activeOverlay.labelCollisionAcknowledged === false && <label className="flex items-start gap-2 rounded-lg bg-amber-50 p-2 text-xs font-semibold text-amber-800"><input type="checkbox" onChange={event => event.target.checked && updateOverlay(activeOverlay.id, overlay => ({ ...overlay, labelCollisionAcknowledged: true }))} />Labels may overlap; reposition or acknowledge</label>}
@@ -869,18 +1228,23 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                             } : undefined}
                             mapFrame={notice.mapFrame}
                             mode={mapMode}
+                            publicationMode={publicMapPreview}
                             selectedItem={mapSelection}
-                            closureStart={activeOverlay.closureStart}
-                            closureEnd={activeOverlay.closureEnd}
                             labels={activeOverlay.labels ?? []}
                             className="h-full min-h-[520px]"
                             onSelectClosureStart={anchor => applyClosureAnchor('start', anchor)}
                             onSelectClosureEnd={anchor => applyClosureAnchor('end', anchor)}
                             onAddWaypoint={addWaypoint}
+                            onInsertDetourWaypoint={insertWaypointOnLine}
                             onMoveWaypoint={moveWaypoint}
                             onDeleteWaypoint={removeWaypoint}
+                            onAddClosureWaypoint={addClosureWaypoint}
+                            onMoveClosureWaypoint={moveClosureWaypoint}
+                            onDeleteClosureWaypoint={removeClosureWaypoint}
                             onAddTemporaryStop={notice.type === 'stop-closure' ? addStopClosureReplacement : addTemporaryStop}
                             onMoveTemporaryStop={(impactId, coordinate) => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, stopImpacts: overlay.stopImpacts.map(impact => impact.id === impactId ? { ...impact, temporaryStopPosition: coordinate } : impact) }))}
+                            onMoveRouteLabel={moveRouteLabel}
+                            onMoveStreetLabel={moveStreetLabel}
                             onConfirmStopImpact={(impactId, status) => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, stopImpacts: overlay.stopImpacts.map(impact => impact.id === impactId ? { ...impact, status, reviewed: true } : impact) }))}
                             onMoveLabel={(labelId, position) => updateOverlay(activeOverlay.id, overlay => {
                                 const labels = overlay.labels.map(label => label.id === labelId ? { ...label, position } : label);
@@ -891,7 +1255,7 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                             onMapFrameChange={updateMapFrame}
                         />
                     ) : (
-                        <div className="grid h-full min-h-[520px] place-items-center rounded-2xl border border-dashed border-slate-300 bg-white text-center"><div><Route className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-3 font-black text-slate-800">Add a route to start mapping</h2><button type="button" onClick={() => setShowRoutePicker(true)} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-black text-white">Choose GTFS route</button></div></div>
+                        <div className="grid h-full min-h-[520px] place-items-center rounded-2xl border border-dashed border-slate-300 bg-white text-center"><div><Route className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-3 font-black text-slate-800">Add a route to start mapping</h2><button type="button" onClick={() => setShowRoutePicker(true)} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-black text-white">Choose route</button></div></div>
                     )}
                 </main>
 
@@ -899,21 +1263,20 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                     <h2 className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">Notice details</h2>
                     <div className="mt-4 space-y-4">
                         <Field label="Reason"><input value={notice.reason} onChange={event => commitNotice(current => ({ ...current, reason: event.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" placeholder="Road closure, construction, event…" /></Field>
-                        <Field label="MyRide summary"><textarea value={notice.publicSummary} onChange={event => commitNotice(current => ({ ...current, publicSummary: event.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 min-h-20" placeholder="Short public summary" /></Field>
                         <Field label="Rider details"><textarea value={notice.publicDetails} onChange={event => commitNotice(current => ({ ...current, publicDetails: event.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 min-h-28" placeholder="What riders need to know" /></Field>
 
                         <div className="rounded-xl border border-slate-200 p-3">
                             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-600"><CalendarClock className="h-4 w-4 text-blue-600" /> Effective schedule</div>
                             <div className="mt-3 grid grid-cols-2 gap-2">
-                                <input type="date" value={notice.schedule.startDate} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, startDate: event.target.value } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" />
-                                <input type="time" value={notice.schedule.startTime} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, startTime: event.target.value } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" />
+                                <Field label="Start date"><input type="date" value={notice.schedule.startDate} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, startDate: event.target.value } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></Field>
+                                <Field label="Start time (optional)"><input type="time" value={notice.schedule.startTime} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, startTime: event.target.value } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></Field>
                             </div>
-                            <select value={notice.schedule.end.mode} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, end: event.target.value === 'fixed' ? { mode: 'fixed', date: current.schedule.startDate, time: current.schedule.startTime } : { mode: event.target.value as 'until-further-notice' | 'until-construction-complete' } } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 mt-2">
+                            <select value={notice.schedule.end.mode} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, end: event.target.value === 'fixed' ? { mode: 'fixed', date: current.schedule.startDate, time: '' } : { mode: event.target.value as 'until-further-notice' | 'until-construction-complete' } } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 mt-2">
                                 <option value="fixed">Exact end date</option><option value="until-further-notice">Until further notice</option><option value="until-construction-complete">Until construction is complete</option>
                             </select>
-                            {notice.schedule.end.mode === 'fixed' && <div className="mt-2 grid grid-cols-2 gap-2"><input type="date" value={notice.schedule.end.date} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, end: { ...current.schedule.end, date: event.target.value } } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /><input type="time" value={notice.schedule.end.time} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, end: { ...current.schedule.end, time: event.target.value } } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></div>}
-                            <select value={notice.schedule.recurrence.mode} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, recurrence: event.target.value === 'weekly' ? { mode: 'weekly', days: [], startTime: current.schedule.startTime, endTime: '23:59' } : { mode: 'continuous' } } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 mt-2"><option value="continuous">Continuous</option><option value="weekly">Repeats weekly</option></select>
-                            {weeklyRecurrence && <div className="mt-2"><div className="flex flex-wrap gap-1">{DAYS.map(day => <button key={day.id} type="button" onClick={() => toggleRecurrenceDay(day.id)} className={cx('rounded-md px-2 py-1 text-[11px] font-black', weeklyRecurrence.days.includes(day.id) ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600')}>{day.label}</button>)}</div><div className="mt-2 grid grid-cols-2 gap-2"><input type="time" value={weeklyRecurrence.startTime} onChange={event => commitNotice(current => current.schedule.recurrence.mode === 'weekly' ? { ...current, schedule: { ...current.schedule, recurrence: { ...current.schedule.recurrence, startTime: event.target.value } } } : current)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /><input type="time" value={weeklyRecurrence.endTime} onChange={event => commitNotice(current => current.schedule.recurrence.mode === 'weekly' ? { ...current, schedule: { ...current.schedule, recurrence: { ...current.schedule.recurrence, endTime: event.target.value } } } : current)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></div></div>}
+                            {notice.schedule.end.mode === 'fixed' && <div className="mt-2 grid grid-cols-2 gap-2"><Field label="End date"><input type="date" value={notice.schedule.end.date} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, end: { ...current.schedule.end, date: event.target.value } } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></Field><Field label="End time (optional)"><input type="time" value={notice.schedule.end.time} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, end: { ...current.schedule.end, time: event.target.value } } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></Field></div>}
+                            <select value={notice.schedule.recurrence.mode} onChange={event => commitNotice(current => ({ ...current, schedule: { ...current.schedule, recurrence: event.target.value === 'weekly' ? { mode: 'weekly', days: [], startTime: '', endTime: '' } : { mode: 'continuous' } } }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 mt-2"><option value="continuous">Continuous</option><option value="weekly">Repeats weekly</option></select>
+                            {weeklyRecurrence && <div className="mt-2"><div className="flex flex-wrap gap-1">{DAYS.map(day => <button key={day.id} type="button" onClick={() => toggleRecurrenceDay(day.id)} className={cx('rounded-md px-2 py-1 text-[11px] font-black', weeklyRecurrence.days.includes(day.id) ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600')}>{day.label}</button>)}</div><div className="mt-2 grid grid-cols-2 gap-2"><Field label="Daily start (optional)"><input type="time" value={weeklyRecurrence.startTime} onChange={event => commitNotice(current => current.schedule.recurrence.mode === 'weekly' ? { ...current, schedule: { ...current.schedule, recurrence: { ...current.schedule.recurrence, startTime: event.target.value } } } : current)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></Field><Field label="Daily end (optional)"><input type="time" value={weeklyRecurrence.endTime} onChange={event => commitNotice(current => current.schedule.recurrence.mode === 'weekly' ? { ...current, schedule: { ...current.schedule, recurrence: { ...current.schedule.recurrence, endTime: event.target.value } } } : current)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></Field></div></div>}
                         </div>
 
                         {notice.type === 'stop-closure' && activeOverlay && (
@@ -930,8 +1293,12 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                         {selectedImpact && activeOverlay && (
                             <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
                                 <div className="flex items-center justify-between"><div className="text-xs font-black text-blue-900">{selectedImpact.sourceStop?.name ?? selectedImpact.temporaryStopName ?? 'Temporary stop'}</div><button type="button" onClick={() => setMapSelection(null)}><X className="h-4 w-4 text-blue-500" /></button></div>
-                                <select value={selectedImpact.status} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, stopImpacts: overlay.stopImpacts.map(impact => impact.id === selectedImpact.id ? { ...impact, status: event.target.value as DetourStopImpactStatus, reviewed: true } : impact) }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 mt-2"><option value="open">Active</option><option value="closed">Closed</option><option value="temporary">Temporary</option></select>
-                                {selectedImpact.status === 'temporary' && <input value={selectedImpact.temporaryStopName ?? ''} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, stopImpacts: overlay.stopImpacts.map(impact => impact.id === selectedImpact.id ? { ...impact, temporaryStopName: event.target.value } : impact) }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 mt-2" placeholder="Temporary stop name" />}
+                                <div className="mt-3"><Field label="Stop status"><select value={selectedImpact.status} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, stopImpacts: overlay.stopImpacts.map(impact => impact.id === selectedImpact.id ? { ...impact, status: event.target.value as DetourStopImpactStatus, reviewed: true } : impact) }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"><option value="open">Active</option><option value="closed">Closed</option><option value="temporary">Temporary</option></select></Field></div>
+                                {selectedImpact.status === 'temporary' && <div className="mt-3 grid gap-3">
+                                    <Field label="Temporary stop name"><input value={selectedImpact.temporaryStopName ?? ''} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, stopImpacts: overlay.stopImpacts.map(impact => impact.id === selectedImpact.id ? { ...impact, temporaryStopName: event.target.value } : impact) }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" placeholder="Temporary stop" /></Field>
+                                    <Field label="Stop code (optional)"><input value={selectedImpact.temporaryStopCode ?? ''} maxLength={12} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, stopImpacts: overlay.stopImpacts.map(impact => impact.id === selectedImpact.id ? { ...impact, temporaryStopCode: event.target.value } : impact) }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" placeholder="e.g. 959" /></Field>
+                                </div>}
+                                {selectedImpact.status === 'temporary' && !selectedImpact.sourceStop && <button type="button" onClick={() => removeTemporaryStop(selectedImpact.id)} className="mt-3 w-full rounded-lg border border-red-200 bg-white py-2 text-xs font-black text-red-600"><Trash2 className="mr-1 inline h-4 w-4" />Remove temporary stop</button>}
                                 {!selectedImpact.reviewed && <button type="button" onClick={() => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, stopImpacts: overlay.stopImpacts.map(impact => impact.id === selectedImpact.id ? { ...impact, reviewed: true } : impact) }))} className="mt-2 w-full rounded-lg bg-blue-600 py-2 text-xs font-black text-white"><Check className="mr-1 inline h-4 w-4" />Confirm impact</button>}
                             </div>
                         )}
@@ -941,6 +1308,40 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
                                 <div className="flex items-center justify-between"><div className="text-xs font-black text-blue-900">Map callout</div><button type="button" onClick={() => setMapSelection(null)}><X className="h-4 w-4 text-blue-500" /></button></div>
                                 <input value={selectedLabel.text} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, labels: overlay.labels.map(label => label.id === selectedLabel.id ? { ...label, text: event.target.value } : label) }))} className="mt-2 w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-400" />
                                 <button type="button" onClick={() => { updateOverlay(activeOverlay.id, overlay => ({ ...overlay, labels: overlay.labels.filter(label => label.id !== selectedLabel.id) })); setMapSelection(null); }} className="mt-2 w-full rounded-lg border border-red-200 bg-white py-2 text-xs font-black text-red-600"><Trash2 className="mr-1 inline h-4 w-4" />Remove callout</button>
+                            </div>
+                        )}
+
+                        {selectedStreetLabel && activeOverlay && (
+                            <div className={cx('rounded-xl border p-3', selectedStreetLabel.path === 'closure' ? 'border-red-200 bg-red-50' : 'border-orange-200 bg-orange-50')}>
+                                <div className="flex items-center justify-between"><div className="text-xs font-black text-slate-900">{selectedStreetLabel.path === 'closure' ? 'No-service street label' : 'Detour street label'}</div><button type="button" onClick={() => setMapSelection(null)}><X className="h-4 w-4 text-slate-500" /></button></div>
+                                <Field label="Street name"><input value={selectedStreetLabel.streetName} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, streetLabels: (overlay.streetLabels ?? []).map(label => label.id === selectedStreetLabel.id ? { ...label, streetName: event.target.value, source: 'planner' } : label) }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:border-blue-400" /></Field>
+                                <div className="mt-3">
+                                    <div className="flex items-center justify-between text-[11px] font-black text-slate-600"><span>Position along path</span><span>{selectedStreetLabelPercent}%</span></div>
+                                    <input type="range" min="0" max="100" step="1" value={selectedStreetLabelPercent} onChange={event => {
+                                        const position = pathCoordinateAtFraction(selectedStreetLabelGeometry, Number(event.target.value) / 100);
+                                        if (position) moveStreetLabel(selectedStreetLabel.id, position);
+                                    }} className="mt-1 w-full accent-blue-600" aria-label="Street label position along path" />
+                                    <div className="flex justify-between text-[10px] font-semibold text-slate-400"><span>Start</span><span>End</span></div>
+                                </div>
+                                <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-700"><input type="checkbox" checked={selectedStreetLabel.visible} onChange={event => updateOverlay(activeOverlay.id, overlay => ({ ...overlay, streetLabels: (overlay.streetLabels ?? []).map(label => label.id === selectedStreetLabel.id ? { ...label, visible: event.target.checked } : label) }))} />Show on public map</label>
+                                <p className="mt-2 text-[11px] font-semibold leading-relaxed text-slate-600">Use the slider or drag the matching {selectedStreetLabel.path === 'closure' ? 'red' : 'orange'} dot to reposition the label. Line clicks remain reserved for adding anchors.</p>
+                                <button type="button" onClick={() => { updateOverlay(activeOverlay.id, overlay => ({ ...overlay, streetLabels: (overlay.streetLabels ?? []).filter(label => label.id !== selectedStreetLabel.id) })); setMapSelection(null); }} className="mt-3 w-full rounded-lg border border-red-200 bg-white py-2 text-xs font-black text-red-600"><Trash2 className="mr-1 inline h-4 w-4" />Remove street label</button>
+                            </div>
+                        )}
+
+                        {activeOverlay && mapSelection?.type === 'waypoint' && (
+                            <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
+                                <div className="text-xs font-black text-orange-900">{mapSelection.index === 0 ? 'Diversion junction' : mapSelection.index === activeOverlay.detourWaypoints.length - 1 ? 'Rejoin junction' : 'Detour path anchor'}</div>
+                                <p className="mt-1 text-xs text-orange-800">{mapSelection.index === 0 || mapSelection.index === activeOverlay.detourWaypoints.length - 1 ? 'Drag the blue diamond to move the shared active-route, closed-section, and detour junction together.' : 'Drag the orange diamond to adjust the road-snapped replacement path.'} Editing handles are hidden from the public map.</p>
+                                {mapSelection.index > 0 && mapSelection.index < activeOverlay.detourWaypoints.length - 1 && <button type="button" onClick={() => { removeWaypoint(mapSelection.index); setMapSelection(null); }} className="mt-2 w-full rounded-lg border border-red-200 bg-white py-2 text-xs font-black text-red-600"><Trash2 className="mr-1 inline h-4 w-4" />Remove anchor</button>}
+                            </div>
+                        )}
+
+                        {activeOverlay && mapSelection?.type === 'closure-waypoint' && (
+                            <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+                                <div className="text-xs font-black text-red-900">Closed-section anchor</div>
+                                <p className="mt-1 text-xs text-red-800">Drag the red diamond to adjust the published closure line.</p>
+                                <button type="button" onClick={() => removeClosureWaypoint(mapSelection.index)} className="mt-2 w-full rounded-lg border border-red-200 bg-white py-2 text-xs font-black text-red-600"><Trash2 className="mr-1 inline h-4 w-4" />Remove anchor</button>
                             </div>
                         )}
 
@@ -955,11 +1356,11 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
             </div>
 
             {showRoutePicker && (
-                <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40" role="dialog" aria-modal="true" aria-label="Choose GTFS route">
+                <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40" role="dialog" aria-modal="true" aria-label="Choose route">
                     <div className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl">
-                        <div className="flex items-center gap-3 border-b border-slate-200 p-4"><div className="flex-1"><h2 className="text-lg font-black text-slate-900">Choose current route pattern</h2><p className="text-xs text-slate-500">The selected geometry and stops are copied into this notice.</p></div><button type="button" onClick={() => setShowRoutePicker(false)} className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-                        <div className="flex gap-2 border-b border-slate-100 p-4"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={patternQuery} onChange={event => setPatternQuery(event.target.value)} placeholder="Search route or destination" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 pl-9" /></div><select value={patternDay} onChange={event => setPatternDay(event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 w-40">{patternDays.map(day => <option key={day}>{day}</option>)}</select><button type="button" onClick={() => void loadPatterns(true)} className="rounded-lg border border-slate-200 p-2 text-slate-600"><RefreshCw className={cx('h-4 w-4', patternsLoading && 'animate-spin')} /></button></div>
-                        <div className="min-h-0 flex-1 overflow-y-auto p-4">{patternsLoading && patterns.length === 0 ? <div className="grid h-48 place-items-center text-sm font-bold text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div> : <div className="space-y-2">{visiblePatterns.map(pattern => <button key={pattern.id} type="button" onClick={() => addPattern(pattern)} className="w-full rounded-xl border border-slate-200 p-3 text-left hover:border-blue-300 hover:bg-blue-50"><div className="flex items-center justify-between gap-2"><span className="font-black text-slate-900">Route {pattern.routeShortName}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">{pattern.dayTypeLabel}</span></div><div className="mt-1 text-sm font-semibold text-slate-600">{pattern.tripHeadsign || pattern.routeLongName || 'Route direction'}</div><div className="mt-1 text-xs text-slate-400">{pattern.stopCount} stops · {pattern.tripCount} trips</div></button>)}</div>}</div>
+                        <div className="flex items-center gap-3 border-b border-slate-200 p-4"><div className="flex-1"><h2 className="text-lg font-black text-slate-900">Choose route</h2><p className="text-xs text-slate-500">The complete weekday route and stops will be copied into this notice.</p></div><button type="button" onClick={() => setShowRoutePicker(false)} className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+                        <div className="flex gap-2 border-b border-slate-100 p-4"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={patternQuery} onChange={event => setPatternQuery(event.target.value)} placeholder="Search route" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pl-9 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></div><button type="button" onClick={() => void loadPatterns(true)} className="rounded-lg border border-slate-200 p-2 text-slate-600" title="Refresh routes"><RefreshCw className={cx('h-4 w-4', patternsLoading && 'animate-spin')} /></button></div>
+                        <div className="min-h-0 flex-1 overflow-y-auto p-4">{patternsLoading && patterns.length === 0 ? <div className="grid h-48 place-items-center text-sm font-bold text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div> : visibleRoutes.length === 0 ? <div className="grid h-48 place-items-center text-center text-sm font-semibold text-slate-500">No weekday routes match your search.</div> : <div className="space-y-2">{visibleRoutes.map(pattern => <button key={pattern.routeShortName} type="button" onClick={() => addPattern(pattern)} className="w-full rounded-xl border border-slate-200 p-3 text-left transition hover:border-blue-300 hover:bg-blue-50"><div className="flex items-center justify-between gap-2"><span className="font-black text-slate-900">Route {pattern.routeShortName}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">Weekday</span></div><div className="mt-1 text-sm font-semibold text-slate-600">{pattern.routeLongName || 'Barrie Transit route'}</div><div className="mt-1 text-xs text-slate-400">Full route · {pattern.stopCount} stops</div></button>)}</div>}</div>
                     </div>
                 </div>
             )}
@@ -967,9 +1368,9 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
             {showPreview && exportNotice && (
                 <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 p-4" role="dialog" aria-modal="true" aria-label="Detour notice preview">
                     <div className="mx-auto max-w-7xl rounded-2xl bg-white shadow-2xl">
-                        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 p-4"><div className="flex-1"><h2 className="text-lg font-black text-slate-900">Notice preview and MyRide package</h2><p className="text-xs text-slate-500">Review the map and public copy before downloading.</p></div><button type="button" onClick={() => captureMap()} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black text-slate-700"><FileImage className="mr-2 inline h-4 w-4" />Recapture map</button><button type="button" disabled={exporting} onClick={() => void exportPackage()} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-black text-white disabled:opacity-50"><Download className="mr-2 inline h-4 w-4" />{exporting ? 'Exporting' : 'Download package'}</button><button type="button" onClick={() => setShowPreview(false)} className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+                        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 p-4"><div className="flex-1"><h2 className="text-lg font-black text-slate-900">Notice preview and MyRide package</h2><p className="text-xs text-slate-500">Review the map and public copy before downloading.</p></div><button type="button" onClick={() => void captureMap()} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black text-slate-700"><FileImage className="mr-2 inline h-4 w-4" />Recapture map</button><button type="button" disabled={exporting} onClick={() => void exportPackage()} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-black text-white disabled:opacity-50"><Download className="mr-2 inline h-4 w-4" />{exporting ? 'Exporting' : 'Download package'}</button><button type="button" onClick={closePreview} aria-label="Close preview and return to editing" className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
                         <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-                            <div className="overflow-auto rounded-xl bg-slate-100 p-4"><div className="origin-top-left" style={{ width: 1100, height: 850, transform: 'scale(0.72)', transformOrigin: 'top left', marginBottom: -238, marginRight: -308 }}><DetourNoticePreview ref={previewRef} notice={exportNotice} mapImageDataUrl={mapImage} /></div></div>
+                            <div className="overflow-auto rounded-xl bg-slate-100 p-4"><div className="origin-top-left" style={{ width: 1100, height: 850, transform: 'scale(0.72)', transformOrigin: 'top left', marginBottom: -238, marginRight: -308 }}><DetourNoticePreview ref={previewRef} notice={exportNotice} mapImageDataUrl={mapImage} brandAssets={DETOUR_BRAND_ASSETS} /></div></div>
                             <aside className="space-y-3">{myRideCopy && <><CopyCard label="MyRide title" text={myRideCopy.title} onCopy={copyText} /><CopyCard label="Summary" text={myRideCopy.summary} onCopy={copyText} /><CopyCard label="Accessible details" text={myRideCopy.accessibleDetails} onCopy={copyText} /><CopyCard label="Image alt text" text={myRideCopy.altText} onCopy={copyText} /><div className="rounded-xl border border-slate-200 p-3"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Route tags</div><div className="mt-2 flex flex-wrap gap-1">{myRideCopy.routeTags.map(tag => <span key={tag} className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{tag}</span>)}</div></div></>}
                                 {lastExport && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><div className="flex items-center gap-2 text-sm font-black text-emerald-800"><Check className="h-4 w-4" /> Files exported</div><p className="mt-1 break-all text-xs text-emerald-700">{lastExport.pdf}<br />{lastExport.png}</p><button type="button" onClick={() => setShowPostDialog(true)} className="mt-3 w-full rounded-lg bg-emerald-700 py-2 text-xs font-black text-white"><Upload className="mr-1 inline h-4 w-4" />Mark posted to MyRide</button></div>}
                             </aside>

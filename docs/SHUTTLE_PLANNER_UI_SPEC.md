@@ -393,8 +393,8 @@ Add timetable preview and compare mode.
 
 The Shuttle Planner should reuse the visual grammar of:
 
-- [OnDemandWorkspace.tsx](/C:/Users/Mike%20McConnell/Documents/mike_apps/Scheduler%204/components/workspaces/OnDemandWorkspace.tsx)
-- [WorkspaceHeader.tsx](/C:/Users/Mike%20McConnell/Documents/mike_apps/Scheduler%204/components/layout/WorkspaceHeader.tsx)
-- [MapBase.tsx](/C:/Users/Mike%20McConnell/Documents/mike_apps/Scheduler%204/components/shared/MapBase.tsx)
+- [OnDemandWorkspace.tsx](../components/workspaces/OnDemandWorkspace.tsx)
+- [WorkspaceHeader.tsx](../components/layout/WorkspaceHeader.tsx)
+- [MapBase.tsx](../components/shared/MapBase.tsx)
 
 The feature should not attempt a bespoke design system in v1. The goal is to make the Shuttle Planner feel like a native part of the current product family on first release.

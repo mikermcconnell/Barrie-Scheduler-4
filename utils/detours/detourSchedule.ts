@@ -22,10 +22,10 @@ export const deriveDetourState = (notice: DetourNotice, now = new Date()): Detou
     if (notice.status === 'draft') return { lifecycle: 'draft', updateNeeded: false, latestPostedRevision };
 
     const current = localDateTime(now);
-    const start = `${notice.schedule.startDate}T${notice.schedule.startTime}:00`;
+    const start = `${notice.schedule.startDate}T${notice.schedule.startTime || '00:00'}:00`;
     if (current < start) return { lifecycle: 'upcoming', updateNeeded, latestPostedRevision };
     if (notice.schedule.end.mode === 'fixed') {
-        const end = `${notice.schedule.end.date}T${notice.schedule.end.time}:59`;
+        const end = `${notice.schedule.end.date}T${notice.schedule.end.time || '23:59'}:59`;
         if (current > end) return { lifecycle: 'expired', updateNeeded, latestPostedRevision };
     }
     return { lifecycle: 'active', updateNeeded, latestPostedRevision };

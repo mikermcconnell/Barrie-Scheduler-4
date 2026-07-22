@@ -12,6 +12,8 @@ Use this document when changing dashboard calculations, filters, labels, imports
 
 `STREETS import -> parser -> daily aggregation -> stored overview/monthly summaries + compact Load Profiles views -> authorized route/date/day filters -> dashboard modules`
 
+The dashboard uses one shared time-range and day-type filter across Overview, OTP Analysis, Ridership, Load Profiles, and Dwell Incident Review. Preset ranges and the inclusive custom start/end range persist when moving between tabs, and every module must apply the same selected dates and day type to its numerator and denominator.
+
 Primary calculation locations:
 
 - daily aggregation: `utils/performanceDataAggregator.ts` and `functions/src/aggregator.ts`

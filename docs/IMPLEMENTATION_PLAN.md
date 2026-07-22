@@ -1,9 +1,12 @@
-# Implementation Plan
+# Implementation Plan — March 2026 Snapshot
 
-Status and roadmap for the Barrie Transit Schedule Builder.
+Point-in-time delivery record for the Barrie Transit Schedule Builder.
 
 > Last reviewed: March 6, 2026
-> Use this as roadmap/status context, not as the authoritative file-location map. For current paths, use `docs/ARCHITECTURE.md` and `docs/SCHEMA.md`.
+> Historical context only. This is not the current roadmap or a reliable statement of unfinished work.
+> For current scope and paths, use `docs/PRODUCT_VISION.md`, `docs/ARCHITECTURE.md`, and `docs/SCHEMA.md`; verify implementation status against current code and tests.
+>
+> Post-snapshot correction: connection items C4, C7, and C8 described below have since been resolved in current code. Other unchecked items have not been re-audited for this historical document.
 
 ---
 
@@ -53,8 +56,8 @@ Connection library with team-shared targets.
 - [x] `components/connections/ConnectionsPanel.tsx` - Library management UI
 - [x] `components/NewSchedule/connections/` - Add target, import route, optimization panels
 - [x] `components/schedule/ConnectionIndicator.tsx` - Schedule cell indicators
-- [ ] **C7 bug**: Panel edits don't refresh editor indicators without reopen
-- [ ] **C4 gap**: Stop code not validated against known stops
+- [x] **C7 resolved after this snapshot**: Panel edits synchronize library/config state back to Schedule Editor
+- [x] **C4 resolved after this snapshot**: Add-target validation checks loaded schedule stop IDs
 
 ### Phase 5: Brochure Generator ✅
 
@@ -79,14 +82,14 @@ Platform analysis with hub configuration.
 
 ---
 
-## Remaining Work
+## Remaining Work Recorded in March 2026
+
+This section preserves the March 2026 planning snapshot. It is not a current backlog.
 
 ### Connections Polish
 
 | Item | Priority | Details |
 |------|----------|---------|
-| Fix C7 sync bug | High | Wire `ConnectionsPanel` state updates back to `ScheduleEditor` |
-| Add stop code validation (C4) | Medium | Validate against known GTFS stops on target creation |
 | Add GO GTFS template scope controls | Medium | Let planners narrow GO imports/templates by station and direction so the library is not flooded with all four GO targets at once |
 | Add connection template regression coverage | Medium | Protect calendar_dates-only GO GTFS selection, arrival/departure template semantics, and route-connection defaults |
 | Add test coverage | Medium | Baseline `tests/connectionUtils.test.ts` exists, but component and sync coverage are still missing |

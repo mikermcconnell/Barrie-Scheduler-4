@@ -61,6 +61,7 @@ describe('security rules regression checks', () => {
     const firestoreRules = readRepoFile('firestore.rules');
 
     expect(firestoreRules).toMatch(/match \/routePlanner2Projects\/\{projectId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsRoutePlanner2'\) \|\| canSupportReadTeamData\(teamId\);[\s\S]*allow write: if canAccessWorkspace\(teamId, 'analyticsRoutePlanner2'\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(firestoreRules).toMatch(/match \/runtimeSnapshots\/\{snapshotId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsRoutePlanner2'\) \|\| canSupportReadTeamData\(teamId\);[\s\S]*allow write: if canAccessWorkspace\(teamId, 'analyticsRoutePlanner2'\) \|\| canSupportWriteTeamData\(teamId\);/);
   });
 
   it('gates Transit App Data and OD Matrix by workspace access', () => {

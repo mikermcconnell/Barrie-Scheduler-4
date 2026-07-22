@@ -23,31 +23,16 @@ npx vitest run tests/timeUtils.test.ts  # Time parsing tests (run before any tim
 
 ---
 
-## 0b. Current Project State (Feb 2026)
+## 0b. Current Product and Repository State
 
-### Implemented and Working
-- CSV/Excel runtime import → schedule generation (5-step wizard)
-- GTFS import with block assignment (single route + system-wide)
-- Draft → Publish workflow with version history
-- Schedule editing (ScheduleEditor, RoundTripTableView, SingleRouteView)
-- Connection library (team-shared targets, GO Train times, college bells)
-- Public timetable brochure generator (jsPDF)
-- Platform conflict detection
-- AI optimization via Gemini (Generator → Critic two-pass)
-- Team-based multi-tenancy with roles
+Do not duplicate feature status or dated roadmap claims in this tool-specific file. Use:
 
-### Known Issues
-- **Connections C7**: Edits in ConnectionsPanel don't refresh ScheduleEditor indicators without reopen
-- **Connections C4**: Stop code not validated against known stops
-- **Connections C8**: Route-based target resync only in panel lifecycle
+- `docs/PRODUCT_VISION.md` for durable product scope and boundaries
+- `docs/ARCHITECTURE.md` for current ownership, entry points, and data flow
+- `docs/SCHEMA.md` for current persistence and type locations
+- the feature document selected by `docs/CONTEXT_INDEX.md` for feature-specific behavior
 
-### Removed / Pending Reimplementation
-- **Interlining (8A↔8B)**: All interline code removed Feb 2026. No `interlineNext`/`interlinePrev` fields on MasterTrip. Reimplementation pending.
-
-### Not Yet Built
-- Real-time GTFS export
-- Multi-route scenario comparison
-- Automated schedule regression testing
+`docs/IMPLEMENTATION_PLAN.md` is a historical March 2026 snapshot, not the current roadmap. Verify status claims against current code and tests before relying on them.
 
 ---
 

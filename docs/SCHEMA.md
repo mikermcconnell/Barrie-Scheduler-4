@@ -2,6 +2,13 @@
 
 > Firestore collections, TypeScript types, and storage patterns for Barrie Transit Scheduler.
 
+This reference distinguishes two layers:
+
+- **Stored document shape** describes Firestore/Storage wire data. Server-written dates are Firestore `Timestamp` values unless a field is explicitly documented as an ISO string.
+- **Application model** describes the deserialized TypeScript shape used by the UI and services. These models commonly expose Firestore timestamps as `Date` values.
+
+Type excerpts below are intentionally abridged navigation aids. The linked TypeScript declaration is authoritative; update this file when a persisted field, collection, storage path, or canonical type location changes.
+
 ---
 
 ## Firestore Structure
@@ -9,9 +16,14 @@
 ```
 firebase/
 ├── users/{userId}/                       # Profile; teamId is the active-team pointer
+│   ├── schedules/{scheduleId}             # Transit On Demand saved schedules
+│   ├── scheduleDrafts/{draftId}           # Legacy schedule autosave metadata retained by dataService
+│   │   └── versions/{versionId}            # Legacy schedule draft versions
 │   ├── draftSchedules/{draftId}          # Working schedule copies
 │   │   └── checkpoints/{checkpointId}    # Immutable named restore points
+│   ├── systemDrafts/{draftId}             # Current multi-route/system-wide fixed-route drafts
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
+│   ├── shuttleProjects/{projectId}        # User-scoped Shuttle Planner projects
 │   └── files/{fileId}                    # Uploaded file metadata; owner-write, scheduler-admin read for support
 │
 ├── teams/{teamId}/
@@ -36,6 +48,7 @@ firebase/
 │   │   └── imports/{importId}            # Residential Growth import history
 │   ├── routePlanner2Projects/{projectId} # Route Planner 2 saved planning projects
 │   │   └── scenarios/{scenarioId}        # Saved editable route concepts
+│   │       └── runtimeSnapshots/{snapshotId} # Accepted/rejected Mapbox runtime decisions
 │   ├── councilIntelligence/default       # Council Intelligence pilot metadata/source health
 │   │   ├── meetings/{meetingId}          # Bounded official meeting text, topics, hashes, status
 │   │   ├── councillors/{profileId}       # Evidence-counted mover/seconder/recorded-vote profile
@@ -61,7 +74,7 @@ firebase/
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
 `teams/{teamId}/routePlanner2Projects/{projectId}` stores Route Planner 2 project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection.
 `teams/{teamId}/councilIntelligence/default` stores the Council Intelligence 90-day pilot window, last sync timestamp, and bounded source-health counts. Its `meetings` subcollection stores normalized eSCRIBE meeting metadata, official source links, extraction status, content hash, transit topics, and bounded plain text; external HTML is never rendered. `councillors` stores evidence counts and only treats explicitly named recorded votes as votes—movers and seconders remain separate signals. `registers` stores transit-relevant official-record summaries with confidence and source links. Reads require `analyticsCouncilIntelligence`; refresh is performed by a scheduled Function or an authenticated owner/admin callable.
-`teams/{teamId}/detourNotices/{noticeId}` stores editable notice copy, effective schedule, map frame, workflow status, and optimistic revision. Route overlays snapshot GTFS geometry/stops so later feed changes do not rewrite saved notices. Publication records store the posted revision, generated filenames, MyRide URL, and posting audit fields; version 1 keeps PDF/PNG files as browser downloads rather than Cloud Storage objects.
+`teams/{teamId}/detourNotices/{noticeId}` stores editable notice copy, effective schedule, map frame, workflow status, and optimistic revision. Route overlays snapshot GTFS geometry/stops so later feed changes do not rewrite saved notices. Each overlay stores immutable operational `closureStart`/`closureEnd` anchors, sparse interior `closureWaypoints` used only to reshape the published closed-section line, sparse `detourWaypoints`, dense closure/detour geometry, and an optional `routeLabelPosition` that is re-snapped to the detour line. Temporary stop impacts may store an optional `temporaryStopCode` alongside their public name and position. Older overlays without `closureWaypoints` load with an empty list. Publication records store the posted revision, generated filenames, MyRide URL, and posting audit fields; version 1 keeps PDF/PNG files as browser downloads rather than Cloud Storage objects.
 `teams/{teamId}/routeConceptPlannerProjects/{projectId}` is separate neutral Route Concept Planner storage. Its integer `revision` supports optimistic conflict detection; alternatives and their patterns are saved atomically with the root document.
 `teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
 
@@ -70,8 +83,11 @@ firebase/
 ```
 storage/
 ├── users/{userId}/
-│   ├── draftSchedules/{draftId}_{timestamp}.json
+│   ├── drafts/{draftId}_{timestamp}.json # Legacy schedule autosave payload
+│   ├── drafts/{draftId}_versions/{versionId}_{timestamp}.json
+│   ├── draftSchedules/{draftId}_{writeToken}.json
 │   ├── draftSchedules/{draftId}_checkpoints/{checkpointId}.json
+│   ├── systemDrafts/{draftId}_{timestamp}.json
 │   ├── newScheduleProjects/{projectId}_{timestamp}.json
 │   └── files/{timestamp}_{safeName}
 │
@@ -294,26 +310,32 @@ interface RoutePlanner2ProjectMetadata {
 }
 ```
 
-Each editable route concept is stored at `teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}` using the `RoutePlanner2Scenario` shape from `utils/route-planner-2/routePlanner2Types.ts`. GTFS-imported Barrie merged A/B routes may include optional `routeFamily` metadata so directions such as 2A and 2B display as one route family while remaining independently editable scenarios. Team members and workspace permission managers can read and write these saved route plans.
+Each editable route concept is stored at `teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}` using the `RoutePlanner2Scenario` shape from `utils/route-planner-2/routePlanner2Types.ts`. GTFS-imported Barrie merged A/B routes may include optional `routeFamily` metadata so directions such as 2A and 2B display as one route family while remaining independently editable scenarios. Reads and writes require `analyticsRoutePlanner2` workspace access; scoped developer-support sessions use the separate audited support boundary defined in `firestore.rules`.
 
-### RouteConceptProject (`teams/{teamId}/routeConceptPlannerProjects/{projectId}`)
+Accepted and rejected Mapbox runtime decisions are stored at `teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}/runtimeSnapshots/{snapshotId}`. Each document uses `RoutePlanner2RuntimeSnapshot`, including provider/profile provenance, calculation and decision timestamps, previous/candidate totals, path fingerprint, and the candidate segment estimates. Persistence retains at most the newest 12 snapshots per scenario; scenarios store only the current acceptance metadata and lock flag.
+
+### Route Concept stored root (`teams/{teamId}/routeConceptPlannerProjects/{projectId}`)
 
 ```typescript
-interface RouteConceptProjectMetadata {
+interface StoredRouteConceptProjectRoot {
   id: string;
+  teamId: string;
   name: string;
   schemaVersion: number;
   revision: number;
+  status: 'local-saved' | 'archived';
   selectedAlternativeId: string;
   preferredAlternativeId?: string;
   alternativeOrder: string[];
-  createdAt: string;
-  updatedAt: string;
+  alternativeCount: number;
+  createdAt: Timestamp;
+  createdBy: string;
+  updatedAt: Timestamp;
   updatedBy: string;
 }
 ```
 
-Complete alternatives are stored under `alternatives/{alternativeId}` and their direction/loop patterns under `patterns/{patternId}`. Saved inputs are authoritative; feasibility is derived after load. Firestore transactions compare the expected revision and commit the root, nested documents, and deletions atomically. Stale saves fail without overwriting the team version. Access requires team membership plus the `analyticsRouteConceptPlanner` workspace permission. Route Concept Planner has no Cloud Storage path and never shares Route Planner 2/Camp documents.
+The application model is `RouteConceptProject` in `utils/route-concept-planner/routeConceptPlannerTypes.ts`; it exposes ISO-string dates and embeds the loaded alternatives. Complete alternatives are stored under `alternatives/{alternativeId}` and their direction/loop patterns under `patterns/{patternId}`. Saved inputs are authoritative; feasibility is derived after load. Firestore transactions compare the expected revision and commit the root, nested documents, and deletions atomically. Stale saves fail without overwriting the team version. Access requires team membership plus the `analyticsRouteConceptPlanner` workspace permission. Route Concept Planner has no Cloud Storage path and never shares Route Planner 2/Camp documents.
 
 ### FleetPlanMetadata (`teams/{teamId}/fleetPlan/default`)
 
@@ -410,6 +432,7 @@ interface MasterScheduleEntry {
   id: string;                    // RouteIdentity: "400-Weekday"
   routeNumber: string;
   dayType: DayType;
+  cycleMode?: 'Strict' | 'Floating';
 
   // Version tracking
   currentVersion: number;
@@ -464,6 +487,7 @@ interface MasterScheduleContent {
     routeNumber: string;
     dayType: DayType;
     uploadedAt: string;
+    cycleMode?: 'Strict' | 'Floating';
     effectiveDate?: string;
     notes?: string;
   };
@@ -489,15 +513,16 @@ interface MasterRouteTable {
 
 ### MasterTrip
 
-Individual transit trip with timing and block info.
+Individual transit trip with timing and block info. The canonical application model is `MasterTrip` in `utils/parsers/masterScheduleParser.ts`; this excerpt highlights the storage-sensitive fields and is not exhaustive.
 
 ```typescript
 interface MasterTrip {
   id: string;
+  lineageId?: string;
   blockId: string;
-  direction: Direction;
+  direction: 'North' | 'South';
   tripNumber: number;
-  rowId?: string;
+  rowId: number;
 
   // Timing (minutes from midnight)
   startTime: number;
@@ -507,15 +532,16 @@ interface MasterTrip {
   cycleTime: number;
 
   // Stop times
-  stops: string[];
-  arrivalTimes: Record<string, number>;    // stopName → minutes
-  recoveryTimes: Record<string, number>;   // stopName → recovery minutes
+  stops: Record<string, string>;           // stopName → formatted departure time
+  stopMinutes?: Record<string, number>;    // stopName → service-day minutes; may exceed 1440
+  arrivalTimes?: Record<string, string>;   // stopName → formatted arrival time
+  recoveryTimes?: Record<string, number>;  // stopName → recovery minutes
 
   // Block position
-  startStopIndex: number;
-  endStopIndex: number;
-  isBlockStart: boolean;
-  isBlockEnd: boolean;
+  startStopIndex?: number;
+  endStopIndex?: number;
+  isBlockStart?: boolean;
+  isBlockEnd?: boolean;
 
   // Connections
   externalConnections?: ExternalConnection[];
@@ -537,11 +563,12 @@ interface RoundTripTable {
   northStopIds: Record<string, string>;
   southStopIds: Record<string, string>;
   rows: RoundTripRow[];
+  terminusStop: string | null;
 }
 
 interface RoundTripRow {
   blockId: string;
-  trips: MasterTrip[];           // Paired N→S trips
+  trips: MasterTrip[];           // Ordered trips in this block cycle
   northStops: string[];
   southStops: string[];
   totalTravelTime: number;
@@ -584,7 +611,7 @@ interface BlockedTrip extends ParsedTrip {
 ```typescript
 interface BlockAssignmentResult {
   blocks: Block[];
-  unassignedTrips: ParsedTrip[];
+  unassignedTrips: BlockedTrip[];
   stats: {
     totalTrips: number;
     assignedTrips: number;
@@ -600,11 +627,12 @@ interface BlockAssignmentResult {
 
 ### ConnectionTarget (`teams/{teamId}/connectionLibrary/default.targets[]`)
 
-GO Train, college bell, or route-to-route target.
+GO Train, college bell, or route-to-route target. Canonical application types live in `utils/connections/connectionTypes.ts`. Embedded target `createdAt`/`updatedAt` values are ISO strings. The connection-library document's `updatedAt` and a route config's `lastOptimized` are stored as Firestore timestamps and deserialized to ISO strings by the service.
 
 ```typescript
 type ConnectionType = 'meet_departing' | 'feed_arriving';
 type ConnectionTargetType = 'manual' | 'route';
+type ConnectionEventType = 'departure' | 'arrival';
 
 interface ConnectionTarget {
   id: string;
@@ -613,25 +641,31 @@ interface ConnectionTarget {
 
   // For manual targets (GO Train, college bells)
   location?: string;
-  times: ConnectionTime[];
+  times?: ConnectionTime[];
 
-  // For route-based targets
-  routeIdentity?: RouteIdentity;
+  // Stop identity is required; route-based targets may also reference a master schedule
+  routeIdentity?: string;
+  stopCode: string;
+  stopCodes?: string[];
+  autoPopulateStops?: boolean;
   stopName?: string;
-  direction?: Direction;
+  direction?: 'North' | 'South';
+  sourceScheduleUpdatedAt?: string;
 
   // Display
   color?: string;
-  icon?: string;
+  icon?: 'train' | 'clock' | 'bus';
+  defaultEventType?: ConnectionEventType;
 
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface ConnectionTime {
   id: string;
   time: number;              // Minutes from midnight
   label?: string;
+  eventType?: ConnectionEventType;
   daysActive: DayType[];
   enabled: boolean;
 }
@@ -643,9 +677,9 @@ interface ConnectionTime {
 type OptimizationMode = 'shift' | 'individual' | 'hybrid';
 
 interface RouteConnectionConfig {
-  routeIdentity: RouteIdentity;
+  routeIdentity: string;
   connections: RouteConnection[];
-  lastOptimized?: Timestamp;
+  lastOptimized?: string;
   optimizationMode?: OptimizationMode;
 }
 
@@ -654,7 +688,8 @@ interface RouteConnection {
   targetId: string;
   connectionType: ConnectionType;
   bufferMinutes: number;
-  stopName: string;
+  stopCode: string;
+  stopName?: string;
   priority: number;
   enabled: boolean;
   timeFilterStart?: number;
@@ -673,7 +708,8 @@ interface ExternalConnection {
   tripArrivalTime: number;
   gapMinutes: number;
   meetsConnection: boolean;
-  stopName: string;
+  stopCode: string;
+  stopName?: string;
 }
 ```
 
@@ -683,7 +719,7 @@ interface ExternalConnection {
 
 ### GTFSRouteOption
 
-User-selectable route during import.
+User-selectable route during import. Canonical GTFS types live in `utils/gtfs/gtfsTypes.ts`.
 
 ```typescript
 interface GTFSRouteOption {
@@ -693,13 +729,17 @@ interface GTFSRouteOption {
   dayType: DayType;
   serviceId: string;
   tripCount: number;
-  direction?: Direction;
+  direction?: Direction | null;
   color?: string;
 
   // For merged A/B routes
   isMergedRoute?: boolean;
   northRouteId?: string;
+  northServiceId?: string;
+  northTripCount?: number;
   southRouteId?: string;
+  southServiceId?: string;
+  southTripCount?: number;
   displayName?: string;
 }
 ```
@@ -711,24 +751,40 @@ interface ProcessedGTFSTrip {
   tripId: string;
   routeId: string;
   serviceId: string;
-  blockId: string;
-  direction: Direction;
-  headsign: string;
-  stopTimes: GTFSStopTimeWithDetails[];
+  blockId: string | null;
+  direction: Direction | 'Loop' | null;
+  headsign: string | null;
+  shapeId: string | null;
+  stopTimes: Array<{
+    stopId: string;
+    stopName: string;
+    arrivalTime: string;
+    departureTime: string;
+    arrivalMinutes: number;
+    departureMinutes: number;
+    sequence: number;
+    isTimepoint: boolean;
+  }>;
   startTime: number;
   endTime: number;
   travelTime: number;
 }
 ```
 
-### GTFSImportConfig (`teams/{teamId}`)
+### GTFSImportConfig (runtime configuration)
+
+`GTFSImportConfig` is currently passed through the import component/service and is not persisted by a Firestore configuration service. Do not assume a team document contains these fields without first adding an explicit persistence contract.
 
 ```typescript
 interface GTFSImportConfig {
   feedUrl: string;
-  lastFetched?: Timestamp;
+  lastFetched?: string;
+  lastFetchedBy?: string;
   cachedRoutes?: GTFSRouteOption[];
-  directionMapping?: Record<string, Direction>;
+  directionMapping?: Record<string, {
+    0: Direction | 'Loop';
+    1: Direction | 'Loop';
+  }>;
 }
 ```
 
@@ -738,31 +794,40 @@ interface GTFSImportConfig {
 
 ### NewScheduleProject (`users/{userId}/newScheduleProjects/{projectId}`)
 
-Wizard state for creating schedules from runtime data.
+Wizard state for creating schedules from runtime data. The application model is defined in `utils/services/newScheduleProjectService.ts`; Firestore stores listing metadata while large analysis, schedule, and raw-data payloads are stored at the referenced Cloud Storage path.
 
 ```typescript
 interface NewScheduleProject {
   id: string;
   name: string;
   dayType: DayType;
+  importMode?: 'csv' | 'gtfs' | 'performance';
+  autofillFromMaster?: boolean;
+  performanceConfig?: {
+    routeId: string;
+    dateRange: { start: string; end: string } | null;
+  };
   routeNumber?: string;
 
   // Analysis results (Step 2)
-  analysis?: RuntimeAnalysis;
+  analysis?: TripBucketAnalysis[];
   bands?: TimeBand[];
+  approvedRuntimeContract?: ApprovedRuntimeContract;
+  approvedRuntimeModel?: ApprovedRuntimeModel;
 
   // User configuration (Step 3)
   config?: ScheduleConfig;
 
   // Generated output (Step 4)
-  generatedSchedules?: MasterScheduleContent;
-  parsedData?: RuntimeData;      // Raw data for regeneration
+  generatedSchedules?: MasterRouteTable[];
+  originalGeneratedSchedules?: MasterRouteTable[];
+  parsedData?: RuntimeData[];      // Raw data for regeneration
 
   isGenerated: boolean;
   storagePath?: string;
 
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  createdAt: Date;
+  updatedAt: Date;
 }
 ```
 
@@ -790,8 +855,8 @@ Unified route model (linear or loop).
 
 ```typescript
 interface RouteSegment {
-  name: 'North' | 'South' | 'Clockwise' | 'Counter-clockwise';
-  variant?: string;      // e.g., "12A", "400"
+  name: string;          // Usually North, South, Clockwise, or Counter-clockwise
+  variant: string;       // e.g., "12A", "400"
   terminus?: string;
 }
 
@@ -825,7 +890,7 @@ interface HubConfig {
 }
 
 // Preconfigured hubs
-const HUBS: Record<string, HubConfig>;
+const HUBS: HubConfig[];
 // Park Place, Barrie South GO, Allandale, Downtown, Georgian College
 ```
 
@@ -833,13 +898,16 @@ const HUBS: Record<string, HubConfig>;
 
 ```typescript
 interface DwellEvent {
+  eventUid: string;
   tripId: string;
   route: string;
-  direction: Direction;
+  direction: 'North' | 'South';
   arrivalMin: number;
   departureMin: number;
   blockId: string;
+  gtfsBlockId?: string;
   stopName: string;
+  stopId?: string;
 }
 
 interface ConflictWindow {
@@ -927,7 +995,8 @@ Routes like 2A+2B share a downtown terminus:
 | ConnectionTarget, RouteConnection | `utils/connections/connectionTypes.ts` |
 | GTFS* types | `utils/gtfs/gtfsTypes.ts` |
 | CycleRouteConfig | `utils/config/routeDirectionConfig.ts` |
-| TimeBand, RuntimeData | `utils/ai/runtimeAnalysis.ts` |
+| TimeBand | `utils/ai/runtimeAnalysis.ts` |
+| RuntimeData | `components/NewSchedule/utils/csvParser.ts` |
 | HubConfig, PlatformAnalysis | `utils/platform/platformConfig.ts`, `utils/platform/platformAnalysis.ts` |
 | Shift, Requirement, TOD day/zone types | `utils/demandTypes.ts` |
 | RideCo/MVT parser result and import report types | `utils/parsers/csvParsers.ts` |

@@ -63,13 +63,13 @@ const cycleTime = trips.reduce((sum, t) => sum + t.duration, 0)
 
 ```bash
 # Check rounding pattern
-grep -n "Math.round" utils/schedule/scheduleGenerator.ts
+rg -n "Math\.round" utils/schedule/scheduleGenerator.ts
 
 # Check cycle calculation
-grep -n "cycleTime" utils/schedule/scheduleGenerator.ts
+rg -n "cycleTime" utils/schedule/scheduleGenerator.ts
 
 # Check band lookup
-grep -n "bandSummary\|bucket" utils/schedule/scheduleGenerator.ts
+rg -n "bandSummary|bucket" utils/schedule/scheduleGenerator.ts
 ```
 
 ## Post-Modification

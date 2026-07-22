@@ -3,27 +3,38 @@ import type { DetourNotice, DetourValidationIssue, DetourValidationResult } from
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const issue = (code: string, message: string, path?: string): DetourValidationIssue => ({ code, message, ...(path ? { path } : {}) });
+const sameCoordinate = (first: { latitude: number; longitude: number } | undefined, second: { latitude: number; longitude: number } | undefined) => Boolean(first && second
+    && Math.abs(first.latitude - second.latitude) < 0.000001
+    && Math.abs(first.longitude - second.longitude) < 0.000001);
 
 export const validateDetourNotice = (notice: DetourNotice): DetourValidationResult => {
     const errors: DetourValidationIssue[] = [];
     const warnings: DetourValidationIssue[] = [];
     if (!notice.title.trim()) errors.push(issue('title-required', 'Enter a public notice title.', 'title'));
-    if (!notice.publicSummary.trim()) errors.push(issue('summary-required', 'Enter a short MyRide summary.', 'publicSummary'));
     if (!notice.publicDetails.trim()) errors.push(issue('details-required', 'Enter rider details.', 'publicDetails'));
-    if (!DATE.test(notice.schedule.startDate) || !TIME.test(notice.schedule.startTime)) {
-        errors.push(issue('schedule-start-invalid', 'Enter a valid start date and time.', 'schedule'));
+    if (!DATE.test(notice.schedule.startDate)) {
+        errors.push(issue('schedule-start-date-invalid', 'Enter a valid start date.', 'schedule.startDate'));
+    }
+    if (notice.schedule.startTime && !TIME.test(notice.schedule.startTime)) {
+        errors.push(issue('schedule-start-time-invalid', 'Enter a valid start time or leave it blank.', 'schedule.startTime'));
     }
     if (notice.schedule.end.mode === 'fixed') {
         const end = notice.schedule.end;
-        if (!DATE.test(end.date) || !TIME.test(end.time)) errors.push(issue('schedule-end-invalid', 'Enter a valid end date and time.', 'schedule.end'));
-        else if (`${end.date}T${end.time}` <= `${notice.schedule.startDate}T${notice.schedule.startTime}`) {
+        if (!DATE.test(end.date)) errors.push(issue('schedule-end-date-invalid', 'Enter a valid end date.', 'schedule.end.date'));
+        if (end.time && !TIME.test(end.time)) errors.push(issue('schedule-end-time-invalid', 'Enter a valid end time or leave it blank.', 'schedule.end.time'));
+        if (DATE.test(notice.schedule.startDate) && (!notice.schedule.startTime || TIME.test(notice.schedule.startTime))
+            && DATE.test(end.date) && (!end.time || TIME.test(end.time))
+            && `${end.date}T${end.time || '23:59'}` <= `${notice.schedule.startDate}T${notice.schedule.startTime || '00:00'}`) {
             errors.push(issue('schedule-end-before-start', 'The end must be after the start.', 'schedule.end'));
         }
     }
     if (notice.schedule.recurrence.mode === 'weekly') {
         if (notice.schedule.recurrence.days.length === 0) errors.push(issue('recurrence-days-required', 'Select at least one recurring day.', 'schedule.recurrence.days'));
-        if (!TIME.test(notice.schedule.recurrence.startTime) || !TIME.test(notice.schedule.recurrence.endTime)) {
-            errors.push(issue('recurrence-time-invalid', 'Enter valid recurring operating hours.', 'schedule.recurrence'));
+        const { startTime, endTime } = notice.schedule.recurrence;
+        if (Boolean(startTime) !== Boolean(endTime)) {
+            errors.push(issue('recurrence-time-pair-required', 'Enter both recurring times or leave both blank.', 'schedule.recurrence'));
+        } else if ((startTime && !TIME.test(startTime)) || (endTime && !TIME.test(endTime))) {
+            errors.push(issue('recurrence-time-invalid', 'Enter valid recurring operating hours or leave them blank.', 'schedule.recurrence'));
         }
     }
 
@@ -36,8 +47,18 @@ export const validateDetourNotice = (notice: DetourNotice): DetourValidationResu
             if (!overlay.routeSnapshot.routeId || !overlay.routeSnapshot.directionLabel.trim()) errors.push(issue('route-direction-required', 'Confirm the route and direction.', path));
             if (!overlay.closureStart || !overlay.closureEnd) errors.push(issue('closure-anchors-required', 'Mark where the closure starts and ends.', `${path}.closure`));
             if (overlay.detourGeometry.coordinates.length < 2) errors.push(issue('detour-path-required', 'Draw the replacement path.', `${path}.detourGeometry`));
+            if (overlay.closureStart && overlay.closureEnd && overlay.detourGeometry.coordinates.length >= 2) {
+                const detourStartsAtJunction = sameCoordinate(overlay.detourGeometry.coordinates[0], overlay.closureStart.coordinate);
+                const detourEndsAtJunction = sameCoordinate(overlay.detourGeometry.coordinates.at(-1), overlay.closureEnd.coordinate);
+                const closureStartsAtJunction = overlay.closureGeometry.coordinates.length < 2 || sameCoordinate(overlay.closureGeometry.coordinates[0], overlay.closureStart.coordinate);
+                const closureEndsAtJunction = overlay.closureGeometry.coordinates.length < 2 || sameCoordinate(overlay.closureGeometry.coordinates.at(-1), overlay.closureEnd.coordinate);
+                if (!detourStartsAtJunction || !detourEndsAtJunction || !closureStartsAtJunction || !closureEndsAtJunction) {
+                    errors.push(issue('junctions-disconnected', 'Repair the diversion and rejoin junctions so every route line meets cleanly.', `${path}.closure`));
+                }
+            }
             if (!overlay.busSuitabilityConfirmed) errors.push(issue('bus-suitability-required', 'Confirm the replacement path is suitable for buses.', `${path}.busSuitabilityConfirmed`));
             if (overlay.detourGeometry.source === 'manual' && !overlay.detourGeometry.manualRoutingAcknowledged) errors.push(issue('manual-routing-unacknowledged', 'Acknowledge the manually routed section.', `${path}.detourGeometry`));
+            if (overlay.closureGeometry.source === 'manual' && !overlay.closureGeometry.manualRoutingAcknowledged) errors.push(issue('closure-routing-unacknowledged', 'Acknowledge the edited closed section.', `${path}.closureGeometry`));
             const unreviewed = overlay.stopImpacts.filter(stop => !stop.reviewed);
             if (unreviewed.length > 0) errors.push(issue('stop-impacts-unreviewed', 'Review every suggested stop impact.', `${path}.stopImpacts`));
             overlay.stopImpacts.forEach((stop, stopIndex) => {
@@ -48,6 +69,13 @@ export const validateDetourNotice = (notice: DetourNotice): DetourValidationResu
                     warnings.push(issue('closed-stop-no-alternative', 'Add a replacement stop or rider instructions for the closed stop.', `${path}.stopImpacts.${stopIndex}`));
                 }
             });
+            const publicStreetLabels = (overlay.streetLabels ?? []).filter(label => label.confirmed && label.visible && label.streetName.trim());
+            if (!publicStreetLabels.some(label => label.path === 'closure')) {
+                warnings.push(issue('closure-street-label-missing', 'Add the affected street so the public map can say where service is unavailable.', `${path}.streetLabels`));
+            }
+            if (!publicStreetLabels.some(label => label.path === 'detour')) {
+                warnings.push(issue('detour-street-label-missing', 'Confirm at least one detour street label for the replacement path.', `${path}.streetLabels`));
+            }
             if (overlay.labelCollisionAcknowledged === false) warnings.push(issue('label-collision', 'Resolve or acknowledge overlapping map labels.', path));
         }
     });

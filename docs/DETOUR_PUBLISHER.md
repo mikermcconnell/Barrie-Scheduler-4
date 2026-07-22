@@ -40,18 +40,26 @@ Editing a posted notice is allowed. When the working revision is newer than the 
 
 All dates and times use `America/Toronto`.
 
-- exact start and end
+- exact start and end dates, with optional times; new notices default to date-only
 - until further notice
 - until construction is complete
 - optional weekly recurrence with selected days and daily start/end times
 
 Date state is derived as upcoming, active, or expired. Workflow state remains draft, posted, or archived.
+When a time is blank, the start date begins at 12:00 a.m. and a fixed end date runs through 11:59 p.m.; public copy remains date-only.
 
 ## Authoring Rules
 
 - This is a preset map editor, not an Illustrator clone.
 - Mapbox may suggest a route, but it never approves a detour for bus use.
 - Unsnapped/manual segments remain visible warnings until acknowledged.
+- In Select mode, clicking the replacement path or closed section inserts an ordered interior anchor at the nearest point on that line. Orange diamonds edit the road-snapped detour; red diamonds edit only the published closed-section geometry.
+- Blue authoring-only diamonds are shared diversion and rejoin junctions. The visible active route, closed section, and replacement path use the exact same junction coordinates; dragging a blue diamond moves all three together and re-snaps the detour while preserving its interior orange controls. Existing saved notices are normalized to this invariant when loaded, disconnected junctions block export, and junction handles never appear in public preview or export.
+- The route number remains a separate label. The route number defaults near the first third of the replacement path and has a violet authoring-only handle that lets the planner reposition it anywhere along that line; the saved position is re-snapped to the current detour geometry.
+- Confirmed street labels replace generic path wording with **NO SERVICE ON · {street}** for the bypassed section and **DETOUR VIA · {street}** for the replacement path. This wording describes transit service without claiming that a municipal road itself is closed. Mapbox road names are suggestions only and require planner confirmation; existing detours without suggestions request them when opened, without replacing the approved geometry. Closed-section street names are planner-entered. A planner may add multiple street names to either path; each new label starts at the path midpoint and can be positioned with a **Position along path** slider or its draggable authoring handle. Line clicks remain reserved exclusively for adding geometry anchors. Pending labels remain visible with reduced emphasis in authoring view, are hidden from public view, and stay available for confirmation or dismissal even after a path change invalidates them. Labels can be hidden, removed, edited, and dragged along their associated path, and their angles are derived from the line rather than persisted.
+- Closed-section edits never change the GTFS closure anchors or suggested stop impacts. They preserve the detailed line and distribute a moved anchor across its neighbouring geometry instead of creating a one-point spike. Edited geometry blocks export until reviewed against the actual road closure, and planners can reset the closed line to its GTFS geometry.
+- Selecting a stop opens its right-sidebar editor, where planners can change its status between active, closed, and temporary. Planner-created temporary stops also expose public-name and optional stop-code fields plus a remove action; imported GTFS stops may be reclassified but are not deleted from the route snapshot.
+- Public view and exports hide all editable anchors and line hit areas. While Public view is active, the sidebar explains that editing is hidden and provides a **Return to editing** action. Closing the notice preview also restores Select mode and the authoring handles.
 - Stop-impact suggestions are never silently accepted.
 - The app must not modify schedule drafts, master schedules, or GTFS.
 - Existing fixed-route locked logic is out of scope.
@@ -67,7 +75,11 @@ The fixed Barrie notice template contains:
 - automatic active/out-of-service/closed/temporary legend
 - contact footer and map attribution
 
-The map is captured from the app. PDF page text and chrome stay vector-based for print clarity. Official brand assets should be supplied from the approved source template; the implementation must keep an explicit asset seam until those files are available.
+The map is captured from the app. PDF page text and chrome stay vector-based for print clarity. The supplied Barrie Transit logo is shared by the on-screen preview, PNG capture, and PDF export. Keep the explicit asset seam for future approved brand replacements and the City of Barrie footer artwork.
+
+Publication previews and exports preserve the planner's current map viewport; capture must not automatically zoom out to the entire route. The explicit **Fit map** tool remains available when full-notice framing is desired. Closed routing is a red dashed line with no solid-route underlay. Replacement routing retains the route colour with a restrained orange outer casing, consistently spaced direction arrows, and a small white route-number capsule with dark text and border offset above the path. Confirmed street-specific service labels replace the generic **DETOUR** and **DETOUR CLOSED** badges; the generic badges remain only as authoring fallbacks until street labels are confirmed. Route, detour, and closure labels follow the angle of the line segment beneath them while remaining upright. Temporary stops use a larger green circle with its label fixed directly above; closed stops use a larger red circle and nearby explicit **STOP {code} CLOSED** wording. Public view hides authoring handles and map controls without changing planner data; secondary basemap and ordinary stop labels may be de-emphasized or collision-managed, while critical detour, closure, temporary-stop, and planner-authored labels remain visible.
+
+The notice header uses an oversized warning icon while preserving its established outline weight. Footer contact details pair phone, email, and website text with matching white vector icons.
 
 Export is blocked when required public copy, effective dates, route paths, stop review, bus-suitability confirmation, or map capture is incomplete. Label collisions and missing alternatives may warn without silently changing planner work.
 

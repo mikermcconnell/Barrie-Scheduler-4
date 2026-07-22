@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRightLeft, BoxSelect, ClipboardList, Copy, Database, Eye, FileDown, FileSpreadsheet, FolderOpen, LassoSelect, Layers3, Loader2, MapPin, MapPinned, MousePointer2, PanelRightOpen, PencilRuler, Plus, Redo2, Save, Search, Star, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BoxSelect, Check, ClipboardList, Copy, Database, Eye, FileDown, FileSpreadsheet, FolderOpen, LassoSelect, Layers3, Loader2, Lock, MapPin, MapPinned, MousePointer2, PanelRightOpen, PencilRuler, Plus, Redo2, RefreshCw, Save, Search, Star, Trash2, Undo2, Unlock, X } from 'lucide-react';
 import {
     addRoutePlanner2LineWaypoint,
     addRoutePlanner2Stop,
@@ -111,12 +111,29 @@ import type {
     RoutePlanner2ServiceAssumptions,
     RoutePlanner2StopRole,
 } from '../../utils/route-planner-2/routePlanner2Types';
+import {
+    acceptRoutePlanner2RuntimeRefresh,
+    buildRoutePlanner2RuntimeRefreshComparison,
+    hasRoutePlanner2AcceptedRuntime,
+    rejectRoutePlanner2RuntimeRefresh,
+    setRoutePlanner2RuntimeLocked,
+    type RoutePlanner2RuntimeRefreshComparison,
+} from '../../utils/route-planner-2/routePlanner2RuntimeSnapshots';
+import type { RoutePlanner2RoadSnapFailure } from '../../utils/route-planner-2/routePlanner2RoadSnap';
 import { saveFixedRouteResumeState } from '../../utils/workspaces/fixedRouteResumeState';
 
 interface RoutePlanner2WorkspaceProps {
     onBack: () => void;
     userId?: string | null;
     teamId?: string | null;
+}
+
+interface RuntimeRefreshState {
+    scenarioId: string;
+    requestId: number;
+    status: 'loading' | 'ready' | 'error';
+    comparison?: RoutePlanner2RuntimeRefreshComparison;
+    message?: string;
 }
 
 interface PendingStopTransferReview {
@@ -963,6 +980,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [isActionSidebarOpen, setIsActionSidebarOpen] = useState(false);
     const runtimeSourceDetailsRef = useRef<HTMLDivElement | null>(null);
     const mapCanvasRef = useRef<RoutePlanner2MapCanvasHandle | null>(null);
+    const selectedScenarioRef = useRef<RoutePlanner2Scenario | undefined>(undefined);
     const [isDrawFocusMode, setIsDrawFocusMode] = useState(false);
     const [isExportingOperatorPdf, setIsExportingOperatorPdf] = useState(false);
     const [isExportingMapPdf, setIsExportingMapPdf] = useState(false);
@@ -1000,6 +1018,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
+    const [runtimeRefreshState, setRuntimeRefreshState] = useState<RuntimeRefreshState | null>(null);
     const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
     const [showRoadNameLabels, setShowRoadNameLabels] = useState(true);
     const [showCampShuttleLabels, setShowCampShuttleLabels] = useState(true);
@@ -1019,6 +1038,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => project.scenarios.find((scenario) => scenario.id === project.selectedScenarioId) ?? project.scenarios[0],
         [project.scenarios, project.selectedScenarioId],
     );
+    selectedScenarioRef.current = selectedScenario;
+    useEffect(() => {
+        setRuntimeRefreshState((current) => current?.scenarioId === selectedScenario?.id ? current : null);
+    }, [selectedScenario?.id]);
     const backgroundScenarios = useMemo(
         () => project.scenarios.filter((scenario) =>
             scenario.id !== selectedScenario?.id
@@ -1039,6 +1062,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const runtimeRouteFilterMode = selectedScenario?.runtimeRouteFilter?.mode ?? 'all-matching';
     const runtimeSelectedRoutes = selectedScenario?.runtimeRouteFilter?.routeShortNames ?? [];
     const runtimeSourceMode = selectedScenario?.runtimeSourceMode ?? 'mapbox';
+    const activeRuntimeRefreshState = runtimeRefreshState?.scenarioId === selectedScenario?.id
+        ? runtimeRefreshState
+        : null;
+    const runtimeSnapshots = selectedScenario?.runtimeSnapshots ?? [];
     const runtimeRouteOptions = useMemo(
         () => [...new Set([
             ...(selectedScenario?.id ? runtimeAvailableRoutesByScenario[selectedScenario.id] ?? [] : []),
@@ -2101,10 +2128,85 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setProject((current) => clearRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, segmentId));
     }
     const selectedScenarioId = selectedScenario?.id;
-    const updateSegmentRuntimeEstimates = useCallback((estimates: RoutePlanner2SegmentRuntime[]) => {
+    const updateSegmentRuntimeEstimates = useCallback((
+        estimates: RoutePlanner2SegmentRuntime[],
+        context: {
+            requestKind: 'background' | 'refresh';
+            calculatedAt: string;
+            failures: RoutePlanner2RoadSnapFailure[];
+        },
+    ) => {
         if (!selectedScenarioId || estimates.length === 0) return;
-        setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenarioId, estimates), { trackHistory: false });
+        if (context.requestKind === 'refresh') {
+            const failure = context.failures[0];
+            const containsFallback = estimates.some((estimate) => estimate.source !== 'mapbox');
+            if (failure || containsFallback) {
+                setRuntimeRefreshState((current) => ({
+                    scenarioId: selectedScenarioId,
+                    requestId: current?.requestId ?? Date.now(),
+                    status: 'error',
+                    message: failure?.message ?? 'Mapbox did not return a complete route estimate.',
+                }));
+                return;
+            }
+            const currentScenario = selectedScenarioRef.current;
+            if (!currentScenario || currentScenario.id !== selectedScenarioId) return;
+            const comparison = buildRoutePlanner2RuntimeRefreshComparison(currentScenario, estimates, context.calculatedAt);
+            setRuntimeRefreshState((refresh) => ({
+                scenarioId: selectedScenarioId,
+                requestId: refresh?.requestId ?? Date.now(),
+                status: 'ready',
+                comparison,
+            }));
+            return;
+        }
+        setProject((current) => {
+            const scenario = current.scenarios.find((item) => item.id === selectedScenarioId);
+            if (!scenario || scenario.runtimeLocked || hasRoutePlanner2AcceptedRuntime(scenario)) return current;
+            return updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenarioId, estimates);
+        }, { trackHistory: false });
     }, [selectedScenarioId, setProject]);
+
+    function refreshMapboxRuntime() {
+        if (!selectedScenario || selectedScenario.stops.length < 2) return;
+        setRuntimeRefreshState({
+            scenarioId: selectedScenario.id,
+            requestId: Date.now(),
+            status: 'loading',
+        });
+    }
+
+    function acceptRuntimeRefresh() {
+        if (!runtimeRefreshState?.comparison || selectedScenario?.runtimeLocked) return;
+        setProject((current) => acceptRoutePlanner2RuntimeRefresh(
+            current,
+            runtimeRefreshState.comparison!,
+            userId ?? undefined,
+        ));
+        setRuntimeRefreshState(null);
+    }
+
+    function keepAcceptedRuntime() {
+        if (!runtimeRefreshState?.comparison) {
+            setRuntimeRefreshState(null);
+            return;
+        }
+        setProject((current) => rejectRoutePlanner2RuntimeRefresh(
+            current,
+            runtimeRefreshState.comparison!,
+            userId ?? undefined,
+        ));
+        setRuntimeRefreshState(null);
+    }
+
+    function toggleRuntimeLock() {
+        if (!selectedScenario) return;
+        setProject((current) => setRoutePlanner2RuntimeLocked(
+            current,
+            selectedScenario.id,
+            !selectedScenario.runtimeLocked,
+        ));
+    }
     async function loadGtfsPatterns(options: { forceRefresh?: boolean } = {}) {
         setGtfsLoading(true);
         setGtfsError(null);
@@ -2731,6 +2833,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         onMoveLineWaypoint={moveLineWaypoint}
                         onDeleteLineWaypoint={deleteLineWaypoint}
                         onSegmentRuntimeEstimates={updateSegmentRuntimeEstimates}
+                        runtimeRefreshRequest={runtimeRefreshState?.status === 'loading'
+                            ? { scenarioId: runtimeRefreshState.scenarioId, requestId: runtimeRefreshState.requestId }
+                            : null}
                         onSetSegmentRuntimeOverride={(segmentId, runtimeMinutes) => updateSegmentRuntimeOverride(segmentId, String(runtimeMinutes))}
                         onClearSegmentRuntimeOverride={clearSegmentRuntimeOverride}
                         metricItems={mapMetricItems}
@@ -3774,6 +3879,85 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
 
                                         </div>
                                     </details>
+                                    <section className="rounded-2xl border border-cyan-200 bg-cyan-50/60 p-3" data-testid="rp2-accepted-runtime-control">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <h3 className="text-sm font-black text-slate-900">Accepted travel time</h3>
+                                                <p className="mt-1 text-xs leading-5 text-slate-600">Mapbox driving profile · planning estimate · no live traffic</p>
+                                            </div>
+                                            <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${selectedScenario.runtimeLocked ? 'bg-slate-800 text-white' : 'bg-white text-cyan-800'}`}>
+                                                {selectedScenario.runtimeLocked ? 'Locked' : 'Planner controlled'}
+                                            </span>
+                                        </div>
+                                        <div className="mt-3 flex items-end justify-between gap-3 rounded-xl bg-white p-3">
+                                            <div>
+                                                <div className="text-2xl font-black text-slate-950">{formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes)}</div>
+                                                <div className="mt-1 text-xs font-semibold text-slate-500">
+                                                    {selectedScenario.runtimeAcceptedAt
+                                                        ? `Accepted ${new Date(selectedScenario.runtimeAcceptedAt).toLocaleString()}`
+                                                        : 'Draft estimate — saving establishes the accepted baseline'}
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={toggleRuntimeLock}
+                                                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                            >
+                                                {selectedScenario.runtimeLocked ? <Unlock size={14} /> : <Lock size={14} />}
+                                                {selectedScenario.runtimeLocked ? 'Unlock' : 'Lock'}
+                                            </button>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={refreshMapboxRuntime}
+                                            disabled={selectedScenario.stops.length < 2 || activeRuntimeRefreshState?.status === 'loading'}
+                                            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-300 bg-white px-3 py-2 text-sm font-black text-cyan-800 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            <RefreshCw size={15} className={activeRuntimeRefreshState?.status === 'loading' ? 'animate-spin' : ''} />
+                                            {activeRuntimeRefreshState?.status === 'loading' ? 'Refreshing Mapbox…' : 'Refresh Mapbox estimate'}
+                                        </button>
+                                        {activeRuntimeRefreshState?.status === 'error' && (
+                                            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900" role="status">
+                                                <div className="font-black">Refresh could not be completed.</div>
+                                                <div>{activeRuntimeRefreshState.message} The accepted travel time was retained.</div>
+                                                <button type="button" onClick={() => setRuntimeRefreshState(null)} className="mt-2 font-black underline">Dismiss</button>
+                                            </div>
+                                        )}
+                                        {activeRuntimeRefreshState?.status === 'ready' && activeRuntimeRefreshState.comparison && (
+                                            <div className="mt-3 rounded-xl border border-cyan-200 bg-white p-3" data-testid="rp2-runtime-refresh-comparison">
+                                                <div className="text-xs font-black uppercase tracking-wide text-cyan-800">Review before applying</div>
+                                                <div className="mt-2 flex items-center gap-2 text-lg font-black text-slate-950">
+                                                    <span>{formatRuntime(activeRuntimeRefreshState.comparison.previousTotalRuntimeMinutes)}</span>
+                                                    <ArrowLeft className="rotate-180 text-slate-400" size={16} />
+                                                    <span>{formatRuntime(activeRuntimeRefreshState.comparison.candidateTotalRuntimeMinutes)}</span>
+                                                    {activeRuntimeRefreshState.comparison.deltaMinutes != null && (
+                                                        <span className={`rounded-full px-2 py-1 text-xs ${activeRuntimeRefreshState.comparison.deltaMinutes === 0 ? 'bg-slate-100 text-slate-600' : 'bg-amber-100 text-amber-800'}`}>
+                                                            {activeRuntimeRefreshState.comparison.deltaMinutes > 0 ? '+' : ''}{activeRuntimeRefreshState.comparison.deltaMinutes} min
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="mt-1 text-xs text-slate-500">{activeRuntimeRefreshState.comparison.changedSegments.length} segment changes. Existing manual overrides remain in control.</p>
+                                                {selectedScenario.runtimeLocked && <p className="mt-2 text-xs font-bold text-amber-800">Unlock this route to accept the candidate.</p>}
+                                                <div className="mt-3 grid grid-cols-2 gap-2">
+                                                    <button type="button" onClick={keepAcceptedRuntime} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">Keep existing</button>
+                                                    <button type="button" onClick={acceptRuntimeRefresh} disabled={selectedScenario.runtimeLocked} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-black text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"><Check size={14} />Accept update</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {runtimeSnapshots.length > 0 && (
+                                            <details className="mt-3 border-t border-cyan-200 pt-3">
+                                                <summary className="cursor-pointer text-xs font-black text-slate-700">Decision history ({runtimeSnapshots.length})</summary>
+                                                <ol className="mt-2 space-y-2">
+                                                    {runtimeSnapshots.map((snapshot) => (
+                                                        <li key={snapshot.id} className="flex items-start justify-between gap-2 rounded-lg bg-white px-2.5 py-2 text-xs">
+                                                            <span><span className="font-black capitalize text-slate-800">{snapshot.decision}</span><span className="block text-slate-500">{new Date(snapshot.decidedAt).toLocaleString()}</span></span>
+                                                            <span className="font-black text-slate-700">{formatRuntime(snapshot.candidateTotalRuntimeMinutes)}</span>
+                                                        </li>
+                                                    ))}
+                                                </ol>
+                                            </details>
+                                        )}
+                                    </section>
                                     <div ref={runtimeSourceDetailsRef} data-testid="rp2-runtime-source-details" className="scroll-mt-24">
                                         <details className="rounded-2xl border border-slate-200 bg-white p-3">
                                             <summary className="cursor-pointer text-sm font-black text-slate-900">Advanced GTFS/source details</summary>

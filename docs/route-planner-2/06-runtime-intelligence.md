@@ -38,6 +38,14 @@ When custom stops are not exactly GTFS stops but the drawn line follows a GTFS r
 For imported address routes, route creation should not wait on every Mapbox segment. Render the draft route immediately, then calculate Mapbox road path and segment runtimes in a bounded background queue with visible progress.
 When a route is too large for automatic road snapping, keep the fallback alignment and still emit per-segment fallback runtime estimates so feasibility and stop cards remain usable. Do not leave large routes in a no-runtime state just because Mapbox snapping was intentionally skipped.
 
+## Accepted Mapbox Runtime
+
+Mapbox uses the standard `mapbox/driving` profile as an automotive planning estimate; it is not live-traffic or departure-time routing. The UI must disclose that provenance.
+
+The first save of a draft with usable Mapbox segments establishes an accepted runtime baseline. After that, opening, rendering, or background road snapping must not silently replace it. **Refresh Mapbox estimate** bypasses the client cache and stages a comparison of accepted and candidate route totals and changed segments. The planner explicitly accepts the candidate or keeps the existing value. Both decisions are retained in bounded history. A runtime lock prevents acceptance until the planner unlocks the route.
+
+Missing credentials, authorization failure, rate limits, network failure, invalid response, no-route response, and oversized routes are safe refresh failures. They must retain the accepted runtime, show a sanitized reason, and never expose credential values. Fallback estimates remain useful for new drafts but cannot replace an accepted runtime during a failed refresh.
+
 ## Segment-Level Disclosure
 
 Each stop-to-stop segment should show:
