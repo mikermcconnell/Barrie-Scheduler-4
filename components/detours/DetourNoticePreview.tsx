@@ -85,7 +85,6 @@ export const DetourNoticePreview = forwardRef<HTMLDivElement, DetourNoticePrevie
             <h2 className="px-3 text-[36px] font-black leading-none">Details</h2>
             <div className="mt-3 min-h-0 flex-1 rounded-[18px] border-[5px] border-[#231F20] px-4 py-4 text-[16px] font-semibold leading-[1.42]">
               <p className="whitespace-pre-line">{notice.publicDetails}</p>
-              <p className="mt-5">Routes not shown are on regular routing.</p>
             </div>
           </section>
         </aside>

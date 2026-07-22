@@ -158,7 +158,6 @@ export function createDetourPdf(input: DetourPdfInput): jsPDF {
   doc.setTextColor(INK);
   doc.setFontSize(10);
   y = addWrappedText(doc, notice.publicDetails, panelX, y, panelW, 13, 13) + 13;
-  y = addWrappedText(doc, 'Routes not shown are on regular routing.', panelX, y, panelW, 13, 2) + 13;
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(BRAND_BLUE);

@@ -87,7 +87,7 @@ describe('detour PDF and preview', () => {
     const commands = ((doc.internal as unknown as { pages: string[][] }).pages[1] ?? []).join('\n');
     expect(commands).toContain('BARRIE TRANSIT');
     expect(commands).toContain('Livingstone Avenue Detour');
-    expect(commands).toContain('Routes not shown are on regular routing.');
+    expect(commands).not.toContain('Routes not shown are on regular routing.');
     expect(commands).toContain('MAP LEGEND');
     expect(commands).toContain('Service Barrie 705-726-4242');
     expect(commands).toContain('servicebarrie@barrie.ca');
