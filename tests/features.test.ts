@@ -11,6 +11,7 @@ describe('feature flags', () => {
     expect(flags.analyticsNetworkConnections).toBe(true);
     expect(flags.analyticsCouncilIntelligence).toBe(true);
     expect(flags.fixedAnalytics).toBe(true);
+    expect(flags.fixedDetours).toBe(true);
     expect(flags.workspaceParking).toBe(true);
   });
 

@@ -19,7 +19,7 @@ export const FEATURE_DEFINITIONS = {
     fixedPerformanceImport: { defaultEnabled: true, hideInDemoMode: false },
     fixedSystemEditor: { defaultEnabled: true, hideInDemoMode: false },
     fixedLocalAiReview: { defaultEnabled: false, hideInDemoMode: false },
-    fixedDetours: { defaultEnabled: false, hideInDemoMode: false },
+    fixedDetours: { defaultEnabled: true, hideInDemoMode: false },
 
     analyticsTransitApp: { defaultEnabled: true, hideInDemoMode: false },
     analyticsOdMatrix: { defaultEnabled: true, hideInDemoMode: true },

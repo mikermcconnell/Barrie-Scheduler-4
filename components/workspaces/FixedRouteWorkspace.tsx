@@ -45,6 +45,7 @@ import {
 } from '../../utils/workspaces/analyticsWorkspaceRouting';
 import { consumeNetworkConnectionEditorHandoff } from '../../utils/network-connections/networkConnectionHandoff';
 import { isFeatureEnabled } from '../../utils/features';
+import { canAccessDetourPublisher } from '../../utils/detours/detourAccess';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
@@ -170,15 +171,16 @@ const WorkspacePanelLoading: React.FC<{ label?: string }> = ({ label = 'Loadingâ
 );
 
 export const FixedRouteWorkspace: React.FC = () => {
-    const { user } = useAuth();
+    const { user, isGlobalAdmin } = useAuth();
     const { team } = useTeam();
-    const { accessLevel, canAccess } = useWorkspaceAccess();
+    const { accessLevel } = useWorkspaceAccess();
     const toast = useToast();
     const [viewMode, setViewModeState] = useState<FixedRouteViewMode>(parseHashViewMode);
     const [showGTFSImport, setShowGTFSImport] = useState(false);
     const [analyticsInitialView, setAnalyticsInitialView] = useState<AnalyticsLaunchView>(() =>
         parseAnalyticsWorkspaceViewFromHash(window.location.hash, 'fixed/analytics')
     );
+    const canAccessDetours = canAccessDetourPublisher({ team, accessLevel, isGlobalAdmin });
 
     // Wrap navigation to sync URL hash
     const setViewMode = useCallback((mode: FixedRouteViewMode) => {
@@ -206,6 +208,12 @@ export const FixedRouteWorkspace: React.FC = () => {
             setViewMode('dashboard');
         }
     }, [setViewMode, viewMode]);
+
+    useEffect(() => {
+        if (viewMode === 'detours' && !canAccessDetours) {
+            setViewMode('dashboard');
+        }
+    }, [canAccessDetours, setViewMode, viewMode]);
 
     const [editorInitialContent, setEditorInitialContent] = useState<MasterScheduleContent | null>(null);
     const [editorSessionKey, setEditorSessionKey] = useState(0);
@@ -712,7 +720,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="Timetable Publisher" description="Generate public timetables." />
                     )}
 
-                    {isFeatureEnabled('fixedDetours') && (
+                    {canAccessDetours && (
                         <DashboardCard
                             onClick={() => setViewMode('detours')}
                             icon={<MapPinned size={20} />}
@@ -1138,7 +1146,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                         </div>
                     )}
 
-                    {viewMode === 'detours' && (
+                    {viewMode === 'detours' && canAccessDetours && (
                         <Suspense fallback={<WorkspacePanelLoading label="Loading Detour Publisher..." />}>
                             <DetourPublisherWorkspace onClose={() => setViewMode('dashboard')} />
                         </Suspense>

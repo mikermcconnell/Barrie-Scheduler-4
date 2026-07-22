@@ -87,7 +87,7 @@ Export is blocked when required public copy, effective dates, route paths, stop 
 
 Notices are team-scoped under `teams/{teamId}/detourNotices`. Route overlays and publication records use subcollections. Structured editable data is saved; generated PDF and PNG files remain browser downloads in version 1.
 
-The workspace is protected by Scheduled Transit access and a dedicated feature flag during pilot rollout. Saves use optimistic revisions so a stale editor cannot silently overwrite newer team work.
+The workspace is protected by Scheduled Transit access and a dedicated feature flag. It is visible to members of the team whose invite code is `BARRIE`, global developer administrators, and users with `internal` or `admin` workspace access. Direct workspace links use the same gate. Saves use optimistic revisions so a stale editor cannot silently overwrite newer team work.
 
 ## Not in Version 1
 
