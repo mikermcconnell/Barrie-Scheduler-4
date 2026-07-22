@@ -5,6 +5,7 @@ import {
   DetourExportNoticeInput,
   formatDetourEffectiveSchedule,
   formatDetourRouteLabel,
+  isDetourEffectiveDateOnly,
 } from '../../utils/detours/detourCopy';
 
 export interface DetourNoticePreviewProps {
@@ -24,6 +25,9 @@ export const DetourNoticePreview = forwardRef<HTMLDivElement, DetourNoticePrevie
   { notice, mapImageDataUrl, mapAttribution = 'Map data (c) Mapbox (c) OpenStreetMap', className = '', style, brandAssets },
   ref,
 ) {
+  const effectiveSchedule = formatDetourEffectiveSchedule(notice.effectiveSchedule);
+  const keepEffectiveDateOnOneLine = isDetourEffectiveDateOnly(notice.effectiveSchedule);
+
   return (
     <div
       ref={ref}
@@ -78,7 +82,12 @@ export const DetourNoticePreview = forwardRef<HTMLDivElement, DetourNoticePrevie
           <section>
             <h2 className="px-3 text-[36px] font-black leading-none">Effective Date</h2>
             <div className="mt-3 flex h-[174px] items-center justify-center rounded-[18px] border-[5px] border-[#231F20] px-6 text-center">
-              <p className="text-[30px] font-semibold leading-[1.18] text-[#F04438]">{formatDetourEffectiveSchedule(notice.effectiveSchedule)}</p>
+              <p
+                className={`${keepEffectiveDateOnOneLine ? 'whitespace-nowrap text-[20px] tracking-tight' : 'text-[30px]'} font-semibold leading-[1.18] text-[#F04438]`}
+                data-effective-date-nowrap={keepEffectiveDateOnOneLine ? 'true' : undefined}
+              >
+                {effectiveSchedule}
+              </p>
             </div>
           </section>
           <section className="mt-5 flex min-h-0 flex-1 flex-col">

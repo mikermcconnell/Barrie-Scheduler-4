@@ -4,6 +4,7 @@ import {
   buildMyRideCopyPackage,
   formatDetourEffectiveSchedule,
   formatDetourRouteLabel,
+  isDetourEffectiveDateOnly,
   sanitizeDetourPlainText,
 } from './detourCopy';
 import { buildDetourFilename } from './detourFilename';
@@ -146,7 +147,12 @@ export function createDetourPdf(input: DetourPdfInput): jsPDF {
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(INK);
   doc.setFontSize(10);
-  addWrappedText(doc, formatDetourEffectiveSchedule(notice.effectiveSchedule), panelX + 12, y + 37, panelW - 24, 13, 3);
+  const effectiveSchedule = formatDetourEffectiveSchedule(notice.effectiveSchedule);
+  if (isDetourEffectiveDateOnly(notice.effectiveSchedule)) {
+    doc.text(effectiveSchedule, panelX + panelW / 2, y + 42, { align: 'center' });
+  } else {
+    addWrappedText(doc, effectiveSchedule, panelX + 12, y + 37, panelW - 24, 13, 3);
+  }
   y += 92;
 
   doc.setFont('helvetica', 'bold');

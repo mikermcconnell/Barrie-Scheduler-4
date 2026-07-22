@@ -138,6 +138,13 @@ export function formatDetourEffectiveSchedule(schedule: DetourEffectiveScheduleI
   return `${start} ${ending}; applies ${formatDays(recurrence.days)}${hours}`.trim();
 }
 
+/** Date-only schedules are compact enough to remain on one line in public notices. */
+export function isDetourEffectiveDateOnly(schedule: DetourEffectiveScheduleInput): boolean {
+  return !schedule.startTime
+    && !schedule.endTime
+    && (!schedule.recurrence || schedule.recurrence.days.length === 0);
+}
+
 export function formatDetourRouteLabel(routes: DetourRouteCopyInput[]): string {
   return routes
     .map(route => `Route ${sanitizeDetourPlainText(route.routeShortName)}${route.directionLabel ? ` · ${sanitizeDetourPlainText(route.directionLabel)}` : ''}`)

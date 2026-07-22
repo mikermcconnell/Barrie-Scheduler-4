@@ -113,12 +113,36 @@ describe('detour PDF and preview', () => {
     expect(html.match(/data-legend-item="true"/g)).toHaveLength(5);
     expect(html.match(/flex min-w-0 flex-col items-center gap-2 text-center/g)).toHaveLength(5);
     expect(html).toContain('Effective Date');
+    expect(html).not.toContain('Routes not shown are on regular routing.');
     expect(html).toContain('For More Information Contact');
     expect(html).toContain('data-contact-icon="phone"');
     expect(html).toContain('data-contact-icon="email"');
     expect(html).toContain('data-contact-icon="website"');
     expect(html).toContain('data-warning-icon="true"');
     expect(html).toContain('h-[82px] w-[82px]');
+  });
+
+  it('keeps a date-only effective range on one line in previews and PDFs', () => {
+    const dateOnlyNotice: DetourExportNoticeInput = {
+      ...notice,
+      effectiveSchedule: {
+        ...notice.effectiveSchedule,
+        startDate: '2026-07-22',
+        startTime: '',
+        endDate: '2026-07-30',
+        endTime: '',
+        recurrence: undefined,
+      },
+    };
+    const html = renderToStaticMarkup(<DetourNoticePreview notice={dateOnlyNotice} />);
+    expect(html).toContain('data-effective-date-nowrap="true"');
+    expect(html).toContain('whitespace-nowrap');
+    expect(html).toContain('July 22, 2026 to July 30, 2026');
+
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const doc = createDetourPdf({ notice: dateOnlyNotice, mapImageDataUrl: png });
+    const commands = ((doc.internal as unknown as { pages: string[][] }).pages[1] ?? []).join('\n');
+    expect(commands).toContain('July 22, 2026 to July 30, 2026');
   });
 
   it('renders the supplied transit logo in branded previews and PDFs', () => {
