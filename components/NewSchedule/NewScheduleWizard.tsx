@@ -94,6 +94,16 @@ const DEFAULT_END_TIME = '22:00';
 const DEFAULT_PROJECT_NAME = 'New Schedule Project';
 const DEFAULT_IMPORT_MODE: ImportMode = 'performance';
 
+const buildRuntimeAnalysisModel = (results: RuntimeData[]) => {
+    const segmentsMap = buildSegmentsMapFromParsedData(results);
+    const orderedSegmentNames = getOrderedSegmentNames(segmentsMap);
+    const rawAnalysis = calculateTotalTripTimes(results);
+    const hardenedAnalysis = hardenRuntimeAnalysisBuckets(rawAnalysis, orderedSegmentNames);
+    const withOutliers = detectOutliers(hardenedAnalysis);
+    const { buckets, bands } = calculateBands(withOutliers);
+    return { buckets, bands, segmentsMap };
+};
+
 const normalizeStopLookupKey = (value: string): string => {
     return value
         .toLowerCase()
@@ -522,6 +532,29 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             .map(bucket => bucket.timeBucket),
     }), [analysis]);
 
+    const cycleAnalysisByStartDirection = useMemo(() => {
+        if (!parsedData.some(runtime => runtime.cycleStartDirection)) return undefined;
+
+        const result: Partial<Record<'North' | 'South', TripBucketAnalysis[]>> = {};
+        const hasNorthStartModel = parsedData.some(runtime => runtime.cycleStartDirection === 'North');
+        const primaryDirection: 'North' | 'South' = hasNorthStartModel ? 'North' : 'South';
+        const excludedBuckets = new Set(step2PlannerOverrides.excludedBuckets);
+        (['North', 'South'] as const).forEach(direction => {
+            const directionResults = parsedData.filter(runtime => runtime.cycleStartDirection === direction);
+            if (directionResults.length > 0) {
+                const directionAnalysis = direction === primaryDirection
+                    ? analysis
+                    : buildRuntimeAnalysisModel(directionResults).buckets;
+                result[direction] = directionAnalysis.map(bucket => (
+                    excludedBuckets.has(bucket.timeBucket)
+                        ? { ...bucket, ignored: true }
+                        : bucket
+                ));
+            }
+        });
+        return result;
+    }, [analysis, parsedData, step2PlannerOverrides.excludedBuckets]);
+
     const step2ReviewBuilderInput = useMemo<Step2ReviewBuilderInput | null>(() => {
         if (analysis.length === 0) return null;
 
@@ -556,6 +589,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             },
             plannerOverrides: step2PlannerOverrides,
             analysis,
+            cycleAnalysisByStartDirection,
             bands,
             segmentsMap,
             matrixAnalysis,
@@ -568,6 +602,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     }, [
         analysis,
         bands,
+        cycleAnalysisByStartDirection,
         config.routeNumber,
         currentConfiguredRouteIdentity,
         dayType,
@@ -1382,16 +1417,29 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const processRuntimeResults = (results: RuntimeData[], displayResults: RuntimeData[] = results) => {
         setParsedData(results);
 
-        const groupedSegments = buildSegmentsMapFromParsedData(results);
-        const orderedSegmentNames = getOrderedSegmentNames(groupedSegments);
-        const rawAnalysis = calculateTotalTripTimes(results);
-        const hardenedAnalysis = hardenRuntimeAnalysisBuckets(rawAnalysis, orderedSegmentNames);
-        const withOutliers = detectOutliers(hardenedAnalysis);
-        const { buckets, bands: generatedBands } = calculateBands(withOutliers);
-        const displayRawAnalysis = calculateTotalTripTimes(displayResults);
+        const northStartResults = results.filter(runtime => runtime.cycleStartDirection === 'North');
+        const southStartResults = results.filter(runtime => runtime.cycleStartDirection === 'South');
+        const primaryResults = northStartResults.length > 0
+            ? northStartResults
+            : southStartResults.length > 0
+                ? southStartResults
+                : results;
+        const {
+            buckets,
+            bands: generatedBands,
+            segmentsMap: groupedSegments,
+        } = buildRuntimeAnalysisModel(primaryResults);
+        const displayNorthStartResults = displayResults.filter(runtime => runtime.cycleStartDirection === 'North');
+        const displaySouthStartResults = displayResults.filter(runtime => runtime.cycleStartDirection === 'South');
+        const primaryDisplayResults = displayNorthStartResults.length > 0
+            ? displayNorthStartResults
+            : displaySouthStartResults.length > 0
+                ? displaySouthStartResults
+                : displayResults;
+        const displayRawAnalysis = calculateTotalTripTimes(primaryDisplayResults);
         const displayWithOutliers = detectOutliers(displayRawAnalysis);
         const { buckets: displayBuckets } = calculateBands(displayWithOutliers);
-        const displayGroupedSegments = buildSegmentsMapFromParsedData(displayResults);
+        const displayGroupedSegments = buildSegmentsMapFromParsedData(primaryDisplayResults);
 
         setAnalysis(buckets);
         setBands(generatedBands);
@@ -1673,7 +1721,13 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
             }
 
-            const generationSourceData = parsedData;
+            const generationNorthStartData = parsedData.filter(runtime => runtime.cycleStartDirection === 'North');
+            const generationSouthStartData = parsedData.filter(runtime => runtime.cycleStartDirection === 'South');
+            const generationSourceData = generationNorthStartData.length > 0
+                ? generationNorthStartData
+                : generationSouthStartData.length > 0
+                    ? generationSouthStartData
+                    : parsedData;
 
             // Sort parsed data by direction
             const directionOrder: Record<string, number> = { 'North': 0, 'A': 1, 'Loop': 2, 'South': 3, 'B': 4 };
@@ -1709,7 +1763,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     gtfsStopLookup,
                     masterStopCodes,
                     generationCanonicalStops,
-                    undefined,
+                    activeApprovedPlanning.approvedCycleBucketsByStartDirection,
                     {
                         strictApprovedRuntime: true,
                         approvedBucketMode: currentApprovedRuntimeContract.importMode === 'performance'

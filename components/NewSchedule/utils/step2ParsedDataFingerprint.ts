@@ -123,6 +123,7 @@ export const buildStep2ParsedDataFingerprint = (
             index,
             detectedRouteNumber: normalizeText(runtime.detectedRouteNumber || ''),
             detectedDirection: normalizeText(runtime.detectedDirection || ''),
+            ...(runtime.cycleStartDirection ? { cycleStartDirection: runtime.cycleStartDirection } : {}),
             troubleshootingPatternStatus: runtime.troubleshootingPatternStatus || null,
             sampleCountMode: runtime.sampleCountMode || null,
             runtimePatternKind: runtime.runtimePatternKind || null,

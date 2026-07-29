@@ -240,6 +240,31 @@ export const isStructurallyValidRuntimeTrustContract = (
     ) {
         return false;
     }
+    const cycleBucketsByStartDirection = planningRecord.approvedCycleBucketsByStartDirection;
+    if (cycleBucketsByStartDirection !== undefined) {
+        if (!isRecord(cycleBucketsByStartDirection)) return false;
+        const entries = Object.entries(cycleBucketsByStartDirection);
+        if (
+            entries.length === 0
+            || entries.some(([direction, buckets]) => (
+                !['North', 'South'].includes(direction)
+                || !Array.isArray(buckets)
+                || buckets.length === 0
+                || buckets.some(bucket => (
+                    !isRecord(bucket)
+                    || bucket.ignored !== false
+                    || bucket.isOutlier !== false
+                    || typeof bucket.assignedBand !== 'string'
+                    || !bucket.assignedBand.trim()
+                    || !evaluateRuntimeBucketEligibility(
+                        bucket as unknown as RuntimeEvidenceEligibilityBucket,
+                        { requireAssignedBand: true }
+                    ).eligible
+                ))
+                || new Set(buckets.map(bucket => (bucket as Record<string, unknown>).timeBucket)).size !== buckets.length
+            ))
+        ) return false;
+    }
     const orderedReviewBucketKeys = (reviewBuckets as Array<Record<string, unknown>>)
         .map(bucket => bucket?.timeBucket);
     const orderedCompatibilityBucketKeys = (compatibilityBuckets as Array<Record<string, unknown>>)

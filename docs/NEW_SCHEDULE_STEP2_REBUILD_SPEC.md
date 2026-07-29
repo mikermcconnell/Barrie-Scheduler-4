@@ -451,6 +451,7 @@ The rebuilt Step 2 must preserve the currently established runtime rules.
 ### 16.4 Confidence Rule
 
 - Performance imports use the 5-day threshold.
+- For bidirectional performance data, North-start and South-start cycles are evaluated independently. Each exact 30-minute start bucket must have five distinct complete same-day cycles before that orientation can drive generation.
 - CSV imports use the 10-observation threshold.
 
 ### 16.5 Locked Logic Rule

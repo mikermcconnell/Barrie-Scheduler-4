@@ -28,6 +28,8 @@ export interface RuntimeData {
     allTimeBuckets: string[];
     detectedRouteNumber?: string;
     detectedDirection?: RouteDirection;
+    /** Orientation of the independently validated paired cycle that owns these buckets. */
+    cycleStartDirection?: 'North' | 'South';
     sampleCountMode?: 'observations' | 'days';
     troubleshootingPatternStatus?: 'anchored' | 'fallback';
     runtimePatternKind?: RuntimePatternKind;

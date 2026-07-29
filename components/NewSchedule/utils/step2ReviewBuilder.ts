@@ -22,6 +22,7 @@ import { evaluateRuntimeBucketEligibility } from '../../../utils/ai/runtimeEvide
 
 export interface Step2ReviewBuilderInput extends Step2ReviewInput {
     analysis: TripBucketAnalysis[];
+    cycleAnalysisByStartDirection?: Partial<Record<'North' | 'South', TripBucketAnalysis[]>>;
     bands: TimeBand[];
     segmentsMap: Record<string, SegmentRawData[]>;
     matrixAnalysis?: TripBucketAnalysis[] | null;
@@ -230,6 +231,16 @@ export const buildStep2ReviewResult = (
     const approvedBuckets = reviewBuckets.filter(bucket => evaluateRuntimeBucketEligibility(bucket, {
         requireAssignedBand: true,
     }).eligible);
+    const approvedCycleBucketsByStartDirection = input.cycleAnalysisByStartDirection
+        ? (Object.fromEntries(
+            (['North', 'South'] as const).map(direction => [
+                direction,
+                cloneValue((input.cycleAnalysisByStartDirection?.[direction] || []).filter(bucket => (
+                    evaluateRuntimeBucketEligibility(bucket, { requireAssignedBand: true }).eligible
+                ))),
+            ]).filter(([, buckets]) => (buckets as TripBucketAnalysis[]).length > 0)
+        ) as Partial<Record<'North' | 'South', TripBucketAnalysis[]>>)
+        : undefined;
 
     return {
         lifecycle: 'reviewable',
@@ -244,6 +255,9 @@ export const buildStep2ReviewResult = (
             generationBasis: approvedRuntimeModel.generationBasis,
             reviewBuckets,
             approvedBuckets: cloneValue(approvedBuckets),
+            ...(approvedCycleBucketsByStartDirection && Object.keys(approvedCycleBucketsByStartDirection).length > 0
+                ? { approvedCycleBucketsByStartDirection }
+                : {}),
             buckets: cloneValue(reviewBuckets),
             bands: cloneValue(approvedRuntimeModel.bands),
             directionBandSummary: cloneValue(approvedRuntimeModel.directionBandSummary) as DirectionBandSummary,

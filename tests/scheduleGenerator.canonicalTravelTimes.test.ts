@@ -143,7 +143,7 @@ describe('scheduleGenerator canonical travel times', () => {
         expect(tables.find(table => table.routeName.includes('(South)'))?.trips).toHaveLength(1);
     });
 
-    it('fails closed when a paired performance block starts South without a proven North cycle start', () => {
+    it('fails closed when a paired performance block starts South without an approved South-start cycle', () => {
         expect(() => generateSchedule(
             {
                 routeNumber: '1', cycleMode: 'Strict', cycleTime: 60, recoveryRatio: 0,
@@ -159,7 +159,30 @@ describe('scheduleGenerator canonical travel times', () => {
             pairedStops,
             undefined,
             { strictApprovedRuntime: true, approvedBucketMode: 'paired-cycle-start' }
-        )).toThrow(/North leg is required before South/);
+        )).toThrow(/No trusted runtime for South 06:00/);
+    });
+
+    it('uses an independently approved South-start cycle for both paired legs', () => {
+        const southStartBucket = makePairedBucket('06:00 - 06:29', 30, 20);
+        const tables = generateSchedule(
+            {
+                routeNumber: '1', cycleMode: 'Strict', cycleTime: 60, recoveryRatio: 0,
+                blocks: [{ id: '1-1', startTime: '06:00', endTime: '06:59', startStop: 'B', startDirection: 'South' }],
+            },
+            [makePairedBucket('06:00 - 06:29', 99, 99)],
+            pairedBands,
+            pairedSummary,
+            pairedSegments,
+            'Weekday',
+            undefined,
+            undefined,
+            pairedStops,
+            { South: [southStartBucket] },
+            { strictApprovedRuntime: true, approvedBucketMode: 'paired-cycle-start' }
+        );
+
+        expect(tables.find(table => table.routeName.includes('(South)'))?.trips[0].travelTime).toBe(20);
+        expect(tables.find(table => table.routeName.includes('(North)'))?.trips[0].travelTime).toBe(30);
     });
 
     it('preserves exact overnight paired-cycle lookup across midnight', () => {

@@ -128,6 +128,20 @@ describe('newScheduleProjectService', () => {
             '../utils/services/newScheduleProjectService'
         );
         expect(isStructurallyValidRuntimeTrustContract(validContract)).toBe(true);
+        expect(isStructurallyValidRuntimeTrustContract({
+            ...validContract,
+            planning: {
+                ...validContract.planning,
+                approvedCycleBucketsByStartDirection: { South: [eligibleBucket] },
+            },
+        })).toBe(true);
+        expect(isStructurallyValidRuntimeTrustContract({
+            ...validContract,
+            planning: {
+                ...validContract.planning,
+                approvedCycleBucketsByStartDirection: { East: [eligibleBucket] },
+            },
+        })).toBe(false);
         const earlierV2Health = { ...validContract.healthSnapshot };
         delete earlierV2Health.coverageCompleteBucketCount;
         delete earlierV2Health.trustedReadyBucketCount;

@@ -392,18 +392,11 @@ export const generateSchedule = (
             let strictTripBucket: TripBucketAnalysis | null = null;
 
             if (strictApprovedRuntime) {
-                if (usePairedCycleBucket && !activePairedCycleBucket && currentDir !== 'North') {
-                    throw new MissingApprovedRuntimeError(
-                        currentDir,
-                        formatHalfHourBucketStart(currentTime),
-                        'paired cycle start (a North leg is required before South)'
-                    );
-                }
                 if (usePairedCycleBucket && activePairedCycleBucket) {
                     strictTripBucket = activePairedCycleBucket;
                 } else {
                     const strictBucketSource = usePairedCycleBucket
-                        ? buckets
+                        ? (directionalBuckets?.[currentDir] || (currentDir === 'North' ? buckets : []))
                         : (directionalBuckets?.[currentDir] || buckets);
                     strictTripBucket = findBucketForTime(currentTime, strictBucketSource);
 

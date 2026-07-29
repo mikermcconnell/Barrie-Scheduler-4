@@ -118,4 +118,22 @@ describe('step2ParsedDataFingerprint', () => {
 
         expect(first).not.toBe(changed);
     });
+
+    it('changes when the paired-cycle start orientation changes', () => {
+        const runtime = {
+            allTimeBuckets: ['05:00'],
+            detectedRouteNumber: '7',
+            detectedDirection: 'South',
+            cycleStartDirection: 'North',
+            segments: [{ segmentName: 'B to A', timeBuckets: {} }],
+        };
+
+        const northStart = buildStep2ParsedDataFingerprint([runtime] as any);
+        const southStart = buildStep2ParsedDataFingerprint([{
+            ...runtime,
+            cycleStartDirection: 'South',
+        }] as any);
+
+        expect(northStart).not.toBe(southStart);
+    });
 });

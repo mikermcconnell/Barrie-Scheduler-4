@@ -1468,6 +1468,60 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(analysis[0].expectedSegmentCount).toBe(4);
     });
 
+    it('builds South-start paired-cycle evidence independently across five complete days', () => {
+        const summaries = Array.from({ length: 5 }, (_, index) => makeSummary({
+            date: `2026-02-${String(index + 2).padStart(2, '0')}`,
+            dayType: 'weekday',
+            routeNames: { '7A': 'North', '7B': 'South' },
+            tripEntries: [
+                {
+                    tripId: `south-${index}`,
+                    tripName: '7B 05:00',
+                    routeId: '7B',
+                    direction: 'S',
+                    terminalDepartureTime: '05:00',
+                    segments: [{
+                        fromStopId: 'b', toStopId: 'a', fromRouteStopIndex: 0, toRouteStopIndex: 1,
+                        runtimeMinutes: 20, timeBucket: '05:00',
+                    }],
+                },
+                {
+                    tripId: `north-${index}`,
+                    tripName: '7A 05:25',
+                    routeId: '7A',
+                    direction: 'N',
+                    terminalDepartureTime: '05:25',
+                    segments: [{
+                        fromStopId: 'a', toStopId: 'b', fromRouteStopIndex: 0, toRouteStopIndex: 1,
+                        runtimeMinutes: 22, timeBucket: '05:00',
+                    }],
+                },
+            ],
+        }));
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['B', 'A'] },
+            fullPatternOnly: true,
+        });
+        const southStartResults = result.filter(runtime => runtime.cycleStartDirection === 'South');
+
+        expect(southStartResults).toHaveLength(2);
+        expect(southStartResults.map(runtime => runtime.detectedDirection).sort()).toEqual(['North', 'South']);
+        expect(southStartResults.every(runtime => runtime.allTimeBuckets.includes('05:00'))).toBe(true);
+        expect(southStartResults[0].segments[0].timeBuckets['05:00'].n).toBe(5);
+        expect(calculateTotalTripTimes(southStartResults)[0].contributingDays).toHaveLength(5);
+
+        const fourDayResults = computeRuntimesFromPerformance(summaries.slice(0, 4), {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['B', 'A'] },
+            fullPatternOnly: true,
+        }).filter(runtime => runtime.cycleStartDirection === 'South');
+        expect(calculateTotalTripTimes(fourDayResults)[0].evidence?.planningEligible).toBe(false);
+    });
+
     it('keeps a canonical cycle stable when history adds a harmless raw stop variation', () => {
         const makeDay = (date: string, withExtraStop: boolean) => makeSummary({
             date, dayType: 'weekday', routeNames: { '12A': '12A', '12B': '12B' },

@@ -121,7 +121,17 @@ describe('step2ReviewBuilder', () => {
             runtimeDiagnostics: diagnostics,
         };
 
-        const result = buildStep2ReviewResult(input);
+        const southStartAnalysis = input.analysis.map(bucket => ({
+            ...bucket,
+            timeBucket: '05:00 - 05:29',
+        }));
+        const result = buildStep2ReviewResult({
+            ...input,
+            cycleAnalysisByStartDirection: {
+                North: input.analysis,
+                South: southStartAnalysis,
+            },
+        });
         const expectedHealth = result.health;
         const approvedRuntimeModel = buildApprovedRuntimeModel({
             dayType: input.dayType,
@@ -166,6 +176,8 @@ describe('step2ReviewBuilder', () => {
             },
         });
         expect(result.plannerOverrides.excludedBuckets).toEqual(['06:30 - 06:59', '07:00 - 07:29']);
+        expect(result.planning.approvedCycleBucketsByStartDirection?.North).toHaveLength(1);
+        expect(result.planning.approvedCycleBucketsByStartDirection?.South?.[0].timeBucket).toBe('05:00 - 05:29');
         expect(result.troubleshooting.fallbackWarning).toBe('Full-route troubleshooting path not confirmed');
         expect(result.troubleshooting.canRenderFullPath).toBe(false);
         expect(result.troubleshooting.matrixAnalysis).toHaveLength(1);

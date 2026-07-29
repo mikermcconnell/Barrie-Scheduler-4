@@ -118,6 +118,8 @@ export interface Step2PlanningPayload {
     reviewBuckets: TripBucketAnalysis[];
     /** The only buckets permitted to drive schedule generation. */
     approvedBuckets: TripBucketAnalysis[];
+    /** Independently approved paired-cycle buckets, keyed by the direction that starts the cycle. */
+    approvedCycleBucketsByStartDirection?: Partial<Record<'North' | 'South', TripBucketAnalysis[]>>;
     /** @deprecated Compatibility alias for reviewBuckets. */
     buckets: TripBucketAnalysis[];
     bands: TimeBand[];

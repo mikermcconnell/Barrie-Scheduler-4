@@ -867,6 +867,7 @@ function buildRuntimeDataFromDirectionBuckets(
   dirMap: Map<string, Map<string, AggregatedSegmentBucket>>,
   canonicalRouteId: string,
   troubleshootingStatusByDirection?: Map<string, 'anchored' | 'fallback'>,
+  cycleStartDirection?: 'North' | 'South',
 ): RuntimeData[] {
   const results: RuntimeData[] = [];
 
@@ -921,6 +922,7 @@ function buildRuntimeDataFromDirectionBuckets(
       allTimeBuckets: sortedBuckets,
       detectedRouteNumber: canonicalRouteId,
       detectedDirection: direction as RouteDirection,
+      ...(cycleStartDirection ? { cycleStartDirection } : {}),
       sampleCountMode: 'days',
       troubleshootingPatternStatus: troubleshootingStatusByDirection?.get(direction) ?? 'anchored',
     });
@@ -1074,14 +1076,18 @@ function buildTripBucketedRuntimesFromTrips(
   if (canonicalSegmentsByDirection.size === 0) return null;
 
   const hasTripEntries = tripEntriesByDay.size > 0;
+  const hasBidirectionalCanonicalModel = canonicalSegmentsByDirection.has('North')
+    && canonicalSegmentsByDirection.has('South');
   const dirMap = new Map<string, Map<string, AggregatedSegmentBucket>>();
+  const southStartDirMap = new Map<string, Map<string, AggregatedSegmentBucket>>();
 
-  const ensureBucket = (
+  const ensureBucketInMap = (
+    targetDirMap: Map<string, Map<string, AggregatedSegmentBucket>>,
     direction: RouteDirection,
     segment: CanonicalSegmentDefinition,
   ) => {
-    if (!dirMap.has(direction)) dirMap.set(direction, new Map());
-    const segMap = dirMap.get(direction)!;
+    if (!targetDirMap.has(direction)) targetDirMap.set(direction, new Map());
+    const segMap = targetDirMap.get(direction)!;
     if (!segMap.has(segment.segmentKey)) {
       segMap.set(segment.segmentKey, {
         segmentName: segment.segmentName,
@@ -1094,13 +1100,14 @@ function buildTripBucketedRuntimesFromTrips(
   };
 
   const addCandidateToCycleBucket = (
+    targetDirMap: Map<string, Map<string, AggregatedSegmentBucket>>,
     direction: RouteDirection,
     candidate: CycleBucketCandidate,
     cycleBucket: string,
     dayDate: string,
   ) => {
     candidate.details.forEach(({ segment, runtimeMinutes }) => {
-      const target = ensureBucket(direction, segment);
+      const target = ensureBucketInMap(targetDirMap, direction, segment);
       if (!target.bucketMap.has(cycleBucket)) {
         target.bucketMap.set(cycleBucket, createAggregatedBucketData());
       }
@@ -1270,7 +1277,7 @@ function buildTripBucketedRuntimesFromTrips(
   for (const dayDate of allDays) {
     const dayTrips = tripEntriesByDay.get(dayDate) || new Map<RouteDirection, DailyTripStopSegmentRuntimeEntry[]>();
     const dayStops = stopEntriesByDay.get(dayDate) || new Map<RouteDirection, DailyStopSegmentRuntimeEntry[]>();
-    const bidirectional = canonicalSegmentsByDirection.has('North') && canonicalSegmentsByDirection.has('South');
+    const bidirectional = hasBidirectionalCanonicalModel;
     const northTrips = [...(dayTrips.get('North') || [])]
       .sort((a, b) => parseClockMinutes(a.terminalDepartureTime) - parseClockMinutes(b.terminalDepartureTime));
     const southTrips = [...(dayTrips.get('South') || [])]
@@ -1305,8 +1312,30 @@ function buildTripBucketedRuntimesFromTrips(
           if (chosenSouthIndex < 0) return;
 
           southUsed.add(chosenSouthIndex);
-          addCandidateToCycleBucket('North', northCandidate, northCandidate.bucket, dayDate);
-          addCandidateToCycleBucket('South', southCandidates[chosenSouthIndex], northCandidate.bucket, dayDate);
+          addCandidateToCycleBucket(dirMap, 'North', northCandidate, northCandidate.bucket, dayDate);
+          addCandidateToCycleBucket(dirMap, 'South', southCandidates[chosenSouthIndex], northCandidate.bucket, dayDate);
+        });
+
+        const northUsed = new Set<number>();
+        southCandidates.forEach((southCandidate) => {
+          const southBucketRange = getHalfHourBucketRange(southCandidate.bucket);
+          const earliestExpectedNorthDeparture = southBucketRange.start + southCandidate.totalRuntime - 5;
+
+          let chosenNorthIndex = -1;
+          for (let index = 0; index < northCandidates.length; index += 1) {
+            if (northUsed.has(index)) continue;
+            const candidateRange = getHalfHourBucketRange(northCandidates[index].bucket);
+            if (candidateRange.end >= earliestExpectedNorthDeparture) {
+              chosenNorthIndex = index;
+              break;
+            }
+          }
+
+          if (chosenNorthIndex < 0) return;
+
+          northUsed.add(chosenNorthIndex);
+          addCandidateToCycleBucket(southStartDirMap, 'South', southCandidate, southCandidate.bucket, dayDate);
+          addCandidateToCycleBucket(southStartDirMap, 'North', northCandidates[chosenNorthIndex], southCandidate.bucket, dayDate);
         });
 
         continue;
@@ -1344,7 +1373,7 @@ function buildTripBucketedRuntimesFromTrips(
           if (details.length === 0) return;
           const bucket = toHalfHourBucket(trip.terminalDepartureTime);
           details.forEach(({ segment, runtimeMinutes }) => {
-            const target = ensureBucket(direction, segment);
+            const target = ensureBucketInMap(dirMap, direction, segment);
             if (!target.bucketMap.has(bucket)) {
               target.bucketMap.set(bucket, createAggregatedBucketData());
             }
@@ -1367,7 +1396,7 @@ function buildTripBucketedRuntimesFromTrips(
         if (!segment) return;
 
         for (const obs of entry.observations) {
-          const target = ensureBucket(direction, segment);
+          const target = ensureBucketInMap(dirMap, direction, segment);
           if (!target.bucketMap.has(obs.timeBucket)) {
             target.bucketMap.set(obs.timeBucket, createAggregatedBucketData());
           }
@@ -1378,7 +1407,23 @@ function buildTripBucketedRuntimesFromTrips(
     });
   }
 
-  if (dirMap.size === 0) return null;
+  if (dirMap.size === 0 && southStartDirMap.size === 0) return null;
+  if (bucketMode === 'cycleStart' && hasBidirectionalCanonicalModel) {
+    return [
+      ...buildRuntimeDataFromDirectionBuckets(
+        dirMap,
+        canonicalRouteId,
+        fullPatternOnly ? troubleshootingStatusByDirection : undefined,
+        'North',
+      ),
+      ...buildRuntimeDataFromDirectionBuckets(
+        southStartDirMap,
+        canonicalRouteId,
+        fullPatternOnly ? troubleshootingStatusByDirection : undefined,
+        'South',
+      ),
+    ];
+  }
   return buildRuntimeDataFromDirectionBuckets(
     dirMap,
     canonicalRouteId,
