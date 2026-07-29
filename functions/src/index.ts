@@ -7,6 +7,7 @@ export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
 export { developerSupportAccess } from './developerSupportAccess';
 export { refreshCouncilIntelligence, scheduledCouncilIntelligenceSync } from './councilIntelligence';
+export { cleanupNewScheduleRuntimeMigrationBackups } from './newScheduleRuntimeBackupCleanup';
 import {
   decodeExcelRequestBody,
   parseIssuanceListingBuffer,
@@ -23,6 +24,11 @@ import {
 } from './types';
 import { filterPerformanceSummaryByRoute, getAvailablePerformanceRoutes } from './performanceRouteFilter';
 import { buildLoadProfileMonthlyView } from './performanceLoadProfileView';
+import {
+  DEFAULT_PERFORMANCE_LOAD_CAPACITY_CONFIG,
+  normalizePerformanceLoadCapacityConfig,
+} from './performanceLoadCapacity';
+import type { PerformanceLoadCapacityConfig } from './types';
 
 admin.initializeApp();
 
@@ -40,21 +46,21 @@ type HeaderCarrier = {
   headers: Record<string, string | string[] | undefined>;
 };
 
-async function isAuthorizedPerformanceIngestRequest(
+async function resolvePerformanceIngestActor(
   req: HeaderCarrier,
   teamId: string,
-): Promise<boolean> {
+): Promise<string | null> {
   const apiKey = req.headers['x-api-key'];
   if (apiKey && apiKey === INGEST_API_KEY.value()) {
-    return true;
+    return 'auto-ingest';
   }
 
   const authHeader = req.headers.authorization;
   if (Array.isArray(authHeader)) {
-    return false;
+    return null;
   }
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return false;
+    return null;
   }
 
   try {
@@ -63,10 +69,30 @@ async function isAuthorizedPerformanceIngestRequest(
     const memberSnap = await getDb()
       .doc(`teams/${teamId}/members/${decoded.uid}`)
       .get();
-    return memberSnap.exists;
+    const role = memberSnap.data()?.role;
+    if (memberSnap.exists && (role === 'owner' || role === 'admin')) return decoded.uid;
+    if (decoded.schedulerAdmin === true) {
+      const supportSnap = await getDb().doc(`developerSupportSessions/${decoded.uid}`).get();
+      const support = supportSnap.data();
+      const expiresAtMs = support?.expiresAt?.toMillis?.();
+      if (supportSnap.exists
+          && support?.teamId === teamId
+          && support?.mode === 'edit'
+          && typeof expiresAtMs === 'number'
+          && expiresAtMs > Date.now()) {
+        return decoded.uid;
+      }
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function loadPerformanceLoadCapacityConfig(teamId: string): Promise<PerformanceLoadCapacityConfig> {
+  const snapshot = await getDb().doc(`teams/${teamId}/performanceConfig/load`).get();
+  if (!snapshot.exists) return DEFAULT_PERFORMANCE_LOAD_CAPACITY_CONFIG;
+  return normalizePerformanceLoadCapacityConfig(snapshot.data());
 }
 const MAX_RETENTION_DAYS = 380;
 const DEFAULT_REBUILD_WINDOW_DAYS = 30;
@@ -1155,7 +1181,8 @@ export const ingestPerformanceData = onRequest(
     }
 
     const teamId = (req.query.teamId as string) || DEFAULT_TEAM_ID;
-    if (!await isAuthorizedPerformanceIngestRequest(req, teamId)) {
+    const importedBy = await resolvePerformanceIngestActor(req, teamId);
+    if (!importedBy) {
       res.status(401).json({ error: 'Invalid or missing ingest authorization' });
       return;
     }
@@ -1202,7 +1229,10 @@ export const ingestPerformanceData = onRequest(
       console.log(`Parsed ${records.length} records with ${warnings.length} warnings`);
 
       // --- Aggregate ---
-      const newSummaries = enrichDailySummariesWithMissedTrips(aggregateDailySummaries(records));
+      const loadCapacityConfig = await loadPerformanceLoadCapacityConfig(teamId);
+      const newSummaries = enrichDailySummariesWithMissedTrips(
+        aggregateDailySummaries(records, loadCapacityConfig),
+      );
       const newDates = newSummaries.map(s => s.date);
       console.log(`Aggregated ${newSummaries.length} day(s): ${newDates.join(', ')}`);
 
@@ -1214,7 +1244,7 @@ export const ingestPerformanceData = onRequest(
         newSummaries,
         recordCount: records.length,
         warningCount: warnings.length,
-        importedBy: 'auto-ingest',
+        importedBy,
         contentType: contentType.includes('json') ? 'application/json' : 'text/csv',
       });
 
@@ -1274,7 +1304,7 @@ export const ingestPerformanceData = onRequest(
 
       const summary = buildPerformanceSummary(
         mergedSummaries,
-        'auto-ingest',
+        importedBy,
         resolveCleanHistoryStartDate(
           existingCleanHistoryStartDate,
           newSummaries,
@@ -1284,7 +1314,7 @@ export const ingestPerformanceData = onRequest(
       const storagePath = await savePerformanceSummary({
         teamId,
         summary,
-        importedBy: 'auto-ingest',
+        importedBy,
         oldStoragePath,
         oldOverviewStoragePath,
         oldReportStoragePath,
@@ -1501,6 +1531,8 @@ export const rebuildPerformanceHistory = onRequest(
     const deleteOld = parseBooleanFlag(req.query.deleteOld ?? body.deleteOld, false);
 
     try {
+      // One immutable capacity snapshot keeps every replayed day consistent.
+      const loadCapacityConfig = await loadPerformanceLoadCapacityConfig(teamId);
       const runSnap = await getPerformanceImportsCollection(teamId).get();
       const importRuns = runSnap.docs
         .map(doc => ({ id: doc.id, ...(doc.data() as PerformanceImportRunRecord) }))
@@ -1535,7 +1567,9 @@ export const rebuildPerformanceHistory = onRequest(
           const [content] = await getBucket().file(run.rawStoragePath).download();
           const csvText = content.toString('utf8');
           const parsed = parseSTREETSCSV(csvText);
-          const summaries = enrichDailySummariesWithMissedTrips(aggregateDailySummaries(parsed.records))
+          const summaries = enrichDailySummariesWithMissedTrips(
+            aggregateDailySummaries(parsed.records, loadCapacityConfig),
+          )
             .filter(summary => summary.date >= startDate && summary.date <= endDate);
 
           for (const summary of summaries) {

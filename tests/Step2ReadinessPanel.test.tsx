@@ -144,6 +144,8 @@ describe('Step2ReadinessPanel', () => {
             missingSegments: [],
             availableBucketCount: 4,
             completeBucketCount: 4,
+            coverageCompleteBucketCount: 4,
+            trustedReadyBucketCount: 4,
             incompleteBucketCount: 0,
             lowConfidenceBucketCount: 0,
             runtimeSourceSummary: 'stop-level',
@@ -153,7 +155,7 @@ describe('Step2ReadinessPanel', () => {
         });
 
         expect(container?.textContent).toContain('ready');
-        expect(container?.textContent).toContain('4/4 route-chain segments matched, with 4/4 complete 30-minute buckets ready for scheduling.');
+        expect(container?.textContent).toContain('4/4 route-chain segments matched. 4/4 buckets have full coverage; 4 are trusted and ready for scheduling.');
         expect(container?.textContent).toContain('Hide route readiness details');
         expect(container?.textContent).toContain('4/4');
     });

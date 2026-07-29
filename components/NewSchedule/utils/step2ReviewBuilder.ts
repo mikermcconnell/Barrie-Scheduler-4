@@ -18,6 +18,7 @@ import { evaluateStep2ReviewHealth, type Step2HealthEvaluatorInput } from './ste
 import type { PerformanceRuntimeDiagnostics } from '../../../utils/performanceRuntimeComputer';
 import type { SegmentRawData } from './csvParser';
 import type { Step2StopOrderHealth } from './step2StopOrder';
+import { evaluateRuntimeBucketEligibility } from '../../../utils/ai/runtimeEvidenceEligibility';
 
 export interface Step2ReviewBuilderInput extends Step2ReviewInput {
     analysis: TripBucketAnalysis[];
@@ -225,6 +226,11 @@ export const buildStep2ReviewResult = (
         plannerOverrides: normalizedPlannerOverrides,
     };
 
+    const reviewBuckets = cloneValue(approvedRuntimeModel.buckets);
+    const approvedBuckets = reviewBuckets.filter(bucket => evaluateRuntimeBucketEligibility(bucket, {
+        requireAssignedBand: true,
+    }).eligible);
+
     return {
         lifecycle: 'reviewable',
         inputFingerprint: buildStep2ReviewFingerprint(reviewInput),
@@ -236,12 +242,14 @@ export const buildStep2ReviewResult = (
         planning: {
             chartBasis: approvedRuntimeModel.chartBasis,
             generationBasis: approvedRuntimeModel.generationBasis,
-            buckets: cloneValue(approvedRuntimeModel.buckets),
+            reviewBuckets,
+            approvedBuckets: cloneValue(approvedBuckets),
+            buckets: cloneValue(reviewBuckets),
             bands: cloneValue(approvedRuntimeModel.bands),
             directionBandSummary: cloneValue(approvedRuntimeModel.directionBandSummary) as DirectionBandSummary,
             segmentColumns: cloneValue(approvedRuntimeModel.segmentColumns),
             canonicalDirectionStops: normalizedDirectionStops,
-            usableBucketCount: approvedRuntimeModel.usableBucketCount,
+            usableBucketCount: approvedBuckets.length,
             ignoredBucketCount: approvedRuntimeModel.ignoredBucketCount,
             usableBandCount: approvedRuntimeModel.usableBandCount,
             directions: cloneValue(approvedRuntimeModel.directions),
@@ -249,7 +257,7 @@ export const buildStep2ReviewResult = (
         troubleshooting: buildTroubleshootingPayload(input),
         plannerOverrides: normalizedPlannerOverrides,
         approvalEligible: health.status !== 'blocked'
-            && approvedRuntimeModel.usableBucketCount > 0
+            && approvedBuckets.length > 0
             && approvedRuntimeModel.usableBandCount > 0,
     };
 };
@@ -274,6 +282,9 @@ export const buildStep2SourceSnapshot = (
         stopOrderDecision: input.performanceDiagnostics?.stopOrderDecision ?? input.stopOrder?.decision,
         stopOrderConfidence: input.performanceDiagnostics?.stopOrderConfidence ?? input.stopOrder?.confidence,
         stopOrderSource: input.performanceDiagnostics?.stopOrderSource ?? input.stopOrder?.sourceUsed,
+        canonicalRouteSource: input.canonicalRouteSource
+            ? cloneValue(input.canonicalRouteSource)
+            : undefined,
     };
 };
 

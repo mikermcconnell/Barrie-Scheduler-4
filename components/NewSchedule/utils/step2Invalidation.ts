@@ -14,7 +14,7 @@ export const isStep2ApprovalStale = (
     approvedContract: ApprovedRuntimeContract | null | undefined
 ): boolean => {
     if (!approvedContract) return false;
-    if (approvedContract.schemaVersion !== 1) return true;
+    if (approvedContract.schemaVersion !== 2) return true;
     if (approvedContract.approvalState !== 'approved') return true;
     if (reviewResult.lifecycle === 'stale' || reviewResult.lifecycle === 'error') return true;
     return !hasMatchingFingerprint(reviewResult, approvedContract);
@@ -36,4 +36,3 @@ export const resolveStep2ApprovalState = (
     if (!approvedContract) return 'unapproved';
     return isStep2ApprovalCurrent(reviewResult, approvedContract) ? 'approved' : 'stale';
 };
-

@@ -167,7 +167,7 @@ describe('Step3Build', () => {
                     bands={[]}
                     analysis={[]}
                     approvedRuntimeContract={{
-                        schemaVersion: 1,
+                        schemaVersion: 2,
                         routeIdentity: '7-Weekday',
                         routeNumber: '7',
                         dayType: 'Weekday',
@@ -191,6 +191,11 @@ describe('Step3Build', () => {
                                     details: [],
                                 },
                             ],
+                            reviewBuckets: [],
+                            approvedBuckets: [{
+                                timeBucket: '06:00 - 06:29', totalP50: 40, totalP80: 44,
+                                assignedBand: 'A', isOutlier: false, ignored: false, details: [],
+                            }],
                             bands: [
                                 {
                                     id: 'A',

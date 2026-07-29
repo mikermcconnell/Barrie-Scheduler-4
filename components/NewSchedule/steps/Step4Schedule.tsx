@@ -67,9 +67,6 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     initialSchedules,
     originalSchedules,
     editorSessionKey,
-    bands,
-    analysis,
-    segmentNames,
     onUpdateSchedules,
     projectName,
     autoSaveStatus,
@@ -111,9 +108,12 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
         () => buildStep2ApprovedRuntimeModelFromContract(approvedRuntimeContract),
         [approvedRuntimeContract]
     );
-    const resolvedStep4Bands = resolvedApprovedRuntimeModel?.bands ?? bands;
-    const resolvedStep4Analysis = resolvedApprovedRuntimeModel?.buckets ?? analysis;
-    const resolvedStep4SegmentNames = resolvedApprovedRuntimeModel?.segmentColumns.map(column => column.segmentName) ?? segmentNames;
+    // Step 4 must never substitute live/re-derived Step 2 data for a missing or
+    // stale approval. The wizard gate normally prevents this state; empty
+    // context here keeps the component fail-closed if it is rendered directly.
+    const resolvedStep4Bands = resolvedApprovedRuntimeModel?.bands ?? [];
+    const resolvedStep4Analysis = resolvedApprovedRuntimeModel?.buckets ?? [];
+    const resolvedStep4SegmentNames = resolvedApprovedRuntimeModel?.segmentColumns.map(column => column.segmentName) ?? [];
     latestInitialSchedulesRef.current = initialSchedules;
     latestResolvedOriginalSchedulesRef.current = resolvedOriginalSchedules;
 
@@ -467,6 +467,18 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                         <div>{resolvedApprovedRuntimeModel.chartBasis === 'observed-cycle' ? 'Observed cycle totals' : 'Uploaded bucket percentiles'}</div>
                         <div className="mt-1 text-blue-700">{resolvedApprovedRuntimeModel.directions.join(', ') || 'No directions'}</div>
                     </div>
+                </section>
+            )}
+
+            {!resolvedApprovedRuntimeModel && (
+                <section className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <div className="flex items-center gap-2 text-sm font-extrabold text-amber-900">
+                        <AlertTriangle size={16} />
+                        Current runtime approval required
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-amber-800">
+                        Runtime bands and bucket details are unavailable until the current Step 2 review is approved.
+                    </p>
                 </section>
             )}
 

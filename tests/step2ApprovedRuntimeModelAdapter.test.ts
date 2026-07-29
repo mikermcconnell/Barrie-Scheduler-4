@@ -3,7 +3,7 @@ import { buildStep2ApprovedRuntimeModelFromContract } from '../components/NewSch
 import type { ApprovedRuntimeContract } from '../components/NewSchedule/utils/step2ReviewTypes';
 
 const contract: ApprovedRuntimeContract = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     routeIdentity: '7-Weekday',
     routeNumber: '7',
     dayType: 'Weekday',
@@ -22,6 +22,8 @@ const contract: ApprovedRuntimeContract = {
         chartBasis: 'observed-cycle',
         generationBasis: 'direction-band-summary',
         buckets: [],
+        reviewBuckets: [],
+        approvedBuckets: [],
         bands: [],
         directionBandSummary: {
             North: [{
@@ -85,4 +87,3 @@ describe('step2ApprovedRuntimeModelAdapter', () => {
         expect(model?.healthReport).not.toBe(contract.healthSnapshot);
     });
 });
-

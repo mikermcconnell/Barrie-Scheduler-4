@@ -4,8 +4,32 @@ import {
     buildNormalizedSegmentNameLookup,
     resolveCanonicalSegmentName,
 } from '../runtimeSegmentMatching';
+import {
+    evaluateRuntimeBucketEligibility,
+    MIN_RELIABLE_DAYS,
+    MIN_RELIABLE_OBSERVATIONS,
+} from './runtimeEvidenceEligibility';
+
+export {
+    evaluateRuntimeBucketEligibility,
+    MIN_RELIABLE_DAYS,
+    MIN_RELIABLE_OBSERVATIONS,
+} from './runtimeEvidenceEligibility';
 
 export type SampleCountMode = 'observations' | 'days';
+export type RuntimeBucketEvidenceKind =
+    | 'paired-cycle'
+    | 'uploaded-percentiles'
+    | 'segment-only'
+    | 'estimated';
+
+export interface RuntimeBucketEvidence {
+    kind: RuntimeBucketEvidenceKind;
+    qualifyingCount: number;
+    requiredCount: number;
+    planningEligible: boolean;
+    exclusionReasons: string[];
+}
 
 export interface SegmentDetail {
     segmentName: string;
@@ -34,6 +58,7 @@ export interface TripBucketAnalysis {
     coverageCause?: BucketCoverageCause;
     repairedSegments?: string[];
     repairSourceBuckets?: string[];
+    evidence?: RuntimeBucketEvidence;
 }
 
 export type BucketCoverageCause =
@@ -53,9 +78,6 @@ export interface TimeBand {
     color: string;
     count: number;
 }
-
-export const MIN_RELIABLE_OBSERVATIONS = 10;
-export const MIN_RELIABLE_DAYS = 5;
 
 export const getLowConfidenceThreshold = (mode?: SampleCountMode): number => (
     mode === 'days' ? MIN_RELIABLE_DAYS : MIN_RELIABLE_OBSERVATIONS
@@ -246,11 +268,9 @@ export const hasCompleteSegmentCoverage = (
 export const isBucketEligibleForBanding = (
     bucket: TripBucketAnalysis,
     fallbackExpectedSegmentCount: number = 0
-): boolean => (
-    !bucket.ignored
-    && getBucketBandingTotal(bucket) > 0
-    && hasCompleteSegmentCoverage(bucket, fallbackExpectedSegmentCount)
-);
+): boolean => evaluateRuntimeBucketEligibility(bucket, {
+    fallbackExpectedSegmentCount,
+}).eligible;
 
 const groupContiguousIndexes = (indexes: number[]): number[][] => {
     if (indexes.length === 0) return [];
@@ -447,6 +467,13 @@ export const hardenRuntimeAnalysisBuckets = (
             coverageCause: 'repaired-single-gap',
             repairedSegments: repair.estimatedDetails.map((detail) => detail.segmentName),
             repairSourceBuckets: repair.sourceBuckets,
+            evidence: {
+                kind: 'estimated',
+                qualifyingCount: 0,
+                requiredCount: getLowConfidenceThreshold(bucket.sampleCountMode),
+                planningEligible: false,
+                exclusionReasons: ['Estimated segment repair'],
+            },
         };
     }).map((bucket) => {
         if (bucket.coverageCause === 'repaired-single-gap') return bucket;
@@ -480,11 +507,14 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
         return a.localeCompare(b);
     });
     const analysis: TripBucketAnalysis[] = [];
-    const sampleCountMode = data.reduce<SampleCountMode | undefined>((mode, fileData) => {
-        if (!fileData.sampleCountMode) return mode;
-        if (!mode) return fileData.sampleCountMode;
-        return mode === fileData.sampleCountMode ? mode : undefined;
-    }, undefined);
+    const sampleCountModes = new Set(
+        data
+            .map(fileData => fileData.sampleCountMode)
+            .filter((mode): mode is SampleCountMode => !!mode)
+    );
+    const sampleCountMode = sampleCountModes.size === 1
+        ? Array.from(sampleCountModes)[0]
+        : undefined;
     const runtimePatternKind = data.reduce<RuntimePatternKind | undefined>((kind, fileData) => {
         if (!fileData.runtimePatternKind) return kind;
         if (!kind) return fileData.runtimePatternKind;
@@ -539,7 +569,29 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
             .map(({ runtime }) => runtime)
             .sort((a, b) => a - b);
 
-        analysis.push({
+        const hasCompleteCoverage = details.length >= expectedSegmentCount && expectedSegmentCount > 0;
+        const requiredCount = sampleCountMode === 'days'
+            ? MIN_RELIABLE_DAYS
+            : MIN_RELIABLE_OBSERVATIONS;
+        const qualifyingCount = sampleCountMode === 'days'
+            ? completeObservedCycleDays.length
+            : sampleCountMode === 'observations' && details.length > 0
+                ? Math.min(...details.map(detail => detail.n ?? 0))
+                : 0;
+        const evidenceKind: RuntimeBucketEvidenceKind = sampleCountMode === 'days'
+            ? (completeObservedCycleDays.length > 0 ? 'paired-cycle' : 'segment-only')
+            : 'uploaded-percentiles';
+        const exclusionReasons: string[] = [];
+        if (!hasCompleteCoverage) exclusionReasons.push('Incomplete segment coverage');
+        if (evidenceKind === 'segment-only') exclusionReasons.push('No complete paired cycle day');
+        if (runtimePatternKind === 'detour') exclusionReasons.push('Detour evidence is troubleshooting-only');
+        if (evidenceKind === 'uploaded-percentiles' && sampleCountMode !== 'observations') {
+            exclusionReasons.push('Observation counts are missing from the uploaded percentile CSV');
+        } else if (qualifyingCount < requiredCount) {
+            exclusionReasons.push(`Only ${qualifyingCount} of ${requiredCount} required ${sampleCountMode}`);
+        }
+
+        const preliminaryBucket: TripBucketAnalysis = {
             timeBucket: bucket,
             totalP50: sumP50,
             totalP80: sumP80,
@@ -550,7 +602,7 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
                 ? Math.round(percentileInc(observedCycleTotals, 0.8) * 100) / 100
                 : undefined,
             isOutlier: false,
-            ignored: sumP50 === 0, // Auto-ignore empty buckets
+            ignored: sumP50 === 0,
             details,
             expectedSegmentCount,
             observedSegmentCount: details.length,
@@ -561,7 +613,17 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
                 .sort((a, b) => b.date.localeCompare(a.date))
                 .slice(0, 10)
                 .map(({ date, runtime }) => ({ date, runtime })),
-        });
+            evidence: {
+                kind: evidenceKind,
+                qualifyingCount,
+                requiredCount,
+                planningEligible: false,
+                exclusionReasons,
+            },
+        };
+        preliminaryBucket.evidence!.planningEligible = evaluateRuntimeBucketEligibility(preliminaryBucket).eligible;
+
+        analysis.push(preliminaryBucket);
     });
 
     return analysis;
@@ -570,7 +632,9 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
 // 2. Outlier Detection (Mean +/- 2 StdDev)
 // To be called ONCE upon initial data load (or manual "Reset" action)
 export const detectOutliers = (analysis: TripBucketAnalysis[]): TripBucketAnalysis[] => {
-    const validItems = analysis.filter(a => getBucketBandingTotal(a) > 0);
+    const fallbackExpectedSegmentCount = getFallbackExpectedSegmentCount(analysis);
+    const validItems = analysis.filter(a => isBucketEligibleForBanding(a, fallbackExpectedSegmentCount));
+    const eligibleItems = new Set(validItems);
     if (validItems.length === 0) return analysis;
 
     const values = validItems.map(a => getBucketBandingTotal(a));
@@ -585,9 +649,19 @@ export const detectOutliers = (analysis: TripBucketAnalysis[]): TripBucketAnalys
     const upperBound = mean + (2 * stdDev);
 
     return analysis.map(item => {
+        if (!eligibleItems.has(item)) return item;
         const bucketTotal = getBucketBandingTotal(item);
         if (bucketTotal > 0 && (bucketTotal < lowerBound || bucketTotal > upperBound)) {
-            return { ...item, isOutlier: true, ignored: true }; // Auto-ignore outliers
+            return {
+                ...item,
+                isOutlier: true,
+                ignored: true,
+                evidence: item.evidence ? {
+                    ...item.evidence,
+                    planningEligible: false,
+                    exclusionReasons: [...item.evidence.exclusionReasons, 'Statistical outlier'],
+                } : item.evidence,
+            }; // Auto-ignore outliers
         }
         return item;
     });

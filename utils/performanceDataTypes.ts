@@ -280,6 +280,16 @@ export interface DailyCascadeMetrics {
 
 // APC load sanitization — cap absurd departureLoad values from hardware malfunctions
 export const DEFAULT_LOAD_CAP = 65; // just above crush load of 60
+export const MIN_LOAD_CAPACITY = 20;
+export const MAX_LOAD_CAPACITY = 150;
+
+export interface PerformanceLoadCapacityConfig {
+  defaultCapacity: number;
+  vehicleCapacities: Record<string, number>;
+  version: number;
+  updatedAt: string;
+  updatedBy: string;
+}
 
 export const OTP_THRESHOLDS = {
   earlySeconds: -180,   // > 3 min early
@@ -509,10 +519,15 @@ export interface RouteStopDeviationProfile {
 // ─── Ridership Heatmap (stop × trip matrix) ─────────────────────────
 
 export interface RidershipHeatmapTrip {
-  terminalDepartureTime: string;  // "HH:MM" - stable key across days
+  /** Stable within-day trip identity. Optional only for pre-v14 stored summaries. */
+  tripId?: string;
+  terminalDepartureTime: string;
   tripName: string;
   block: string;
   direction: string;
+  /** Vehicle and capacity used when this summary was aggregated. */
+  vehicleId?: string;
+  capacity?: number;
 }
 
 export interface RidershipHeatmapStop {
@@ -539,11 +554,11 @@ export interface DataQuality {
   totalRecords: number;
   inBetweenFiltered: number;
   missingAVL: number;       // null ObservedArrivalTime
-  missingAPC: number;       // records with 0 APC source
+  missingAPC: number;       // records without a positive APC source
   detourRecords: number;
   tripperRecords: number;
-  loadCapped: number;       // records where departureLoad was capped at DEFAULT_LOAD_CAP
-  apcExcludedFromLoad: number; // records with apcSource === 0 excluded from load calcs
+  loadCapped: number;       // records where departureLoad exceeded applied vehicle/default capacity
+  apcExcludedFromLoad: number; // records with apcSource <= 0 excluded from load calcs
 }
 
 export interface SystemMetrics {
@@ -572,6 +587,9 @@ export interface DailySummary {
   loadProfilePeakTrips?: LoadProfilePeakTrip[];
   loadProfiles: RouteLoadProfile[];
   ridershipHeatmaps?: RouteRidershipHeatmap[];
+  /** Capacity policy applied while sanitizing APC loads for this day. */
+  defaultLoadCapacity?: number;
+  loadCapacityConfigVersion?: number;
   missedTrips?: {
     totalScheduled: number;
     totalMatched: number;
@@ -605,7 +623,8 @@ export interface DailySummary {
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 13;
+export const PERFORMANCE_SCHEMA_VERSION = 14;
+export const RIDERSHIP_STABLE_TRIP_SCHEMA_VERSION = 14;
 export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 4;
 export const LOAD_PROFILE_VIEW_SCHEMA_VERSION = 1;
 

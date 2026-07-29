@@ -47,6 +47,23 @@ describe('parseRuntimeCSV', () => {
         const result = await parseRuntimeCSV(file);
 
         expect(result.sampleCountMode).toBeUndefined();
-        expect(result.segments[0].timeBuckets['06:00 - 06:29'].n).toBe(1);
+        expect(result.segments[0].timeBuckets['06:00 - 06:29'].n).toBe(0);
+    });
+
+    it('accepts an explicit positive-integer observation count row', async () => {
+        const file = {
+            text: async () => [
+                'Title,Stop A to Stop B',
+                'Half-Hour,06:00 - 06:29',
+                '10 Observed Runtime-50%,14',
+                '10 Observed Runtime-80%,17',
+                '10 Observed Runtime-Count,12',
+            ].join('\n'),
+        } as File;
+
+        const result = await parseRuntimeCSV(file);
+
+        expect(result.sampleCountMode).toBe('observations');
+        expect(result.segments[0].timeBuckets['06:00 - 06:29'].n).toBe(12);
     });
 });

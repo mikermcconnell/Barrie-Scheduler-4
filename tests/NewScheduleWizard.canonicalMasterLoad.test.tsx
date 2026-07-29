@@ -91,6 +91,8 @@ vi.mock('../utils/services/newScheduleProjectService', () => ({
     saveProject: vi.fn(),
     getProject: vi.fn(),
     getAllProjects: vi.fn().mockResolvedValue([]),
+    resetLegacyRuntimeProject: vi.fn().mockResolvedValue(1),
+    StaleNewScheduleProjectError: class StaleNewScheduleProjectError extends Error {},
 }));
 
 vi.mock('../utils/services/masterScheduleService', () => ({

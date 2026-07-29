@@ -134,12 +134,6 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
 
 const OPERATIONS_TOOLS: WorkspacePreviewItem[] = [
     {
-        feature: 'operationsLoadProfiles',
-        label: 'Load Profiles',
-        description: 'Passenger load profile analysis.',
-        previewKind: 'operations-tool',
-    },
-    {
         feature: 'operationsOperatorDwell',
         label: 'Operator Dwell',
         description: 'Operator dwell reporting and review.',

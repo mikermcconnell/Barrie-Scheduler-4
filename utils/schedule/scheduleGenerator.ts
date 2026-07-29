@@ -6,6 +6,31 @@ import { SegmentRawData, extractTimepointsFromSegments } from '../../components/
 import { getOperationalSortTime, reassignBlocksForTables } from '../blocks/blockAssignmentCore';
 import { normalizeSegmentStopKey } from '../runtimeSegmentMatching';
 import { createTripLineageId } from './tripLineage';
+import { evaluateRuntimeBucketEligibility } from '../ai/runtimeEvidenceEligibility';
+
+export interface StrictApprovedRuntimeOptions {
+    strictApprovedRuntime?: boolean;
+    /**
+     * Performance evidence is stored by North paired-cycle start, so both
+     * consecutive directions must use the same approved bucket. CSV evidence
+     * remains keyed to each trip's own departure.
+     */
+    approvedBucketMode?: 'trip-start' | 'paired-cycle-start';
+}
+
+export class MissingApprovedRuntimeError extends Error {
+    readonly direction: string;
+    readonly timeBucket: string;
+    readonly segmentName: string;
+
+    constructor(direction: string, timeBucket: string, segmentName: string) {
+        super(`No trusted runtime for ${direction} ${timeBucket}: ${segmentName}`);
+        this.name = 'MissingApprovedRuntimeError';
+        this.direction = direction;
+        this.timeBucket = timeBucket;
+        this.segmentName = segmentName;
+    }
+}
 
 const normalizeStopLookupKey = (value: string): string => {
     return value
@@ -134,8 +159,11 @@ export const generateSchedule = (
     gtfsStopLookup?: Record<string, string>,
     fallbackStopLookup?: Record<string, string>,
     canonicalTimepointsMap?: Record<string, string[]>,
-    directionalBuckets?: Record<string, TripBucketAnalysis[]>
+    directionalBuckets?: Record<string, TripBucketAnalysis[]>,
+    options: StrictApprovedRuntimeOptions = {}
 ): MasterRouteTable[] => {
+    const strictApprovedRuntime = options.strictApprovedRuntime === true;
+    const approvedBucketMode = options.approvedBucketMode ?? 'trip-start';
     // 1. Validation
     const isFloatingMode = config.cycleMode === 'Floating';
     const cycleTimeMinutes = config.cycleTime;
@@ -212,8 +240,18 @@ export const generateSchedule = (
         const lookupStr = `${Math.floor(h).toString().padStart(2, '0')}:${slotM.toString().padStart(2, '0')}`;
 
         // First try exact match
-        const bucket = sourceBuckets.find(b => b.timeBucket.startsWith(lookupStr) && !b.ignored && b.assignedBand);
+        const bucket = sourceBuckets.find(b => (
+            b.timeBucket.startsWith(lookupStr)
+            && !b.ignored
+            && b.assignedBand
+            && (!strictApprovedRuntime || evaluateRuntimeBucketEligibility(b, {
+                fallbackExpectedSegmentCount: b.details.length,
+                requireAssignedBand: true,
+            }).eligible)
+        ));
         if (bucket) return bucket;
+
+        if (strictApprovedRuntime) return null;
 
         // If no exact match, find the CLOSEST bucket with valid data
         const validBuckets = sourceBuckets.filter(b => !b.ignored && b.assignedBand && b.totalP50 > 0);
@@ -234,6 +272,21 @@ export const generateSchedule = (
         });
 
         return closestBucket;
+    };
+
+    const formatHalfHourBucketStart = (timeMinutes: number): string => {
+        const normalizedMinutes = ((Math.floor(timeMinutes) % 1440) + 1440) % 1440;
+        const hour = Math.floor(normalizedMinutes / 60);
+        const minute = normalizedMinutes % 60 >= 30 ? 30 : 0;
+        return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+    };
+
+    const getBandForBucket = (
+        bucket: TripBucketAnalysis | null,
+        direction: string
+    ): BandSummary | null => {
+        if (!bucket?.assignedBand) return null;
+        return bandSummary[direction]?.find(summary => summary.bandId === bucket.assignedBand) || null;
     };
 
     // Helper: Get band travel time for a given time slot
@@ -302,6 +355,8 @@ export const generateSchedule = (
             block.startDirection
         );
         let tripSequence = 1;
+        let activePairedCycleBucket: TripBucketAnalysis | null = null;
+        let activePairedCycleLegsRemaining = 0;
 
         // For mid-route starts: find start stop index in the first trip's direction.
         // Only applies to the first trip of the block; cleared after generation.
@@ -329,14 +384,58 @@ export const generateSchedule = (
         while (currentTime < endMins) {
             const dirSegments = segmentsMap[currentDir] || [];
             const dirTimepoints = timepointsMap[currentDir];
+            const usePairedCycleBucket = (
+                strictApprovedRuntime
+                && approvedBucketMode === 'paired-cycle-start'
+                && isRoundTrip
+            );
+            let strictTripBucket: TripBucketAnalysis | null = null;
+
+            if (strictApprovedRuntime) {
+                if (usePairedCycleBucket && !activePairedCycleBucket && currentDir !== 'North') {
+                    throw new MissingApprovedRuntimeError(
+                        currentDir,
+                        formatHalfHourBucketStart(currentTime),
+                        'paired cycle start (a North leg is required before South)'
+                    );
+                }
+                if (usePairedCycleBucket && activePairedCycleBucket) {
+                    strictTripBucket = activePairedCycleBucket;
+                } else {
+                    const strictBucketSource = usePairedCycleBucket
+                        ? buckets
+                        : (directionalBuckets?.[currentDir] || buckets);
+                    strictTripBucket = findBucketForTime(currentTime, strictBucketSource);
+
+                    if (usePairedCycleBucket && strictTripBucket) {
+                        activePairedCycleBucket = strictTripBucket;
+                        activePairedCycleLegsRemaining = 2;
+                    }
+                }
+            }
 
             // Use the trip's own departure time to select the runtime band for that direction.
-            const currentBand: BandSummary | null = getBandForTime(currentTime, currentDir);
+            const currentBand: BandSummary | null = strictApprovedRuntime
+                ? getBandForBucket(strictTripBucket, currentDir)
+                : getBandForTime(currentTime, currentDir);
 
             // Hardened segment time lookup with adjacent-band fallback
             const getReliableSegmentTime = (fromStop: string, toStop: string): { time: number; source: string } => {
                 const segmentName = `${fromStop} to ${toStop}`;
                 const dirBands = bandSummary[currentDir];
+
+                if (strictApprovedRuntime) {
+                    const exactBucket = strictTripBucket;
+                    const exactDetail = exactBucket?.details.find(detail => (
+                        normalizeSegmentStopKey(detail.segmentName) === normalizeSegmentStopKey(segmentName)
+                    ));
+                    if (!exactBucket || !exactDetail) {
+                        const timeBucket = exactBucket?.timeBucket.split(' - ')[0]
+                            ?? formatHalfHourBucketStart(currentTime);
+                        throw new MissingApprovedRuntimeError(currentDir, timeBucket, segmentName);
+                    }
+                    return { time: exactDetail.p50, source: 'approved-exact-bucket' };
+                }
 
                 // 1. Current band — use if reliable (n >= threshold)
                 if (currentBand) {
@@ -577,6 +676,14 @@ export const generateSchedule = (
             tripSequence++;
             // Clear mid-route start after first trip — subsequent trips are full-route
             pendingStartStopIdx = undefined;
+
+            if (usePairedCycleBucket && activePairedCycleBucket) {
+                activePairedCycleLegsRemaining -= 1;
+                if (activePairedCycleLegsRemaining <= 0) {
+                    activePairedCycleBucket = null;
+                    activePairedCycleLegsRemaining = 0;
+                }
+            }
 
             // Toggle Direction for Round Trip
             if (isRoundTrip) {

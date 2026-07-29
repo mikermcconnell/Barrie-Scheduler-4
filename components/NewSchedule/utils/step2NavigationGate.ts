@@ -14,12 +14,13 @@ export const getBlockedStep2FallbackStep = (
 
 export const resolveWizardStepWithStep2Gate = ({
     requestedStep,
-    approvalState: _approvalState,
-    hasReviewResult: _hasReviewResult,
+    approvalState,
+    hasReviewResult,
 }: Step2NavigationGateInput): Step2GatedWizardStep => {
-    return requestedStep;
+    if (requestedStep <= 2 || approvalState === 'approved') return requestedStep;
+    return getBlockedStep2FallbackStep(hasReviewResult);
 };
 
-export const isStep2NavigationBlocked = (
-    _input: Step2NavigationGateInput
-): boolean => false;
+export const isStep2NavigationBlocked = (input: Step2NavigationGateInput): boolean => (
+    input.requestedStep > 2 && input.approvalState !== 'approved'
+);

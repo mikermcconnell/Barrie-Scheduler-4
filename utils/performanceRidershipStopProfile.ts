@@ -1,10 +1,12 @@
 import type {
     DailySummary,
     LoadProfileStop,
+    PerformanceLoadCapacityConfig,
     RouteLoadProfile,
     RouteRidershipHeatmap,
 } from './performanceDataTypes';
-import { DEFAULT_LOAD_CAP } from './performanceDataTypes';
+import { DEFAULT_LOAD_CAP, RIDERSHIP_STABLE_TRIP_SCHEMA_VERSION } from './performanceDataTypes';
+import { resolvePerformanceLoadCapacity } from './performanceLoadCapacity';
 import { toMinutes } from './timeUtils';
 
 type LoadProfileStopWithCount = LoadProfileStop & {
@@ -35,6 +37,10 @@ export interface RidershipStopProfileRow {
     loadSource: RidershipStopProfileLoadSource;
     /** Number of trip-stop loads inferred by carrying passenger deltas through a block. */
     blockInferredLoadCount: number;
+    /** Number of reliable APC observations represented by this row. */
+    observedLoadObservationCount: number;
+    /** Number of legacy daily averages represented by this row. */
+    legacyLoadDayCount: number;
 }
 
 export type RidershipStopProfileLoadSource =
@@ -78,6 +84,60 @@ export interface RidershipStopProfileOption {
     blockInferenceUsesMinimumFeasibleAnchor: boolean;
     /** Block chains excluded because their passenger deltas produced an invalid load. */
     invalidBlockInferenceChainCount: number;
+    /** Visible provenance and coverage totals for the displayed stop profile. */
+    loadEvidence: RidershipStopProfileLoadEvidence;
+    /** Deterministic, opportunity-weighted confidence and inference health. */
+    loadQuality: RidershipStopProfileLoadQuality;
+}
+
+export type RidershipStopProfileLoadQualityRating = 'high' | 'medium' | 'low' | 'unavailable';
+export type RidershipStopProfileLoadQualityIssueCode =
+    | 'low-observed-coverage'
+    | 'estimated-load'
+    | 'legacy-load'
+    | 'unavailable-load'
+    | 'minimum-feasible-anchor'
+    | 'invalid-chain'
+    | 'open-ending'
+    | 'legacy-trip-identity'
+    | 'skipped-trip';
+
+export interface RidershipStopProfileLoadQualityIssue {
+    code: RidershipStopProfileLoadQualityIssueCode;
+    severity: 'info' | 'warning' | 'critical';
+    message: string;
+}
+
+export interface RidershipStopProfileLoadQuality {
+    methodVersion: 1;
+    score: number | null;
+    rating: RidershipStopProfileLoadQualityRating;
+    totalOpportunityCount: number;
+    observedOpportunityCount: number;
+    estimatedOpportunityCount: number;
+    legacyEstimatedOpportunityCount: number;
+    unavailableOpportunityCount: number;
+    attemptedChainCount: number;
+    validChainCount: number;
+    assumedEmptyAnchorChainCount: number;
+    minimumFeasibleAnchorChainCount: number;
+    invalidChainCount: number;
+    openEndingChainCount: number;
+    stableTripCount: number;
+    legacyTripIdentityCount: number;
+    skippedInferenceTripCount: number;
+    issues: RidershipStopProfileLoadQualityIssue[];
+}
+
+export interface RidershipStopProfileLoadEvidence {
+    totalStopCount: number;
+    observedStopCount: number;
+    observedObservationCount: number;
+    estimatedStopCount: number;
+    estimatedObservationCount: number;
+    legacyStopCount: number;
+    legacyDayCount: number;
+    unavailableStopCount: number;
 }
 
 export interface RidershipStopProfileResult {
@@ -94,6 +154,12 @@ interface DailyRouteData {
     assumedEmptyBlockCount: number;
     minimumFeasibleBlockCount: number;
     invalidBlockCount: number;
+    attemptedBlockCount: number;
+    validBlockCount: number;
+    openEndingBlockCount: number;
+    stableTripCount: number;
+    legacyTripIdentityCount: number;
+    skippedInferenceTripCount: number;
 }
 
 type LoadSource = 'observed' | 'legacy' | 'block-inferred';
@@ -122,6 +188,12 @@ interface InferredOptionLoads {
     assumedEmptyBlocks: Set<string>;
     minimumFeasibleBlocks: Set<string>;
     invalidBlocks: Set<string>;
+    attemptedBlocks: Set<string>;
+    validBlocks: Set<string>;
+    openEndingBlocks: Set<string>;
+    stableTripCount: number;
+    legacyTripIdentityCount: number;
+    skippedInferenceTripCount: number;
 }
 
 interface InferenceStop {
@@ -135,6 +207,8 @@ interface InferenceTrip {
     block: string;
     departureMinutes: number;
     sequence: number;
+    tripIdentity: string;
+    capacity: number;
     stops: InferenceStop[];
 }
 
@@ -156,17 +230,36 @@ function isUsableProfileLoad(load: LoadProfileStopWithCount): boolean {
     return load.avgLoad !== 0;
 }
 
-function inferLoadsByBlock(day: DailySummary): Map<string, InferredOptionLoads> {
+function inferLoadsByBlock(
+    day: DailySummary,
+    liveCapacityConfig?: PerformanceLoadCapacityConfig,
+): Map<string, InferredOptionLoads> {
     const tripsByRouteBlock = new Map<string, InferenceTrip[]>();
-    const optionsWithUsableProfiles = new Set(
-        (day.loadProfiles ?? [])
-            .filter(profile => profile.stops.some(stop => isUsableProfileLoad(stop as LoadProfileStopWithCount)))
-            .map(profile => optionKey(profile.routeId, profile.direction)),
-    );
+    const result = new Map<string, InferredOptionLoads>();
     let sequence = 0;
+
+    const ensureOption = (key: string): InferredOptionLoads => {
+        const existing = result.get(key);
+        if (existing) return existing;
+        const created: InferredOptionLoads = {
+            loads: new Map(),
+            assumedEmptyBlocks: new Set(),
+            minimumFeasibleBlocks: new Set(),
+            invalidBlocks: new Set(),
+            attemptedBlocks: new Set(),
+            validBlocks: new Set(),
+            openEndingBlocks: new Set(),
+            stableTripCount: 0,
+            legacyTripIdentityCount: 0,
+            skippedInferenceTripCount: 0,
+        };
+        result.set(key, created);
+        return created;
+    };
 
     for (const heatmap of day.ridershipHeatmaps ?? []) {
         const routeOptionKey = optionKey(heatmap.routeId, heatmap.direction);
+        const option = ensureOption(routeOptionKey);
         const orderedStopIndexes = heatmap.stops
             .map((stop, index) => ({ stop, index }))
             .sort((a, b) => a.stop.routeStopIndex - b.stop.routeStopIndex || a.index - b.index);
@@ -182,9 +275,18 @@ function inferLoadsByBlock(day: DailySummary): Map<string, InferredOptionLoads> 
         }
 
         heatmap.trips.forEach((trip, tripIndex) => {
+            const hasStableIdentity = day.schemaVersion >= RIDERSHIP_STABLE_TRIP_SCHEMA_VERSION
+                && typeof trip.tripId === 'string'
+                && trip.tripId.trim().length > 0;
+            if (hasStableIdentity) option.stableTripCount++;
+            else option.legacyTripIdentityCount++;
+
             const block = trip.block?.trim();
             const departureMinutes = toMinutes(trip.terminalDepartureTime);
-            if (!block || departureMinutes === null) return;
+            if (!block || departureMinutes === null) {
+                option.skippedInferenceTripCount++;
+                return;
+            }
 
             const stops: InferenceStop[] = [];
             for (const { index } of orderedStopIndexes) {
@@ -196,13 +298,24 @@ function inferLoadsByBlock(day: DailySummary): Map<string, InferredOptionLoads> 
                     alightings: cell[1],
                 });
             }
-            if (stops.length === 0) return;
+            if (stops.length === 0) {
+                option.skippedInferenceTripCount++;
+                return;
+            }
 
+            const storedCapacity = Number.isFinite(trip.capacity) && Number(trip.capacity) > 0
+                ? Number(trip.capacity)
+                : (day.defaultLoadCapacity ?? DEFAULT_LOAD_CAP);
+            const capacity = liveCapacityConfig
+                ? resolvePerformanceLoadCapacity(liveCapacityConfig, trip.vehicleId)
+                : storedCapacity;
             const candidate: InferenceTrip = {
                 optionKey: routeOptionKey,
                 block,
                 departureMinutes,
                 sequence: sequence++,
+                tripIdentity: trip.tripId?.trim() || `legacy:${tripIndex}`,
+                capacity,
                 stops,
             };
             const routeBlockKey = JSON.stringify([heatmap.routeId, block]);
@@ -212,38 +325,29 @@ function inferLoadsByBlock(day: DailySummary): Map<string, InferredOptionLoads> 
         });
     }
 
-    const result = new Map<string, InferredOptionLoads>();
-    const ensureOption = (key: string): InferredOptionLoads => {
-        const existing = result.get(key);
-        if (existing) return existing;
-        const created: InferredOptionLoads = {
-            loads: new Map(),
-            assumedEmptyBlocks: new Set(),
-            minimumFeasibleBlocks: new Set(),
-            invalidBlocks: new Set(),
-        };
-        result.set(key, created);
-        return created;
-    };
-
-    for (const blockTrips of tripsByRouteBlock.values()) {
-        const block = blockTrips[0].block;
+    for (const [routeBlockKey, blockTrips] of tripsByRouteBlock) {
         const orderedTrips = [...blockTrips].sort((a, b) =>
-            a.departureMinutes - b.departureMinutes || a.sequence - b.sequence
+            a.departureMinutes - b.departureMinutes
+            || a.tripIdentity.localeCompare(b.tripIdentity)
+            || a.sequence - b.sequence
         );
         const touchedOptions = new Set(orderedTrips.map(trip => trip.optionKey));
-        // Daily load profiles are route-direction-stop averages, not trip anchors.
-        // If any direction participating in this route/block chain has usable load,
-        // suppress the independently anchored trajectory for the entire chain.
-        if ([...touchedOptions].some(key => optionsWithUsableProfiles.has(key))) continue;
+        for (const key of touchedOptions) ensureOption(key).attemptedBlocks.add(routeBlockKey);
 
         let cumulativeLoad = 0;
         let minimumCumulativeLoad = 0;
-        let maximumCumulativeLoad = 0;
-        let valid = true;
-        const pending: Array<{ optionKey: string; occurrenceKey: string; cumulativeLoad: number }> = [];
+        let valid = !orderedTrips.some((trip, index) =>
+            index > 0 && trip.departureMinutes === orderedTrips[index - 1].departureMinutes
+        );
+        const pending: Array<{
+            optionKey: string;
+            occurrenceKey: string;
+            cumulativeLoad: number;
+            capacity: number;
+        }> = [];
 
         for (const trip of orderedTrips) {
+            if (!valid) break;
             for (const stop of trip.stops) {
                 if (!Number.isFinite(stop.boardings) || !Number.isFinite(stop.alightings)) {
                     valid = false;
@@ -255,28 +359,34 @@ function inferLoadsByBlock(day: DailySummary): Map<string, InferredOptionLoads> 
                     break;
                 }
                 minimumCumulativeLoad = Math.min(minimumCumulativeLoad, cumulativeLoad);
-                maximumCumulativeLoad = Math.max(maximumCumulativeLoad, cumulativeLoad);
                 pending.push({
                     optionKey: trip.optionKey,
                     occurrenceKey: stop.occurrenceKey,
                     cumulativeLoad,
+                    capacity: trip.capacity,
                 });
             }
-            if (!valid) break;
         }
 
         const startingLoad = Math.max(0, -minimumCumulativeLoad);
-        if (!Number.isFinite(startingLoad) || startingLoad + maximumCumulativeLoad > DEFAULT_LOAD_CAP) {
+        if (!Number.isFinite(startingLoad) || pending.some(entry => {
+            const inferredLoad = startingLoad + entry.cumulativeLoad;
+            return inferredLoad < 0 || inferredLoad > entry.capacity;
+        })) {
             valid = false;
         }
         if (!valid) {
-            for (const key of touchedOptions) ensureOption(key).invalidBlocks.add(block);
+            for (const key of touchedOptions) ensureOption(key).invalidBlocks.add(routeBlockKey);
             continue;
         }
 
+        const endingLoad = startingLoad + cumulativeLoad;
         for (const key of touchedOptions) {
-            if (startingLoad === 0) ensureOption(key).assumedEmptyBlocks.add(block);
-            else ensureOption(key).minimumFeasibleBlocks.add(block);
+            const option = ensureOption(key);
+            option.validBlocks.add(routeBlockKey);
+            if (startingLoad === 0) option.assumedEmptyBlocks.add(routeBlockKey);
+            else option.minimumFeasibleBlocks.add(routeBlockKey);
+            if (endingLoad > 0) option.openEndingBlocks.add(routeBlockKey);
         }
         for (const entry of pending) {
             const option = ensureOption(entry.optionKey);
@@ -331,12 +441,43 @@ function chooseLoadProfile(
     return profiles.find(profile => profile.routeId === routeId && profile.direction === direction);
 }
 
+function chooseDailyLoad(
+    loadStop: LoadProfileStopWithCount | undefined,
+    inferred: number[],
+): LoadValue | null {
+    if (loadStop && isUsableProfileLoad(loadStop)) {
+        return {
+            value: loadStop.avgLoad,
+            observationCount: loadStop.loadObservationCount,
+            source: loadStop.loadObservationCount === undefined ? 'legacy' : 'observed',
+        };
+    }
+
+    if (inferred.length > 0) {
+        return {
+            value: inferred.reduce((sum, value) => sum + value, 0) / inferred.length,
+            observationCount: inferred.length,
+            source: 'block-inferred',
+        };
+    }
+
+    // Retain the legacy-zero ambiguity marker when neither APC nor heatmap
+    // inference can distinguish a genuine zero from missing load data.
+    if (loadStop && loadStop.loadObservationCount === undefined) {
+        return { value: loadStop.avgLoad, source: 'legacy' };
+    }
+
+    return null;
+}
+
 function calculateLoad(loads: StopAccumulator['loads']): {
     averageLoad: number | null;
     loadObservationCount: number | null;
     loadEstimated: boolean;
     loadSource: RidershipStopProfileLoadSource;
     blockInferredLoadCount: number;
+    observedLoadObservationCount: number;
+    legacyLoadDayCount: number;
 } {
     const ambiguousLegacyZero = loads.some(load =>
         load.source === 'legacy' && load.observationCount === undefined && load.value === 0
@@ -356,13 +497,19 @@ function calculateLoad(loads: StopAccumulator['loads']): {
             loadEstimated: ambiguousLegacyZero,
             loadSource: 'none',
             blockInferredLoadCount: 0,
+            observedLoadObservationCount: 0,
+            legacyLoadDayCount: 0,
         };
     }
 
     const sources = new Set(usable.map(load => load.source));
+    const observedLoadObservationCount = usable
+        .filter(load => load.source === 'observed')
+        .reduce((sum, load) => sum + (load.observationCount ?? 0), 0);
     const blockInferredLoadCount = usable
         .filter(load => load.source === 'block-inferred')
         .reduce((sum, load) => sum + (load.observationCount ?? 0), 0);
+    const legacyLoadDayCount = usable.filter(load => load.source === 'legacy').length;
     const legacyPresent = sources.has('legacy');
     if (legacyPresent) {
         // Legacy profiles do not retain observation counts. Preserve the historical
@@ -376,6 +523,8 @@ function calculateLoad(loads: StopAccumulator['loads']): {
                 ? 'legacy'
                 : 'mixed',
             blockInferredLoadCount,
+            observedLoadObservationCount,
+            legacyLoadDayCount,
         };
     }
 
@@ -387,6 +536,8 @@ function calculateLoad(loads: StopAccumulator['loads']): {
             loadEstimated: false,
             loadSource: 'none',
             blockInferredLoadCount: 0,
+            observedLoadObservationCount: 0,
+            legacyLoadDayCount: 0,
         };
     }
 
@@ -401,6 +552,8 @@ function calculateLoad(loads: StopAccumulator['loads']): {
             ? (sources.has('observed') ? 'observed' : 'block-inferred')
             : 'mixed',
         blockInferredLoadCount,
+        observedLoadObservationCount,
+        legacyLoadDayCount,
     };
 }
 
@@ -415,12 +568,125 @@ function highestRow(
     )[0] ?? null;
 }
 
+interface LoadQualityCounts {
+    totalOpportunityCount: number;
+    observedOpportunityCount: number;
+    estimatedOpportunityCount: number;
+    legacyEstimatedOpportunityCount: number;
+    unavailableOpportunityCount: number;
+}
+
+function computeLoadQuality(
+    counts: LoadQualityCounts,
+    diagnostics: Omit<RidershipStopProfileLoadQuality,
+        | 'methodVersion'
+        | 'score'
+        | 'rating'
+        | 'totalOpportunityCount'
+        | 'observedOpportunityCount'
+        | 'estimatedOpportunityCount'
+        | 'legacyEstimatedOpportunityCount'
+        | 'unavailableOpportunityCount'
+        | 'issues'>,
+): RidershipStopProfileLoadQuality {
+    const total = counts.totalOpportunityCount;
+    const available = counts.observedOpportunityCount
+        + counts.estimatedOpportunityCount
+        + counts.legacyEstimatedOpportunityCount;
+    let score: number | null = null;
+    if (total > 0 && available > 0) {
+        const evidenceScore = (
+            (100 * counts.observedOpportunityCount)
+            + (60 * counts.estimatedOpportunityCount)
+            + (30 * counts.legacyEstimatedOpportunityCount)
+        ) / total;
+        const attempted = Math.max(1, diagnostics.attemptedChainCount);
+        const tripCount = Math.max(1, diagnostics.stableTripCount + diagnostics.legacyTripIdentityCount);
+        const estimatedShare = counts.estimatedOpportunityCount / total;
+        const nonObservedShare = (
+            counts.estimatedOpportunityCount
+            + counts.legacyEstimatedOpportunityCount
+            + counts.unavailableOpportunityCount
+        ) / total;
+        const inferencePenalty = estimatedShare * (
+            10 * (diagnostics.minimumFeasibleAnchorChainCount / attempted)
+            + 5 * (diagnostics.openEndingChainCount / attempted)
+            + 10 * (diagnostics.legacyTripIdentityCount / tripCount)
+        );
+        const invalidPenalty = 5 * nonObservedShare * (diagnostics.invalidChainCount / attempted);
+        score = Math.max(0, Math.min(100, Math.round(evidenceScore - inferencePenalty - invalidPenalty)));
+    }
+
+    const rating: RidershipStopProfileLoadQualityRating = score === null
+        ? 'unavailable'
+        : score >= 90
+            ? 'high'
+            : score >= 60
+                ? 'medium'
+                : 'low';
+    const issues: RidershipStopProfileLoadQualityIssue[] = [];
+    const observedShare = total > 0 ? counts.observedOpportunityCount / total : 0;
+    if (total > 0 && observedShare < 0.8) issues.push({
+        code: 'low-observed-coverage',
+        severity: observedShare < 0.25 ? 'critical' : 'warning',
+        message: `${Math.round(observedShare * 100)}% of served trip-stop loads are backed by reliable APC observations.`,
+    });
+    if (counts.estimatedOpportunityCount > 0) issues.push({
+        code: 'estimated-load', severity: 'info',
+        message: `${counts.estimatedOpportunityCount.toLocaleString()} trip-stop loads use passenger-flow estimates.`,
+    });
+    if (counts.legacyEstimatedOpportunityCount > 0) issues.push({
+        code: 'legacy-load', severity: 'warning',
+        message: `${counts.legacyEstimatedOpportunityCount.toLocaleString()} trip-stop loads rely on historical averages without sample counts.`,
+    });
+    if (counts.unavailableOpportunityCount > 0) issues.push({
+        code: 'unavailable-load', severity: 'critical',
+        message: `${counts.unavailableOpportunityCount.toLocaleString()} served trip-stop loads have no usable load evidence.`,
+    });
+    if (diagnostics.minimumFeasibleAnchorChainCount > 0) issues.push({
+        code: 'minimum-feasible-anchor', severity: 'warning',
+        message: `${diagnostics.minimumFeasibleAnchorChainCount.toLocaleString()} block chains use a lower-bound starting-load anchor.`,
+    });
+    if (diagnostics.invalidChainCount > 0) issues.push({
+        code: 'invalid-chain', severity: 'critical',
+        message: `${diagnostics.invalidChainCount.toLocaleString()} block chains were rejected as ambiguous or outside vehicle capacity.`,
+    });
+    if (diagnostics.openEndingChainCount > 0) issues.push({
+        code: 'open-ending', severity: 'warning',
+        message: `${diagnostics.openEndingChainCount.toLocaleString()} block chains end the selected window with riders still onboard.`,
+    });
+    if (diagnostics.legacyTripIdentityCount > 0) issues.push({
+        code: 'legacy-trip-identity', severity: 'warning',
+        message: `${diagnostics.legacyTripIdentityCount.toLocaleString()} trips predate stable heatmap identity and may contain same-time collisions.`,
+    });
+    if (diagnostics.skippedInferenceTripCount > 0) issues.push({
+        code: 'skipped-trip', severity: 'warning',
+        message: `${diagnostics.skippedInferenceTripCount.toLocaleString()} trips could not enter inference because block, time, or activity evidence was missing.`,
+    });
+
+    return {
+        methodVersion: 1,
+        score,
+        rating,
+        ...counts,
+        ...diagnostics,
+        issues,
+    };
+}
+
 function buildOption(routeDays: DailyRouteData[]): RidershipStopProfileOption {
     const first = routeDays[0].heatmap;
     const serviceDates = new Set(routeDays.map(day => day.date));
     const serviceDays = serviceDates.size;
     const patterns = new Set(routeDays.map(day => patternSignature(day.heatmap)));
     const stops = new Map<string, StopAccumulator>();
+    const qualityCounts: LoadQualityCounts = {
+        totalOpportunityCount: 0,
+        observedOpportunityCount: 0,
+        estimatedOpportunityCount: 0,
+        legacyEstimatedOpportunityCount: 0,
+        unavailableOpportunityCount: 0,
+    };
 
     for (const day of routeDays) {
         const dailyStopOccurrences = new Set<string>();
@@ -480,36 +746,29 @@ function buildOption(routeDays: DailyRouteData[]): RidershipStopProfileOption {
             if (!dailyStopOccurrences.has(occurrenceKey)) {
                 const loadStop = occurrenceLoadStops.get(occurrenceKey)
                     ?? legacyLoadStops.get(loadOccurrenceKey);
-                if (loadStop) {
-                    if (isUsableProfileLoad(loadStop)) {
-                        accumulator.loads.push({
-                            value: loadStop.avgLoad,
-                            observationCount: loadStop.loadObservationCount,
-                            source: loadStop.loadObservationCount === undefined ? 'legacy' : 'observed',
-                        });
+                const inferredLoads = day.inferredLoads.get(occurrenceKey) ?? [];
+                const dailyLoad = chooseDailyLoad(
+                    loadStop,
+                    inferredLoads,
+                );
+                if (dailyLoad) accumulator.loads.push(dailyLoad);
+                const opportunities = (day.heatmap.cells[stopIndex] ?? [])
+                    .reduce((count, cell) => count + (cell ? 1 : 0), 0);
+                qualityCounts.totalOpportunityCount += opportunities;
+                if (loadStop && isUsableProfileLoad(loadStop)) {
+                    if (loadStop.loadObservationCount === undefined) {
+                        qualityCounts.legacyEstimatedOpportunityCount += opportunities;
                     } else {
-                        const inferred = day.inferredLoads.get(occurrenceKey) ?? [];
-                        if (inferred.length > 0) {
-                            accumulator.loads.push({
-                                value: inferred.reduce((sum, value) => sum + value, 0) / inferred.length,
-                                observationCount: inferred.length,
-                                source: 'block-inferred',
-                            });
-                        }
-                        // Retain the legacy-zero ambiguity marker when inference is unavailable.
-                        if (inferred.length === 0 && loadStop.loadObservationCount === undefined) {
-                            accumulator.loads.push({ value: loadStop.avgLoad, source: 'legacy' });
-                        }
+                        const observed = Math.min(opportunities, Math.max(0, loadStop.loadObservationCount));
+                        qualityCounts.observedOpportunityCount += observed;
+                        qualityCounts.unavailableOpportunityCount += opportunities - observed;
                     }
+                } else if (inferredLoads.length > 0) {
+                    const estimated = Math.min(opportunities, inferredLoads.length);
+                    qualityCounts.estimatedOpportunityCount += estimated;
+                    qualityCounts.unavailableOpportunityCount += opportunities - estimated;
                 } else {
-                    const inferred = day.inferredLoads.get(occurrenceKey) ?? [];
-                    if (inferred.length > 0) {
-                        accumulator.loads.push({
-                            value: inferred.reduce((sum, value) => sum + value, 0) / inferred.length,
-                            observationCount: inferred.length,
-                            source: 'block-inferred',
-                        });
-                    }
+                    qualityCounts.unavailableOpportunityCount += opportunities;
                 }
                 dailyStopOccurrences.add(occurrenceKey);
             }
@@ -540,6 +799,27 @@ function buildOption(routeDays: DailyRouteData[]): RidershipStopProfileOption {
     const busiestAlighting = highestRow(rows, row => row.alightings);
     const loadRows = rows.filter(row => row.averageLoad !== null);
     const peakLoad = highestRow(loadRows, row => row.averageLoad ?? Number.NEGATIVE_INFINITY);
+    const loadEvidence: RidershipStopProfileLoadEvidence = {
+        totalStopCount: rows.length,
+        observedStopCount: rows.filter(row => row.observedLoadObservationCount > 0).length,
+        observedObservationCount: rows.reduce((sum, row) => sum + row.observedLoadObservationCount, 0),
+        estimatedStopCount: rows.filter(row => row.blockInferredLoadCount > 0).length,
+        estimatedObservationCount: rows.reduce((sum, row) => sum + row.blockInferredLoadCount, 0),
+        legacyStopCount: rows.filter(row => row.legacyLoadDayCount > 0).length,
+        legacyDayCount: rows.reduce((sum, row) => sum + row.legacyLoadDayCount, 0),
+        unavailableStopCount: rows.filter(row => row.averageLoad === null).length,
+    };
+    const loadQuality = computeLoadQuality(qualityCounts, {
+        attemptedChainCount: routeDays.reduce((sum, day) => sum + day.attemptedBlockCount, 0),
+        validChainCount: routeDays.reduce((sum, day) => sum + day.validBlockCount, 0),
+        assumedEmptyAnchorChainCount: routeDays.reduce((sum, day) => sum + day.assumedEmptyBlockCount, 0),
+        minimumFeasibleAnchorChainCount: routeDays.reduce((sum, day) => sum + day.minimumFeasibleBlockCount, 0),
+        invalidChainCount: routeDays.reduce((sum, day) => sum + day.invalidBlockCount, 0),
+        openEndingChainCount: routeDays.reduce((sum, day) => sum + day.openEndingBlockCount, 0),
+        stableTripCount: routeDays.reduce((sum, day) => sum + day.stableTripCount, 0),
+        legacyTripIdentityCount: routeDays.reduce((sum, day) => sum + day.legacyTripIdentityCount, 0),
+        skippedInferenceTripCount: routeDays.reduce((sum, day) => sum + day.skippedInferenceTripCount, 0),
+    });
 
     return {
         key: optionKey(first.routeId, first.direction),
@@ -574,6 +854,8 @@ function buildOption(routeDays: DailyRouteData[]): RidershipStopProfileOption {
         blockInferenceAssumedEmptyAnchor: routeDays.some(day => day.assumedEmptyBlockCount > 0),
         blockInferenceUsesMinimumFeasibleAnchor: routeDays.some(day => day.minimumFeasibleBlockCount > 0),
         invalidBlockInferenceChainCount: routeDays.reduce((sum, day) => sum + day.invalidBlockCount, 0),
+        loadEvidence,
+        loadQuality,
     };
 }
 
@@ -581,32 +863,36 @@ function buildOption(routeDays: DailyRouteData[]): RidershipStopProfileOption {
  * Builds chart-ready passenger flow profiles from already-filtered daily summaries.
  * Heatmaps are authoritative for boarding/alighting totals; load profiles only provide load.
  */
-export function buildRidershipStopProfiles(days: DailySummary[]): RidershipStopProfileResult {
+export function buildRidershipStopProfiles(
+    days: DailySummary[],
+    liveCapacityConfig?: PerformanceLoadCapacityConfig,
+): RidershipStopProfileResult {
     const grouped = new Map<string, DailyRouteData[]>();
     const seenServiceDays = new Set<string>();
 
     for (const day of days) {
-        const inferredByOption = inferLoadsByBlock(day);
+        const inferredByOption = inferLoadsByBlock(day, liveCapacityConfig);
         for (const heatmap of day.ridershipHeatmaps ?? []) {
             const key = optionKey(heatmap.routeId, heatmap.direction);
             const serviceDayKey = `${day.date}\u001f${key}`;
             if (seenServiceDays.has(serviceDayKey)) continue;
             seenServiceDays.add(serviceDayKey);
             const loadProfile = chooseLoadProfile(day.loadProfiles ?? [], heatmap.routeId, heatmap.direction);
-            // A daily load profile is already averaged by route-direction-stop, not
-            // trip-occurrence APC. If any stop is usable, keep that profile intact
-            // and do not fill its gaps from a separately anchored block trajectory.
-            const inferenceEligible = !loadProfile
-                || !loadProfile.stops.some(stop => isUsableProfileLoad(stop as LoadProfileStopWithCount));
             const inferred = inferredByOption.get(key);
             const entry: DailyRouteData = {
                 date: day.date,
                 heatmap,
                 loadProfile,
-                inferredLoads: inferenceEligible ? (inferred?.loads ?? new Map()) : new Map(),
-                assumedEmptyBlockCount: inferenceEligible ? (inferred?.assumedEmptyBlocks.size ?? 0) : 0,
-                minimumFeasibleBlockCount: inferenceEligible ? (inferred?.minimumFeasibleBlocks.size ?? 0) : 0,
-                invalidBlockCount: inferenceEligible ? (inferred?.invalidBlocks.size ?? 0) : 0,
+                inferredLoads: inferred?.loads ?? new Map(),
+                assumedEmptyBlockCount: inferred?.assumedEmptyBlocks.size ?? 0,
+                minimumFeasibleBlockCount: inferred?.minimumFeasibleBlocks.size ?? 0,
+                invalidBlockCount: inferred?.invalidBlocks.size ?? 0,
+                attemptedBlockCount: inferred?.attemptedBlocks.size ?? 0,
+                validBlockCount: inferred?.validBlocks.size ?? 0,
+                openEndingBlockCount: inferred?.openEndingBlocks.size ?? 0,
+                stableTripCount: inferred?.stableTripCount ?? 0,
+                legacyTripIdentityCount: inferred?.legacyTripIdentityCount ?? 0,
+                skippedInferenceTripCount: inferred?.skippedInferenceTripCount ?? 0,
             };
             const existing = grouped.get(key);
             if (existing) existing.push(entry);

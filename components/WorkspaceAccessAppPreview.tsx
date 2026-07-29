@@ -286,9 +286,6 @@ function getPreviewActions(item: WorkspacePreviewItem): string[] {
     if (item.feature === 'analyticsCouncilIntelligence') {
         return ['Meeting Records', 'Council Decisions', 'Votes & Positions', 'Transit Actions'];
     }
-    if (item.feature === 'operationsLoadProfiles') {
-        return ['Load Profile Dashboard', 'Export'];
-    }
     if (item.feature === 'operationsOperatorDwell') {
         return ['Dwell Summary', 'Operator Report'];
     }

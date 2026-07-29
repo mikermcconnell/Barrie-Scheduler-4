@@ -23,7 +23,7 @@ import { Step2ApprovedRuntimeModelPanel } from './Step2ApprovedRuntimeModelPanel
 import { Step2ReadinessPanel } from './Step2ReadinessPanel';
 import { Step2RuntimeReviewHeader } from './Step2RuntimeReviewHeader';
 import { Step2TravelViewsPanel } from './Step2TravelViewsPanel';
-import { useStep2RuntimeReview } from '../hooks/useStep2RuntimeReview';
+import { useStep2RuntimeReview, type Step2BucketConfidence } from '../hooks/useStep2RuntimeReview';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
 import { AlertTriangle, CheckCircle2, TrendingUp, BarChart2, ChevronDown, ChevronRight, Eye, EyeOff, Table } from 'lucide-react';
 import { buildNormalizedSegmentNameLookup, resolveCanonicalSegmentName } from '../../../utils/runtimeSegmentMatching';
@@ -241,7 +241,7 @@ const SegmentBreakdownMatrix: React.FC<{
                     <h3 className="font-bold text-gray-900">Segment Times by Band</h3>
                 </div>
                 <span className="text-xs text-gray-500">
-                    Segment cells show weighted {metricLabel} summaries. Band Avg shows the actual average {metricLabel} cycle total.
+                    Segment cells show weighted {metricLabel} summaries. Band Avg shows the evidence-backed average {metricLabel} cycle total.
                 </span>
             </div>
             <div className="overflow-x-auto">
@@ -364,7 +364,7 @@ const SegmentBreakdownMatrix: React.FC<{
                                     >
                                         <div>{actualBandAverage !== null ? actualBandAverage.toFixed(1) : '-'}</div>
                                         <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
-                                            actual avg
+                                            evidence avg
                                         </div>
                                     </td>
                                 </tr>
@@ -382,16 +382,7 @@ const StopToStopMatrix: React.FC<{
     bands: TimeBand[];
     viewMetric: 'p50' | 'p80';
     segmentColumns: OrderedSegmentColumn[];
-    bucketConfidence: Record<string, {
-        matchedSegments: number;
-        expectedSegments: number;
-        missingSegments: number;
-        minSegmentSamples: number;
-        avgSegmentSamples: number;
-        hasLowSamples: boolean;
-        hasMissingSegments: boolean;
-        isLowConfidence: boolean;
-    }>;
+    bucketConfidence: Record<string, Step2BucketConfidence>;
     title?: string;
     description?: string;
     badges?: string[];
@@ -554,7 +545,7 @@ const StopToStopMatrix: React.FC<{
                                                 )}
                                                 {confidence?.isLowConfidence && (
                                                     <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${getBucketConfidenceClasses(confidence)}`}>
-                                                        Low
+                                                        {confidence.planningEligible === false ? 'Not scheduling' : 'Low'}
                                                     </span>
                                                 )}
                                             </div>
@@ -815,7 +806,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                     </h3>
                 </div>
                 <p className="mb-4 text-xs text-gray-500">
-                    Bars show actual {metricLabel} bucket totals. {bandContextLabel}
+                    Bars show evidence-backed {metricLabel} bucket totals. {bandContextLabel}
                     {partialRouteChartBuckets.length > 0 && (
                         <span className="mt-1 block font-semibold text-orange-700">
                             Partial-route buckets are tagged on the chart and excluded from banding until the full route is observed.
@@ -895,12 +886,17 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                                         {data.confidence.isLowConfidence && (
                                                             <div className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-700 font-semibold">
                                                                 <AlertTriangle size={12} />
-                                                                {data.confidence.hasMissingSegments
+                                                                {data.confidence.qualifyingCount !== undefined && data.confidence.requiredCount !== undefined
+                                                                    ? `${data.confidence.qualifyingCount} of ${data.confidence.requiredCount} required ${sampleCountMode === 'days' ? 'days' : 'observations'}`
+                                                                    : data.confidence.hasMissingSegments
                                                                     ? data.confidence.coverageCauseLabel
                                                                         ? `${data.confidence.coverageCauseLabel} (${data.confidence.missingSegments} segment${data.confidence.missingSegments === 1 ? '' : 's'} missing)`
                                                                         : `Incomplete coverage (${data.confidence.missingSegments} segment${data.confidence.missingSegments === 1 ? '' : 's'} missing)`
                                                                     : `Low ${sampleCountMode === 'days' ? 'day' : 'sample'} bucket (< ${confidenceThreshold} ${sampleCountPluralLabel})`}
                                                             </div>
+                                                        )}
+                                                        {data.confidence.exclusionReasons && data.confidence.exclusionReasons.length > 0 && (
+                                                            <div className="text-amber-700">Not for scheduling: {data.confidence.exclusionReasons.join('; ')}</div>
                                                         )}
                                                     </div>
                                                 )}
@@ -982,7 +978,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                             <p className="text-sm text-blue-700 mt-1">
                                 The chart shows the observed cycle total for each 30-minute bucket.
                                 The matrix below summarizes those buckets into broader time bands using weighted segment summaries.
-                                Its <strong>Band Avg</strong> column and the legend show the actual average bucket total for that band.
+                                Its <strong>Band Avg</strong> column and the legend show the evidence-backed average bucket total for that band.
                                 Buckets with thin data or missing segment coverage are dimmed and outlined.
                                 Buckets missing one or more segments remain visible, but do not contribute to band calculations until coverage is complete.
                                 Bands (A-E) are calculated from the <strong>50th Percentile</strong> (median) cycle totals.
@@ -1008,7 +1004,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: band.color }} />
                             <span className="text-xs font-bold text-gray-700">
                                 {displayedBandTotals.has(band.id)
-                                    ? `Band ${band.id} (${displayedBandTotals.get(band.id)!.toFixed(1)}m actual avg)`
+                                    ? `Band ${band.id} (${displayedBandTotals.get(band.id)!.toFixed(1)}m evidence avg)`
                                     : `Band ${band.id} (no active buckets)`}
                             </span>
                         </div>
@@ -1108,7 +1104,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                                 >
                                                     {row.assignedBand}
                                                 </span>
-                                            ) : confidence?.hasMissingSegments ? (
+                                            ) : confidence?.planningEligible === false ? (
                                                 <span className="rounded-full bg-orange-50 px-2 py-1 text-[11px] font-semibold text-orange-700">
                                                     Unbanded
                                                 </span>
@@ -1134,6 +1130,11 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                                                 : `${confidence.missingSegments} segment${confidence.missingSegments === 1 ? '' : 's'} missing`}
                                                         </span>
                                                     )}
+                                                    {!confidence.hasLowSamples && !confidence.hasMissingSegments && !confidence.isEstimatedRepair && (
+                                                        <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+                                                            Evidence not eligible
+                                                        </span>
+                                                    )}
                                                 </div>
                                             ) : (
                                                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
@@ -1143,13 +1144,24 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                             )}
                                         </td>
                                         <td className="px-6 py-4 text-center">
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); toggleIgnore(row.timeBucket); }}
-                                                className={`p-1 rounded hover:bg-gray-200 transition-colors ${row.ignored ? 'text-gray-400' : 'text-blue-600'}`}
-                                                title={row.ignored ? "Include in analysis" : "Ignore from analysis"}
-                                            >
-                                                {row.ignored ? <EyeOff size={16} /> : <Eye size={16} />}
-                                            </button>
+                                            <div className="inline-flex flex-col items-center gap-1">
+                                                {confidence?.planningEligible === false && (
+                                                    <span
+                                                        className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700"
+                                                        title={confidence.exclusionReasons?.join('; ')}
+                                                    >
+                                                        Not for scheduling
+                                                    </span>
+                                                )}
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); toggleIgnore(row.timeBucket); }}
+                                                    disabled={row.ignored && confidence?.planningEligible === false}
+                                                    className={`p-1 rounded hover:bg-gray-200 transition-colors ${row.ignored ? 'text-gray-400' : 'text-blue-600'} disabled:cursor-not-allowed disabled:opacity-50`}
+                                                    title={row.ignored && confidence?.planningEligible === false ? 'Weak or estimated evidence cannot be restored for scheduling' : row.ignored ? 'Include in analysis' : 'Ignore from analysis'}
+                                                >
+                                                    {row.ignored ? <EyeOff size={16} /> : <Eye size={16} />}
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                         );

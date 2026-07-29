@@ -2,9 +2,9 @@
 import {
   STREETSRecord, DailySummary, DayType, parseDayType, deriveDayTypeFromDate,
   SystemMetrics, RouteMetrics, HourMetrics, StopMetrics, TripMetrics,
-  RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown, OTPStatus,
+  RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown,
   RouteRidershipHeatmap, RidershipHeatmapTrip, RidershipHeatmapStop,
-  classifyOTP, OTP_THRESHOLDS, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
+  classifyOTP, PERFORMANCE_SCHEMA_VERSION,
   OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
   classifyDwell, DWELL_THRESHOLDS,
   DailySegmentRuntimes, DailySegmentRuntimeEntry, SegmentRuntimeObservation,
@@ -13,12 +13,18 @@ import {
   DailyRuntimePattern, RuntimePatternKind,
   RouteStopDeviationProfile, RouteStopDeviationEntry,
   RouteHourMetrics,
+  PerformanceLoadCapacityConfig,
 } from './performanceDataTypes';
 import type { MonthlySnapshot, MonthlyRouteSnapshot, MonthlyDayTypeSnapshot } from './performanceSnapshotTypes';
 import { SNAPSHOT_VERSION } from './performanceSnapshotTypes';
 import { compareDateStrings } from './performanceDateUtils';
 import { mergeOTPBreakdowns } from './performanceOtpUtils';
 import { buildDailyCascadeMetrics } from './schedule/dwellCascadeComputer';
+import {
+  DEFAULT_PERFORMANCE_LOAD_CAPACITY_CONFIG,
+  normalizePerformanceLoadCapacityConfig,
+  resolvePerformanceLoadCapacity,
+} from './performanceLoadCapacity';
 
 export { mergeOTPBreakdowns } from './performanceOtpUtils';
 
@@ -128,20 +134,24 @@ function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
 /** Returns true if the record has usable load data. */
 function isLoadReliable(r: STREETSRecord): boolean {
   // APC-backed zero load is valid and must be kept in averages (e.g. terminals).
-  return r.apcSource !== 0 && r.departureLoad >= 0;
+  return r.apcSource > 0 && r.departureLoad >= 0;
 }
 
 /** Cap departureLoad values and return sanitization counts.
  *  WARNING: Mutates records in place. Only call once per record set. */
-function sanitizeRecords(records: STREETSRecord[]): { loadCapped: number; apcExcludedFromLoad: number } {
+function sanitizeRecords(
+  records: STREETSRecord[],
+  loadCapacityConfig: PerformanceLoadCapacityConfig,
+): { loadCapped: number; apcExcludedFromLoad: number } {
   let loadCapped = 0;
   let apcExcludedFromLoad = 0;
   for (const r of records) {
-    if (r.departureLoad > DEFAULT_LOAD_CAP) {
-      r.departureLoad = DEFAULT_LOAD_CAP;
+    const capacity = resolvePerformanceLoadCapacity(loadCapacityConfig, r.vehicleId);
+    if (r.departureLoad > capacity) {
+      r.departureLoad = capacity;
       loadCapped++;
     }
-    if (r.apcSource === 0) {
+    if (r.apcSource <= 0) {
       apcExcludedFromLoad++;
     }
   }
@@ -208,13 +218,27 @@ function computeDeviation(r: STREETSRecord): number {
   return deviationSeconds;
 }
 
+function stableHeatmapTripId(record: STREETSRecord): string {
+  const sourceTripId = record.tripId?.trim();
+  if (sourceTripId) return sourceTripId;
+  if (Number.isFinite(record.internalTripId) && record.internalTripId > 0) {
+    return `internal:${record.internalTripId}`;
+  }
+  return `fallback:${JSON.stringify([
+    record.vehicleId?.trim() ?? '',
+    record.block?.trim() ?? '',
+    record.tripName?.trim() ?? '',
+    record.terminalDepartureTime?.trim() ?? '',
+  ])}`;
+}
+
 /**
  * Assign each physical stop visit a stable zero-based ordinal within its trip.
  * Duplicate source rows for the same stop and route position share one visit.
  */
 function buildStopOccurrenceIndexes(records: STREETSRecord[]): Map<STREETSRecord, number> {
   const result = new Map<STREETSRecord, number>();
-  const byTrip = groupBy(records, record => record.tripId);
+  const byTrip = groupBy(records, stableHeatmapTripId);
 
   for (const tripRecords of byTrip.values()) {
     const uniqueByPosition = new Map<string, STREETSRecord>();
@@ -734,7 +758,10 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
   });
 }
 
-function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap[] {
+function buildRidershipHeatmaps(
+  records: STREETSRecord[],
+  loadCapacityConfig: PerformanceLoadCapacityConfig,
+): RouteRidershipHeatmap[] {
   const byRouteDir = groupBy(records, r => `${r.routeId}||${r.direction}`);
   const results: RouteRidershipHeatmap[] = [];
 
@@ -747,23 +774,27 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
       occurrenceIndexes.get(record) ?? 0,
     ]);
 
-    // Identify unique trips by terminalDepartureTime
+    // New summaries use stable trip identity. Pre-v14 stored summaries may not have tripId.
     const tripMap = new Map<string, RidershipHeatmapTrip>();
     // Group records by trip to find the longest trip pattern
     const recordsByTrip = new Map<string, STREETSRecord[]>();
 
     for (const r of recs) {
-      if (!tripMap.has(r.terminalDepartureTime)) {
-        tripMap.set(r.terminalDepartureTime, {
+      const tripId = stableHeatmapTripId(r);
+      if (!tripMap.has(tripId)) {
+        tripMap.set(tripId, {
+          tripId,
           terminalDepartureTime: r.terminalDepartureTime,
           tripName: r.tripName,
           block: r.block,
           direction: r.direction,
+          vehicleId: r.vehicleId,
+          capacity: resolvePerformanceLoadCapacity(loadCapacityConfig, r.vehicleId),
         });
       }
-      const tripRecs = recordsByTrip.get(r.tripId);
+      const tripRecs = recordsByTrip.get(tripId);
       if (tripRecs) tripRecs.push(r);
-      else recordsByTrip.set(r.tripId, [r]);
+      else recordsByTrip.set(tripId, [r]);
     }
     const patternSignatures = new Set([...recordsByTrip.values()].map(tripRecs => {
       const uniqueOccurrences = new Map<string, STREETSRecord>();
@@ -817,13 +848,14 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
 
     // Sort trips by departure time, stops by routeStopIndex
     const trips = Array.from(tripMap.values())
-      .sort((a, b) => timeToSeconds(a.terminalDepartureTime) - timeToSeconds(b.terminalDepartureTime));
+      .sort((a, b) => timeToSeconds(a.terminalDepartureTime) - timeToSeconds(b.terminalDepartureTime)
+        || (a.tripId ?? '').localeCompare(b.tripId ?? ''));
     const stops = Array.from(stopMap.values())
       .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
 
     // Build index lookups for O(1) cell placement
     const tripIdx = new Map<string, number>();
-    trips.forEach((t, i) => tripIdx.set(t.terminalDepartureTime, i));
+    trips.forEach((t, i) => tripIdx.set(t.tripId!, i));
     const stopIdx = new Map<string, number>();
     stops.forEach((s, i) => stopIdx.set(JSON.stringify([s.stopId, s.occurrenceIndex ?? 0]), i));
 
@@ -833,7 +865,7 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
     // Single pass: accumulate boardings/alightings per cell
     for (const r of recs) {
       const si = stopIdx.get(occurrenceKey(r));
-      const ti = tripIdx.get(r.terminalDepartureTime);
+      const ti = tripIdx.get(stableHeatmapTripId(r));
       if (si === undefined || ti === undefined) continue;
       const existing = cells[si][ti];
       if (existing) {
@@ -1581,7 +1613,7 @@ function buildDataQuality(
   for (const r of records) {
     if (r.inBetween) inBetweenFiltered++;
     if (r.observedArrivalTime === null) missingAVL++;
-    if (r.apcSource === 0) missingAPC++;
+    if (r.apcSource <= 0) missingAPC++;
     if (r.isDetour) detourRecords++;
     if (r.isTripper) tripperRecords++;
   }
@@ -1600,14 +1632,18 @@ function buildDataQuality(
 
 // ─── Single-Day Aggregation ───────────────────────────────────────────
 
-function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummary {
+function aggregateSingleDay(
+  date: string,
+  records: STREETSRecord[],
+  loadCapacityConfig: PerformanceLoadCapacityConfig,
+): DailySummary {
   const rawDay = records[0].day;
   const dayType = (rawDay === 'SATURDAY' || rawDay === 'SUNDAY' || rawDay === 'MONDAY' ||
     rawDay === 'TUESDAY' || rawDay === 'WEDNESDAY' || rawDay === 'THURSDAY' || rawDay === 'FRIDAY')
     ? parseDayType(rawDay)
     : deriveDayTypeFromDate(date);
   const operationalRecords = records.filter(r => !r.inBetween);
-  const sanitization = sanitizeRecords(operationalRecords);
+  const sanitization = sanitizeRecords(operationalRecords, loadCapacityConfig);
   const eligibleOTP = otpEligible(operationalRecords);
 
   const dwellMetrics = buildOperatorDwellMetrics(operationalRecords, date);
@@ -1621,7 +1657,9 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byStop: buildStopMetrics(operationalRecords, eligibleOTP),
     byTrip: buildTripMetrics(operationalRecords, eligibleOTP),
     loadProfiles: buildLoadProfiles(operationalRecords),
-    ridershipHeatmaps: buildRidershipHeatmaps(operationalRecords),
+    ridershipHeatmaps: buildRidershipHeatmaps(operationalRecords, loadCapacityConfig),
+    defaultLoadCapacity: loadCapacityConfig.defaultCapacity,
+    loadCapacityConfigVersion: loadCapacityConfig.version,
     byOperatorDwell: dwellMetrics,
     byCascade: buildDailyCascadeMetrics(operationalRecords, dwellMetrics.incidents.filter(i => i.severity !== 'minor')),
     segmentRuntimes: buildSegmentRuntimes(operationalRecords),
@@ -1639,8 +1677,10 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
 
 export function aggregateDailySummaries(
   records: STREETSRecord[],
-  onProgress?: (p: { phase: string; current: number; total: number }) => void
+  onProgress?: (p: { phase: string; current: number; total: number }) => void,
+  loadCapacityConfig: PerformanceLoadCapacityConfig = DEFAULT_PERFORMANCE_LOAD_CAPACITY_CONFIG,
 ): DailySummary[] {
+  const normalizedLoadCapacityConfig = normalizePerformanceLoadCapacityConfig(loadCapacityConfig);
   const byDate = groupBy(records, r => r.date);
   const dates = Array.from(byDate.keys()).sort(compareDateStrings);
   const total = dates.length;
@@ -1649,7 +1689,7 @@ export function aggregateDailySummaries(
   for (let i = 0; i < dates.length; i++) {
     const date = dates[i];
     onProgress?.({ phase: `Aggregating ${date}`, current: i + 1, total });
-    summaries.push(aggregateSingleDay(date, byDate.get(date)!));
+    summaries.push(aggregateSingleDay(date, byDate.get(date)!, normalizedLoadCapacityConfig));
   }
 
   onProgress?.({ phase: 'Complete', current: total, total });

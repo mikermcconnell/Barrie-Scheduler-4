@@ -90,8 +90,15 @@ export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
     'workspaceOperations',
     'workspaceParking',
     ...ANALYTICS_WORKSPACE_FEATURES,
-    'operationsLoadProfiles',
     'operationsOperatorDwell',
+];
+
+// Stored overrides and the legacy backend detail route still recognize this key,
+// but it is intentionally absent from assignable workspace surfaces and defaults.
+const LEGACY_WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = ['operationsLoadProfiles'];
+const ALL_WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
+    ...WORKSPACE_ACCESS_FEATURES,
+    ...LEGACY_WORKSPACE_ACCESS_FEATURES,
 ];
 
 const PRODUCTION_WORKSPACES: WorkspaceAccessFeatureKey[] = [
@@ -126,7 +133,6 @@ const ADMIN_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     ...PLANNER_WORKSPACES,
     'workspaceParking',
     'analyticsOdMatrix',
-    'operationsLoadProfiles',
     'operationsOperatorDwell',
 ];
 
@@ -148,7 +154,7 @@ export function isWorkspaceAccessLevel(value: unknown): value is WorkspaceAccess
 }
 
 export function isWorkspaceAccessFeature(feature: FeatureKey): feature is WorkspaceAccessFeatureKey {
-    return (WORKSPACE_ACCESS_FEATURES as FeatureKey[]).includes(feature);
+    return (ALL_WORKSPACE_ACCESS_FEATURES as FeatureKey[]).includes(feature);
 }
 
 export function resolveWorkspaceAccessLevel(subject: WorkspaceAccessSubject): WorkspaceAccessLevel {
@@ -201,5 +207,5 @@ export function canAccessWorkspaceFeature(
 }
 
 export function listUnknownWorkspaceAccessKeys(): string[] {
-    return WORKSPACE_ACCESS_FEATURES.filter((feature) => !(feature in FEATURE_DEFINITIONS));
+    return ALL_WORKSPACE_ACCESS_FEATURES.filter((feature) => !(feature in FEATURE_DEFINITIONS));
 }

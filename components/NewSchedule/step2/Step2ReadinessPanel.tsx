@@ -36,7 +36,7 @@ const getCollapsedSummary = (healthReport: Step2DataHealthReport): string => {
     if (healthReport.blockers.length > 0) return healthReport.blockers[0];
     if (healthReport.warnings.length > 0) return healthReport.warnings[0];
     if (healthReport.expectedSegmentCount > 0) {
-        return `${healthReport.completeBucketCount}/${healthReport.availableBucketCount} complete buckets ready for scheduling.`;
+        return `${healthReport.trustedReadyBucketCount ?? 0}/${healthReport.availableBucketCount} buckets are trusted and ready for scheduling.`;
     }
     return 'Review route readiness before continuing.';
 };
@@ -93,7 +93,7 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                         <div>
                             <p className="mt-0 text-sm text-gray-700">
                                 {healthReport.expectedSegmentCount > 0
-                                    ? `${healthReport.matchedSegmentCount}/${healthReport.expectedSegmentCount} route-chain segments matched, with ${healthReport.completeBucketCount}/${healthReport.availableBucketCount} complete 30-minute buckets ready for scheduling.`
+                                    ? `${healthReport.matchedSegmentCount}/${healthReport.expectedSegmentCount} route-chain segments matched. ${healthReport.coverageCompleteBucketCount ?? healthReport.completeBucketCount}/${healthReport.availableBucketCount} buckets have full coverage; ${healthReport.trustedReadyBucketCount ?? 0} are trusted and ready for scheduling.`
                                     : 'Review route readiness and bucket coverage before using these runtimes for schedule generation.'}
                             </p>
                         </div>
@@ -118,7 +118,7 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                         </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+                    <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-6">
                         <div className="rounded-lg bg-white/80 p-3 border border-white/70">
                             <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Directions</div>
                             <div className="mt-1 text-sm font-semibold text-gray-900">
@@ -138,9 +138,14 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                             </div>
                         </div>
                         <div className="rounded-lg bg-white/80 p-3 border border-white/70">
-                            <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Complete buckets</div>
-                            <div className="mt-1 text-sm font-semibold text-gray-900">{healthReport.completeBucketCount}</div>
-                            <div className="text-xs text-gray-600">of {healthReport.availableBucketCount} buckets</div>
+                            <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Full coverage</div>
+                            <div className="mt-1 text-sm font-semibold text-gray-900">{healthReport.coverageCompleteBucketCount ?? healthReport.completeBucketCount}</div>
+                            <div className="text-xs text-gray-600">All route segments present</div>
+                        </div>
+                        <div className="rounded-lg bg-white/80 p-3 border border-white/70">
+                            <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Trusted ready</div>
+                            <div className="mt-1 text-sm font-semibold text-gray-900">{healthReport.trustedReadyBucketCount ?? 0}</div>
+                            <div className="text-xs text-gray-600">Eligible for scheduling</div>
                         </div>
                         <div className="rounded-lg bg-white/80 p-3 border border-white/70">
                             <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Incomplete buckets</div>

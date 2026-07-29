@@ -7,12 +7,12 @@ import type { ApprovedRuntimeContract } from './step2ReviewTypes';
 import {
     computeDirectionBandSummary,
     getLowConfidenceThreshold,
-    hasSampleCountConfidence,
     type DirectionBandSummary,
     type SampleCountMode,
     type TimeBand,
     type TripBucketAnalysis,
 } from '../../../utils/ai/runtimeAnalysis';
+import { evaluateRuntimeBucketEligibility } from '../../../utils/ai/runtimeEvidenceEligibility';
 import { getRouteConfig, getRouteVariant, parseRouteInfo } from '../../../utils/config/routeDirectionConfig';
 import type { PerformanceRuntimeDiagnostics } from '../../../utils/performanceRuntimeComputer';
 import {
@@ -580,6 +580,10 @@ export interface Step2DataHealthReport {
     matchedSegmentCount: number;
     missingSegments: string[];
     completeBucketCount: number;
+    /** Buckets with all route segments present, regardless of evidence quality. */
+    coverageCompleteBucketCount?: number;
+    /** Buckets independently verified as eligible scheduling inputs. */
+    trustedReadyBucketCount?: number;
     incompleteBucketCount: number;
     lowConfidenceBucketCount: number;
     availableBucketCount: number;
@@ -650,8 +654,11 @@ export const buildStep2DataHealthReport = (params: {
     const lookup = buildNormalizedSegmentNameLookup(displaySegmentNames);
     const sampleCountMode = analysis.find(bucket => bucket.sampleCountMode)?.sampleCountMode;
     const confidenceThreshold = getLowConfidenceThreshold(sampleCountMode);
-    const useSampleCountConfidence = hasSampleCountConfidence(sampleCountMode);
-    const usableBuckets = analysis.filter(bucket => !bucket.ignored && !!bucket.assignedBand);
+    const expectedSegmentCount = displaySegmentNames.length;
+    const usableBuckets = analysis.filter(bucket => evaluateRuntimeBucketEligibility(bucket, {
+        fallbackExpectedSegmentCount: expectedSegmentCount,
+        requireAssignedBand: true,
+    }).eligible);
     const usableBandCount = new Set(
         usableBuckets
             .map(bucket => bucket.assignedBand)
@@ -659,7 +666,8 @@ export const buildStep2DataHealthReport = (params: {
     ).size;
 
     const matchedSegments = new Set<string>();
-    let completeBucketCount = 0;
+    let coverageCompleteBucketCount = 0;
+    let trustedReadyBucketCount = 0;
     let incompleteBucketCount = 0;
     let lowConfidenceBucketCount = 0;
     let repairedBucketCount = 0;
@@ -670,29 +678,30 @@ export const buildStep2DataHealthReport = (params: {
 
     analysis.forEach((bucket) => {
         const bucketSegments = new Set<string>();
-        const sampleValues: number[] = [];
-
         bucket.details?.forEach((detail) => {
             const resolved = resolveCanonicalSegmentName(detail.segmentName, lookup);
             if (!resolved) return;
             matchedSegments.add(resolved);
             bucketSegments.add(resolved);
-            sampleValues.push(detail.n && detail.n > 0 ? detail.n : 1);
         });
 
-        const expectedSegmentCount = displaySegmentNames.length;
         const missingSegments = Math.max(0, expectedSegmentCount - bucketSegments.size);
-        const minSamples = sampleValues.length > 0 ? Math.min(...sampleValues) : 0;
         const isIncomplete = expectedSegmentCount > 0 && missingSegments > 0;
-        const hasLowSamples = useSampleCountConfidence && minSamples > 0 && minSamples < confidenceThreshold;
+        const eligibility = evaluateRuntimeBucketEligibility(bucket, {
+            fallbackExpectedSegmentCount: expectedSegmentCount,
+            requireAssignedBand: true,
+        });
+        const onlyPlannerExcluded = eligibility.reasons.length === 1
+            && eligibility.reasons[0] === 'Bucket is excluded';
 
         if (!isIncomplete && expectedSegmentCount > 0) {
-            completeBucketCount += 1;
+            coverageCompleteBucketCount += 1;
         }
+        if (eligibility.eligible) trustedReadyBucketCount += 1;
         if (isIncomplete) {
             incompleteBucketCount += 1;
         }
-        if (isIncomplete || hasLowSamples) {
+        if (!eligibility.eligible && !onlyPlannerExcluded) {
             lowConfidenceBucketCount += 1;
         }
 
@@ -746,8 +755,14 @@ export const buildStep2DataHealthReport = (params: {
     if (expectedDirections > 1 && matchedDirections.length < expectedDirections) {
         blockers.push(`Only ${matchedDirections.length} of ${expectedDirections} directions were found for this route.`);
     }
-    if (displaySegmentNames.length > 0 && completeBucketCount === 0) {
-        blockers.push('No complete cycle buckets are currently available for scheduling.');
+    if (displaySegmentNames.length > 0 && coverageCompleteBucketCount === 0) {
+        blockers.push('No buckets have complete route-segment coverage.');
+    }
+    if (analysis.some(bucket => (
+        bucket.evidence?.kind === 'uploaded-percentiles'
+        && bucket.sampleCountMode !== 'observations'
+    ))) {
+        blockers.push('The uploaded percentile CSV does not include verified observation counts. Export a count row for every segment and 30-minute bucket before using it for scheduling.');
     }
     if (analysis.length > 0 && usableBuckets.length === 0) {
         blockers.push('No usable planning buckets remain after the current exclusions and banding rules.');
@@ -825,7 +840,9 @@ export const buildStep2DataHealthReport = (params: {
         expectedSegmentCount: displaySegmentNames.length,
         matchedSegmentCount: matchedSegments.size,
         missingSegments,
-        completeBucketCount,
+        completeBucketCount: coverageCompleteBucketCount,
+        coverageCompleteBucketCount,
+        trustedReadyBucketCount,
         incompleteBucketCount,
         lowConfidenceBucketCount,
         availableBucketCount: analysis.length,
@@ -878,14 +895,17 @@ export const buildApprovedRuntimeModel = (params: {
         performanceDiagnostics: null,
     });
 
+    const usableBuckets = analysis.filter(bucket => evaluateRuntimeBucketEligibility(bucket, {
+        fallbackExpectedSegmentCount: segmentColumns.length,
+        requireAssignedBand: true,
+    }).eligible);
     const directionBandSummary = computeDirectionBandSummary(
-        analysis,
+        usableBuckets,
         bands,
         segmentsMap,
         segmentColumns.length > 0 ? { canonicalSegmentColumns: segmentColumns } : undefined
     );
 
-    const usableBuckets = analysis.filter(bucket => !bucket.ignored && !!bucket.assignedBand);
     const ignoredBucketCount = analysis.filter(bucket => bucket.ignored).length;
     const usableBandIds = new Set(usableBuckets.map(bucket => bucket.assignedBand).filter(Boolean));
     const directions = Object.keys(directionBandSummary);

@@ -21,6 +21,23 @@ const diagnostics: PerformanceRuntimeDiagnostics = {
     usesCleanHistoryCutoff: false,
 };
 
+const trustedPairedCycleEvidence = (expectedSegmentCount: number) => ({
+    expectedSegmentCount,
+    observedSegmentCount: expectedSegmentCount,
+    coverageCause: 'complete' as const,
+    contributingDays: Array.from({ length: 5 }, (_, index) => ({
+        date: `2026-03-${String(index + 1).padStart(2, '0')}`,
+        runtime: 90 + index,
+    })),
+    evidence: {
+        kind: 'paired-cycle' as const,
+        qualifyingCount: 5,
+        requiredCount: 5,
+        planningEligible: true,
+        exclusionReasons: [] as string[],
+    },
+});
+
 describe('step2HealthEvaluator', () => {
     it('wraps the current health report logic into the new review health shape', () => {
         const input = {
@@ -35,6 +52,7 @@ describe('step2HealthEvaluator', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days' as const,
+                ...trustedPairedCycleEvidence(4),
                 details: [
                     { segmentName: 'Park Place to Peggy Hill', p50: 14, p80: 16, n: 6 },
                     { segmentName: 'Peggy Hill to Allandale GO Station', p50: 16, p80: 18, n: 6 },
@@ -110,7 +128,7 @@ describe('step2HealthEvaluator', () => {
 
         expect(blocked.status).toBe('blocked');
         expect(blocked.blockers).toContain('Only 1 of 2 directions were found for this route.');
-        expect(blocked.blockers).toContain('No complete cycle buckets are currently available for scheduling.');
+        expect(blocked.blockers).toContain('No buckets have complete route-segment coverage.');
         expect(blocked.warnings).toContain('This performance import was built with older runtime logic. Re-importing is recommended.');
     });
 
@@ -158,7 +176,7 @@ describe('step2HealthEvaluator', () => {
         expect(blocked.blockers).toContain('No usable runtime bands remain for schedule generation.');
     });
 
-    it('does not mark complete CSV-style buckets low confidence when sample counts are unknown', () => {
+    it('blocks complete CSV-style buckets when verified observation counts are missing', () => {
         const report = evaluateStep2ReviewHealth({
             routeNumber: '10',
             analysis: [{
@@ -168,9 +186,20 @@ describe('step2HealthEvaluator', () => {
                 assignedBand: 'C',
                 isOutlier: false,
                 ignored: false,
+                expectedSegmentCount: 2,
+                observedSegmentCount: 2,
+                sampleCountMode: 'observations',
+                coverageCause: 'complete',
+                evidence: {
+                    kind: 'uploaded-percentiles',
+                    qualifyingCount: 0,
+                    requiredCount: 10,
+                    planningEligible: false,
+                    exclusionReasons: ['Verified observation counts are missing'],
+                },
                 details: [
-                    { segmentName: 'Downtown Hub to Maple at Ross', p50: 10, p80: 12, n: 1 },
-                    { segmentName: 'Maple at Ross to Downtown Hub', p50: 45, p80: 48, n: 1 },
+                    { segmentName: 'Downtown Hub to Maple at Ross', p50: 10, p80: 12, n: 0 },
+                    { segmentName: 'Maple at Ross to Downtown Hub', p50: 45, p80: 48, n: 0 },
                 ],
             }],
             segmentsMap: {
@@ -185,9 +214,10 @@ describe('step2HealthEvaluator', () => {
             ],
         });
 
-        expect(report.status).toBe('ready');
-        expect(report.sampleCountMode).toBeUndefined();
-        expect(report.lowConfidenceBucketCount).toBe(0);
-        expect(report.warnings).not.toContain('1 bucket has low confidence or incomplete coverage.');
+        expect(report.status).toBe('blocked');
+        expect(report.sampleCountMode).toBe('observations');
+        expect(report.trustedReadyBucketCount).toBe(0);
+        expect(report.lowConfidenceBucketCount).toBe(1);
+        expect(report.blockers).toContain('No usable planning buckets remain after the current exclusions and banding rules.');
     });
 });
