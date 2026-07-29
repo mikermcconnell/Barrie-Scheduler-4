@@ -37,9 +37,8 @@ try {
 
     await page.getByRole('heading', { name: 'Route Concept Planner' }).waitFor();
     await page.getByRole('button', { name: /Import GTFS route/i }).click();
-    await page.getByRole('heading', { name: 'Import complete GTFS route' }).waitFor();
-    await page.getByRole('button', { name: 'Select route' }).click();
-    await page.getByRole('button', { name: /Import 2 selected patterns/i }).click();
+    await page.getByRole('heading', { name: 'Import a GTFS route' }).waitFor();
+    await page.getByRole('button', { name: 'Import Route 400' }).click();
 
     await page.getByText('Route 400 — Weekday', { exact: true }).first().waitFor();
     await page.getByRole('button', { name: 'Duplicate alternative' }).click();

@@ -10,6 +10,8 @@ Approved reuse must sit behind a narrow neutral adapter:
 - Mapbox road snapping, directions, and individual place search
 - map rendering/authoring capabilities with all Camp presentation disabled
 
+The import adapter owns the user-facing route-option reduction. Group by route family and service day, then by direction/loop role. Collapse candidates only when their route member, stop sequence, and alignment match. Prefer a recognized day label, then trip count, stop count, service span, and a stable ID tie-break. Preserve materially different stop sequences or alignments as optional variants; never silently merge them.
+
 The new domain layer owns complete-route aggregation, authoring state, evidence invalidation, feasibility, daily estimates, warnings, and review readiness. It does not call fixed-route schedule generation or block assignment.
 
 ## Domain contract

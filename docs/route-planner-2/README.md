@@ -1,8 +1,8 @@
-# Route Planner 2 Documentation
+# Camp Shuttle Planner Documentation
 
-Current source of truth for the Route Planner 2 clean restart.
+Current source of truth for the **Camp Shuttle Planner**. Its stable internal code name remains `Route Planner 2`, including component names, route keys, persistence paths, and utility folders; those identifiers are not user-facing and do not require a data migration.
 
-Route Planner 2 is a new module, not a continuation of the old Route Planner implementation. The old Route Planner docs live in `docs/route-planner-legacy/` and may be used only as background.
+Camp Shuttle Planner is a new module, not a continuation of the old Route Planner implementation. The old Route Planner docs live in `docs/route-planner-legacy/` and may be used only as background.
 
 ## Read Order
 
@@ -17,11 +17,11 @@ Route Planner 2 is a new module, not a continuation of the old Route Planner imp
 
 ## Documentation Contract
 
-These docs are the default contract for Route Planner 2 coding. If implementation needs to deviate, update the relevant doc first so the next agent has the current source of truth.
+These docs are the default contract for Camp Shuttle Planner (`Route Planner 2` internally) coding. If implementation needs to deviate, update the relevant doc first so the next agent has the current source of truth.
 
 ## V1 Scope Summary
 
-Route Planner 2 v1 is a team-saveable operational feasibility workspace for blank route concepts.
+Camp Shuttle Planner v1 is a team-saveable operational feasibility workspace for Camp and address-based shuttle route concepts.
 
 In scope:
 - project with routes

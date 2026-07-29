@@ -692,7 +692,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                     <AnalyticsFeatureNotice feature="analyticsRoutePlanner2" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Route Planner..." />}>
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Camp Shuttle Planner..." />}>
                         <RoutePlanner2Workspace
                             onBack={() => setView('dashboard')}
                             userId={user?.uid ?? null}
@@ -884,8 +884,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                         <AnalyticsCard
                             color="teal"
                             icon={<Route size={20} />}
-                            title="Route Planner"
-                            description="A clean restart for route concept planning, isolated from the old Route Planner module."
+                            title="Camp Shuttle Planner"
+                            description="Build Camp and address-based shuttle concepts with map authoring, road travel times, service assumptions, and field-ready exports."
                             hasData={false}
                             underConstruction={isFeatureUnderConstruction('analyticsRoutePlanner2')}
                             onClick={() => setView('route-planner-2')}

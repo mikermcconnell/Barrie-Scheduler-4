@@ -108,8 +108,8 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
     },
     {
         feature: 'analyticsRoutePlanner2',
-        label: 'Route Planner',
-        description: 'Route concept planning workspace.',
+        label: 'Camp Shuttle Planner',
+        description: 'Camp and address-based shuttle route planning workspace.',
         previewKind: 'analytics-card',
     },
     {

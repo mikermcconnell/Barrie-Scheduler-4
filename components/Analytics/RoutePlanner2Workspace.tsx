@@ -1425,8 +1425,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         saveFixedRouteResumeState({
             hash: window.location.hash || '#planning/route-planner-2',
             label: projectName
-                ? `${labelPrefix} · Route Planner · ${projectName}`
-                : `${labelPrefix} · Route Planner`,
+                ? `${labelPrefix} · Camp Shuttle Planner · ${projectName}`
+                : `${labelPrefix} · Camp Shuttle Planner`,
         }, userId);
     }, [project.name, userId]);
     useEffect(() => {
@@ -2888,7 +2888,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-cyan-700">
                                             <MapPinned size={16} />
-                                            Route Planner
+                                            Camp Shuttle Planner
                                         </div>
                                         <input
                                             value={project.name}
@@ -2925,7 +2925,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                 data-testid="rp2-action-sidebar"
                                 data-state={actionSidebarExpanded ? 'expanded' : 'collapsed'}
                                 className={`pointer-events-auto absolute bottom-4 left-3 top-24 z-30 flex flex-col rounded-3xl border border-slate-200 bg-white/95 p-2.5 shadow-xl backdrop-blur transition-all duration-200 ${actionSidebarExpanded ? 'w-72' : 'w-20'}`}
-                                aria-label="Route Planner actions"
+                                aria-label="Camp Shuttle Planner actions"
                             >
                                 <button
                                     type="button"
@@ -3408,7 +3408,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         <section className="sticky top-0 z-10 rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur">
                             <div className="flex items-center justify-between gap-3">
                                 <div>
-                                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">Route Planner</div>
+                                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">Camp Shuttle Planner</div>
                                     <h2 className="mt-0.5 text-base font-black text-slate-950">Review route</h2>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -4333,7 +4333,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                     >
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">Route Planner 2</div>
+                                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">Camp Shuttle Planner</div>
                                 <h2 id="rp2-load-picker-title" className="mt-1 text-lg font-black text-slate-950">Load route plan</h2>
                                 <p className="mt-1 text-sm font-semibold text-slate-500">Choose a saved route plan from this team workspace.</p>
                             </div>

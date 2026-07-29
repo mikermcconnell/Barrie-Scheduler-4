@@ -220,7 +220,7 @@ function drawHeader(
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.2);
     doc.setTextColor(100, 116, 139);
-    drawMiddleText(doc, `Route Planner 2 map export - Generated ${generatedAt}`, box.x, box.y + 10.9);
+    drawMiddleText(doc, `Camp Shuttle Planner map export - Generated ${generatedAt}`, box.x, box.y + 10.9);
 
     if (summaryItems.length > 0) {
         const gap = 2;
@@ -442,9 +442,9 @@ export async function exportRoutePlanner2MapPdf(
 
     doc.setProperties({
         title: `${title} Map`,
-        subject: 'Route Planner 2 map export',
+        subject: 'Camp Shuttle Planner map export',
         author: 'TransitScheduler',
-        creator: 'TransitScheduler Route Planner 2',
+        creator: 'TransitScheduler Camp Shuttle Planner',
     });
 
     const summaryItems = options.summaryItems?.slice(0, 5) ?? [];

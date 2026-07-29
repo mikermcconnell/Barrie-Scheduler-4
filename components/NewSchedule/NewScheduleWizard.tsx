@@ -2129,6 +2129,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 stopSuggestions={stopSuggestions}
                                 autofillFromMaster={autofillFromMaster}
                                 onAutofillFromMasterChange={setAutofillFromMaster}
+                                onChangeRoute={() => setStep(1)}
                             />
                         )}
                         {step === 4 && (

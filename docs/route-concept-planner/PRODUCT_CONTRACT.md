@@ -14,7 +14,7 @@ Each alternative represents the full operating route:
 - **Loop:** one complete loop pattern; do not double its runtime.
 - **Out and back:** separately editable outbound and return patterns that meet at a turnaround. Each pattern contributes its runtime once.
 
-GTFS import groups full-route patterns into one complete alternative. Barrie route-family handling may merge 2A/2B, 7A/7B, and 12A/12B while keeping 8A and 8B separate. Exclude short turns. A one-direction linear import is incomplete until a return is imported, drawn, or created as an editable reversed copy; incomplete alternatives cannot be review-ready.
+GTFS import shows one complete-route option per route and service day rather than exposing technical pattern rows. It automatically chooses the strongest full pattern for each direction, preferring an explicitly labelled service day and then the candidate with the most scheduled trips. Duplicate service IDs with the same stops and alignment collapse into that one choice. Only genuinely different stop sequences or alignments appear under optional route-variant review. Barrie route-family handling may merge 2A/2B, 7A/7B, and 12A/12B while keeping 8A and 8B separate. Exclude short turns. A one-direction linear import is incomplete until a return is imported, drawn, or created as an editable reversed copy; incomplete alternatives cannot be review-ready.
 
 The reversed-copy action creates neutral stop/alignment IDs and intentionally clears automatic and manual runtime evidence so outbound evidence is never silently applied to the return.
 

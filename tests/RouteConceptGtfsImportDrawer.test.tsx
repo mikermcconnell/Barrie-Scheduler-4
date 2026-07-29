@@ -14,6 +14,14 @@ const pattern: RouteConceptGtfsPatternCandidate = {
   ], shapePoints: [],
 };
 
+const returnPattern: RouteConceptGtfsPatternCandidate = {
+  ...pattern,
+  id: 'route-1-return',
+  directionId: 1,
+  tripHeadsign: 'A',
+  stops: [...pattern.stops].reverse().map((stop, index) => ({ ...stop, id: `${stop.id}-return`, sequence: index + 1 })),
+};
+
 describe('RouteConceptGtfsImportDrawer accessibility', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -32,5 +40,40 @@ describe('RouteConceptGtfsImportDrawer accessibility', () => {
     const dialog = container.querySelector('[role="dialog"]')!;
     act(() => dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('shows one complete-route card and imports both directions in one click', () => {
+    const onImport = vi.fn();
+    const duplicateServicePattern: RouteConceptGtfsPatternCandidate = {
+      ...pattern,
+      id: 'route-1-out-special-service',
+      serviceId: 'special-service-id',
+      dayTypeLabel: 'special-service-id',
+      tripCount: 20,
+    };
+
+    act(() => root.render(
+      <RouteConceptGtfsImportDrawer
+        open
+        patterns={[duplicateServicePattern, pattern, returnPattern]}
+        loading={false}
+        error={null}
+        onClose={vi.fn()}
+        onRetry={vi.fn()}
+        onImport={onImport}
+      />,
+    ));
+
+    expect(Array.from(container.querySelectorAll('h3')).map((heading) => heading.textContent)).toEqual(['Route 1']);
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+    const importButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent?.includes('Import Route 1'))!;
+    act(() => importButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    expect(onImport).toHaveBeenCalledOnce();
+    expect(onImport.mock.calls[0]?.[0].map((selected: RouteConceptGtfsPatternCandidate) => selected.id)).toEqual([
+      pattern.id,
+      returnPattern.id,
+    ]);
   });
 });

@@ -4,9 +4,9 @@ Durable entrypoint for the neutral, fixed-route concept-testing workspace.
 
 ## Status and boundary
 
-Route Concept Planner is an internal beta, hidden behind its own feature and workspace-access key. It is a new workspace, not a rename or refactor of Route Planner 2.
+Route Concept Planner is an internal beta, hidden behind its own feature and workspace-access key. It is a new workspace, not a rename or refactor of Camp Shuttle Planner (`Route Planner 2` internally).
 
-Route Planner 2 is the working Camp route-planning tool and is frozen from this feature's perspective. Keep its navigation, data, camp/address workflows, exports, and behaviour unchanged. Route Concept Planner may reuse proven GTFS, Mapbox, and map capabilities only through neutral adapters; it must not depend on Camp UI, Camp persistence, camper data, or Camp exports.
+Camp Shuttle Planner is the working Camp and address-based shuttle tool and is frozen from this feature's perspective. Keep its navigation, data, Camp/address workflows, exports, and behaviour unchanged. Route Concept Planner may reuse proven GTFS, Mapbox, and map capabilities only through neutral adapters; it must not depend on Camp UI, Camp persistence, camper data, or Camp exports.
 
 ## Read next
 

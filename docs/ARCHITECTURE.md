@@ -138,7 +138,7 @@ Notable areas:
 - OD analysis → `components/Analytics/OD*`, `utils/od-matrix/`
 - Fleet Plan → `components/Analytics/FleetPlan*.tsx`, `utils/fleet-plan/`; imports the legacy three-tab Excel template, but the app/editor and export present one combined Fleet Plan sheet with a Bus Type column. The active plan is team-shared, versioned under `fleetPlan/default/versions`, and writable only by team owners/admins.
 - Legacy Route Planner workspace has been removed; old docs live in `docs/route-planner-legacy/` as background only, and remaining `utils/route-planner/` helpers are legacy support code used by Shuttle Planner.
-- Route Planner 2 → `components/Analytics/RoutePlanner2Workspace.tsx`; the working Camp route-planning tool is frozen from Route Concept Planner work; current docs live in `docs/route-planner-2/`
+- Camp Shuttle Planner (`Route Planner 2` internally) → `components/Analytics/RoutePlanner2Workspace.tsx`; the working Camp and address-based shuttle tool is frozen from Route Concept Planner work; current docs live in `docs/route-planner-2/`
 - Route Concept Planner → a separate internal-beta, map-first workspace under `components/Analytics/` with a neutral domain/persistence layer under `utils/route-concept-planner/`; it models complete alternatives and may reuse GTFS, Mapbox, and map capabilities only through neutral adapters. Its contract lives in `docs/route-concept-planner/`.
 - Shuttle Planner → `components/Analytics/ShuttlePlannerWorkspace.tsx`, `utils/shuttle/`
 - Network Connections → `components/Analytics/NetworkConnectionsWorkspace.tsx`, `utils/network-connections/`
@@ -304,7 +304,7 @@ Representative coverage areas in `tests/`:
 - **Transit App / analytics** → aggregator, parser, scoring, and pipeline tests
 - **Workspace/UI flows** → selected tests for Add Trip, Extend Trip, resume, connections, and performance import behavior
 - **On-Demand imports** → `rideCoParser.test.ts` covers RideCo/MVT row detection, Excel numeric times, workbook-sheet selection, and skipped-column reports
-- **Route Planner 2** → route authoring, road snapping, map export, stop-time labels, and workspace local-state tests cover the current map-first workflow
+- **Camp Shuttle Planner** (`Route Planner 2` internally) → route authoring, road snapping, map export, stop-time labels, and workspace local-state tests cover the current map-first workflow
 - **Council Intelligence** → deterministic source parsing, named-vote honesty, pilot-window filtering, source allowlisting, workspace access, routing, and Firestore boundary tests cover the initial pilot
 
 Do not assume every large UI surface has deep coverage. For fragile planner-facing workflows, manual verification is still important.

@@ -23,7 +23,7 @@ Scheduler 4 is a Barrie Transit planning platform with a fixed-route scheduling 
 
 Top-level shells in `App.tsx` are On-Demand, Fixed Route, Operations, Parking, and Planning Data. `index.tsx` is the mount point. Navigation is hash-based rather than router-library based.
 
-Planning Data deep-link handling is centralized in `utils/workspaces/analyticsWorkspaceRouting.ts`. The home-screen resume card uses `utils/workspaces/fixedRouteResumeState.ts`; despite the legacy name, Route Planner 2 also updates it.
+Planning Data deep-link handling is centralized in `utils/workspaces/analyticsWorkspaceRouting.ts`. The home-screen resume card uses `utils/workspaces/fixedRouteResumeState.ts`; despite the legacy name, Camp Shuttle Planner (`Route Planner 2` internally) also updates it.
 
 This is a domain-heavy monolith:
 
@@ -78,12 +78,12 @@ Parking owns parking-code usage, revenue review, map/location settings, and plat
 
 ### Planning Data
 
-Planning Data includes Transit App analytics, OD analysis, Route Planner 2, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Council Intelligence, Fleet Plan, and related tools.
+Planning Data includes Transit App analytics, OD analysis, Camp Shuttle Planner, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Council Intelligence, Fleet Plan, and related tools.
 
 Important boundaries:
 
-- Route Planner 2 is the current Camp tool. `docs/route-planner-2/README.md` routes to its product, workflow, architecture, data, runtime, and test contracts.
-- Route Concept Planner is a separate neutral internal-beta workspace. Keep it isolated from Route Planner 2 and load `docs/route-concept-planner/README.md` plus its contracts.
+- Camp Shuttle Planner is the current Camp and address-based shuttle tool; its stable internal code name remains `Route Planner 2`. `docs/route-planner-2/README.md` routes to its product, workflow, architecture, data, runtime, and test contracts.
+- Route Concept Planner is a separate neutral internal-beta workspace. Keep it isolated from Camp Shuttle Planner and load `docs/route-concept-planner/README.md` plus its contracts.
 - The removed legacy Route Planner is historical. Remaining `utils/route-planner/` code is legacy support used by Shuttle Planner, not Route Planner 2.
 - Council Intelligence must distinguish official named votes from movers, seconders, procedural signals, and unknown evidence.
 - Fleet Plan is team-shared and versioned; writes are owner/admin-only and validation/conflict gated.

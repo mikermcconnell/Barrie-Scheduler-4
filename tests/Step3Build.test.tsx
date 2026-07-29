@@ -498,6 +498,140 @@ describe('Step3Build', () => {
         expect(timeInputs[2]?.value).toBe('06:30');
     });
 
+    it('presents the Master as the baseline, marks planner edits, and can reset or start blank', async () => {
+        vi.mocked(getMasterSchedule).mockResolvedValue({
+            entry: {
+                currentVersion: 4,
+                publishedAt: new Date('2026-07-20T12:00:00.000Z'),
+            } as any,
+            content: {
+                northTable: {
+                    routeName: '8 (Weekday) (North)',
+                    stops: ['Park Place', 'Georgian College'],
+                    stopIds: {},
+                    trips: [{
+                        id: 'n1', blockId: '8-1', direction: 'North', tripNumber: 1, rowId: 1,
+                        startTime: 360, endTime: 390, recoveryTime: 8, travelTime: 30, cycleTime: 38,
+                        stops: { 'Park Place': '6:00 AM', 'Georgian College': '6:30 AM' }, assignedBand: 'A',
+                    }],
+                },
+                southTable: {
+                    routeName: '8 (Weekday) (South)',
+                    stops: ['Georgian College', 'Park Place'],
+                    stopIds: {},
+                    trips: [{
+                        id: 's1', blockId: '8-1', direction: 'South', tripNumber: 2, rowId: 2,
+                        startTime: 400, endTime: 430, recoveryTime: 10, travelTime: 30, cycleTime: 40,
+                        stops: { 'Georgian College': '6:40 AM', 'Park Place': '7:10 AM' }, assignedBand: 'B',
+                    }],
+                },
+                metadata: {
+                    routeNumber: '8', dayType: 'Weekday', uploadedAt: '2026-07-20T12:00:00.000Z', cycleMode: 'Floating',
+                },
+            },
+        } as any);
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const changeRoute = vi.fn();
+
+        const Wrapper = () => {
+            const [autofill, setAutofill] = React.useState(true);
+            const [config, setConfig] = React.useState<ScheduleConfig>({
+                routeNumber: '8', cycleMode: 'Floating', cycleTime: 60, recoveryRatio: 15, blocks: [],
+            });
+            return (
+                <Step3Build
+                    dayType="Weekday"
+                    bands={[]}
+                    config={config}
+                    setConfig={setConfig}
+                    teamId="team-1"
+                    stopSuggestions={[]}
+                    autofillFromMaster={autofill}
+                    onAutofillFromMasterChange={setAutofill}
+                    onChangeRoute={changeRoute}
+                />
+            );
+        };
+
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+        flushSync(() => root?.render(<Wrapper />));
+
+        for (let i = 0; i < 5; i++) {
+            await Promise.resolve();
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        expect(container.textContent).toContain('Current Master v4 · Route 8 · Weekday');
+        expect(container.textContent).toContain('1 block carried forward');
+        expect(container.textContent).toContain('Proposed Block Configuration');
+        expect(container.textContent).toContain('Matches Master · 1 block');
+        expect(container.textContent).not.toContain('From Master');
+        const changeRouteButton = Array.from(container.querySelectorAll('button'))
+            .find(button => button.textContent?.includes('Change in Step 1')) as HTMLButtonElement;
+        flushSync(() => changeRouteButton.click());
+        expect(changeRoute).toHaveBeenCalledOnce();
+
+        const startTime = container.querySelector('input[type="time"]') as HTMLInputElement;
+        flushSync(() => {
+            const setNativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            setNativeValue?.call(startTime, '06:05');
+            startTime.dispatchEvent(new Event('input', { bubbles: true }));
+            startTime.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        expect(container.textContent).toContain('1 edited');
+        const resetButton = container.querySelector('button[aria-label="Reset 8-1 to Master"]') as HTMLButtonElement;
+        expect(resetButton).not.toBeNull();
+        flushSync(() => resetButton.click());
+        expect((container.querySelector('input[type="time"]') as HTMLInputElement).value).toBe('06:00');
+
+        const startBlankButton = Array.from(container.querySelectorAll('button'))
+            .find(button => button.textContent?.includes('Start blank')) as HTMLButtonElement;
+        flushSync(() => startBlankButton.click());
+
+        expect(confirmSpy).toHaveBeenCalled();
+        expect(container.textContent).toContain('Blank / manually configured');
+        expect(container.textContent).toContain('No blocks defined. Add a block to start.');
+    });
+
+    it('labels post-midnight block endings as the next service day', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step3Build
+                    dayType="Weekday"
+                    bands={[]}
+                    config={{
+                        routeNumber: '12',
+                        cycleMode: 'Floating',
+                        cycleTime: 60,
+                        recoveryRatio: 15,
+                        blocks: [{
+                            id: '12-1',
+                            startTime: '05:09',
+                            endTime: '00:33',
+                            startStop: 'Georgian Mall',
+                            endStop: 'Georgian Mall',
+                        }],
+                    }}
+                    setConfig={() => {}}
+                    teamId={undefined}
+                    stopSuggestions={[]}
+                    autofillFromMaster={false}
+                    onAutofillFromMasterChange={() => {}}
+                />
+            );
+        });
+
+        expect(container.textContent).toContain('+1 day');
+        expect(container.querySelector('[aria-label="Calculated from generated trips"]')).not.toBeNull();
+    });
+
     it('does not trust a legacy approved runtime model when no approved contract is present', () => {
         container = document.createElement('div');
         document.body.appendChild(container);
