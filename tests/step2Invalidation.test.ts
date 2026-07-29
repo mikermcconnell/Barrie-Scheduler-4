@@ -30,14 +30,33 @@ const reviewResult: Step2ReviewResult = {
     planning: {
         chartBasis: 'observed-cycle',
         generationBasis: 'direction-band-summary',
-        buckets: [{
+        reviewBuckets: [{
             timeBucket: '06:30 - 06:59',
             totalP50: 40,
             totalP80: 44,
             assignedBand: 'A',
             isOutlier: false,
             ignored: false,
-            details: [],
+            details: [{ segmentName: 'A to B', p50: 40, p80: 44, n: 5 }],
+            expectedSegmentCount: 1, observedSegmentCount: 1, sampleCountMode: 'days',
+            contributingDays: ['01', '02', '03', '04', '05'].map(date => ({ date: `2026-03-${date}`, runtime: 40 })),
+            evidence: { kind: 'paired-cycle', qualifyingCount: 5, requiredCount: 5, planningEligible: true, exclusionReasons: [] },
+        }],
+        approvedBuckets: [{
+            timeBucket: '06:30 - 06:59', totalP50: 40, totalP80: 44, assignedBand: 'A',
+            isOutlier: false, ignored: false,
+            details: [{ segmentName: 'A to B', p50: 40, p80: 44, n: 5 }],
+            expectedSegmentCount: 1, observedSegmentCount: 1, sampleCountMode: 'days',
+            contributingDays: ['01', '02', '03', '04', '05'].map(date => ({ date: `2026-03-${date}`, runtime: 40 })),
+            evidence: { kind: 'paired-cycle', qualifyingCount: 5, requiredCount: 5, planningEligible: true, exclusionReasons: [] },
+        }],
+        buckets: [{
+            timeBucket: '06:30 - 06:59', totalP50: 40, totalP80: 44, assignedBand: 'A',
+            isOutlier: false, ignored: false,
+            details: [{ segmentName: 'A to B', p50: 40, p80: 44, n: 5 }],
+            expectedSegmentCount: 1, observedSegmentCount: 1, sampleCountMode: 'days',
+            contributingDays: ['01', '02', '03', '04', '05'].map(date => ({ date: `2026-03-${date}`, runtime: 40 })),
+            evidence: { kind: 'paired-cycle', qualifyingCount: 5, requiredCount: 5, planningEligible: true, exclusionReasons: [] },
         }],
         bands: [{
             id: 'A',
@@ -110,7 +129,7 @@ describe('step2Invalidation', () => {
 
     it('marks approval stale when the approval contract schema version changes', () => {
         const mismatchedSchema = approvedContract
-            ? ({ ...approvedContract, schemaVersion: 2 } as any)
+            ? ({ ...approvedContract, schemaVersion: 1 } as any)
             : null;
 
         expect(isStep2ApprovalStale(reviewResult, mismatchedSchema)).toBe(true);

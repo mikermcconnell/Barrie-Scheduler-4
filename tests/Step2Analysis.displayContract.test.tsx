@@ -103,7 +103,7 @@ describe('Step2Analysis display and planner actions', () => {
             bandSummaryToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
 
-        expect(container.textContent).toContain('Band A (12.0m actual avg)');
+        expect(container.textContent).toContain('Band A (12.0m evidence avg)');
         expect(container.textContent).toContain('weighted median (P50) summaries');
 
         const p80Toggle = Array.from(container.querySelectorAll('button')).find(
@@ -116,7 +116,7 @@ describe('Step2Analysis display and planner actions', () => {
             p80Toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
 
-        expect(container.textContent).toContain('Band A (14.0m actual avg)');
+        expect(container.textContent).toContain('Band A (14.0m evidence avg)');
         expect(container.textContent).toContain('weighted reliable (P80) summaries');
         expect(container.textContent).toContain('Band A');
     });

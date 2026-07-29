@@ -18,7 +18,7 @@ describe('step2ParsedDataFingerprint', () => {
             },
         ] as any);
 
-        expect(fingerprint).toContain('step2-parsed-data:v1:');
+        expect(fingerprint).toContain('step2-parsed-data:v2:');
         expect(fingerprint).toContain('"detectedRouteNumber":"7"');
         expect(fingerprint).toContain('"detectedDirection":"North"');
         expect(fingerprint).toContain('"segmentName":"A to B"');
@@ -89,5 +89,33 @@ describe('step2ParsedDataFingerprint', () => {
         ] as any);
 
         expect(firstFingerprint).not.toBe(changedFingerprint);
+    });
+
+    it('changes when the complete-day evidence changes', () => {
+        const runtime = {
+            allTimeBuckets: ['06:00 - 06:29'],
+            detectedRouteNumber: '7',
+            detectedDirection: 'North',
+            sampleCountMode: 'days',
+            segments: [{
+                segmentName: 'A to B',
+                timeBuckets: {
+                    '06:00 - 06:29': { p50: 5, p80: 6, n: 5, contributions: [{ date: '2026-03-01', runtime: 5 }] },
+                },
+            }],
+        };
+
+        const first = buildStep2ParsedDataFingerprint([runtime] as any);
+        const changed = buildStep2ParsedDataFingerprint([{
+            ...runtime,
+            segments: [{
+                ...runtime.segments[0],
+                timeBuckets: {
+                    '06:00 - 06:29': { p50: 5, p80: 6, n: 5, contributions: [{ date: '2026-03-02', runtime: 5 }] },
+                },
+            }],
+        }] as any);
+
+        expect(first).not.toBe(changed);
     });
 });

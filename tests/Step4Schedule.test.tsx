@@ -422,7 +422,7 @@ describe('Step4Schedule', () => {
                     onUpdateSchedules={onUpdateSchedules}
                     projectName="Test Project"
                     approvedRuntimeContract={{
-                        schemaVersion: 1,
+                        schemaVersion: 2,
                         routeIdentity: '7-Weekday',
                         routeNumber: '7',
                         dayType: 'Weekday',
@@ -446,6 +446,11 @@ describe('Step4Schedule', () => {
                                     details: [],
                                 },
                             ],
+                            reviewBuckets: [],
+                            approvedBuckets: [{
+                                timeBucket: '06:00 - 06:29', totalP50: 40, totalP80: 44,
+                                assignedBand: 'A', isOutlier: false, ignored: false, details: [],
+                            }],
                             bands: [
                                 {
                                     id: 'A',
@@ -542,7 +547,7 @@ describe('Step4Schedule', () => {
         expect(container.textContent).toContain('Approved runtime contract');
     });
 
-    it('falls back to the live Step 4 inputs when no approved contract is present', () => {
+    it('fails closed instead of using live Step 4 runtime inputs without an approved contract', () => {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -615,22 +620,11 @@ describe('Step4Schedule', () => {
         expect(latestCall?.initialTimepointOnly).toBe(true);
         expect(latestCall?.condensedTimepointView).toBe(true);
         expect(latestCall?.initialShowDeltas).toBe(false);
-        expect(latestCall?.bands).toEqual([
-            { id: 'Z', label: 'Legacy', min: 1, max: 2, avg: 1, color: '#999999', count: 1 },
-        ]);
-        expect(latestCall?.analysis).toEqual([
-            {
-                timeBucket: '05:00 - 05:29',
-                totalP50: 10,
-                totalP80: 12,
-                assignedBand: 'Z',
-                isOutlier: false,
-                ignored: false,
-                details: [],
-            },
-        ]);
-        expect(latestCall?.segmentNames).toEqual(['Live Step 4 Segment']);
+        expect(latestCall?.bands).toEqual([]);
+        expect(latestCall?.analysis).toEqual([]);
+        expect(latestCall?.segmentNames).toEqual([]);
         expect(container.textContent).not.toContain('Approved runtime contract');
+        expect(container.textContent).toContain('Current runtime approval required');
     });
 
     it('does not immediately sync unchanged initial schedules back to the wizard parent', () => {

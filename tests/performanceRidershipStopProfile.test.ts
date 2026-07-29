@@ -13,7 +13,7 @@ function heatmap(
     routeId: string,
     direction: string,
     stops: Array<{ id: string; name?: string; index: number; cells: Array<[number, number] | null> }>,
-    trips?: Array<{ time: string; block: string }>,
+    trips?: Array<{ time: string; block: string; tripId?: string; vehicleId?: string; capacity?: number }>,
 ): RouteRidershipHeatmap {
     const tripCount = Math.max(0, ...stops.map(stop => stop.cells.length));
     return {
@@ -21,10 +21,13 @@ function heatmap(
         routeName: `Route ${routeId}`,
         direction,
         trips: Array.from({ length: tripCount }, (_, index) => ({
+            tripId: trips?.[index]?.tripId ?? `trip-${index + 1}`,
             terminalDepartureTime: trips?.[index]?.time ?? `${8 + index}:00`,
             tripName: `Trip ${index + 1}`,
             block: trips?.[index]?.block ?? '1',
             direction,
+            vehicleId: trips?.[index]?.vehicleId ?? '2301',
+            capacity: trips?.[index]?.capacity ?? 65,
         })),
         stops: stops.map(stop => ({
             stopId: stop.id,
@@ -70,6 +73,8 @@ function day(
         dayType: 'weekday',
         ridershipHeatmaps: heatmaps,
         loadProfiles,
+        schemaVersion: 14,
+        defaultLoadCapacity: 65,
     } as DailySummary;
 }
 
@@ -107,6 +112,16 @@ describe('buildRidershipStopProfiles', () => {
             expect.objectContaining({ stopId: 'A', boardings: 15, alightings: 5, servedDays: 2 }),
             expect.objectContaining({ stopId: 'B', boardings: 4, alightings: 1, servedDays: 1 }),
         ]);
+        expect(result.options[0].loadEvidence).toEqual({
+            totalStopCount: 2,
+            observedStopCount: 0,
+            observedObservationCount: 0,
+            estimatedStopCount: 2,
+            estimatedObservationCount: 3,
+            legacyStopCount: 0,
+            legacyDayCount: 0,
+            unavailableStopCount: 0,
+        });
     });
 
     it('weights average load by reliable observation count', () => {
@@ -345,15 +360,15 @@ describe('buildRidershipStopProfiles', () => {
         ]);
     });
 
-    it('does not fill profile gaps when any stop has a usable daily load', () => {
+    it('uses observed APC first and fills only missing stops from the heatmap estimate', () => {
         const result = buildRidershipStopProfiles([day('2026-07-07', [heatmap('10', 'Loop', [
-            { id: 'A', index: 1, cells: [[0, 10]] },
-            { id: 'B', index: 2, cells: [[66, 0]] },
+            { id: 'A', index: 1, cells: [[5, 0]] },
+            { id: 'B', index: 2, cells: [[2, 0]] },
         ])], [loadProfile('10', 'Loop', [{ id: 'A', index: 1, load: 20, count: 2 }])])]);
 
         expect(result.options[0]).toMatchObject({
-            hasBlockInferredLoad: false,
-            blockInferenceAssumedEmptyAnchor: false,
+            hasBlockInferredLoad: true,
+            blockInferenceAssumedEmptyAnchor: true,
             blockInferenceUsesMinimumFeasibleAnchor: false,
             invalidBlockInferenceChainCount: 0,
         });
@@ -363,13 +378,13 @@ describe('buildRidershipStopProfiles', () => {
                 loadEstimated: false, loadSource: 'observed', blockInferredLoadCount: 0,
             }),
             expect.objectContaining({
-                stopId: 'B', averageLoad: null, loadObservationCount: null,
-                loadEstimated: false, loadSource: 'none', blockInferredLoadCount: 0,
+                stopId: 'B', averageLoad: 7, loadObservationCount: null,
+                loadEstimated: true, loadSource: 'block-inferred', blockInferredLoadCount: 1,
             }),
         ]);
     });
 
-    it('infers an all-missing day without filling gaps on a separate observed day', () => {
+    it('combines per-stop heatmap fallbacks with observed APC across days', () => {
         const result = buildRidershipStopProfiles([
             day('2026-07-07', [heatmap('10', 'Loop', [
                 { id: 'A', index: 1, cells: [[5, 0]] },
@@ -392,8 +407,8 @@ describe('buildRidershipStopProfiles', () => {
                 loadObservationCount: null, blockInferredLoadCount: 1,
             }),
             expect.objectContaining({
-                stopId: 'B', averageLoad: 3, loadSource: 'block-inferred',
-                loadObservationCount: null, blockInferredLoadCount: 1,
+                stopId: 'B', averageLoad: 4.5, loadSource: 'block-inferred',
+                loadObservationCount: null, blockInferredLoadCount: 2,
             }),
         ]);
     });
@@ -433,7 +448,7 @@ describe('buildRidershipStopProfiles', () => {
             .toEqual(filteredRoute.options[0].rows);
     });
 
-    it('suppresses a whole same-route block when either direction has usable daily load', () => {
+    it('uses heatmap estimates for a missing direction without replacing observed APC on the same block', () => {
         const result = buildRidershipStopProfiles([day('2026-07-07', [
             heatmap('10', 'CW', [{ id: 'A', index: 1, cells: [[2, 0]] }], [
                 { time: '08:00', block: '1' },
@@ -446,12 +461,103 @@ describe('buildRidershipStopProfiles', () => {
         const missingDirection = result.options.find(option => option.direction === 'CW')!;
         const observedDirection = result.options.find(option => option.direction === 'CCW')!;
         expect(missingDirection).toMatchObject({
-            hasBlockInferredLoad: false,
-            blockInferenceAssumedEmptyAnchor: false,
+            hasBlockInferredLoad: true,
+            blockInferenceAssumedEmptyAnchor: true,
             blockInferenceUsesMinimumFeasibleAnchor: false,
             invalidBlockInferenceChainCount: 0,
         });
-        expect(missingDirection.rows[0]).toMatchObject({ averageLoad: null, loadSource: 'none' });
+        expect(missingDirection.rows[0]).toMatchObject({ averageLoad: 2, loadSource: 'block-inferred' });
         expect(observedDirection.rows[0]).toMatchObject({ averageLoad: 20, loadSource: 'observed' });
+    });
+
+    it('scores complete APC coverage as high confidence', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [
+            heatmap('10', 'CW', [{ id: 'A', index: 1, cells: [[1, 1]] }]),
+        ], [loadProfile('10', 'CW', [{ id: 'A', index: 1, load: 12, count: 1 }])])]);
+
+        expect(result.options[0].loadQuality).toMatchObject({
+            score: 100,
+            rating: 'high',
+            totalOpportunityCount: 1,
+            observedOpportunityCount: 1,
+            unavailableOpportunityCount: 0,
+        });
+    });
+
+    it('scores APC coverage by served trip-stop opportunities rather than stop count', () => {
+        const cells = Array.from({ length: 20 }, (): [number, number] => [1, 1]);
+        const trips = cells.map((_, index) => ({ time: `${8 + Math.floor(index / 2)}:${index % 2 ? '30' : '00'}`, block: String(index + 1) }));
+        const result = buildRidershipStopProfiles([day('2026-07-07', [
+            heatmap('10', 'CW', [{ id: 'A', index: 1, cells }], trips),
+        ], [loadProfile('10', 'CW', [{ id: 'A', index: 1, load: 12, count: 1 }])])]);
+
+        expect(result.options[0].loadQuality).toMatchObject({
+            score: 5,
+            rating: 'low',
+            totalOpportunityCount: 20,
+            observedOpportunityCount: 1,
+            unavailableOpportunityCount: 19,
+        });
+    });
+
+    it('rates clean heatmap inference medium and lower-bound inference low', () => {
+        const clean = buildRidershipStopProfiles([day('2026-07-07', [
+            heatmap('10', 'CW', [{ id: 'A', index: 1, cells: [[1, 1]] }]),
+        ])]).options[0];
+        const lowerBound = buildRidershipStopProfiles([day('2026-07-07', [
+            heatmap('10', 'CW', [{ id: 'A', index: 1, cells: [[0, 1]] }]),
+        ])]).options[0];
+
+        expect(clean.loadQuality).toMatchObject({ score: 60, rating: 'medium' });
+        expect(lowerBound.loadQuality.score).toBeLessThan(60);
+        expect(lowerBound.loadQuality.rating).toBe('low');
+        expect(lowerBound.loadQuality.minimumFeasibleAnchorChainCount).toBe(1);
+    });
+
+    it('rejects same-time trips on one block and reports unavailable confidence', () => {
+        const result = buildRidershipStopProfiles([day('2026-07-07', [heatmap('10', 'CW', [
+            { id: 'A', index: 1, cells: [[1, 0], [1, 0]] },
+        ], [
+            { time: '08:00', block: '1', tripId: 'same-1' },
+            { time: '08:00', block: '1', tripId: 'same-2' },
+        ])])]);
+
+        expect(result.options[0].loadQuality).toMatchObject({
+            score: null,
+            rating: 'unavailable',
+            invalidChainCount: 1,
+            unavailableOpportunityCount: 2,
+        });
+    });
+
+    it('applies trip-specific and live vehicle capacity to inference validity', () => {
+        const summary = day('2026-07-07', [heatmap('10', 'CW', [
+            { id: 'A', index: 1, cells: [[30, 0]] },
+        ], [{ time: '08:00', block: '1', tripId: 'capacity-trip', vehicleId: '2301', capacity: 20 }])]);
+        const storedCapacity = buildRidershipStopProfiles([summary]).options[0];
+        const liveCapacity = buildRidershipStopProfiles([summary], {
+            defaultCapacity: 65,
+            vehicleCapacities: { '2301': 40 },
+            version: 2,
+            updatedAt: '',
+            updatedBy: 'manager',
+        }).options[0];
+
+        expect(storedCapacity.loadQuality.invalidChainCount).toBe(1);
+        expect(liveCapacity.loadQuality.invalidChainCount).toBe(0);
+        expect(liveCapacity.rows[0].averageLoad).toBe(30);
+    });
+
+    it('flags pre-v14 trip identity as a confidence risk without breaking legacy reads', () => {
+        const legacyDay = day('2026-07-07', [heatmap('10', 'CW', [
+            { id: 'A', index: 1, cells: [[1, 1]] },
+        ], [{ time: '08:00', block: '1', tripId: '' }])]);
+        legacyDay.schemaVersion = 13;
+        legacyDay.ridershipHeatmaps![0].trips[0].tripId = undefined;
+
+        const quality = buildRidershipStopProfiles([legacyDay]).options[0].loadQuality;
+        expect(quality.legacyTripIdentityCount).toBe(1);
+        expect(quality.score).toBeLessThan(60);
+        expect(quality.issues.map(issue => issue.code)).toContain('legacy-trip-identity');
     });
 });

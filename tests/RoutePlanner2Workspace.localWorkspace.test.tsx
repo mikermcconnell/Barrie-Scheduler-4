@@ -535,6 +535,21 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.querySelector('[data-testid="rp2-map-canvas"]')?.textContent).toContain('Box selection active');
   });
 
+  it('offers a visible map action for adding a bus stop', () => {
+    const view = renderWorkspace();
+    const addBusStopButton = view.querySelector('[data-testid="rp2-add-bus-stop-toggle"]') as HTMLButtonElement | null;
+
+    expect(addBusStopButton).not.toBeNull();
+    expect(addBusStopButton?.getAttribute('aria-pressed')).toBe('false');
+
+    flushSync(() => {
+      click(addBusStopButton);
+    });
+
+    expect(addBusStopButton?.getAttribute('aria-pressed')).toBe('true');
+    expect(view.querySelector('[data-testid="rp2-stop-placement-banner"]')?.textContent).toContain('Click the map or route line to add a bus stop');
+  });
+
   it('defaults road-name labels on once a route has enough stops', () => {
     const view = renderWorkspace();
 

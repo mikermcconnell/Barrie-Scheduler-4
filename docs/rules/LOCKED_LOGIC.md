@@ -47,6 +47,17 @@ Excel time values `>= 1.0` represent next-day service and must preserve post-mid
 
 Keep the generator -> critic pattern. AI suggests; planners decide.
 
+### 7. Trusted runtime buckets
+
+New Schedule generation uses only the exact approved 30-minute bucket.
+
+- Performance buckets require at least 5 distinct days with a complete same-day paired cycle.
+- A performance bucket is keyed to the North cycle start and is reused for both legs of that North/South pair. A South-start pair has no trusted cycle-start mapping and must fail closed.
+- Uploaded CSV buckets require an explicit count of at least 10 observations for every canonical segment. Percentiles without counts are review-only.
+- Estimated repairs, stop-level fragments, detours, outliers, ignored buckets, and incomplete trips are review evidence only.
+- Do not substitute the closest bucket, another band, a raw segment value, or a default runtime when trusted evidence is missing.
+- Missing or stale approval blocks later-step navigation, generation, export, and upload to Master.
+
 ---
 
 ## High-Risk Areas
@@ -66,6 +77,7 @@ If you touch these, read `.claude/CLAUDE.md` danger zones and the detailed notes
 ## Durable Terms
 
 - Runtime: for STREETS-derived stop-to-stop planning proxies, use observed departure-to-departure time when the downstream stop has an observed departure; fall back to downstream arrival at terminal/end-of-trip points so terminal recovery stays separate
+- Approved Runtime Bucket: a complete canonical bucket that meets its source threshold and is eligible for exact-bucket schedule generation
 - Recovery: buffer between trips
 - Cycle Time: total vehicle operating period
 - Trip Pair: northbound + southbound trip

@@ -282,9 +282,6 @@ function getPreviewActions(item: WorkspacePreviewItem): string[] {
     if (item.feature === 'analyticsOdMatrix') {
         return ['OD Map', 'Station Connectivity', 'Import Matrix'];
     }
-    if (item.feature === 'operationsLoadProfiles') {
-        return ['Load Profile Dashboard', 'Export'];
-    }
     if (item.feature === 'operationsOperatorDwell') {
         return ['Dwell Summary', 'Operator Report'];
     }

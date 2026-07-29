@@ -5,14 +5,20 @@ import type { ImportMode, PerformanceConfig } from '../steps/Step1Upload';
 import type { RuntimeData, SegmentRawData } from './csvParser';
 import type { WizardProgress } from '../../../hooks/useWizardProgress';
 import type { ApprovedRuntimeModel } from './wizardState';
-import type { ApprovedRuntimeContract } from './step2ReviewTypes';
+import type {
+    ApprovedRuntimeContract,
+    Step2CanonicalRouteSource,
+} from './step2ReviewTypes';
+import type { Step2StopOrderHealth } from './step2StopOrder';
 import { normalizeScheduleBaselinesForLineage } from '../../../utils/schedule/tripLineage';
 import { resolveWizardPersistenceStep } from './wizardPersistence';
+import { isStructurallyValidRuntimeTrustContract } from './runtimeTrustPersistence';
 import {
     buildSegmentsMapFromParsedData,
     createDefaultPerformanceConfig,
     createDefaultScheduleConfig,
     getOrderedSegmentNames,
+    type OrderedSegmentColumn,
 } from './wizardState';
 
 type WizardStep = 1 | 2 | 3 | 4;
@@ -100,7 +106,52 @@ export interface NormalizedRestoredWizardState {
     approvedRuntimeModel?: ApprovedRuntimeModel;
     segmentsMap: Record<string, SegmentRawData[]>;
     segmentNames: string[];
+    matrixAnalysis: TripBucketAnalysis[];
+    matrixSegmentsMap: Record<string, SegmentRawData[]>;
+    troubleshootingPatternWarning: string | null;
+    canonicalSegmentColumns?: OrderedSegmentColumn[];
+    canonicalDirectionStops?: Partial<Record<'North' | 'South' | 'Loop', string[]>>;
+    canonicalRouteIdentity?: string;
+    canonicalRouteSource?: Step2CanonicalRouteSource;
+    step2StopOrderHealth: Step2StopOrderHealth | null;
+    legacyRuntimeDataReset: boolean;
 }
+
+const resolveRestoredCanonicalRouteSource = (
+    contract: ApprovedRuntimeContract | undefined
+): Step2CanonicalRouteSource | undefined => {
+    if (!contract) return undefined;
+    if (contract.sourceSnapshot?.canonicalRouteSource) {
+        return contract.sourceSnapshot.canonicalRouteSource;
+    }
+
+    if (contract.importMode === 'csv') {
+        return {
+            type: 'runtime-derived',
+            routeIdentity: contract.routeIdentity,
+            versionHint: 'csv-runtime-segment-chain',
+        };
+    }
+
+    if (contract.sourceSnapshot?.stopOrderSource === 'runtime-derived') {
+        return {
+            type: 'runtime-derived',
+            routeIdentity: contract.routeIdentity,
+            versionHint: `stop-order-${contract.sourceSnapshot.stopOrderDecision ?? 'accept'}`,
+        };
+    }
+
+    if (contract.sourceSnapshot?.stopOrderSource === 'master-fallback'
+        || contract.planning.canonicalDirectionStops) {
+        return {
+            type: 'master',
+            routeIdentity: contract.routeIdentity,
+            versionHint: 'master-schedule',
+        };
+    }
+
+    return undefined;
+};
 
 export const resolveGeneratedScheduleBaselines = (
     generatedSchedules?: MasterRouteTable[],
@@ -145,7 +196,7 @@ export const buildLocalWizardProgress = (
         originalGeneratedSchedules: persistenceStep >= 4 ? baselines.originalGeneratedSchedules : undefined,
         parsedData: persistenceStep >= 1 ? state.parsedData : undefined,
         approvedRuntimeContract: persistenceStep >= 2 ? state.approvedRuntimeContract : undefined,
-        approvedRuntimeModel: persistenceStep >= 2 ? state.approvedRuntimeModel : undefined,
+        approvedRuntimeModel: undefined,
         updatedAt: new Date().toISOString()
     };
 };
@@ -175,7 +226,7 @@ export const buildFirebaseWizardSaveData = (
         originalGeneratedSchedules: persistenceStep >= 4 ? baselines.originalGeneratedSchedules : undefined,
         parsedData: persistenceStep >= 1 ? state.parsedData : undefined,
         approvedRuntimeContract: persistenceStep >= 2 ? state.approvedRuntimeContract : undefined,
-        approvedRuntimeModel: persistenceStep >= 2 ? state.approvedRuntimeModel : undefined,
+        approvedRuntimeModel: undefined,
         isGenerated: overrides?.isGenerated ?? (persistenceStep >= 4),
         ...(effectiveProjectId ? { id: effectiveProjectId } : {})
     };
@@ -184,23 +235,36 @@ export const buildFirebaseWizardSaveData = (
 export const normalizeRestoredWizardState = (
     input: WizardRestorableStateInput
 ): NormalizedRestoredWizardState => {
-    const parsedData = input.parsedData && input.parsedData.length > 0
+    const hasValidV2Contract = isStructurallyValidRuntimeTrustContract(input.approvedRuntimeContract);
+    const hasLegacyDerivedRuntime = (
+        (!!input.approvedRuntimeContract && !hasValidV2Contract)
+        || (!!input.approvedRuntimeModel && !hasValidV2Contract)
+        || (!input.approvedRuntimeContract && (
+            (input.analysis?.length ?? 0) > 0
+            || (input.bands?.length ?? 0) > 0
+            || (input.generatedSchedules?.length ?? 0) > 0
+            || (input.originalGeneratedSchedules?.length ?? 0) > 0
+        ))
+    );
+    const parsedData = !hasLegacyDerivedRuntime && input.parsedData && input.parsedData.length > 0
         ? input.parsedData
         : [];
     const segmentsMap = parsedData.length > 0
         ? buildSegmentsMapFromParsedData(parsedData)
         : {};
-    const analysis = input.analysis && input.analysis.length > 0
+    const analysis = !hasLegacyDerivedRuntime && input.analysis && input.analysis.length > 0
         ? input.analysis
         : [];
     const baselines = resolveGeneratedScheduleBaselines(
-        input.generatedSchedules,
-        input.originalGeneratedSchedules
+        hasLegacyDerivedRuntime ? [] : input.generatedSchedules,
+        hasLegacyDerivedRuntime ? [] : input.originalGeneratedSchedules
     );
     const normalizedBaselines = normalizeScheduleBaselinesForLineage(
         baselines.generatedSchedules,
         baselines.originalGeneratedSchedules
     );
+    const approvedContract = hasValidV2Contract ? input.approvedRuntimeContract : undefined;
+    const troubleshooting = approvedContract?.troubleshootingSnapshot;
 
     return {
         dayType: input.dayType || 'Weekday',
@@ -208,16 +272,25 @@ export const normalizeRestoredWizardState = (
         performanceConfig: input.performanceConfig || createDefaultPerformanceConfig(),
         autofillFromMaster: input.autofillFromMaster ?? true,
         analysis,
-        bands: input.bands && input.bands.length > 0 ? input.bands : [],
+        bands: !hasLegacyDerivedRuntime && input.bands && input.bands.length > 0 ? input.bands : [],
         config: input.config || createDefaultScheduleConfig(),
         generatedSchedules: normalizedBaselines.generatedSchedules,
         originalGeneratedSchedules: normalizedBaselines.originalGeneratedSchedules,
         parsedData,
-        approvedRuntimeContract: input.approvedRuntimeContract,
-        approvedRuntimeModel: input.approvedRuntimeModel,
+        approvedRuntimeContract: approvedContract,
+        approvedRuntimeModel: undefined,
         segmentsMap,
         segmentNames: parsedData.length > 0
             ? getOrderedSegmentNames(segmentsMap, analysis)
             : getOrderedSegmentNames({}, analysis),
+        matrixAnalysis: troubleshooting?.matrixAnalysis ?? [],
+        matrixSegmentsMap: troubleshooting?.matrixSegmentsMap ?? {},
+        troubleshootingPatternWarning: troubleshooting?.fallbackWarning ?? null,
+        canonicalSegmentColumns: approvedContract?.planning.segmentColumns,
+        canonicalDirectionStops: approvedContract?.planning.canonicalDirectionStops,
+        canonicalRouteIdentity: approvedContract?.routeIdentity,
+        canonicalRouteSource: resolveRestoredCanonicalRouteSource(approvedContract),
+        step2StopOrderHealth: approvedContract?.healthSnapshot?.stopOrder ?? null,
+        legacyRuntimeDataReset: hasLegacyDerivedRuntime,
     };
 };

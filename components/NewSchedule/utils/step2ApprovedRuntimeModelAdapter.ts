@@ -13,7 +13,7 @@ const cloneValue = <T>(value: T): T => {
 export const buildStep2ApprovedRuntimeModelFromContract = (
     contract: ApprovedRuntimeContract | null | undefined
 ): ApprovedRuntimeModel | null => {
-    if (!contract) return null;
+    if (!contract || contract.schemaVersion !== 2) return null;
 
     const directionBandSummary = cloneValue(contract.planning.directionBandSummary) as DirectionBandSummary;
     const directions = contract.planning.directions.length > 0
@@ -36,7 +36,7 @@ export const buildStep2ApprovedRuntimeModelFromContract = (
         status: contract.healthSnapshot.status,
         chartBasis: contract.planning.chartBasis,
         generationBasis: contract.planning.generationBasis,
-        buckets: cloneValue(contract.planning.buckets) as TripBucketAnalysis[],
+        buckets: cloneValue(contract.planning.approvedBuckets) as TripBucketAnalysis[],
         bands: cloneValue(contract.planning.bands),
         directionBandSummary,
         segmentColumns: cloneValue(contract.planning.segmentColumns),

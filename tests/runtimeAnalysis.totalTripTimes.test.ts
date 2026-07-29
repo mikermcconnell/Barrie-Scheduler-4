@@ -293,6 +293,7 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
             allTimeBuckets: ['07:00 - 07:29', '07:30 - 07:59'],
             detectedRouteNumber: '10',
             detectedDirection: 'North',
+            sampleCountMode: 'observations',
         }];
 
         const analysis = calculateTotalTripTimes(data);
@@ -325,6 +326,9 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
                 ],
                 expectedSegmentCount: 2,
                 observedSegmentCount: 2,
+                sampleCountMode: 'days',
+                contributingDays: ['01', '02', '03', '04', '05'].map(date => ({ date: `2026-03-${date}`, runtime: 45 })),
+                evidence: { kind: 'paired-cycle', qualifyingCount: 5, requiredCount: 5, planningEligible: true, exclusionReasons: [] },
             },
             {
                 timeBucket: '06:30 - 06:59',
@@ -340,6 +344,9 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
                 ],
                 expectedSegmentCount: 2,
                 observedSegmentCount: 2,
+                sampleCountMode: 'days',
+                contributingDays: ['01', '02', '03', '04', '05'].map(date => ({ date: `2026-03-${date}`, runtime: 55 })),
+                evidence: { kind: 'paired-cycle', qualifyingCount: 5, requiredCount: 5, planningEligible: true, exclusionReasons: [] },
             },
         ]);
 
@@ -497,6 +504,8 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
                 ],
                 expectedSegmentCount: 2,
                 observedSegmentCount: 2,
+                sampleCountMode: 'observations',
+                evidence: { kind: 'uploaded-percentiles', qualifyingCount: 10, requiredCount: 10, planningEligible: true, exclusionReasons: [] },
             },
             {
                 timeBucket: '06:30 - 06:59',
@@ -509,6 +518,8 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
                 ],
                 expectedSegmentCount: 2,
                 observedSegmentCount: 1,
+                sampleCountMode: 'observations',
+                evidence: { kind: 'uploaded-percentiles', qualifyingCount: 10, requiredCount: 10, planningEligible: false, exclusionReasons: ['Incomplete segment coverage'] },
             },
         ]);
 
@@ -580,7 +591,11 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
         expect(hardened[1].details.find(detail => detail.segmentName === 'B to C')?.p50).toBe(21);
 
         const { buckets } = calculateBands(hardened);
-        expect(buckets[1].assignedBand).toBeTruthy();
+        expect(buckets[1].assignedBand).toBeUndefined();
+        expect(buckets[1].evidence).toMatchObject({
+            kind: 'estimated',
+            planningEligible: false,
+        });
     });
 
     it('classifies missing edge-only coverage as boundary service', () => {
@@ -659,5 +674,37 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
         expect(hardened[1].totalP80).toBe(47);
         expect(hardened[1].details.find(detail => detail.segmentName === 'B to C')?.p50).toBe(12);
         expect(hardened[1].details.find(detail => detail.segmentName === 'C to D')?.p50).toBe(10);
+    });
+
+    it('requires five complete paired-cycle days for performance banding', () => {
+        const build = (dayCount: number) => calculateTotalTripTimes([{
+            detectedDirection: 'North',
+            sampleCountMode: 'days',
+            allTimeBuckets: ['10:00 - 10:29'],
+            segments: [{
+                segmentName: 'A to B',
+                timeBuckets: {
+                    '10:00 - 10:29': {
+                        p50: 10, p80: 12, n: dayCount,
+                        contributions: Array.from({ length: dayCount }, (_, index) => ({ date: `2026-04-${index + 1}`, runtime: 10 })),
+                    },
+                },
+            }],
+        }]);
+
+        expect(calculateBands(build(4)).buckets[0].assignedBand).toBeUndefined();
+        expect(calculateBands(build(5)).buckets[0].assignedBand).toBe('A');
+    });
+
+    it('requires ten observations for every uploaded CSV segment', () => {
+        const build = (count: number) => calculateTotalTripTimes([{
+            detectedDirection: 'North',
+            sampleCountMode: 'observations',
+            allTimeBuckets: ['10:00 - 10:29'],
+            segments: [{ segmentName: 'A to B', timeBuckets: { '10:00 - 10:29': { p50: 10, p80: 12, n: count } } }],
+        }]);
+
+        expect(calculateBands(build(9)).buckets[0].assignedBand).toBeUndefined();
+        expect(calculateBands(build(10)).buckets[0].assignedBand).toBe('A');
     });
 });

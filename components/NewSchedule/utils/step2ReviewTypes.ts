@@ -57,6 +57,7 @@ export interface Step2SourceSnapshot {
     stopOrderDecision?: 'accept' | 'review' | 'blocked';
     stopOrderConfidence?: 'high' | 'medium' | 'low';
     stopOrderSource?: 'runtime-derived' | 'master-fallback' | 'none';
+    canonicalRouteSource?: Step2CanonicalRouteSource;
 }
 
 export interface Step2ReviewInput {
@@ -87,6 +88,8 @@ export interface Step2ReviewHealth {
 
     availableBucketCount: number;
     completeBucketCount: number;
+    coverageCompleteBucketCount?: number;
+    trustedReadyBucketCount?: number;
     incompleteBucketCount: number;
     lowConfidenceBucketCount: number;
     repairedBucketCount?: number;
@@ -111,6 +114,11 @@ export interface Step2PlanningPayload {
     chartBasis: 'observed-cycle' | 'uploaded-percentiles';
     generationBasis: 'direction-band-summary';
 
+    /** All visible evidence, including weak and estimated buckets. */
+    reviewBuckets: TripBucketAnalysis[];
+    /** The only buckets permitted to drive schedule generation. */
+    approvedBuckets: TripBucketAnalysis[];
+    /** @deprecated Compatibility alias for reviewBuckets. */
     buckets: TripBucketAnalysis[];
     bands: TimeBand[];
     directionBandSummary: DirectionBandSummary;
@@ -154,7 +162,7 @@ export interface Step2ApprovedBy {
 }
 
 export interface ApprovedRuntimeContract {
-    schemaVersion: 1;
+    schemaVersion: 2;
 
     routeIdentity: string;
     routeNumber: string;
@@ -174,4 +182,6 @@ export interface ApprovedRuntimeContract {
 
     planning: Step2PlanningPayload;
     healthSnapshot: Step2ReviewHealth;
+    /** Review-only data needed to rebuild the same Step 2 fingerprint after project restore. */
+    troubleshootingSnapshot?: Step2TroubleshootingPayload;
 }

@@ -970,6 +970,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [isSelectionMenuOpen, setIsSelectionMenuOpen] = useState(false);
     const [mapSelectionMode, setMapSelectionMode] = useState<RoutePlanner2MapSelectionMode | null>(null);
     const [mapSelection, setMapSelection] = useState<RoutePlanner2MapSelection>(EMPTY_MAP_SELECTION);
+    const [isStopPlacementMode, setIsStopPlacementMode] = useState(false);
     const [isGtfsImportOpen, setIsGtfsImportOpen] = useState(false);
     const [isAddressImportOpen, setIsAddressImportOpen] = useState(false);
     const [segmentSwitchStep, setSegmentSwitchStep] = useState<SegmentSwitchStep>('idle');
@@ -1625,6 +1626,23 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         }));
         setSelectedStopId(stopId);
     }
+    function toggleStopPlacementMode() {
+        if (isStopPlacementMode) {
+            setIsStopPlacementMode(false);
+            return;
+        }
+        setMapSelectionMode(null);
+        setMapSelection(EMPTY_MAP_SELECTION);
+        setIsSelectionMenuOpen(false);
+        setIsGtfsImportOpen(false);
+        setIsAddressImportOpen(false);
+        setIsStopPlacementMode(true);
+    }
+    function addStopFromPlacementMode(coordinate: { lat: number; lng: number; name?: string }) {
+        addStop(coordinate);
+        setIsStopPlacementMode(false);
+        setIsRightRailOpen(true);
+    }
     function addAddressStopAtSelectedPosition(coordinate: { lat: number; lng: number; name?: string }) {
         if (!selectedScenario) return;
         const stopNumber = selectedScenario.stops.length + 1;
@@ -1867,6 +1885,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setProject((current) => updateRoutePlanner2LineWaypointCoordinate(current, selectedScenario.id, waypointId, coordinate));
     }
     function startSegmentSwitchMode() {
+        setIsStopPlacementMode(false);
         setIsGtfsImportOpen(false);
         setIsAddressImportOpen(false);
         setIsDrawFocusMode(false);
@@ -1922,6 +1941,11 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             return;
         }
         setSelectedStopId(stopId);
+    }
+    function insertStopFromPlacementMode(placement: Parameters<typeof insertStopOnLine>[0]) {
+        insertStopOnLine(placement);
+        setIsStopPlacementMode(false);
+        setIsRightRailOpen(true);
     }
     function buildStopTransferOptions(mode: 'copy' | 'move', now = new Date().toISOString()): RoutePlanner2StopTransferPreviewOptions | null {
         if (!selectedScenario || !transferTargetScenarioId || !sourceSegmentSelectionReady) return null;
@@ -2022,6 +2046,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         }));
     }
     function activateMapSelectionMode(mode: RoutePlanner2MapSelectionMode) {
+        setIsStopPlacementMode(false);
         setIsActionSidebarOpen(true);
         setIsSelectionMenuOpen(true);
         setMapSelectionMode(mode);
@@ -2118,6 +2143,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         }
     }
     function openGtfsImport() {
+        setIsStopPlacementMode(false);
         setIsAddressImportOpen(false);
         setIsGtfsImportOpen(true);
         if (gtfsPatterns.length === 0 && !gtfsLoading) void loadGtfsPatterns();
@@ -2719,15 +2745,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         highlightedWaypointId={hoveredMapItem?.type === 'waypoint' ? hoveredMapItem.id : null}
                         highlightedSegmentId={hoveredMapItem?.type === 'segment' ? hoveredMapItem.id : null}
                         selectionMode={mapSelectionMode}
+                        stopPlacementMode={isStopPlacementMode}
+                        onCancelStopPlacement={() => setIsStopPlacementMode(false)}
                         selectedStopIds={mapSelectedStopIds}
                         selectedWaypointIds={mapSelection.waypointIds}
                         onSelectionChange={setMapSelection}
                         onSelectStop={selectRoutePlannerStop}
-                        onAddStop={addStop}
+                        onAddStop={addStopFromPlacementMode}
                         onDeleteStop={deleteStop}
                         onMoveStop={moveStop}
                         onAddLineWaypoint={addLineWaypoint}
-                        onInsertStopOnLine={insertStopOnLine}
+                        onInsertStopOnLine={insertStopFromPlacementMode}
                         onMoveLineWaypoint={moveLineWaypoint}
                         onDeleteLineWaypoint={deleteLineWaypoint}
                         onSegmentRuntimeEstimates={updateSegmentRuntimeEstimates}
@@ -2768,6 +2796,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         {saveStatusLabel}
                                     </span>
                                 </div>
+                                <button
+                                    type="button"
+                                    onClick={toggleStopPlacementMode}
+                                    disabled={!selectedScenario || segmentSwitchModeActive}
+                                    data-testid="rp2-add-bus-stop-toggle"
+                                    aria-pressed={isStopPlacementMode}
+                                    className={`pointer-events-auto mt-1 inline-flex min-h-10 shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black shadow-lg backdrop-blur disabled:cursor-not-allowed disabled:opacity-40 ${isStopPlacementMode ? 'border-cyan-700 bg-cyan-600 text-white' : 'border-cyan-200 bg-white/95 text-cyan-800 hover:bg-cyan-50'}`}
+                                    title={isStopPlacementMode ? 'Cancel adding a bus stop' : 'Add a bus stop on the map'}
+                                >
+                                    <Plus size={16} /> {isStopPlacementMode ? 'Cancel adding stop' : 'Add bus stop'}
+                                </button>
                                 {visibleSaveMessage && (
                                     <div className={`pointer-events-auto mt-1 rounded-2xl border px-3 py-1.5 text-xs font-semibold shadow-lg ${saveState === 'error' || loadState === 'error'
                                         ? 'border-rose-200 bg-rose-50 text-rose-700'
@@ -3126,9 +3165,10 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => {
-                                            setIsGtfsImportOpen(false);
-                                            setIsAddressImportOpen(true);
+                                            onClick={() => {
+                                                setIsStopPlacementMode(false);
+                                                setIsGtfsImportOpen(false);
+                                                setIsAddressImportOpen(true);
                                         }}
                                         className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-bold text-emerald-800 ${actionSidebarExpanded ? 'justify-start' : 'justify-center'}`}
                                         title="Import addresses"

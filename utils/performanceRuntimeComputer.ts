@@ -1147,7 +1147,11 @@ function buildTripBucketedRuntimesFromTrips(
     direction: RouteDirection,
   ): CycleBucketCandidate[] => (
     trips
-    .filter((trip) => tripMatchesPreferredPattern(trip, preferredPatternsByDirection.get(direction), preferStopIdsForPatterns))
+    // Canonical planning is based on the official stop chain, not an exact raw-leg
+    // pattern. Harmless intermediate AVL stops must not disqualify a complete trip.
+    .filter((trip) => canonicalDirectionStops
+      ? true
+      : tripMatchesPreferredPattern(trip, preferredPatternsByDirection.get(direction), preferStopIdsForPatterns))
     .map((trip) => {
       const details = buildPerTripSegments(trip, direction);
       const definitions = canonicalSegmentsByDirection.get(direction);
@@ -1273,12 +1277,13 @@ function buildTripBucketedRuntimesFromTrips(
       .sort((a, b) => parseClockMinutes(a.terminalDepartureTime) - parseClockMinutes(b.terminalDepartureTime));
 
     if (bucketMode === 'cycleStart' && bidirectional) {
+      const allowStopLevelPairing = !(fullPatternOnly && canonicalDirectionStops);
       const northCandidates = northTrips.length > 0
         ? buildTripCandidates(northTrips, 'North')
-        : buildStopBucketCandidates(dayStops.get('North') || [], 'North');
+        : allowStopLevelPairing ? buildStopBucketCandidates(dayStops.get('North') || [], 'North') : [];
       const southCandidates = southTrips.length > 0
         ? buildTripCandidates(southTrips, 'South')
-        : buildStopBucketCandidates(dayStops.get('South') || [], 'South');
+        : allowStopLevelPairing ? buildStopBucketCandidates(dayStops.get('South') || [], 'South') : [];
 
       if (northCandidates.length > 0 && southCandidates.length > 0) {
         const southUsed = new Set<number>();
@@ -1306,6 +1311,11 @@ function buildTripBucketedRuntimesFromTrips(
 
         continue;
       }
+
+      // Schedule-driving cycle evidence must be a same-day pair of complete
+      // canonical trips. Stop-clock fragments remain available elsewhere for
+      // troubleshooting, but never become planning buckets.
+      if (fullPatternOnly && canonicalDirectionStops) continue;
     }
 
     const directions = new Set<RouteDirection>([
@@ -1315,7 +1325,9 @@ function buildTripBucketedRuntimesFromTrips(
 
     directions.forEach((direction) => {
       const trips = (dayTrips.get(direction) || []).filter((trip) => (
-        tripMatchesPreferredPattern(trip, preferredPatternsByDirection.get(direction), preferStopIdsForPatterns)
+        canonicalDirectionStops
+          ? true
+          : tripMatchesPreferredPattern(trip, preferredPatternsByDirection.get(direction), preferStopIdsForPatterns)
       ));
       if (trips.length > 0 && hasTripEntries) {
         trips.forEach((trip) => {
@@ -1670,6 +1682,11 @@ export function computeRuntimesFromPerformance(
   if (tripBucketedResults && tripBucketedResults.length > 0) {
     return tripBucketedResults;
   }
+
+  // A canonical full-pattern request is the schedule-driving path. If complete
+  // trip pairs cannot be built, do not silently replace them with stop-clock
+  // or coarse segment evidence.
+  if (canonicalDirectionStops && fullPatternOnly) return [];
 
   const strictCanonicalPlanning = !!canonicalDirectionStops && fullPatternOnly;
   const adjacentCanonicalSegmentsByDirection = strictCanonicalPlanning

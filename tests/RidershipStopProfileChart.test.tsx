@@ -47,12 +47,42 @@ function option(overrides: Partial<RidershipStopProfileChartOption> = {}): Rider
         blockInferenceAssumedEmptyAnchor: false,
         blockInferenceUsesMinimumFeasibleAnchor: false,
         invalidBlockInferenceChainCount: 0,
+        loadEvidence: {
+            totalStopCount: 2,
+            observedStopCount: 2,
+            observedObservationCount: 18,
+            estimatedStopCount: 0,
+            estimatedObservationCount: 0,
+            legacyStopCount: 0,
+            legacyDayCount: 0,
+            unavailableStopCount: 0,
+        },
+        loadQuality: {
+            methodVersion: 1,
+            score: 100,
+            rating: 'high',
+            totalOpportunityCount: 18,
+            observedOpportunityCount: 18,
+            estimatedOpportunityCount: 0,
+            legacyEstimatedOpportunityCount: 0,
+            unavailableOpportunityCount: 0,
+            attemptedChainCount: 2,
+            validChainCount: 2,
+            assumedEmptyAnchorChainCount: 2,
+            minimumFeasibleAnchorChainCount: 0,
+            invalidChainCount: 0,
+            openEndingChainCount: 0,
+            stableTripCount: 2,
+            legacyTripIdentityCount: 0,
+            skippedInferenceTripCount: 0,
+            issues: [],
+        },
         busiestBoardingStop: { stopId: '100', stopName: 'Downtown Terminal', value: 30 },
         busiestAlightingStop: { stopId: '200', stopName: 'Georgian College', value: 32 },
         peakAverageLoad: { stopId: '200', stopName: 'Georgian College', value: 20, loadObservationCount: 8, estimated: false },
         rows: [
-            { stopId: '100', stopName: 'Downtown Terminal', routeStopIndex: 0, isTimepoint: true, boardings: 30, alightings: 4, servedDays: 2, averageLoad: 12, loadObservationCount: 10, loadEstimated: false, loadSource: 'observed', blockInferredLoadCount: 0 },
-            { stopId: '200', stopName: 'Georgian College', routeStopIndex: 1, isTimepoint: true, boardings: 15, alightings: 32, servedDays: 2, averageLoad: 20, loadObservationCount: 8, loadEstimated: false, loadSource: 'observed', blockInferredLoadCount: 0 },
+            { stopId: '100', stopName: 'Downtown Terminal', routeStopIndex: 0, isTimepoint: true, boardings: 30, alightings: 4, servedDays: 2, averageLoad: 12, loadObservationCount: 10, loadEstimated: false, loadSource: 'observed', blockInferredLoadCount: 0, observedLoadObservationCount: 10, legacyLoadDayCount: 0 },
+            { stopId: '200', stopName: 'Georgian College', routeStopIndex: 1, isTimepoint: true, boardings: 15, alightings: 32, servedDays: 2, averageLoad: 20, loadObservationCount: 8, loadEstimated: false, loadSource: 'observed', blockInferredLoadCount: 0, observedLoadObservationCount: 8, legacyLoadDayCount: 0 },
         ],
         ...overrides,
     };
@@ -109,11 +139,16 @@ describe('RidershipStopProfileChart', () => {
     });
 
     it('discloses multiple patterns and estimated legacy weighting', () => {
-        render([option({ multipleStopPatterns: true, hasEstimatedLoad: true })]);
+        render([option({
+            multipleStopPatterns: true,
+            hasEstimatedLoad: true,
+            loadEvidence: { ...option().loadEvidence, legacyStopCount: 2, legacyDayCount: 4 },
+        })]);
         expect(container.textContent).toContain('Multiple stop patterns');
         expect(container.textContent).toContain('Estimated weighting');
+        expect(container.textContent).toContain('Historical weighting:');
         const estimatedLine = container.querySelector('[data-chart-name="Average onboard (contains estimates)"]');
-        expect(estimatedLine?.getAttribute('data-stroke-dasharray')).toBe('6 4');
+        expect(estimatedLine?.getAttribute('data-stroke-dasharray')).toBeNull();
     });
 
     it('clearly discloses block-inferred loads and invalid block chains', () => {
@@ -123,6 +158,7 @@ describe('RidershipStopProfileChart', () => {
             loadEstimated: true,
             loadSource: 'block-inferred' as const,
             blockInferredLoadCount: 4,
+            observedLoadObservationCount: 0,
         }));
         render([option({
             rows: inferredRows,
@@ -130,15 +166,56 @@ describe('RidershipStopProfileChart', () => {
             hasBlockInferredLoad: true,
             blockInferenceAssumedEmptyAnchor: true,
             invalidBlockInferenceChainCount: 2,
+            loadEvidence: {
+                ...option().loadEvidence,
+                observedStopCount: 0,
+                observedObservationCount: 0,
+                estimatedStopCount: 2,
+                estimatedObservationCount: 8,
+            },
         })]);
 
-        expect(container.textContent).toContain('Block-inferred load:');
+        expect(container.textContent).toContain('Heatmap-estimated load:');
+        expect(container.textContent).toContain('reliable APC load is used where available');
         expect(container.textContent).toContain('same route and block');
         expect(container.textContent).toContain('first observed trip in each block is assumed empty');
         expect(container.textContent).toContain('2 block chains were omitted');
         expect(container.textContent).toContain('outside the plausible range');
-        expect(container.textContent).toContain('Georgian College · Block-inferred');
-        expect(container.querySelector('[data-chart-name="Average onboard (includes block inference)"]')).not.toBeNull();
+        expect(container.textContent).toContain('Georgian College · Heatmap estimate');
+        expect(container.querySelector('[data-chart-name="Average onboard (APC + heatmap estimates)"]')).not.toBeNull();
+        expect(container.querySelector('[aria-label="Load evidence coverage"]')?.textContent).toContain('Observed APC: 0/2 stops');
+        expect(container.querySelector('[aria-label="Load evidence coverage"]')?.textContent).toContain('Heatmap estimate: 2/2 stops');
+        expect(container.querySelector('[aria-label="Load evidence coverage"]')?.textContent).toContain('8 samples');
+    });
+
+    it('renders a persistent opportunity-weighted load confidence panel', () => {
+        render([option({
+            loadQuality: {
+                ...option().loadQuality,
+                score: 55,
+                rating: 'low',
+                observedOpportunityCount: 4,
+                estimatedOpportunityCount: 8,
+                legacyEstimatedOpportunityCount: 2,
+                unavailableOpportunityCount: 4,
+                minimumFeasibleAnchorChainCount: 1,
+                openEndingChainCount: 1,
+                issues: [
+                    { code: 'minimum-feasible-anchor', severity: 'warning', message: '1 block chain uses a lower-bound starting-load anchor.' },
+                    { code: 'unavailable-load', severity: 'critical', message: '4 served trip-stop loads have no usable load evidence.' },
+                ],
+            },
+        })]);
+
+        const panel = container.querySelector('[aria-label="Load confidence"]');
+        expect(panel?.textContent).toContain('55/100');
+        expect(panel?.textContent).toContain('low');
+        expect(panel?.textContent).toContain('Observed APC4/18');
+        expect(panel?.textContent).toContain('Heatmap estimated8/18');
+        expect(panel?.textContent).toContain('Historical estimate2/18');
+        expect(panel?.textContent).toContain('Unavailable4/18');
+        expect(panel?.textContent).toContain('lower-bound starting-load anchor');
+        expect(panel?.textContent).toContain('planning estimates');
     });
 
     it('discloses the minimum-feasible block anchor as a lower-bound estimate', () => {

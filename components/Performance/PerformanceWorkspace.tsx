@@ -1,7 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
-    BarChart3, ExternalLink, Timer, Loader2,
+    ExternalLink, Timer, Loader2,
 } from 'lucide-react';
 import type {
     PerformanceDataLoadOptions,
@@ -34,6 +34,9 @@ interface PerformanceWorkspaceProps {
     selectedRouteId?: string;
     routeOptions?: PerformanceRouteOption[];
     onRouteChange?: (routeId: string) => void;
+    loadConfigTeamId?: string;
+    loadConfigUserId?: string;
+    canManageLoadConfig?: boolean;
 }
 
 interface TabConfig {
@@ -49,14 +52,8 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'complete' },
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
-    { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete', badge: 'Testing', feature: 'operationsLoadProfiles' },
     { id: 'operator-dwell', label: 'Dwell Incident Review', icon: Timer, status: 'complete', badge: 'Testing', feature: 'operationsOperatorDwell' },
 ];
-
-const PERFORMANCE_TAB_FEATURES: Partial<Record<PerformanceTab, Parameters<typeof isFeatureEnabled>[0]>> = {
-    'load-profiles': 'operationsLoadProfiles',
-    'operator-dwell': 'operationsOperatorDwell',
-};
 
 const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 
@@ -95,10 +92,6 @@ const RidershipModule = lazyWithRetry(
     () => import('./RidershipModule').then(module => ({ default: module.RidershipModule })),
     'performance-ridership-module',
 );
-const LoadProfileModule = lazyWithRetry(
-    () => import('./LoadProfileModule').then(module => ({ default: module.LoadProfileModule })),
-    'performance-load-profiles-module',
-);
 const OperatorDwellModule = lazyWithRetry(
     () => import('./OperatorDwellModule').then(module => ({ default: module.OperatorDwellModule })),
     'performance-operator-dwell-module',
@@ -124,13 +117,6 @@ const PerformancePanelError: React.FC<{ onRetry: () => void }> = ({ onRetry }) =
 );
 
 const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
-const LOAD_PROFILE_TIME_RANGES: TimeRange[] = [
-    'past-three-months',
-    'past-month',
-    'past-week',
-    'yesterday',
-    'single-day',
-];
 
 function resolveDetailDateRange(
     metadata: PerformanceMetadata | null | undefined,
@@ -180,6 +166,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     selectedRouteId = 'all',
     routeOptions = [],
     onRouteChange,
+    loadConfigTeamId,
+    loadConfigUserId,
+    canManageLoadConfig = false,
 }) => {
     const { canAccess } = useWorkspaceAccess();
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
@@ -215,11 +204,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const isCurrentDetailLoading = shouldLoadDetailData && detailQuery.isFetching && !detailData;
     const detailsReady = !shouldLoadDetailData || !!detailData;
     const workspaceData = detailData ?? data;
-    const allowedTimeRanges = activeTab === 'load-profiles'
-        ? LOAD_PROFILE_TIME_RANGES
-        : detailsReady
-            ? undefined
-            : OVERVIEW_ONLY_TIME_RANGES;
+    const allowedTimeRanges = detailsReady ? undefined : OVERVIEW_ONLY_TIME_RANGES;
     const showImportHealthPanel = !import.meta.env.PROD
         && detailsReady
         && isFeatureEnabled('operationsImportHealth');
@@ -356,18 +341,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <RidershipModule
                             data={filteredData}
+                            loadConfigTeamId={loadConfigTeamId}
+                            loadConfigUserId={loadConfigUserId}
+                            canManageLoadConfig={canManageLoadConfig}
                             comparisonDays={ridershipComparisonPeriod?.days ?? []}
                             comparisonRange={ridershipComparisonPeriod
                                 ? { start: ridershipComparisonPeriod.startDate, end: ridershipComparisonPeriod.endDate }
                                 : null}
                         />
-                    </PerformanceScopeProvider>
-                );
-            case 'load-profiles':
-                if (isCurrentDetailLoading) return <PerformancePanelLoading label="Loading load profiles..." />;
-                return (
-                    <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
-                        <LoadProfileModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
             case 'operator-dwell':

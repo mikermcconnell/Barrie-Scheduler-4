@@ -13,6 +13,7 @@ import {
     type TripBucketAnalysis,
 } from '../../../utils/ai/runtimeAnalysis';
 import { buildNormalizedSegmentNameLookup, resolveCanonicalSegmentName } from '../../../utils/runtimeSegmentMatching';
+import { evaluateRuntimeBucketEligibility } from '../../../utils/ai/runtimeEvidenceEligibility';
 import type { SegmentRawData } from '../utils/csvParser';
 import {
     alignOrderedSegmentColumnsToPreferredGroups,
@@ -57,6 +58,11 @@ export interface Step2BucketConfidence {
     repairedSegments?: string[];
     repairSourceBuckets?: string[];
     isEstimatedRepair?: boolean;
+    evidenceKind?: NonNullable<TripBucketAnalysis['evidence']>['kind'];
+    qualifyingCount?: number;
+    requiredCount?: number;
+    planningEligible?: boolean;
+    exclusionReasons?: string[];
 }
 
 export interface UseStep2RuntimeReviewInput {
@@ -146,7 +152,12 @@ const buildConfidenceMap = (
         ? sampleValues.reduce((sum, value) => sum + value, 0) / sampleValues.length
         : 0;
     const missingSegments = Math.max(0, expectedSegmentNames.length - matchedSegments);
-    const hasLowSamples = useSampleCountConfidence && minSegmentSamples > 0 && minSegmentSamples < confidenceThreshold;
+    const eligibility = evaluateRuntimeBucketEligibility(bucket, {
+        fallbackExpectedSegmentCount: expectedSegmentNames.length,
+    });
+    const hasLowSamples = bucket.evidence
+        ? bucket.evidence.qualifyingCount < bucket.evidence.requiredCount
+        : useSampleCountConfidence && minSegmentSamples > 0 && minSegmentSamples < confidenceThreshold;
     const hasMissingSegments = expectedSegmentNames.length > 0 && missingSegments > 0;
 
     return [bucket.timeBucket, {
@@ -157,13 +168,18 @@ const buildConfidenceMap = (
         avgSegmentSamples,
         hasLowSamples,
         hasMissingSegments,
-        isLowConfidence: hasLowSamples || hasMissingSegments,
+        isLowConfidence: hasLowSamples || hasMissingSegments || !eligibility.eligible,
         coverageCause: bucket.coverageCause,
         coverageCauseLabel: getBucketCoverageCauseLabel(bucket.coverageCause),
         missingSegmentNames: bucket.missingSegmentNames,
         repairedSegments: bucket.repairedSegments,
         repairSourceBuckets: bucket.repairSourceBuckets,
         isEstimatedRepair: bucket.coverageCause === 'repaired-single-gap',
+        evidenceKind: bucket.evidence?.kind,
+        qualifyingCount: bucket.evidence?.qualifyingCount,
+        requiredCount: bucket.evidence?.requiredCount,
+        planningEligible: eligibility.eligible,
+        exclusionReasons: eligibility.reasons,
     }];
 }));
 
@@ -202,7 +218,9 @@ export const useStep2RuntimeReview = ({
     const toggleIgnore = (bucket: string) => {
         const newData = analysis.map(a => (
             a.timeBucket === bucket
-                ? { ...a, ignored: !a.ignored }
+                ? (a.ignored && !evaluateRuntimeBucketEligibility({ ...a, ignored: false }).eligible
+                    ? a
+                    : { ...a, ignored: !a.ignored })
                 : a
         ));
         setAnalysis(newData);

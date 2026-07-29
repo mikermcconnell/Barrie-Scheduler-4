@@ -48,6 +48,7 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
     // State machine context
     let currentSegmentName: string | null = null;
     let colToBucketMap: Record<number, string> = {};
+    let foundVerifiedObservationCount = false;
 
     // Helper: Initialize segment if new
     const ensureSegmentInit = (segName: string) => {
@@ -90,7 +91,9 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
                     if (currentSegmentName) {
                         const segData = resultSegments[currentSegmentName];
                         if (!segData.timeBuckets[bucket]) {
-                            segData.timeBuckets[bucket] = { p50: 0, p80: 0, n: 1 };
+                            // Percentile exports do not prove how many observations were used.
+                            // Keep the count at zero unless an explicit observation-count row supplies it.
+                            segData.timeBuckets[bucket] = { p50: 0, p80: 0, n: 0 };
                         }
                     }
                 }
@@ -110,12 +113,33 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
                 if (bucket && !isNaN(val)) {
                     // Initialize bucket if missing (e.g. if Half-Hour row had more cols than initialized?)
                     if (!segData.timeBuckets[bucket]) {
-                        segData.timeBuckets[bucket] = { p50: 0, p80: 0, n: 1 };
+                        segData.timeBuckets[bucket] = { p50: 0, p80: 0, n: 0 };
                     }
 
                     if (isP50) segData.timeBuckets[bucket].p50 = val;
                     else segData.timeBuckets[bucket].p80 = val;
                 }
+            }
+        }
+        else if (/Observed (?:Runtime-(?:Count|N|Sample Count|Observations)|(?:Sample |Observation )?Count)\s*$/i.test(rowLabel.trim())) {
+            // Scheduling requires a real per-segment observation count. Only accept
+            // an explicit count row from the export; never infer a count from P50/P80.
+            if (!currentSegmentName) continue;
+
+            const segData = resultSegments[currentSegmentName];
+            for (let c = 1; c < cols.length; c++) {
+                const bucket = colToBucketMap[c];
+                const rawCount = cols[c]?.trim();
+                const count = Number(rawCount);
+                if (!bucket || !/^\d+$/.test(rawCount || '') || !Number.isSafeInteger(count) || count <= 0) {
+                    continue;
+                }
+
+                if (!segData.timeBuckets[bucket]) {
+                    segData.timeBuckets[bucket] = { p50: 0, p80: 0, n: 0 };
+                }
+                segData.timeBuckets[bucket].n = count;
+                foundVerifiedObservationCount = true;
             }
         }
     }
@@ -208,6 +232,7 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
         allTimeBuckets: allBuckets,
         detectedRouteNumber,
         detectedDirection,
+        sampleCountMode: foundVerifiedObservationCount ? 'observations' : undefined,
     };
 };
 

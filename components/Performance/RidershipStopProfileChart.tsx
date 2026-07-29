@@ -10,7 +10,7 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
-import { AlertTriangle, BusFront } from 'lucide-react';
+import { AlertTriangle, BusFront, ShieldCheck } from 'lucide-react';
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import type {
     RidershipStopProfileOption,
@@ -29,6 +29,22 @@ interface TooltipRow extends RidershipStopProfileRow {
     stopNumber: number;
 }
 
+function LoadPointDot({ cx, cy, payload }: { cx?: number; cy?: number; payload?: TooltipRow }) {
+    if (typeof cx !== 'number' || typeof cy !== 'number' || !payload || payload.averageLoad === null) return null;
+    const observedOnly = payload.loadSource === 'observed';
+    return (
+        <circle
+            cx={cx}
+            cy={cy}
+            r={3.5}
+            fill={observedOnly ? '#164e63' : '#ffffff'}
+            stroke={observedOnly ? '#164e63' : '#0284c7'}
+            strokeWidth={observedOnly ? 1 : 2}
+            data-load-source={payload.loadSource}
+        />
+    );
+}
+
 function stopRowKey(stop: TooltipRow): string {
     const occurrenceIndex = 'occurrenceIndex' in stop && typeof stop.occurrenceIndex === 'number'
         ? stop.occurrenceIndex
@@ -43,7 +59,7 @@ function formatMetric(value: number): string {
 function loadSourceLabel(row: RidershipStopProfileRow): string {
     switch (row.loadSource) {
         case 'block-inferred':
-            return 'Block-inferred onboard';
+            return 'Heatmap-estimated onboard';
         case 'mixed':
             return 'Average onboard (mixed estimate)';
         case 'legacy':
@@ -130,6 +146,14 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
     const isAverage = periodMode === 'multi-day';
     const activityUnit = isAverage ? 'Avg / service day' : 'Daily total';
     const chartWidth = Math.max(760, rows.length * 62);
+    const confidence = selected?.loadQuality;
+    const confidenceTone = confidence?.rating === 'high'
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+        : confidence?.rating === 'medium'
+            ? 'border-sky-200 bg-sky-50 text-sky-800'
+            : confidence?.rating === 'low'
+                ? 'border-amber-200 bg-amber-50 text-amber-900'
+                : 'border-slate-200 bg-slate-50 text-slate-700';
     const accessibleSummary = selected
         ? `${selected.routeId} ${selected.direction}. ${rows.length} stops. ${activityUnit}. ${hasBoardings && busiestBoarding ? `Busiest boarding stop is ${busiestBoarding.stopName} at ${formatMetric(busiestBoarding.boardings)}.` : 'No boarding activity.'} ${hasAlightings && busiestAlighting ? `Busiest alighting stop is ${busiestAlighting.stopName} at ${formatMetric(busiestAlighting.alightings)}.` : 'No alighting activity.'} ${peakLoad ? `Peak average onboard load is ${formatMetric(peakLoad.averageLoad ?? 0)} at ${peakLoad.stopName}.` : 'Average onboard load is unavailable.'}`
         : 'No passenger flow data is available.';
@@ -194,10 +218,64 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
                             label="Peak average onboard"
                             value={peakLoad ? formatMetric(peakLoad.averageLoad ?? 0) : '—'}
                             detail={peakLoad
-                                ? `${peakLoad.stopName}${peakLoad.loadSource === 'block-inferred' ? ' · Block-inferred' : peakLoad.loadSource === 'mixed' ? ' · Mixed estimate' : ''}`
+                                ? `${peakLoad.stopName}${peakLoad.loadSource === 'block-inferred' ? ' · Heatmap estimate' : peakLoad.loadSource === 'mixed' ? ' · Mixed estimate' : ''}`
                                 : 'Load unavailable'}
                         />
                         <MetricSummary label="Observed service days" value={selected.serviceDays.toLocaleString()} detail={isAverage ? 'Average denominator' : 'Selected date'} />
+                    </div>
+
+                    <section className={`mb-3 rounded-xl border px-4 py-3 ${confidenceTone}`} aria-label="Load confidence" data-testid="load-confidence-panel">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="flex items-start gap-2">
+                                <ShieldCheck size={17} className="mt-0.5 shrink-0" aria-hidden="true" />
+                                <div>
+                                    <h3 className="text-sm font-bold">Load confidence</h3>
+                                    <p className="mt-0.5 text-xs opacity-80">Opportunity-weighted APC and inference quality · method v{confidence?.methodVersion ?? 1}</p>
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <div className="text-xl font-black tabular-nums">{confidence?.score === null || confidence?.score === undefined ? '—' : `${confidence.score}/100`}</div>
+                                <div className="text-[10px] font-bold uppercase tracking-wider">{confidence?.rating ?? 'unavailable'}</div>
+                            </div>
+                        </div>
+                        {confidence && (
+                            <>
+                                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                                    <div><span className="block opacity-65">Observed APC</span><strong>{confidence.observedOpportunityCount}/{confidence.totalOpportunityCount}</strong></div>
+                                    <div><span className="block opacity-65">Heatmap estimated</span><strong>{confidence.estimatedOpportunityCount}/{confidence.totalOpportunityCount}</strong></div>
+                                    <div><span className="block opacity-65">Historical estimate</span><strong>{confidence.legacyEstimatedOpportunityCount}/{confidence.totalOpportunityCount}</strong></div>
+                                    <div><span className="block opacity-65">Unavailable</span><strong>{confidence.unavailableOpportunityCount}/{confidence.totalOpportunityCount}</strong></div>
+                                </div>
+                                {confidence.issues.length > 0 ? (
+                                    <ul className="mt-3 space-y-1 border-t border-current/10 pt-2 text-xs" aria-label="Load confidence findings">
+                                        {confidence.issues.map(issue => <li key={issue.code} className="flex items-start gap-1.5"><AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden="true" /><span>{issue.message}</span></li>)}
+                                    </ul>
+                                ) : (
+                                    <p className="mt-3 border-t border-current/10 pt-2 text-xs">No load-quality exceptions were detected for this route and direction.</p>
+                                )}
+                                <p className="mt-2 text-[11px] opacity-70">Inferred values are planning estimates. Lower-bound anchors and open block endings should be reviewed before operational decisions.</p>
+                            </>
+                        )}
+                    </section>
+
+                    <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5" aria-label="Load evidence coverage" data-testid="load-evidence-coverage">
+                        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
+                            <strong className="text-slate-800">Load evidence</strong>
+                            <span className="inline-flex items-center gap-1.5">
+                                <span className="h-2.5 w-2.5 rounded-full bg-cyan-900" aria-hidden="true" />
+                                Observed APC: <strong className="text-slate-800">{selected.loadEvidence.observedStopCount}/{selected.loadEvidence.totalStopCount} stops</strong>
+                                <span className="text-slate-400">· {selected.loadEvidence.observedObservationCount.toLocaleString()} samples</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1.5">
+                                <span className="h-2.5 w-2.5 rounded-full border-2 border-sky-600 bg-white" aria-hidden="true" />
+                                Heatmap estimate: <strong className="text-slate-800">{selected.loadEvidence.estimatedStopCount}/{selected.loadEvidence.totalStopCount} stops</strong>
+                                <span className="text-slate-400">· {selected.loadEvidence.estimatedObservationCount.toLocaleString()} samples</span>
+                            </span>
+                            <span>Unavailable: <strong className="text-slate-800">{selected.loadEvidence.unavailableStopCount}/{selected.loadEvidence.totalStopCount} stops</strong></span>
+                            {selected.loadEvidence.legacyStopCount > 0 && (
+                                <span>Historical weighting: <strong className="text-slate-800">{selected.loadEvidence.legacyStopCount} stops</strong> <span className="text-slate-400">· {selected.loadEvidence.legacyDayCount} daily averages</span></span>
+                            )}
+                        </div>
                     </div>
 
                     {!hasBars && !hasLoad ? (
@@ -214,7 +292,7 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
                             )}
                             {selected.hasBlockInferredLoad && (
                                 <p className="mb-2 rounded-md border border-sky-100 bg-sky-50 px-3 py-2 text-xs text-sky-800">
-                                    <strong>Block-inferred load:</strong> calculated from boardings minus alightings across consecutive trips on the same route and block.{' '}
+                                    <strong>Heatmap-estimated load:</strong> reliable APC load is used where available; missing values are estimated from heatmap boardings minus alightings across consecutive trips on the same route and block.{' '}
                                     {selected.blockInferenceUsesMinimumFeasibleAnchor && selected.blockInferenceAssumedEmptyAnchor
                                         ? 'Some blocks start from an assumed-empty first trip. Where a zero start would produce a negative load, the calculation instead uses the smallest starting load that keeps the full block non-negative; those values are lower-bound estimates.'
                                         : selected.blockInferenceUsesMinimumFeasibleAnchor
@@ -246,7 +324,7 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
                                             <Legend verticalAlign="top" height={32} wrapperStyle={{ fontSize: 11, color: '#4b5563' }} />
                                             {hasBoardings && <Bar yAxisId="activity" dataKey="boardings" name="Boardings" fill="#06b6d4" radius={[3, 3, 0, 0]} maxBarSize={22} />}
                                             {hasAlightings && <Bar yAxisId="activity" dataKey="alightings" name="Alightings" fill="#8b5cf6" radius={[3, 3, 0, 0]} maxBarSize={22} />}
-                                            {hasLoad && <Line yAxisId="load" type="linear" dataKey="averageLoad" name={selected.hasBlockInferredLoad ? 'Average onboard (includes block inference)' : selected.hasEstimatedLoad ? 'Average onboard (contains estimates)' : 'Average onboard'} stroke="#164e63" strokeWidth={2.5} strokeDasharray={selected.hasEstimatedLoad ? '6 4' : undefined} dot={{ r: 2.5, fill: '#164e63', strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />}
+                                            {hasLoad && <Line yAxisId="load" type="linear" dataKey="averageLoad" name={selected.hasBlockInferredLoad ? 'Average onboard (APC + heatmap estimates)' : selected.hasEstimatedLoad ? 'Average onboard (contains estimates)' : 'Average onboard'} stroke="#164e63" strokeWidth={2.5} dot={<LoadPointDot />} activeDot={{ r: 4 }} connectNulls={false} />}
                                         </ComposedChart>
                                     </ResponsiveContainer>
                                 </div>

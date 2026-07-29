@@ -171,6 +171,20 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
       }
 
+      // Passenger-load capacity policy used by Operations aggregation.
+      match /performanceConfig/{configId} {
+        allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+        allow create: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                         configId == 'load' &&
+                         isValidPerformanceLoadConfig(request.resource.data) &&
+                         request.resource.data.version == 1;
+        allow update: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                         configId == 'load' &&
+                         isValidPerformanceLoadConfig(request.resource.data) &&
+                         request.resource.data.version == resource.data.version + 1;
+        allow delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
+      }
+
       // Shared connection library
       match /connectionLibrary/{libraryId} {
         allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
@@ -402,6 +416,25 @@ service cloud.firestore {
       let member = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
       return request.auth != null &&
              (member.data.role == 'owner' || member.data.role == 'admin');
+    }
+
+    function isValidPerformanceLoadConfig(data) {
+      return data is map &&
+             data.keys().hasAll([
+               'schemaVersion', 'defaultCapacity', 'vehicleCapacities',
+               'version', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'defaultCapacity', 'vehicleCapacities',
+               'version', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.schemaVersion == 1 &&
+             data.defaultCapacity is int &&
+             data.defaultCapacity >= 20 && data.defaultCapacity <= 150 &&
+             data.vehicleCapacities is map && data.vehicleCapacities.size() <= 500 &&
+             data.version is int && data.version > 0 &&
+             data.updatedAt == request.time &&
+             data.updatedBy == request.auth.uid;
     }
 
     function isValidScheduleReviewSummary(summary) {

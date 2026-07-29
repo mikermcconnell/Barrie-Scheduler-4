@@ -18,6 +18,23 @@ import {
     shouldShowNextStepAction,
 } from '../components/NewSchedule/utils/wizardState';
 
+const trustedPairedCycleEvidence = (expectedSegmentCount: number) => ({
+    expectedSegmentCount,
+    observedSegmentCount: expectedSegmentCount,
+    coverageCause: 'complete' as const,
+    contributingDays: Array.from({ length: 5 }, (_, index) => ({
+        date: `2026-03-${String(index + 1).padStart(2, '0')}`,
+        runtime: 60 + index,
+    })),
+    evidence: {
+        kind: 'paired-cycle' as const,
+        qualifyingCount: 5,
+        requiredCount: 5,
+        planningEligible: true,
+        exclusionReasons: [] as string[],
+    },
+});
+
 describe('newSchedule wizard state helpers', () => {
     it('does not treat step 1 CSV filenames as resumable progress', () => {
         expect(
@@ -471,7 +488,7 @@ describe('newSchedule wizard state helpers', () => {
 
         expect(report.status).toBe('blocked');
         expect(report.blockers).toContain('Only 1 of 2 directions were found for this route.');
-        expect(report.blockers).toContain('No complete cycle buckets are currently available for scheduling.');
+        expect(report.blockers).toContain('No buckets have complete route-segment coverage.');
         expect(report.missingSegments).toEqual([
             'Allandale GO Station to Downtown',
             'Downtown to Peggy Hill',
@@ -489,6 +506,7 @@ describe('newSchedule wizard state helpers', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days',
+                ...trustedPairedCycleEvidence(3),
                 details: [
                     { segmentName: "Park Place to Veteran's at Essa", p50: 5, p80: 6, n: 5 },
                     { segmentName: "Veteran's at Essa to Cuthbert Street", p50: 2, p80: 2, n: 5 },
@@ -540,6 +558,7 @@ describe('newSchedule wizard state helpers', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days',
+                ...trustedPairedCycleEvidence(4),
                 details: [
                     { segmentName: 'Park Place to Peggy Hill', p50: 14, p80: 16, n: 6 },
                     { segmentName: 'Peggy Hill to Allandale GO Station', p50: 16, p80: 18, n: 6 },
@@ -602,6 +621,7 @@ describe('newSchedule wizard state helpers', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days',
+                ...trustedPairedCycleEvidence(4),
                 details: [
                     { segmentName: 'Park Place to Peggy Hill', p50: 14, p80: 16, n: 6 },
                     { segmentName: 'Peggy Hill to Allandale GO Station', p50: 16, p80: 18, n: 6 },
@@ -658,6 +678,7 @@ describe('newSchedule wizard state helpers', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days',
+                ...trustedPairedCycleEvidence(4),
                 details: [
                     { segmentName: 'Park Place to Peggy Hill', p50: 14, p80: 16, n: 6 },
                     { segmentName: 'Peggy Hill to Allandale GO Station', p50: 16, p80: 18, n: 6 },
@@ -717,6 +738,7 @@ describe('newSchedule wizard state helpers', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days',
+                ...trustedPairedCycleEvidence(2),
                 details: [
                     { segmentName: 'Barrie South GO Station to Mapleview at Chef', p50: 5, p80: 6, n: 2 },
                     { segmentName: 'Mapleview at Chef to Georgian Mall', p50: 45, p80: 49, n: 2 },

@@ -13,8 +13,8 @@ interface Props {
     userId: string | null;
     currentProjectId?: string;
     onClose: () => void;
-    onLoadProject: (project: NewScheduleProject) => void;
-    onLoadGeneratedSchedule?: (project: NewScheduleProject) => void;
+    onLoadProject: (project: NewScheduleProject) => void | Promise<void>;
+    onLoadGeneratedSchedule?: (project: NewScheduleProject) => void | Promise<void>;
     onNewProject: () => void;
 }
 
@@ -262,7 +262,7 @@ export const ProjectManagerModal: React.FC<Props> = ({
                                                 try {
                                                     const fullProject = await getProject(userId, selectedProject.id);
                                                     if (fullProject?.generatedSchedules && fullProject.generatedSchedules.length > 0) {
-                                                        onLoadGeneratedSchedule(fullProject);
+                                                        await onLoadGeneratedSchedule(fullProject);
                                                         onClose();
                                                         return;
                                                     }
@@ -271,7 +271,7 @@ export const ProjectManagerModal: React.FC<Props> = ({
                                                 }
                                             }
                                             // Fallback to normal project load (resume wizard)
-                                            onLoadProject(selectedProject);
+                                            await onLoadProject(selectedProject);
                                             onClose();
                                         }}
                                         className="flex-1 bg-emerald-500 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-600 transition-colors"
