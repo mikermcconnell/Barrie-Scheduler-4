@@ -36,7 +36,6 @@ type GeocodeStatus = 'idle' | 'loading' | 'ready' | 'error';
 type DayFilter = FareProgramExactDayType | 'all';
 type TimeFilter = FareProgramExactTimeBandId | 'all';
 type MapView = 'bubbles' | 'heatmap';
-type ValueMode = 'total' | 'average';
 type LocatedOrigin = FareProgramExactOrigin & FareProgramOriginGeocode & { filteredUses: number };
 type ClusterHover = {
     longitude: number;
@@ -46,7 +45,6 @@ type ClusterHover = {
 };
 
 const number = new Intl.NumberFormat('en-CA');
-const averageNumber = new Intl.NumberFormat('en-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const HIGH_SCHOOL_PASS = 'High School Student Pass 25/26';
 const BUBBLE_SOURCE_ID = 'fare-programs-usage-bubble-source';
 const BUBBLE_CLUSTER_LAYER_ID = 'fare-programs-usage-clusters';
@@ -108,28 +106,26 @@ const bubbleTopPointLabelLayer: LayerProps = {
     },
 };
 
-function bubbleClusterLabelLayer(valueMode: ValueMode): LayerProps {
-    return {
-        id: BUBBLE_CLUSTER_LABEL_LAYER_ID,
-        type: 'symbol',
-        filter: ['has', 'point_count'],
-        layout: {
-            'text-field': [
-                'number-format',
-                ['coalesce', ['get', 'uses_sum'], ['get', 'point_count']],
-                { 'max-fraction-digits': valueMode === 'average' ? 1 : 0 },
-            ],
-            'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-            'text-size': 12,
-            'text-allow-overlap': true,
-        },
-        paint: {
-            'text-color': '#ffffff',
-            'text-halo-color': '#1e3a8a',
-            'text-halo-width': 0.75,
-        },
-    };
-}
+const bubbleClusterLabelLayer: LayerProps = {
+    id: BUBBLE_CLUSTER_LABEL_LAYER_ID,
+    type: 'symbol',
+    filter: ['has', 'point_count'],
+    layout: {
+        'text-field': [
+            'number-format',
+            ['coalesce', ['get', 'uses_sum'], ['get', 'point_count']],
+            { 'max-fraction-digits': 0 },
+        ],
+        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+        'text-size': 12,
+        'text-allow-overlap': true,
+    },
+    paint: {
+        'text-color': '#ffffff',
+        'text-halo-color': '#1e3a8a',
+        'text-halo-width': 0.75,
+    },
+};
 
 function propertyNumber(value: unknown): number {
     const parsed = typeof value === 'number' ? value : Number(value);
@@ -173,7 +169,6 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
     const [isExportingPdf, setIsExportingPdf] = useState(false);
     const [pdfError, setPdfError] = useState<string | null>(null);
     const [mapView, setMapView] = useState<MapView>('heatmap');
-    const [valueMode, setValueMode] = useState<ValueMode>('total');
     const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
 
     useEffect(() => {
@@ -258,11 +253,6 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
         };
     }, [snapshot.serviceMirroring.uses, snapshot.sourceRows, sourceFile]);
 
-    const sourceDayCount = exactData
-        ? dayFilter === 'all'
-            ? exactData.coverageDays.weekday + exactData.coverageDays.weekend
-            : exactData.coverageDays[dayFilter]
-        : 0;
     const filteredOriginTotals = useMemo(() => (exactData?.origins ?? [])
         .map((origin) => ({
             origin,
@@ -274,13 +264,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
         exactData?.origins,
         timeFilter,
     ]);
-    const filteredOrigins = useMemo(() => filteredOriginTotals.map(({ origin, filteredUses }) => ({
-        origin,
-        filteredUses: valueMode === 'average' && sourceDayCount > 0
-            ? filteredUses / sourceDayCount
-            : filteredUses,
-    })), [filteredOriginTotals, sourceDayCount, valueMode]);
-    const rawFilteredUses = filteredOriginTotals.reduce((sum, item) => sum + item.filteredUses, 0);
+    const filteredOrigins = filteredOriginTotals;
     const filteredUses = filteredOrigins.reduce((sum, item) => sum + item.filteredUses, 0);
     const locatedOrigins = useMemo(() => filteredOrigins
         .map(({ origin, filteredUses: uses }) => {
@@ -306,9 +290,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
     const totalUses = exactData?.matchedUses ?? snapshot.serviceMirroring.uses;
     const missingUses = exactData?.missingStartUses
         ?? snapshot.serviceMirroring.uses - snapshot.serviceMirroring.originUsage.usableStartUses;
-    const formatMeasure = (value: number) => valueMode === 'average'
-        ? averageNumber.format(value)
-        : number.format(value);
+    const formatMeasure = (value: number) => number.format(value);
 
     const heatmapGeoJson: GeoJSON.FeatureCollection = {
         type: 'FeatureCollection',
@@ -631,37 +613,6 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                         </div>
                     </div>
                 </div>
-                <div className="mt-4 border-t border-gray-100 pt-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Measure</div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {([
-                            ['total', 'Total uses'],
-                            ['average', 'Average per day'],
-                        ] as const).map(([id, label]) => (
-                            <button
-                                key={id}
-                                type="button"
-                                onClick={() => {
-                                    setValueMode(id);
-                                    setSelectedMapPointId(null);
-                                    setClusterHover(null);
-                                }}
-                                className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
-                                    valueMode === id
-                                        ? 'border-blue-600 bg-blue-600 text-white'
-                                        : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300 hover:text-blue-700'
-                                }`}
-                            >
-                                {label}
-                            </button>
-                        ))}
-                        <span className="text-xs text-gray-500">
-                            {sourceDayCount > 0
-                                ? `${number.format(sourceDayCount)} distinct ${dayFilter === 'all' ? 'source days' : `${dayFilter} source days`} in the workbook`
-                                : 'Source-day count appears after the workbook loads'}
-                        </span>
-                    </div>
-                </div>
             </section>
 
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
@@ -671,11 +622,9 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                     <div className="mt-1 text-xs text-blue-800">All High School Student Pass transactions.</div>
                 </div>
                 <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">{valueMode === 'average' ? 'Average uses per day' : 'Uses in filter'}</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Uses in filter</div>
                     <div className="mt-2 text-2xl font-bold text-gray-900">{formatMeasure(filteredUses)}</div>
-                    <div className="mt-1 text-xs text-gray-500">
-                        {currentFilterLabel}; {valueMode === 'average' ? `${number.format(rawFilteredUses)} uses across ${number.format(sourceDayCount)} source days.` : 'usable starts.'}
-                    </div>
+                    <div className="mt-1 text-xs text-gray-500">{currentFilterLabel}; usable starts.</div>
                 </div>
                 <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Starting locations</div>
@@ -759,7 +708,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                 }}
                             >
                                 <Layer {...bubbleClusterLayer} />
-                                <Layer {...bubbleClusterLabelLayer(valueMode)} />
+                                <Layer {...bubbleClusterLabelLayer} />
                                 <Layer {...bubblePointLayer} />
                                 <Layer {...bubbleTopPointLabelLayer} />
                             </Source>
@@ -795,7 +744,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                         {number.format(clusterHover.locationCount)} starting locations
                                     </div>
                                     <div className="mt-1 text-xs font-semibold text-blue-700">
-                                        {formatMeasure(clusterHover.filteredUses)} {valueMode === 'average' ? 'average daily uses' : 'filtered uses'}
+                                        {formatMeasure(clusterHover.filteredUses)} filtered uses
                                     </div>
                                     <p className="mt-1 text-xs text-gray-500">Click to zoom in and separate this area.</p>
                                 </div>
@@ -818,7 +767,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                             : `${number.format(selectedMapPoint.locationCount)} starting locations`}
                                     </div>
                                     <div className="mt-1 text-sm font-semibold text-blue-700">
-                                        {formatMeasure(selectedMapPoint.filteredUses)} {valueMode === 'average' ? 'uses per source day' : 'filtered uses'}
+                                        {formatMeasure(selectedMapPoint.filteredUses)} filtered uses
                                     </div>
                                     <p className="mt-1 text-xs leading-relaxed text-gray-600">
                                         {currentFilterLabel}. {number.format(selectedMapPoint.totalUses)} uses across all days and times.
@@ -917,7 +866,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                 {mapView === 'bubbles' ? 'Starting locations' : 'Usage heat map'}
                             </div>
                             <p className="mt-1 text-xs leading-relaxed text-gray-600">
-                                {formatMeasure(mappedUses)} {valueMode === 'average' ? 'average daily' : 'filtered'} uses mapped. {mapView === 'bubbles' ? 'Nearby points are grouped; click a cluster to zoom in.' : 'Warmer areas represent more use.'}
+                                {formatMeasure(mappedUses)} filtered uses mapped. {mapView === 'bubbles' ? 'Nearby points are grouped; click a cluster to zoom in.' : 'Warmer areas represent more use.'}
                             </p>
                             <p className="mt-1 text-xs text-gray-500"><GraduationCap className="mr-1 inline h-3.5 w-3.5" />School icons provide planning context.</p>
                             {failedCount > 0 && <p className="mt-1 text-xs text-amber-700">{number.format(failedCount)} locations could not be located.</p>}

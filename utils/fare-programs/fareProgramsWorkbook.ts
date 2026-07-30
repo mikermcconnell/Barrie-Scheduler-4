@@ -77,16 +77,12 @@ export interface FareProgramExactOriginResult {
     matchedUses: number;
     usableStartUses: number;
     missingStartUses: number;
-    coverageDays: Record<FareProgramExactDayType, number>;
     origins: FareProgramExactOrigin[];
 }
 
 const UNAVAILABLE_LOCATION = /no data available|geolocation unauthorized/i;
 const TORONTO_DATE_TIME = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Toronto',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
     weekday: 'short',
     hour: '2-digit',
     hourCycle: 'h23',
@@ -169,7 +165,6 @@ function parseUtcDate(value: unknown): Date | null {
 }
 
 function localDayAndHour(value: unknown): {
-    dateKey: string;
     dayType: FareProgramExactDayType;
     hour: number;
 } | null {
@@ -181,7 +176,6 @@ function localDayAndHour(value: unknown): {
     const hour = Number(parts.hour);
     if (!Number.isFinite(hour)) return null;
     return {
-        dateKey: `${parts.year}-${parts.month}-${parts.day}`,
         dayType: /Sat|Sun/.test(parts.weekday) ? 'weekend' : 'weekday',
         hour,
     };
@@ -233,16 +227,11 @@ export function extractFareProgramExactOrigins(
 ): FareProgramExactOriginResult {
     const rows = readWorkbookRows(buffer, true);
     const groups = new Map<string, FareProgramExactOrigin>();
-    const coverageDateKeys: Record<FareProgramExactDayType, Set<string>> = {
-        weekday: new Set<string>(),
-        weekend: new Set<string>(),
-    };
     let matchedUses = 0;
     let usableStartUses = 0;
 
     rows.slice(1).forEach((row) => {
         const localTime = localDayAndHour(row[5]);
-        if (localTime) coverageDateKeys[localTime.dayType].add(localTime.dateKey);
         if (displayCell(row[2]) !== fareType) return;
         matchedUses += 1;
 
@@ -284,10 +273,6 @@ export function extractFareProgramExactOrigins(
         matchedUses,
         usableStartUses,
         missingStartUses: matchedUses - usableStartUses,
-        coverageDays: {
-            weekday: coverageDateKeys.weekday.size,
-            weekend: coverageDateKeys.weekend.size,
-        },
         origins,
     };
 }

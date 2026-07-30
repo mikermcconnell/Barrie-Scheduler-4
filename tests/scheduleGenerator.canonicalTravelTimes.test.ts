@@ -57,18 +57,97 @@ describe('scheduleGenerator canonical travel times', () => {
     };
     const pairedStops = { North: ['A', 'B'], South: ['B', 'A'] };
 
-    it('uses an exact trusted bucket and blocks when that half hour is missing', () => {
+    it('uses an exact trusted bucket and falls back to it when a nearby half hour is missing', () => {
         const bands: TimeBand[] = [{ id: 'A', label: 'A', min: 10, max: 10, avg: 10, color: '#000', count: 1 }];
         const summary = { North: [{ bandId: 'A', color: '#000', avgTotal: 10, segments: [{ segmentName: 'A to B', avgTime: 10, totalN: 10 }], timeSlots: ['06:00'] }] };
         const segments = { North: [{ segmentName: 'A to B', timeBuckets: {} }] };
         const base = { routeNumber: '1', cycleMode: 'Floating' as const, cycleTime: 0, recoveryRatio: 0, blocks: [{ id: '1-1', startTime: '06:00', endTime: '06:09' }] };
 
         expect(generateSchedule(base, [trustedBucket], bands, summary, segments, 'Weekday', undefined, undefined, { North: ['A', 'B'] }, undefined, { strictApprovedRuntime: true })).toHaveLength(1);
-        expect(() => generateSchedule(
+        const fallbackTables = generateSchedule(
             { ...base, blocks: [{ id: '1-1', startTime: '06:30', endTime: '06:39' }] },
             [trustedBucket], bands, summary, segments, 'Weekday', undefined, undefined,
             { North: ['A', 'B'] }, undefined, { strictApprovedRuntime: true }
-        )).toThrow(MissingApprovedRuntimeError);
+        );
+
+        expect(fallbackTables[0].trips[0].travelTime).toBe(10);
+        expect(fallbackTables[0].trips[0].runtimeSourceBreakdown).toEqual({
+            'A to B': 'approved-nearest-bucket[06:00-for-06:30]',
+        });
+    });
+
+    it('uses only eligible buckets and prefers the earlier bucket when distance is tied', () => {
+        const buckets: TripBucketAnalysis[] = [
+            trustedBucket,
+            {
+                ...trustedBucket,
+                timeBucket: '06:30 - 06:59',
+                details: [{ segmentName: 'A to B', p50: 99, p80: 99, n: 2 }],
+                evidence: { kind: 'uploaded-percentiles', qualifyingCount: 2, requiredCount: 10, planningEligible: true, exclusionReasons: [] },
+            },
+            {
+                ...trustedBucket,
+                timeBucket: '07:00 - 07:29',
+                details: [{ segmentName: 'A to B', p50: 20, p80: 22, n: 10 }],
+            },
+        ];
+        const tables = generateSchedule(
+            {
+                routeNumber: '1', cycleMode: 'Floating', cycleTime: 0, recoveryRatio: 0,
+                blocks: [{ id: '1-1', startTime: '06:30', endTime: '06:39' }],
+            },
+            buckets,
+            pairedBands,
+            { North: [{ bandId: 'A', color: '#000', avgTotal: 15, segments: [], timeSlots: ['06:00', '07:00'] }] },
+            { North: [{ segmentName: 'A to B', timeBuckets: {} }] },
+            'Weekday',
+            undefined,
+            undefined,
+            { North: ['A', 'B'] },
+            undefined,
+            { strictApprovedRuntime: true }
+        );
+
+        expect(tables[0].trips[0].travelTime).toBe(10);
+        expect(tables[0].trips[0].runtimeSourceBreakdown?.['A to B']).toBe(
+            'approved-nearest-bucket[06:00-for-06:30]'
+        );
+    });
+
+    it('finds the nearest eligible bucket across midnight', () => {
+        const buckets: TripBucketAnalysis[] = [
+            {
+                ...trustedBucket,
+                timeBucket: '23:30 - 23:59',
+                details: [{ segmentName: 'A to B', p50: 12, p80: 14, n: 10 }],
+            },
+            {
+                ...trustedBucket,
+                timeBucket: '01:00 - 01:29',
+                details: [{ segmentName: 'A to B', p50: 20, p80: 22, n: 10 }],
+            },
+        ];
+        const tables = generateSchedule(
+            {
+                routeNumber: '1', cycleMode: 'Floating', cycleTime: 0, recoveryRatio: 0,
+                blocks: [{ id: '1-1', startTime: '00:00', endTime: '00:09' }],
+            },
+            buckets,
+            pairedBands,
+            { North: [{ bandId: 'A', color: '#000', avgTotal: 16, segments: [], timeSlots: ['23:30', '01:00'] }] },
+            { North: [{ segmentName: 'A to B', timeBuckets: {} }] },
+            'Weekday',
+            undefined,
+            undefined,
+            { North: ['A', 'B'] },
+            undefined,
+            { strictApprovedRuntime: true }
+        );
+
+        expect(tables[0].trips[0].travelTime).toBe(12);
+        expect(tables[0].trips[0].runtimeSourceBreakdown?.['A to B']).toBe(
+            'approved-nearest-bucket[23:30-for-00:00]'
+        );
     });
 
     it('revalidates strict bucket evidence instead of trusting a stored planning flag', () => {
@@ -183,6 +262,37 @@ describe('scheduleGenerator canonical travel times', () => {
 
         expect(tables.find(table => table.routeName.includes('(South)'))?.trips[0].travelTime).toBe(20);
         expect(tables.find(table => table.routeName.includes('(North)'))?.trips[0].travelTime).toBe(30);
+    });
+
+    it('uses the nearest independently approved South-start cycle for both paired legs', () => {
+        const southStartBucket = makePairedBucket('06:30 - 06:59', 30, 20);
+        const tables = generateSchedule(
+            {
+                routeNumber: '1', cycleMode: 'Strict', cycleTime: 60, recoveryRatio: 0,
+                blocks: [{ id: '1-1', startTime: '06:00', endTime: '06:59', startStop: 'B', startDirection: 'South' }],
+            },
+            [makePairedBucket('06:00 - 06:29', 99, 99)],
+            pairedBands,
+            pairedSummary,
+            pairedSegments,
+            'Weekday',
+            undefined,
+            undefined,
+            pairedStops,
+            { South: [southStartBucket] },
+            { strictApprovedRuntime: true, approvedBucketMode: 'paired-cycle-start' }
+        );
+
+        const southTrip = tables.find(table => table.routeName.includes('(South)'))?.trips[0];
+        const northTrip = tables.find(table => table.routeName.includes('(North)'))?.trips[0];
+        expect(southTrip?.travelTime).toBe(20);
+        expect(northTrip?.travelTime).toBe(30);
+        expect(southTrip?.runtimeSourceBreakdown?.['B to A']).toBe(
+            'approved-nearest-bucket[06:30-for-06:00]'
+        );
+        expect(northTrip?.runtimeSourceBreakdown?.['A to B']).toBe(
+            'approved-nearest-bucket[06:30-for-06:00]'
+        );
     });
 
     it('preserves exact overnight paired-cycle lookup across midnight', () => {

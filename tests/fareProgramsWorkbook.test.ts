@@ -61,10 +61,6 @@ describe('Fare Programs workbook transaction extraction', () => {
             matchedUses: 4,
             usableStartUses: 3,
             missingStartUses: 1,
-            coverageDays: {
-                weekday: 1,
-                weekend: 1,
-            },
         });
         expect(result.origins).toHaveLength(2);
         expect(result.origins[0].label).toBe('123 Main St Unit 4');

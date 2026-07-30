@@ -1858,6 +1858,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             setStep4LoadingMessage('Opening the schedule editor...');
             setStep(4);
             toast.success('Schedule Generated', `Created ${generatedTables.length} schedule(s)`);
+            const nearbyRuntimeTrips = generatedTables
+                .flatMap(table => table.trips)
+                .filter(trip => Object.values(trip.runtimeSourceBreakdown || {}).some(
+                    source => source.startsWith('approved-nearest-bucket')
+                ));
+            const nearbyRuntimeMappings = new Set(
+                nearbyRuntimeTrips
+                    .flatMap(trip => Object.values(trip.runtimeSourceBreakdown || {}))
+                    .filter(source => source.startsWith('approved-nearest-bucket'))
+            );
+            if (nearbyRuntimeTrips.length > 0) {
+                toast.warning(
+                    'Nearby Runtime Buckets Used',
+                    `${nearbyRuntimeTrips.length} trip${nearbyRuntimeTrips.length === 1 ? '' : 's'} used the nearest approved runtime across ${nearbyRuntimeMappings.size} bucket substitution${nearbyRuntimeMappings.size === 1 ? '' : 's'}.`
+                );
+            }
             hideStep4LoadingAfterPaint();
 
             // Save generated schedule - localStorage backup + Firebase (uses consolidated helpers)

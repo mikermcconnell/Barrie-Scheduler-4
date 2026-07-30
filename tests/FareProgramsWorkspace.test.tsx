@@ -89,7 +89,6 @@ describe('FareProgramsWorkspace', () => {
                             matchedUses: 2_059,
                             usableStartUses: 1,
                             missingStartUses: 2_058,
-                            coverageDays: { weekday: 10, weekend: 4 },
                             origins: [{
                                 id: 'origin-1',
                                 label: 'Test starting location',
@@ -188,10 +187,9 @@ describe('FareProgramsWorkspace', () => {
         expect(container.textContent).toContain('9 AM–4 PM');
         expect(container.textContent).toContain('4–7 PM');
         expect(container.textContent).toContain('After 7 PM');
-        expect(container.textContent).toContain('Total uses');
-        expect(container.textContent).toContain('Average per day');
         expect(container.textContent).toContain('Total high-school uses');
         expect(container.textContent).toContain('2,059');
+        expect(container.textContent).not.toContain('Average per day');
         expect(container.textContent).toContain('Workbook stays on this device');
         expect(container.textContent).toContain('Choose the source workbook');
         expect(container.textContent).toContain('Export page PDF');
@@ -239,7 +237,6 @@ describe('FareProgramsWorkspace', () => {
         });
 
         expect(geocoderMocks.geocodeFareProgramOrigins).toHaveBeenCalledOnce();
-        expect(container.textContent).toContain('14 distinct source days in the workbook');
         expect(container.textContent).not.toContain('Build usage map');
     });
 

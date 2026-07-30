@@ -229,56 +229,98 @@ export const generateSchedule = (
         return `${displayH}:${m.toString().padStart(2, '0')} ${ampm}`;
     };
 
-    // Helper: Find the bucket for a given time (or closest bucket if not found)
-    const findBucketForTime = (
-        timeMinutes: number,
-        sourceBuckets: TripBucketAnalysis[] = buckets
-    ): TripBucketAnalysis | null => {
-        const h = Math.floor(timeMinutes / 60) % 24;
-        const m = Math.floor(timeMinutes % 60);
-        const slotM = m >= 30 ? 30 : 0;
-        const lookupStr = `${Math.floor(h).toString().padStart(2, '0')}:${slotM.toString().padStart(2, '0')}`;
-
-        // First try exact match
-        const bucket = sourceBuckets.find(b => (
-            b.timeBucket.startsWith(lookupStr)
-            && !b.ignored
-            && b.assignedBand
-            && (!strictApprovedRuntime || evaluateRuntimeBucketEligibility(b, {
-                fallbackExpectedSegmentCount: b.details.length,
-                requireAssignedBand: true,
-            }).eligible)
-        ));
-        if (bucket) return bucket;
-
-        if (strictApprovedRuntime) return null;
-
-        // If no exact match, find the CLOSEST bucket with valid data
-        const validBuckets = sourceBuckets.filter(b => !b.ignored && b.assignedBand && b.totalP50 > 0);
-        if (validBuckets.length === 0) return null;
-
-        let closestBucket = validBuckets[0];
-        let minDiff = Infinity;
-
-        validBuckets.forEach(b => {
-            const bucketStart = b.timeBucket.split(' - ')[0];
-            const [bh, bm] = bucketStart.split(':').map(Number);
-            const bucketMins = bh * 60 + bm;
-            const diff = Math.abs(bucketMins - timeMinutes);
-            if (diff < minDiff) {
-                minDiff = diff;
-                closestBucket = b;
-            }
-        });
-
-        return closestBucket;
-    };
-
     const formatHalfHourBucketStart = (timeMinutes: number): string => {
         const normalizedMinutes = ((Math.floor(timeMinutes) % 1440) + 1440) % 1440;
         const hour = Math.floor(normalizedMinutes / 60);
         const minute = normalizedMinutes % 60 >= 30 ? 30 : 0;
         return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+    };
+
+    const parseBucketStartMinutes = (timeBucket: string): number | null => {
+        const [hours, minutes] = timeBucket.split(' - ')[0].split(':').map(Number);
+        if (
+            !Number.isInteger(hours)
+            || !Number.isInteger(minutes)
+            || hours < 0
+            || hours > 23
+            || minutes < 0
+            || minutes > 59
+        ) {
+            return null;
+        }
+        return (hours * 60) + minutes;
+    };
+
+    const getSignedClockDifference = (candidateMinutes: number, targetMinutes: number): number => {
+        const rawDifference = candidateMinutes - targetMinutes;
+        return ((((rawDifference + 720) % 1440) + 1440) % 1440) - 720;
+    };
+
+    interface RuntimeBucketMatch {
+        bucket: TripBucketAnalysis;
+        requestedBucketStart: string;
+        usedBucketStart: string;
+        isExact: boolean;
+    }
+
+    // Use the exact eligible bucket when present; otherwise use the nearest
+    // eligible bucket from the same direction/orientation-specific source.
+    const findBucketForTime = (
+        timeMinutes: number,
+        sourceBuckets: TripBucketAnalysis[] = buckets
+    ): RuntimeBucketMatch | null => {
+        const requestedBucketStart = formatHalfHourBucketStart(timeMinutes);
+        const requestedBucketMinutes = parseBucketStartMinutes(requestedBucketStart);
+        const validBuckets = sourceBuckets.filter(b => (
+            parseBucketStartMinutes(b.timeBucket) !== null
+            && !b.ignored
+            && b.assignedBand
+            && (
+                strictApprovedRuntime
+                    ? evaluateRuntimeBucketEligibility(b, {
+                        fallbackExpectedSegmentCount: b.details.length,
+                        requireAssignedBand: true,
+                    }).eligible
+                    : b.totalP50 > 0
+            )
+        ));
+
+        const exactBucket = validBuckets.find(
+            bucket => bucket.timeBucket.startsWith(requestedBucketStart)
+        );
+        if (exactBucket) {
+            return {
+                bucket: exactBucket,
+                requestedBucketStart,
+                usedBucketStart: requestedBucketStart,
+                isExact: true,
+            };
+        }
+
+        if (validBuckets.length === 0 || requestedBucketMinutes === null) return null;
+
+        const closestBucket = [...validBuckets].sort((left, right) => {
+            const leftMinutes = parseBucketStartMinutes(left.timeBucket) ?? 0;
+            const rightMinutes = parseBucketStartMinutes(right.timeBucket) ?? 0;
+            const leftDifference = getSignedClockDifference(leftMinutes, requestedBucketMinutes);
+            const rightDifference = getSignedClockDifference(rightMinutes, requestedBucketMinutes);
+            const distanceDifference = Math.abs(leftDifference) - Math.abs(rightDifference);
+            if (distanceDifference !== 0) return distanceDifference;
+
+            // At equal distance, prefer the earlier bucket, including across midnight.
+            const leftIsLater = leftDifference > 0 ? 1 : 0;
+            const rightIsLater = rightDifference > 0 ? 1 : 0;
+            if (leftIsLater !== rightIsLater) return leftIsLater - rightIsLater;
+            return left.timeBucket.localeCompare(right.timeBucket);
+        })[0];
+        const usedBucketStart = closestBucket.timeBucket.split(' - ')[0];
+
+        return {
+            bucket: closestBucket,
+            requestedBucketStart,
+            usedBucketStart,
+            isExact: false,
+        };
     };
 
     const getBandForBucket = (
@@ -292,13 +334,13 @@ export const generateSchedule = (
     // Helper: Get band travel time for a given time slot
     // Helper: Find which band a time slot falls into for a specific direction
     const getBandForTime = (timeMinutes: number, direction: string): BandSummary | null => {
-        const bucket = findBucketForTime(timeMinutes, directionalBuckets?.[direction] || buckets);
-        if (!bucket || !bucket.assignedBand) return null;
+        const bucketMatch = findBucketForTime(timeMinutes, directionalBuckets?.[direction] || buckets);
+        if (!bucketMatch?.bucket.assignedBand) return null;
 
         const dirBands = bandSummary[direction];
         if (!dirBands) return null;
 
-        return dirBands.find(bs => bs.bandId === bucket.assignedBand) || null;
+        return dirBands.find(bs => bs.bandId === bucketMatch.bucket.assignedBand) || null;
     };
 
     // Helper: Segment Runtime (Legacy / Fallback)
@@ -355,7 +397,7 @@ export const generateSchedule = (
             block.startDirection
         );
         let tripSequence = 1;
-        let activePairedCycleBucket: TripBucketAnalysis | null = null;
+        let activePairedCycleBucketMatch: RuntimeBucketMatch | null = null;
         let activePairedCycleLegsRemaining = 0;
 
         // For mid-route starts: find start stop index in the first trip's direction.
@@ -389,19 +431,19 @@ export const generateSchedule = (
                 && approvedBucketMode === 'paired-cycle-start'
                 && isRoundTrip
             );
-            let strictTripBucket: TripBucketAnalysis | null = null;
+            let strictTripBucketMatch: RuntimeBucketMatch | null = null;
 
             if (strictApprovedRuntime) {
-                if (usePairedCycleBucket && activePairedCycleBucket) {
-                    strictTripBucket = activePairedCycleBucket;
+                if (usePairedCycleBucket && activePairedCycleBucketMatch) {
+                    strictTripBucketMatch = activePairedCycleBucketMatch;
                 } else {
                     const strictBucketSource = usePairedCycleBucket
                         ? (directionalBuckets?.[currentDir] || (currentDir === 'North' ? buckets : []))
                         : (directionalBuckets?.[currentDir] || buckets);
-                    strictTripBucket = findBucketForTime(currentTime, strictBucketSource);
+                    strictTripBucketMatch = findBucketForTime(currentTime, strictBucketSource);
 
-                    if (usePairedCycleBucket && strictTripBucket) {
-                        activePairedCycleBucket = strictTripBucket;
+                    if (usePairedCycleBucket && strictTripBucketMatch) {
+                        activePairedCycleBucketMatch = strictTripBucketMatch;
                         activePairedCycleLegsRemaining = 2;
                     }
                 }
@@ -409,7 +451,7 @@ export const generateSchedule = (
 
             // Use the trip's own departure time to select the runtime band for that direction.
             const currentBand: BandSummary | null = strictApprovedRuntime
-                ? getBandForBucket(strictTripBucket, currentDir)
+                ? getBandForBucket(strictTripBucketMatch?.bucket ?? null, currentDir)
                 : getBandForTime(currentTime, currentDir);
 
             // Hardened segment time lookup with adjacent-band fallback
@@ -418,16 +460,19 @@ export const generateSchedule = (
                 const dirBands = bandSummary[currentDir];
 
                 if (strictApprovedRuntime) {
-                    const exactBucket = strictTripBucket;
-                    const exactDetail = exactBucket?.details.find(detail => (
+                    const approvedBucket = strictTripBucketMatch?.bucket;
+                    const approvedDetail = approvedBucket?.details.find(detail => (
                         normalizeSegmentStopKey(detail.segmentName) === normalizeSegmentStopKey(segmentName)
                     ));
-                    if (!exactBucket || !exactDetail) {
-                        const timeBucket = exactBucket?.timeBucket.split(' - ')[0]
+                    if (!approvedBucket || !approvedDetail) {
+                        const timeBucket = strictTripBucketMatch?.requestedBucketStart
                             ?? formatHalfHourBucketStart(currentTime);
                         throw new MissingApprovedRuntimeError(currentDir, timeBucket, segmentName);
                     }
-                    return { time: exactDetail.p50, source: 'approved-exact-bucket' };
+                    const source = strictTripBucketMatch?.isExact
+                        ? 'approved-exact-bucket'
+                        : `approved-nearest-bucket[${strictTripBucketMatch?.usedBucketStart}-for-${strictTripBucketMatch?.requestedBucketStart}]`;
+                    return { time: approvedDetail.p50, source };
                 }
 
                 // 1. Current band — use if reliable (n >= threshold)
@@ -670,10 +715,10 @@ export const generateSchedule = (
             // Clear mid-route start after first trip — subsequent trips are full-route
             pendingStartStopIdx = undefined;
 
-            if (usePairedCycleBucket && activePairedCycleBucket) {
+            if (usePairedCycleBucket && activePairedCycleBucketMatch) {
                 activePairedCycleLegsRemaining -= 1;
                 if (activePairedCycleLegsRemaining <= 0) {
-                    activePairedCycleBucket = null;
+                    activePairedCycleBucketMatch = null;
                     activePairedCycleLegsRemaining = 0;
                 }
             }
