@@ -47,7 +47,7 @@ Load feature docs only when the task directly touches that feature.
 
 ### Fixed-route scheduling and operations
 
-- New Schedule Step 2: `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`, `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`, and `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
+- New Schedule Step 2: start with `docs/new-schedule-step2/README.md`, then load only the routed contract for the task
 - Connections: `docs/CONNECTIONS_FEATURE.md`
 - Schedule Editor verification history: `docs/SCHEDULE_EDITOR_TEST_SUMMARY.md` only when point-in-time test history is relevant
 - GTFS/STREETS auto-ingest: `docs/AUTO_INGEST_SETUP.md`
@@ -58,10 +58,10 @@ Load feature docs only when the task directly touches that feature.
 
 ### Planning-data workspaces
 
-- Route Planner 2: `docs/route-planner-2/README.md`, then its numbered docs
+- Route Planner 2: start with `docs/route-planner-2/README.md`, then load only the numbered docs selected by its task router
 - Route Concept Planner: `docs/route-concept-planner/README.md`, then its product and technical contracts
-- Shuttle Planner: `docs/SHUTTLE_PLANNER_PRD.md` and `docs/SHUTTLE_PLANNER_UI_SPEC.md`
-- Network Connections: `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md` and `docs/NETWORK_CONNECTIONS_UI_SPEC.md`
+- Shuttle Planner: use `docs/SHUTTLE_PLANNER_PRD.md` for product/domain work; add `docs/SHUTTLE_PLANNER_UI_SPEC.md` only for UI, interaction, or layout work
+- Network Connections: use `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md` for product/domain work; add `docs/NETWORK_CONNECTIONS_UI_SPEC.md` only for UI, interaction, or layout work
 - OD workspace: `docs/OD_WORKSPACE_GUIDE.md`
 - Residential Growth: `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
 - Transit App data validation: `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md`

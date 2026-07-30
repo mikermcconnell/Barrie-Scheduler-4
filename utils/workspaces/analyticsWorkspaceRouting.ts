@@ -15,6 +15,7 @@ export type AnalyticsWorkspaceView =
     | 'route-concept-planner'
     | 'network-connections'
     | 'shuttle-planner'
+    | 'fare-programs'
     | 'council-intelligence';
 
 const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
@@ -34,6 +35,7 @@ const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'route-concept-planner',
     'network-connections',
     'shuttle-planner',
+    'fare-programs',
     'council-intelligence',
 ]);
 
@@ -54,6 +56,7 @@ const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = 
     'route-concept-planner': 'Route Concept Planner',
     'network-connections': 'Network Connections',
     'shuttle-planner': 'Shuttle Planner',
+    'fare-programs': 'Fare Programs',
     'council-intelligence': 'Council Intelligence',
 };
 

@@ -59,6 +59,7 @@ describe('workspace access', () => {
         expect(allowed).toContain('analyticsFleetPlan');
         expect(allowed).toContain('analyticsRoutePlanner2');
         expect(allowed).toContain('analyticsCouncilIntelligence');
+        expect(allowed).toContain('analyticsFarePrograms');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
         expect(allowed).not.toContain('workspaceParking');
@@ -78,6 +79,7 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsStudentPass');
         expect(allowed).not.toContain('analyticsFleetPlan');
         expect(allowed).not.toContain('analyticsCouncilIntelligence');
+        expect(allowed).not.toContain('analyticsFarePrograms');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
     });

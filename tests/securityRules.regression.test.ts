@@ -76,6 +76,16 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).not.toMatch(/accessLevel == 'none' &&[\s\S]*feature/);
   });
 
+  it('keeps Fare Programs access profiles aligned across client and security rules', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+    const storageRules = readRepoFile('storage.rules');
+
+    expect(firestoreRules).toMatch(/accessLevel == 'admin' &&[\s\S]*?feature in \[[^\]]*'analyticsFarePrograms'[^\]]*\]/);
+    expect(firestoreRules).toMatch(/accessLevel == 'planner' &&[\s\S]*?feature in \[[^\]]*'analyticsFarePrograms'[^\]]*\]/);
+    expect(storageRules).toMatch(/accessLevel == 'admin' &&[\s\S]*?feature in \[[^\]]*'analyticsFarePrograms'[^\]]*\]/);
+    expect(storageRules).toMatch(/accessLevel == 'planner' &&[\s\S]*?feature in \[[^\]]*'analyticsFarePrograms'[^\]]*\]/);
+  });
+
   it('allows Parking workspace users to import and maintain Parking data', () => {
     const firestoreRules = readRepoFile('firestore.rules');
     const storageRules = readRepoFile('storage.rules');

@@ -4,7 +4,7 @@
 
 Runtime intelligence should turn a route concept into explainable operating estimates.
 
-V1 should be designed for observed stop-to-stop proxy evidence. The current MVP can also use Mapbox Directions estimates for shaped stop-to-stop segments, with fallback assumptions when Mapbox is unavailable.
+The evidence engine can derive scheduled, observed-proxy, and observed/scheduled-blend estimates. The current workspace deliberately requests scheduled-only GTFS evidence and can also use Mapbox Directions estimates for shaped stop-to-stop segments, with fallback assumptions when stronger evidence is unavailable.
 
 ## Required Outputs
 
@@ -20,10 +20,10 @@ V1 should be designed for observed stop-to-stop proxy evidence. The current MVP 
 
 ## Runtime Source Priority
 
-Use this priority order:
+For the current interactive workspace, use this priority order:
 
 1. manual segment/runtime override if planner provided one
-2. scheduled GTFS runtime evidence for the selected day type, time period, and source route when available
+2. scheduled GTFS runtime evidence for the selected day type, time period, and planner-controlled route filter when available
 3. Mapbox Directions estimate for the shaped stop-to-stop path
 4. fallback estimate from distance or simple default speed
 5. missing/not ready state
@@ -35,6 +35,14 @@ When GTFS runtime is enabled, the planner's explicit route filter controls match
 When a drawn segment extends beyond a matched GTFS corridor, use the scheduled GTFS runtime for the covered portion and estimate the uncovered portion from the drawn-route estimate or fallback distance. Label this as partial GTFS coverage rather than presenting the whole segment as fully scheduled evidence.
 When custom stops are not exactly GTFS stops but the drawn line follows a GTFS route shape, interpolate the matched shape overlap and use the proportional scheduled GTFS runtime for the covered portion before falling back to Mapbox.
 
+### Implemented evidence flow
+
+`deriveRoutePlanner2EvidenceRuntimeEstimates` matches each planner stop to GTFS candidates, then tries three evidence methods: a direct adjacent stop pair, a multi-edge scheduled corridor path, and GTFS shape overlap for custom stops. Corridor candidates must follow the drawn line; routes that detour away from it are rejected. A partially covered corridor produces `partial-scheduled-proxy` by combining scheduled runtime for the covered portion with the drawn-route or distance estimate for the remainder. Missing matches produce diagnostics rather than fabricated evidence; feasibility may still use Mapbox or fallback estimates afterward.
+
+`runtimeSourceMode` and `runtimeRouteFilter` are planner-controlled. Mapbox mode skips this evidence flow. GTFS mode uses the selected day and period and either selected route short names or all matching corridor routes.
+
+The derivation engine's default best-available basis can return `observed-proxy` or `observed-scheduled-blend` when observed samples are available. That capability and its sample-size behavior are unit-tested. `RoutePlanner2Workspace` currently passes `runtimeBasis: 'scheduled'`, so observed values do not drive the current interactive feasibility totals. Activating best-available evidence in the workspace requires an explicit product/UI decision and matching disclosure; agents must not describe the present scheduled-basis output as observed runtime.
+
 For imported address routes, route creation should not wait on every Mapbox segment. Render the draft route immediately, then calculate Mapbox road path and segment runtimes in a bounded background queue with visible progress.
 When a route is too large for automatic road snapping, keep the fallback alignment and still emit per-segment fallback runtime estimates so feasibility and stop cards remain usable. Do not leave large routes in a no-runtime state just because Mapbox snapping was intentionally skipped.
 
@@ -43,6 +51,8 @@ When a route is too large for automatic road snapping, keep the fallback alignme
 Mapbox uses the standard `mapbox/driving` profile as an automotive planning estimate; it is not live-traffic or departure-time routing. The UI must disclose that provenance.
 
 The first save of a draft with usable Mapbox segments establishes an accepted runtime baseline. After that, opening, rendering, or background road snapping must not silently replace it. **Refresh Mapbox estimate** bypasses the client cache and stages a comparison of accepted and candidate route totals and changed segments. The planner explicitly accepts the candidate or keeps the existing value. Both decisions are retained in bounded history. A runtime lock prevents acceptance until the planner unlocks the route.
+
+This accepted/locked state governs Mapbox road-runtime refreshes only. Scheduled GTFS evidence is derived from the planner's current day, period, source-mode, and route-filter selections; it is not accepted through the Mapbox snapshot decision history.
 
 Missing credentials, authorization failure, rate limits, network failure, invalid response, no-route response, and oversized routes are safe refresh failures. They must retain the accepted runtime, show a sanitized reason, and never expose credential values. Fallback estimates remain useful for new drafts but cannot replace an accepted runtime during a failed refresh.
 
@@ -72,8 +82,8 @@ The right rail should include a compact runtime-source summary showing how many 
 
 Suggested confidence rules:
 
-- `high`: most segments have strong observed evidence or exact GTFS scheduled stop-to-stop runtime evidence
-- `medium`: Mapbox estimates, manual assumptions, or mixed observed and fallback estimates
+- `high`: most segments have exact or strong scheduled GTFS evidence; the evidence engine can also assign high confidence to sufficiently strong observed samples when best-available mode is used
+- `medium`: Mapbox estimates, manual assumptions, partial scheduled coverage, or mixed observed and scheduled/fallback estimates
 - `low`: mostly fallback estimates
 - `not-ready`: missing terminals, too few stops, or no usable assumptions
 

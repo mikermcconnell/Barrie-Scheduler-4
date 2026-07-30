@@ -17,7 +17,7 @@ Activate when discussion involves:
 - Route structure or service planning
 - GTFS import/export
 - Connection optimization
-- Any file in: `scheduleGenerator.ts`, `blockAssignment.ts`, `runtimeAnalysis.ts`, `gtfsImportService.ts`
+- Any file in: `utils/schedule/scheduleGenerator.ts`, `utils/blocks/blockAssignment.ts`, `utils/blocks/blockAssignmentCore.ts`, `utils/ai/runtimeAnalysis.ts`, `utils/gtfs/gtfsImportService.ts`
 
 ---
 
@@ -41,7 +41,7 @@ Activate when discussion involves:
 | **Frequency** | Trips per hour | 60 ÷ headway = trips/hr |
 | **Span of Service** | Hours of operation per day | First trip start → Last trip end |
 | **Revenue Hours** | Total scheduled service time | Sum of all trip durations |
-| **Cycle Time** | Time for one complete round trip | Includes travel + recovery |
+| **Cycle Time** | First departure through the vehicle's occupied end | Terminal recovery is counted exactly once according to block-end and `endTimeIncludesRecovery` semantics |
 
 ### Travel Time Components
 
@@ -211,12 +211,19 @@ const totalTime = Math.round(segments.reduce((sum, seg) =>
 
 **Cycle Time Calculation (LOCKED)**
 ```typescript
-// CORRECT - span from first departure to last arrival
-const cycleTime = lastTrip.endTime - firstTrip.startTime;
+// CORRECT - span from first departure through occupied end
+const occupiedEnd = lastTrip.endTime + (
+  lastTrip.isBlockEnd || resolvedEndTimeIncludesRecovery
+    ? 0
+    : terminalRecovery
+);
+const cycleTime = occupiedEnd - firstTrip.startTime;
 
 // WRONG - sum of individual trip times
 const cycleTime = trips.reduce((sum, t) => sum + t.duration, 0);
 ```
+
+Use the explicit `endTimeIncludesRecovery` flag when available; legacy trips may require terminal-arrival data to resolve it. Never blindly add final recovery.
 
 **Block Assignment for Merged Routes (LOCKED)**
 ```typescript
@@ -295,7 +302,8 @@ For round trips: 2 trips/hr (1 N + 1 S = 1 round trip/hr)
 
 ### Formulas
 ```
-Cycle Time = Last Arrival - First Departure + Final Recovery
+Cycle Time = Occupied End - First Departure
+Occupied End = Last Trip End + terminal recovery only when not block-ending and not already included
 Headway = Time between consecutive trip departures
 Frequency = 60 ÷ Headway
 Recovery Ratio = Recovery Time ÷ Cycle Time (target: 15-20%)
@@ -304,7 +312,7 @@ Recovery Ratio = Recovery Time ÷ Cycle Time (target: 15-20%)
 ### File Locations
 ```
 Schedule generation: utils/schedule/scheduleGenerator.ts
-Block assignment: utils/blocks/blockAssignment.ts (+ gtfsImportService.ts)
+Block assignment: `utils/blocks/blockAssignment.ts` and `utils/blocks/blockAssignmentCore.ts` (+ `utils/gtfs/gtfsImportService.ts`)
 Runtime analysis: utils/ai/runtimeAnalysis.ts
 Time parsing: utils/timeUtils.ts
 GTFS handling: utils/gtfs/gtfsImportService.ts

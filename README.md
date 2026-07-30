@@ -10,7 +10,7 @@ It currently supports:
 - fixed-route schedule generation, editing, optimization, and publishing
 - Transit On-Demand planning, Master/RideCo shift import review, and shift optimization
 - operations dashboards and reporting for STREETS data
-- planning-data workspaces such as Transit App analytics, OD analysis, Route Planner, Shuttle Planner, and Network Connections
+- planning-data workspaces such as Transit App analytics, OD analysis, Route Planner 2, the separate Route Concept Planner, Shuttle Planner, and Network Connections
 
 ## Main Workspaces
 
@@ -19,6 +19,7 @@ It currently supports:
 | Scheduled Transit | Core fixed-route schedule building, editing, publishing, connections, and reports |
 | Transit On-Demand | Demand-responsive planning and optimization |
 | Dashboard & Reporting | Operational performance dashboards, imports, and reporting |
+| Parking | Parking-code imports, usage and revenue review, settings, and plate-pattern analysis |
 | Planning Data tools | Route planning, shuttle concepts, network connections, Transit App, OD, and related analysis surfaces |
 
 ## Tech Stack
@@ -33,6 +34,8 @@ It currently supports:
 | AI | Google Gemini API |
 
 ## Quick Start
+
+Requires Node.js 22 or newer, matching Firebase Functions and CI.
 
 ```powershell
 npm install
@@ -64,7 +67,7 @@ Detailed file ownership lives in `docs/ARCHITECTURE.md`. Use the summary above o
 
 For agent work, start with only these two files:
 - [AGENTS.md](AGENTS.md) - Primary agent entrypoint and repo instruction contract
-- [Context Index](docs/CONTEXT_INDEX.md) - Canonical load order, document tiers, and what not to load by default
+- [Context Index](docs/CONTEXT_INDEX.md) - Canonical task router, document tiers, and what not to load by default
 
 The Context Index routes each task to the smallest useful set of additional documents. Durable references include:
 - [Locked Logic](docs/rules/LOCKED_LOGIC.md) - Durable behavioral constraints
@@ -74,7 +77,7 @@ The Context Index routes each task to the smallest useful set of additional docu
 
 Load these only when relevant:
 - [.claude/CLAUDE.md](.claude/CLAUDE.md) - Tool-specific workflow supplement and danger-zone verification guidance
-- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Roadmap and status tracking
+- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Historical March 2026 delivery snapshot, not a current roadmap
 - [Route Planner 2 docs](docs/route-planner-2/README.md)
 - [Shuttle Planner PRD](docs/SHUTTLE_PLANNER_PRD.md)
 - [Network Connections brief](docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md)
@@ -82,7 +85,7 @@ Load these only when relevant:
 - [Archive](docs/archive/README.md) - Historical notes that should not drive current implementation
 - [Artifacts](docs/artifacts/README.md) - Supporting files and examples, not default context
 
-Run `npm run docs:check` after changing agent-facing Markdown. It validates required context files, repository-relative links, portable paths, and skill frontmatter.
+Run `npm run docs:check` after changing agent-facing Markdown. It validates required context files, inline and reference-style repository links, declared file paths, code-formatted paths in canonical context, portable paths, and skill frontmatter. CI runs the same check; historical Tier 3 documents are excluded.
 
 ## Fixed-Route Routes Supported
 

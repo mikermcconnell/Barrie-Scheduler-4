@@ -33,6 +33,8 @@ Use `package.json`, `firebase.json`, and `functions/package.json` for current de
 
 `App.tsx` is the main shell. It uses hash-based navigation and lazy-loads five top-level app views:
 
+Firebase Hosting keeps its client-route fallback for non-asset URLs but excludes `/assets/**`. Missing hashed bundles must return `404` so `utils/lazyWithRetry.ts` can refresh a stale open tab instead of receiving cached `index.html` as JavaScript.
+
 - **On-Demand** → `components/workspaces/OnDemandWorkspace.tsx`
 - **Fixed Route** → `components/workspaces/FixedRouteWorkspace.tsx`
 - **Operations** → `components/workspaces/OperationsWorkspace.tsx`
@@ -57,6 +59,8 @@ Planning Data has a second routing and permission-registration layer beneath the
 - user/team access keys and access profiles → `utils/workspaceAccess.ts`
 
 When adding or renaming a Planning Data workspace, update all four registration points and the focused routing/access tests. A card or component alone does not make a workspace routable or accessible.
+
+`components/Analytics/FareProgramsWorkspace.tsx` is a read-only, aggregate analysis surface. `scripts/generateFareProgramsSnapshot.mjs` deterministically derives its privacy-preserving `utils/fare-programs/fareProgramsSnapshot.generated.json` asset from the source workbook, including a source hash and explicit school-matching rules. The client wrapper lives in `utils/fare-programs/fareProgramsSnapshot.ts`; no raw transaction IDs, addresses, or rider-level records are bundled, and school-area matching remains labelled as proxy evidence.
 
 ---
 

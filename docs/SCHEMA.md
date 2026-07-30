@@ -160,9 +160,13 @@ type Direction = 'North' | 'South';
 
 ### Team (`teams/{teamId}`)
 
+#### Stored document shape
+
+`TeamDocument` is a documentation-only name for the Firestore wire payload.
+The document ID supplies the application model's `id` field.
+
 ```typescript
-interface Team {
-  id: string;
+interface TeamDocument {
   name: string;
   createdAt: Timestamp;
   createdBy: string;        // userId
@@ -175,6 +179,19 @@ interface Team {
     masterSchedules?: string; // Source team for read-only published master schedules.
   };
   partnerTeam?: boolean;    // True for externally onboarded agency teams.
+}
+```
+
+#### Application model
+
+`utils/services/teamService.ts` converts `createdAt` to `Date` and attaches the
+Firestore document ID when it builds the canonical model declared in
+`utils/masterScheduleTypes.ts`:
+
+```typescript
+interface Team extends Omit<TeamDocument, 'createdAt'> {
+  id: string;
+  createdAt: Date;
 }
 ```
 
@@ -264,8 +281,13 @@ Platform config is read by team members and should only be written by team owner
 
 ### PublicTimetableConfig (`teams/{teamId}/publicTimetable/default`)
 
+#### Stored document shape
+
+`PublicTimetableConfigWireDocument` is a documentation-only name for the
+Firestore payload written by the config service.
+
 ```typescript
-interface PublicTimetableConfigDocument {
+interface PublicTimetableConfigWireDocument {
   disclaimer: string;
   fareEffectiveDate: string;
   fareRows: Array<{
@@ -289,6 +311,22 @@ interface PublicTimetableConfigDocument {
   version: number;
 }
 ```
+
+#### Application model
+
+Despite its legacy `Document` suffix, the exported application type is the
+deserialized service/UI model. The service converts the stored timestamp to an
+ISO string:
+
+```typescript
+interface PublicTimetableConfigDocument
+  extends Omit<PublicTimetableConfigWireDocument, 'updatedAt'> {
+  updatedAt: string; // ISO timestamp
+}
+```
+
+The authoritative application declaration and conversion live in
+`utils/reports/publicTimetableConfigService.ts`.
 
 Public timetable settings are readable by team members and should only be written by team owners/admins.
 
@@ -596,10 +634,10 @@ interface Block {
   totalRecoveryTime: number;
 }
 
-interface BlockedTrip extends ParsedTrip {
+interface BlockedTrip extends Omit<ParsedTrip, 'direction'> {
   blockId: string;
   tripNumber: number;
-  direction: Direction;
+  direction: Direction | 'Loop' | string;
   firstStopName: string;
   lastStopName: string;
   routeName: string;
@@ -997,7 +1035,8 @@ Routes like 2A+2B share a downtown terminus:
 | CycleRouteConfig | `utils/config/routeDirectionConfig.ts` |
 | TimeBand | `utils/ai/runtimeAnalysis.ts` |
 | RuntimeData | `components/NewSchedule/utils/csvParser.ts` |
-| HubConfig, PlatformAnalysis | `utils/platform/platformConfig.ts`, `utils/platform/platformAnalysis.ts` |
+| HubConfig | `utils/platform/platformConfig.ts` |
+| DwellEvent, ConflictWindow, PlatformAnalysis, HubAnalysis | `utils/platform/types.ts` (re-exported by `utils/platform/platformAnalysis.ts`) |
 | Shift, Requirement, TOD day/zone types | `utils/demandTypes.ts` |
 | RideCo/MVT parser result and import report types | `utils/parsers/csvParsers.ts` |
 | Parking import, revenue import, settings, summaries, and flags | `utils/parking/parkingTypes.ts` |

@@ -66,14 +66,14 @@ Outcome:
 Future outcome:
 - version or updated-at conflict handling if multiple planners edit the same route plan concurrently
 
-## Future Milestone: Observed Runtime Integration
+## Future Milestone: Observed Runtime Activation
 
-V1 is designed for this, but wiring may land after fallback estimates.
+The evidence engine already implements and tests observed proxy matching, observed/scheduled blending, sample-size confidence, matching diagnostics, and segment fallback disclosure. The current workspace intentionally calls that engine with a scheduled-only basis.
 
 Future outcome:
-- observed proxy matching
-- sample-size confidence
-- fallback disclosure by segment
+- make an explicit product and UI decision about enabling best-available observed evidence in the interactive workspace
+- disclose observed sample size, blend behavior, and provenance before observed values affect feasibility totals
+- preserve planner-controlled runtime source and route filters
 
 ## Future Milestone: Downstream Schedule Handoff
 

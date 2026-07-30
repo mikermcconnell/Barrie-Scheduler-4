@@ -35,7 +35,7 @@ Will this touch any of these? If yes, extra scrutiny required:
 | Pattern | Files | Risk |
 |---------|-------|------|
 | Segment rounding | `scheduleGenerator.ts` | HIGH |
-| Block assignment | `blockAssignment.ts`, `gtfsImportService.ts` | HIGH |
+| Block assignment | `utils/blocks/blockAssignment.ts`, `utils/blocks/blockAssignmentCore.ts`, `utils/gtfs/gtfsImportService.ts` | HIGH |
 | Time parsing | `timeUtils.ts`, `csvParser.ts` | MEDIUM |
 | Trip pairing | `ScheduleEditor.tsx`, table renderers | MEDIUM |
 
@@ -71,10 +71,11 @@ Recommend full `/pm-review` when:
 ## Reference Files
 
 Quick-read before finalizing plans:
+- `AGENTS.md` - Authoritative repository contract and development patterns
+- `docs/CONTEXT_INDEX.md` - Task routing, authority, and document tiers
 - `docs/PRODUCT_VISION.md` - Section "Decision Framework"
 - `docs/rules/LOCKED_LOGIC.md` - Locked logic summary
 - `.claude/context.md` - Detailed compatibility notes
-- `AGENTS.md` - Repository contract and development patterns
 
 ## Integration with plan completion
 

@@ -1,8 +1,9 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const realWorkspaceRoot = realpathSync(workspaceRoot);
 
 const excludedRelativePrefixes = [
   '.git/',
@@ -15,8 +16,15 @@ const excludedRelativePrefixes = [
   'docs/archive/',
   'docs/artifacts/',
   'docs/plans/',
+  'docs/route-planner-legacy/',
   'docs/superpowers/plans/',
 ];
+
+const excludedRelativeFiles = new Set([
+  'docs/DWELL_CASCADE_PLAN.md',
+  'docs/IMPLEMENTATION_PLAN.md',
+  'docs/SCHEDULE_EDITOR_TEST_SUMMARY.md',
+]);
 
 const requiredContextFiles = [
   'AGENTS.md',
@@ -33,6 +41,7 @@ const shouldExclude = absolutePath => {
   const relativePath = normalizeRelative(path.relative(workspaceRoot, absolutePath));
   const pathSegments = relativePath.split('/');
   return relativePath === '.tmp_pr_body.md'
+    || excludedRelativeFiles.has(relativePath)
     || pathSegments.some(segment => ['.git', 'build', 'dist', 'node_modules'].includes(segment))
     || excludedRelativePrefixes.some(prefix => relativePath.startsWith(prefix));
 };
@@ -55,6 +64,32 @@ const collectMarkdownFiles = directory => {
 };
 
 const isExternalTarget = target => /^(?:https?:|mailto:|tel:|data:|#)/i.test(target);
+const repositoryPathPattern = /^(?:\.agents|\.claude|\.codex|api|components|docs|functions|hooks|scripts|tests|utils)\//;
+const shouldValidateCodePaths = relativePath => requiredContextFiles.includes(relativePath)
+  || ['ORCHESTRATOR.md', 'README.md'].includes(relativePath);
+
+const isOutsideWorkspace = resolvedPath => {
+  const relativeTarget = path.relative(workspaceRoot, resolvedPath);
+  if (relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) return true;
+  if (!existsSync(resolvedPath)) return false;
+
+  const realRelativeTarget = path.relative(realWorkspaceRoot, realpathSync(resolvedPath));
+  return realRelativeTarget.startsWith('..') || path.isAbsolute(realRelativeTarget);
+};
+
+const validateLocalPath = ({ declaredPath, label, lineNumber, relativePath, resolveFrom }) => {
+  if (path.isAbsolute(declaredPath) || /^[A-Za-z]:[\\/]/.test(declaredPath)) {
+    errors.push(`${relativePath}:${lineNumber}: nonportable absolute ${label} ${declaredPath}`);
+    return;
+  }
+
+  const resolvedPath = path.resolve(resolveFrom, declaredPath);
+  if (isOutsideWorkspace(resolvedPath)) {
+    errors.push(`${relativePath}:${lineNumber}: ${label} escapes the workspace ${declaredPath}`);
+  } else if (!existsSync(resolvedPath)) {
+    errors.push(`${relativePath}:${lineNumber}: ${label} does not exist ${declaredPath}`);
+  }
+};
 
 const errors = [];
 const markdownFiles = collectMarkdownFiles(workspaceRoot);
@@ -73,7 +108,10 @@ for (const absolutePath of markdownFiles) {
   lines.forEach((line, index) => {
     const lineNumber = index + 1;
 
-    if (/(?:\/)?[A-Za-z]:[\\/](?:Users|Documents)[\\/]/i.test(line)) {
+    const hasWindowsMachinePath = /[A-Za-z]:[\\/](?:Users|Documents)[\\/]/i.test(line)
+      || /\\\\[^\\\s]+\\[^\\\s]+/.test(line);
+    const hasUnixMachinePath = /\/(?:home|Users)\/[^/\s]+/.test(line);
+    if (hasWindowsMachinePath || hasUnixMachinePath) {
       errors.push(`${relativePath}:${lineNumber}: machine-specific absolute path`);
     }
 
@@ -81,19 +119,28 @@ for (const absolutePath of markdownFiles) {
       errors.push(`${relativePath}:${lineNumber}: obsolete .Codex path; use the repository's canonical paths`);
     }
 
-    for (const match of line.matchAll(/\(file:\s*((?:\.{0,2}[\\/]|[A-Za-z]:[\\/])[^)]+)\)/g)) {
+    for (const match of line.matchAll(/\(file:\s*((?:\.{0,2}[\\/]|[A-Za-z]:[\\/]|(?:\.agents|\.claude|\.codex|api|components|docs|functions|hooks|scripts|tests|utils)[\\/])[^)]+)\)/g)) {
       const declaredPath = match[1].trim();
-      if (path.isAbsolute(declaredPath) || /^[A-Za-z]:[\\/]/.test(declaredPath)) {
-        errors.push(`${relativePath}:${lineNumber}: nonportable declared file path ${declaredPath}`);
-        continue;
-      }
+      validateLocalPath({
+        declaredPath,
+        label: 'declared file path',
+        lineNumber,
+        relativePath,
+        resolveFrom: workspaceRoot,
+      });
+    }
 
-      const resolvedPath = path.resolve(workspaceRoot, declaredPath);
-      const relativeTarget = path.relative(workspaceRoot, resolvedPath);
-      if (relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) {
-        errors.push(`${relativePath}:${lineNumber}: declared file path escapes the workspace ${declaredPath}`);
-      } else if (!existsSync(resolvedPath)) {
-        errors.push(`${relativePath}:${lineNumber}: declared file path does not exist ${declaredPath}`);
+    if (shouldValidateCodePaths(relativePath)) {
+      for (const match of line.matchAll(/`([^`\r\n]+)`/g)) {
+        const candidate = match[1].trim().replace(/:\d+(?:-\d+)?$/, '');
+        if (!repositoryPathPattern.test(candidate) || /[*{}\s]/.test(candidate)) continue;
+        validateLocalPath({
+          declaredPath: candidate,
+          label: 'code-formatted repository path',
+          lineNumber,
+          relativePath,
+          resolveFrom: workspaceRoot,
+        });
       }
     }
 
@@ -117,12 +164,37 @@ for (const absolutePath of markdownFiles) {
         continue;
       }
 
-      const resolvedTarget = path.resolve(path.dirname(absolutePath), decodedTarget);
-      const relativeTarget = path.relative(workspaceRoot, resolvedTarget);
-      if (relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) {
-        errors.push(`${relativePath}:${lineNumber}: Markdown link escapes the workspace ${rawTarget}`);
-      } else if (!existsSync(resolvedTarget)) {
-        errors.push(`${relativePath}:${lineNumber}: broken Markdown link ${rawTarget}`);
+      validateLocalPath({
+        declaredPath: decodedTarget,
+        label: 'Markdown link',
+        lineNumber,
+        relativePath,
+        resolveFrom: path.dirname(absolutePath),
+      });
+    }
+
+    const referenceLinkMatch = line.match(/^\s*\[[^\]]+\]:\s*(?:<([^>]+)>|(\S+))/);
+    if (referenceLinkMatch) {
+      const rawTarget = (referenceLinkMatch[1] ?? referenceLinkMatch[2]).trim();
+      if (!isExternalTarget(rawTarget)) {
+        const targetWithoutAnchor = rawTarget.split('#', 1)[0].split('?', 1)[0];
+        if (targetWithoutAnchor) {
+          let decodedTarget;
+          try {
+            decodedTarget = decodeURIComponent(targetWithoutAnchor);
+          } catch {
+            errors.push(`${relativePath}:${lineNumber}: invalid URL encoding in reference-style Markdown link ${rawTarget}`);
+          }
+          if (decodedTarget !== undefined) {
+            validateLocalPath({
+              declaredPath: decodedTarget,
+              label: 'reference-style Markdown link',
+              lineNumber,
+              relativePath,
+              resolveFrom: path.dirname(absolutePath),
+            });
+          }
+        }
       }
     }
   });

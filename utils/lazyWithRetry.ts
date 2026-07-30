@@ -43,8 +43,9 @@ export async function loadWithRetry<T>(
       storage.setItem(retryKey, 'true');
       reload();
 
-      // Keep Suspense pending while the page reloads.
-      return new Promise<T>(() => undefined);
+      // Navigation normally replaces this page immediately. If it is blocked or
+      // delayed, surface the failure instead of leaving Suspense pending forever.
+      throw error;
     }
 
     storage?.removeItem(retryKey);

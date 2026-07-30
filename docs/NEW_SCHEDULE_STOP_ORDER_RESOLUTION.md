@@ -3,6 +3,7 @@
 Status: Proposed  
 Date: March 30, 2026  
 Audience: Engineers working on New Schedule Step 2 runtime analysis, route-chain resolution, and schedule generation
+Context entrypoint: `docs/new-schedule-step2/README.md`
 
 ---
 
@@ -489,3 +490,4 @@ For this repo, the simplest durable rule is:
 
 > Build planning stop order from the dominant recent complete observed trip pattern, prefer midday when available, use stop numbers first, use stop names second, and never let partial trips define planning truth.
 
+Related context: `docs/new-schedule-step2/README.md`, `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`, and `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`.

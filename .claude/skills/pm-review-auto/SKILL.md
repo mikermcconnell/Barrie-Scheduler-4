@@ -11,7 +11,7 @@ This skill auto-activates during implementation planning to catch misalignment e
 
 Activate when:
 - Using `EnterPlanMode` for feature implementation
-- Writing to a plan file (`.claude/plan.md` or similar)
+- Writing or materially revising an implementation plan in Claude plan mode
 - About to call `ExitPlanMode`
 - Creating TodoWrite lists with 5+ implementation tasks
 
@@ -35,7 +35,7 @@ Will this touch any of these? If yes, extra scrutiny required:
 | Pattern | Files | Risk |
 |---------|-------|------|
 | Segment rounding | `scheduleGenerator.ts` | HIGH |
-| Block assignment | `blockAssignment.ts`, `gtfsImportService.ts` | HIGH |
+| Block assignment | `utils/blocks/blockAssignment.ts`, `utils/blocks/blockAssignmentCore.ts`, `utils/gtfs/gtfsImportService.ts` | HIGH |
 | Time parsing | `timeUtils.ts`, `csvParser.ts` | MEDIUM |
 | Trip pairing | `ScheduleEditor.tsx`, table renderers | MEDIUM |
 
@@ -71,10 +71,12 @@ Recommend full `/pm-review` when:
 ## Reference Files
 
 Quick-read before finalizing plans:
+- `AGENTS.md` - Authoritative repository contract and development patterns
+- `docs/CONTEXT_INDEX.md` - Task routing, authority, and document tiers
 - `docs/PRODUCT_VISION.md` - Section "Decision Framework"
 - `docs/rules/LOCKED_LOGIC.md` - Locked logic summary
 - `.claude/context.md` - Detailed compatibility notes
-- `.claude/CLAUDE.md` - Development patterns
+- `.claude/CLAUDE.md` - Supplemental Claude workflow and danger-zone guidance
 
 ## Integration with ExitPlanMode
 

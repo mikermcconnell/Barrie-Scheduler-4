@@ -125,6 +125,12 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
         previewKind: 'analytics-card',
     },
     {
+        feature: 'analyticsFarePrograms',
+        label: 'Fare Programs',
+        description: 'Fare-program use, school-area proxies, and map-ready data quality.',
+        previewKind: 'analytics-card',
+    },
+    {
         feature: 'analyticsCouncilIntelligence',
         label: 'Council Intelligence',
         description: 'Council and committee meeting records, decisions, votes, and transit-related actions.',

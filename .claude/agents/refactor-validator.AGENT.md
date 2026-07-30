@@ -30,16 +30,19 @@ Row 2: N2 + S2
 
 ### 3. Cycle Time Calculation
 ```typescript
-cycleTime = lastTripEnd - firstTripStart
+const occupiedEnd = lastTrip.endTime + (
+  lastTrip.isBlockEnd || resolvedEndTimeIncludesRecovery ? 0 : terminalRecovery
+)
+cycleTime = occupiedEnd - firstTrip.startTime
 ```
-**Check:** Any file calculating cycle time
+**Check:** Any file calculating cycle time; terminal recovery must be counted exactly once
 
-### 4. Double Pass Optimization
+### 4. AI Optimization Paths
 ```
-Phase 1: Generator creates schedule
-Phase 2: Critic reviews and improves
+Generate: fast single-generator path
+Refine: generator -> critic -> polisher only when multi-phase policy and runtime support permit it
 ```
-**Check:** `api/optimize.ts` - two-phase pattern intact
+**Check:** `api/optimize.ts` and `functions/src/optimizePipelinePolicy.ts` - preserve the intentional fast and extended paths
 
 ## Validation Process
 
@@ -55,7 +58,7 @@ Phase 2: Critic reviews and improves
    ```
 
 3. **Search for Locked Patterns**
-   - Grep for `Math.round` in schedule files
+   - Use `rg` for `Math.round` in schedule files
    - Check trip pairing in editor components
    - Verify cycle calculation formula
 
@@ -77,7 +80,7 @@ Phase 2: Critic reviews and improves
 - [ ] Segment rounding: [OK/VIOLATION at file:line]
 - [ ] Trip pairing: [OK/VIOLATION at file:line]
 - [ ] Cycle calculation: [OK/VIOLATION at file:line]
-- [ ] Double pass: [OK/VIOLATION at file:line]
+- [ ] AI optimization paths: [OK/VIOLATION at file:line]
 
 ### Verdict
 [SAFE TO MERGE / NEEDS REVIEW / BLOCKED - reason]

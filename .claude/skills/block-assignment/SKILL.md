@@ -1,6 +1,6 @@
 ---
 name: block-assignment
-description: Use when working on blockAssignment.ts, block IDs, or trip linking. Block bugs have been a recurring issue.
+description: Use when working on utils/blocks/blockAssignment.ts, utils/blocks/blockAssignmentCore.ts, block IDs, or trip linking. Block bugs have been a recurring issue.
 ---
 
 ## Block Assignment Logic
@@ -15,14 +15,19 @@ Examples: `400-1`, `400-2`, `12-1`
 
 ### Trip Linking Rules
 
-Trips are linked into the same block when:
+Two matching modes exist and must not be conflated:
 
-1. **Time Proximity**: Trip A's `endTime` matches Trip B's `startTime` within 1 minute
-   - ⚠️ **CRITICAL**: For generated schedules, `endTime` already includes recovery time
-   - Do NOT add recovery again when calculating expected start of next trip
-   - Use `endTime` directly as the expected start time
-2. **Direction Alternation**: For bidirectional routes, N→S→N→S pattern
-3. **Same Block ID**: Both trips have matching blockId
+1. **Generated/legacy section matching** (`utils/blocks/blockAssignment.ts`)
+   - Expected-start matching uses a one-minute tolerance.
+   - For generated schedules, `endTime` already includes recovery time. Do not add recovery again.
+2. **Unified and merged-route matching** (`utils/blocks/blockAssignmentCore.ts`)
+   - When `maxGap` is configured for merged A/B routes, compare the actual gap: `candidate.startTime - current.endTime`.
+   - Accept non-negative gaps up to `maxGap`; do not derive expected start from recovery for this mode.
+   - Otherwise, the core uses expected-start matching with the configured tolerance and `endTimeIncludesRecovery` semantics.
+3. **Direction and location continuity**
+   - Preserve the configured direction alternation and stop/terminal matching rules.
+
+Never apply the legacy one-minute rule to merged-route actual-gap matching.
 
 ### Bidirectional Routes
 
@@ -42,6 +47,12 @@ In `utils/blocks/blockAssignment.ts`:
 - `assignBlocksToRoute()`: Route-level orchestrator
 - `debugBlockAssignment()`: Debug output helper
 
+In `utils/blocks/blockAssignmentCore.ts`:
+
+- `findNextTrip()`: Chooses actual-gap or expected-start matching from the config
+- `buildBlocks()` / `buildBlocksBidirectional()`: Unified block construction
+- `MatchConfigPresets`: Matching policy, including merged-route `maxGap`
+
 ### Recovery Time at Terminals
 
 - Recovery goes at the END of each trip (terminus)
@@ -51,7 +62,8 @@ In `utils/blocks/blockAssignment.ts`:
 
 | Bug | Cause | Fix |
 |-----|-------|-----|
-| Trips not linking | Gap > 1 minute | Check time calculations |
+| Generated/legacy trips not linking | Expected-start difference > 1 minute | Verify `endTime`/recovery semantics |
+| Merged trips not linking | Actual gap is outside `maxGap` or terminal identity does not match | Check the matching preset, actual gap, and location data |
 | Wrong direction sequence | Initialization error | Verify first trip direction |
 | Recovery not propagating | Block boundary issue | Check block membership |
 

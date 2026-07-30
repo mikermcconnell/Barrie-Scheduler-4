@@ -9,14 +9,18 @@
 
 ## Locked Logic (6 Rules)
 
-### 1. Double Pass Optimization (`api/optimize.ts`)
+### 1. Dual AI Optimization Paths (`api/optimize.ts`, `functions/src/optimizePipelinePolicy.ts`)
 
 ```
-Phase 1 (Generator): Create initial schedule
-Phase 2 (Critic): Review and suggest improvements
+Generate (`full`): fast single-generator path
+Refine with OPTIMIZE_MULTI_PHASE enabled and runtime support:
+  generator → critic → polisher
+Refine without that policy/runtime support: fast single-generator path
 ```
 
-**Why:** Prevents AI over-optimization; iterative refinement produces better results.
+**Why:** Fresh generation stays fast. Explicit refinement can use the extended
+review pipeline where the deployment supports it. Do not assume every request
+runs a critic phase; AI output remains planner-controlled in either path.
 
 ---
 
@@ -52,12 +56,21 @@ Row 2: Trip N2 | Trip S2
 ### 4. Cycle Time Calculation
 
 ```typescript
-cycleTime = schedule[schedule.length - 1].end - schedule[0].start
+const lastTrip = schedule[schedule.length - 1];
+const occupiedEnd = lastTrip.endTime + (
+  lastTrip.isBlockEnd || resolvedEndTimeIncludesRecovery
+    ? 0
+    : terminalRecovery
+);
+const cycleTime = occupiedEnd - schedule[0].startTime;
 ```
 
-**NOT:** Sum of trip durations or runtime + recovery.
+Resolve `endTimeIncludesRecovery` from the explicit trip flag when available;
+for legacy trips, infer it from terminal arrival/departure data. **Do not**
+blindly add terminal recovery, and do not sum trip durations.
 
-**Why:** Cycle time = total vehicle operating period, not sum of parts.
+**Why:** Cycle time is the occupied span from first departure through the final
+applicable recovery, counted exactly once.
 
 ---
 

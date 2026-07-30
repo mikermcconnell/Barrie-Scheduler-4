@@ -1,6 +1,6 @@
 ---
 name: review-schedule-auto
-description: Auto-activates when modifying scheduleGenerator.ts, runtimeAnalysis.ts, or trip generation logic. Validates locked logic compliance.
+description: Auto-activates when modifying schedule generation, runtime analysis, block assignment core, or trip generation logic. Validates locked logic compliance.
 ---
 
 # Schedule Generation Review
@@ -10,9 +10,10 @@ This skill auto-activates when you modify schedule generation code.
 ## Automatic Validation
 
 When touching these files, I will verify:
-- `scheduleGenerator.ts`
-- `runtimeAnalysis.ts`
-- `blockAssignment.ts`
+- `utils/schedule/scheduleGenerator.ts`
+- `utils/ai/runtimeAnalysis.ts`
+- `utils/blocks/blockAssignment.ts`
+- `utils/blocks/blockAssignmentCore.ts`
 - Any file with trip generation logic
 
 ## Validation Checklist
@@ -41,15 +42,22 @@ Verify in any table/grid rendering:
 
 ### 3. Cycle Time Calculation (LOCKED)
 
-**Rule:** `Last Trip End - First Trip Start`
+**Rule:** First departure through occupied end. Count the last trip's terminal recovery exactly once.
 
 ```typescript
 // CORRECT
-const cycleTime = schedule[schedule.length - 1].endTime - schedule[0].startTime
+const occupiedEnd = lastTrip.endTime + (
+  lastTrip.isBlockEnd || resolvedEndTimeIncludesRecovery
+    ? 0
+    : terminalRecovery
+)
+const cycleTime = occupiedEnd - firstTrip.startTime
 
 // WRONG - sum of durations
 const cycleTime = trips.reduce((sum, t) => sum + t.duration, 0)
 ```
+
+Use the explicit `endTimeIncludesRecovery` flag when present; legacy trips may require terminal-arrival data to resolve it. Never blindly add terminal recovery.
 
 ### 4. Band Lookup Logic
 
@@ -59,7 +67,7 @@ const cycleTime = trips.reduce((sum, t) => sum + t.duration, 0)
 - Fall back to closest bucket if no exact match
 - Use averaged segment times from bandSummary
 
-## Quick Grep Commands
+## Quick `rg` Commands
 
 ```bash
 # Check rounding pattern

@@ -3,6 +3,7 @@
 Status: Proposed  
 Date: March 27, 2026  
 Audience: Engineers working on the New Schedule wizard rebuild before implementation starts
+Context entrypoint: `docs/new-schedule-step2/README.md`
 
 ---
 
@@ -690,6 +691,7 @@ Current files most relevant to the rebuild:
 
 Related durable docs:
 
+- `docs/new-schedule-step2/README.md`
 - `docs/rules/LOCKED_LOGIC.md`
 - `docs/PRODUCT_VISION.md`
 - `docs/ARCHITECTURE.md`

@@ -28,6 +28,7 @@ export type WorkspaceAccessFeatureKey =
     | 'analyticsRoutePlanner2'
     | 'analyticsRouteConceptPlanner'
     | 'analyticsShuttlePlanner'
+    | 'analyticsFarePrograms'
     | 'analyticsCouncilIntelligence'
     | 'operationsLoadProfiles'
     | 'operationsOperatorDwell';
@@ -81,6 +82,7 @@ export const ANALYTICS_WORKSPACE_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsRoutePlanner2',
     'analyticsRouteConceptPlanner',
     'analyticsShuttlePlanner',
+    'analyticsFarePrograms',
     'analyticsCouncilIntelligence',
 ];
 
@@ -107,6 +109,7 @@ const PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     'analyticsFleetPlan',
     'analyticsResidentialGrowth',
     'analyticsRoutePlanner2',
+    'analyticsFarePrograms',
     'analyticsCouncilIntelligence',
 ];
 

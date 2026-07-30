@@ -10,6 +10,7 @@ describe('workspace access packages', () => {
         const selection = buildWorkspaceSelectionFromPackage('barrie-planner');
 
         expect(selection.analyticsCouncilIntelligence).toBe(true);
+        expect(selection.analyticsFarePrograms).toBe(true);
     });
 
     it('includes the WATT-style Transit App plus STREETS dashboard package', () => {

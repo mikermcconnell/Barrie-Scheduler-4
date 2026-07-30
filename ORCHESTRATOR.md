@@ -85,7 +85,7 @@ Important boundaries:
 - Route Concept Planner is a separate neutral internal-beta workspace. Keep it isolated from Route Planner 2 and load `docs/route-concept-planner/README.md` plus its contracts.
 - The removed legacy Route Planner is historical. Remaining `utils/route-planner/` code is legacy support used by Shuttle Planner, not Route Planner 2.
 - Council Intelligence must distinguish official named votes from movers, seconders, procedural signals, and unknown evidence.
-- Fleet Plan is team-shared and versioned; writes are owner/admin-only and validation/conflict gated.
+- Fleet Plan is team-shared and versioned. Ordinary writes are owner/admin-only; an audited support session in edit mode is the explicit cross-team exception. The UI gates saves on workbook validation, while the persistence service enforces version conflicts, so preserve both layers.
 - Transit App schema and data-quality cautions live in `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md`; re-import saved data when that checklist or schema contract says regeneration is required.
 
 ## Persistence and server model

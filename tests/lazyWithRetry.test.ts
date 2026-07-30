@@ -18,24 +18,21 @@ describe('lazyWithRetry helpers', () => {
     const storage = createStorage();
     const reload = vi.fn();
 
-    const result = loadWithRetry(
-      () =>
-        Promise.reject(
-          new Error(
-            'Failed to fetch dynamically imported module: https://transitscheduler.ca/assets/FixedRouteWorkspace-B3lkzZ-X.js'
-          )
-        ),
-      'fixed-workspace',
-      { reload, storage }
-    );
-
-    await Promise.resolve();
+    await expect(
+      loadWithRetry(
+        () =>
+          Promise.reject(
+            new Error(
+              'Failed to fetch dynamically imported module: https://transitscheduler.ca/assets/FixedRouteWorkspace-B3lkzZ-X.js'
+            )
+          ),
+        'fixed-workspace',
+        { reload, storage }
+      )
+    ).rejects.toThrow('Failed to fetch dynamically imported module');
 
     expect(reload).toHaveBeenCalledTimes(1);
     expect(storage.getItem('lazy-retry:fixed-workspace')).toBe('true');
-
-    // Prevent an intentionally pending promise from affecting the test process.
-    void result;
   });
 
   it('throws after the retry has already been used', async () => {

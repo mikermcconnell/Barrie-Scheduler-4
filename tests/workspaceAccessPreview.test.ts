@@ -79,6 +79,8 @@ describe('workspace access preview', () => {
         });
 
         expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('Council Intelligence');
+        expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('Fare Programs');
         expect(partnerPreview.analyticsCards.map(card => card.label)).not.toContain('Council Intelligence');
+        expect(partnerPreview.analyticsCards.map(card => card.label)).not.toContain('Fare Programs');
     });
 });

@@ -79,8 +79,9 @@ service firebase.storage {
     function workspaceAllowedByProfile(accessLevel, feature) {
       return accessLevel == 'internal' ||
              (accessLevel == 'admin' &&
-              (feature in ['workspaceFixedRoute', 'workspaceParking'])) ||
-             (accessLevel == 'planner' && feature == 'workspaceFixedRoute') ||
+              (feature in ['workspaceFixedRoute', 'workspaceParking', 'analyticsFarePrograms'])) ||
+             (accessLevel == 'planner' &&
+              (feature in ['workspaceFixedRoute', 'analyticsFarePrograms'])) ||
              (accessLevel == 'production' && feature == 'workspaceFixedRoute') ||
              (accessLevel == 'parking' && feature == 'workspaceParking');
     }

@@ -4,6 +4,7 @@ Status: Proposed
 Date: March 27, 2026  
 Depends on: `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
 Related: `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
+Context entrypoint: `docs/new-schedule-step2/README.md`
 
 ---
 
@@ -667,6 +668,7 @@ This contract design is ready for implementation only when all are accepted:
 
 ## 15. Related Documents
 
+- `docs/new-schedule-step2/README.md`
 - `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
 - `docs/plans/2026-03-27-step2-rebuild-plan.md`
 - `docs/rules/LOCKED_LOGIC.md`

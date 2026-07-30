@@ -75,6 +75,7 @@ interface RoutePlanner2Scenario {
   turnaroundStopId?: string;
   service: RoutePlanner2ServiceAssumptions;
   runtimeSourceMode?: RoutePlanner2RuntimeSourceMode;
+  runtimeRouteFilter?: RoutePlanner2RuntimeRouteFilter;
   runtimeEstimates?: RoutePlanner2SegmentRuntime[];
   runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
   runtimeLocked?: boolean;
@@ -87,9 +88,14 @@ interface RoutePlanner2Scenario {
   createdAt: string;
   updatedAt: string;
 }
+
+interface RoutePlanner2RuntimeRouteFilter {
+  mode: 'all-matching' | 'selected';
+  routeShortNames: string[];
+}
 ```
 
-`runtimeSnapshots` is hydrated from the nested Firestore `runtimeSnapshots` subcollection and is capped at 12 newest decisions. Each snapshot records the Mapbox profile, calculation and decision timestamps, planner decision (`accepted` or `rejected`), previous and candidate totals, path fingerprint, and segment estimates. `runtimeLocked` prevents applying a staged refresh; manual segment overrides remain the highest-priority source regardless of lock state.
+`runtimeRouteFilter` is planner-controlled. `all-matching` permits every scheduled route that follows the corridor; `selected` limits evidence to the chosen route short names. `runtimeSnapshots` is hydrated from the nested Firestore `runtimeSnapshots` subcollection and is capped at 12 newest decisions. Each snapshot records the Mapbox profile, calculation and decision timestamps, planner decision (`accepted` or `rejected`), previous and candidate totals, path fingerprint, and segment estimates. This accepted state applies to Mapbox road-runtime refreshes; it does not freeze or approve automatically derived GTFS evidence. `runtimeLocked` prevents applying a staged Mapbox refresh; manual segment overrides remain the highest-priority source regardless of lock state.
 
 `routeShape` defaults to `one-way` for new local draft routes and for older saved local data that does not yet include the field.
 
@@ -216,11 +222,17 @@ interface RoutePlanner2SegmentRuntime {
   source: RoutePlanner2RuntimeSource;
   sampleSize?: number;
   scheduledRuntimeMinutes?: number;
+  scheduledCoverageRatio?: number;
+  scheduledCoverageDistanceKm?: number;
+  estimatedUncoveredDistanceKm?: number;
   observedRuntimeMinutes?: number;
   matchQuality?: 'exact-code' | 'name' | 'nearby' | 'unmatched';
   matchedFromStopId?: string;
   matchedToStopId?: string;
   matchedRoutes?: string[];
+  runtimeRouteBreakdown?: RoutePlanner2SegmentRuntimeRouteBreakdown[];
+  evidenceMethod?: 'adjacent-stop-pair' | 'corridor-path' | 'shape-overlap';
+  matchedGtfsPathStopIds?: string[];
   evidenceDayType?: 'weekday' | 'saturday' | 'sunday';
   evidencePeriod?: 'am-peak' | 'midday' | 'pm-peak' | 'evening' | 'full-day';
   confidence: 'high' | 'medium' | 'low' | 'missing';
@@ -230,6 +242,11 @@ interface RoutePlanner2SegmentRuntime {
   updatedAt?: string;
   fallbackReason?: string;
 }
+
+interface RoutePlanner2SegmentRuntimeRouteBreakdown {
+  routeShortName: string;
+  scheduledRuntimeMinutes: number;
+}
 ```
 
 Runtime source values:
@@ -237,11 +254,12 @@ Runtime source values:
 - `observed-proxy`: observed stop-to-stop runtime evidence.
 - `observed-scheduled-blend`: blended estimate from scheduled and observed runtime evidence.
 - `scheduled-proxy`: scheduled stop-to-stop runtime evidence.
+- `partial-scheduled-proxy`: scheduled evidence for the covered GTFS corridor plus an estimate for the uncovered drawn segment.
 - `mapbox`: Mapbox Directions estimate for the shaped stop-to-stop path.
 - `fallback`: distance/default-speed estimate when stronger evidence is unavailable.
 - `missing`: no usable runtime estimate yet.
 
-`runtimeSourceMode` defaults to `mapbox` for new blank/custom route concepts and to `gtfs` for routes imported from GTFS. In `mapbox` mode, GTFS evidence is ignored and segment runtime uses Mapbox estimates when available, then fallback assumptions. In `gtfs` mode, scheduled GTFS evidence is allowed to outrank Mapbox. Manual overrides remain planner-controlled and still outrank automatic sources. A segment can have multiple scheduled runtime estimates for the same stop pair, one per `evidencePeriod`; feasibility prefers the estimate matching the route's selected day type and runtime period, then falls back to full-day scheduled evidence when a narrower band is unavailable.
+`runtimeSourceMode` defaults to `mapbox` for new blank/custom route concepts and to `gtfs` for routes imported from GTFS. In `mapbox` mode, GTFS evidence derivation is skipped and segment runtime uses Mapbox estimates when available, then fallback assumptions. In `gtfs` mode, the current workspace requests scheduled-only evidence, which is allowed to outrank Mapbox. The evidence engine also supports best-available observed proxy/blend results, but the workspace does not currently request that basis. Manual overrides remain planner-controlled and still outrank automatic sources. A segment can have multiple scheduled runtime estimates for the same stop pair, one per `evidencePeriod`; feasibility prefers the estimate matching the route's selected day type and runtime period, then falls back to full-day scheduled evidence when a narrower band is unavailable.
 
 Runtime evidence fields disclose how automatic estimates were produced:
 - `scheduledRuntimeMinutes`: scheduled stop-to-stop runtime used as evidence.
@@ -249,6 +267,10 @@ Runtime evidence fields disclose how automatic estimates were produced:
 - `matchQuality`: stop matching method: exact stop code, normalized name, nearby coordinate, or unmatched.
 - `matchedFromStopId` / `matchedToStopId`: matched GTFS stop IDs used for evidence.
 - `matchedRoutes`: route IDs that contributed matching runtime evidence.
+- `runtimeRouteBreakdown`: per-route evidence used when multiple scheduled routes match.
+- `evidenceMethod`: whether evidence came from a direct adjacent pair, a corridor path, or GTFS shape overlap.
+- `matchedGtfsPathStopIds`: the GTFS stop path used for direct or multi-edge matching.
+- scheduled coverage fields: how much of a partially matched drawn segment came from GTFS and how much required estimation.
 - `evidenceDayType` / `evidencePeriod`: the service day and time band used for scheduled runtime evidence.
 
 `recoveryTimeMinutes` is the spare time between the estimated full runtime and the scheduled cycle window created by the selected frequency and required buses. Example: 24 minutes of estimated full runtime at 30-minute frequency with 1 bus leaves 6 minutes of recovery. `recoveryPercent` is recovery time divided by estimated full runtime.
@@ -283,9 +305,10 @@ Route Planner 2 projects are saved in team-scoped Firestore documents:
 ```text
 teams/{teamId}/routePlanner2Projects/{projectId}
 teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}
+teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}/runtimeSnapshots/{snapshotId}
 ```
 
-The project document stores metadata such as name, selected route, preferred route, scenario order, scenario count, timestamps, and updatedBy. Each scenario document stores the editable route concept inputs and cached runtime/feasibility outputs.
+The project document stores metadata such as name, selected route, preferred route, scenario order, scenario count, timestamps, and updatedBy. Each scenario document stores the editable route concept inputs and cached runtime/feasibility outputs. The nested snapshot subcollection stores at most the latest 12 accepted or rejected Mapbox refresh decisions.
 
 Large geometry or derived analysis artifacts may move to Firebase Storage later if needed.
 

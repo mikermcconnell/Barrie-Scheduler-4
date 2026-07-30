@@ -18,45 +18,19 @@ Systematically audit all project context documentation to ensure it accurately r
 - When an agent makes mistakes that suggest stale documentation
 - After reorganizing file structure
 
-## Documentation Inventory
+## Documentation Inventory and Authority
 
-Audit these files in order of priority:
+Do not duplicate document tiers in this skill. Load these first:
 
-### Tier 1 — Critical (directly controls agent behavior)
+1. `AGENTS.md` — repository-wide workflow, safety, and authority contract
+2. `docs/CONTEXT_INDEX.md` — the canonical task router, document tiers, and source-of-truth precedence
 
-| File | Purpose |
-|------|---------|
-| `docs/CONTEXT_INDEX.md` | Canonical load order and doc tiers |
-| `AGENTS.md` | Project instructions and repository contract |
-| `docs/rules/LOCKED_LOGIC.md` | Durable locked logic summary |
-| `.claude/context.md` | Detailed compatibility copy of locked logic |
+Build the audit inventory from `docs/CONTEXT_INDEX.md` at review time. Load only the durable and feature documents relevant to the audit scope. Never promote `.claude/` supplements, tool-managed memory, dated plans, status snapshots, or archives above the authority assigned by the context index.
 
-Tool-managed cross-session memory may be consulted when available, but it is not portable repository context and must not replace the files above.
+Also audit the repository's agent extensions:
 
-### Tier 2 — High (referenced during planning and feature work)
-
-| File | Purpose |
-|------|---------|
-| `docs/PRODUCT_VISION.md` | Product goals, user personas, feature scope |
-| `docs/ARCHITECTURE.md` | Component map, data flow, stack description |
-| `docs/SCHEMA.md` | Firestore collections, TypeScript types, storage paths |
-| `docs/IMPLEMENTATION_PLAN.md` | Historical March 2026 delivery snapshot |
-
-### Tier 3 — Reference (consulted for specific features)
-
-| File | Purpose |
-|------|---------|
-| `docs/CONNECTIONS_FEATURE.md` | Connection library design, known issues |
-| `docs/AUTO_INGEST_SETUP.md` | Automated data ingestion |
-| `docs/OD_WORKSPACE_GUIDE.md` | OD workspace user guidance |
-| `docs/DWELL_CASCADE_PLAN.md` | Dwell and cascade reference |
-| `docs/route-colors.md` | Route color scheme reference |
-| `docs/plans/README.md` | Archive policy for dated plans |
-
-### Tier 4 — Skills & Commands
-
-| Location | Count |
-|----------|-------|
+| Location | Purpose |
+|----------|---------|
 | `.agents/skills/*/SKILL.md` | Portable skill sources |
 | `.claude/skills/*/SKILL.md` | Claude-specific skill adapters |
 | `.claude/commands/*.md` | Claude-specific commands |
@@ -69,14 +43,14 @@ Tool-managed cross-session memory may be consulted when available, but it is not
 For every file path mentioned in documentation:
 
 1. **Verify the file exists** at the stated path
-2. **Verify key functions/types exist** — grep for function names, type names, exports
+2. **Verify key functions/types exist** — use `rg` for function names, type names, and exports
 3. **Flag moved or renamed files** that docs still reference at old paths
 4. **Flag deleted files** still referenced in docs
 
 ```
 Example stale reference:
   Doc says: "See utils/blockAssignment.ts"
-  Reality: File moved to utils/blocks/blockAssignmentCore.ts
+  Reality: File moved to utils/blocks/blockAssignment.ts
   → Flag as STALE PATH
 ```
 
@@ -124,7 +98,7 @@ For each file in `.claude/CLAUDE.md` Section 8 (Danger Zones):
 1. **Verify the file exists** at the stated path
 2. **Verify the test command works** (or at least that the test file exists)
 3. **Check if new high-risk files should be added** to the danger zone table
-4. **Cross-reference with recent bug patterns** in MEMORY.md
+4. **Cross-reference with recent bug patterns** in tool-managed memory when available
 
 ### Check 6: Cross-Document Consistency
 
@@ -147,13 +121,13 @@ For each portable skill in `.agents/skills/` and each tool adapter in `.claude/s
 3. **Confirm frontmatter format** (name, description, optional user_invocable)
 4. **Flag skills that reference removed functionality**
 
-### Check 8: MEMORY.md Hygiene
+### Check 8: Tool-Managed Memory Hygiene
 
 1. **Under 200 lines** (lines after 200 are truncated in system prompt)
 2. **No session-specific content** (temporary state, in-progress work)
-3. **No contradictions with AGENTS.md** (AGENTS.md is authoritative)
+3. **No contradictions with `AGENTS.md` or `docs/CONTEXT_INDEX.md`** (repository context remains authoritative)
 4. **Organized by topic**, not chronologically
-5. **Links to detailed topic files** if MEMORY.md is getting long
+5. **Links to detailed topic files** if tool-managed memory is getting long
 
 ## Output Format
 
@@ -196,7 +170,7 @@ Things confirmed accurate (brief list for confidence):
 
 ## Workflow
 
-1. **Read all Tier 1 docs** first to establish baseline understanding
+1. **Read `AGENTS.md` and `docs/CONTEXT_INDEX.md`**, then load the smallest relevant authoritative set
 2. **Run Check 3** (removed code grep) — fastest way to find stale content
 3. **Run Check 1** (file/path references) — systematic path verification
 4. **Run Checks 2, 4, 5** in parallel where possible using subagents
@@ -207,10 +181,10 @@ Things confirmed accurate (brief list for confidence):
 
 ## Automation Tips
 
-- Use `Glob` to verify file existence quickly
-- Use `Grep` to search for stale references across all docs at once
+- Use `rg --files` to inventory Markdown and verify repository paths
+- Use `rg` to search for stale references across the selected documentation scope
 - Use subagents for parallel checks (e.g., one per tier)
-- For large audits, focus on Tier 1 first and expand if time permits
+- For large audits, follow the scope and authority routes in `docs/CONTEXT_INDEX.md`
 
 ## Scope Options
 

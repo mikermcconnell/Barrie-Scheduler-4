@@ -29,13 +29,24 @@ Loop-route planning chains are an explicit exception: keep them keyed as `Loop` 
 
 ### 3. Cycle time
 
-Cycle time is:
+Cycle time spans the first departure through the vehicle's occupied end. The
+last trip's terminal recovery is part of that span only when the trip is not a
+block-ending trip and its recorded `endTime` does not already include that
+recovery:
 
 ```typescript
-lastTripEnd - firstTripStart
+const occupiedEnd = lastTrip.endTime + (
+  lastTrip.isBlockEnd || resolvedEndTimeIncludesRecovery
+    ? 0
+    : terminalRecovery
+);
+const cycleTime = occupiedEnd - firstTrip.startTime;
 ```
 
-Do not replace this with summed trip durations.
+`resolvedEndTimeIncludesRecovery` comes from the explicit trip flag when
+available; legacy trips may require terminal-arrival data to infer it. Do not
+blindly add recovery, and do not replace the occupied-span calculation with
+summed trip durations.
 
 ### 4. Block assignment for merged routes
 
@@ -47,7 +58,16 @@ Excel time values `>= 1.0` represent next-day service and must preserve post-mid
 
 ### 6. AI optimization
 
-Keep the generator -> critic pattern. AI suggests; planners decide.
+The Transit On-Demand optimizer has two intentional execution paths:
+
+- **Generate (`full`)** uses the fast, single-generator path and skips critic
+  and polisher phases.
+- **Refine** may use the extended generator -> critic -> polisher path only
+  when `OPTIMIZE_MULTI_PHASE` is enabled and the active runtime permits it;
+  otherwise Refine also uses the fast path.
+
+Do not force every optimization request through the extended pipeline. In all
+paths, AI suggests and planners decide.
 
 ---
 

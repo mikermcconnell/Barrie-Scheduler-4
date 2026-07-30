@@ -129,12 +129,18 @@ Rules:
 
 ### Runtime Evidence Adapter
 
-Future-ready adapter for observed proxy data.
+Implemented adapter for matching Route Planner 2 segments to scheduled and observed-capable GTFS evidence. `utils/route-planner-2/routePlanner2RuntimeEvidence.ts` owns derivation; the workspace supplies the planner's day, period, source mode, and route filter.
 
 Responsibilities:
-- match adjacent stops or segments to evidence
-- return fallback estimates when evidence is missing
-- explain source and confidence per segment
+- match route stops to GTFS stops using exact identifiers, normalized names, nearby candidates, and corridor context
+- derive evidence from an adjacent stop pair, a multi-edge corridor path, or proportional GTFS shape overlap
+- constrain candidate paths to the drawn corridor and honor the planner's selected-route or all-matching filter
+- return estimates only for matched evidence and emit diagnostics for unmatched stops, missing period data, route mismatch, or missing corridor paths
+- explain source, confidence, matching method, contributing routes, and partial coverage per segment
+
+The current workspace invokes `deriveRoutePlanner2EvidenceRuntimeEstimates` with `runtimeBasis: 'scheduled'`. Its interactive feasibility totals therefore use scheduled GTFS evidence, then Mapbox and fallback sources for gaps. The derivation engine also supports a best-available observed/scheduled blend, and that behavior is unit-tested, but the workspace does not currently request it. `runtimeSourceMode: 'mapbox'` skips GTFS evidence derivation entirely. Manual overrides remain the highest-priority planner input.
+
+Accepted runtime snapshots belong to the Mapbox refresh lifecycle, not to automatic GTFS evidence derivation. The persistence service saves that planner-controlled accepted state separately from the evidence adapter's derived estimates.
 
 ### Map PDF Export Adapter
 

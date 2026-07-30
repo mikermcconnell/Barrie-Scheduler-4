@@ -23,13 +23,18 @@ Before completing ANY task that touches schedule logic, verify:
   Row 1: North Trip 1 | North Trip 2  ✗
   ```
 
-- [ ] **Cycle time** - Is it `lastEnd - firstStart`?
+- [ ] **Cycle time** - Does it span first departure through occupied end, counting terminal recovery exactly once?
   ```typescript
   // RIGHT
-  cycle = trips[trips.length-1].endTime - trips[0].startTime
+  occupiedEnd = lastTrip.endTime + (
+    lastTrip.isBlockEnd || resolvedEndTimeIncludesRecovery ? 0 : terminalRecovery
+  )
+  cycle = occupiedEnd - firstTrip.startTime
   // WRONG
   cycle = sum(allTripDurations)
   ```
+
+- [ ] **TOD optimization path** - Does Generate stay fast, while Refine uses critic/polisher only when policy and runtime allow it?
 
 - [ ] **Time parsing** - Did I handle Excel times >= 1.0?
 
@@ -43,15 +48,16 @@ Before completing ANY task that touches schedule logic, verify:
 
 | File | Watch Out For |
 |------|---------------|
-| `scheduleGenerator.ts` | Segment rounding, band lookup |
-| `ScheduleEditor.tsx` | Trip pairing, unique React keys |
-| `blockAssignment.ts` | Time proximity (1-min tolerance), direction alternation |
-| `runtimeAnalysis.ts` | Band boundaries, bucket matching |
-| `api/optimize.ts` | Double-pass pattern (Generator → Critic) |
+| `utils/schedule/scheduleGenerator.ts` | Segment rounding, band lookup |
+| `components/ScheduleEditor.tsx` | Trip pairing, unique React keys |
+| `utils/blocks/blockAssignment.ts` | Generated/legacy expected-start matching and direction alternation |
+| `utils/blocks/blockAssignmentCore.ts` | Merged-route actual-gap matching, `maxGap`, location continuity, and matching presets |
+| `utils/ai/runtimeAnalysis.ts` | Band boundaries, bucket matching |
+| `api/optimize.ts` | Generate uses the fast generator path; Refine may use generator → critic → polisher only when multi-phase policy/runtime allow it |
 
 ## Common Mistakes
 
-1. **Adding recovery twice** - `endTime` already includes recovery in generated schedules
+1. **Counting terminal recovery incorrectly** - Respect `isBlockEnd` and resolved `endTimeIncludesRecovery`; add terminal recovery only when neither already closes the occupied span
 2. **Off-by-one in stop indexing** - Arrays are 0-indexed, UI is 1-indexed
 3. **Duplicate React keys** - Use `${blockId}-${tripIndex}` pattern
 4. **Missing band fallback** - Always handle "no exact bucket match"

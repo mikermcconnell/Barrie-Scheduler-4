@@ -1,6 +1,11 @@
 # Skill maintenance
 
-`.agents/skills/` is the canonical home for portable repository skills. Keep these instructions tool-neutral and use repository-relative paths.
+Portable repository skills have two intentional roots:
+
+- `.agents/skills/` is canonical for shared, tool-neutral skills that may have Claude adapters.
+- `.codex/skills/` contains intentional Codex-owned feature skills such as `feature-delivery-loop`.
+
+`AGENTS.md` is the authoritative skill registry. Keep portable instructions tool-neutral, use repository-relative paths, and update the registry if a skill entrypoint moves.
 
 `.claude/skills/` contains Claude-specific adapters. When shared behavior changes, update the portable skill first and mirror the behavior into its Claude adapter. Preserve intentional Claude terminology, lifecycle hooks, and `.claude/` references in the adapter; do not copy those tool-specific details back into the portable source.
 

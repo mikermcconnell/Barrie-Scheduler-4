@@ -18,10 +18,11 @@ Primary app shells today:
 - **Transit On-Demand** - demand-responsive requirements import, RideCo/MVT shift import review, planning, and shift optimization
 - **Dashboard & Reporting** - STREETS-backed performance dashboards and operational reporting
 - **Parking** - shared department parking-code import, monthly usage summaries, and plate-level pattern review
+- **Planning Data** - access-controlled route, network, ridership, fleet, growth, and policy-analysis workspaces
 
 Scheduled Transit also includes **Detour Publisher**, a team-shared, map-first tool for creating fixed-route detour and stop-closure notices from current GTFS patterns. It exports public communication packages but does not modify schedules, GTFS, or MyRide directly.
 
-Adjacent planning-data workspaces include Route Planner 2, the internal-beta Route Concept Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, Council Intelligence, and related exploratory tools. Council Intelligence is a transit-first, evidence-led internal pilot: official named votes and sourced statements may inform profiles, while missing evidence stays unknown and AI or procedural signals must never be presented as official councillor votes.
+Adjacent planning-data workspaces include Route Planner 2, the internal-beta Route Concept Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, Fare Programs, Council Intelligence, and related exploratory tools. Fare Programs summarizes fare-program usage while keeping proxy geography visibly separate from confirmed rider or school identity. Council Intelligence is a transit-first, evidence-led internal pilot: official named votes and sourced statements may inform profiles, while missing evidence stays unknown and AI or procedural signals must never be presented as official councillor votes.
 
 Use this document for the overall product frame and the fixed-route core workflow. Use feature-specific product briefs and UI specs for narrower planning-data modules when those tasks are directly relevant.
 
@@ -69,7 +70,10 @@ The planner remains responsible for assumptions, overrides, preferred-alternativ
 | **Operations Manager** | Schedule approval and operational review | Review drafts, publish to master, track versions, review reporting |
 | **Dispatcher** | Reference | View published schedules, export for operations |
 
-All users belong to **teams** with role-based access (Owner, Admin, Member).
+Ordinary users belong to **teams** with role-based access (Owner, Admin,
+Member). Global scheduler administrators are the exception: they can operate
+without a home-team membership and use time-bounded support access to inspect
+or edit an authorized team context.
 
 ---
 
@@ -77,21 +81,26 @@ All users belong to **teams** with role-based access (Owner, Admin, Member).
 
 ### 1. Create Schedule from Runtime Data (Primary)
 ```
-Upload CSV → Analyze runtimes → Configure cycle/headway → Generate trips → Optimize connections → Publish
+Upload CSV → Analyze runtimes → Configure cycle/headway → Generate trips → Optimize connections → Save draft → Submit for review → Ready for review → Publish
 ```
 **5-step wizard**: Upload → Analysis → Build → Schedule → Connections
 
 ### 2. Import from GTFS (Secondary)
 ```
-Fetch GTFS feed → Map routes/directions → Chain trips to blocks → Create draft → Edit → Publish
+Fetch GTFS feed → Map routes/directions → Chain trips to blocks → Create draft → Edit → Submit for review → Ready for review → Publish
 ```
 Used for onboarding existing schedules into the system.
 
 ### 3. Edit Published Schedule
 ```
-Copy master to draft → Edit trips/times → Re-optimize if needed → Publish new version
+Copy master to draft → Edit trips/times → Re-optimize if needed → Submit for review → Ready for review → Publish new version
 ```
 Version history preserved. Rollback possible.
+
+Publishing is a protected service transition, not a direct wizard or editor
+action. The draft must have no blocking schedule issues, be marked
+`ready_for_review`, retain a current immutable review snapshot that matches its
+content and source master version, and include a publish note.
 
 ### 4. Connection Optimization
 ```

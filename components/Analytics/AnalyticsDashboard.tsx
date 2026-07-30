@@ -6,7 +6,7 @@
  */
 
 import React, { Suspense, useState, useEffect, useCallback } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Landmark } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Landmark, Ticket } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -92,6 +92,10 @@ const NetworkConnectionsWorkspace = lazyWithRetry(
 const CouncilIntelligenceWorkspace = lazyWithRetry(
     () => import('./CouncilIntelligenceWorkspace').then(module => ({ default: module.CouncilIntelligenceWorkspace })),
     'analytics-council-intelligence-workspace'
+);
+const FareProgramsWorkspace = lazyWithRetry(
+    () => import('./FareProgramsWorkspace').then(module => ({ default: module.FareProgramsWorkspace })),
+    'analytics-fare-programs-workspace'
 );
 
 interface AnalyticsCardProps {
@@ -182,6 +186,7 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'route-concept-planner': 'analyticsRouteConceptPlanner',
     'network-connections': 'analyticsNetworkConnections',
     'shuttle-planner': 'analyticsShuttlePlanner',
+    'fare-programs': 'analyticsFarePrograms',
     'council-intelligence': 'analyticsCouncilIntelligence',
 };
 
@@ -782,6 +787,21 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         );
     }
 
+    if (view === 'fare-programs') {
+        return (
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsFarePrograms" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Fare Programs..." />}>
+                        <FareProgramsWorkspace onBack={() => setView('dashboard')} />
+                    </Suspense>
+                </div>
+            </div>
+        );
+    }
+
     // Main dashboard with cards
     return (
         <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -900,6 +920,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                             hasData={false}
                             underConstruction={isFeatureUnderConstruction('analyticsCouncilIntelligence')}
                             onClick={() => setView('council-intelligence')}
+                        />
+                    )}
+                    {canAccess('analyticsFarePrograms') && (
+                        <AnalyticsCard
+                            color="amber"
+                            icon={<Ticket size={20} />}
+                            title="Fare Programs"
+                            description="Summarize Service Mirroring and Field Trip Pass uses, review school-area proxies, and map the location evidence available."
+                            hasData
+                            underConstruction={isFeatureUnderConstruction('analyticsFarePrograms')}
+                            onClick={() => setView('fare-programs')}
                         />
                     )}
                     {canAccess('analyticsRouteConceptPlanner') && (

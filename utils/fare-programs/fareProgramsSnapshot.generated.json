@@ -1,0 +1,166 @@
+{
+  "sourceFileName": "Barrie Transit Sept 2025-June 2026.xlsx",
+  "sourceRows": 693983,
+  "sourceSizeBytes": 36745747,
+  "sourceSha256": "db52b3b203daa5bd57058f4c1b40000bc6bcbe222089a30915fc5907ee4a77cd",
+  "coverageStart": "2025-09-01",
+  "coverageEnd": "2026-06-30",
+  "coverageLabel": "September 1, 2025 to June 30, 2026",
+  "allSourceMonthlyUses": [
+    {
+      "month": "2025-09",
+      "label": "Sep",
+      "uses": 72452
+    },
+    {
+      "month": "2025-10",
+      "label": "Oct",
+      "uses": 77028
+    },
+    {
+      "month": "2025-11",
+      "label": "Nov",
+      "uses": 71725
+    },
+    {
+      "month": "2025-12",
+      "label": "Dec",
+      "uses": 63501
+    },
+    {
+      "month": "2026-01",
+      "label": "Jan",
+      "uses": 65421
+    },
+    {
+      "month": "2026-02",
+      "label": "Feb",
+      "uses": 60976
+    },
+    {
+      "month": "2026-03",
+      "label": "Mar",
+      "uses": 69905
+    },
+    {
+      "month": "2026-04",
+      "label": "Apr",
+      "uses": 66445
+    },
+    {
+      "month": "2026-05",
+      "label": "May",
+      "uses": 72990
+    },
+    {
+      "month": "2026-06",
+      "label": "Jun",
+      "uses": 73540
+    }
+  ],
+  "serviceMirroring": {
+    "definition": "Working proxy: High School Student Pass 25/26 only.",
+    "uses": 2059,
+    "passTypes": [
+      {
+        "label": "High School Student Pass 25/26",
+        "uses": 2059
+      }
+    ],
+    "excludedReviewPasses": [
+      {
+        "label": "Innisdale Student Pass",
+        "uses": 1,
+        "reason": "Not included without confirmed Service Mirroring user-group mapping."
+      }
+    ],
+    "monthlyUses": [
+      {
+        "month": "2025-09",
+        "label": "Sep",
+        "uses": 0
+      },
+      {
+        "month": "2025-10",
+        "label": "Oct",
+        "uses": 0
+      },
+      {
+        "month": "2025-11",
+        "label": "Nov",
+        "uses": 0
+      },
+      {
+        "month": "2025-12",
+        "label": "Dec",
+        "uses": 6
+      },
+      {
+        "month": "2026-01",
+        "label": "Jan",
+        "uses": 81
+      },
+      {
+        "month": "2026-02",
+        "label": "Feb",
+        "uses": 131
+      },
+      {
+        "month": "2026-03",
+        "label": "Mar",
+        "uses": 136
+      },
+      {
+        "month": "2026-04",
+        "label": "Apr",
+        "uses": 446
+      },
+      {
+        "month": "2026-05",
+        "label": "May",
+        "uses": 559
+      },
+      {
+        "month": "2026-06",
+        "label": "Jun",
+        "uses": 700
+      }
+    ],
+    "schoolAreas": [
+      {
+        "id": "barrie-north",
+        "name": "Barrie North CI",
+        "latitude": 44.4012,
+        "longitude": -79.6901,
+        "evidence": "Endpoint matched Barrie North Collegiate or 110 Grove St. E.",
+        "uses": 204
+      },
+      {
+        "id": "innisdale",
+        "name": "Innisdale SS",
+        "latitude": 44.3594,
+        "longitude": -79.6854,
+        "evidence": "Endpoint matched Innisdale or 95 Little Ave.",
+        "uses": 21
+      },
+      {
+        "id": "maple-ridge",
+        "name": "Maple Ridge SS",
+        "latitude": 44.3509,
+        "longitude": -79.6086,
+        "evidence": "Endpoint matched the school or Mapleview / Prince William stop area.",
+        "uses": 18
+      }
+    ],
+    "ambiguousSchoolUses": 0,
+    "unattributedUses": 1816,
+    "authorizedStartLocations": 1663,
+    "recordedEndLocations": 408,
+    "usableEndLocations": 400
+  },
+  "fieldTripPass": {
+    "uses": 982,
+    "source": "Planner-provided total",
+    "mappingStatus": "No Field Trip Pass transaction rows or location fields were present in the source workbook."
+  }
+}

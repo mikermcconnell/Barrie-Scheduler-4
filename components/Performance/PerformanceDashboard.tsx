@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Loader2, Activity, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { ArrowRight, Loader2, Activity, AlertTriangle, CheckCircle2, RefreshCw, ShieldAlert } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { TeamManagement } from '../TeamManagement';
@@ -85,6 +85,35 @@ const PerformanceWorkspaceLoading: React.FC<{
                         {typeof dayCount === 'number' ? dayCount.toLocaleString() : 'Unknown'}
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+);
+
+const PerformanceWorkspaceError: React.FC<{
+    isRetrying: boolean;
+    onRetry: () => void;
+}> = ({ isRetrying, onRetry }) => (
+    <div className="rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
+        <div className="flex items-start gap-4">
+            <div className="rounded-xl bg-red-50 p-3 text-red-600">
+                <AlertTriangle size={22} />
+            </div>
+            <div className="min-w-0 flex-1">
+                <h3 className="text-lg font-bold text-gray-900">Dashboard data could not be loaded</h3>
+                <p className="mt-1 text-sm leading-relaxed text-gray-600">
+                    The latest performance import was found, but its dashboard overview could not be opened.
+                    Check your connection and access, then try again.
+                </p>
+                <button
+                    type="button"
+                    onClick={onRetry}
+                    disabled={isRetrying}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-blue px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                    <RefreshCw size={15} className={isRetrying ? 'animate-spin' : ''} />
+                    {isRetrying ? 'Retrying...' : 'Try again'}
+                </button>
             </div>
         </div>
     </div>
@@ -252,11 +281,16 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                                 onBack={handleWorkspaceBack}
                             />
                         </Suspense>
-                    ) : (
+                    ) : overviewQuery.isLoading || overviewQuery.isFetching ? (
                         <PerformanceWorkspaceLoading
                             importedAt={metadataQuery.data.importedAt}
                             dateRange={metadataQuery.data.dateRange}
                             dayCount={metadataQuery.data.dayCount}
+                        />
+                    ) : (
+                        <PerformanceWorkspaceError
+                            isRetrying={overviewQuery.isFetching}
+                            onRetry={() => { void overviewQuery.refetch(); }}
                         />
                     )}
                 </div>

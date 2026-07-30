@@ -14,7 +14,8 @@ Read `AGENTS.md` first for the repo's top-level agent contract.
 
 ```bash
 npm run dev          # Dev server on port 3008
-npm run build        # Production build (catches TS errors)
+npm run typecheck    # TypeScript validation
+npm run build        # Production Vite bundle
 npx vitest run       # Run all tests
 npx vitest run tests/timeUtils.test.ts  # Time parsing tests (run before any time changes)
 ```

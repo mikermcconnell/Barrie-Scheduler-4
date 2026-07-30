@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "start": "vite",
@@ -14,6 +17,8 @@
     "build": "vite build",
     "build:prod": "node scripts/build-production.mjs",
     "docs:check": "node scripts/checkDocumentationContext.mjs",
+    "fare-programs:generate": "node scripts/generateFareProgramsSnapshot.mjs --write",
+    "fare-programs:check": "node scripts/generateFareProgramsSnapshot.mjs --check",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "preview": "vite preview",

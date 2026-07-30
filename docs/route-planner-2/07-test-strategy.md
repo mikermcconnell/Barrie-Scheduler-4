@@ -25,6 +25,11 @@ Recommended coverage:
 - stop ordering
 - terminal role validation
 - runtime source priority
+- scheduled-basis workspace integration and planner-controlled source/route filters
+- best-available observed proxy/blend derivation as an engine capability, without implying that the current workspace enables it
+- direct adjacent-pair, multi-edge corridor-path, and shape-overlap evidence matching
+- partial scheduled coverage and rejection of candidate routes that leave the drawn corridor
+- evidence diagnostics for unmatched stops, route mismatch, missing period data, and missing corridor paths
 - cycle time calculation
 - bus requirement calculation
 - confidence calculation
@@ -40,6 +45,14 @@ Recommended coverage:
 - accepted/rejected snapshot history is bounded and runtime lock blocks acceptance
 - Mapbox failure categories are sanitized and never expose tokens
 - segment runtimes retain the locked round-each-segment-before-summing behavior
+
+Current focused suites:
+- `tests/routePlanner2RuntimeEvidence.test.ts` covers scheduled and best-available evidence derivation, matching methods, route filters, diagnostics, and partial coverage.
+- `tests/routePlanner2RuntimeSnapshots.test.ts` covers staged Mapbox comparisons, accept/reject decisions, locking, bounded history, and first-save acceptance.
+- `tests/RoutePlanner2Workspace.localWorkspace.test.tsx` covers scheduled GTFS runtime behavior and runtime-source UI integration.
+- `tests/routePlanner2RoadSnap.test.ts` covers Mapbox road-snap estimates and failure behavior.
+
+Keep the distinction explicit in tests: evidence-engine unit tests may use the default best-available observed basis, while the current workspace integration must preserve scheduled-only behavior unless the product contract intentionally changes.
 
 ## Component Tests
 

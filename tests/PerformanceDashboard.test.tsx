@@ -10,6 +10,7 @@ const usePerformanceOverviewQueryMock = vi.fn();
 const usePerformanceDataQueryMock = vi.fn();
 const buildPerformanceMetadataHealthMock = vi.fn();
 const onCloseSpy = vi.fn();
+const refetchOverviewSpy = vi.fn();
 
 vi.mock('../components/contexts/TeamContext', () => ({
   useTeam: () => useTeamMock(),
@@ -75,12 +76,15 @@ describe('PerformanceDashboard', () => {
     usePerformanceOverviewQueryMock.mockReturnValue({
       data: null,
       isLoading: false,
+      isFetching: false,
+      refetch: refetchOverviewSpy,
     });
     usePerformanceDataQueryMock.mockReturnValue({
       data: null,
       isLoading: false,
     });
     buildPerformanceMetadataHealthMock.mockReturnValue(null);
+    refetchOverviewSpy.mockClear();
 
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -199,6 +203,37 @@ describe('PerformanceDashboard', () => {
     expect(container.textContent).toContain('Operations dashboard is opening');
     expect(container.textContent).toContain('2026-03-01 → 2026-03-31');
     expect(container.textContent).not.toContain('Mock Performance Workspace');
+  });
+
+  it('shows a retryable error instead of loading forever when the overview is unavailable', async () => {
+    usePerformanceMetadataQueryMock.mockReturnValue({
+      data: {
+        importedAt: '2026-03-31T12:00:00Z',
+        dateRange: { start: '2026-03-01', end: '2026-03-31' },
+        dayCount: 31,
+        overviewStoragePath: 'teams/team-1/performanceData/latest-overview.json',
+      },
+      isLoading: false,
+    });
+    usePerformanceOverviewQueryMock.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isFetching: false,
+      refetch: refetchOverviewSpy,
+    });
+
+    flushSync(() => {
+      root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
+    });
+
+    await vi.waitFor(() => expect(container.textContent).toContain('Dashboard data could not be loaded'));
+
+    expect(container.textContent).not.toContain('Operations dashboard is opening');
+    const retryButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Try again',
+    );
+    retryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(refetchOverviewSpy).toHaveBeenCalledTimes(1);
   });
 
   it('goes straight to import when auto-open is enabled but no data exists', async () => {

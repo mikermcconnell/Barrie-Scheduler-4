@@ -536,6 +536,7 @@ service cloud.firestore {
                 'analyticsFleetPlan',
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
+                'analyticsFarePrograms',
                 'analyticsCouncilIntelligence',
                 'operationsLoadProfiles',
                 'operationsOperatorDwell'
@@ -550,6 +551,7 @@ service cloud.firestore {
                 'analyticsFleetPlan',
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
+                'analyticsFarePrograms',
                 'analyticsCouncilIntelligence'
               ])) ||
              (accessLevel == 'production' &&
