@@ -1,5 +1,5 @@
 {
-  "sourceFileName": "Barrie Transit Sept 2025-June 2026.xlsx",
+  "sourceFileName": "Barrie Transit Sept 2025-June 2026 (1).xlsx",
   "sourceRows": 693983,
   "sourceSizeBytes": 36745747,
   "sourceSha256": "db52b3b203daa5bd57058f4c1b40000bc6bcbe222089a30915fc5907ee4a77cd",
@@ -56,6 +56,64 @@
       "month": "2026-06",
       "label": "Jun",
       "uses": 73540
+    }
+  ],
+  "sourcePassCounts": [
+    {
+      "label": "Student Monthly Pass",
+      "uses": 298205
+    },
+    {
+      "label": "Adult Monthly Pass",
+      "uses": 184770
+    },
+    {
+      "label": "Adult 10 Ride Card",
+      "uses": 87698
+    },
+    {
+      "label": "Adult Single Ride",
+      "uses": 72261
+    },
+    {
+      "label": "Student 10 Ride Card",
+      "uses": 35439
+    },
+    {
+      "label": "Adult Day Pass",
+      "uses": 3139
+    },
+    {
+      "label": "Senior 10 Ride Card",
+      "uses": 2977
+    },
+    {
+      "label": "Senior Monthly Pass",
+      "uses": 2917
+    },
+    {
+      "label": "High School Student Pass 25/26",
+      "uses": 2059
+    },
+    {
+      "label": "Family Day Pass",
+      "uses": 1809
+    },
+    {
+      "label": "Barrie Staff Monthly Pass",
+      "uses": 1609
+    },
+    {
+      "label": "Senior Single Ride",
+      "uses": 1085
+    },
+    {
+      "label": "Barrie Transit Staff",
+      "uses": 14
+    },
+    {
+      "label": "Innisdale Student Pass",
+      "uses": 1
     }
   ],
   "serviceMirroring": {
@@ -156,11 +214,2306 @@
     "unattributedUses": 1816,
     "authorizedStartLocations": 1663,
     "recordedEndLocations": 408,
-    "usableEndLocations": 400
-  },
-  "fieldTripPass": {
-    "uses": 982,
-    "source": "Planner-provided total",
-    "mappingStatus": "No Field Trip Pass transaction rows or location fields were present in the source workbook."
+    "usableEndLocations": 400,
+    "originUsage": {
+      "sourceField": "Starting Location",
+      "minimumGroupUses": 3,
+      "locationMethod": "Civic numbers, postal codes, city, province, and country are removed; repeated street or named-place areas are aggregated.",
+      "timezone": "America/Toronto",
+      "timestampAssumption": "Workbook timestamps are interpreted as UTC and displayed in Barrie local time.",
+      "timeBands": [
+        {
+          "id": "before-6",
+          "label": "Before 6 AM"
+        },
+        {
+          "id": "morning",
+          "label": "6–9 AM"
+        },
+        {
+          "id": "school-day",
+          "label": "9 AM–2 PM"
+        },
+        {
+          "id": "afternoon",
+          "label": "2–7 PM"
+        },
+        {
+          "id": "evening",
+          "label": "After 7 PM"
+        }
+      ],
+      "usableStartUses": 1663,
+      "displayedUses": 1475,
+      "suppressedUses": 188,
+      "origins": [
+        {
+          "id": "origin-58313901b143",
+          "label": "Grove St E area",
+          "geocodeQuery": "Grove St E",
+          "uses": 155,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 29,
+              "school-day": 63,
+              "afternoon": 62,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-38c7830fa775",
+          "label": "Little Ave area",
+          "geocodeQuery": "Little Ave",
+          "uses": 74,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 21,
+              "afternoon": 53,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-68e168d122b4",
+          "label": "Bayview at Little",
+          "geocodeQuery": "Bayview & Little",
+          "uses": 67,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 38,
+              "afternoon": 28,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-1ad4e362ed8d",
+          "label": "Mapleview Dr area",
+          "geocodeQuery": "Mapleview Dr",
+          "uses": 67,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 8,
+              "afternoon": 59,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-1db695b9c054",
+          "label": "Bayfield St area",
+          "geocodeQuery": "Bayfield St",
+          "uses": 66,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 10,
+              "school-day": 13,
+              "afternoon": 23,
+              "evening": 9
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 9,
+              "evening": 2
+            }
+          }
+        },
+        {
+          "id": "origin-83bfc8e1c991",
+          "label": "Bayview Dr area",
+          "geocodeQuery": "Bayview Dr",
+          "uses": 60,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 24,
+              "afternoon": 35,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-08daf72fa32a",
+          "label": "Barrie North Collegiate",
+          "geocodeQuery": "Barrie North Collegiate",
+          "uses": 56,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 3,
+              "school-day": 26,
+              "afternoon": 27,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-95cf630ab8fb",
+          "label": "Kraus Rd area",
+          "geocodeQuery": "Kraus Rd",
+          "uses": 47,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 10,
+              "school-day": 10,
+              "afternoon": 11,
+              "evening": 2
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 3,
+              "school-day": 8,
+              "afternoon": 3,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-bcc54fb56a0d",
+          "label": "Livingstone St W area",
+          "geocodeQuery": "Livingstone St W",
+          "uses": 33,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 8,
+              "school-day": 2,
+              "afternoon": 10,
+              "evening": 6
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 3,
+              "afternoon": 4,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-963b7864811e",
+          "label": "Wal-Mart Plaza",
+          "geocodeQuery": "Wal-Mart Plaza",
+          "uses": 32,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 15,
+              "evening": 6
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 8,
+              "evening": 2
+            }
+          }
+        },
+        {
+          "id": "origin-772f2563624b",
+          "label": "Downtown Hub",
+          "geocodeQuery": "Downtown Hub",
+          "uses": 31,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 3,
+              "afternoon": 18,
+              "evening": 5
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 2,
+              "evening": 2
+            }
+          }
+        },
+        {
+          "id": "origin-a5ff0b7a215b",
+          "label": "Boys St S area",
+          "geocodeQuery": "Boys St S",
+          "uses": 28,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 14,
+              "school-day": 10,
+              "afternoon": 4,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-8534fee4f116",
+          "label": "Lakeside Ter area",
+          "geocodeQuery": "Lakeside Ter",
+          "uses": 28,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 28,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-390ae82ed7a4",
+          "label": "Penetang St area",
+          "geocodeQuery": "Penetang St",
+          "uses": 28,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 22,
+              "afternoon": 6,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-a408ed2ab058",
+          "label": "Mapleview Dr E area",
+          "geocodeQuery": "Mapleview Dr E",
+          "uses": 24,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 2,
+              "afternoon": 20,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-f25541f3ad87",
+          "label": "Newton St area",
+          "geocodeQuery": "Newton St",
+          "uses": 24,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 15,
+              "afternoon": 8,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-4812992459d8",
+          "label": "Grand Forest Dr",
+          "geocodeQuery": "Grand Forest Dr",
+          "uses": 23,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 23,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-b4c244e035bd",
+          "label": "Maple Ave area",
+          "geocodeQuery": "Maple Ave",
+          "uses": 19,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 10,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 4,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-3e54dfae6203",
+          "label": "Big Bay Point at Pine",
+          "geocodeQuery": "Big Bay Point & Pine",
+          "uses": 18,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 18,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-c9197ca1f2a5",
+          "label": "Grove at Davidson",
+          "geocodeQuery": "Grove & Davidson",
+          "uses": 18,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 5,
+              "afternoon": 12,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-08f88c0d8732",
+          "label": "Georgian Mall",
+          "geocodeQuery": "Georgian Mall",
+          "uses": 17,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 2,
+              "afternoon": 9,
+              "evening": 4
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-672b708632ff",
+          "label": "Prince William Way area",
+          "geocodeQuery": "Prince William Way",
+          "uses": 17,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 10,
+              "afternoon": 7,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-3c565c96e3b8",
+          "label": "Big Bay Point Rd area",
+          "geocodeQuery": "Big Bay Point Rd",
+          "uses": 16,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 8,
+              "school-day": 4,
+              "afternoon": 2,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-17f3f4171cc9",
+          "label": "Edgehill Dr area",
+          "geocodeQuery": "Edgehill Dr",
+          "uses": 16,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 5,
+              "school-day": 0,
+              "afternoon": 8,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-4e641bbfa11d",
+          "label": "Grove St",
+          "geocodeQuery": "Grove St",
+          "uses": 16,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 13,
+              "afternoon": 3,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-d211b7b83150",
+          "label": "D'Ambrosio Dr area",
+          "geocodeQuery": "D'Ambrosio Dr",
+          "uses": 15,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 12,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-586c4671837c",
+          "label": "Cundles Rd E area",
+          "geocodeQuery": "Cundles Rd E",
+          "uses": 14,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 12,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-f5ec0f793252",
+          "label": "Yonge St area",
+          "geocodeQuery": "Yonge St",
+          "uses": 14,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 5,
+              "school-day": 4,
+              "afternoon": 3,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-231e04a6dfa4",
+          "label": "Madelaine Dr",
+          "geocodeQuery": "Madelaine Dr",
+          "uses": 13,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 3,
+              "school-day": 0,
+              "afternoon": 6,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 3,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-04fdbb1c97a0",
+          "label": "Leggott Ave area",
+          "geocodeQuery": "Leggott Ave",
+          "uses": 12,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 5,
+              "school-day": 1,
+              "afternoon": 3,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-9db01c285369",
+          "label": "Cloughley Dr area",
+          "geocodeQuery": "Cloughley Dr",
+          "uses": 11,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 8,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-d05159701852",
+          "label": "Dunlop St W area",
+          "geocodeQuery": "Dunlop St W",
+          "uses": 11,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 3,
+              "afternoon": 2,
+              "evening": 3
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-c6999305159f",
+          "label": "Mapleview at Prince William Way",
+          "geocodeQuery": "Mapleview & Prince William Way",
+          "uses": 11,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 3,
+              "afternoon": 8,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-2bab9c67dee6",
+          "label": "Anne St N area",
+          "geocodeQuery": "Anne St N",
+          "uses": 10,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 5
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-e6e36191bacc",
+          "label": "Austen Ln area",
+          "geocodeQuery": "Austen Ln",
+          "uses": 10,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 2,
+              "afternoon": 3,
+              "evening": 2
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-a24150ed1a66",
+          "label": "Burns Circle",
+          "geocodeQuery": "Burns Circle",
+          "uses": 10,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 8,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-c3e258eb8e3f",
+          "label": "Livingstone St E area",
+          "geocodeQuery": "Livingstone St E",
+          "uses": 10,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 2,
+              "school-day": 0,
+              "afternoon": 6,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-428da5b7038b",
+          "label": "Archer St area",
+          "geocodeQuery": "Archer St",
+          "uses": 9,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 2,
+              "school-day": 0,
+              "afternoon": 4,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 1,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-a596e3112da1",
+          "label": "Big Bay Point at Yonge",
+          "geocodeQuery": "Big Bay Point & Yonge",
+          "uses": 9,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 9,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-1128c88da5ad",
+          "label": "Cundles Rd W area",
+          "geocodeQuery": "Cundles Rd W",
+          "uses": 9,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 3,
+              "school-day": 2,
+              "afternoon": 3,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-8e00b98089b0",
+          "label": "Mulcaster St area",
+          "geocodeQuery": "Mulcaster St",
+          "uses": 9,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 8,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-e0bbed8ff7db",
+          "label": "Worsley St area",
+          "geocodeQuery": "Worsley St",
+          "uses": 9,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 6,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-9978c21db1e1",
+          "label": "Burton Ave. @ Bayview Dr.",
+          "geocodeQuery": "Burton Ave. & Bayview Dr.",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 6,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-246359fa4499",
+          "label": "East Bayfield Community Centre",
+          "geocodeQuery": "East Bayfield Community Centre",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 0,
+              "afternoon": 5,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-3551703ef694",
+          "label": "Engel Crescent",
+          "geocodeQuery": "Engel Crescent",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 5,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-b6fced617513",
+          "label": "Engel Crescent area",
+          "geocodeQuery": "Engel Crescent",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 7,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-c1deeae9b34c",
+          "label": "Frances St S area",
+          "geocodeQuery": "Frances St S",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 2,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 3
+            }
+          }
+        },
+        {
+          "id": "origin-8757532b74f3",
+          "label": "Heather St",
+          "geocodeQuery": "Heather St",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 0,
+              "afternoon": 6,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-fd3f655316ef",
+          "label": "Leacock Dr area",
+          "geocodeQuery": "Leacock Dr",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 3,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 3,
+              "afternoon": 2,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-4ac6ad842e77",
+          "label": "Leggott Ave",
+          "geocodeQuery": "Leggott Ave",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 6,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-6a08c1a778b1",
+          "label": "Sun King Crescent area",
+          "geocodeQuery": "Sun King Crescent",
+          "uses": 8,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 7,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-dbc26f867e4a",
+          "label": "Barrie Allandale Transit Terminal",
+          "geocodeQuery": "Barrie Allandale Transit Terminal",
+          "uses": 7,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 4
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-31534faa61eb",
+          "label": "Davidson St area",
+          "geocodeQuery": "Davidson St",
+          "uses": 7,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 6,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-864f28878f70",
+          "label": "Edgehill Dr",
+          "geocodeQuery": "Edgehill Dr",
+          "uses": 7,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 1,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-e62d2d603afb",
+          "label": "Pumpkin Cor Cres area",
+          "geocodeQuery": "Pumpkin Cor Cres",
+          "uses": 7,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 6,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-de67bcd76ef5",
+          "label": "Sproule at Kraus",
+          "geocodeQuery": "Sproule & Kraus",
+          "uses": 7,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 4,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-d0ada08d044b",
+          "label": "Wismer Ave area",
+          "geocodeQuery": "Wismer Ave",
+          "uses": 7,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 1,
+              "afternoon": 2,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-b73f8b0c861f",
+          "label": "A Bayview Dr area",
+          "geocodeQuery": "A Bayview Dr",
+          "uses": 6,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 4,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-2efde686ca7d",
+          "label": "Anne at Cundles",
+          "geocodeQuery": "Anne & Cundles",
+          "uses": 6,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 5,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-7f4f44c61008",
+          "label": "Bayfield at Livingstone",
+          "geocodeQuery": "Bayfield & Livingstone",
+          "uses": 6,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 3,
+              "school-day": 1,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-5ce2d2976dbd",
+          "label": "Hickory Ln area",
+          "geocodeQuery": "Hickory Ln",
+          "uses": 6,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 6,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-ab90bffc5d53",
+          "label": "Kozlov St area",
+          "geocodeQuery": "Kozlov St",
+          "uses": 6,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-4740c5c6fb80",
+          "label": "McVeigh Dr area",
+          "geocodeQuery": "McVeigh Dr",
+          "uses": 6,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-b3b16e448a73",
+          "label": "Park Place",
+          "geocodeQuery": "Park Place",
+          "uses": 6,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 4
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-ce7638be6d81",
+          "label": "Prince William at Mapleview",
+          "geocodeQuery": "Prince William & Mapleview",
+          "uses": 6,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 4,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-ec28fae76947",
+          "label": "Burns Cir area",
+          "geocodeQuery": "Burns Cir",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 5,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-245c349aa9ca",
+          "label": "College Crescent area",
+          "geocodeQuery": "College Crescent",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 1,
+              "evening": 3
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-711d1d93050e",
+          "label": "Donald at Anne",
+          "geocodeQuery": "Donald & Anne",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 1,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-3c8367e036f9",
+          "label": "Dunlop at Anne",
+          "geocodeQuery": "Dunlop & Anne",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 4,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-92d1acdf3c0d",
+          "label": "Madelaine Dr area",
+          "geocodeQuery": "Madelaine Dr",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 0,
+              "afternoon": 3,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-0b23d1d0c5a3",
+          "label": "Moir Crescent area",
+          "geocodeQuery": "Moir Crescent",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 1,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-dac87f04581f",
+          "label": "Northview Crescent area",
+          "geocodeQuery": "Northview Crescent",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 3,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-b81311d4b4d6",
+          "label": "Pickett Crescent area",
+          "geocodeQuery": "Pickett Crescent",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 2,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 2
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-ad0cc15ce63b",
+          "label": "Poyntz St area",
+          "geocodeQuery": "Poyntz St",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 5,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-22058e09184f",
+          "label": "Raquel St area",
+          "geocodeQuery": "Raquel St",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 5,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-cc7bf23ed1b6",
+          "label": "Tobias Ln area",
+          "geocodeQuery": "Tobias Ln",
+          "uses": 5,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 3,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-fc381a6623fb",
+          "label": "Commerce Park Dr area",
+          "geocodeQuery": "Commerce Park Dr",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 3,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-a0d08fb1a2f4",
+          "label": "Farmingdale Crescent area",
+          "geocodeQuery": "Farmingdale Crescent",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-c3de98576bf8",
+          "label": "Fox Run area",
+          "geocodeQuery": "Fox Run",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 2,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-33c0070d12ec",
+          "label": "Leacock Dr",
+          "geocodeQuery": "Leacock Dr",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 1,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-8029f40f07c1",
+          "label": "Lions Gate",
+          "geocodeQuery": "Lions Gate",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-eb9d1d57d6d1",
+          "label": "Live Eight Way area",
+          "geocodeQuery": "Live Eight Way",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-0adb0d17eaea",
+          "label": "Penetang at Berczy",
+          "geocodeQuery": "Penetang & Berczy",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 3,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-34284c056b14",
+          "label": "Ruffet Dr area",
+          "geocodeQuery": "Ruffet Dr",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 3
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-9da6f157435b",
+          "label": "The Queensway",
+          "geocodeQuery": "The Queensway",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-fcaa5f06d592",
+          "label": "Wellington at Donald",
+          "geocodeQuery": "Wellington & Donald",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 3
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-494f0ad1c7e3",
+          "label": "Wellington St W area",
+          "geocodeQuery": "Wellington St W",
+          "uses": 4,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-fc813eab5cc7",
+          "label": "Anne at Edgehill Dr",
+          "geocodeQuery": "Anne & Edgehill Dr",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 2,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-f43b534f4d01",
+          "label": "Bayfield at Wellington",
+          "geocodeQuery": "Bayfield & Wellington",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-3feb34623279",
+          "label": "Bayfield Mall",
+          "geocodeQuery": "Bayfield Mall",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-c71c107f8dd2",
+          "label": "Ecole Catholique",
+          "geocodeQuery": "Ecole Catholique",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-f0d6858c3704",
+          "label": "Gowan St area",
+          "geocodeQuery": "Gowan St",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-1cf1b1197683",
+          "label": "Grove at Cook St",
+          "geocodeQuery": "Grove & Cook St",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 3,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-730a3dd0f6ef",
+          "label": "Grove at Nelson",
+          "geocodeQuery": "Grove & Nelson",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 2
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-2da2605e737b",
+          "label": "Kozlov Centre",
+          "geocodeQuery": "Kozlov Centre",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 3,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-4207d7f41499",
+          "label": "Kozlov St",
+          "geocodeQuery": "Kozlov St",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 1
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-2647656fcd47",
+          "label": "Leacock at Frost",
+          "geocodeQuery": "Leacock & Frost",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 2,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-21148ac22a30",
+          "label": "Livingstone at Bayfield",
+          "geocodeQuery": "Livingstone & Bayfield",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 1,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-8ce65e41374e",
+          "label": "Loon Ave area",
+          "geocodeQuery": "Loon Ave",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 1
+            }
+          }
+        },
+        {
+          "id": "origin-b69eeae4194d",
+          "label": "Ross St area",
+          "geocodeQuery": "Ross St",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 1,
+              "evening": 2
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-c7ee8f4120eb",
+          "label": "Willow Landing School",
+          "geocodeQuery": "Willow Landing School",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 1,
+              "school-day": 2,
+              "afternoon": 0,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-afedbb4a8377",
+          "label": "Wiseman Ct area",
+          "geocodeQuery": "Wiseman Ct",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 3,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        },
+        {
+          "id": "origin-c6a9e64ef8f2",
+          "label": "Yonge at Little",
+          "geocodeQuery": "Yonge & Little",
+          "uses": 3,
+          "buckets": {
+            "weekday": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 3,
+              "evening": 0
+            },
+            "weekend": {
+              "before-6": 0,
+              "morning": 0,
+              "school-day": 0,
+              "afternoon": 0,
+              "evening": 0
+            }
+          }
+        }
+      ]
+    }
   }
 }

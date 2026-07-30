@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Transit On-Demand Demo Capture</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["Nunito", "sans-serif"],
+            },
+            colors: {
+              brand: {
+                green: "#58CC02",
+                greenDark: "#46A302",
+                red: "#FF4B4B",
+                redDark: "#D33131",
+                blue: "#1CB0F6",
+                yellow: "#FFC800",
+                offWhite: "#F7F7F7",
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        overflow: hidden;
+        background: #f7f7f7;
+      }
+
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+      }
+
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/demo/on-demand-capture.tsx"></script>
+  </body>
+</html>

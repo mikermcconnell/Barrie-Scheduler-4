@@ -235,6 +235,13 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayTy
 
 const INITIAL_REQUIREMENTS = generateRequirements();
 const INITIAL_ALL_SHIFTS = normalizeOnDemandShifts(generateShifts(INITIAL_REQUIREMENTS, false), 'Weekday');
+const INITIAL_EMPTY_REQUIREMENTS = INITIAL_REQUIREMENTS.map(requirement => ({
+    slotIndex: requirement.slotIndex,
+    north: 0,
+    south: 0,
+    floater: 0,
+    total: 0,
+}));
 
 // Helper to validate and return a safe day type
 const toValidDayType = (day: string): DayType => {
@@ -318,7 +325,15 @@ const getRideCoReportSourceLabel = (report: RideCoImportReport): string => (
         .join(' · ') || 'RideCo import'
 );
 
-export const OnDemandWorkspace: React.FC = () => {
+interface OnDemandWorkspaceProps {
+    initialMode?: 'sample' | 'empty';
+    captureFileStageEventName?: string;
+}
+
+export const OnDemandWorkspace: React.FC<OnDemandWorkspaceProps> = ({
+    initialMode = 'sample',
+    captureFileStageEventName,
+}) => {
     const { user } = useAuth();
     const toast = useToast();
 
@@ -326,9 +341,15 @@ export const OnDemandWorkspace: React.FC = () => {
     const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
     // Core State
     // Initialize synchronously to ensure data is present for first render calculation
-    const [requirements, setRequirements] = useState<Requirement[]>(() => INITIAL_REQUIREMENTS);
-    const [allShifts, setAllShifts] = useState<Shift[]>(() => INITIAL_ALL_SHIFTS);
-    const [shifts, setShifts] = useState<Shift[]>(() => filterShiftsByDay(INITIAL_ALL_SHIFTS, 'Weekday'));
+    const [requirements, setRequirements] = useState<Requirement[]>(() =>
+        initialMode === 'empty' ? INITIAL_EMPTY_REQUIREMENTS : INITIAL_REQUIREMENTS
+    );
+    const [allShifts, setAllShifts] = useState<Shift[]>(() =>
+        initialMode === 'empty' ? [] : INITIAL_ALL_SHIFTS
+    );
+    const [shifts, setShifts] = useState<Shift[]>(() =>
+        initialMode === 'empty' ? [] : filterShiftsByDay(INITIAL_ALL_SHIFTS, 'Weekday')
+    );
 
     const [activeTab, setActiveTab] = useState<'overview' | 'editor' | 'rules'>('overview');
     const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
@@ -474,7 +495,8 @@ export const OnDemandWorkspace: React.FC = () => {
     const shiftCountWithinHardCap = scheduledShifts.length <= activeMaxShiftCount;
     const fleetWithinLimit = maxConcurrentVehicles <= optimizationSettings.maxFleetVehicles;
     const isWorkspaceBusy = isAnimating || isProcessingFiles;
-    const usingStarterSampleData = !currentDraftId
+    const usingStarterSampleData = initialMode === 'sample'
+        && !currentDraftId
         && !loadedCloudFiles.master
         && !loadedCloudFiles.rideco
         && !cachedFiles.master
@@ -1167,6 +1189,24 @@ export const OnDemandWorkspace: React.FC = () => {
             );
         }
     };
+
+    useEffect(() => {
+        if (!captureFileStageEventName) return undefined;
+
+        const stageFiles = (event: Event) => {
+            const files = (event as CustomEvent<File[]>).detail;
+            if (Array.isArray(files)) {
+                handleFileUpload(files);
+            }
+        };
+
+        window.addEventListener(captureFileStageEventName, stageFiles);
+        document.documentElement.dataset.onDemandCaptureFileBridge = 'ready';
+        return () => {
+            window.removeEventListener(captureFileStageEventName, stageFiles);
+            delete document.documentElement.dataset.onDemandCaptureFileBridge;
+        };
+    }, [captureFileStageEventName, isWorkspaceBusy]);
 
     const processFiles = async () => {
         if (isWorkspaceBusy) return;

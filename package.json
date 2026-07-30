@@ -14,6 +14,7 @@
     "test:route-concept-browser": "node scripts/routeConceptPlannerBrowserSmoke.mjs",
     "test:coverage": "vitest run --coverage",
     "test:smoke": "npm run build && node scripts/browserSmoke.mjs",
+    "demo:ondemand": "npm run build && node scripts/onDemandDemoCapture.mjs",
     "build": "vite build",
     "build:prod": "node scripts/build-production.mjs",
     "docs:check": "node scripts/checkDocumentationContext.mjs",

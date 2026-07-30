@@ -1,0 +1,9 @@
+,Demonstration,Shift1,Shift2,Shift3,Shift4
+Day,Example,All Weekdays,All Weekdays,All Weekdays,All Weekdays
+Driver (optional),Example,North,North,South,South
+Shift Label,Example,North Shift 1,North Shift 2,South Shift 1,South Shift 2
+Service Start Time,9:00 AM,6:15,11:45,6:15,11:45
+Service End Time,5:00 PM,11:45,16:45,11:15,16:45
+Break 1 Window Start Time,11:00 AM,N/B,N/B,N/B,N/B
+Break 1 Window End Time,11:30 AM,N/B,N/B,N/B,N/B
+Break 1 Duration (min),15,0,0,0,0
