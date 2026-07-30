@@ -450,7 +450,7 @@ async function captureFrame(page, name) {
   });
 }
 
-async function transcodeDeliveryVideo() {
+async function transcodeDeliveryVideo(storyStartOffsetSeconds) {
   const ffmpeg = findPlaywrightFfmpeg();
   if (!ffmpeg) {
     copyFileSync(RAW_VIDEO_PATH, DELIVERY_VIDEO_PATH);
@@ -460,13 +460,13 @@ async function transcodeDeliveryVideo() {
   await execFileAsync(ffmpeg, [
     '-y',
     '-ss',
-    '0.25',
+    String(Math.max(0, storyStartOffsetSeconds - 0.2)),
     '-i',
     RAW_VIDEO_PATH,
     '-t',
     String(DELIVERY_SECONDS),
     '-vf',
-    'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+    'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,tpad=stop_mode=clone:stop_duration=60',
     '-an',
     '-c:v',
     'libvpx',
@@ -510,6 +510,7 @@ async function runDemoCapture() {
         size: VIEWPORT,
       },
     });
+    const recordingStartedAt = Date.now();
     const page = await context.newPage();
     page.on('console', message => {
       if (message.type() === 'error' || message.type() === 'warning') {
@@ -524,6 +525,7 @@ async function runDemoCapture() {
     await openOnDemandWorkspace(page, baseUrl);
 
     await installDemoOverlay(page);
+    const storyStartOffsetSeconds = (Date.now() - recordingStartedAt) / 1000;
     await captureFrame(page, '00-title');
     await hold(3_200);
     await hideTitle(page);
@@ -717,7 +719,7 @@ async function runDemoCapture() {
     assert(video, 'Playwright did not create a recording');
     await video.saveAs(RAW_VIDEO_PATH);
 
-    const transcode = await transcodeDeliveryVideo();
+    const transcode = await transcodeDeliveryVideo(storyStartOffsetSeconds);
     const deliverySize = statSync(DELIVERY_VIDEO_PATH).size;
     assert(
       deliverySize <= DELIVERY_MAX_BYTES,
