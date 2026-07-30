@@ -600,10 +600,10 @@ async function runDemoCapture() {
     await gapHeading.waitFor({ state: 'visible' });
     await gapHeading.scrollIntoViewIfNeeded();
 
-    const southFilter = page
-      .locator('button')
-      .filter({ hasText: /^South$/ })
-      .first();
+    const southFilter = page.getByRole('button', {
+      name: 'South',
+      exact: true,
+    });
     await southFilter.click();
     await narrate(
       page,
