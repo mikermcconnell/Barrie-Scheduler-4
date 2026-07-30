@@ -1,8 +1,10 @@
 import * as XLSX from 'xlsx';
 import { describe, expect, it } from 'vitest';
 import {
+    extractFareProgramExactOrigins,
     extractFareProgramTransactions,
     FARE_PROGRAMS_WORKBOOK_HEADERS,
+    getFareProgramExactOriginUses,
 } from '../utils/fare-programs/fareProgramsWorkbook';
 
 function workbookBuffer(rows: unknown[][]): ArrayBuffer {
@@ -42,5 +44,35 @@ describe('Fare Programs workbook transaction extraction', () => {
             ['Wrong', ...FARE_PROGRAMS_WORKBOOK_HEADERS.slice(1)],
             [1, 'Barrie Transit', 'Adult Monthly Pass', '', '', '', ''],
         ]), 'Adult Monthly Pass')).toThrow(/Unexpected workbook columns/);
+    });
+
+    it('keeps exact starting addresses and supports overlapping verification filters', () => {
+        const result = extractFareProgramExactOrigins(workbookBuffer([
+            [...FARE_PROGRAMS_WORKBOOK_HEADERS],
+            [1, 'Barrie Transit', 'High School Student Pass 25/26', '123 Main St Unit 4', '', '2026-01-05 14:30', ''],
+            [2, 'Barrie Transit', 'High School Student Pass 25/26', '123 Main St Unit 4', '', '2026-01-05 21:30', ''],
+            [3, 'Barrie Transit', 'High School Student Pass 25/26', '456 Other Rd', '', '2026-01-10 14:00', ''],
+            [4, 'Barrie Transit', 'High School Student Pass 25/26', 'Geolocation unauthorized', '', '2026-01-05 15:00', ''],
+            [5, 'Barrie Transit', 'Adult Monthly Pass', '789 Adult Ave', '', '2026-01-05 15:00', ''],
+        ]), 'High School Student Pass 25/26');
+
+        expect(result).toMatchObject({
+            sourceRows: 5,
+            matchedUses: 4,
+            usableStartUses: 3,
+            missingStartUses: 1,
+            coverageDays: {
+                weekday: 1,
+                weekend: 1,
+            },
+        });
+        expect(result.origins).toHaveLength(2);
+        expect(result.origins[0].label).toBe('123 Main St Unit 4');
+        expect(result.origins[0].uses).toBe(2);
+        expect(getFareProgramExactOriginUses(result.origins[0], 'weekday', 'school-day')).toBe(1);
+        expect(getFareProgramExactOriginUses(result.origins[0], 'weekday', 'daytime')).toBe(1);
+        expect(getFareProgramExactOriginUses(result.origins[0], 'weekday', 'afternoon')).toBe(1);
+        expect(getFareProgramExactOriginUses(result.origins[0], 'weekday', 'after-school')).toBe(1);
+        expect(getFareProgramExactOriginUses(result.origins[1], 'weekend', 'daytime')).toBe(1);
     });
 });

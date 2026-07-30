@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Bus, ChevronLeft, ChevronRight, FileSpreadsheet, Loader2, Upload, X } from 'lucide-react';
 import { FareProgramsUsageMap } from './FareProgramsUsageMap';
 import { FARE_PROGRAMS_SNAPSHOT } from '../../utils/fare-programs/fareProgramsSnapshot';
@@ -6,6 +6,12 @@ import type {
     FareProgramTransactionResult,
     FareProgramTransactionRow,
 } from '../../utils/fare-programs/fareProgramsWorkbook';
+import { validateFareProgramsWorkbookFile } from '../../utils/fare-programs/fareProgramsWorkbook';
+import {
+    loadFareProgramsWorkbook,
+    removeFareProgramsWorkbook,
+    saveFareProgramsWorkbook,
+} from '../../utils/fare-programs/fareProgramsWorkbookStorage';
 
 interface FareProgramsWorkspaceProps {
     onBack: () => void;
@@ -14,6 +20,7 @@ interface FareProgramsWorkspaceProps {
 const number = new Intl.NumberFormat('en-CA');
 type ActiveTab = 'usage-map' | 'raw-counts';
 type FarePassCount = { label: string; uses: number };
+type WorkbookStorageStatus = 'restoring' | 'saving' | 'saved' | 'none' | 'error';
 const TRANSACTION_PAGE_SIZE = 100;
 
 const MetricCard: React.FC<{
@@ -144,7 +151,7 @@ const FareTypeRowsModal: React.FC<{
                             <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{number.format(fareType.uses)} summary rows</span>
                         </div>
                         <p className="mt-1 text-xs text-gray-500">
-                            Transaction details are read locally from the selected workbook and are not saved by this page.
+                            Transaction details are read locally from the workbook saved on this device.
                         </p>
                     </div>
                     <button type="button" onClick={onClose} aria-label="Close transaction rows" className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-900">
@@ -158,7 +165,7 @@ const FareTypeRowsModal: React.FC<{
                             <FileSpreadsheet className="mx-auto h-10 w-10 text-blue-600" />
                             <h3 className="mt-4 text-base font-bold text-gray-900">Choose the source workbook</h3>
                             <p className="mt-2 text-sm leading-relaxed text-gray-600">
-                                Select <strong>{expectedSourceFileName}</strong> to view every transaction row for this fare type. The file remains in this browser session only.
+                                Select <strong>{expectedSourceFileName}</strong> to view every transaction row for this fare type. The browser will keep it on this device for future visits.
                             </p>
                             <label className="mt-5 inline-flex cursor-pointer items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700">
                                 <Upload size={17} />
@@ -294,7 +301,63 @@ export const FareProgramsWorkspace: React.FC<FareProgramsWorkspaceProps> = ({ on
     const [activeTab, setActiveTab] = useState<ActiveTab>('usage-map');
     const [selectedFareType, setSelectedFareType] = useState<FarePassCount | null>(null);
     const [sourceWorkbook, setSourceWorkbook] = useState<File | null>(null);
+    const [workbookStorageStatus, setWorkbookStorageStatus] = useState<WorkbookStorageStatus>('restoring');
+    const [workbookStorageError, setWorkbookStorageError] = useState<string | null>(null);
     const snapshot = FARE_PROGRAMS_SNAPSHOT;
+
+    useEffect(() => {
+        let cancelled = false;
+        void loadFareProgramsWorkbook()
+            .then((file) => {
+                if (cancelled) return;
+                if (file) {
+                    setSourceWorkbook(file);
+                    setWorkbookStorageStatus('saved');
+                } else {
+                    setWorkbookStorageStatus('none');
+                }
+            })
+            .catch((cause: unknown) => {
+                if (cancelled) return;
+                setWorkbookStorageStatus('error');
+                setWorkbookStorageError(cause instanceof Error ? cause.message : 'Could not restore the saved workbook.');
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const handleSourceWorkbookChange = (file: File) => {
+        const validationError = validateFareProgramsWorkbookFile(file);
+        if (validationError) {
+            setWorkbookStorageStatus('error');
+            setWorkbookStorageError(validationError);
+            return;
+        }
+
+        setSourceWorkbook(file);
+        setWorkbookStorageStatus('saving');
+        setWorkbookStorageError(null);
+        void saveFareProgramsWorkbook(file)
+            .then((saved) => {
+                setWorkbookStorageStatus(saved ? 'saved' : 'error');
+                if (!saved) setWorkbookStorageError('This browser cannot save the workbook, but it remains available for this session.');
+            })
+            .catch((cause: unknown) => {
+                setWorkbookStorageStatus('error');
+                setWorkbookStorageError(cause instanceof Error ? cause.message : 'Could not save the workbook on this device.');
+            });
+    };
+
+    const handleRemoveSourceWorkbook = () => {
+        setSourceWorkbook(null);
+        setWorkbookStorageStatus('none');
+        setWorkbookStorageError(null);
+        void removeFareProgramsWorkbook().catch((cause: unknown) => {
+            setWorkbookStorageStatus('error');
+            setWorkbookStorageError(cause instanceof Error ? cause.message : 'Could not remove the saved workbook.');
+        });
+    };
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-gray-50">
@@ -443,7 +506,7 @@ export const FareProgramsWorkspace: React.FC<FareProgramsWorkspaceProps> = ({ on
                                             </div>
                                             <div>
                                                 <dt className="font-semibold text-gray-500">Transaction access</dt>
-                                                <dd className="mt-1 leading-relaxed text-gray-700">Click a fare type to open its rows. Detailed IDs and locations are read from a workbook selected on this device and are not bundled into the app.</dd>
+                                                <dd className="mt-1 leading-relaxed text-gray-700">Click a fare type to open its rows. Detailed IDs and locations are read from a workbook saved only in this browser and are not bundled into the app or uploaded to shared storage.</dd>
                                             </div>
                                         </dl>
                                     </div>
@@ -451,7 +514,14 @@ export const FareProgramsWorkspace: React.FC<FareProgramsWorkspaceProps> = ({ on
                             </section>
                         </>
                     ) : (
-                        <FareProgramsUsageMap snapshot={snapshot} />
+                        <FareProgramsUsageMap
+                            snapshot={snapshot}
+                            sourceFile={sourceWorkbook}
+                            workbookStorageStatus={workbookStorageStatus}
+                            workbookStorageError={workbookStorageError}
+                            onSourceFileChange={handleSourceWorkbookChange}
+                            onRemoveSourceFile={handleRemoveSourceWorkbook}
+                        />
                     )}
                 </div>
             </main>
@@ -461,7 +531,7 @@ export const FareProgramsWorkspace: React.FC<FareProgramsWorkspaceProps> = ({ on
                     expectedSourceRows={snapshot.sourceRows}
                     expectedSourceFileName={snapshot.sourceFileName}
                     sourceFile={sourceWorkbook}
-                    onSourceFileChange={setSourceWorkbook}
+                    onSourceFileChange={handleSourceWorkbookChange}
                     onClose={() => setSelectedFareType(null)}
                 />
             )}

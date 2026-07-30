@@ -1,7 +1,5 @@
 import { getClientMapboxToken, normalizeMapboxToken } from '../mapboxToken';
 import { findStopCoords } from '../gtfs/gtfsStopLookup';
-import type { FareProgramOriginArea } from './fareProgramsSnapshot';
-
 const BARRIE_BBOX = {
     west: -79.85,
     south: 44.25,
@@ -36,6 +34,12 @@ export interface FareProgramOriginGeocodeProgress {
     label: string;
 }
 
+export interface FareProgramGeocodableOrigin {
+    id: string;
+    label: string;
+    geocodeQuery: string;
+}
+
 export function buildFareProgramOriginGeocodeUrl(query: string, token: string): string {
     const searchText = `${query}, Barrie, Ontario, Canada`;
     const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchText)}.json`);
@@ -56,7 +60,7 @@ function withinBarrie(latitude: number, longitude: number): boolean {
 }
 
 export async function geocodeFareProgramOrigins(
-    origins: FareProgramOriginArea[],
+    origins: FareProgramGeocodableOrigin[],
     options: {
         token?: string | null;
         fetcher?: typeof fetch;

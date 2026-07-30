@@ -1,15 +1,18 @@
 import {
+    extractFareProgramExactOrigins,
     extractFareProgramTransactions,
+    type FareProgramExactOriginResult,
     type FareProgramTransactionResult,
 } from './fareProgramsWorkbook';
 
 interface FareProgramsWorkbookWorkerRequest {
     buffer: ArrayBuffer;
     fareType: string;
+    mode?: 'transactions' | 'exact-origins';
 }
 
 type FareProgramsWorkbookWorkerResponse =
-    | { ok: true; result: FareProgramTransactionResult }
+    | { ok: true; result: FareProgramTransactionResult | FareProgramExactOriginResult }
     | { ok: false; error: string };
 
 const workerScope = self as unknown as {
@@ -19,7 +22,9 @@ const workerScope = self as unknown as {
 
 workerScope.onmessage = (event) => {
     try {
-        const result = extractFareProgramTransactions(event.data.buffer, event.data.fareType);
+        const result = event.data.mode === 'exact-origins'
+            ? extractFareProgramExactOrigins(event.data.buffer, event.data.fareType)
+            : extractFareProgramTransactions(event.data.buffer, event.data.fareType);
         workerScope.postMessage({ ok: true, result });
     } catch (cause) {
         workerScope.postMessage({

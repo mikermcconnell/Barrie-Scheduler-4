@@ -79,6 +79,10 @@ firebase/
 `teams/{teamId}/routeConceptPlannerProjects/{projectId}` is separate neutral Route Concept Planner storage. Its integer `revision` supports optimistic conflict detection; alternatives and their patterns are saved atomically with the root document.
 `teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
 
+### Device-local browser storage
+
+Fare Programs keeps one optional source workbook in IndexedDB database `scheduler4-fare-programs`, object store `workbooks`, key `high-school-pass-source`. The record contains the workbook `Blob`, file name, MIME type, source `lastModified`, and local `savedAt` timestamp. This is browser-and-device-local convenience storage: it is not synchronized between users or devices, is not written to Firestore or Cloud Storage, is replaced when a planner selects another workbook, and is deleted through the workspace's **Remove saved workbook** action. Parsed transaction rows and Mapbox geocodes are not separately persisted.
+
 ### Cloud Storage Paths
 
 ```
