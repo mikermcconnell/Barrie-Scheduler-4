@@ -466,7 +466,7 @@ async function transcodeDeliveryVideo(storyStartOffsetSeconds) {
     '-t',
     String(DELIVERY_SECONDS),
     '-vf',
-    'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,tpad=stop_mode=clone:stop_duration=60',
+    'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
     '-an',
     '-c:v',
     'libvpx',
@@ -712,7 +712,7 @@ async function runDemoCapture() {
       }
     });
     await captureFrame(page, '11-closing');
-    await hold(15_000);
+    await hold(30_000);
 
     await context.close();
     context = null;
