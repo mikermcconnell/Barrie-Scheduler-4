@@ -608,7 +608,7 @@ async function runDemoCapture() {
     await narrate(
       page,
       'Identify the gap',
-      'South-zone coverage is short for 30 minutes between the two contractor shifts.',
+      'Back-to-back South shifts hide a 20-minute off-site changeoff gap.',
       49,
     );
     await spotlight(page, gapHeading.locator('..').locator('..'), 12);
@@ -635,38 +635,39 @@ async function runDemoCapture() {
 
     const shiftEditorTab = page.getByRole('button', { name: /Shift Editor/i });
     await shiftEditorTab.click();
-    const southShiftOne = page.getByText('South Shift 1', { exact: true }).first();
-    await southShiftOne.waitFor({ state: 'visible' });
+    const southShiftTwo = page.getByText('South Shift 2', { exact: true }).first();
+    await southShiftTwo.waitFor({ state: 'visible' });
     await narrate(
       page,
       'Adjust one shift',
-      'A planner can extend the first South shift by 30 minutes to cover the service gap.',
+      'A planner can move the second South shift 30 minutes earlier to cover the service gap.',
       68,
     );
-    await spotlight(page, southShiftOne.locator('..').locator('..'), 12);
+    await spotlight(page, southShiftTwo.locator('..').locator('..'), 12);
     await captureFrame(page, '07-shift-selected');
     await hold(3_500);
-    await southShiftOne.click();
+    await southShiftTwo.click();
 
-    const editEndTimeButton = page.getByRole('button', {
-      name: 'Edit shift end time',
+    const startTimeInput = page.getByRole('textbox', {
+      name: 'Shift start time',
       exact: true,
     });
-    await editEndTimeButton.waitFor({ state: 'visible' });
-    await spotlight(page, editEndTimeButton, 18);
-    await hold(2_500);
-    await editEndTimeButton.click();
-
     const endTimeInput = page.getByRole('textbox', {
       name: 'Shift end time',
       exact: true,
     });
-    await endTimeInput.fill('11:45');
+    await startTimeInput.waitFor({ state: 'visible' });
+    await spotlight(page, startTimeInput.locator('..').locator('..').locator('..'), 18);
+    await hold(2_500);
+
+    await startTimeInput.fill('10:45');
+    await startTimeInput.press('Enter');
+    await endTimeInput.fill('15:45');
     await endTimeInput.press('Enter');
     await narrate(
       page,
       'Test the change',
-      'The preview updates immediately, before the planner commits the adjustment.',
+      'The preview updates immediately while the five-hour shift length stays unchanged.',
       78,
     );
     await clearSpotlight(page);
@@ -709,7 +710,7 @@ async function runDemoCapture() {
       }
     });
     await captureFrame(page, '11-closing');
-    await hold(6_000);
+    await hold(9_500);
 
     await context.close();
     context = null;

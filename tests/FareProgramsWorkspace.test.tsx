@@ -12,16 +12,6 @@ vi.mock('react-map-gl/mapbox', () => ({
     Popup: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock('recharts', () => ({
-    ResponsiveContainer: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
-    BarChart: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
-    CartesianGrid: (): null => null,
-    Tooltip: (): null => null,
-    XAxis: (): null => null,
-    YAxis: (): null => null,
-    Bar: (): null => null,
-}));
-
 import { FareProgramsWorkspace } from '../components/Analytics/FareProgramsWorkspace';
 
 describe('FareProgramsWorkspace', () => {
@@ -42,16 +32,13 @@ describe('FareProgramsWorkspace', () => {
         container.remove();
     });
 
-    it('shows reconciled program totals and the conservative school proxy', () => {
-        expect(container.textContent).toContain('Potential Service Mirroring uses');
-        expect(container.textContent).toContain('2,059');
-        expect(container.textContent).toContain('Barrie North CI');
-        expect(container.textContent).toContain('Innisdale SS');
-        expect(container.textContent).toContain('Maple Ridge SS');
-        expect(container.textContent).toContain('Not attributable');
-        expect(container.textContent).toContain('Usable end locations');
-        expect(container.textContent).toContain('400');
-        expect(container.querySelector('[data-testid="fare-programs-map"]')).not.toBeNull();
+    it('opens directly on Usage map without an Overview tab', () => {
+        const tabs = Array.from(container.querySelectorAll('[role="tab"]'));
+
+        expect(tabs.map((tab) => tab.textContent)).toEqual(['Usage map', 'Raw counts']);
+        expect(tabs[0]?.getAttribute('aria-selected')).toBe('true');
+        expect(container.textContent).toContain('High-school-pass starting areas');
+        expect(container.textContent).not.toContain('Overview');
     });
 
     it('shows reconciled workbook fare labels and opens row details in Raw counts', () => {
@@ -95,6 +82,9 @@ describe('FareProgramsWorkspace', () => {
         expect(container.textContent).toContain('Weekends');
         expect(container.textContent).toContain('6–9 AM');
         expect(container.textContent).toContain('After 7 PM');
+        expect(container.textContent).toContain('Total high-school uses');
+        expect(container.textContent).toContain('2,059');
+        expect(container.textContent).toContain('Uses shown for filter');
         expect(container.textContent).toContain('1,475');
         expect(container.textContent).toContain('88.7%');
         expect(container.textContent).toContain('188 usable starts suppressed');

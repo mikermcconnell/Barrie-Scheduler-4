@@ -176,11 +176,16 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({ snap
                 </div>
             </section>
 
-            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">Total high-school uses</div>
+                    <div className="mt-2 text-2xl font-bold text-gray-900">{number.format(snapshot.serviceMirroring.uses)}</div>
+                    <div className="mt-1 text-xs text-blue-800">All High School Student Pass transactions in the workbook.</div>
+                </div>
                 <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Filtered uses</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Uses shown for filter</div>
                     <div className="mt-2 text-2xl font-bold text-gray-900">{number.format(filteredUses)}</div>
-                    <div className="mt-1 text-xs text-gray-500">{currentFilterLabel}</div>
+                    <div className="mt-1 text-xs text-gray-500">{currentFilterLabel}; privacy-safe map areas only.</div>
                 </div>
                 <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Sanitized areas</div>
