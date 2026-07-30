@@ -459,10 +459,10 @@ async function transcodeDeliveryVideo(storyStartOffsetSeconds) {
 
   await execFileAsync(ffmpeg, [
     '-y',
-    '-ss',
-    String(Math.max(0, storyStartOffsetSeconds - 0.2)),
     '-i',
     RAW_VIDEO_PATH,
+    '-ss',
+    String(Math.max(0, storyStartOffsetSeconds - 0.2)),
     '-t',
     String(DELIVERY_SECONDS),
     '-vf',
@@ -526,6 +526,9 @@ async function runDemoCapture() {
 
     await installDemoOverlay(page);
     const storyStartOffsetSeconds = (Date.now() - recordingStartedAt) / 1000;
+    console.log(
+      `[demo] Story begins ${storyStartOffsetSeconds.toFixed(2)} seconds into the raw recording.`,
+    );
     await captureFrame(page, '00-title');
     await hold(3_200);
     await hideTitle(page);
