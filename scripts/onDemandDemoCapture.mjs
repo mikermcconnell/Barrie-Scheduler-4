@@ -20,7 +20,7 @@ const VIEWPORT = { width: 1920, height: 1080 };
 const DELIVERY_MAX_BYTES = 10 * 1024 * 1024;
 const DELIVERY_BITRATE = '900k';
 const DELIVERY_SECONDS = 60;
-const TIME_SCALE = Number(process.env.DEMO_TIME_SCALE ?? '1');
+const TIME_SCALE = Number(process.env.DEMO_TIME_SCALE ?? '0.25');
 const STAGING_TIMEOUT_MS = TIME_SCALE < 1 ? 5_000 : 30_000;
 const OUTPUT_DIR = path.resolve('output', 'demo', 'transit-on-demand');
 const FRAME_DIR = path.join(OUTPUT_DIR, 'frames');
@@ -710,7 +710,7 @@ async function runDemoCapture() {
       }
     });
     await captureFrame(page, '11-closing');
-    await hold(9_500);
+    await hold(15_000);
 
     await context.close();
     context = null;
