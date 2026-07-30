@@ -712,7 +712,7 @@ async function runDemoCapture() {
       }
     });
     await captureFrame(page, '11-closing');
-    await hold(30_000);
+    await hold(60_000);
 
     await context.close();
     context = null;
