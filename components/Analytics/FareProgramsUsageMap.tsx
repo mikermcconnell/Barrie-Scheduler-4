@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clock3, Download, FileSpreadsheet, GraduationCap, Info, Layers3, Loader2, MapPin, ShieldCheck, Trash2, Upload } from 'lucide-react';
-import { Layer, Marker, Popup, Source, type LayerProps } from 'react-map-gl/mapbox';
+import { Layer, Marker, Popup, Source, type LayerProps, type MapMouseEvent, type MapRef } from 'react-map-gl/mapbox';
 import { MapBase } from '../shared/MapBase';
 import type { FareProgramsSnapshot } from '../../utils/fare-programs/fareProgramsSnapshot';
 import {
@@ -18,6 +18,10 @@ import {
 } from '../../utils/fare-programs/fareProgramsOriginGeocoder';
 import { exportFareProgramsUsageMapPdf } from '../../utils/fare-programs/fareProgramsPdfExport';
 import { BARRIE_HIGH_SCHOOLS } from '../../utils/fare-programs/fareProgramsSchools';
+import {
+    groupFareProgramUsageMapOrigins,
+    type FareProgramUsageMapPoint,
+} from '../../utils/fare-programs/fareProgramsUsageMap';
 
 interface FareProgramsUsageMapProps {
     snapshot: FareProgramsSnapshot;
@@ -34,14 +38,102 @@ type TimeFilter = FareProgramExactTimeBandId | 'all';
 type MapView = 'bubbles' | 'heatmap';
 type ValueMode = 'total' | 'average';
 type LocatedOrigin = FareProgramExactOrigin & FareProgramOriginGeocode & { filteredUses: number };
+type ClusterHover = {
+    longitude: number;
+    latitude: number;
+    filteredUses: number;
+    locationCount: number;
+};
 
 const number = new Intl.NumberFormat('en-CA');
 const averageNumber = new Intl.NumberFormat('en-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const HIGH_SCHOOL_PASS = 'High School Student Pass 25/26';
+const BUBBLE_SOURCE_ID = 'fare-programs-usage-bubble-source';
+const BUBBLE_CLUSTER_LAYER_ID = 'fare-programs-usage-clusters';
+const BUBBLE_CLUSTER_LABEL_LAYER_ID = 'fare-programs-usage-cluster-labels';
+const BUBBLE_POINT_LAYER_ID = 'fare-programs-usage-points';
+const BUBBLE_TOP_POINT_LABEL_LAYER_ID = 'fare-programs-usage-top-point-labels';
 
-function markerDiameter(uses: number, maximumUses: number): number {
-    const share = maximumUses > 0 ? Math.sqrt(uses / maximumUses) : 0;
-    return Math.round(24 + share * 36);
+const bubbleClusterLayer: LayerProps = {
+    id: BUBBLE_CLUSTER_LAYER_ID,
+    type: 'circle',
+    filter: ['has', 'point_count'],
+    paint: {
+        'circle-color': '#2563eb',
+        'circle-opacity': 0.9,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 3,
+        'circle-radius': [
+            'step',
+            ['coalesce', ['get', 'uses_sum'], ['get', 'point_count'], 1],
+            18,
+            25, 22,
+            100, 28,
+            250, 34,
+            500, 40,
+        ],
+    },
+};
+
+const bubblePointLayer: LayerProps = {
+    id: BUBBLE_POINT_LAYER_ID,
+    type: 'circle',
+    filter: ['!', ['has', 'point_count']],
+    paint: {
+        'circle-color': '#2563eb',
+        'circle-opacity': 0.82,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+        'circle-radius': [
+            'case',
+            ['<=', ['get', 'rank'], 10],
+            11,
+            7,
+        ],
+    },
+};
+
+const bubbleTopPointLabelLayer: LayerProps = {
+    id: BUBBLE_TOP_POINT_LABEL_LAYER_ID,
+    type: 'symbol',
+    filter: ['all', ['!', ['has', 'point_count']], ['<=', ['get', 'rank'], 10]],
+    layout: {
+        'text-field': ['to-string', ['get', 'rank']],
+        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+        'text-size': 11,
+        'text-allow-overlap': true,
+    },
+    paint: {
+        'text-color': '#ffffff',
+    },
+};
+
+function bubbleClusterLabelLayer(valueMode: ValueMode): LayerProps {
+    return {
+        id: BUBBLE_CLUSTER_LABEL_LAYER_ID,
+        type: 'symbol',
+        filter: ['has', 'point_count'],
+        layout: {
+            'text-field': [
+                'number-format',
+                ['coalesce', ['get', 'uses_sum'], ['get', 'point_count']],
+                { 'max-fraction-digits': valueMode === 'average' ? 1 : 0 },
+            ],
+            'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+            'text-size': 12,
+            'text-allow-overlap': true,
+        },
+        paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': '#1e3a8a',
+            'text-halo-width': 0.75,
+        },
+    };
+}
+
+function propertyNumber(value: unknown): number {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function filterLabel(dayFilter: DayFilter, timeFilter: TimeFilter): string {
@@ -61,6 +153,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
     onRemoveSourceFile,
 }) => {
     const reportRef = useRef<HTMLDivElement | null>(null);
+    const mapRef = useRef<MapRef | null>(null);
     const previousSourceFileRef = useRef<File | null>(null);
     const mapBuildIdRef = useRef(0);
     const [exactData, setExactData] = useState<FareProgramExactOriginResult | null>(null);
@@ -75,7 +168,8 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
     const [failedCount, setFailedCount] = useState(0);
     const [progress, setProgress] = useState({ completed: 0, total: 0 });
     const [mapError, setMapError] = useState<string | null>(null);
-    const [selectedOriginId, setSelectedOriginId] = useState<string | null>(null);
+    const [selectedMapPointId, setSelectedMapPointId] = useState<string | null>(null);
+    const [clusterHover, setClusterHover] = useState<ClusterHover | null>(null);
     const [isExportingPdf, setIsExportingPdf] = useState(false);
     const [pdfError, setPdfError] = useState<string | null>(null);
     const [mapView, setMapView] = useState<MapView>('heatmap');
@@ -97,7 +191,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                 setGeocodes({});
                 setStatus('idle');
                 setMapError(null);
-                setSelectedOriginId(null);
+                setSelectedMapPointId(null);
             }
             return () => { cancelled = true; };
         }
@@ -110,7 +204,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
         setGeocodes({});
         setStatus('idle');
         setMapError(null);
-        setSelectedOriginId(null);
+        setSelectedMapPointId(null);
         setIsReadingWorkbook(true);
         void sourceFile.arrayBuffer()
             .then((buffer) => new Promise<FareProgramExactOriginResult>((resolve, reject) => {
@@ -188,15 +282,25 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
     })), [filteredOriginTotals, sourceDayCount, valueMode]);
     const rawFilteredUses = filteredOriginTotals.reduce((sum, item) => sum + item.filteredUses, 0);
     const filteredUses = filteredOrigins.reduce((sum, item) => sum + item.filteredUses, 0);
-    const locatedOrigins = filteredOrigins
+    const locatedOrigins = useMemo(() => filteredOrigins
         .map(({ origin, filteredUses: uses }) => {
             const geocode = geocodes[origin.id];
             return geocode ? { ...origin, ...geocode, filteredUses: uses } : null;
         })
-        .filter((origin): origin is LocatedOrigin => origin !== null);
+        .filter((origin): origin is LocatedOrigin => origin !== null), [filteredOrigins, geocodes]);
+    const usageMapPoints = useMemo(
+        () => groupFareProgramUsageMapOrigins(locatedOrigins),
+        [locatedOrigins],
+    );
+    const originPointIds = useMemo(() => new Map(
+        usageMapPoints.flatMap((point) => point.origins.map((origin) => [origin.id, point.id] as const)),
+    ), [usageMapPoints]);
+    const originRanks = useMemo(() => new Map(
+        filteredOrigins.map(({ origin }, index) => [origin.id, index + 1] as const),
+    ), [filteredOrigins]);
     const mappedUses = locatedOrigins.reduce((sum, origin) => sum + origin.filteredUses, 0);
     const maximumUses = locatedOrigins.reduce((maximum, origin) => Math.max(maximum, origin.filteredUses), 0);
-    const selectedOrigin = locatedOrigins.find((origin) => origin.id === selectedOriginId) ?? null;
+    const selectedMapPoint = usageMapPoints.find((point) => point.id === selectedMapPointId) ?? null;
     const selectedSchool = BARRIE_HIGH_SCHOOLS.find((school) => school.id === selectedSchoolId) ?? null;
     const currentFilterLabel = filterLabel(dayFilter, timeFilter);
     const totalUses = exactData?.matchedUses ?? snapshot.serviceMirroring.uses;
@@ -242,6 +346,94 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                 1, 'rgba(220,38,38,0.92)',
             ] as mapboxgl.Expression,
         },
+    };
+    const bubbleGeoJson: GeoJSON.FeatureCollection = {
+        type: 'FeatureCollection',
+        features: usageMapPoints.map((point) => ({
+            type: 'Feature',
+            id: point.id,
+            properties: {
+                id: point.id,
+                uses: point.filteredUses,
+                locationCount: point.locationCount,
+                rank: Math.min(...point.origins.map((origin) => originRanks.get(origin.id) ?? Number.MAX_SAFE_INTEGER)),
+            },
+            geometry: {
+                type: 'Point',
+                coordinates: [point.longitude, point.latitude],
+            },
+        })),
+    };
+
+    const focusMapPoint = (pointId: string, zoomIn: boolean) => {
+        const point = usageMapPoints.find((candidate) => candidate.id === pointId);
+        if (!point) return;
+        setSelectedMapPointId(pointId);
+        setSelectedSchoolId(null);
+        setClusterHover(null);
+        if (zoomIn) {
+            const map = mapRef.current?.getMap();
+            map?.easeTo({
+                center: [point.longitude, point.latitude],
+                zoom: Math.max(map.getZoom(), 14.5),
+                duration: 450,
+            });
+        }
+    };
+
+    const handleBubbleMapClick = (event: MapMouseEvent) => {
+        const feature = event.features?.[0];
+        const clusterId = feature?.properties?.cluster_id;
+        if (clusterId != null && feature?.geometry.type === 'Point' && 'coordinates' in feature.geometry) {
+            const coordinates = feature.geometry.coordinates as [number, number];
+            const source = mapRef.current?.getMap().getSource(BUBBLE_SOURCE_ID) as {
+                getClusterExpansionZoom?: (
+                    id: number,
+                    callback: (error: Error | null, zoom: number) => void,
+                ) => void;
+            } | undefined;
+            source?.getClusterExpansionZoom?.(Number(clusterId), (clusterError, zoom) => {
+                if (clusterError) return;
+                mapRef.current?.getMap().easeTo({
+                    center: coordinates,
+                    zoom,
+                    duration: 450,
+                });
+            });
+            setSelectedMapPointId(null);
+            setClusterHover(null);
+            return;
+        }
+
+        const pointId = typeof feature?.properties?.id === 'string'
+            ? feature.properties.id
+            : undefined;
+        if (pointId) focusMapPoint(pointId, false);
+    };
+
+    const handleBubbleMapMouseMove = (event: MapMouseEvent) => {
+        const feature = event.features?.[0];
+        const canvas = mapRef.current?.getMap().getCanvas();
+        if (canvas) canvas.style.cursor = feature ? 'pointer' : '';
+
+        if (feature?.properties?.cluster_id == null || feature.geometry.type !== 'Point' || !('coordinates' in feature.geometry)) {
+            setClusterHover(null);
+            return;
+        }
+
+        const coordinates = feature.geometry.coordinates as [number, number];
+        setClusterHover({
+            longitude: coordinates[0],
+            latitude: coordinates[1],
+            filteredUses: propertyNumber(feature.properties.uses_sum),
+            locationCount: propertyNumber(feature.properties.locations_sum),
+        });
+    };
+
+    const handleBubbleMapMouseLeave = () => {
+        const canvas = mapRef.current?.getMap().getCanvas();
+        if (canvas) canvas.style.cursor = '';
+        setClusterHover(null);
     };
 
     const chooseSourceFile = (file: File) => {
@@ -386,7 +578,8 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                     type="button"
                                     onClick={() => {
                                         setDayFilter(id);
-                                        setSelectedOriginId(null);
+                                        setSelectedMapPointId(null);
+                                        setClusterHover(null);
                                     }}
                                     className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
                                         dayFilter === id
@@ -406,7 +599,8 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                 type="button"
                                 onClick={() => {
                                     setTimeFilter('all');
-                                    setSelectedOriginId(null);
+                                    setSelectedMapPointId(null);
+                                    setClusterHover(null);
                                 }}
                                 className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
                                     timeFilter === 'all'
@@ -422,7 +616,8 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                     type="button"
                                     onClick={() => {
                                         setTimeFilter(band.id);
-                                        setSelectedOriginId(null);
+                                        setSelectedMapPointId(null);
+                                        setClusterHover(null);
                                     }}
                                     className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
                                         timeFilter === band.id
@@ -446,7 +641,11 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                             <button
                                 key={id}
                                 type="button"
-                                onClick={() => setValueMode(id)}
+                                onClick={() => {
+                                    setValueMode(id);
+                                    setSelectedMapPointId(null);
+                                    setClusterHover(null);
+                                }}
                                 className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
                                     valueMode === id
                                         ? 'border-blue-600 bg-blue-600 text-white'
@@ -514,7 +713,8 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                 aria-selected={mapView === id}
                                 onClick={() => {
                                     setMapView(id);
-                                    setSelectedOriginId(null);
+                                    setSelectedMapPointId(null);
+                                    setClusterHover(null);
                                 }}
                                 className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold ${
                                     mapView === id ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
@@ -525,33 +725,54 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                             </button>
                         ))}
                     </div>
-                    <MapBase longitude={-79.69} latitude={44.38} zoom={11.3} showNavigation showScale preserveDrawingBuffer>
+                    <MapBase
+                        mapRef={mapRef}
+                        longitude={-79.69}
+                        latitude={44.38}
+                        zoom={11.3}
+                        showNavigation
+                        showScale
+                        preserveDrawingBuffer
+                        interactiveLayerIds={mapView === 'bubbles'
+                            ? [BUBBLE_CLUSTER_LAYER_ID, BUBBLE_POINT_LAYER_ID]
+                            : undefined}
+                        onClick={mapView === 'bubbles' ? handleBubbleMapClick : undefined}
+                        onMouseMove={mapView === 'bubbles' ? handleBubbleMapMouseMove : undefined}
+                        onMouseLeave={mapView === 'bubbles' ? handleBubbleMapMouseLeave : undefined}
+                    >
                         {mapView === 'heatmap' && locatedOrigins.length > 0 && (
                             <Source id="fare-programs-usage-heatmap-source" type="geojson" data={heatmapGeoJson}>
                                 <Layer {...heatmapLayer} />
                             </Source>
                         )}
-                        {mapView === 'bubbles' && locatedOrigins.map((origin) => {
-                            const diameter = markerDiameter(origin.filteredUses, maximumUses);
-                            return (
-                                <Marker key={origin.id} longitude={origin.longitude} latitude={origin.latitude} anchor="center">
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedOriginId(origin.id)}
-                                        aria-label={`${origin.label}: ${formatMeasure(origin.filteredUses)} ${valueMode === 'average' ? 'average daily' : 'filtered'} uses`}
-                                        className="grid rounded-full border-2 border-white bg-blue-600 text-white shadow-lg transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                                        style={{ width: diameter, height: diameter, placeItems: 'center' }}
-                                    >
-                                        <span className="text-xs font-bold">{formatMeasure(origin.filteredUses)}</span>
-                                    </button>
-                                </Marker>
-                            );
-                        })}
+                        {mapView === 'bubbles' && usageMapPoints.length > 0 && (
+                            <Source
+                                id={BUBBLE_SOURCE_ID}
+                                type="geojson"
+                                data={bubbleGeoJson}
+                                cluster
+                                clusterMaxZoom={14}
+                                clusterRadius={44}
+                                clusterProperties={{
+                                    uses_sum: ['+', ['get', 'uses']],
+                                    locations_sum: ['+', ['get', 'locationCount']],
+                                }}
+                            >
+                                <Layer {...bubbleClusterLayer} />
+                                <Layer {...bubbleClusterLabelLayer(valueMode)} />
+                                <Layer {...bubblePointLayer} />
+                                <Layer {...bubbleTopPointLabelLayer} />
+                            </Source>
+                        )}
                         {BARRIE_HIGH_SCHOOLS.map((school) => (
                             <Marker key={school.id} longitude={school.longitude} latitude={school.latitude} anchor="center">
                                 <button
                                     type="button"
-                                    onClick={() => setSelectedSchoolId(school.id)}
+                                    onClick={() => {
+                                        setSelectedSchoolId(school.id);
+                                        setSelectedMapPointId(null);
+                                        setClusterHover(null);
+                                    }}
                                     aria-label={`High school: ${school.name}`}
                                     className="grid h-8 w-8 place-items-center rounded-lg border-2 border-white bg-gray-900 text-white shadow-lg transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-amber-300"
                                     title={school.name}
@@ -560,22 +781,60 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                 </button>
                             </Marker>
                         ))}
-                        {selectedOrigin && (
+                        {clusterHover && !selectedMapPoint && (
                             <Popup
-                                longitude={selectedOrigin.longitude}
-                                latitude={selectedOrigin.latitude}
+                                longitude={clusterHover.longitude}
+                                latitude={clusterHover.latitude}
                                 anchor="bottom"
-                                offset={36}
+                                offset={28}
+                                closeButton={false}
+                                closeOnClick={false}
+                            >
+                                <div className="p-1">
+                                    <div className="text-sm font-bold text-gray-900">
+                                        {number.format(clusterHover.locationCount)} starting locations
+                                    </div>
+                                    <div className="mt-1 text-xs font-semibold text-blue-700">
+                                        {formatMeasure(clusterHover.filteredUses)} {valueMode === 'average' ? 'average daily uses' : 'filtered uses'}
+                                    </div>
+                                    <p className="mt-1 text-xs text-gray-500">Click to zoom in and separate this area.</p>
+                                </div>
+                            </Popup>
+                        )}
+                        {selectedMapPoint && (
+                            <Popup
+                                longitude={selectedMapPoint.longitude}
+                                latitude={selectedMapPoint.latitude}
+                                anchor="bottom"
+                                offset={24}
                                 closeButton
                                 closeOnClick={false}
-                                onClose={() => setSelectedOriginId(null)}
+                                onClose={() => setSelectedMapPointId(null)}
                             >
-                                <div className="max-w-[280px] p-1">
-                                    <div className="font-bold text-gray-900">{selectedOrigin.label}</div>
-                                    <div className="mt-1 text-sm font-semibold text-blue-700">
-                                        {formatMeasure(selectedOrigin.filteredUses)} {valueMode === 'average' ? 'uses per source day' : 'filtered uses'}
+                                <div className="max-w-[300px] p-1">
+                                    <div className="font-bold text-gray-900">
+                                        {selectedMapPoint.locationCount === 1
+                                            ? selectedMapPoint.origins[0].label
+                                            : `${number.format(selectedMapPoint.locationCount)} starting locations`}
                                     </div>
-                                    <p className="mt-1 text-xs leading-relaxed text-gray-600">{currentFilterLabel}. {number.format(selectedOrigin.uses)} uses across all days and times.</p>
+                                    <div className="mt-1 text-sm font-semibold text-blue-700">
+                                        {formatMeasure(selectedMapPoint.filteredUses)} {valueMode === 'average' ? 'uses per source day' : 'filtered uses'}
+                                    </div>
+                                    <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                                        {currentFilterLabel}. {number.format(selectedMapPoint.totalUses)} uses across all days and times.
+                                    </p>
+                                    {selectedMapPoint.locationCount > 1 && (
+                                        <div className="mt-3 max-h-44 space-y-1 overflow-y-auto border-t border-gray-100 pt-2">
+                                            {selectedMapPoint.origins.map((origin) => (
+                                                <div key={origin.id} className="flex items-start justify-between gap-3 text-xs">
+                                                    <span className="min-w-0 flex-1 text-gray-600">{origin.label}</span>
+                                                    <span className="shrink-0 font-semibold tabular-nums text-gray-900">
+                                                        {formatMeasure(origin.filteredUses)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </Popup>
                         )}
@@ -658,7 +917,7 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                 {mapView === 'bubbles' ? 'Starting locations' : 'Usage heat map'}
                             </div>
                             <p className="mt-1 text-xs leading-relaxed text-gray-600">
-                                {formatMeasure(mappedUses)} {valueMode === 'average' ? 'average daily' : 'filtered'} uses mapped. {mapView === 'bubbles' ? 'Bubble size represents the selected measure.' : 'Warmer areas represent more use.'}
+                                {formatMeasure(mappedUses)} {valueMode === 'average' ? 'average daily' : 'filtered'} uses mapped. {mapView === 'bubbles' ? 'Nearby points are grouped; click a cluster to zoom in.' : 'Warmer areas represent more use.'}
                             </p>
                             <p className="mt-1 text-xs text-gray-500"><GraduationCap className="mr-1 inline h-3.5 w-3.5" />School icons provide planning context.</p>
                             {failedCount > 0 && <p className="mt-1 text-xs text-amber-700">{number.format(failedCount)} locations could not be located.</p>}
@@ -678,7 +937,10 @@ export const FareProgramsUsageMap: React.FC<FareProgramsUsageMapProps> = ({
                                     key={origin.id}
                                     type="button"
                                     disabled={!geocodes[origin.id]}
-                                    onClick={() => setSelectedOriginId(origin.id)}
+                                    onClick={() => {
+                                        const pointId = originPointIds.get(origin.id);
+                                        if (pointId) focusMapPoint(pointId, true);
+                                    }}
                                     className="flex w-full items-center gap-3 rounded-lg border border-gray-200 px-3 py-2.5 text-left enabled:hover:border-blue-200 enabled:hover:bg-blue-50/50 disabled:cursor-default"
                                 >
                                     <span className="w-5 text-xs font-bold tabular-nums text-gray-400">{index + 1}</span>

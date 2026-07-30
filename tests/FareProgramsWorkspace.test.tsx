@@ -8,14 +8,48 @@ const geocoderMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../components/shared/MapBase', () => ({
-    MapBase: ({ children }: { children?: React.ReactNode }) => <div data-testid="fare-programs-map">{children}</div>,
+    MapBase: ({
+        children,
+        interactiveLayerIds,
+    }: {
+        children?: React.ReactNode;
+        interactiveLayerIds?: string[];
+    }) => (
+        <div
+            data-testid="fare-programs-map"
+            data-interactive-layers={interactiveLayerIds?.join(',')}
+        >
+            {children}
+        </div>
+    ),
 }));
 
 vi.mock('react-map-gl/mapbox', () => ({
-    Layer: () => <div data-testid="fare-programs-heat-layer" />,
+    Layer: ({ id }: { id?: string }) => <div data-layer-id={id} />,
     Marker: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
     Popup: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
-    Source: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+    Source: ({
+        children,
+        id,
+        cluster,
+        clusterMaxZoom,
+        clusterRadius,
+    }: {
+        children?: React.ReactNode;
+        id?: string;
+        cluster?: boolean;
+        clusterMaxZoom?: number;
+        clusterRadius?: number;
+    }) => (
+        <div
+            data-source-id={id}
+            data-cluster={cluster ? 'true' : 'false'}
+            data-cluster-max-zoom={clusterMaxZoom}
+            data-cluster-radius={clusterRadius}
+        >
+            {children}
+        </div>
+    ),
 }));
 
 vi.mock('../utils/fare-programs/fareProgramsWorkbookStorage', () => ({
@@ -207,6 +241,51 @@ describe('FareProgramsWorkspace', () => {
         expect(geocoderMocks.geocodeFareProgramOrigins).toHaveBeenCalledOnce();
         expect(container.textContent).toContain('14 distinct source days in the workbook');
         expect(container.textContent).not.toContain('Build usage map');
+    });
+
+    it('clusters bubble-map locations and explains click-to-expand behavior', async () => {
+        geocoderMocks.geocodeFareProgramOrigins.mockResolvedValue({
+            geocodes: [{
+                originId: 'origin-1',
+                longitude: -79.69,
+                latitude: 44.38,
+                relevance: 1,
+                source: 'gtfs-stop',
+            }],
+            failedOriginIds: [],
+        });
+        const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+        const workbook = new File(['workbook'], 'Barrie Transit.xlsx', {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        Object.defineProperty(workbook, 'arrayBuffer', {
+            configurable: true,
+            value: vi.fn(async () => new ArrayBuffer(8)),
+        });
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [workbook],
+        });
+
+        await act(async () => {
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        const bubbleTab = Array.from(container.querySelectorAll('[aria-label="Usage map display"] [role="tab"]'))
+            .find((tab) => tab.textContent?.trim() === 'Bubble map') as HTMLButtonElement;
+        act(() => bubbleTab.click());
+
+        const bubbleSource = container.querySelector('[data-source-id="fare-programs-usage-bubble-source"]');
+        expect(bubbleSource?.getAttribute('data-cluster')).toBe('true');
+        expect(bubbleSource?.getAttribute('data-cluster-max-zoom')).toBe('14');
+        expect(bubbleSource?.getAttribute('data-cluster-radius')).toBe('44');
+        expect(container.querySelector('[data-layer-id="fare-programs-usage-clusters"]')).not.toBeNull();
+        expect(container.querySelector('[data-layer-id="fare-programs-usage-points"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="fare-programs-map"]')?.getAttribute('data-interactive-layers'))
+            .toBe('fare-programs-usage-clusters,fare-programs-usage-points');
+        expect(container.textContent).toContain('Nearby points are grouped; click a cluster to zoom in.');
     });
 
     it('rejects a non-xlsx address-verification upload before reading it', () => {
