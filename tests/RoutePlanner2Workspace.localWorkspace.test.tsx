@@ -416,7 +416,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     const view = renderWorkspace();
     const notes = view.querySelector('#rp2-notes') as HTMLTextAreaElement | null;
 
-    expect(view.textContent).toContain('Route Planner');
+    expect(view.textContent).toContain('Camp Shuttle Planner');
     expect(view.textContent).toContain('Local draft');
     expect(view.textContent).toContain('Select');
     expect(view.textContent).toContain('Export');
