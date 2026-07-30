@@ -359,7 +359,7 @@ export async function buildRoutePlanner2OperatorDirectionPlan(
             steps: mapboxResult?.steps.length
                 ? mapboxResult.steps
                 : [{
-                    instruction: `Proceed from ${fromStop.name} to ${toStop.name} using the approved route alignment shown in Route Planner 2.`,
+                    instruction: `Proceed from ${fromStop.name} to ${toStop.name} using the approved route alignment shown in Camp Shuttle Planner.`,
                     actionLabel: 'CONTINUE',
                     distanceMeters: segmentRuntime?.distanceKm == null ? undefined : segmentRuntime.distanceKm * 1000,
                 }],
@@ -741,9 +741,9 @@ export async function exportRoutePlanner2OperatorDirectionsPdf(
 
     doc.setProperties({
         title: `${scenario.name} Operator Turn-by-Turn`,
-        subject: 'Route Planner 2 operator direction sheet',
+        subject: 'Camp Shuttle Planner operator direction sheet',
         author: 'TransitScheduler',
-        creator: 'TransitScheduler Route Planner 2',
+        creator: 'TransitScheduler Camp Shuttle Planner',
     });
 
     doc.setFillColor(15, 23, 42);

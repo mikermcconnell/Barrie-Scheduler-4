@@ -240,7 +240,7 @@ export function generatePreview(
     warnings.push(`${overCap} records (${pct}%) have load > ${DEFAULT_LOAD_CAP} (will be capped — possible APC malfunction)`);
   }
 
-  const noApc = records.filter(r => r.apcSource === 0).length;
+  const noApc = records.filter(r => r.apcSource <= 0).length;
   if (noApc > 0) {
     const pct = ((noApc / records.length) * 100).toFixed(1);
     warnings.push(`${noApc} records (${pct}%) have no APC data (excluded from load calculations)`);

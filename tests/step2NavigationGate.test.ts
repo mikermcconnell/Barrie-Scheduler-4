@@ -11,7 +11,7 @@ describe('step2NavigationGate', () => {
         expect(getBlockedStep2FallbackStep(true)).toBe(2);
     });
 
-    it('does not gate wizard steps by approval state', () => {
+    it('gates later wizard steps until the v2 runtime approval is current', () => {
         expect(resolveWizardStepWithStep2Gate({
             requestedStep: 2,
             approvalState: 'unapproved',
@@ -22,15 +22,15 @@ describe('step2NavigationGate', () => {
             requestedStep: 4,
             approvalState: 'stale',
             hasReviewResult: true,
-        })).toBe(4);
+        })).toBe(2);
     });
 
-    it('reports approval navigation as unblocked', () => {
+    it('reports unapproved navigation as blocked', () => {
         expect(isStep2NavigationBlocked({
             requestedStep: 4,
             approvalState: 'unapproved',
             hasReviewResult: true,
-        })).toBe(false);
+        })).toBe(true);
 
         expect(isStep2NavigationBlocked({
             requestedStep: 4,

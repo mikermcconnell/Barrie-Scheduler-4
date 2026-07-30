@@ -81,7 +81,7 @@ import { buildInviteLinkForCurrentLocation, normalizeInviteCode } from '../utils
 import { WorkspaceAccessAppPreview } from './WorkspaceAccessAppPreview';
 import { filterUploadsForTeam } from '../utils/adminUploadScope';
 
-const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
+const WORKSPACE_FEATURE_LABELS: Partial<Record<WorkspaceAccessFeatureKey, string>> = {
     workspaceOndemand: 'On Demand',
     workspaceFixedRoute: 'Scheduled Transit',
     workspaceOperations: 'Operations',
@@ -99,7 +99,6 @@ const WORKSPACE_FEATURE_LABELS: Record<WorkspaceAccessFeatureKey, string> = {
     analyticsShuttlePlanner: 'Shuttle Planner',
     analyticsFarePrograms: 'Fare Programs',
     analyticsCouncilIntelligence: 'Council Intelligence',
-    operationsLoadProfiles: 'Load Profiles',
     operationsOperatorDwell: 'Dwell Incident Review',
 };
 

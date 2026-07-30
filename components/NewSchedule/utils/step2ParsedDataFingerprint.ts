@@ -12,6 +12,12 @@ const normalizeSegmentTimeBuckets = (timeBuckets: SegmentRawData['timeBuckets'])
             p50: values?.p50 ?? null,
             p80: values?.p80 ?? null,
             n: values?.n ?? null,
+            contributions: (values?.contributions || [])
+                .map(contribution => ({
+                    date: normalizeText(contribution.date),
+                    runtime: contribution.runtime,
+                }))
+                .sort((left, right) => left.date.localeCompare(right.date) || left.runtime - right.runtime),
         }))
 );
 
@@ -37,6 +43,25 @@ const normalizeAnalysisBucket = (bucket: TripBucketAnalysis) => ({
     sampleCountMode: bucket.sampleCountMode || null,
     runtimePatternKind: bucket.runtimePatternKind || null,
     runtimePatternSummary: bucket.runtimePatternSummary || null,
+    expectedSegmentCount: bucket.expectedSegmentCount ?? null,
+    observedSegmentCount: bucket.observedSegmentCount ?? null,
+    missingSegmentNames: (bucket.missingSegmentNames || []).map(normalizeText).sort(),
+    coverageCause: bucket.coverageCause || null,
+    repairedSegments: (bucket.repairedSegments || []).map(normalizeText).sort(),
+    repairSourceBuckets: (bucket.repairSourceBuckets || []).map(normalizeText).sort(),
+    contributingDays: (bucket.contributingDays || [])
+        .map(contribution => ({
+            date: normalizeText(contribution.date),
+            runtime: contribution.runtime,
+        }))
+        .sort((left, right) => left.date.localeCompare(right.date) || left.runtime - right.runtime),
+    evidence: bucket.evidence ? {
+        kind: bucket.evidence.kind,
+        qualifyingCount: bucket.evidence.qualifyingCount,
+        requiredCount: bucket.evidence.requiredCount,
+        planningEligible: bucket.evidence.planningEligible,
+        exclusionReasons: [...bucket.evidence.exclusionReasons].map(normalizeText).sort(),
+    } : null,
     details: bucket.details?.map(detail => ({
         segmentName: normalizeText(detail.segmentName),
         p50: detail.p50,
@@ -98,6 +123,7 @@ export const buildStep2ParsedDataFingerprint = (
             index,
             detectedRouteNumber: normalizeText(runtime.detectedRouteNumber || ''),
             detectedDirection: normalizeText(runtime.detectedDirection || ''),
+            ...(runtime.cycleStartDirection ? { cycleStartDirection: runtime.cycleStartDirection } : {}),
             troubleshootingPatternStatus: runtime.troubleshootingPatternStatus || null,
             sampleCountMode: runtime.sampleCountMode || null,
             runtimePatternKind: runtime.runtimePatternKind || null,
@@ -120,5 +146,5 @@ export const buildStep2ParsedDataFingerprint = (
         canonicalSegmentColumns: normalizeSegmentColumns(scope?.canonicalSegmentColumns),
     };
 
-    return `step2-parsed-data:v1:${JSON.stringify(payload)}`;
+    return `step2-parsed-data:v2:${JSON.stringify(payload)}`;
 };

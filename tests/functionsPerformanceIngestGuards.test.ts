@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   decodeCsvBodyText,
   mergeStoredPerformanceRuntimeMetadata,
@@ -6,6 +7,17 @@ import {
 } from '../functions/src/index';
 
 describe('functions performance ingest guards', () => {
+  it('requires manager or active support-edit authorization for bearer imports', () => {
+    const source = readFileSync('functions/src/index.ts', 'utf8');
+    const guard = source.match(/async function resolvePerformanceIngestActor[\s\S]*?\n\}/)?.[0] ?? '';
+
+    expect(guard).toContain("role === 'owner' || role === 'admin'");
+    expect(guard).toContain("support?.mode === 'edit'");
+    expect(guard).toContain('expiresAtMs > Date.now()');
+    expect(source).toContain('const importedBy = await resolvePerformanceIngestActor(req, teamId)');
+    expect(source).toContain('importedBy,');
+  });
+
   it('leaves plain CSV request bodies untouched', () => {
     const csv = [
       'VehicleID,RouteID,TripName,StopName,ObservedArrivalTime,TerminalDepartureTime',

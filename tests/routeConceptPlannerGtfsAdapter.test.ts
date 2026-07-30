@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildRouteConceptGtfsImportOptions,
     convertRouteConceptGtfsSelections,
     type RouteConceptGtfsPatternCandidate,
 } from '../utils/route-concept-planner/routeConceptPlannerGtfsAdapter';
@@ -202,6 +203,57 @@ describe('Route Concept Planner GTFS adapter', () => {
         expect(alternatives).toHaveLength(1);
         expect(alternatives[0]?.name).toBe('Route 2 — Weekday');
         expect(alternatives[0]?.patterns.map((pattern) => pattern.source?.routeShortName)).toEqual(['2A', '2B']);
+    });
+
+    it('shows one route option and collapses duplicate service IDs with the same alignment', () => {
+        const outbound = candidate();
+        const inbound = inboundCandidate();
+        const duplicateOutbound = candidate({
+            id: 'route-1-special-service-outbound',
+            serviceId: 'uuid-special-service',
+            dayTypeLabel: 'uuid-special-service',
+            tripCount: 30,
+        });
+        const duplicateInbound = inboundCandidate();
+        duplicateInbound.id = 'route-1-special-service-inbound';
+        duplicateInbound.serviceId = 'uuid-special-service';
+        duplicateInbound.dayTypeLabel = 'uuid-special-service';
+        duplicateInbound.tripCount = 30;
+
+        const options = buildRouteConceptGtfsImportOptions(
+            [duplicateOutbound, duplicateInbound, outbound, inbound],
+            'weekday',
+        );
+
+        expect(options).toHaveLength(1);
+        expect(options[0]).toMatchObject({
+            routeLabel: 'Route 1',
+            complete: true,
+        });
+        expect(options[0]?.directions).toHaveLength(2);
+        expect(options[0]?.directions.map((direction) => direction.variants.length)).toEqual([1, 1]);
+        expect(options[0]?.directions.map((direction) => direction.recommendedPatternId)).toEqual([
+            outbound.id,
+            inbound.id,
+        ]);
+    });
+
+    it('keeps genuinely different stop alignments available for optional review', () => {
+        const alternate = candidate({
+            id: 'route-1-outbound-via-hospital',
+            tripCount: 12,
+            stops: [
+                { id: 'gtfs-a-1', gtfsStopId: 'a', name: 'Alpha', lat: 44.37, lng: -79.70, sequence: 1 },
+                { id: 'gtfs-h-2', gtfsStopId: 'hospital', name: 'Hospital', lat: 44.38, lng: -79.67, sequence: 2 },
+                { id: 'gtfs-c-3', gtfsStopId: 'c', name: 'Charlie', lat: 44.39, lng: -79.68, sequence: 3 },
+            ],
+        });
+
+        const [option] = buildRouteConceptGtfsImportOptions([candidate(), alternate, inboundCandidate()], 'weekday');
+        const outbound = option?.directions.find((direction) => direction.role === 'outbound');
+
+        expect(outbound?.variants).toHaveLength(2);
+        expect(outbound?.recommendedPatternId).toBe('route-1-weekday-outbound');
     });
 
     it('allows several route groups and never introduces Camp or rider-manifest fields', () => {

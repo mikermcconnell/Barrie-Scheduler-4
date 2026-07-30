@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { aggregateDailySummaries } from '../utils/performanceDataAggregator';
-import { classifyOTP, parseDayType, OTP_THRESHOLDS, DEFAULT_LOAD_CAP } from '../utils/performanceDataTypes';
+import { classifyOTP, parseDayType, DEFAULT_LOAD_CAP } from '../utils/performanceDataTypes';
 import type { STREETSRecord } from '../utils/performanceDataTypes';
 import { buildRidershipStopProfiles } from '../utils/performanceRidershipStopProfile';
 
@@ -859,18 +859,21 @@ describe('APC load sanitization', () => {
         expect(summaries[0].dataQuality.loadCapped).toBe(2);
     });
 
-    it('excludes apcSource === 0 records from load calculations', () => {
+    it('excludes records without a positive APC source from load calculations', () => {
         const records = [
             makeRecord({ departureLoad: 50, apcSource: 1, boardings: 5 }),
             makeRecord({ departureLoad: 30, apcSource: 0, boardings: 3 }),  // no APC
+            makeRecord({ departureLoad: 60, apcSource: -1, boardings: 2 }), // missing APCSource column value
         ];
         const summaries = aggregateDailySummaries(records);
         // Only the apcSource=1 record contributes to load
         expect(summaries[0].system.avgSystemLoad).toBe(50);
         expect(summaries[0].system.peakLoad).toBe(50);
         // But boardings still count for ridership
-        expect(summaries[0].system.totalRidership).toBe(8);
-        expect(summaries[0].system.totalBoardings).toBe(8);
+        expect(summaries[0].system.totalRidership).toBe(10);
+        expect(summaries[0].system.totalBoardings).toBe(10);
+        expect(summaries[0].dataQuality.missingAPC).toBe(2);
+        expect(summaries[0].dataQuality.apcExcludedFromLoad).toBe(2);
     });
 
     it('includes APC-backed zero loads in averages', () => {
@@ -897,13 +900,14 @@ describe('APC load sanitization', () => {
         expect(summaries[0].dataQuality.apcExcludedFromLoad).toBe(2);
     });
 
-    it('only counts apcSource === 0 toward apcExcludedFromLoad', () => {
+    it('counts every non-positive APC source toward apcExcludedFromLoad', () => {
         const records = [
             makeRecord({ apcSource: 1, departureLoad: 0 }),
             makeRecord({ apcSource: 0, departureLoad: 25 }),
+            makeRecord({ apcSource: -1, departureLoad: 50 }),
         ];
         const summaries = aggregateDailySummaries(records);
-        expect(summaries[0].dataQuality.apcExcludedFromLoad).toBe(1);
+        expect(summaries[0].dataQuality.apcExcludedFromLoad).toBe(2);
     });
 
     it('excludes apcSource === 0 from route-level load metrics', () => {
@@ -935,5 +939,50 @@ describe('APC load sanitization', () => {
         const summaries = aggregateDailySummaries(records);
         const trip = summaries[0].byTrip.find(t => t.tripId === 'T1');
         expect(trip?.maxLoad).toBe(30);
+    });
+
+    it('keeps distinct same-time trips in separate heatmap columns', () => {
+        const summaries = aggregateDailySummaries([
+            makeRecord({ tripId: 'same-time-a', internalTripId: 101, terminalDepartureTime: '08:00', block: 'A', boardings: 3, alightings: 0 }),
+            makeRecord({ tripId: 'same-time-b', internalTripId: 102, terminalDepartureTime: '08:00', block: 'B', boardings: 7, alightings: 1 }),
+        ]);
+        const heatmap = summaries[0].ridershipHeatmaps![0];
+
+        expect(heatmap.trips).toHaveLength(2);
+        expect(heatmap.trips.map(trip => trip.tripId)).toEqual(['same-time-a', 'same-time-b']);
+        expect(heatmap.trips.map(trip => trip.block)).toEqual(['A', 'B']);
+        expect(heatmap.cells[0]).toEqual([[3, 0], [7, 1]]);
+    });
+
+    it('uses internal trip identity when source TripID is blank', () => {
+        const summaries = aggregateDailySummaries([
+            makeRecord({ tripId: '', internalTripId: 101, terminalDepartureTime: '08:00', boardings: 2 }),
+            makeRecord({ tripId: '', internalTripId: 102, terminalDepartureTime: '08:00', boardings: 4 }),
+        ]);
+
+        expect(summaries[0].ridershipHeatmaps![0].trips.map(trip => trip.tripId))
+            .toEqual(['internal:101', 'internal:102']);
+    });
+
+    it('applies default and vehicle-specific capacity and stores the applied policy', () => {
+        const summaries = aggregateDailySummaries([
+            makeRecord({ tripId: 'default-cap', vehicleId: '2301', departureLoad: 90 }),
+            makeRecord({ tripId: 'override-cap', vehicleId: '2401', terminalDepartureTime: '09:00', departureLoad: 90 }),
+        ], undefined, {
+            defaultCapacity: 70,
+            vehicleCapacities: { '2401': 45 },
+            version: 3,
+            updatedAt: '',
+            updatedBy: 'manager',
+        });
+        const heatmapTrips = summaries[0].ridershipHeatmaps![0].trips;
+
+        expect(summaries[0].system.peakLoad).toBe(70);
+        expect(summaries[0].dataQuality.loadCapped).toBe(2);
+        expect(summaries[0]).toMatchObject({ defaultLoadCapacity: 70, loadCapacityConfigVersion: 3 });
+        expect(heatmapTrips).toEqual(expect.arrayContaining([
+            expect.objectContaining({ tripId: 'default-cap', vehicleId: '2301', capacity: 70 }),
+            expect.objectContaining({ tripId: 'override-cap', vehicleId: '2401', capacity: 45 }),
+        ]));
     });
 });

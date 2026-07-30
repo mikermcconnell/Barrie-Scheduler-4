@@ -88,6 +88,22 @@ export interface RouteConceptGtfsPatternCandidate {
     };
 }
 
+export type RouteConceptGtfsImportRole = 'outbound' | 'inbound' | 'loop';
+
+export interface RouteConceptGtfsImportDirectionOption {
+    role: RouteConceptGtfsImportRole;
+    variants: RouteConceptGtfsPatternCandidate[];
+    recommendedPatternId: string;
+}
+
+export interface RouteConceptGtfsImportOption {
+    id: string;
+    routeLabel: string;
+    dayType: RouteConceptDayType;
+    directions: RouteConceptGtfsImportDirectionOption[];
+    complete: boolean;
+}
+
 export interface LoadRouteConceptGtfsPatternsOptions {
     feedUrl?: string;
     fetchImpl?: typeof fetch;
@@ -234,11 +250,102 @@ function getDayGroupKey(pattern: RouteConceptGtfsPatternCandidate): string {
         : `service:${pattern.serviceId}`;
 }
 
-function getPatternRole(pattern: RouteConceptGtfsPatternCandidate): RouteConceptPatternRole {
+function getPatternRole(pattern: RouteConceptGtfsPatternCandidate): RouteConceptGtfsImportRole {
     if (isClosedPattern(pattern)) return 'loop';
     if (pattern.routeFamily?.directionRole === 'back') return 'inbound';
     if (pattern.routeFamily?.directionRole === 'out') return 'outbound';
     return pattern.directionId === 1 ? 'inbound' : 'outbound';
+}
+
+function compareImportCandidates(
+    left: RouteConceptGtfsPatternCandidate,
+    right: RouteConceptGtfsPatternCandidate,
+): number {
+    const recognizedDayCompare = Number(hasRecognizedDayType(right.dayTypeLabel, right.serviceId))
+        - Number(hasRecognizedDayType(left.dayTypeLabel, left.serviceId));
+    if (recognizedDayCompare !== 0) return recognizedDayCompare;
+
+    const tripCompare = right.tripCount - left.tripCount;
+    if (tripCompare !== 0) return tripCompare;
+
+    const stopCompare = right.stops.length - left.stops.length;
+    if (stopCompare !== 0) return stopCompare;
+
+    const leftSpan = (left.lastDepartureMinutes ?? 0) - (left.firstDepartureMinutes ?? 0);
+    const rightSpan = (right.lastDepartureMinutes ?? 0) - (right.firstDepartureMinutes ?? 0);
+    const spanCompare = rightSpan - leftSpan;
+    return spanCompare || left.id.localeCompare(right.id);
+}
+
+function getImportVariantKey(pattern: RouteConceptGtfsPatternCandidate): string {
+    const stopSequence = pattern.stops.map((stop) => stop.gtfsStopId).join('>');
+    const alignment = pattern.shapePoints.length > 0
+        ? stableHash(pattern.shapePoints
+            .map((point) => `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`)
+            .join('>'))
+        : pattern.shapeId ?? 'no-shape';
+    return `${pattern.routeShortName}|${getPatternRole(pattern)}|${stopSequence}|${alignment}`;
+}
+
+/**
+ * Turn technical GTFS patterns into one user-facing complete-route option.
+ * Duplicate service IDs with the same stops/alignment collapse to one candidate;
+ * genuinely different stop sequences or alignments remain available as variants.
+ */
+export function buildRouteConceptGtfsImportOptions(
+    patterns: readonly RouteConceptGtfsPatternCandidate[],
+    dayType: RouteConceptDayType,
+): RouteConceptGtfsImportOption[] {
+    const groups = new Map<string, RouteConceptGtfsPatternCandidate[]>();
+    patterns
+        .filter((pattern) => pattern.dayType === dayType)
+        .forEach((pattern) => {
+            const key = getRouteGroupKey(pattern);
+            groups.set(key, [...(groups.get(key) ?? []), pattern]);
+        });
+
+    return [...groups.entries()].map(([groupKey, candidates]) => {
+        const roleGroups = new Map<RouteConceptGtfsImportRole, RouteConceptGtfsPatternCandidate[]>();
+        candidates.forEach((candidate) => {
+            const role = getPatternRole(candidate);
+            roleGroups.set(role, [...(roleGroups.get(role) ?? []), candidate]);
+        });
+
+        const roleOrder: RouteConceptGtfsImportRole[] = ['outbound', 'inbound', 'loop'];
+        const directions = roleOrder.flatMap((role): RouteConceptGtfsImportDirectionOption[] => {
+            const roleCandidates = roleGroups.get(role) ?? [];
+            if (roleCandidates.length === 0) return [];
+
+            const variants = new Map<string, RouteConceptGtfsPatternCandidate[]>();
+            roleCandidates.forEach((candidate) => {
+                const key = getImportVariantKey(candidate);
+                variants.set(key, [...(variants.get(key) ?? []), candidate]);
+            });
+            const representatives = [...variants.values()]
+                .map((matches) => [...matches].sort(compareImportCandidates)[0]!)
+                .sort(compareImportCandidates);
+
+            return [{
+                role,
+                variants: representatives,
+                recommendedPatternId: representatives[0]!.id,
+            }];
+        });
+        const first = [...candidates].sort(compareImportCandidates)[0]!;
+        const hasLoop = directions.some((direction) => direction.role === 'loop');
+        const complete = hasLoop
+            ? directions.length === 1
+            : directions.some((direction) => direction.role === 'outbound')
+                && directions.some((direction) => direction.role === 'inbound');
+
+        return {
+            id: `${groupKey}|${dayType}`,
+            routeLabel: first.routeFamily?.name ?? `Route ${first.routeShortName}`,
+            dayType,
+            directions,
+            complete,
+        };
+    }).sort((left, right) => left.routeLabel.localeCompare(right.routeLabel, undefined, { numeric: true }));
 }
 
 function remapScenario(

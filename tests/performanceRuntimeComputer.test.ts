@@ -1468,6 +1468,102 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(analysis[0].expectedSegmentCount).toBe(4);
     });
 
+    it('builds South-start paired-cycle evidence independently across five complete days', () => {
+        const summaries = Array.from({ length: 5 }, (_, index) => makeSummary({
+            date: `2026-02-${String(index + 2).padStart(2, '0')}`,
+            dayType: 'weekday',
+            routeNames: { '7A': 'North', '7B': 'South' },
+            tripEntries: [
+                {
+                    tripId: `south-${index}`,
+                    tripName: '7B 05:00',
+                    routeId: '7B',
+                    direction: 'S',
+                    terminalDepartureTime: '05:00',
+                    segments: [{
+                        fromStopId: 'b', toStopId: 'a', fromRouteStopIndex: 0, toRouteStopIndex: 1,
+                        runtimeMinutes: 20, timeBucket: '05:00',
+                    }],
+                },
+                {
+                    tripId: `north-${index}`,
+                    tripName: '7A 05:25',
+                    routeId: '7A',
+                    direction: 'N',
+                    terminalDepartureTime: '05:25',
+                    segments: [{
+                        fromStopId: 'a', toStopId: 'b', fromRouteStopIndex: 0, toRouteStopIndex: 1,
+                        runtimeMinutes: 22, timeBucket: '05:00',
+                    }],
+                },
+            ],
+        }));
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['B', 'A'] },
+            fullPatternOnly: true,
+        });
+        const southStartResults = result.filter(runtime => runtime.cycleStartDirection === 'South');
+
+        expect(southStartResults).toHaveLength(2);
+        expect(southStartResults.map(runtime => runtime.detectedDirection).sort()).toEqual(['North', 'South']);
+        expect(southStartResults.every(runtime => runtime.allTimeBuckets.includes('05:00'))).toBe(true);
+        expect(southStartResults[0].segments[0].timeBuckets['05:00'].n).toBe(5);
+        expect(calculateTotalTripTimes(southStartResults)[0].contributingDays).toHaveLength(5);
+
+        const fourDayResults = computeRuntimesFromPerformance(summaries.slice(0, 4), {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['B', 'A'] },
+            fullPatternOnly: true,
+        }).filter(runtime => runtime.cycleStartDirection === 'South');
+        expect(calculateTotalTripTimes(fourDayResults)[0].evidence?.planningEligible).toBe(false);
+    });
+
+    it('keeps a canonical cycle stable when history adds a harmless raw stop variation', () => {
+        const makeDay = (date: string, withExtraStop: boolean) => makeSummary({
+            date, dayType: 'weekday', routeNames: { '12A': '12A', '12B': '12B' },
+            stopEntries: [
+                { routeId: '12A', direction: 'N', fromStopId: 'a', toStopId: 'b', fromStopName: 'A', toStopName: 'B', fromRouteStopIndex: 1, toRouteStopIndex: 2, segmentName: 'A to B', observations: [] },
+                { routeId: '12A', direction: 'N', fromStopId: 'x', toStopId: 'b', fromStopName: 'Extra', toStopName: 'B', fromRouteStopIndex: 2, toRouteStopIndex: 3, segmentName: 'Extra to B', observations: [] },
+                { routeId: '12B', direction: 'S', fromStopId: 'c', toStopId: 'd', fromStopName: 'C', toStopName: 'D', fromRouteStopIndex: 1, toRouteStopIndex: 2, segmentName: 'C to D', observations: [] },
+            ],
+            tripEntries: [
+                {
+                    tripId: `${date}-n`, tripName: '12A 10:25', routeId: '12A', direction: 'N', terminalDepartureTime: '10:25',
+                    segments: withExtraStop
+                        ? [
+                            { fromStopId: 'a', toStopId: 'x', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 25, timeBucket: '10:00' },
+                            { fromStopId: 'x', toStopId: 'b', fromRouteStopIndex: 2, toRouteStopIndex: 3, runtimeMinutes: 30, timeBucket: '10:30' },
+                        ]
+                        : [{ fromStopId: 'a', toStopId: 'b', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 55, timeBucket: '10:00' }],
+                },
+                {
+                    tripId: `${date}-s`, tripName: '12B 10:52', routeId: '12B', direction: 'S', terminalDepartureTime: '10:52',
+                    segments: [{ fromStopId: 'c', toStopId: 'd', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 60.93, timeBucket: '10:30' }],
+                },
+            ],
+        });
+        const options = {
+            routeId: '12', dayType: 'weekday' as const, fullPatternOnly: true,
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['C', 'D'] },
+        };
+        const day = makeDay('2026-04-01', true);
+        const alone = calculateTotalTripTimes(computeRuntimesFromPerformance([day], options));
+        const withHistory = calculateTotalTripTimes(computeRuntimesFromPerformance([day, makeDay('2026-04-02', false)], options));
+
+        expect(alone.map(bucket => bucket.timeBucket)).toEqual(['10:00']);
+        expect(alone[0].observedCycleP50).toBe(115.93);
+        expect(withHistory.map(bucket => bucket.timeBucket)).toEqual(['10:00']);
+        expect(withHistory[0].observedCycleP50).toBe(115.93);
+
+        const northOnly = makeDay('2026-04-03', false);
+        northOnly.tripStopSegmentRuntimes!.entries = northOnly.tripStopSegmentRuntimes!.entries.filter(entry => entry.routeId === '12A');
+        expect(computeRuntimesFromPerformance([northOnly], options)).toEqual([]);
+    });
+
     it('keeps Route 7 handoff segments on the outbound chain so Step 2 does not lose one return segment', () => {
         const canonicalDirectionStops = getUsableCanonicalDirectionStops('7', {
             North: ['Park Place', 'Peggy Hill Community Centre', 'Allandale GO Station', 'Downtown', 'Georgian College'],
@@ -1677,6 +1773,10 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
             'Georgian Mall to Downtown',
             'Downtown to Barrie South GO',
         ]);
+        expect(calculateTotalTripTimes(detourFallback)[0].evidence).toMatchObject({
+            planningEligible: false,
+            exclusionReasons: expect.arrayContaining(['Detour evidence is troubleshooting-only']),
+        });
     });
 
     it('prefers normal pattern runtimes when normal and detour evidence both exist', () => {
@@ -2037,8 +2137,9 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(analysis[0].totalP50).toBe(63);
 
         const { buckets, bands } = calculateBands(analysis);
-        expect(buckets[0].assignedBand).toBe('A');
-        expect(bands.find(band => band.id === 'A')?.count).toBe(1);
+        expect(buckets[0].assignedBand).toBeUndefined();
+        expect(buckets[0].evidence).toMatchObject({ qualifyingCount: 1, requiredCount: 5, planningEligible: false });
+        expect(bands.find(band => band.id === 'A')?.count).toBe(0);
     });
 
     it('treats stop-level bucket windows as half-hour ranges when pairing stop-only cycles', () => {

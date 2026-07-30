@@ -114,7 +114,7 @@ describe('workspace access', () => {
 
         expect(allowed).toContain('analyticsRoutePlanner2');
         expect(allowed).toContain('analyticsCouncilIntelligence');
-        expect(allowed).toContain('operationsLoadProfiles');
+        expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).toContain('operationsOperatorDwell');
         expect(allowed).toContain('workspaceParking');
         expect(allowed).not.toContain('analyticsCorridorSpeed');
@@ -122,6 +122,14 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsNetworkConnections');
         expect(allowed).not.toContain('analyticsShuttlePlanner');
         expect(allowed).not.toContain('analyticsRouteConceptPlanner');
+    });
+
+    it('keeps the legacy Load Profiles key non-assignable while honoring stored overrides', () => {
+        expect(canAccessWorkspaceFeature('operationsLoadProfiles', member({ accessLevel: 'internal' }))).toBe(false);
+        expect(canAccessWorkspaceFeature('operationsLoadProfiles', member({
+            accessLevel: 'production',
+            workspaceOverrides: { operationsLoadProfiles: true },
+        }))).toBe(true);
     });
 
     it('lets internal users access unfinished workspaces when globally enabled', () => {

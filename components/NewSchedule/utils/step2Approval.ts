@@ -4,6 +4,7 @@ import type {
     Step2ReviewResult,
     Step2SourceSnapshot,
 } from './step2ReviewTypes';
+import { evaluateRuntimeBucketEligibility } from '../../../utils/ai/runtimeEvidenceEligibility';
 
 export interface Step2ApprovalCreationInput {
     reviewResult: Step2ReviewResult;
@@ -49,6 +50,10 @@ export const canCreateStep2Approval = (input: Step2ApprovalCreationInput): boole
     if (reviewResult.planning.usableBucketCount <= 0) return false;
     if (reviewResult.planning.usableBandCount <= 0) return false;
     if (!hasUsableCanonicalDirectionStops(reviewResult.planning.canonicalDirectionStops)) return false;
+    if (reviewResult.planning.approvedBuckets.length <= 0) return false;
+    if (reviewResult.planning.approvedBuckets.some(bucket => !evaluateRuntimeBucketEligibility(bucket, {
+        requireAssignedBand: true,
+    }).eligible)) return false;
 
     return true;
 };
@@ -76,10 +81,17 @@ export const createStep2ApprovedRuntimeContract = (
         stopOrderDecision: sourceSnapshot.stopOrderDecision,
         stopOrderConfidence: sourceSnapshot.stopOrderConfidence,
         stopOrderSource: sourceSnapshot.stopOrderSource,
+        canonicalRouteSource: sourceSnapshot.canonicalRouteSource
+            ? {
+                type: sourceSnapshot.canonicalRouteSource.type,
+                routeIdentity: sourceSnapshot.canonicalRouteSource.routeIdentity?.trim(),
+                versionHint: sourceSnapshot.canonicalRouteSource.versionHint?.trim(),
+            }
+            : undefined,
     };
 
     return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         routeIdentity: reviewResult.routeIdentity,
         routeNumber: reviewResult.routeNumber,
         dayType: reviewResult.dayType,
@@ -93,5 +105,6 @@ export const createStep2ApprovedRuntimeContract = (
         sourceSnapshot: cloneSnapshotValue(normalizedSourceSnapshot),
         planning: cloneSnapshotValue(reviewResult.planning),
         healthSnapshot: cloneSnapshotValue(reviewResult.health),
+        troubleshootingSnapshot: cloneSnapshotValue(reviewResult.troubleshooting),
     };
 };

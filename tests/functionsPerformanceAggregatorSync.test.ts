@@ -63,7 +63,23 @@ describe('functions performance aggregation stays aligned with app runtime logic
 
   it('keeps the performance schema version constant in sync', () => {
     expect(BACKEND_SCHEMA_VERSION).toBe(FRONTEND_SCHEMA_VERSION);
-    expect(BACKEND_SCHEMA_VERSION).toBe(13);
+    expect(BACKEND_SCHEMA_VERSION).toBe(14);
+  });
+
+  it('keeps missing APC source handling aligned and excludes it from load', () => {
+    const records = [
+      makeRecord({ departureLoad: 40, apcSource: 1 }),
+      makeRecord({ departureLoad: 60, apcSource: -1 }),
+    ];
+
+    const frontend = aggregateFrontend(records)[0];
+    const backend = aggregateBackend(records as any)[0];
+
+    expect(backend.system).toEqual(frontend.system);
+    expect(frontend.system.avgSystemLoad).toBe(40);
+    expect(backend.dataQuality).toEqual(frontend.dataQuality);
+    expect(frontend.dataQuality.missingAPC).toBe(1);
+    expect(frontend.dataQuality.apcExcludedFromLoad).toBe(1);
   });
 
   it('retains load profiles in ridership detail mode for direct and shared reads', () => {
@@ -113,6 +129,31 @@ describe('functions performance aggregation stays aligned with app runtime logic
     expect(backend.loadProfiles).toEqual(frontend.loadProfiles);
     expect(frontend.ridershipHeatmaps![0].multipleStopPatterns).toBe(true);
     expect(frontend.ridershipHeatmaps![0].stops.filter(stop => stop.stopId === 'A').map(stop => stop.occurrenceIndex)).toEqual([0, 1]);
+  });
+
+  it('keeps same-time trip identity and capacity policy aligned server-side', () => {
+    const records = [
+      makeRecord({ tripId: 'same-a', internalTripId: 11, terminalDepartureTime: '08:00', block: 'A', vehicleId: '2301', boardings: 3, departureLoad: 80 }),
+      makeRecord({ tripId: 'same-b', internalTripId: 12, terminalDepartureTime: '08:00', block: 'B', vehicleId: '2401', boardings: 7, departureLoad: 80 }),
+    ];
+    const config = {
+      defaultCapacity: 70,
+      vehicleCapacities: { '2401': 40 },
+      version: 2,
+      updatedAt: '',
+      updatedBy: 'manager',
+    };
+
+    const frontend = aggregateFrontend(structuredClone(records), undefined, config)[0];
+    const backend = aggregateBackend(structuredClone(records) as any, config)[0];
+
+    expect(backend).toEqual(frontend);
+    expect(frontend.ridershipHeatmaps![0].trips).toHaveLength(2);
+    expect(frontend.ridershipHeatmaps![0].cells[0]).toEqual([[3, 1], [7, 1]]);
+    expect(frontend.ridershipHeatmaps![0].trips).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tripId: 'same-a', capacity: 70 }),
+      expect.objectContaining({ tripId: 'same-b', capacity: 40 }),
+    ]));
   });
 
   it('uses downstream departure for non-terminal timepoint segments and downstream arrival at the terminal', () => {

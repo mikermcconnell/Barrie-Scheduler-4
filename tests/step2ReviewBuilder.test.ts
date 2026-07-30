@@ -68,6 +68,11 @@ describe('step2ReviewBuilder', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days' as const,
+                expectedSegmentCount: 4,
+                observedSegmentCount: 4,
+                coverageCause: 'complete' as const,
+                contributingDays: ['01', '02', '03', '04', '05', '06'].map(date => ({ date: `2026-03-${date}`, runtime: 98 })),
+                evidence: { kind: 'paired-cycle' as const, qualifyingCount: 6, requiredCount: 5, planningEligible: true, exclusionReasons: [] as string[] },
                 details: [
                     { segmentName: 'Park Place to Peggy Hill Community Centre', p50: 14, p80: 16, n: 6 },
                     { segmentName: 'Peggy Hill Community Centre to Allandale GO Station', p50: 16, p80: 18, n: 6 },
@@ -116,7 +121,17 @@ describe('step2ReviewBuilder', () => {
             runtimeDiagnostics: diagnostics,
         };
 
-        const result = buildStep2ReviewResult(input);
+        const southStartAnalysis = input.analysis.map(bucket => ({
+            ...bucket,
+            timeBucket: '05:00 - 05:29',
+        }));
+        const result = buildStep2ReviewResult({
+            ...input,
+            cycleAnalysisByStartDirection: {
+                North: input.analysis,
+                South: southStartAnalysis,
+            },
+        });
         const expectedHealth = result.health;
         const approvedRuntimeModel = buildApprovedRuntimeModel({
             dayType: input.dayType,
@@ -161,6 +176,8 @@ describe('step2ReviewBuilder', () => {
             },
         });
         expect(result.plannerOverrides.excludedBuckets).toEqual(['06:30 - 06:59', '07:00 - 07:29']);
+        expect(result.planning.approvedCycleBucketsByStartDirection?.North).toHaveLength(1);
+        expect(result.planning.approvedCycleBucketsByStartDirection?.South?.[0].timeBucket).toBe('05:00 - 05:29');
         expect(result.troubleshooting.fallbackWarning).toBe('Full-route troubleshooting path not confirmed');
         expect(result.troubleshooting.canRenderFullPath).toBe(false);
         expect(result.troubleshooting.matrixAnalysis).toHaveLength(1);
@@ -210,6 +227,11 @@ describe('step2ReviewBuilder', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days',
+                expectedSegmentCount: 2,
+                observedSegmentCount: 2,
+                coverageCause: 'complete' as const,
+                contributingDays: ['01', '02', '03', '04', '05', '06'].map(date => ({ date: `2026-03-${date}`, runtime: 30 })),
+                evidence: { kind: 'paired-cycle' as const, qualifyingCount: 6, requiredCount: 5, planningEligible: true, exclusionReasons: [] },
                 details: [
                     { segmentName: 'Park Place to Downtown Hub', p50: 15, p80: 18, n: 6 },
                     { segmentName: 'Downtown Hub to Park Place', p50: 15, p80: 17, n: 6 },
@@ -316,6 +338,11 @@ describe('step2ReviewBuilder', () => {
                 isOutlier: false,
                 ignored: false,
                 sampleCountMode: 'days',
+                expectedSegmentCount: 2,
+                observedSegmentCount: 2,
+                coverageCause: 'complete',
+                contributingDays: ['01', '02', '03', '04', '05', '06'].map(date => ({ date: `2026-03-${date}`, runtime: 30 })),
+                evidence: { kind: 'paired-cycle', qualifyingCount: 6, requiredCount: 5, planningEligible: true, exclusionReasons: [] },
                 details: [
                     { segmentName: 'Park Place to Downtown Hub', p50: 15, p80: 18, n: 6 },
                     { segmentName: 'Downtown Hub to Park Place', p50: 15, p80: 17, n: 6 },

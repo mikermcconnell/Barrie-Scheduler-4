@@ -22,7 +22,7 @@ Primary app shells today:
 
 Scheduled Transit also includes **Detour Publisher**, a team-shared, map-first tool for creating fixed-route detour and stop-closure notices from current GTFS patterns. It exports public communication packages but does not modify schedules, GTFS, or MyRide directly.
 
-Adjacent planning-data workspaces include Route Planner 2, the internal-beta Route Concept Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, Fare Programs, Council Intelligence, and related exploratory tools. Fare Programs summarizes fare-program usage while keeping proxy geography visibly separate from confirmed rider or school identity. Council Intelligence is a transit-first, evidence-led internal pilot: official named votes and sourced statements may inform profiles, while missing evidence stays unknown and AI or procedural signals must never be presented as official councillor votes.
+Adjacent planning-data workspaces include Camp Shuttle Planner (`Route Planner 2` internally), the internal-beta Route Concept Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, Fare Programs, Council Intelligence, and related exploratory tools. Fare Programs summarizes fare-program usage while keeping proxy geography visibly separate from confirmed rider or school identity. Council Intelligence is a transit-first, evidence-led internal pilot: official named votes and sourced statements may inform profiles, while missing evidence stays unknown and AI or procedural signals must never be presented as official councillor votes.
 
 Use this document for the overall product frame and the fixed-route core workflow. Use feature-specific product briefs and UI specs for narrower planning-data modules when those tasks are directly relevant.
 
@@ -42,7 +42,7 @@ Load these only when the task is directly related:
 
 - `docs/DETOUR_PUBLISHER.md` for detour and stop-closure notice authoring
 - `docs/route-concept-planner/README.md` and its contract docs for neutral complete-route concept testing
-- `docs/route-planner-2/README.md` and numbered docs for current Route Planner 2 work
+- `docs/route-planner-2/README.md` and numbered docs for current Camp Shuttle Planner work
 - `docs/route-planner-legacy/README.md` only for historical old Route Planner background
 - `docs/SHUTTLE_PLANNER_PRD.md`
 - `docs/SHUTTLE_PLANNER_UI_SPEC.md`
@@ -54,7 +54,7 @@ Load these only when the task is directly related:
 
 ## Route-planning boundary
 
-- **Route Planner 2** is the working Camp route-planning tool. Preserve its Camp workflows, storage, exports, navigation, and behaviour.
+- **Camp Shuttle Planner** (`Route Planner 2` internally) is the working Camp and address-based shuttle route-planning tool. Preserve its workflows, storage, exports, navigation, and behaviour.
 - **Route Concept Planner** is a separate internal-beta workspace for testing complete fixed-route alternatives with scheduled GTFS evidence, Mapbox road-time estimates, and confirmed planner overrides.
 - Route Concept Planner supports feasibility and comparison only. It does not create schedules, modify/publish GTFS, estimate operating cost, or include Camp/address-manifest workflows.
 

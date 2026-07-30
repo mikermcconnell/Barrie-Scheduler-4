@@ -108,8 +108,8 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
     },
     {
         feature: 'analyticsRoutePlanner2',
-        label: 'Route Planner',
-        description: 'Route concept planning workspace.',
+        label: 'Camp Shuttle Planner',
+        description: 'Camp and address-based shuttle route planning workspace.',
         previewKind: 'analytics-card',
     },
     {
@@ -139,12 +139,6 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
 ];
 
 const OPERATIONS_TOOLS: WorkspacePreviewItem[] = [
-    {
-        feature: 'operationsLoadProfiles',
-        label: 'Load Profiles',
-        description: 'Passenger load profile analysis.',
-        previewKind: 'operations-tool',
-    },
     {
         feature: 'operationsOperatorDwell',
         label: 'Operator Dwell',

@@ -58,7 +58,7 @@ Load feature docs only when the task directly touches that feature.
 
 ### Planning-data workspaces
 
-- Route Planner 2: start with `docs/route-planner-2/README.md`, then load only the numbered docs selected by its task router
+- Camp Shuttle Planner (`Route Planner 2` internally): start with `docs/route-planner-2/README.md`, then load only the numbered docs selected by its task router
 - Route Concept Planner: `docs/route-concept-planner/README.md`, then its product and technical contracts
 - Shuttle Planner: use `docs/SHUTTLE_PLANNER_PRD.md` for product/domain work; add `docs/SHUTTLE_PLANNER_UI_SPEC.md` only for UI, interaction, or layout work
 - Network Connections: use `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md` for product/domain work; add `docs/NETWORK_CONNECTIONS_UI_SPEC.md` only for UI, interaction, or layout work
@@ -68,8 +68,8 @@ Load feature docs only when the task directly touches that feature.
 
 ### Important route-planning boundaries
 
-- Route Planner 2 is the current Camp route-planning tool.
-- Route Concept Planner is a separate neutral internal-beta workspace. Do not change Route Planner 2 as part of Route Concept Planner work.
+- Camp Shuttle Planner is the current Camp and address-based shuttle route-planning tool; its internal code name remains `Route Planner 2`.
+- Route Concept Planner is a separate neutral internal-beta workspace. Do not change Camp Shuttle Planner as part of Route Concept Planner work.
 - `docs/route-planner-legacy/` is historical background only. Remaining `utils/route-planner/` code supports legacy-dependent features and is not the Route Planner 2 implementation.
 
 ## Document tiers

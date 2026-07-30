@@ -21,6 +21,7 @@ import {
 } from '../../utils/performanceDataTypes';
 import { compareDateStrings } from '../../utils/performanceDateUtils';
 import { auth } from '../../utils/firebase';
+import { getEffectivePerformanceLoadCapacityConfig } from '../../utils/performanceLoadConfigService';
 
 interface PerformanceImportProps {
     teamId: string;
@@ -186,10 +187,11 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
 
             setProgress(65);
             setProgressText('Aggregating daily summaries...');
+            const loadCapacityConfig = await getEffectivePerformanceLoadCapacityConfig(teamId);
             const dailySummaries = aggregateDailySummaries(records, (p) => {
                 setProgress(65 + Math.round((p.current / p.total) * 15));
                 setProgressText(`Aggregating: ${p.phase}`);
-            });
+            }, loadCapacityConfig);
 
             // Enrich with GTFS missed trips
             for (const day of dailySummaries) {

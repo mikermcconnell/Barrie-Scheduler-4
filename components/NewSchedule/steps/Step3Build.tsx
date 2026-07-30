@@ -1,10 +1,10 @@
 
 import React from 'react';
 import { TimeBand, TripBucketAnalysis } from '../../../utils/ai/runtimeAnalysis';
-import { Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database } from 'lucide-react';
+import { Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database, RefreshCw, RotateCcw, FilePlus2, Info, Lock } from 'lucide-react';
 import { getMasterSchedule } from '../../../utils/services/masterScheduleService';
-import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
-import { resolveBlockStartDirection, shouldShowStartDirectionForRoute, normalizeDirectionHint, inferBlockStartDirection } from '../utils/blockStartDirection';
+import type { MasterScheduleEntry, RouteIdentity } from '../../../utils/masterScheduleTypes';
+import { shouldShowStartDirectionForRoute, normalizeDirectionHint, inferBlockStartDirection } from '../utils/blockStartDirection';
 import { computeSuggestedStrictCycle } from '../../../utils/schedule/strictCycleSuggestion';
 import { detectMasterCycleMode, type MasterCycleModeDetection } from '../../../utils/schedule/masterCycleMode';
 import { buildStep2ApprovedRuntimeModelFromContract } from '../utils/step2ApprovedRuntimeModelAdapter';
@@ -60,9 +60,30 @@ interface Step3Props {
     stopSuggestions?: string[];
     autofillFromMaster: boolean;
     onAutofillFromMasterChange: (value: boolean) => void;
+    onChangeRoute?: () => void;
 }
 
 const START_STOP_SUGGESTIONS_ID = 'start-stop-suggestions';
+
+const blocksMatch = (left: BlockConfig, right: BlockConfig): boolean => (
+    left.id === right.id
+    && left.startTime === right.startTime
+    && left.endTime === right.endTime
+    && (left.startStop || '') === (right.startStop || '')
+    && (left.endStop || '') === (right.endStop || '')
+    && (left.startDirection || '') === (right.startDirection || '')
+);
+
+const isNextDayBlockEnd = (startTime: string, endTime: string): boolean => {
+    const toMinutes = (value: string): number | null => {
+        const match = value.match(/^(\d{2}):(\d{2})$/);
+        if (!match) return null;
+        return (Number(match[1]) * 60) + Number(match[2]);
+    };
+    const start = toMinutes(startTime);
+    const end = toMinutes(endTime);
+    return start !== null && end !== null && end < 240 && end < start;
+};
 
 export const Step3Build: React.FC<Step3Props> = ({
     dayType,
@@ -74,7 +95,8 @@ export const Step3Build: React.FC<Step3Props> = ({
     teamId,
     stopSuggestions = [],
     autofillFromMaster,
-    onAutofillFromMasterChange
+    onAutofillFromMasterChange,
+    onChangeRoute,
 }) => {
 
     // Autofill from Master Schedule state
@@ -83,6 +105,9 @@ export const Step3Build: React.FC<Step3Props> = ({
     const [usePerBandRecovery, setUsePerBandRecovery] = React.useState(true);
     const [displayBandDefaults, setDisplayBandDefaults] = React.useState<BandRecoveryDefault[]>([]);
     const [masterCycleModeDetection, setMasterCycleModeDetection] = React.useState<MasterCycleModeDetection | null>(null);
+    const [masterEntry, setMasterEntry] = React.useState<MasterScheduleEntry | null>(null);
+    const [masterBaselineBlocks, setMasterBaselineBlocks] = React.useState<BlockConfig[]>([]);
+    const [masterReloadRequest, setMasterReloadRequest] = React.useState(0);
     const configRef = React.useRef(config);
     const lastRouteDefaultsKeyRef = React.useRef<string | null>(null);
     React.useEffect(() => { configRef.current = config; }, [config]);
@@ -327,6 +352,8 @@ export const Step3Build: React.FC<Step3Props> = ({
                 if (cancelled) return;
 
                 if (!result) {
+                    setMasterEntry(null);
+                    setMasterBaselineBlocks([]);
                     setConfig({
                         ...configRef.current,
                         blocks: [],
@@ -336,7 +363,7 @@ export const Step3Build: React.FC<Step3Props> = ({
                     return;
                 }
 
-                const { content } = result;
+                const { content, entry } = result;
                 const cycleModeDetection = detectMasterCycleMode(content);
                 setMasterCycleModeDetection(cycleModeDetection);
                 const allTrips = [
@@ -437,6 +464,8 @@ export const Step3Build: React.FC<Step3Props> = ({
                 }
 
                 if (blocks.length > 0 && !cancelled) {
+                    setMasterEntry(entry);
+                    setMasterBaselineBlocks(blocks);
                     setConfig({
                         ...configRef.current,
                         blocks,
@@ -447,6 +476,8 @@ export const Step3Build: React.FC<Step3Props> = ({
                     });
                     setMasterStatus('loaded');
                 } else {
+                    setMasterEntry(entry);
+                    setMasterBaselineBlocks([]);
                     setMasterStatus('not-found');
                 }
             } catch (e) {
@@ -461,7 +492,7 @@ export const Step3Build: React.FC<Step3Props> = ({
 
         fetchBlocks();
         return () => { cancelled = true; };
-    }, [autofillFromMaster, teamId, config.routeNumber, dayType, setConfig]);
+    }, [autofillFromMaster, teamId, config.routeNumber, dayType, masterReloadRequest, setConfig]);
 
     // Helper to add minutes to HH:MM time string
     const addMinutes = (timeStr: string, minutes: number): string => {
@@ -531,6 +562,72 @@ export const Step3Build: React.FC<Step3Props> = ({
         setConfig({ ...config, blocks: newBlocks });
     };
 
+    const baselineById = React.useMemo(
+        () => new Map(masterBaselineBlocks.map(block => [block.id, block])),
+        [masterBaselineBlocks]
+    );
+    const blockChangeSummary = React.useMemo(() => {
+        let unchanged = 0;
+        let edited = 0;
+        let added = 0;
+
+        config.blocks.forEach(block => {
+            const baseline = baselineById.get(block.id);
+            if (!baseline) {
+                added += 1;
+            } else if (blocksMatch(block, baseline)) {
+                unchanged += 1;
+            } else {
+                edited += 1;
+            }
+        });
+
+        const currentIds = new Set(config.blocks.map(block => block.id));
+        const removed = masterBaselineBlocks.filter(block => !currentIds.has(block.id)).length;
+        return { unchanged, edited, added, removed };
+    }, [baselineById, config.blocks, masterBaselineBlocks]);
+    const hasBlockChanges = blockChangeSummary.edited > 0
+        || blockChangeSummary.added > 0
+        || blockChangeSummary.removed > 0;
+
+    const resetBlockToMaster = (blockId: string) => {
+        const baseline = baselineById.get(blockId);
+        if (!baseline) return;
+        setConfig({
+            ...config,
+            blocks: config.blocks.map(block => block.id === blockId ? { ...baseline } : block),
+        });
+    };
+
+    const resetAllBlocksToMaster = () => {
+        if (masterBaselineBlocks.length === 0) return;
+        setConfig({ ...config, blocks: masterBaselineBlocks.map(block => ({ ...block })) });
+    };
+
+    const reloadMasterBaseline = () => {
+        if (hasBlockChanges && !window.confirm('Reloading the Master will replace your block changes. Continue?')) return;
+        if (!autofillFromMaster) {
+            onAutofillFromMasterChange(true);
+            return;
+        }
+        setMasterReloadRequest(request => request + 1);
+    };
+
+    const startBlank = () => {
+        if (config.blocks.length > 0 && !window.confirm('Start with a blank block configuration? Your current block rows will be removed.')) return;
+        onAutofillFromMasterChange(false);
+        setMasterStatus('idle');
+        setMasterEntry(null);
+        setMasterBaselineBlocks([]);
+        setMasterCycleModeDetection(null);
+        setDisplayBandDefaults([]);
+        setConfig({ ...config, blocks: [], bandRecoveryDefaults: undefined });
+    };
+
+    const masterPublishedLabel = masterEntry?.publishedAt
+        ? new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }).format(masterEntry.publishedAt)
+        : null;
+
     const cycleTime = config.cycleTime;
     const computedHeadway = config.blocks.length > 0 ? cycleTime / config.blocks.length : 0;
     const strictCycleAnalysis = resolvedApprovedRuntimeModel?.buckets ?? analysis;
@@ -561,11 +658,11 @@ export const Step3Build: React.FC<Step3Props> = ({
 
     return (
         <div className="h-full flex flex-col animate-in fade-in duration-500 overflow-hidden">
-            <div className="flex justify-between items-start mb-6 flex-shrink-0">
+            <div className="flex justify-between items-start mb-4 flex-shrink-0">
                 <div>
-                    <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Build Schedule</h2>
+                    <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Set the Service Plan</h2>
                     <p className="text-gray-500">
-                        Define your service parameters for <strong>{dayType}</strong>.
+                        Carry the existing schedule forward, then adjust the proposed service for <strong>{dayType}</strong>.
                     </p>
                     {resolvedApprovedRuntimeModel && (
                         <p className="mt-1 text-xs text-gray-400">
@@ -588,51 +685,124 @@ export const Step3Build: React.FC<Step3Props> = ({
                 </div>
             </div>
 
-            <div className="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
-
-                {/* Left Column: Global Config */}
-                <div className="lg:col-span-4 flex flex-col gap-4 overflow-y-auto pr-1">
-                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-4">
-                        <div className="flex items-center gap-2 mb-1">
-                            <Bus className="text-brand-blue" size={20} />
-                            <h3 className="text-md font-bold text-gray-900">Route Configuration</h3>
+            {/* The Master is an explicit baseline, not an incidental autofill utility. */}
+            <div className={`mb-4 flex-shrink-0 rounded-xl border px-4 py-2.5 ${
+                masterStatus === 'not-found' && autofillFromMaster
+                    ? 'border-amber-200 bg-amber-50'
+                    : autofillFromMaster
+                        ? 'border-blue-200 bg-blue-50/70'
+                        : 'border-gray-200 bg-white'
+            }`} data-testid="step3-starting-schedule">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                        <div className={`rounded-lg p-2 ${autofillFromMaster ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                            {isLoadingMaster ? <Loader2 size={18} className="animate-spin" /> : <Database size={18} />}
                         </div>
+                        <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Starting schedule</span>
+                                {masterStatus === 'loaded' && autofillFromMaster && (
+                                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Loaded</span>
+                                )}
+                            </div>
+                            <p className="mt-0.5 font-bold text-gray-900">
+                                {!autofillFromMaster
+                                    ? 'Blank / manually configured'
+                                    : masterStatus === 'not-found'
+                                        ? `No current Master found for Route ${config.routeNumber} · ${dayType}`
+                                        : isLoadingMaster
+                                            ? `Loading current Master for Route ${config.routeNumber} · ${dayType}…`
+                                            : `Current Master${masterEntry?.currentVersion ? ` v${masterEntry.currentVersion}` : ''} · Route ${config.routeNumber} · ${dayType}`}
+                            </p>
+                            <p className="mt-0.5 text-xs text-gray-600">
+                                {masterStatus === 'loaded' && autofillFromMaster
+                                    ? `${masterBaselineBlocks.length} block${masterBaselineBlocks.length === 1 ? '' : 's'} carried forward${masterPublishedLabel ? ` from ${masterPublishedLabel}` : ''}. Changes below affect only this working schedule.`
+                                    : masterStatus === 'not-found' && autofillFromMaster
+                                        ? 'You can configure the schedule manually or try loading the Master again.'
+                                        : !autofillFromMaster
+                                            ? 'This working schedule is not linked to a Master baseline.'
+                                            : 'The current published schedule will be used as the editable starting point.'}
+                            </p>
+                        </div>
+                    </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="col-span-1">
-                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Route #</label>
+                    <div className="flex shrink-0 items-center gap-2 lg:justify-end">
+                        <button
+                            type="button"
+                            onClick={reloadMasterBaseline}
+                            disabled={!teamId || isLoadingMaster}
+                            className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <RefreshCw size={14} className={isLoadingMaster ? 'animate-spin' : ''} />
+                            {autofillFromMaster ? 'Reload Master' : 'Use current Master'}
+                        </button>
+                        {autofillFromMaster && (
+                            <button
+                                type="button"
+                                onClick={startBlank}
+                                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:bg-white hover:text-gray-900"
+                            >
+                                <FilePlus2 size={14} /> Start blank
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex-grow min-h-0 overflow-y-auto pr-1 space-y-4">
+                <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="mb-3 flex items-center gap-2">
+                        <Bus className="text-brand-blue" size={18} />
+                        <h3 className="font-bold text-gray-900">Service Settings</h3>
+                    </div>
+
+                    <div className="grid grid-cols-2 items-start gap-3 md:grid-cols-3 xl:grid-cols-10">
+                        <div className="xl:col-span-2">
+                            <label className="mb-1 block text-[11px] font-bold uppercase text-gray-500">Route</label>
+                            {masterStatus === 'loaded' && autofillFromMaster ? (
+                                <div className="flex h-[34px] items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3">
+                                    <span className="text-sm font-bold text-gray-800">{config.routeNumber}</span>
+                                    {onChangeRoute && (
+                                        <button type="button" onClick={onChangeRoute} className="text-[10px] font-semibold text-brand-blue hover:underline">
+                                            Change in Step 1
+                                        </button>
+                                    )}
+                                </div>
+                            ) : (
                                 <input
                                     type="text"
                                     value={config.routeNumber}
                                     onChange={e => setConfig({ ...config, routeNumber: e.target.value })}
-                                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue font-bold text-gray-800 text-sm"
+                                    className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-bold text-gray-800 focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
                                     placeholder="e.g. 100"
                                 />
-                            </div>
-
-                            <div className="col-span-1">
-                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Recov. Dist.</label>
-                                <select
-                                    value={config.recoveryDistribution || 'End'}
-                                    onChange={e => setConfig({ ...config, recoveryDistribution: e.target.value as 'End' | 'Proportional' })}
-                                    className="w-full px-2 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue font-bold text-gray-800 text-xs"
-                                >
-                                    <option value="End">End Only</option>
-                                    <option value="Proportional">Proportional</option>
-                                </select>
-                            </div>
+                            )}
                         </div>
 
-                        <div>
-                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cycle Mode</label>
-                            <div className="flex bg-gray-100 p-1 rounded-lg mb-3">
+                        <div className="xl:col-span-2">
+                            <label className="mb-1 block text-[11px] font-bold uppercase text-gray-500">Recovery distribution</label>
+                            <select
+                                value={config.recoveryDistribution || 'End'}
+                                onChange={e => setConfig({ ...config, recoveryDistribution: e.target.value as 'End' | 'Proportional' })}
+                                className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-xs font-bold text-gray-800 focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
+                            >
+                                <option value="End">End Only</option>
+                                <option value="Proportional">Proportional</option>
+                            </select>
+                        </div>
+
+                        <div className="xl:col-span-2">
+                            <label className="mb-1 block text-[11px] font-bold uppercase text-gray-500">Cycle mode</label>
+                            <div className="flex rounded-lg bg-gray-100 p-1">
                                 <button
+                                    type="button"
                                     onClick={() => setConfig({ ...config, cycleMode: 'Strict' })}
-                                    className={`flex-1 py-1 text-xs font-bold rounded-md transition-all ${(!config.cycleMode || config.cycleMode === 'Strict') ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500'}`}
+                                    className={`flex-1 rounded-md py-1 text-xs font-bold transition-all ${(!config.cycleMode || config.cycleMode === 'Strict') ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500'}`}
                                 >
                                     Strict
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => setConfig({
                                         ...config,
                                         cycleMode: 'Floating',
@@ -640,190 +810,152 @@ export const Step3Build: React.FC<Step3Props> = ({
                                             ? config.recoveryRatio
                                             : SCHEDULE_DEFAULTS.RECOVERY_RATIO
                                     })}
-                                    className={`flex-1 py-1 text-xs font-bold rounded-md transition-all ${config.cycleMode === 'Floating' ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500'}`}
+                                    className={`flex-1 rounded-md py-1 text-xs font-bold transition-all ${config.cycleMode === 'Floating' ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500'}`}
                                 >
                                     Floating
                                 </button>
                             </div>
                             {autofillFromMaster && masterStatus === 'loaded' && masterCycleModeDetection && (
-                                <div className="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
-                                    <p className="text-[11px] font-semibold text-blue-800">
-                                        Autofilled from Master: {masterCycleModeDetection.cycleMode}
-                                        <span className="ml-1 font-normal text-blue-600">
-                                            ({masterCycleModeDetection.source === 'metadata' ? 'saved setting' : `${masterCycleModeDetection.confidence}-confidence detection`})
-                                        </span>
-                                    </p>
-                                    <p className="mt-0.5 text-[11px] text-blue-700">
-                                        {masterCycleModeDetection.summary}
-                                    </p>
+                                <details className={`mt-1 rounded-md border px-2 py-1 text-[10px] ${masterCycleModeDetection.source !== 'metadata' && masterCycleModeDetection.confidence === 'low' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-blue-100 bg-blue-50 text-blue-800'}`}>
+                                    <summary className="cursor-pointer font-semibold">
+                                        Master: {masterCycleModeDetection.cycleMode}
+                                        <span className="ml-1 font-normal opacity-80">· {masterCycleModeDetection.source === 'metadata' ? 'saved setting' : `${masterCycleModeDetection.confidence} confidence`} · Why?</span>
+                                    </summary>
+                                    <p className="mt-1 text-[10px] opacity-90">{masterCycleModeDetection.summary}</p>
                                     {config.cycleMode !== 'Floating' && config.blocks.length > 1 && (
-                                        <p className="mt-1 text-[11px] text-blue-700">
-                                            Strict mode keeps block starts on a fixed clockface grid based on cycle ÷ buses.
-                                        </p>
+                                        <p className="mt-1 text-[10px] opacity-90">Strict mode keeps block starts on a fixed clockface grid based on cycle ÷ buses.</p>
                                     )}
-                                </div>
-                            )}
-
-                            {config.cycleMode === 'Floating' ? (
-                                <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Reference Cycle (Optional)</label>
-                                        <div className="relative">
-                                            <input
-                                                type="number"
-                                                value={config.cycleTime}
-                                                onChange={e => setConfig({ ...config, cycleTime: parseInt(e.target.value) || 0 })}
-                                                placeholder="Optional"
-                                                className="w-full pl-8 px-2 py-1.5 border border-gray-200 bg-gray-50 rounded-lg text-gray-600 font-medium text-sm"
-                                            />
-                                            <Clock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-brand-blue uppercase mb-1">Target Recov.</label>
-                                        <div className="relative">
-                                            <input
-                                                type="number"
-                                                value={config.recoveryRatio ?? SCHEDULE_DEFAULTS.RECOVERY_RATIO}
-                                                onChange={e => setConfig({ ...config, recoveryRatio: parseInt(e.target.value) || SCHEDULE_DEFAULTS.RECOVERY_RATIO })}
-                                                className="w-full pl-3 pr-6 py-1.5 border border-brand-blue/30 bg-blue-50/50 rounded-lg focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue font-bold text-brand-blue text-sm"
-                                            />
-                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-blue/50 font-bold text-xs">%</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div>
-                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Strict Cycle Time</label>
-                                    <div className="relative">
-                                        <input
-                                            type="number"
-                                            value={config.cycleTime}
-                                            onChange={e => setConfig({ ...config, cycleTime: parseInt(e.target.value) || 0 })}
-                                            className="w-full pl-9 px-3 py-2 border border-brand-blue/30 rounded-lg focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue font-bold text-gray-900 text-lg shadow-sm"
-                                        />
-                                        <Clock size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-blue" />
-                                    </div>
-                                    <p className="text-[10px] text-gray-400 mt-1">Total round-trip time (min)</p>
-                                    {strictCycleSeverity && (
-                                        <div
-                                            className={`mt-2 rounded-lg px-2 py-1.5 ${
-                                                strictCycleSeverity === 'critical'
-                                                    ? 'border border-red-200 bg-red-50'
-                                                    : 'border border-amber-200 bg-amber-50'
-                                            }`}
-                                        >
-                                            <p
-                                                className={`text-[11px] font-semibold ${
-                                                    strictCycleSeverity === 'critical'
-                                                        ? 'text-red-800'
-                                                        : 'text-amber-800'
-                                                }`}
-                                            >
-                                                {strictCycleLead} {cycleTime}m is {strictCycleDeltaPct! > 0 ? `${strictCycleDeltaPct}% above` : `${Math.abs(strictCycleDeltaPct!)}% below`} {strictCycleSuggestion.basisLabel} (~{suggestedStrictCycle}m).
-                                            </p>
-                                            <button
-                                                type="button"
-                                                onClick={() => setConfig({ ...config, cycleTime: suggestedStrictCycle! })}
-                                                className={`mt-1 text-[11px] font-bold underline ${
-                                                    strictCycleSeverity === 'critical'
-                                                        ? 'text-red-700 hover:text-red-800'
-                                                        : 'text-amber-700 hover:text-amber-800'
-                                                }`}
-                                            >
-                                                {strictCycleButtonLabel}
-                                            </button>
-                                            {!isHighConfidenceStrictCycle && (
-                                                <p className="mt-1 text-[10px] text-gray-600">
-                                                    This reference excludes the weakest observed buckets where possible, but it is not treated as a high-confidence planner default.
-                                                </p>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
+                                </details>
                             )}
                         </div>
-                    </div>
 
-                    {/* Calculated Stats (Compact) */}
-                    <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col gap-2">
-                        <h3 className="text-xs font-bold text-blue-800 uppercase">Service Metrics</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <span className="text-xs text-blue-600 font-medium block">Headway</span>
-                                <span className="text-xl font-bold text-blue-900">
-                                    {Number.isInteger(computedHeadway) ? computedHeadway : computedHeadway.toFixed(1)}
-                                    <span className="text-xs font-normal ml-0.5">m</span>
-                                </span>
-                                {displayBandDefaults.length > 0 && usePerBandRecovery && (
-                                    <span className="text-[10px] text-blue-500 italic">varies by band</span>
-                                )}
-                            </div>
-                            <div>
-                                <span className="text-xs text-blue-600 font-medium block">Blocks</span>
-                                <span className="text-xl font-bold text-blue-900">{config.blocks.length}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Per-Band Recovery Defaults */}
-                    {displayBandDefaults.length > 0 && (
-                        <div className={`p-4 rounded-xl flex flex-col gap-2 ${usePerBandRecovery ? 'bg-emerald-50 border border-emerald-100' : 'bg-gray-50 border border-gray-200'}`}>
-                            <h3 className={`text-xs font-bold uppercase ${usePerBandRecovery ? 'text-emerald-800' : 'text-gray-500'}`}>Master Recovery Defaults</h3>
-                            {config.cycleMode !== 'Floating' && (
-                                <p className="text-[11px] text-gray-600">
-                                    In Strict mode, the fixed cycle time above controls the clockface. These per-band defaults only affect Floating mode.
-                                </p>
-                            )}
-                            <table className="w-full text-left text-xs">
-                                <thead>
-                                    <tr className={usePerBandRecovery ? 'text-emerald-600' : 'text-gray-400'}>
-                                        <th className="py-1 font-bold">Band</th>
-                                        <th className="py-1 font-bold text-right">Cycle</th>
-                                        <th className="py-1 font-bold text-right">Recov%</th>
-                                        <th className="py-1 font-bold text-right">Trips</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {displayBandDefaults.map(bd => {
-                                        const bandColor = bands.find(b => b.id === bd.bandId)?.color;
-                                        return (
-                                            <tr key={bd.bandId} className={usePerBandRecovery ? 'text-emerald-900' : 'text-gray-500'}>
-                                                <td className="py-0.5 flex items-center gap-1.5">
-                                                    {bandColor && <div className="w-2 h-2 rounded-full" style={{ backgroundColor: bandColor, opacity: usePerBandRecovery ? 1 : 0.4 }} />}
-                                                    <span className="font-bold">{bd.bandId}</span>
-                                                </td>
-                                                <td className="py-0.5 text-right font-medium">{bd.avgCycleTime}m</td>
-                                                <td className="py-0.5 text-right font-medium">{bd.avgRecoveryRatio}%</td>
-                                                <td className="py-0.5 text-right">{bd.tripCount}</td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                            <label className="flex items-center gap-2 mt-1 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={usePerBandRecovery}
-                                    onChange={e => setUsePerBandRecovery(e.target.checked)}
-                                    className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500"
-                                />
-                                <span className="text-xs font-medium text-emerald-700">Use per-band defaults</span>
+                        <div>
+                            <label className="mb-1 block text-[11px] font-bold uppercase text-gray-500">
+                                {config.cycleMode === 'Floating' ? 'Reference cycle' : 'Strict cycle'}
                             </label>
+                            <div className="relative">
+                                <input
+                                    type="number"
+                                    value={config.cycleTime}
+                                    onChange={e => setConfig({ ...config, cycleTime: parseInt(e.target.value) || 0 })}
+                                    placeholder={config.cycleMode === 'Floating' ? 'Optional' : undefined}
+                                    className={`w-full rounded-lg border py-1.5 pl-8 pr-8 text-sm font-bold focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20 ${config.cycleMode === 'Floating' ? 'border-gray-200 bg-gray-50 text-gray-600' : 'border-brand-blue/30 bg-white text-gray-900'}`}
+                                />
+                                <Clock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-gray-400">MIN</span>
+                            </div>
                         </div>
+
+                        {config.cycleMode === 'Floating' && (
+                            <div>
+                                <label className="mb-1 block text-[11px] font-bold uppercase text-brand-blue">Target recovery</label>
+                                <div className="relative">
+                                    <input
+                                        type="number"
+                                        value={config.recoveryRatio ?? SCHEDULE_DEFAULTS.RECOVERY_RATIO}
+                                        onChange={e => setConfig({ ...config, recoveryRatio: parseInt(e.target.value) || SCHEDULE_DEFAULTS.RECOVERY_RATIO })}
+                                        className="w-full rounded-lg border border-brand-blue/30 bg-blue-50/50 py-1.5 pl-3 pr-7 text-sm font-bold text-brand-blue focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-brand-blue/50">%</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className={`rounded-lg border border-blue-100 bg-blue-50 px-3 py-1.5 ${config.cycleMode === 'Floating' ? 'xl:col-span-2' : 'xl:col-span-3'}`}>
+                            <span className="block text-[10px] font-bold uppercase text-blue-600">Service metrics</span>
+                            <div className="mt-0.5 grid grid-cols-2 gap-3">
+                                <div className="flex items-baseline justify-between gap-1 whitespace-nowrap">
+                                    <span className="text-[10px] font-medium text-blue-600">Headway</span>
+                                    <strong className="text-sm text-blue-900">{Number.isInteger(computedHeadway) ? computedHeadway : computedHeadway.toFixed(1)} min</strong>
+                                </div>
+                                <div className="flex items-baseline justify-between gap-1 whitespace-nowrap border-l border-blue-200 pl-3">
+                                    <span className="text-[10px] font-medium text-blue-600">Blocks</span>
+                                    <strong className="text-sm text-blue-900">{config.blocks.length}</strong>
+                                </div>
+                            </div>
+                            {displayBandDefaults.length > 0 && usePerBandRecovery && (
+                                <span className="block text-[9px] text-blue-600">Recovery varies by band</span>
+                            )}
+                        </div>
+                    </div>
+
+                    {strictCycleSeverity && (
+                        <div className={`mt-3 rounded-lg border px-3 py-2 ${strictCycleSeverity === 'critical' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+                            <p className={`text-[11px] font-semibold ${strictCycleSeverity === 'critical' ? 'text-red-800' : 'text-amber-800'}`}>
+                                {strictCycleLead} {cycleTime}m is {strictCycleDeltaPct! > 0 ? `${strictCycleDeltaPct}% above` : `${Math.abs(strictCycleDeltaPct!)}% below`} {strictCycleSuggestion.basisLabel} (~{suggestedStrictCycle}m).
+                                {' '}
+                                <button
+                                    type="button"
+                                    onClick={() => setConfig({ ...config, cycleTime: suggestedStrictCycle! })}
+                                    className="font-bold underline"
+                                >
+                                    {strictCycleButtonLabel}
+                                </button>
+                            </p>
+                            {!isHighConfidenceStrictCycle && (
+                                <p className="mt-1 text-[10px] text-gray-600">This is reference evidence, not a high-confidence planner default.</p>
+                            )}
+                        </div>
+                    )}
+
+                    {displayBandDefaults.length > 0 && (
+                        <details className="mt-3 border-t border-gray-100 pt-2">
+                            <summary className="cursor-pointer text-xs font-semibold text-gray-700">
+                                Master recovery defaults · {displayBandDefaults.length} band{displayBandDefaults.length === 1 ? '' : 's'} · {usePerBandRecovery ? 'In use' : 'Not in use'}
+                            </summary>
+                            <div className="mt-2 max-w-xl rounded-lg bg-gray-50 p-3">
+                                {config.cycleMode !== 'Floating' && (
+                                    <p className="mb-2 text-[11px] text-gray-600">These defaults affect Floating mode only.</p>
+                                )}
+                                <table className="w-full text-left text-xs">
+                                    <thead className="text-gray-500">
+                                        <tr>
+                                            <th className="py-1 font-bold">Band</th>
+                                            <th className="py-1 text-right font-bold">Cycle</th>
+                                            <th className="py-1 text-right font-bold">Recovery</th>
+                                            <th className="py-1 text-right font-bold">Trips</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {displayBandDefaults.map(bd => {
+                                            const bandColor = bands.find(b => b.id === bd.bandId)?.color;
+                                            return (
+                                                <tr key={bd.bandId} className="text-gray-700">
+                                                    <td className="flex items-center gap-1.5 py-0.5">
+                                                        {bandColor && <div className="h-2 w-2 rounded-full" style={{ backgroundColor: bandColor, opacity: usePerBandRecovery ? 1 : 0.4 }} />}
+                                                        <span className="font-bold">{bd.bandId}</span>
+                                                    </td>
+                                                    <td className="py-0.5 text-right font-medium">{bd.avgCycleTime}m</td>
+                                                    <td className="py-0.5 text-right font-medium">{bd.avgRecoveryRatio}%</td>
+                                                    <td className="py-0.5 text-right">{bd.tripCount}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                                <label className="mt-2 flex cursor-pointer items-center gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={usePerBandRecovery}
+                                        onChange={e => setUsePerBandRecovery(e.target.checked)}
+                                        className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500"
+                                    />
+                                    <span className="text-xs font-medium text-gray-700">Use per-band defaults</span>
+                                </label>
+                            </div>
+                        </details>
                     )}
                 </div>
 
-                {/* Right Column: Block Definitions */}
-                <div className="lg:col-span-8 flex flex-col h-full min-h-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between flex-shrink-0">
+                <div className="min-h-0 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="flex flex-col gap-3 border-b border-gray-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
                         <div>
                             <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                                 <LayoutGrid size={20} className="text-gray-400" />
-                                Block Configuration
+                                Proposed Block Configuration
                             </h3>
                             <p className="text-[11px] text-gray-500 mt-1">
-                                Set <strong>Start Stop</strong> per block to control where each block pulls out from (for example, Park Place vs Georgian).
+                                Edit the start location and service span as needed. End locations are calculated from the generated trips.
                             </p>
                             {showStartDirectionColumn && (
                                 <p className="text-[11px] text-blue-600 mt-1">
@@ -831,29 +963,26 @@ export const Step3Build: React.FC<Step3Props> = ({
                                 </p>
                             )}
                         </div>
-                        <div className="flex items-center gap-3">
-                            {/* Autofill from Master Toggle */}
-                            {teamId && (
-                                <button
-                                    onClick={() => onAutofillFromMasterChange(!autofillFromMaster)}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
-                                        autofillFromMaster
-                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm'
-                                            : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'
-                                    }`}
-                                >
-                                    {isLoadingMaster ? (
-                                        <Loader2 size={14} className="animate-spin" />
+                        <div className="flex flex-wrap items-center gap-2">
+                            {masterStatus === 'loaded' && autofillFromMaster && (
+                                <div className="mr-1 flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+                                    {!hasBlockChanges ? (
+                                        <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">Matches Master · {config.blocks.length} block{config.blocks.length === 1 ? '' : 's'}</span>
                                     ) : (
-                                        <Database size={14} />
+                                        <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{blockChangeSummary.unchanged} unchanged</span>
                                     )}
-                                    Autofill from Master
-                                    {masterStatus === 'loaded' && autofillFromMaster && !isLoadingMaster && (
-                                        <span className="text-emerald-500 ml-0.5">&#10003;</span>
-                                    )}
-                                    {masterStatus === 'not-found' && autofillFromMaster && !isLoadingMaster && (
-                                        <span className="text-amber-500 text-[10px] ml-1">No master found</span>
-                                    )}
+                                    {blockChangeSummary.edited > 0 && <span className="rounded-full bg-blue-100 px-2 py-1 text-blue-700">{blockChangeSummary.edited} edited</span>}
+                                    {blockChangeSummary.added > 0 && <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">{blockChangeSummary.added} new</span>}
+                                    {blockChangeSummary.removed > 0 && <span className="rounded-full bg-red-100 px-2 py-1 text-red-700">{blockChangeSummary.removed} removed</span>}
+                                </div>
+                            )}
+                            {masterStatus === 'loaded' && hasBlockChanges && (
+                                <button
+                                    type="button"
+                                    onClick={resetAllBlocksToMaster}
+                                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                                >
+                                    <RotateCcw size={14} /> Reset blocks
                                 </button>
                             )}
                             <button
@@ -865,42 +994,66 @@ export const Step3Build: React.FC<Step3Props> = ({
                         </div>
                     </div>
 
-                    <div className="flex-grow overflow-y-auto">
-                        <table className="w-full text-left">
+                    <div className="overflow-x-auto">
+                        <table className={`w-full text-left ${showStartDirectionColumn ? 'min-w-[1040px]' : 'min-w-[900px]'}`}>
                             <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                                 <tr>
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Block ID</th>
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Time</th>
-                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Stop</th>
+                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Location</th>
                                     {showStartDirectionColumn && <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Dir</th>}
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">End Time</th>
-                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">End Stop</th>
+                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">
+                                        <span className="inline-flex items-center gap-1">
+                                            End Location
+                                            <Info size={12} className="text-gray-400" aria-label="Calculated from generated trips" />
+                                        </span>
+                                    </th>
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 {config.blocks.map((block, idx) => {
-                                    const startDirection = resolveBlockStartDirection(
-                                        config.routeNumber,
-                                        block.startStop,
-                                        block.startDirection
+                                    const masterBlock = baselineById.get(block.id);
+                                    const blockStatus = !masterBlock
+                                        ? 'new'
+                                        : blocksMatch(block, masterBlock)
+                                            ? 'master'
+                                            : 'edited';
+                                    const fieldChanged = (field: keyof BlockConfig): boolean => (
+                                        Boolean(masterBlock)
+                                        && String(block[field] ?? '') !== String(masterBlock?.[field] ?? '')
                                     );
                                     return (
-                                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                                    <tr
+                                        key={idx}
+                                        className={`transition-colors ${
+                                            blockStatus === 'edited'
+                                                ? 'bg-blue-50/40 hover:bg-blue-50/70'
+                                                : blockStatus === 'new'
+                                                    ? 'bg-emerald-50/30 hover:bg-emerald-50/60'
+                                                    : 'hover:bg-gray-50'
+                                        }`}
+                                    >
                                         <td className="px-4 py-3">
                                             <input
                                                 type="text"
                                                 value={block.id}
                                                 onChange={e => updateBlock(idx, 'id', e.target.value)}
-                                                className="bg-transparent font-bold text-gray-900 focus:outline-none focus:underline w-24"
+                                                className="w-24 bg-transparent font-bold text-gray-900 focus:outline-none focus:underline"
                                             />
+                                            {blockStatus !== 'master' && (
+                                                <span className={`mt-1 block w-fit rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${blockStatus === 'edited' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                    {blockStatus}
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3">
                                             <input
                                                 type="time"
                                                 value={block.startTime}
                                                 onChange={e => updateBlock(idx, 'startTime', e.target.value)}
-                                                className={`${idx === 0 ? 'bg-white' : 'bg-gray-50'} border border-gray-200 rounded-md px-2 py-1 text-sm font-medium focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue outline-none`}
+                                                className={`${fieldChanged('startTime') ? 'border-blue-300 bg-blue-50 text-blue-900' : idx === 0 ? 'border-gray-200 bg-white' : 'border-gray-200 bg-gray-50'} w-[126px] rounded-md border px-2 py-1 text-sm font-medium outline-none focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20`}
                                                 title={idx > 0 ? "Auto-filled based on headway (editable)" : "Start time for Block 1"}
                                             />
                                         </td>
@@ -911,7 +1064,7 @@ export const Step3Build: React.FC<Step3Props> = ({
                                                 onChange={e => updateBlock(idx, 'startStop', e.target.value)}
                                                 list={START_STOP_SUGGESTIONS_ID}
                                                 placeholder={combinedStopSuggestions[0] || 'e.g. Park Place'}
-                                                className="w-full min-w-[150px] bg-white border border-gray-200 rounded-md px-2 py-1 text-sm text-gray-700 focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue outline-none"
+                                                className={`w-full min-w-[190px] rounded-md border px-2 py-1 text-sm outline-none focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20 ${fieldChanged('startStop') ? 'border-blue-300 bg-blue-50 text-blue-900' : 'border-gray-200 bg-white text-gray-700'}`}
                                                 title="Optional: set where this block starts service"
                                             />
                                         </td>
@@ -925,7 +1078,7 @@ export const Step3Build: React.FC<Step3Props> = ({
                                                         newBlocks[idx] = { ...newBlocks[idx], startDirection: val || undefined };
                                                         setConfig({ ...config, blocks: newBlocks });
                                                     }}
-                                                    className={`text-xs font-semibold rounded-full px-2 py-0.5 border outline-none cursor-pointer ${
+                                                    className={`text-xs font-semibold rounded-full px-2 py-0.5 border outline-none cursor-pointer ${fieldChanged('startDirection') ? 'ring-2 ring-blue-200 ' : ''}${
                                                         block.startDirection === 'North'
                                                             ? 'bg-blue-50 text-blue-700 border-blue-200'
                                                             : block.startDirection === 'South'
@@ -940,30 +1093,52 @@ export const Step3Build: React.FC<Step3Props> = ({
                                             </td>
                                         )}
                                         <td className="px-4 py-3">
-                                            <input
-                                                type="time"
-                                                value={block.endTime}
-                                                onChange={e => updateBlock(idx, 'endTime', e.target.value)}
-                                                className="bg-gray-50 border border-gray-200 rounded-md px-2 py-1 text-sm font-medium focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue outline-none"
-                                            />
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="time"
+                                                    value={block.endTime}
+                                                    onChange={e => updateBlock(idx, 'endTime', e.target.value)}
+                                                    className={`w-[126px] rounded-md border px-2 py-1 text-sm font-medium outline-none focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20 ${fieldChanged('endTime') ? 'border-blue-300 bg-blue-50 text-blue-900' : 'border-gray-200 bg-gray-50'}`}
+                                                />
+                                                {isNextDayBlockEnd(block.startTime, block.endTime) && (
+                                                    <span className="whitespace-nowrap rounded-full bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-700">+1 day</span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-4 py-3">
                                             {block.endStop ? (
-                                                <span className="text-xs text-gray-500 truncate block max-w-[140px]" title={block.endStop}>
-                                                    {block.endStop}
-                                                </span>
+                                                <div className="flex min-w-[180px] items-center gap-2 rounded-md bg-gray-50 px-2 py-1 text-sm text-gray-600" title="Calculated from generated trips">
+                                                    <Lock size={12} className="shrink-0 text-gray-400" />
+                                                    <span>{block.endStop}</span>
+                                                </div>
                                             ) : (
                                                 <span className="text-xs text-gray-300">—</span>
                                             )}
                                         </td>
                                         <td className="px-4 py-3 text-right">
-                                            <button
-                                                onClick={() => removeBlock(idx)}
-                                                className="text-gray-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors"
-                                                disabled={config.blocks.length <= 1}
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
+                                            <div className="flex items-center justify-end gap-1">
+                                                {blockStatus === 'edited' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => resetBlockToMaster(block.id)}
+                                                        className="rounded-lg p-2 text-blue-500 transition-colors hover:bg-blue-100 hover:text-blue-700"
+                                                        title="Reset this block to the Master"
+                                                        aria-label={`Reset ${block.id} to Master`}
+                                                    >
+                                                        <RotateCcw size={15} />
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeBlock(idx)}
+                                                    className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                                    disabled={config.blocks.length <= 1}
+                                                    title="Remove block from the proposed schedule"
+                                                    aria-label={`Remove ${block.id}`}
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 )})}

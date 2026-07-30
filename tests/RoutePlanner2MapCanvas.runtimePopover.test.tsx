@@ -859,6 +859,136 @@ describe('RoutePlanner2MapCanvas runtime popover', () => {
     expect(capture?.dataUrl).toBe('data:image/png;base64,mock-detail-capture');
   });
 
+  it('deletes a selected bus stop directly from its map marker', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Sproule at Kraus', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Pringle at Sproule', lat: 44.39, lng: -79.68 });
+    const onDeleteStop = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId="stop-1"
+          onSelectStop={() => {}}
+          onAddStop={() => {}}
+          onDeleteStop={onDeleteStop}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const deleteStopButton = container.querySelector('button[aria-label="Delete Sproule at Kraus"]');
+    expect(deleteStopButton).not.toBeNull();
+    expect(deleteStopButton?.className).toContain('opacity-100');
+
+    flushSync(() => {
+      click(deleteStopButton);
+    });
+
+    expect(onDeleteStop).toHaveBeenCalledOnce();
+    expect(onDeleteStop).toHaveBeenCalledWith('stop-1');
+  });
+
+  it('adds a bus stop at a blank map click while placement mode is active', async () => {
+    const project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    const onAddStop = vi.fn();
+    const onCancelStopPlacement = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          stopPlacementMode
+          onCancelStopPlacement={onCancelStopPlacement}
+          onSelectStop={() => {}}
+          onAddStop={onAddStop}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={() => {}}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(container.querySelector('[data-testid="rp2-stop-placement-banner"]')?.textContent).toContain('Click the map or route line');
+    expect(container.querySelector('[data-testid="rp2-map-canvas"]')?.className).toContain('cursor-crosshair');
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-blank-map-click"]'));
+    });
+
+    expect(onAddStop).toHaveBeenCalledWith({ lat: 44.395, lng: -79.675 });
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(onCancelStopPlacement).toHaveBeenCalledOnce();
+  });
+
+  it('inserts a placed bus stop into the clicked route segment', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.69 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Stop 2', lat: 44.39, lng: -79.68 });
+    const onAddStop = vi.fn();
+    const onInsertStopOnLine = vi.fn();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2MapCanvas
+          scenario={project.scenarios[0]!}
+          selectedStopId={null}
+          stopPlacementMode
+          onSelectStop={() => {}}
+          onAddStop={onAddStop}
+          onDeleteStop={() => {}}
+          onMoveStop={() => {}}
+          onAddLineWaypoint={() => {}}
+          onInsertStopOnLine={onInsertStopOnLine}
+          onMoveLineWaypoint={() => {}}
+          onDeleteLineWaypoint={() => {}}
+          onSegmentRuntimeEstimates={() => {}}
+        />,
+      );
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(container?.querySelector('[data-testid="mock-route-line-click"]'));
+    });
+
+    expect(onInsertStopOnLine).toHaveBeenCalledWith(expect.objectContaining({
+      fromStopId: 'stop-1',
+      toStopId: 'stop-2',
+      coordinate: { lat: 44.385, lng: -79.685 },
+    }));
+    expect(onAddStop).not.toHaveBeenCalled();
+  });
+
   it('does not add a stop from a blank map click when no popover is open', async () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-13T12:00:00.000Z' });
     project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Downtown Terminal', lat: 44.38, lng: -79.69 });

@@ -58,6 +58,8 @@ interface RoutePlanner2MapCanvasProps {
     highlightedWaypointId?: string | null;
     highlightedSegmentId?: string | null;
     selectionMode?: RoutePlanner2MapSelectionMode | null;
+    stopPlacementMode?: boolean;
+    onCancelStopPlacement?: () => void;
     selectedStopIds?: string[];
     selectedWaypointIds?: string[];
     onSelectionChange?: (selection: RoutePlanner2MapSelection) => void;
@@ -1442,6 +1444,8 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     highlightedWaypointId,
     highlightedSegmentId,
     selectionMode = null,
+    stopPlacementMode = false,
+    onCancelStopPlacement,
     selectedStopIds = [],
     selectedWaypointIds = [],
     onSelectionChange,
@@ -1832,6 +1836,11 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
     useEffect(() => {
         function handleKeyDown(event: KeyboardEvent) {
             if (event.ctrlKey || event.metaKey || event.altKey) return;
+            if (event.key === 'Escape' && stopPlacementMode) {
+                event.preventDefault();
+                onCancelStopPlacement?.();
+                return;
+            }
             const target = event.target;
             if (target instanceof HTMLElement) {
                 const tagName = target.tagName.toLowerCase();
@@ -1867,7 +1876,13 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [applyAnchorToReturn, mouseMapCoordinate, onAddLineWaypoint, onAddStop, pendingHasReturnSegment, pendingLineAction, scenario]);
+    }, [applyAnchorToReturn, mouseMapCoordinate, onAddLineWaypoint, onAddStop, onCancelStopPlacement, pendingHasReturnSegment, pendingLineAction, scenario, stopPlacementMode]);
+
+    useEffect(() => {
+        if (!stopPlacementMode) return;
+        setApplyAnchorToReturn(false);
+        setPendingLineAction(null);
+    }, [stopPlacementMode]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -2070,6 +2085,18 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             return;
         }
 
+        if (stopPlacementMode) {
+            if (clickedRouteLine(event) && scenario.stops.length >= 2) {
+                const segment = getClosestRouteSegment(scenario, coordinate);
+                if (segment) {
+                    onInsertStopOnLine({ ...segment, coordinate });
+                    return;
+                }
+            }
+            onAddStop(coordinate);
+            return;
+        }
+
         if (clickedRouteLine(event) && scenario.stops.length >= 2) {
             const segment = getClosestRouteSegment(scenario, coordinate);
             if (segment) {
@@ -2225,10 +2252,25 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
             onPointerDown={handleSelectionPointerDown}
             onPointerMove={handleSelectionPointerMove}
             onPointerUp={handleSelectionPointerUp}
-            className={`h-full min-h-0 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm ${selectionMode ? 'cursor-crosshair' : ''}`}
+            className={`h-full min-h-0 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm ${selectionMode || stopPlacementMode ? 'cursor-crosshair' : ''}`}
         >
             <div className="relative h-full min-h-0">
-                {!isExportCaptureMode && selectionMode && (
+                {!isExportCaptureMode && stopPlacementMode && (
+                    <div
+                        data-testid="rp2-stop-placement-banner"
+                        className="pointer-events-auto absolute left-[var(--rp2-overlay-left)] top-[var(--rp2-overlay-top)] z-20 flex items-center gap-3 rounded-2xl border border-cyan-200 bg-white/95 px-3 py-2 text-xs font-black text-cyan-800 shadow-lg"
+                    >
+                        <span className="inline-flex items-center gap-1.5"><Plus size={14} /> Click the map or route line to add a bus stop</span>
+                        <button
+                            type="button"
+                            onClick={onCancelStopPlacement}
+                            className="rounded-xl border border-cyan-200 bg-cyan-50 px-2 py-1 text-[11px] font-black text-cyan-800 hover:bg-cyan-100"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                )}
+                {!isExportCaptureMode && !stopPlacementMode && selectionMode && (
                     <div
                         data-testid="rp2-map-selection-banner"
                         className="pointer-events-none absolute left-[var(--rp2-overlay-left)] top-[var(--rp2-overlay-top)] z-20 rounded-2xl border border-cyan-200 bg-white/95 px-3 py-2 text-xs font-black text-cyan-800 shadow-lg"
@@ -2537,23 +2579,38 @@ export const RoutePlanner2MapCanvas = forwardRef<RoutePlanner2MapCanvasHandle, R
                             {isExportCaptureMode ? (
                                 <RoutePlanner2ExportStopMarker stop={stop} routeColor={routeColor} />
                             ) : (
-                                <button
-                                    type="button"
-                                    onClick={(event) => {
-                                        event.stopPropagation();
-                                        onSelectStop(stop.id);
-                                    }}
-                                    data-highlighted={isHighlighted ? 'true' : undefined}
-                                    data-selected={isBulkSelected ? 'true' : undefined}
-                                    className={`${getStopMarkerClass(selectedStopId === stop.id || isBulkSelected, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''} ${isBulkSelected ? 'ring-4 ring-violet-300' : ''}`}
-                                    style={{
-                                        backgroundColor: routeColor,
-                                        color: routeTextColor === 'white' ? '#ffffff' : '#111827',
-                                    }}
-                                    aria-label={`Select ${stop.name}`}
-                                >
-                                    {stop.sequence}
-                                </button>
+                                <div className="group relative">
+                                    <button
+                                        type="button"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            onSelectStop(stop.id);
+                                        }}
+                                        data-highlighted={isHighlighted ? 'true' : undefined}
+                                        data-selected={isBulkSelected ? 'true' : undefined}
+                                        className={`${getStopMarkerClass(selectedStopId === stop.id || isBulkSelected, isHighlighted)} cursor-grab ${isDragging ? 'scale-110 cursor-grabbing ring-4 ring-cyan-100' : ''} ${isBulkSelected ? 'ring-4 ring-violet-300' : ''}`}
+                                        style={{
+                                            backgroundColor: routeColor,
+                                            color: routeTextColor === 'white' ? '#ffffff' : '#111827',
+                                        }}
+                                        aria-label={`Select ${stop.name}`}
+                                    >
+                                        {stop.sequence}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onPointerDown={(event) => event.stopPropagation()}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            onDeleteStop(stop.id);
+                                        }}
+                                        className={`absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full border border-red-200 bg-white text-red-600 shadow-md transition-opacity hover:bg-red-50 focus:opacity-100 ${selectedStopId === stop.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}
+                                        aria-label={`Delete ${stop.name}`}
+                                        title={`Delete ${stop.name}`}
+                                    >
+                                        <Trash2 size={11} />
+                                    </button>
+                                </div>
                             )}
                         </Marker>
                         );

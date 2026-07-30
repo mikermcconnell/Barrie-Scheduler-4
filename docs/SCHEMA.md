@@ -37,6 +37,7 @@ firebase/
 │   ├── routeConnectionConfigs/{routeIdentity} # Per-route connection settings
 │   ├── transitAppData/{docId}            # Transit App analytics datasets
 │   ├── performanceData/{docId}           # STREETS / ops performance datasets
+│   ├── performanceConfig/load            # Team passenger-capacity policy
 │   ├── todPickupData/{docId}             # Monthly Transit On Demand pickup map datasets
 │   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
 │   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
@@ -46,7 +47,7 @@ firebase/
 │   │   └── imports/{importId}            # OD import history
 │   ├── residentialGrowth/{docId}         # Monthly issued/occupied residential growth datasets
 │   │   └── imports/{importId}            # Residential Growth import history
-│   ├── routePlanner2Projects/{projectId} # Route Planner 2 saved planning projects
+│   ├── routePlanner2Projects/{projectId} # Camp Shuttle Planner saved projects (internal Route Planner 2 key)
 │   │   └── scenarios/{scenarioId}        # Saved editable route concepts
 │   │       └── runtimeSnapshots/{snapshotId} # Accepted/rejected Mapbox runtime decisions
 │   ├── councilIntelligence/default       # Council Intelligence pilot metadata/source health
@@ -72,7 +73,7 @@ firebase/
 `teams/{teamId}/connectionLibrary/default` and `teams/{teamId}/routeConnectionConfigs/{routeIdentity}` are used by the application and documented here because code reads and writes those paths directly.
 `teams/{teamId}/members/{userId}` is the durable source of team membership. The `userId` field must match the document ID so a collection-group query filtered to the signed-in user can safely enumerate only that user's teams. The required collection-group `userId` index is declared in `firestore.indexes.json`. `users/{userId}.teamId` selects the active team; joining an additional team does not replace an existing active-team pointer unless activation is explicitly requested.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
-`teams/{teamId}/routePlanner2Projects/{projectId}` stores Route Planner 2 project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection.
+`teams/{teamId}/routePlanner2Projects/{projectId}` stores Camp Shuttle Planner project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection. The existing `routePlanner2Projects` path remains stable to avoid a data migration.
 `teams/{teamId}/councilIntelligence/default` stores the Council Intelligence 90-day pilot window, last sync timestamp, and bounded source-health counts. Its `meetings` subcollection stores normalized eSCRIBE meeting metadata, official source links, extraction status, content hash, transit topics, and bounded plain text; external HTML is never rendered. `councillors` stores evidence counts and only treats explicitly named recorded votes as votes—movers and seconders remain separate signals. `registers` stores transit-relevant official-record summaries with confidence and source links. Reads require `analyticsCouncilIntelligence`; refresh is performed by a scheduled Function or an authenticated owner/admin callable.
 `teams/{teamId}/detourNotices/{noticeId}` stores editable notice copy, effective schedule, map frame, workflow status, and optimistic revision. Route overlays snapshot GTFS geometry/stops so later feed changes do not rewrite saved notices. Each overlay stores immutable operational `closureStart`/`closureEnd` anchors, sparse interior `closureWaypoints` used only to reshape the published closed-section line, sparse `detourWaypoints`, dense closure/detour geometry, and an optional `routeLabelPosition` that is re-snapped to the detour line. Temporary stop impacts may store an optional `temporaryStopCode` alongside their public name and position. Older overlays without `closureWaypoints` load with an empty list. Publication records store the posted revision, generated filenames, MyRide URL, and posting audit fields; version 1 keeps PDF/PNG files as browser downloads rather than Cloud Storage objects.
 `teams/{teamId}/routeConceptPlannerProjects/{projectId}` is separate neutral Route Concept Planner storage. Its integer `revision` supports optimistic conflict detection; alternatives and their patterns are saved atomically with the root document.
@@ -130,6 +131,10 @@ Partner teams that are granted Scheduled Transit access can also read published 
 Performance schema v12 extends daily dwell summaries with `exposureByRouteOperator`, `eligibleTimepointVisits`, and `incidentsPer1kEligibleVisits`. Each exposure row counts deduplicated normal timepoint observations with valid observed arrival and departure for one route/operator pair, allowing route and operator filters to keep matching numerators and denominators. Dwell incidents may include a deterministic `incidentId`, scheduled/observed timing context, vehicle/direction, passenger activity, reliable load status, and coordinates; cascades repeat `incidentId` for stable joining. These fields are optional so older stored days remain readable. `byOperatorDwell.totalReportableDwellMinutes` remains the moderate/high-only dwell total used by compact report snapshots.
 
 Performance schema v13 adds optional `occurrenceIndex` to load-profile and ridership-heatmap stops. The value is the zero-based visit number for that physical stop within one trip. It keeps repeated loop visits separate and aligns the same visit when other stops shift its `routeStopIndex`. Ridership heatmaps may also store `multipleStopPatterns` so the dashboard can disclose within-day pattern variation. Older summaries remain readable but cannot recover repeated visits that were already collapsed; rebuild or re-import them when occurrence-level passenger flow is required.
+
+Performance schema v14 adds stable `tripId` identity to ridership-heatmap columns so distinct trips with the same terminal departure time no longer merge. New trip columns also retain `vehicleId` and the applied `capacity`; each daily summary retains the applied default capacity and capacity-config version. Pre-v14 summaries remain readable, but same-time collisions cannot be repaired without rebuild or re-import.
+
+`teams/{teamId}/performanceConfig/load` stores the team-managed passenger-capacity policy: `schemaVersion: 1`, `defaultCapacity`, normalized `vehicleCapacities`, monotonic `version`, `updatedAt`, and `updatedBy`. Capacities are whole numbers from 20 through 150, with at most 500 vehicle overrides. Members may read the policy; owners/admins may write it. Writes use an expected-version transaction. Server CSV ingest and history rebuild load one policy snapshot before aggregation; workbook import loads it immediately before browser aggregation. The 65-passenger value is only the fallback when no valid team policy exists.
 
 `teams/{teamId}/todPickupData/metadata` stores the active Transit On Demand pickup-map import pointer. Full monthly TOD pickup datasets live in Storage as aggregated JSON at `teams/{teamId}/todPickupData/{timestamp}.json`. Uploading a CSV for a month replaces that month only; other months remain in the same stored summary. The stored payload is aggregated by stop ID when present, otherwise by pickup name plus rounded coordinates, or by coordinates alone. Raw request rows, rider-identifying fields, and address columns are not persisted. Imports are bounded to CSV files under 5 MB and 25,000 rows. TOD pickup map data and import metadata are readable by team members; writes are restricted to team owners/admins or workspace permission managers.
 
@@ -847,10 +852,10 @@ interface NewScheduleProject {
   };
   routeNumber?: string;
 
-  // Analysis results (Step 2)
+  // Runtime review and trust contract (Step 2)
   analysis?: TripBucketAnalysis[];
   bands?: TimeBand[];
-  approvedRuntimeContract?: ApprovedRuntimeContract;
+  approvedRuntimeContract?: ApprovedRuntimeContract; // schemaVersion 2 only
   approvedRuntimeModel?: ApprovedRuntimeModel;
 
   // User configuration (Step 3)
@@ -863,11 +868,16 @@ interface NewScheduleProject {
 
   isGenerated: boolean;
   storagePath?: string;
+  projectRevision: number; // incremented by every committed save/reset
+  runtimeTrustSchemaVersion?: 2;
+  runtimeTrustMigrationVersion?: 2;
 
   createdAt: Date;
   updatedAt: Date;
 }
 ```
+
+The schema v2 contract separates visible `reviewBuckets` from trusted `approvedBuckets`. Normal v2 saves write `runtimeTrustSchemaVersion: 2` and `runtimeTrustMigrationVersion: 2`, but readers still validate the contract itself; a marker alone never makes old Storage content trusted. Old analysis, bands, approvals, parsed runtime results, and generated schedule artifacts can be cleared by `functions/scripts/migrate-new-schedule-runtime-v2.mjs`. The script is dry-run by default, requires matching `--project` and `--confirm-project` values for `--apply`, uses update-time checks, and keeps a 30-day backup under `migration-backups/new-schedule-runtime-v2/` before replacing an active Storage object. `cleanupNewScheduleRuntimeMigrationBackups` runs daily and deletes only expired objects under that exact migration prefix. Project identity, performance selection, and planner configuration are preserved. The app uses the same upload-verify-commit-cleanup order when it durably resets a legacy project on load.
 
 ### TimeBand
 

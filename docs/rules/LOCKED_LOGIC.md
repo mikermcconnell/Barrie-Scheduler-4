@@ -69,6 +69,18 @@ The Transit On-Demand optimizer has two intentional execution paths:
 Do not force every optimization request through the extended pipeline. In all
 paths, AI suggests and planners decide.
 
+### 7. Trusted runtime buckets
+
+New Schedule generation uses only the exact approved 30-minute bucket.
+
+- Performance buckets require at least 5 distinct days with a complete same-day paired cycle.
+- Performance cycles are validated independently by start orientation. A North-start bucket covers its North/South pair; a South-start bucket covers its South/North pair. Each orientation requires its own exact five-day complete-cycle evidence.
+- A block may use only the exact approved bucket for its starting orientation, reused for both paired legs. If that orientation and half-hour bucket are missing, generation must fail closed.
+- Uploaded CSV buckets require an explicit count of at least 10 observations for every canonical segment. Percentiles without counts are review-only.
+- Estimated repairs, stop-level fragments, detours, outliers, ignored buckets, and incomplete trips are review evidence only.
+- Do not substitute the closest bucket, another band, a raw segment value, or a default runtime when trusted evidence is missing.
+- Missing or stale approval blocks later-step navigation, generation, export, and upload to Master.
+
 ---
 
 ## High-Risk Areas
@@ -88,6 +100,7 @@ If you touch these, read `.claude/CLAUDE.md` danger zones and the detailed notes
 ## Durable Terms
 
 - Runtime: for STREETS-derived stop-to-stop planning proxies, use observed departure-to-departure time when the downstream stop has an observed departure; fall back to downstream arrival at terminal/end-of-trip points so terminal recovery stays separate
+- Approved Runtime Bucket: a complete canonical bucket that meets its source threshold and is eligible for exact-bucket schedule generation
 - Recovery: buffer between trips
 - Cycle Time: total vehicle operating period
 - Trip Pair: the two complementary directional trips in a bidirectional schedule row; loop chains remain `Loop`

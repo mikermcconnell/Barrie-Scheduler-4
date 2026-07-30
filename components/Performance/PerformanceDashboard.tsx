@@ -145,10 +145,10 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
         () => buildPerformanceMetadataHealth(metadataQuery.data),
         [metadataQuery.data],
     );
-    const canSeeAdvancedOperationsTabs = canAccess('operationsLoadProfiles') || canAccess('operationsOperatorDwell');
-    const dashboardDescription = canSeeAdvancedOperationsTabs
-        ? 'On-time performance, ridership, and load profiles from STREETS AVL/APC data.'
-        : 'On-time performance and ridership from STREETS AVL/APC data.';
+    const canSeeDwellReview = canAccess('operationsOperatorDwell');
+    const dashboardDescription = canSeeDwellReview
+        ? 'On-time performance, ridership, passenger load, and dwell review from STREETS AVL/APC data.'
+        : 'On-time performance, ridership, and passenger load from STREETS AVL/APC data.';
 
     useEffect(() => {
         setView(autoOpen ? 'loading' : 'landing');
@@ -272,6 +272,9 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                                 selectedRouteId={selectedRouteId}
                                 routeOptions={routeOptions}
                                 onRouteChange={setSelectedRouteId}
+                                loadConfigTeamId={usesSharedPerformanceData ? undefined : team.id}
+                                loadConfigUserId={usesSharedPerformanceData ? undefined : user?.uid}
+                                canManageLoadConfig={canManageTeam && !usesSharedPerformanceData}
                                 canReimport={canManageTeam && !usesSharedPerformanceData}
                                 onReimport={() => {
                                     if (usesSharedPerformanceData || !canManageTeam) return;
@@ -378,12 +381,8 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                         <h3 className="text-lg font-bold text-gray-900 mb-1">STREETS AVL Data</h3>
                         <p className="text-sm text-gray-500 leading-relaxed">
                             {hasExistingData
-                                ? canSeeAdvancedOperationsTabs
-                                    ? 'View OTP, ridership trends, and load profiles. Data updates daily.'
-                                    : 'View OTP and ridership trends. Data updates daily.'
-                                : canSeeAdvancedOperationsTabs
-                                    ? 'Import AVL/APC data to view OTP, ridership trends, and load profiles by route.'
-                                    : 'Import AVL/APC data to view OTP and ridership trends by route.'}
+                                ? 'View OTP, ridership trends, and passenger load by stop. Data updates daily.'
+                                : 'Import AVL/APC data to view OTP, ridership trends, and passenger load by route and stop.'}
                         </p>
                         {quickHealth && (
                             <p className={`mt-3 text-xs leading-relaxed ${

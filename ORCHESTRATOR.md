@@ -23,7 +23,7 @@ Scheduler 4 is a Barrie Transit planning platform with a fixed-route scheduling 
 
 Top-level shells in `App.tsx` are On-Demand, Fixed Route, Operations, Parking, and Planning Data. `index.tsx` is the mount point. Navigation is hash-based rather than router-library based.
 
-Planning Data deep-link handling is centralized in `utils/workspaces/analyticsWorkspaceRouting.ts`. The home-screen resume card uses `utils/workspaces/fixedRouteResumeState.ts`; despite the legacy name, Route Planner 2 also updates it.
+Planning Data deep-link handling is centralized in `utils/workspaces/analyticsWorkspaceRouting.ts`. The home-screen resume card uses `utils/workspaces/fixedRouteResumeState.ts`; despite the legacy name, Camp Shuttle Planner (`Route Planner 2` internally) also updates it.
 
 This is a domain-heavy monolith:
 
@@ -67,9 +67,10 @@ Load `docs/rules/LOCKED_LOGIC.md` for behavioral constraints and the matching fi
 Operations owns STREETS-backed imports, dashboards, summaries, and reporting.
 
 - Performance history uses monthly Storage chunks with Firestore metadata and route/month pointers; the old monolithic path is fallback only.
-- Load Profiles uses a separate compact monthly read model. Keep `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts` contract-identical.
+- Passenger load is reviewed in Ridership -> Passenger Flow by Stop. The former standalone Load Profiles UI and assignable access surface are removed; its compact monthly read model remains only for backward-compatible backend and repair use. Keep `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts` contract-identical.
 - Same-team and partner detail reads use bounded, access-checked backend views; do not restore broad direct browser reads or convert load/schema failures into empty data.
 - Canonical metric and schema-version behavior lives in `docs/OPERATIONS_DASHBOARD_METRICS.md`. Older stored summaries may require rebuild or re-import after schema changes.
+- Performance schema v14 gives heatmap trips stable identity and stores vehicle/applied capacity so same-time trips do not collide and inferred loads can enforce fleet-specific capacity.
 
 ### Parking
 
@@ -77,12 +78,12 @@ Parking owns parking-code usage, revenue review, map/location settings, and plat
 
 ### Planning Data
 
-Planning Data includes Transit App analytics, OD analysis, Route Planner 2, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Council Intelligence, Fleet Plan, and related tools.
+Planning Data includes Transit App analytics, OD analysis, Camp Shuttle Planner, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Council Intelligence, Fleet Plan, and related tools.
 
 Important boundaries:
 
-- Route Planner 2 is the current Camp tool. `docs/route-planner-2/README.md` routes to its product, workflow, architecture, data, runtime, and test contracts.
-- Route Concept Planner is a separate neutral internal-beta workspace. Keep it isolated from Route Planner 2 and load `docs/route-concept-planner/README.md` plus its contracts.
+- Camp Shuttle Planner is the current Camp and address-based shuttle tool; its stable internal code name remains `Route Planner 2`. `docs/route-planner-2/README.md` routes to its product, workflow, architecture, data, runtime, and test contracts.
+- Route Concept Planner is a separate neutral internal-beta workspace. Keep it isolated from Camp Shuttle Planner and load `docs/route-concept-planner/README.md` plus its contracts.
 - The removed legacy Route Planner is historical. Remaining `utils/route-planner/` code is legacy support used by Shuttle Planner, not Route Planner 2.
 - Council Intelligence must distinguish official named votes from movers, seconders, procedural signals, and unknown evidence.
 - Fleet Plan is team-shared and versioned. Ordinary writes are owner/admin-only; an audited support session in edit mode is the explicit cross-team exception. The UI gates saves on workbook validation, while the persistence service enforces version conflicts, so preserve both layers.
@@ -147,6 +148,10 @@ Use the relevant `.agents/skills/` danger-zone skill and focused tests before ca
 
 ## Durable feature cautions and pointers
 
+- New Schedule runtime approvals use schema version 2. Visible `reviewBuckets` are evidence; only independently revalidated `approvedBuckets` may generate schedules.
+- Performance runtime buckets require five complete paired-cycle days; CSV buckets require ten explicit observations on every segment. Detours, estimates, outliers, partial trips, and stop-only evidence remain review-only.
+- Strict generation uses the exact approved half-hour bucket. The North cycle-start bucket supplies both paired legs; South-start pairs and missing buckets fail closed without closest-bucket, band, raw-segment, or default-runtime fallback.
+- Missing or stale approval blocks later wizard steps, generation, export, and Master upload. Pre-v2 projects are durably reset while preserving planner settings; schema-v2 saves are serialized and revision-checked.
 - Dwell Incident Review is incident-first, read-only, and map-first. Current UX and metric rules live in `docs/DWELL_CASCADE_FEATURE.md` and `docs/OPERATIONS_DASHBOARD_METRICS.md`.
 - Passenger Flow inferred loads must remain visibly distinct from verified APC values. The canonical fallback and rejection rules live in `docs/OPERATIONS_DASHBOARD_METRICS.md`.
 - Public timetable content is team-managed configuration. Its persistence contract lives in `docs/SCHEMA.md`.

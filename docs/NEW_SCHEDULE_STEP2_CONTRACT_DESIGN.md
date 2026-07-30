@@ -1,7 +1,7 @@
 # New Schedule Step 2 Contract Design
 
-Status: Proposed  
-Date: March 27, 2026  
+Status: Implemented (schema v2)
+Date: July 29, 2026
 Depends on: `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
 Related: `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
 Context entrypoint: `docs/new-schedule-step2/README.md`
@@ -211,6 +211,10 @@ interface Step2PlanningPayload {
   chartBasis: 'observed-cycle' | 'uploaded-percentiles';
   generationBasis: 'direction-band-summary';
 
+  reviewBuckets: TripBucketAnalysis[];
+  approvedBuckets: TripBucketAnalysis[];
+  approvedCycleBucketsByStartDirection?: Partial<Record<'North' | 'South', TripBucketAnalysis[]>>;
+  /** Compatibility alias for reviewBuckets. */
   buckets: TripBucketAnalysis[];
   bands: TimeBand[];
   directionBandSummary: DirectionBandSummary;
@@ -285,7 +289,7 @@ This replaces the current vague `ApprovedRuntimeModel` idea with a true persiste
 
 ```ts
 interface ApprovedRuntimeContract {
-  schemaVersion: 1;
+  schemaVersion: 2;
 
   routeIdentity: string;
   routeNumber: string;
@@ -316,6 +320,10 @@ interface ApprovedRuntimeContract {
   healthSnapshot: Step2ReviewHealth;
 }
 ```
+
+Schema version 2 stores all visible evidence in `planning.reviewBuckets` and only independently validated scheduling inputs in `planning.approvedBuckets`. For performance data, `planning.approvedCycleBucketsByStartDirection` may additionally store separate North-start and South-start models. Each orientation needs five distinct complete same-day cycles in its exact 30-minute start bucket, and that bucket is reused only for the two legs in that orientation. Missing orientation-specific evidence fails closed. The optional map preserves compatibility with older v2 contracts, which can continue to supply North-start buckets through `approvedBuckets` but cannot authorize South-start generation. Uploaded percentile evidence needs an explicit count of at least ten observations for every segment; a percentile-only file remains review-only. Estimated and segment-only evidence cannot be approved.
+
+Steps 3 and 4, export, and Master upload require a current contract. Saved contracts are deeply revalidated on load, legacy runtime artifacts are durably reset, and cloud saves use project revisions plus a single ordered queue to reject stale cross-tab writes.
 
 Blocked contracts are not valid contracts and must never be created.
 

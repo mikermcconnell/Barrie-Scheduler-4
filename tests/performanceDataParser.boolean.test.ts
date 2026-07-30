@@ -32,4 +32,10 @@ describe('performanceDataParser boolean coercion', () => {
         expect(parsed?.timePoint).toBe(true);
         expect(parsed?.inBetween).toBe(false);
     });
+
+    it('marks a missing APC source as unavailable instead of reliable', () => {
+        const parsed = parseRow(baseRow({ DepartureLoad: 25 }), 2);
+
+        expect(parsed?.apcSource).toBe(-1);
+    });
 });

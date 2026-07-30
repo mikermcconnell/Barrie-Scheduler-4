@@ -15,8 +15,8 @@ describe('Route Concept Planner analytics routing', () => {
         expect(buildAnalyticsWorkspaceHash('fixed/analytics', 'route-concept-planner')).toBe('#fixed/analytics/route-concept-planner');
     });
 
-    it('uses a distinct user-facing label without changing Route Planner', () => {
+    it('uses distinct user-facing labels for both planning workspaces', () => {
         expect(getAnalyticsWorkspaceViewLabel('route-concept-planner')).toBe('Route Concept Planner');
-        expect(getAnalyticsWorkspaceViewLabel('route-planner-2')).toBe('Route Planner');
+        expect(getAnalyticsWorkspaceViewLabel('route-planner-2')).toBe('Camp Shuttle Planner');
     });
 });
