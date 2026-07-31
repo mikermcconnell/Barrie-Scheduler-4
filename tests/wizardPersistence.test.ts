@@ -15,4 +15,8 @@ describe('resolveWizardPersistenceStep', () => {
     it('does not move backward when already at Step 4', () => {
         expect(resolveWizardPersistenceStep(4, { generatedSchedules: [] })).toBe(4);
     });
+
+    it('preserves Step 3 progress while the wizard is temporarily gated on Step 2', () => {
+        expect(resolveWizardPersistenceStep(2, { hasStep3Payload: true })).toBe(3);
+    });
 });

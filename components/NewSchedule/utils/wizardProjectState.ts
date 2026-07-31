@@ -175,11 +175,23 @@ export const buildLocalWizardProgress = (
     state: WizardPersistenceState,
     overrides?: WizardPersistenceOverrides
 ): WizardProgress => {
-    const persistenceStep = resolveWizardPersistenceStep(state.step, overrides);
     const baselines = resolveGeneratedScheduleBaselines(
         overrides?.generatedSchedules ?? state.generatedSchedules,
         overrides?.originalGeneratedSchedules ?? state.originalGeneratedSchedules
     );
+    const persistenceStep = resolveWizardPersistenceStep(state.step, {
+        generatedSchedules: overrides?.generatedSchedules !== undefined
+            ? overrides.generatedSchedules
+            : baselines.generatedSchedules.length > 0
+                ? baselines.generatedSchedules
+                : undefined,
+        originalGeneratedSchedules: overrides?.originalGeneratedSchedules !== undefined
+            ? overrides.originalGeneratedSchedules
+            : baselines.originalGeneratedSchedules.length > 0
+                ? baselines.originalGeneratedSchedules
+                : undefined,
+        hasStep3Payload: state.config.blocks.length > 0,
+    });
 
     return {
         step: persistenceStep,
@@ -206,11 +218,23 @@ export const buildFirebaseWizardSaveData = (
     overrides?: WizardPersistenceOverrides
 ): WizardFirebaseSaveData => {
     const effectiveProjectId = overrides?.id ?? state.projectId;
-    const persistenceStep = resolveWizardPersistenceStep(state.step, overrides);
     const baselines = resolveGeneratedScheduleBaselines(
         overrides?.generatedSchedules ?? state.generatedSchedules,
         overrides?.originalGeneratedSchedules ?? state.originalGeneratedSchedules
     );
+    const persistenceStep = resolveWizardPersistenceStep(state.step, {
+        generatedSchedules: overrides?.generatedSchedules !== undefined
+            ? overrides.generatedSchedules
+            : baselines.generatedSchedules.length > 0
+                ? baselines.generatedSchedules
+                : undefined,
+        originalGeneratedSchedules: overrides?.originalGeneratedSchedules !== undefined
+            ? overrides.originalGeneratedSchedules
+            : baselines.originalGeneratedSchedules.length > 0
+                ? baselines.originalGeneratedSchedules
+                : undefined,
+        hasStep3Payload: state.config.blocks.length > 0,
+    });
 
     return {
         name: overrides?.name || state.projectName,
@@ -227,7 +251,7 @@ export const buildFirebaseWizardSaveData = (
         parsedData: persistenceStep >= 1 ? state.parsedData : undefined,
         approvedRuntimeContract: persistenceStep >= 2 ? state.approvedRuntimeContract : undefined,
         approvedRuntimeModel: undefined,
-        isGenerated: overrides?.isGenerated ?? (persistenceStep >= 4),
+        isGenerated: overrides?.isGenerated ?? (baselines.generatedSchedules.length > 0),
         ...(effectiveProjectId ? { id: effectiveProjectId } : {})
     };
 };

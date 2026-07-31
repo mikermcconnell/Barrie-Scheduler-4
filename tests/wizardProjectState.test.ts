@@ -224,6 +224,41 @@ describe('wizardProjectState helpers', () => {
         expect(payload.approvedRuntimeModel).toBeUndefined();
     });
 
+    it('preserves a loaded Step 4 schedule when a stale approval temporarily shows Step 2', () => {
+        const state = { ...makeState(), step: 2 as const };
+
+        const localPayload = buildLocalWizardProgress(state);
+        const firebasePayload = buildFirebaseWizardSaveData(state);
+
+        expect(localPayload.step).toBe(4);
+        expect(localPayload.config).toEqual(state.config);
+        expect(localPayload.generatedSchedules).toEqual(state.generatedSchedules);
+        expect(localPayload.originalGeneratedSchedules).toEqual(state.generatedSchedules);
+        expect(firebasePayload.config).toEqual(state.config);
+        expect(firebasePayload.generatedSchedules).toEqual(state.generatedSchedules);
+        expect(firebasePayload.originalGeneratedSchedules).toEqual(state.generatedSchedules);
+        expect(firebasePayload.isGenerated).toBe(true);
+    });
+
+    it('preserves loaded Step 3 block settings while a stale approval temporarily shows Step 2', () => {
+        const state: WizardPersistenceState = {
+            ...makeState(),
+            step: 2 as const,
+            generatedSchedules: [],
+            originalGeneratedSchedules: [],
+            config: {
+                ...makeState().config,
+                blocks: [{ id: '8-1', startTime: '06:00', endTime: '22:00' }],
+            },
+        };
+
+        const payload = buildFirebaseWizardSaveData(state);
+
+        expect(payload.config).toEqual(state.config);
+        expect(payload.generatedSchedules).toBeUndefined();
+        expect(payload.isGenerated).toBe(false);
+    });
+
     it('normalizes restored state with parsed-data segment ordering and baseline fallback', () => {
         const restored = normalizeRestoredWizardState({
             analysis: [{

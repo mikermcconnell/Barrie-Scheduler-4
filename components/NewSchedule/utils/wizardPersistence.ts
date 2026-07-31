@@ -3,6 +3,7 @@ import type { MasterRouteTable } from '../../../utils/parsers/masterSchedulePars
 export interface WizardPersistenceOverrides {
     generatedSchedules?: MasterRouteTable[];
     originalGeneratedSchedules?: MasterRouteTable[];
+    hasStep3Payload?: boolean;
 }
 
 export const resolveWizardPersistenceStep = (
@@ -15,6 +16,10 @@ export const resolveWizardPersistenceStep = (
 
     if (hasStep4Payload && step < 4) {
         return 4;
+    }
+
+    if (overrides?.hasStep3Payload && step < 3) {
+        return 3;
     }
 
     return step;
