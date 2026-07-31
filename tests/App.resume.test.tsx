@@ -7,6 +7,10 @@ const authState = vi.hoisted(() => ({
   user: { uid: 'user-1', email: 'planner@example.com' } as { uid: string; email: string } | null,
 }));
 
+const workspaceAccessState = vi.hoisted(() => ({
+  loading: false,
+}));
+
 vi.mock('../components/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: () => ({
@@ -40,6 +44,13 @@ vi.mock('../components/contexts/TeamContext', () => ({
 
 vi.mock('../components/contexts/ToastContext', () => ({
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('../hooks/useWorkspaceAccess', () => ({
+  useWorkspaceAccess: () => ({
+    canAccess: () => true,
+    loading: workspaceAccessState.loading,
+  }),
 }));
 
 vi.mock('../components/modals/AuthModal', () => ({
@@ -99,6 +110,7 @@ describe('App resume entry', () => {
 
   beforeEach(() => {
     authState.user = { uid: 'user-1', email: 'planner@example.com' };
+    workspaceAccessState.loading = false;
     localStorage.clear();
     window.location.hash = '';
     container = document.createElement('div');
@@ -185,5 +197,25 @@ describe('App resume entry', () => {
     expect(container.textContent).not.toContain('Where you left off');
     expect(container.textContent).not.toContain('Scheduled Transit · My Drafts');
     expect(localStorage.getItem('scheduler4:fixed-route-resume')).toBeNull();
+  });
+
+  it('keeps a deep link intact while workspace access is loading', () => {
+    workspaceAccessState.loading = true;
+    window.location.hash = '#operations/performance/ridership';
+
+    flushSync(() => {
+      root.render(<App />);
+    });
+
+    expect(window.location.hash).toBe('#operations/performance/ridership');
+    expect(container.textContent).toContain('Loading...');
+
+    workspaceAccessState.loading = false;
+    flushSync(() => {
+      root.render(<App />);
+    });
+
+    expect(window.location.hash).toBe('#operations/performance/ridership');
+    expect(container.textContent).toContain('Mock Operations Workspace');
   });
 });

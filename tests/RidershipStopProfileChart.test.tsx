@@ -128,14 +128,24 @@ describe('RidershipStopProfileChart', () => {
 
     it('adapts labels and summary values for multi-day and single-day periods', () => {
         render([option()]);
-        expect(container.textContent).toContain('Average boardings and alightings per observed service day');
+        expect(container.textContent).toContain('Estimated passengers onboard after each stop, averaged across observed service days');
         expect(container.textContent).toContain('30 · Avg / service day');
         expect(container.textContent).toContain('Georgian College');
         expect(container.textContent).toContain('20');
 
         render([option({ serviceDays: 1 })], 'single-day');
-        expect(container.textContent).toContain('Boardings and alightings by stop');
+        expect(container.textContent).toContain('Estimated passengers onboard after departing each stop');
         expect(container.textContent).toContain('30 · Daily total');
+    });
+
+    it('shows estimated load, boardings, and alightings together in one view', () => {
+        render([option()]);
+
+        expect(container.querySelector('[data-chart-name="Estimated onboard load (APC-backed)"]')).not.toBeNull();
+        expect(container.querySelector('[data-chart-name="Boardings"]')).not.toBeNull();
+        expect(container.querySelector('[data-chart-name="Alightings"]')).not.toBeNull();
+        expect(container.querySelector('[aria-label^="Combined estimated onboard load"]')).not.toBeNull();
+        expect(container.textContent).not.toContain('Passenger movement');
     });
 
     it('discloses multiple patterns and estimated legacy weighting', () => {
@@ -145,9 +155,9 @@ describe('RidershipStopProfileChart', () => {
             loadEvidence: { ...option().loadEvidence, legacyStopCount: 2, legacyDayCount: 4 },
         })]);
         expect(container.textContent).toContain('Multiple stop patterns');
-        expect(container.textContent).toContain('Estimated weighting');
         expect(container.textContent).toContain('Historical weighting:');
-        const estimatedLine = container.querySelector('[data-chart-name="Average onboard (contains estimates)"]');
+        expect(container.textContent).toContain('Historical load averages do not include observation counts');
+        const estimatedLine = container.querySelector('[data-chart-name="Estimated onboard load (contains historical estimates)"]');
         expect(estimatedLine?.getAttribute('data-stroke-dasharray')).toBeNull();
     });
 
@@ -166,6 +176,16 @@ describe('RidershipStopProfileChart', () => {
             hasBlockInferredLoad: true,
             blockInferenceAssumedEmptyAnchor: true,
             invalidBlockInferenceChainCount: 2,
+            loadQuality: {
+                ...option().loadQuality,
+                score: 27,
+                rating: 'low',
+                observedOpportunityCount: 0,
+                estimatedOpportunityCount: 8,
+                unavailableOpportunityCount: 10,
+                invalidChainCount: 2,
+                issues: [{ code: 'invalid-chain', severity: 'critical', message: '2 block chains were omitted because passenger changes produced an estimated load outside the plausible range.' }],
+            },
             loadEvidence: {
                 ...option().loadEvidence,
                 observedStopCount: 0,
@@ -175,20 +195,19 @@ describe('RidershipStopProfileChart', () => {
             },
         })]);
 
-        expect(container.textContent).toContain('Heatmap-estimated load:');
-        expect(container.textContent).toContain('reliable APC load is used where available');
+        expect(container.textContent).toContain('Passenger-flow estimates carry boardings minus alightings');
         expect(container.textContent).toContain('same route and block');
         expect(container.textContent).toContain('first observed trip in each block is assumed empty');
         expect(container.textContent).toContain('2 block chains were omitted');
         expect(container.textContent).toContain('outside the plausible range');
-        expect(container.textContent).toContain('Georgian College · Heatmap estimate');
-        expect(container.querySelector('[data-chart-name="Average onboard (APC + heatmap estimates)"]')).not.toBeNull();
-        expect(container.querySelector('[aria-label="Load evidence coverage"]')?.textContent).toContain('Observed APC: 0/2 stops');
-        expect(container.querySelector('[aria-label="Load evidence coverage"]')?.textContent).toContain('Heatmap estimate: 2/2 stops');
+        expect(container.textContent).toContain('Georgian College · Passenger-flow estimate');
+        expect(container.querySelector('[data-chart-name="Estimated onboard load (APC + passenger-flow estimates)"]')).not.toBeNull();
+        expect(container.querySelector('[aria-label="Load evidence coverage"]')?.textContent).toContain('APC-backed: 0/2 stops');
+        expect(container.querySelector('[aria-label="Load evidence coverage"]')?.textContent).toContain('Passenger-flow estimate: 2/2 stops');
         expect(container.querySelector('[aria-label="Load evidence coverage"]')?.textContent).toContain('8 samples');
     });
 
-    it('renders a persistent opportunity-weighted load confidence panel', () => {
+    it('leads with plain-language confidence while retaining expandable technical detail', () => {
         render([option({
             loadQuality: {
                 ...option().loadQuality,
@@ -207,11 +226,14 @@ describe('RidershipStopProfileChart', () => {
             },
         })]);
 
-        const panel = container.querySelector('[aria-label="Load confidence"]');
+        const panel = container.querySelector('[aria-label="Estimated load confidence"]');
+        expect(panel?.textContent).toContain('Low confidence');
+        expect(panel?.textContent).toContain('22% APC-backed');
+        expect(panel?.textContent).toContain('78% usable coverage');
+        expect(panel?.textContent).toContain('How confidence was calculated');
         expect(panel?.textContent).toContain('55/100');
-        expect(panel?.textContent).toContain('low');
-        expect(panel?.textContent).toContain('Observed APC4/18');
-        expect(panel?.textContent).toContain('Heatmap estimated8/18');
+        expect(panel?.textContent).toContain('APC-backed4/18');
+        expect(panel?.textContent).toContain('Passenger-flow estimate8/18');
         expect(panel?.textContent).toContain('Historical estimate2/18');
         expect(panel?.textContent).toContain('Unavailable4/18');
         expect(panel?.textContent).toContain('lower-bound starting-load anchor');
@@ -226,7 +248,7 @@ describe('RidershipStopProfileChart', () => {
             blockInferenceUsesMinimumFeasibleAnchor: true,
         })]);
 
-        expect(container.textContent).toContain('smallest starting load that keeps the full block non-negative');
+        expect(container.textContent).toContain('smallest non-negative starting load is used');
         expect(container.textContent).toContain('lower-bound estimate');
     });
 
@@ -256,14 +278,14 @@ describe('RidershipStopProfileChart', () => {
         expect(container.textContent).toContain('Try a different date, day type, or route filter.');
 
         render([option({ rows: option().rows.map((row): RidershipStopProfileRow => ({ ...row, averageLoad: null, loadObservationCount: null })) })]);
-        expect(container.textContent).toContain('Average onboard load is unavailable; boarding and alighting activity is shown.');
+        expect(container.textContent).toContain('Estimated onboard load is unavailable; boarding and alighting movement is still shown.');
     });
 
     it('renders load-only data without activity bars', () => {
         render([option({ rows: option().rows.map(row => ({ ...row, boardings: 0, alightings: 0 })) })]);
 
-        expect(container.textContent).toContain('No boarding or alighting activity was recorded; available load observations are shown.');
-        expect(container.querySelector('[data-chart-name="Average onboard"]')).not.toBeNull();
+        expect(container.textContent).toContain('Passenger movement is unavailable; estimated onboard load is shown.');
+        expect(container.querySelector('[data-chart-name="Estimated onboard load (APC-backed)"]')).not.toBeNull();
         expect(container.querySelector('[data-chart-name="Boardings"]')).toBeNull();
         expect(container.querySelector('[data-chart-name="Alightings"]')).toBeNull();
     });
@@ -280,7 +302,7 @@ describe('RidershipStopProfileChart', () => {
 
         const summary = container.querySelector('[role="img"]');
         expect(summary?.getAttribute('aria-label')).toContain('Busiest boarding stop is Downtown Terminal at 30.');
-        expect(summary?.getAttribute('aria-label')).toContain('Peak average onboard load is 20 at Georgian College.');
+        expect(summary?.getAttribute('aria-label')).toContain('Peak estimated onboard load is 20 at Georgian College.');
 
         const scrollRegion = container.querySelector<HTMLElement>('[data-testid="passenger-flow-scroll-region"]');
         expect(scrollRegion?.tabIndex).toBe(0);

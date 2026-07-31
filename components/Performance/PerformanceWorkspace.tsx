@@ -22,6 +22,11 @@ import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/featur
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import type { PerformanceRouteOption } from '../../utils/performanceRouteFilter';
 import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
+import {
+    buildPerformanceWorkspaceHash,
+    parsePerformanceWorkspaceTabFromHash,
+    type PerformanceWorkspaceTab,
+} from '../../utils/workspaces/performanceWorkspaceRouting';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -186,7 +191,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
 }) => {
     const { canAccess } = useWorkspaceAccess();
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
-    const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
+    const [activeTab, setActiveTab] = useState<PerformanceWorkspaceTab>(() =>
+        parsePerformanceWorkspaceTabFromHash(window.location.hash)
+    );
     const [timeRange, setTimeRangeState] = useState<TimeRange>('past-week');
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [customDateRange, setCustomDateRange] = useState<PerformanceDateWindow | null>(null);
@@ -300,15 +307,37 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         setSelectedDate(latestAvailableDate);
     }, [timeRange, selectedDate, availableDates, latestAvailableDate]);
 
+    const navigateToTab = useCallback((tab: PerformanceWorkspaceTab) => {
+        setActiveTab(tab);
+        const nextHash = buildPerformanceWorkspaceHash(tab);
+        if (window.location.hash !== nextHash) window.location.hash = nextHash;
+    }, []);
+
     useEffect(() => {
-        if (tabs.some(tab => tab.id === activeTab)) return;
-        setActiveTab(tabs[0]?.id ?? 'overview');
-    }, [activeTab, tabs]);
+        const syncTabFromHash = () => {
+            const requestedTab = parsePerformanceWorkspaceTabFromHash(window.location.hash);
+            const nextTab = tabs.find(tab => tab.id === requestedTab && tab.enabled)?.id
+                ?? tabs.find(tab => tab.enabled)?.id
+                ?? 'overview';
+            const safeTab = nextTab as PerformanceWorkspaceTab;
+            setActiveTab(safeTab);
+
+            const canonicalHash = buildPerformanceWorkspaceHash(safeTab);
+            if (window.location.hash.startsWith('#operations/performance')
+                && window.location.hash !== canonicalHash) {
+                window.history.replaceState(null, '', canonicalHash);
+            }
+        };
+
+        syncTabFromHash();
+        window.addEventListener('hashchange', syncTabFromHash);
+        return () => window.removeEventListener('hashchange', syncTabFromHash);
+    }, [tabs]);
 
     const handleNavigate = (tabId: string) => {
         const tab = tabs.find(t => t.id === tabId);
         if (tab?.enabled) {
-            setActiveTab(tab.id);
+            navigateToTab(tab.id as PerformanceWorkspaceTab);
             const tabEl = tabBarRef.current?.querySelector(`[data-tab="${tabId}"]`);
             tabEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
@@ -475,7 +504,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                                 data-tab={tab.id}
                                 aria-pressed={isActive}
                                 disabled={!tab.enabled}
-                                onClick={() => tab.enabled && setActiveTab(tab.id)}
+                                onClick={() => tab.enabled && navigateToTab(tab.id as PerformanceWorkspaceTab)}
                                 className={`relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
                                     isActive
                                         ? 'text-gray-900'

@@ -84,6 +84,8 @@ const AppContent: React.FC = () => {
 
   // Handle browser back/forward
   useEffect(() => {
+    if (loading || accessLoading) return undefined;
+
     const handler = () => {
       const parsedView = parseHashView();
       const nextView = isViewAvailable(parsedView) ? parsedView : 'home';
@@ -96,7 +98,7 @@ const AppContent: React.FC = () => {
     handler();
     window.addEventListener('hashchange', handler);
     return () => window.removeEventListener('hashchange', handler);
-  }, [isViewAvailable, user?.uid]);
+  }, [accessLoading, isViewAvailable, loading, user?.uid]);
 
   useEffect(() => {
     if (!user) {

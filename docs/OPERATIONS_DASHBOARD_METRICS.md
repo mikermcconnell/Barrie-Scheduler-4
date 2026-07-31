@@ -49,6 +49,8 @@ Passenger load is presented in **Ridership -> Passenger Flow by Stop**; there is
 | Data quality | Raw record and missing/capped/excluded field counts for the loaded import scope | Route-specific pages must not imply that system-wide quality counts are route-specific | Route-level quality fields are not currently available |
 | Action Queue priority | Heuristic combining severity, persistence, and relative rider impact | Decision-support ranking only; it is not an audited operating metric | Definition sign-off required |
 
+Passenger Flow by Stop uses one combined chart: boarding and alighting bars share the stop sequence with the estimated onboard-load line. Separate view controls are not used; dual axes keep passenger movement and onboard load readable together.
+
 ## Passenger-load confidence method v1
 
 Confidence is calculated for the selected route and direction from served trip-stop opportunities: every non-null heatmap cell is one opportunity. Structural nulls caused by trips that do not serve a stop are not penalized.
@@ -61,6 +63,15 @@ Confidence is calculated for the selected route and direction from served trip-s
 - High is 90-100, medium is 60-89, low is 0-59, and unavailable means no usable load evidence.
 
 The panel also monitors attempted/valid/invalid chains, assumed-empty and minimum-feasible anchors, open endings, stable versus legacy trip identity, skipped inference trips, and the four evidence categories. A score supports triage; it does not convert estimated loads into observations.
+
+### Passenger-flow presentation contract
+
+- The default chart answers the operational question directly: **estimated passengers onboard after departing each stop**.
+- `Estimated onboard load` is the umbrella label. Each point still discloses whether its basis is APC-backed, passenger-flow inferred, mixed-source, historical, or unavailable.
+- Boardings and alightings are always shown as bars on the same stop sequence as the estimated onboard-load line; dual axes keep the measures readable without separating the views.
+- Confidence is presented first as high, medium, low, or not enough data, with APC-backed share, usable coverage, evidence mix, and the most important actionable finding visible.
+- The numeric method score, full evidence counts, inference method, and remaining findings stay available under `How confidence was calculated`; the score is diagnostic and must not be presented as statistical precision.
+- When usable load is absent but stop activity exists, the boarding and alighting bars remain visible and the chart states that estimated load is unavailable rather than displaying zero.
 
 ## Required reconciliation checks
 
