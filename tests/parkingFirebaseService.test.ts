@@ -329,6 +329,28 @@ describe('parking Firebase service', () => {
     });
   });
 
+  it('restores P12026 to saved settings with Ignore data enabled by default', async () => {
+    const { getParkingSettings } = await import('../utils/parking/parkingService');
+    firestoreMock.getDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        settings: {
+          codeFamilies: strictSettings.codeFamilies,
+          spotLocations: strictSettings.spotLocations,
+          flagRules: strictSettings.flagRules,
+        },
+      }),
+    });
+
+    const settings = await getParkingSettings('team-1');
+
+    expect(settings.codeFamilies.find(mapping => mapping.familyKey === 'P1')).toMatchObject({
+      codes: ['P12026'],
+      department: 'City Staff Underground Parking',
+      ignoreData: true,
+    });
+  });
+
   it('loads saved Parking revenue imports from Storage using Firestore metadata', async () => {
     const { getParkingRevenueData } = await import('../utils/parking/parkingService');
     const importedDate = new Date('2026-01-31T20:00:00.000Z');

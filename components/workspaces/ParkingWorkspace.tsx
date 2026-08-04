@@ -194,16 +194,6 @@ const DEPARTMENT_COLORS = [
 ];
 
 const normalizeText = (value: string | null | undefined) => (value || '').trim().toLowerCase();
-const NON_DEPARTMENT_CODE_FAMILIES = new Set(['P1']);
-const NON_DEPARTMENT_NAMES = new Set([
-  'city staff underground parking',
-  'city underground parking',
-]);
-
-function isNonDepartmentParkingCode(codeFamilyKey: string | null | undefined, department: string | null | undefined): boolean {
-  return NON_DEPARTMENT_CODE_FAMILIES.has((codeFamilyKey || '').trim().toUpperCase())
-    || NON_DEPARTMENT_NAMES.has(normalizeText(department));
-}
 const DEFAULT_DEPARTMENT_LEGEND_SORT = DEFAULT_PARKING_SETTINGS.departmentLegendSort || { key: 'color' as ParkingDepartmentLegendSortKey, direction: 'asc' as ParkingSortDirection };
 const ALL_REVENUE_SOURCES: Array<ParkingRevenueSource | 'all'> = ['all', 'hotspot', 'qr'];
 const ALL_REVENUE_DAY_TYPES: Array<NonNullable<ParkingRevenueFilters['dayType']>> = ['all', 'weekday', 'weekend', 'saturday', 'sunday'];
@@ -286,8 +276,7 @@ export function buildParkingDepartmentDrilldownRows(
     const familyKey = getParkingCodeFamilyKey(row.codeFamilyKey).trim().toUpperCase();
     const department = row.department.trim() || 'Unmapped';
     if (
-      isNonDepartmentParkingCode(familyKey, department)
-      || ignoredKeys.has(`family:${familyKey}`)
+      ignoredKeys.has(`family:${familyKey}`)
       || ignoredKeys.has(`department:${normalizeText(department)}`)
     ) continue;
 
@@ -737,7 +726,7 @@ function getCodeFamilyColor(codeFamilyKey?: string, department?: string, mapping
 function getDepartmentRowsForLegend(settings: ParkingSettings) {
   return settings.codeFamilies
     .map((mapping, mappingIndex) => ({ mapping, mappingIndex }))
-    .filter(({ mapping }) => !mapping.archived && !isNonDepartmentParkingCode(mapping.familyKey, mapping.department))
+    .filter(({ mapping }) => !mapping.archived)
     .map(({ mapping, mappingIndex }): DepartmentLegendRow => {
       const color = getCodeFamilyColor(mapping.familyKey, mapping.department, settings.codeFamilies);
       const previewYear = getParkingActiveYears(mapping)[0] || new Date().getFullYear();
@@ -1155,7 +1144,6 @@ function buildAnnualSummaryRows(months: ParkingMonthlyDataset[], year: string, s
   for (const row of observedRows) {
     const codeFamilyKey = row.codeFamilyKey || 'OTHER';
     const department = row.department || row.description || 'Unmapped';
-    if (isNonDepartmentParkingCode(codeFamilyKey, department)) continue;
     const key = `${codeFamilyKey}|${department}`;
     const group = groups.get(key) || {
       codeFamilyKey,
@@ -1973,7 +1961,6 @@ export const ParkingWorkspace: React.FC = () => {
     const query = normalizeText(departmentSearch);
     return settings.codeFamilies
       .map((mapping, index) => ({ mapping, index }))
-      .filter(({ mapping }) => !isNonDepartmentParkingCode(mapping.familyKey, mapping.department))
       .filter(({ mapping }) => !query
         || normalizeText(mapping.department).includes(query)
         || normalizeText(mapping.familyKey).includes(query)
@@ -1983,7 +1970,6 @@ export const ParkingWorkspace: React.FC = () => {
     const warnings: string[] = [];
     const seen = new Set<string>();
     for (const mapping of settings.codeFamilies) {
-      if (isNonDepartmentParkingCode(mapping.familyKey, mapping.department)) continue;
       const key = getParkingCodeFamilyKey(mapping.familyKey);
       if (!key || !mapping.department.trim()) warnings.push('Every department needs a short code and name.');
       if (key && seen.has(key)) warnings.push(`Duplicate short code: ${key}`);

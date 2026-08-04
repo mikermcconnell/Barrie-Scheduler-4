@@ -343,6 +343,7 @@ export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {
     { familyKey: 'IT', codes: ['IT2025', 'IT2026'], department: 'Information Technology' },
     { familyKey: 'LC', codes: ['LC25'], department: 'Legislative and Court Services' },
     { familyKey: 'OP', codes: ['OP2025'], department: 'Operations' },
+    { familyKey: 'P1', codes: ['P12026'], department: 'City Staff Underground Parking', colorHex: '#6B7280', ignoreData: true },
     { familyKey: 'RS', codes: ['RS2025', 'RS2026'], department: 'Recreation Services' },
     { familyKey: 'TP', codes: ['TP2025'], department: 'Transit' },
     { familyKey: 'WM', codes: ['WM2025'], department: 'Waste Management and Environmental Sustainability' },
