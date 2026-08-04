@@ -2,11 +2,6 @@ import { getParkingCodeFamilyKey } from './parkingCodeRules';
 import type { ParkingMonthlyDataset, ParkingRawRow, ParkingSettings } from './parkingTypes';
 
 const normalizeText = (value: string | null | undefined) => (value || '').trim().toLowerCase();
-const NON_DEPARTMENT_CODE_FAMILIES = new Set(['P1']);
-const NON_DEPARTMENT_NAMES = new Set([
-  'city staff underground parking',
-  'city underground parking',
-]);
 
 export interface ParkingObservationScope {
   year: string;
@@ -30,8 +25,8 @@ export function filterParkingObservationRows(
     ? getParkingCodeFamilyKey(scope.codeFamilyKey).trim().toUpperCase()
     : null;
   const targetDepartment = scope.department ? normalizeText(scope.department) : null;
-  const ignoredFamilyKeys = new Set(NON_DEPARTMENT_CODE_FAMILIES);
-  const ignoredDepartments = new Set(NON_DEPARTMENT_NAMES);
+  const ignoredFamilyKeys = new Set<string>();
+  const ignoredDepartments = new Set<string>();
   for (const mapping of settings.codeFamilies) {
     if (mapping.ignoreData !== true) continue;
     ignoredFamilyKeys.add(getParkingCodeFamilyKey(mapping.familyKey).trim().toUpperCase());

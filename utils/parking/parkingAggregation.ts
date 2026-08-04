@@ -68,9 +68,29 @@ function filterIgnoredDataRows(rows: ParkingRawRow[], settings: ParkingAnalysisS
   return rows.filter(row => !isIgnoredDepartment(row, ignoredKeys));
 }
 
+function mergeCodeFamilies(base: ParkingSettings, override: ParkingSettings): ParkingSettings['codeFamilies'] {
+  const suppliedFamilies = override.codeFamilies ?? base.codeFamilies;
+  const suppliedByKey = new Map(suppliedFamilies.map(mapping => [normalizeKey(getParkingCodeFamilyKey(mapping.familyKey)), mapping]));
+  const requiredDefaults = base.codeFamilies.filter(mapping => normalizeKey(getParkingCodeFamilyKey(mapping.familyKey)) === 'P1');
+  const normalizedFamilies = suppliedFamilies.map(mapping => {
+    const defaultMapping = requiredDefaults.find(candidate => (
+      normalizeKey(getParkingCodeFamilyKey(candidate.familyKey)) === normalizeKey(getParkingCodeFamilyKey(mapping.familyKey))
+    ));
+    return defaultMapping?.ignoreData === true && mapping.ignoreData === undefined
+      ? { ...mapping, ignoreData: true }
+      : mapping;
+  });
+
+  for (const defaultMapping of requiredDefaults) {
+    const key = normalizeKey(getParkingCodeFamilyKey(defaultMapping.familyKey));
+    if (!suppliedByKey.has(key)) normalizedFamilies.push({ ...defaultMapping });
+  }
+  return normalizedFamilies;
+}
+
 export function mergeParkingSettings(base: ParkingSettings, override: ParkingSettings): ParkingSettings {
   return {
-    codeFamilies: override.codeFamilies ?? base.codeFamilies,
+    codeFamilies: mergeCodeFamilies(base, override),
     spotLocations: override.spotLocations ?? base.spotLocations,
     revenueLocations: mergeDefaultParkingRevenueLocations(override.revenueLocations ?? base.revenueLocations),
     revenueLocationCategories: mergeParkingRevenueCategories(override.revenueLocationCategories ?? base.revenueLocationCategories),
