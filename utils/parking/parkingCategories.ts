@@ -112,6 +112,7 @@ const DEFAULT_CATEGORY_BY_SOURCE_ID: Record<string, string> = {
   '8115': 'hospital', // Gallie Court
   '8205': 'hospital', // Quarry Ridge
   '9105': 'allandale-go', // Cumberland St Parking
+  '9000': 'special-events', // Special Events (not tied to a physical location)
 };
 
 const LEGACY_DEFAULT_CATEGORY_BY_SOURCE_ID: Record<string, string> = {

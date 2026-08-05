@@ -6,6 +6,8 @@ export type ParkingDepartmentLegendSortKey = 'color' | 'code' | 'department' | '
 export type ParkingSortDirection = 'asc' | 'desc';
 export type ParkingRevenueSource = 'hotspot' | 'qr';
 export type ParkingRevenueCategoryFilter = 'all' | 'uncategorized' | string;
+export type ParkingRevenueLocationKind = 'physical' | 'non_spatial';
+export type ParkingRevenueMapStatus = 'mapped' | 'unmapped' | 'not_applicable';
 
 export interface ParkingRevenueLocationCategory {
   id: string;
@@ -23,6 +25,7 @@ export interface ParkingRevenueLocationRef {
 export interface ParkingRevenueLocationMapping {
   id: string;
   displayName: string;
+  locationKind?: ParkingRevenueLocationKind;
   latitude: number | null;
   longitude: number | null;
   capacitySpaces?: number | null;
@@ -257,6 +260,8 @@ export interface ParkingRevenueFilters {
 export interface ParkingRevenueLocationSummary {
   key: string;
   displayName: string;
+  locationKind: ParkingRevenueLocationKind;
+  mapStatus: ParkingRevenueMapStatus;
   sourceIds: ParkingRevenueLocationRef[];
   latitude: number | null;
   longitude: number | null;
@@ -289,6 +294,7 @@ export interface ParkingRevenueAnalytics {
   locationSummaries: ParkingRevenueLocationSummary[];
   mappedLocationSummaries: ParkingRevenueLocationSummary[];
   unmappedLocationSummaries: ParkingRevenueLocationSummary[];
+  nonSpatialLocationSummaries: ParkingRevenueLocationSummary[];
   totalRevenue: number;
   totalPaid: number;
   rowCount: number;
@@ -325,6 +331,7 @@ export const DEFAULT_PARKING_REVENUE_LOCATION_CATEGORIES: ParkingRevenueLocation
   { id: 'marina', label: 'Marina', colorHex: '#0EA5E9' },
   { id: 'hospital', label: 'Hospital', colorHex: '#EA580C' },
   { id: 'allandale-go', label: 'Allandale GO', colorHex: '#475569' },
+  { id: 'special-events', label: 'Special Events', colorHex: '#B45309' },
 ];
 
 export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {

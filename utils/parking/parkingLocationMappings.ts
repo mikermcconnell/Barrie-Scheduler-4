@@ -58,6 +58,7 @@ export function mergeParkingRevenueLocationMappings(
         : {
           ...current,
           displayName: current.displayName || importedMapping.displayName,
+          locationKind: current.locationKind ?? importedMapping.locationKind,
           latitude: current.latitude ?? importedMapping.latitude,
           longitude: current.longitude ?? importedMapping.longitude,
           capacitySpaces: current.capacitySpaces ?? importedMapping.capacitySpaces,
