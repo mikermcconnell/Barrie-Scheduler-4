@@ -109,4 +109,12 @@ describe('WorkspaceHeader', () => {
     expect(viewMenu?.textContent).toContain('Timeline');
     expect(viewMenu?.textContent).toContain('Travel Times');
   });
+
+  it('uses the reduced-height shell for compact Step 4 tools', () => {
+    renderHeader({ compactTools: true });
+
+    const header = container?.querySelector('header');
+    expect(header?.className).toContain('py-1');
+    expect(header?.className).not.toContain('py-1.5');
+  });
 });

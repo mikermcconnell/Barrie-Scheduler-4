@@ -24,6 +24,8 @@ interface AuditLogPanelProps {
     onToggle: () => void;
     onRevertTo?: (entryIndex: number) => void;
     maxEntriesShown?: number;
+    hideClosedTrigger?: boolean;
+    placement?: 'top-right' | 'bottom-right';
 }
 
 const formatTime = (date: Date) => {
@@ -55,13 +57,17 @@ export const AuditLogPanel: React.FC<AuditLogPanelProps> = ({
     isOpen,
     onToggle,
     onRevertTo,
-    maxEntriesShown = 50
+    maxEntriesShown = 50,
+    hideClosedTrigger = false,
+    placement = 'bottom-right',
 }) => {
     const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
 
     const displayEntries = entries.slice(-maxEntriesShown).reverse(); // Show most recent first
 
     if (!isOpen) {
+        if (hideClosedTrigger) return null;
+
         return (
             <button
                 onClick={onToggle}
@@ -79,7 +85,9 @@ export const AuditLogPanel: React.FC<AuditLogPanelProps> = ({
     }
 
     return (
-        <div className="fixed bottom-4 right-4 w-96 max-h-[60vh] bg-white border border-gray-200 rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden">
+        <div className={`fixed right-4 w-96 max-h-[60vh] bg-white border border-gray-200 rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden ${
+            placement === 'top-right' ? 'top-24' : 'bottom-4'
+        }`}>
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
                 <div className="flex items-center gap-2">

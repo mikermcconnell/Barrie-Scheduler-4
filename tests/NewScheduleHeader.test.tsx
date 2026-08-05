@@ -73,4 +73,32 @@ describe('NewScheduleHeader', () => {
 
         expect(onClose).toHaveBeenCalledTimes(1);
     });
+
+    it('moves Step 4 progress into the project row on wide screens', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <NewScheduleHeader
+                    currentStep={4}
+                    stepLabel="Schedule"
+                    projectName="Project 1"
+                    onClose={vi.fn()}
+                    maxStepReached={4}
+                />
+            );
+        });
+
+        const scheduleButton = Array.from(container.querySelectorAll('button')).find(
+            button => button.textContent?.includes('Schedule')
+        );
+        const progressRow = scheduleButton?.closest('.overflow-x-auto');
+        const headerContent = container.querySelector('.sticky > div');
+
+        expect(progressRow?.className).toContain('2xl:absolute');
+        expect(progressRow?.className).toContain('2xl:top-1/2');
+        expect(headerContent?.className).toContain('py-1.5');
+    });
 });

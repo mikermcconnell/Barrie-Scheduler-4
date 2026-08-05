@@ -186,7 +186,9 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
     return (
         <>
             <div className="sticky top-0 z-[60] border-b border-gray-200 bg-white/95 shadow-sm backdrop-blur">
-                <div className="flex flex-col gap-2 px-4 py-2.5 lg:px-6">
+                <div className={`relative flex flex-col px-4 lg:px-6 ${
+                    currentStep === 4 ? 'gap-1 py-1.5' : 'gap-2 py-2.5'
+                }`}>
                     {/* Top row: project identity + project actions */}
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex min-w-0 items-center gap-3">
@@ -269,7 +271,11 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
                     </div>
 
                     {/* Stepper */}
-                    <div className="overflow-x-auto pb-0.5">
+                    <div className={`overflow-x-auto pb-0.5 ${
+                        currentStep === 4
+                            ? '2xl:absolute 2xl:left-1/2 2xl:top-1/2 2xl:w-auto 2xl:-translate-x-1/2 2xl:-translate-y-1/2 2xl:overflow-visible 2xl:pb-0'
+                            : ''
+                    }`}>
                         <div className="flex min-w-max items-center justify-start gap-2 lg:min-w-0 lg:justify-center">
                             {steps.map((s, idx) => {
                                 const isCompleted = s.num < currentStep;

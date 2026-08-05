@@ -2133,8 +2133,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 />
 
                 {/* Content Area */}
-                <div className="min-h-0 flex-1 overflow-auto px-4 py-3 sm:px-6 sm:py-5 lg:px-8">
-                    <div className={step === 4 || step === 2 ? "w-full" : "mx-auto max-w-5xl"}>
+                <div className={`min-h-0 flex-1 ${
+                    step === 4
+                        ? 'overflow-hidden p-0'
+                        : 'overflow-auto px-4 py-3 sm:px-6 sm:py-5 lg:px-8'
+                }`}>
+                    <div className={step === 4 ? "h-full min-h-0 w-full" : step === 2 ? "w-full" : "mx-auto max-w-5xl"}>
                         {step === 1 && (
                             <Step1Upload
                                 files={files}

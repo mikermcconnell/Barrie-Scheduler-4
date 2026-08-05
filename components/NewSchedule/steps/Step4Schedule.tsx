@@ -509,7 +509,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     }, [schedules, onUpdateSchedules]);
 
     return (
-        <div className="h-full flex flex-col -m-8 min-h-0 overflow-hidden">
+        <div data-testid="step4-schedule-shell" className="flex h-full min-h-0 flex-col overflow-hidden">
             {isHeadwayModalOpen && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/40 px-4">
                     <div

@@ -122,6 +122,7 @@ describe('Step4Schedule', () => {
         });
 
         expect(container.textContent).toContain('Compare to master');
+        expect(container.querySelector('[data-testid="step4-schedule-shell"]')?.className).not.toContain('-m-8');
         expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].compactStep4).toBe(true);
         expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].reviewToolsSlot).toBeTruthy();
         expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toBeUndefined();

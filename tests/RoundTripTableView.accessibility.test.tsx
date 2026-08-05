@@ -96,6 +96,7 @@ describe('RoundTripTableView accessibility polish', () => {
 
     expect(region).not.toBeNull();
     expect(grid).not.toBeNull();
+    expect(region?.className).not.toContain('space-y-8');
     expect(region?.getAttribute('aria-describedby')).toBeTruthy();
 
     flushSync(() => {
@@ -324,13 +325,78 @@ describe('RoundTripTableView accessibility polish', () => {
     const cycleHeader = Array.from(container?.querySelectorAll('th') ?? []).find(
       header => header.textContent?.trim() === 'Cycle'
     );
+    const runHeader = container?.querySelector('th[title="Run time and assigned time band"]');
+    const recoveryHeader = container?.querySelector('th[title="Recovery minutes and recovery ratio"]');
     const blockCell = Array.from(container?.querySelectorAll('tbody td') ?? []).find(
       cell => cell.textContent?.includes('10-1')
     );
+    const runCell = container?.querySelector('tbody td.sticky.right-\\[176px\\]') as HTMLTableCellElement | null;
 
+    expect(container?.querySelector('[data-testid="round-trip-scroll-region"]')).not.toBeNull();
     expect(blockHeader?.className).toContain('sticky left-0');
     expect(blockCell?.className).toContain('sticky left-0');
+    expect(blockCell?.querySelector('[aria-label="Trip #1"]')).not.toBeNull();
+    expect(blockCell?.closest('tr')?.className).toContain('h-11');
+    expect(runHeader?.className).toContain('sticky right-[176px]');
+    expect(recoveryHeader?.className).toContain('sticky right-[112px]');
     expect(cycleHeader?.className).toContain('sticky right-0');
+    expect(runCell?.className).toContain('z-30');
+    expect(runCell?.style.backgroundColor).toBe('rgb(255, 255, 255)');
+    expect(Array.from(container?.querySelectorAll('th') ?? []).some(
+      header => header.textContent?.trim() === 'Trip #'
+    )).toBe(false);
+  });
+
+  it('uses the route colour and labels partial-start rows without changing trip data', () => {
+    flushSync(() => {
+      root?.render(
+        <RoundTripTableView
+          schedules={[
+            {
+              routeName: '12 (Weekday) (North)',
+              stops: ['Georgian Mall', 'Downtown Hub'],
+              stopIds: {},
+              trips: [{
+                id: 'north-partial', blockId: '12-1', direction: 'North', tripNumber: 1, rowId: 1,
+                startTime: 360, endTime: 390, recoveryTime: 5, travelTime: 30, cycleTime: 35,
+                startStopIndex: 1,
+                stops: { 'Downtown Hub': '6:00 AM' },
+                arrivalTimes: { 'Downtown Hub': '6:00 AM' },
+                stopMinutes: { 'Downtown Hub': 360 }
+              }]
+            },
+            {
+              routeName: '12 (Weekday) (South)',
+              stops: ['Downtown Hub', 'Georgian Mall'],
+              stopIds: {},
+              trips: [{
+                id: 'south-trip', blockId: '12-1', direction: 'South', tripNumber: 2, rowId: 2,
+                startTime: 395, endTime: 425, recoveryTime: 0, travelTime: 30, cycleTime: 30,
+                stops: { 'Downtown Hub': '6:35 AM', 'Georgian Mall': '7:05 AM' },
+                arrivalTimes: { 'Downtown Hub': '6:35 AM', 'Georgian Mall': '7:05 AM' },
+                stopMinutes: { 'Downtown Hub': 395, 'Georgian Mall': 425 }
+              }]
+            }
+          ] as any}
+          onCellEdit={vi.fn()}
+        />
+      );
+    });
+
+    const routeBadge = Array.from(container?.querySelectorAll('span') ?? []).find(
+      element => element.textContent?.trim() === 'Route 12'
+    ) as HTMLSpanElement | undefined;
+    const northHeader = container?.querySelector('th.border-blue-400') as HTMLTableCellElement | null;
+    const southHeader = container?.querySelector('th.border-orange-400') as HTMLTableCellElement | null;
+
+    expect(routeBadge?.style.backgroundColor).toBe('rgb(248, 161, 190)');
+    expect(northHeader?.className).toContain('bg-blue-50/50');
+    expect(southHeader?.className).toContain('bg-orange-50/50');
+    expect(northHeader?.style.backgroundColor).not.toBe('rgb(248, 161, 190)');
+    expect(southHeader?.style.backgroundColor).not.toBe('rgb(248, 161, 190)');
+    expect(container?.querySelector('[aria-label="Partial start"]')?.textContent).toContain('PARTIAL');
+    expect(container?.textContent).toContain('2 one-way trips');
+    expect(container?.textContent).not.toContain('h cycle');
   });
 
   it('provides larger, descriptive minute adjustment controls', () => {

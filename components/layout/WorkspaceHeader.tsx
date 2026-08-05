@@ -162,7 +162,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     );
 
     return (
-        <header className={`sticky top-0 z-60 border-b border-gray-200 bg-white shadow-sm ${compactTools ? 'px-3 py-1.5' : 'px-4 py-2'}`}>
+        <header className={`sticky top-0 z-60 border-b border-gray-200 bg-white shadow-sm ${compactTools ? 'px-3 py-1' : 'px-4 py-2'}`}>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
                 {!hideRouteIdentity && !compactTools && (
                     <div
