@@ -5,6 +5,7 @@ import {
   type ParkingRevenueDataset,
   type ParkingRevenueFilters,
   type ParkingRevenueLocationMapping,
+  type ParkingRevenueMapStatus,
   type ParkingRevenueLocationRef,
   type ParkingRevenueLocationSummary,
   type ParkingRevenueParseResult,
@@ -468,6 +469,13 @@ function buildLocationSummaryIndex(
   const categoryMemberships = new Map<string, { keys: Set<string>; names: Set<string> }>();
   const summaries = [...groups.values()].map(accumulator => {
     const { key, first, mappedLocation } = accumulator;
+    const locationKind = mappedLocation?.locationKind || 'physical';
+    const hasReviewedCoordinates = locationKind === 'physical'
+      && typeof mappedLocation?.latitude === 'number'
+      && typeof mappedLocation?.longitude === 'number';
+    const mapStatus: ParkingRevenueMapStatus = locationKind === 'non_spatial'
+      ? 'not_applicable'
+      : hasReviewedCoordinates ? 'mapped' : 'unmapped';
     const category = getParkingCategoryDisplay(settings, mappedLocation?.categoryId);
     const categoryKey = category.id || UNCATEGORIZED_PARKING_CATEGORY_ID;
     const membership = categoryMemberships.get(categoryKey) || {
@@ -482,13 +490,15 @@ function buildLocationSummaryIndex(
     return {
       key,
       displayName,
+      locationKind,
+      mapStatus,
       sourceIds: mappedLocation?.sourceRefs?.length ? mappedLocation.sourceRefs : [...accumulator.sourceIds.values()],
       latitude: mappedLocation?.latitude ?? null,
       longitude: mappedLocation?.longitude ?? null,
       categoryId: category.id,
       categoryLabel: category.label,
       categoryColorHex: category.colorHex,
-      isMapped: Boolean(mappedLocation && typeof mappedLocation.latitude === 'number' && typeof mappedLocation.longitude === 'number'),
+      isMapped: hasReviewedCoordinates,
       rowCount: accumulator.rowCount,
       totalRevenue: roundMoney(accumulator.totalRevenue),
       totalPaid: roundMoney(accumulator.totalPaid),
@@ -610,7 +620,8 @@ export function buildParkingRevenueAnalytics(
     rows,
     locationSummaries,
     mappedLocationSummaries: locationSummaries.filter(location => location.isMapped),
-    unmappedLocationSummaries: locationSummaries.filter(location => !location.isMapped),
+    unmappedLocationSummaries: locationSummaries.filter(location => location.mapStatus === 'unmapped'),
+    nonSpatialLocationSummaries: locationSummaries.filter(location => location.mapStatus === 'not_applicable'),
     totalRevenue: roundMoney(rows.reduce((sum, row) => sum + row.amount, 0)),
     totalPaid: roundMoney(rows.reduce((sum, row) => sum + row.total, 0)),
     rowCount: rows.length,

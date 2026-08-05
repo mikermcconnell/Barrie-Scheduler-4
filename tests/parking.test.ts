@@ -13,6 +13,7 @@ import {
   parseParkingRevenueWorkbook,
 } from '../utils/parking/parkingRevenue';
 import {
+  buildParkingMapRevenueCoverage,
   buildParkingRevenueMapDisplayLocations,
   getParkingMapMetricValue,
 } from '../utils/parking/parkingMapDisplay';
@@ -366,7 +367,7 @@ describe('parking replacement and export', () => {
     const loaded = readParkingSettingsFromDocument(undefined);
     const collier = loaded.revenueLocations?.find(location => location.id === 'hotspot-1322');
 
-    expect(DEFAULT_PARKING_REVENUE_LOCATIONS.length).toBe(104);
+    expect(DEFAULT_PARKING_REVENUE_LOCATIONS.length).toBe(105);
     expect(countMissingDefaultParkingRevenueLocations(loaded.revenueLocations)).toBe(0);
     expect(collier).toMatchObject({
       displayName: 'Collier Street Parkade',
@@ -375,7 +376,7 @@ describe('parking replacement and export', () => {
       capacitySpaces: 303,
     });
     expect(collier?.sourceRefs.map(ref => `${ref.source}:${ref.sourceId}`)).toEqual(['hotspot:1322', 'qr:1322']);
-    expect(loaded.revenueLocationCategories?.map(category => category.id)).toEqual(expect.arrayContaining(['downtown', 'waterfront', 'hybrid', 'marina', 'hospital', 'allandale-go']));
+    expect(loaded.revenueLocationCategories?.map(category => category.id)).toEqual(expect.arrayContaining(['downtown', 'waterfront', 'hybrid', 'marina', 'hospital', 'allandale-go', 'special-events']));
     expect(loaded.revenueLocations?.every(location => Boolean(location.categoryId))).toBe(true);
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1322')?.categoryId).toBe('downtown');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1430')?.categoryId).toBe('downtown');
@@ -386,6 +387,15 @@ describe('parking replacement and export', () => {
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5000')?.categoryId).toBe('marina');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-8105')?.categoryId).toBe('hospital');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-9105')?.categoryId).toBe('allandale-go');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-9000')).toMatchObject({
+      displayName: 'Special Events',
+      locationKind: 'non_spatial',
+      latitude: null,
+      longitude: null,
+      capacitySpaces: null,
+      categoryId: 'special-events',
+      sourceRefs: [{ source: 'hotspot', sourceId: '9000', label: 'Special Events' }],
+    });
   });
 
   it('migrates the legacy H-Block default category from Hospital to Downtown', () => {
@@ -428,6 +438,27 @@ describe('parking replacement and export', () => {
     });
 
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5100')?.categoryId).toBeNull();
+  });
+
+  it('upgrades an existing HotSpot 9000 mapping to the seeded non-spatial kind', () => {
+    const loaded = readParkingSettingsFromDocument({
+      settings: {
+        ...DEFAULT_PARKING_SETTINGS,
+        revenueLocations: [{
+          id: 'custom-events',
+          displayName: 'Annual Events',
+          latitude: null,
+          longitude: null,
+          sourceRefs: [{ source: 'hotspot', sourceId: '9000', label: 'Annual Events' }],
+        }],
+      },
+    });
+
+    expect(loaded.revenueLocations?.find(location => location.id === 'custom-events')).toMatchObject({
+      displayName: 'Annual Events',
+      locationKind: 'non_spatial',
+      categoryId: 'special-events',
+    });
   });
 
   it('adds missing default lot IDs without overwriting custom reviewed coordinates', () => {
@@ -730,6 +761,48 @@ describe('parking revenue parser and analytics', () => {
     });
   });
 
+  it('classifies HotSpot 9000 as non-spatial Special Events revenue', () => {
+    const settings = readParkingSettingsFromDocument(undefined);
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '9000', 'Special Events', '2026-07-01 18:00:00', 'EVENT1', '25.00', '3.25', '28.25', '3', 'visa'],
+    ]), { fileName: 'special-events.xlsx', importedBy: 'user-1', settings }).dataset;
+    const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
+
+    const analytics = buildParkingRevenueAnalytics(summary, settings, { categoryId: 'special-events' });
+    const planner = buildParkingPlannerAnalysis(analytics, analytics.locationSummaries[0]);
+    const displayLocations = buildParkingRevenueMapDisplayLocations(analytics.locationSummaries, new Map());
+    const coverage = buildParkingMapRevenueCoverage(analytics.locationSummaries, displayLocations);
+
+    expect(analytics).toMatchObject({
+      totalRevenue: 25,
+      rowCount: 1,
+      mappedLocationSummaries: [],
+      unmappedLocationSummaries: [],
+    });
+    expect(analytics.nonSpatialLocationSummaries).toHaveLength(1);
+    expect(analytics.locationSummaries[0]).toMatchObject({
+      key: 'hotspot-9000',
+      displayName: 'Special Events',
+      locationKind: 'non_spatial',
+      mapStatus: 'not_applicable',
+      categoryId: 'special-events',
+      categoryLabel: 'Special Events',
+      isMapped: false,
+    });
+    expect(displayLocations).toEqual([]);
+    expect(planner.selectedLot?.rows).toHaveLength(1);
+    expect(planner.selectedLot?.rows[0]).toMatchObject({ source: 'hotspot', sourceId: '9000', amount: 25 });
+    expect(coverage).toEqual({
+      coveredRevenue: 0,
+      spatialRevenue: 0,
+      uncoveredSpatialRevenue: 0,
+      nonSpatialRevenue: 25,
+      coveragePercent: null,
+    });
+  });
+
   it('counts paid-minute overlap without adding out-of-window sessions or revenue', () => {
     const settings: ParkingSettings = {
       ...DEFAULT_PARKING_SETTINGS,
@@ -913,6 +986,8 @@ describe('public parking location fallback', () => {
   const summaryFor = (sourceId: string, displayName = 'Collier Parkade'): ParkingRevenueLocationSummary => ({
     key: `hotspot:${sourceId}`,
     displayName,
+    locationKind: 'physical',
+    mapStatus: 'unmapped',
     sourceIds: [{ source: 'hotspot', sourceId, label: displayName }],
     latitude: null,
     longitude: null,
@@ -1001,6 +1076,31 @@ describe('public parking location fallback', () => {
     expect(match).toMatchObject({ matchType: 'hotspot-id', confidence: 'high' });
   });
 
+  it('never assigns a public map fallback to a non-spatial revenue group', () => {
+    const specialEvents = {
+      ...summaryFor('9000', 'Special Events'),
+      locationKind: 'non_spatial' as const,
+      mapStatus: 'not_applicable' as const,
+    };
+    const match = findPublicParkingLocationFallback(specialEvents, [{
+      id: 'hotspot-9000',
+      objectIds: [1],
+      hotspotId: '9000',
+      parkingId: 'EVENT',
+      name: 'Special Events',
+      commonName: 'Special Events',
+      address: '',
+      latitude: 44.39,
+      longitude: -79.69,
+      numSpaces: null,
+      type: 'Event',
+      classification: 'Event',
+      sourceUrl: 'source',
+    }]);
+
+    expect(match).toBeNull();
+  });
+
   it('falls back to matching by lot name', () => {
     const match = findPublicParkingLocationFallback(summaryFor('9999', 'Heritage Park Lot'), [
       {
@@ -1085,6 +1185,7 @@ describe('public parking location fallback', () => {
       key: 'collier-parkade',
       latitude: 44.389,
       longitude: -79.69,
+      mapStatus: 'mapped',
       isMapped: true,
       totalRevenue: 42,
       rowCount: 5,
@@ -1111,6 +1212,7 @@ describe('public parking location fallback', () => {
       key: 'collier',
       latitude: 44.389,
       longitude: -79.69,
+      mapStatus: 'mapped',
       isMapped: true,
       totalRevenue: 100,
       rowCount: 10,
@@ -1120,6 +1222,7 @@ describe('public parking location fallback', () => {
       key: 'dunlop',
       latitude: 44.3892,
       longitude: -79.6902,
+      mapStatus: 'mapped',
       isMapped: true,
       totalRevenue: 50,
       rowCount: 5,
@@ -1129,6 +1232,7 @@ describe('public parking location fallback', () => {
       key: 'waterfront',
       latitude: 44.405,
       longitude: -79.66,
+      mapStatus: 'mapped',
       isMapped: true,
       totalRevenue: 25,
       rowCount: 3,

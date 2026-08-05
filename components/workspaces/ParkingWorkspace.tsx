@@ -82,6 +82,7 @@ import {
   type PublicParkingLocationMatch,
 } from '../../utils/parking/publicParkingLocations';
 import {
+  buildParkingMapRevenueCoverage,
   buildParkingRevenueMapDisplayLocations,
   getParkingMapMetricLabel,
   getParkingMapMetricValue,
@@ -228,7 +229,7 @@ const PARKING_COMPARISON_METRICS: Array<{
 const PARKING_ANALYSIS_VIEWS: Array<{ id: ParkingAnalysisView; label: string; description: string }> = [
   { id: 'overview', label: 'Overview', description: 'Executive summary' },
   { id: 'trends', label: 'Trends', description: 'Month and day movement' },
-  { id: 'lots', label: 'Lots', description: 'Lot and category leaders' },
+  { id: 'lots', label: 'Locations', description: 'Location and category leaders' },
   { id: 'time', label: 'Time', description: 'Hourly and source patterns' },
   { id: 'capacity', label: 'Capacity', description: 'Space productivity' },
 ];
@@ -1714,7 +1715,7 @@ export const ParkingWorkspace: React.FC = () => {
     const matches = new Map<string, PublicParkingLocationMatch>();
     if (publicParkingLocations.length === 0) return matches;
     for (const location of revenueAnalytics.locationSummaries) {
-      if (location.isMapped) continue;
+      if (location.isMapped || location.locationKind === 'non_spatial') continue;
       const match = findPublicParkingLocationFallback(location, publicParkingLocations);
       if (match) matches.set(location.key, match);
     }
@@ -1724,6 +1725,7 @@ export const ParkingWorkspace: React.FC = () => {
     const matches = new Map<string, PublicParkingLocationMatch>();
     if (publicParkingLocations.length === 0) return matches;
     for (const location of revenueAnalytics.locationSummaries) {
+      if (location.locationKind === 'non_spatial') continue;
       const match = findPublicParkingLocationFallback(location, publicParkingLocations);
       if (match) matches.set(location.key, match);
     }
@@ -1754,14 +1756,10 @@ export const ParkingWorkspace: React.FC = () => {
       publicCapacityByLocationKey,
     )
   ), [publicCapacityByLocationKey, publicParkingMatchesByKey, revenueAnalytics.locationSummaries]);
-  const mapCoveredRevenue = useMemo(
-    () => Math.round(mapLocationSummaries.reduce((sum, location) => sum + location.totalRevenue, 0) * 100) / 100,
-    [mapLocationSummaries],
+  const mapRevenueCoverage = useMemo(
+    () => buildParkingMapRevenueCoverage(revenueAnalytics.locationSummaries, mapLocationSummaries),
+    [mapLocationSummaries, revenueAnalytics.locationSummaries],
   );
-  const mapUncoveredRevenue = Math.max(0, Math.round((revenueAnalytics.totalRevenue - mapCoveredRevenue) * 100) / 100);
-  const mapRevenueCoveragePercent = revenueAnalytics.totalRevenue > 0
-    ? Math.min(100, Math.round((mapCoveredRevenue / revenueAnalytics.totalRevenue) * 1000) / 10)
-    : 0;
   const publicFallbackPinCount = mapLocationSummaries.filter(entry => entry.coordinateSource === 'public').length;
   const selectedRevenueLocation = useMemo(() => {
     if (!selectedRevenueLocationKey) return null;
@@ -1925,7 +1923,7 @@ export const ParkingWorkspace: React.FC = () => {
     selectedRevenueYear,
   ]);
   const peakPeriodScopeLabel = parkingPlannerAnalysis.selectedLot
-    ? 'Selected lot'
+    ? 'Selected location or group'
     : selectedRevenueCategoryLabel
       ? selectedRevenueCategoryLabel
       : 'Current filters';
@@ -2960,6 +2958,7 @@ export const ParkingWorkspace: React.FC = () => {
     const mapMetricLabel = getParkingMapMetricLabel(parkingMapMetric);
     const activeLocation = selectedRevenueLocation;
     const hasVisibleRevenuePins = mapLocationSummaries.length > 0;
+    const hasRevenueActivity = revenueAnalytics.rowCount > 0;
 
     return (
       <div className="h-full overflow-hidden bg-slate-100">
@@ -3149,14 +3148,14 @@ export const ParkingWorkspace: React.FC = () => {
             } ${
               lotLeftRailOpen ? 'w-[calc(100%-1.5rem)] min-h-0 overflow-y-auto overscroll-contain p-3 sm:w-80' : 'w-16 items-center p-2'
             }`}
-            aria-label="Parking lot filters and list"
+            aria-label="Parking revenue filters and location list"
           >
             {lotLeftRailOpen ? (
               <>
             <div className="flex items-center justify-between gap-2">
               <div>
-                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Parking lots</div>
-                <p className="text-[11px] font-semibold text-slate-400">Browse lots first; filters can tuck away.</p>
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Revenue locations and groups</div>
+                <p className="text-[11px] font-semibold text-slate-400">Browse activity first; filters can tuck away.</p>
               </div>
               <div className="flex items-center gap-2">
                 <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700">{mapLocationSummaries.length} pins</span>
@@ -3309,19 +3308,22 @@ export const ParkingWorkspace: React.FC = () => {
             <div className="mt-3 shrink-0 rounded-2xl border border-slate-200 bg-white p-3 text-[11px] font-bold leading-4 text-slate-500">
               <div className="flex items-center justify-between gap-2 text-slate-700">
                 <span className="font-black">Map revenue coverage</span>
-                <span>{mapRevenueCoveragePercent.toFixed(1)}%</span>
+                <span>{mapRevenueCoverage.coveragePercent == null ? 'N/A' : `${mapRevenueCoverage.coveragePercent.toFixed(1)}%`}</span>
               </div>
               <div className="mt-1">
-                Pins represent {money(mapCoveredRevenue)} of {money(revenueAnalytics.totalRevenue)} in filtered revenue.
-                {mapUncoveredRevenue > 0.01
-                  ? ` ${money(mapUncoveredRevenue)} is not on the map because those records do not have a coordinate match.`
-                  : ' All filtered revenue is represented by mapped locations.'}
+                Pins represent {money(mapRevenueCoverage.coveredRevenue)} of {money(mapRevenueCoverage.spatialRevenue)} in spatially applicable revenue.
+                {mapRevenueCoverage.uncoveredSpatialRevenue > 0.01
+                  ? ` ${money(mapRevenueCoverage.uncoveredSpatialRevenue)} is not on the map because those records do not have a coordinate match.`
+                  : mapRevenueCoverage.spatialRevenue > 0 ? ' All spatially applicable revenue is represented by mapped locations.' : ' No filtered revenue requires a map location.'}
+                {mapRevenueCoverage.nonSpatialRevenue > 0.01
+                  ? ` ${money(mapRevenueCoverage.nonSpatialRevenue)} is intentionally non-spatial revenue.`
+                  : ''}
               </div>
             </div>
 
             <div className="mt-3 shrink-0 pr-1 pb-2">
               <div className="mb-2 flex items-center justify-between">
-                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Parking lots</div>
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Revenue locations and groups</div>
                 <div className="text-[11px] font-bold text-slate-400">{revenueAnalytics.locationSummaries.length.toLocaleString()} total</div>
               </div>
               <div className="space-y-2">
@@ -3346,6 +3348,7 @@ export const ParkingWorkspace: React.FC = () => {
                       <div className="mt-2 flex flex-wrap gap-1">
                         {location.sourceIds.slice(0, 3).map(ref => <span key={`${ref.source}-${ref.sourceId}`} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{getParkingRevenueSourceLabel(ref.source)} {ref.sourceId}</span>)}
                         <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${location.categoryColorHex || '#64748B'}22`, color: location.categoryColorHex || '#64748B' }}>{location.categoryLabel || 'Uncategorized'}</span>
+                        {location.locationKind === 'non_spatial' ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">Non-location</span> : null}
                         {location.isMapped ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Reviewed map</span> : publicMatch ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">City source</span> : null}
                       </div>
                     </button>
@@ -3386,7 +3389,7 @@ export const ParkingWorkspace: React.FC = () => {
                   </div>
                   <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">Parking Lot Data Analysis</h2>
                   <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
-                    Chart-led view for revenue, demand timing, top lots, and space productivity. Use the views below to reduce the amount of data on screen.
+                    Chart-led view for revenue, demand timing, top locations and groups, and space productivity. Use the views below to reduce the amount of data on screen.
                   </p>
                 </div>
                 <button
@@ -3473,8 +3476,8 @@ export const ParkingWorkspace: React.FC = () => {
                     <ParkingChartCard title="Hourly Demand Profile" subtitle="Shows when paid activity concentrates during the day.">
                       <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Top Lots by Revenue" subtitle="Highest-value parking locations under the current filters." tall>
-                      <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare lots." />
+                    <ParkingChartCard title="Top Locations and Groups by Revenue" subtitle="Highest-value revenue activity under the current filters." tall>
+                      <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare activity." />
                     </ParkingChartCard>
                     <ParkingChartCard title="Capacity Opportunity" subtitle="Revenue per space compared with estimated utilization." tall>
                       <CapacityOpportunityChart data={parkingPlannerAnalysis.capacityRows} />
@@ -3554,7 +3557,7 @@ export const ParkingWorkspace: React.FC = () => {
                   </div>
                   {parkingTrendOverview.fastestGrowingLot ? (
                     <div className="border-t border-emerald-100 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-900">
-                      Fastest-growing lot this month: <span className="font-black">{parkingTrendOverview.fastestGrowingLot.label}</span>
+                      Fastest-growing location or group this month: <span className="font-black">{parkingTrendOverview.fastestGrowingLot.label}</span>
                       {' '}increased by {money(parkingTrendOverview.fastestGrowingLot.changeValue)}
                       {parkingTrendOverview.fastestGrowingLot.changePercent == null ? '' : ` (${parkingTrendOverview.fastestGrowingLot.changePercent.toFixed(1)}%)`}.
                     </div>
@@ -3564,14 +3567,14 @@ export const ParkingWorkspace: React.FC = () => {
 
               {parkingAnalysisView === 'lots' ? (
                 <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                  <ParkingChartCard title="Top Lots by Revenue" subtitle="Quick comparison of the highest-value parking locations." tall>
-                    <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare lots." />
+                  <ParkingChartCard title="Top Locations and Groups by Revenue" subtitle="Quick comparison of the highest-value revenue activity." tall>
+                    <TopLotsChart data={parkingPlannerAnalysis.topLotsByRevenue} emptyAction="Upload revenue data or broaden the filters to compare activity." />
                   </ParkingChartCard>
                   <ParkingChartCard
                     title="Category Comparison"
                     subtitle={categoryComparisonMetric === 'revenuePerSpace' || categoryComparisonMetric === 'utilizationPercent'
                       ? `${categoryComparisonMetricConfig.label} uses matched, known space counts.`
-                      : `${categoryComparisonMetricConfig.label} by lot category for the current filters.`}
+                      : `${categoryComparisonMetricConfig.label} by revenue category for the current filters.`}
                     tall
                     action={(
                       <label className="block">
@@ -3610,7 +3613,9 @@ export const ParkingWorkspace: React.FC = () => {
                             {row.sessions.toLocaleString()} sessions · avg stay {minutesToDuration(row.averageStayMinutes)}
                           </div>
                           <div className="mt-1 text-xs font-bold text-slate-400">
-                            {row.spaces == null
+                            {row.lotCount === 0
+                              ? 'Capacity metrics not applicable to non-location revenue'
+                              : row.spaces == null
                               ? 'Capacity-derived metrics unavailable'
                               : `${row.spaces.toLocaleString()} known spaces · ${money(row.revenuePerSpace || 0)}/known space`}
                           </div>
@@ -3724,10 +3729,10 @@ export const ParkingWorkspace: React.FC = () => {
                 <section className="mt-4 rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm">
                   <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                     <div>
-                      <div className="text-xs font-black uppercase tracking-wide text-emerald-600">Selected lot drilldown</div>
+                      <div className="text-xs font-black uppercase tracking-wide text-emerald-600">Selected location or group drilldown</div>
                       <h3 className="mt-1 text-xl font-black text-slate-950">{parkingPlannerAnalysis.selectedLot.displayName}</h3>
                       <p className="mt-1 text-sm font-semibold text-slate-500">
-                        #{parkingPlannerAnalysis.selectedLot.revenueRank} by revenue · {parkingPlannerAnalysis.selectedLot.revenueSharePercent}% of filtered revenue · {parkingPlannerAnalysis.selectedLot.spaces ? `${parkingPlannerAnalysis.selectedLot.spaces} known spaces` : 'capacity not matched yet'}
+                        #{parkingPlannerAnalysis.selectedLot.revenueRank} by revenue · {parkingPlannerAnalysis.selectedLot.revenueSharePercent}% of filtered revenue · {activeLocation?.locationKind === 'non_spatial' ? 'capacity not applicable' : parkingPlannerAnalysis.selectedLot.spaces ? `${parkingPlannerAnalysis.selectedLot.spaces} known spaces` : 'capacity not matched yet'}
                       </p>
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-right text-xs font-black text-slate-600 sm:grid-cols-4">
@@ -3738,18 +3743,40 @@ export const ParkingWorkspace: React.FC = () => {
                     </div>
                   </div>
                   <div className="grid gap-4 xl:grid-cols-3">
-                    <ParkingChartCard title="Selected-Lot Hourly Profile" subtitle="Paid activity by hour for this lot.">
+                    <ParkingChartCard title="Selected Activity Hourly Profile" subtitle="Paid activity by hour for this selection.">
                       <HourlyRevenueChart data={parkingPlannerAnalysis.selectedLot.hourlyProfile} compact />
                     </ParkingChartCard>
                     <ParkingChartCard
-                      title={selectedRevenueMonth === 'all' ? 'Selected-Lot Trend' : 'Selected-Lot Daily Trend'}
-                      subtitle={selectedRevenueMonth === 'all' ? 'Revenue trend for this lot only.' : 'Daily movement for this lot in the selected month.'}
+                      title={selectedRevenueMonth === 'all' ? 'Selected Activity Trend' : 'Selected Activity Daily Trend'}
+                      subtitle={selectedRevenueMonth === 'all' ? 'Revenue trend for this selection only.' : 'Daily movement for this selection in the selected month.'}
                     >
                       <TrendAreaChart data={selectedRevenueMonth === 'all' ? parkingPlannerAnalysis.selectedLot.monthlyTrend : parkingPlannerAnalysis.selectedLot.dailyTrend} color="#059669" />
                     </ParkingChartCard>
-                    <ParkingChartCard title="Selected-Lot Payment Mix" subtitle="App compared with QR for this lot.">
+                    <ParkingChartCard title="Selected Activity Payment Mix" subtitle="App compared with QR for this selection.">
                       <SourceMixChart data={parkingPlannerAnalysis.selectedLot.sourceMix} />
                     </ParkingChartCard>
+                  </div>
+                  <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                      <div>
+                        <div className="text-xs font-black uppercase tracking-wide text-slate-500">Source rows</div>
+                        <div className="mt-0.5 text-xs font-semibold text-slate-400">Transactions contributing to this selection.</div>
+                      </div>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-slate-600">{parkingPlannerAnalysis.selectedLot.rows.length.toLocaleString()} rows</span>
+                    </div>
+                    <div className="max-h-80 overflow-auto">
+                      <table className="min-w-full text-left text-xs">
+                        <thead className="sticky top-0 bg-white text-[10px] font-black uppercase tracking-wide text-slate-400">
+                          <tr><th className="px-4 py-2">Date</th><th className="px-4 py-2">Time</th><th className="px-4 py-2">Source</th><th className="px-4 py-2">ID</th><th className="px-4 py-2">Plate</th><th className="px-4 py-2 text-right">Amount</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white font-semibold text-slate-700">
+                          {parkingPlannerAnalysis.selectedLot.rows.slice(0, 100).map(row => (
+                            <tr key={row.id}><td className="px-4 py-2">{row.startDate}</td><td className="px-4 py-2">{minutesToTime(row.startMinutes)}</td><td className="px-4 py-2">{getParkingRevenueSourceLabel(row.source)}</td><td className="px-4 py-2">{row.sourceId}</td><td className="px-4 py-2">{row.plate || 'Missing'}</td><td className="px-4 py-2 text-right font-black text-emerald-700">{money(row.amount)}</td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {parkingPlannerAnalysis.selectedLot.rows.length > 100 ? <div className="border-t border-slate-100 bg-slate-50 px-4 py-2 text-[11px] font-bold text-slate-500">Showing the 100 most recent rows.</div> : null}
                   </div>
                 </section>
               ) : null}
@@ -3761,7 +3788,7 @@ export const ParkingWorkspace: React.FC = () => {
             className={`pointer-events-auto absolute bottom-4 right-3 top-4 z-30 hidden flex-col rounded-3xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur transition-all duration-200 xl:flex ${
               lotRightRailOpen ? 'w-[380px] p-3' : 'w-16 items-center p-2'
             }`}
-            aria-label="Parking lot trends and details"
+            aria-label="Parking revenue trends and details"
           >
             {lotRightRailOpen ? (
               <>
@@ -3785,7 +3812,7 @@ export const ParkingWorkspace: React.FC = () => {
                           ? 'Selected public-source match'
                           : 'Parking trends'}
                     </div>
-                    <h3 className="mt-1 text-lg font-black text-emerald-950">{activeMapLocation?.displayName || activeLocation?.displayName || 'All Parking Lots'}</h3>
+                    <h3 className="mt-1 text-lg font-black text-emerald-950">{activeMapLocation?.displayName || activeLocation?.displayName || 'All Parking Revenue'}</h3>
                   </div>
                   <BarChart3 className="text-emerald-700" size={22} />
                 </div>
@@ -3938,7 +3965,7 @@ export const ParkingWorkspace: React.FC = () => {
 
               <details className="mt-3 rounded-3xl border border-slate-200 bg-white p-4">
                 <summary className="cursor-pointer text-sm font-black text-slate-950">
-                  Map Location Settings
+                  Map and Revenue Group Settings
                 </summary>
                 <a href={BARRIE_PUBLIC_PARKING_VIEWER_URL} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs font-black text-blue-700 hover:text-blue-900">
                   City public parking source
@@ -3982,14 +4009,43 @@ export const ParkingWorkspace: React.FC = () => {
                     const publicMatch = sourceSummary ? publicParkingMatchesByKey.get(sourceSummary.key) || null : null;
                     return (
                       <div key={location.id} className="rounded-2xl border border-amber-100 bg-white p-3">
-                        <TextInput disabled={!canEditParking} value={location.displayName} onChange={value => updateRevenueLocation(location.id, { displayName: value })} />
-                        <div className="mt-2 grid grid-cols-2 gap-2">
-                          <TextInput disabled={!canEditParking} value={location.latitude == null ? '' : String(location.latitude)} onChange={value => updateRevenueLocation(location.id, { latitude: value ? Number(value) : null })} placeholder="Latitude" />
-                          <TextInput disabled={!canEditParking} value={location.longitude == null ? '' : String(location.longitude)} onChange={value => updateRevenueLocation(location.id, { longitude: value ? Number(value) : null })} placeholder="Longitude" />
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <TextInput disabled={!canEditParking} value={location.displayName} onChange={value => updateRevenueLocation(location.id, { displayName: value })} />
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${location.locationKind === 'non_spatial' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {location.locationKind === 'non_spatial' ? 'Non-location' : 'Physical'}
+                          </span>
                         </div>
                         <div className="mt-2">
-                          <TextInput disabled={!canEditParking} value={location.capacitySpaces == null ? '' : String(location.capacitySpaces)} onChange={value => updateRevenueLocation(location.id, { capacitySpaces: value ? Number(value) : null })} placeholder="Spaces" />
+                          <select
+                            disabled={!canEditParking}
+                            value={location.locationKind || 'physical'}
+                            onChange={event => updateRevenueLocation(location.id, event.target.value === 'non_spatial'
+                              ? { locationKind: 'non_spatial', latitude: null, longitude: null, capacitySpaces: null }
+                              : { locationKind: 'physical' })}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:bg-slate-50"
+                            aria-label={`${location.displayName} location type`}
+                          >
+                            <option value="physical">Physical parking location</option>
+                            <option value="non_spatial">Not tied to a location</option>
+                          </select>
                         </div>
+                        {location.locationKind !== 'non_spatial' ? (
+                          <>
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              <TextInput disabled={!canEditParking} value={location.latitude == null ? '' : String(location.latitude)} onChange={value => updateRevenueLocation(location.id, { latitude: value ? Number(value) : null })} placeholder="Latitude" />
+                              <TextInput disabled={!canEditParking} value={location.longitude == null ? '' : String(location.longitude)} onChange={value => updateRevenueLocation(location.id, { longitude: value ? Number(value) : null })} placeholder="Longitude" />
+                            </div>
+                            <div className="mt-2">
+                              <TextInput disabled={!canEditParking} value={location.capacitySpaces == null ? '' : String(location.capacitySpaces)} onChange={value => updateRevenueLocation(location.id, { capacitySpaces: value ? Number(value) : null })} placeholder="Spaces" />
+                            </div>
+                          </>
+                        ) : (
+                          <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50 p-2 text-[11px] font-bold text-amber-800">
+                            Included in revenue, session, category, and trend analysis without a map pin or capacity metrics.
+                          </div>
+                        )}
                         <div className="mt-2">
                           <select
                             disabled={!canEditParking}
@@ -4001,13 +4057,13 @@ export const ParkingWorkspace: React.FC = () => {
                             {revenueCategoryOptions.map(category => <option key={category.id} value={category.id}>{category.label}</option>)}
                           </select>
                         </div>
-                        <div className="mt-2 flex gap-2">
+                        {location.locationKind !== 'non_spatial' ? <div className="mt-2 flex gap-2">
                           <input value={search.query} disabled={!canEditParking} onChange={event => setLocationSearchById(current => ({ ...current, [location.id]: { ...search, query: event.target.value } }))} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none" />
                           <button type="button" disabled={!canEditParking || search.searching} onClick={() => void searchRevenueLocation(location)} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:bg-gray-300">
                             {search.searching ? '...' : 'Find'}
                           </button>
-                        </div>
-                        {publicMatch ? (
+                        </div> : null}
+                        {location.locationKind !== 'non_spatial' && publicMatch ? (
                           <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs font-bold text-blue-800">
                             <div>Public source match: {publicMatch.location.commonName || publicMatch.location.name}{publicMatch.location.address ? ` · ${publicMatch.location.address}` : ''}</div>
                             <button type="button" disabled={!canEditParking} onClick={() => applyPublicRevenueLocationFallback(location.id, publicMatch)} className="mt-2 rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-blue-700 disabled:bg-gray-300">
@@ -4015,8 +4071,8 @@ export const ParkingWorkspace: React.FC = () => {
                             </button>
                           </div>
                         ) : null}
-                        {search.error ? <div className="mt-2 text-xs font-bold text-amber-700">{search.error}</div> : null}
-                        {search.suggestions.length > 0 ? (
+                        {location.locationKind !== 'non_spatial' && search.error ? <div className="mt-2 text-xs font-bold text-amber-700">{search.error}</div> : null}
+                        {location.locationKind !== 'non_spatial' && search.suggestions.length > 0 ? (
                           <div className="mt-2 space-y-1.5">
                             {search.suggestions.map(suggestion => (
                               <button key={suggestion.id} type="button" onClick={() => applyRevenueLocationSuggestion(location.id, suggestion)} className="w-full rounded-xl border border-blue-100 bg-blue-50 p-2 text-left text-xs font-bold text-blue-800 hover:bg-blue-100">
@@ -4127,7 +4183,7 @@ export const ParkingWorkspace: React.FC = () => {
             )}
           </aside>
 
-          {(errorMessage || publicParkingError || previewRevenueDatasets.length > 0 || revenueImportStatus || !hasVisibleRevenuePins) ? (
+          {(errorMessage || publicParkingError || previewRevenueDatasets.length > 0 || revenueImportStatus || (!hasVisibleRevenuePins && !hasRevenueActivity)) ? (
             <div className="pointer-events-none absolute bottom-4 left-[350px] right-[400px] z-30 hidden xl:block">
               <div className="pointer-events-auto rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur">
                 {errorMessage ? <div className="mb-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{errorMessage}</div> : null}
@@ -4165,7 +4221,7 @@ export const ParkingWorkspace: React.FC = () => {
                       </button>
                     )}
                   </div>
-                ) : !hasVisibleRevenuePins ? (
+                ) : !hasVisibleRevenuePins && !hasRevenueActivity ? (
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">
                     <div>The map is ready. Import revenue files; reviewed coordinates or public City matches will light up the pins.</div>
                     <label className={`mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2 text-sm font-black text-white ${canEditParking ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-gray-300'}`}>

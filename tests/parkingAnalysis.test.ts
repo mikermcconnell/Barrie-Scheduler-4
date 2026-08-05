@@ -40,6 +40,8 @@ function location(patch: Partial<ParkingRevenueLocationSummary>): ParkingRevenue
   return {
     key: patch.key || 'lot-a',
     displayName: patch.displayName || 'Lot A',
+    locationKind: patch.locationKind || 'physical',
+    mapStatus: patch.mapStatus || 'unmapped',
     sourceIds: patch.sourceIds || [{ source: 'hotspot', sourceId: '100', label: 'Lot A' }],
     latitude: patch.latitude ?? null,
     longitude: patch.longitude ?? null,
@@ -76,6 +78,7 @@ function analytics(patch: Partial<ParkingRevenueAnalytics>): ParkingRevenueAnaly
     locationSummaries: patch.locationSummaries || [],
     mappedLocationSummaries: patch.mappedLocationSummaries || [],
     unmappedLocationSummaries: patch.unmappedLocationSummaries || [],
+    nonSpatialLocationSummaries: patch.nonSpatialLocationSummaries || [],
     totalRevenue: patch.totalRevenue ?? 0,
     totalPaid: patch.totalPaid ?? 0,
     rowCount: patch.rowCount ?? 0,
@@ -360,6 +363,67 @@ describe('parking planner analysis milestones', () => {
       capacityCoveredSessions: 10,
       capacityCoveredPaidMinutes: 120,
     });
+  });
+
+  it('keeps non-spatial category activity while making capacity metrics not applicable', () => {
+    const specialEvents = location({
+      key: 'hotspot-9000',
+      displayName: 'Special Events',
+      locationKind: 'non_spatial',
+      mapStatus: 'not_applicable',
+      categoryId: 'special-events',
+      categoryLabel: 'Special Events',
+      rowCount: 4,
+      totalRevenue: 100,
+      paidMinutes: 720,
+    });
+
+    const result = buildParkingPlannerAnalysis(analytics({
+      locationSummaries: [specialEvents],
+      rowCount: 4,
+      totalRevenue: 100,
+      activeDayCount: 1,
+    }), null, {
+      'hotspot-9000': { spaces: 500 },
+    });
+
+    expect(result.capacityRows).toEqual([]);
+    expect(result.categoryComparisonRows[0]).toMatchObject({
+      key: 'special-events',
+      label: 'Special Events',
+      sessions: 4,
+      revenue: 100,
+      spaces: null,
+      revenuePerSpace: null,
+      utilizationPercent: null,
+      lotCount: 0,
+      capacityCoveredLotCount: 0,
+    });
+  });
+
+  it('uses stable source IDs for drilldown rows after a mapping ID changes', () => {
+    const specialEvents = location({
+      key: 'custom-events',
+      displayName: 'Special Events',
+      locationKind: 'non_spatial',
+      mapStatus: 'not_applicable',
+      sourceIds: [{ source: 'hotspot', sourceId: '9000', label: 'Special Events' }],
+    });
+    const legacyRow = row({
+      id: 'event-row',
+      sourceId: '9000',
+      sourceLabel: 'Special Events',
+      physicalLocationId: 'hotspot-9000',
+      physicalLocationName: 'Special Events',
+    });
+    const result = buildParkingPlannerAnalysis(analytics({
+      rows: [legacyRow],
+      locationSummaries: [specialEvents],
+      rowCount: 1,
+      totalRevenue: 10,
+    }), specialEvents);
+
+    expect(result.selectedLot?.rows.map(entry => entry.id)).toEqual(['event-row']);
   });
 
   it('keeps selected-lot analysis isolated from a distinct same-named location', () => {
