@@ -116,7 +116,6 @@ const PerformancePanelError: React.FC<{ onRetry: () => void }> = ({ onRetry }) =
     </div>
 );
 
-const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
 function resolveDetailDateRange(
     metadata: PerformanceMetadata | null | undefined,
     timeRange: TimeRange,
@@ -219,9 +218,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const detailData = detailQuery.data ?? null;
     const detailLoadFailed = shouldLoadDetailData && detailQuery.isError;
     const isCurrentDetailLoading = shouldLoadDetailData && detailQuery.isFetching && !detailData;
+    const isPendingDetailLoad = shouldLoadDetailData && !detailData && !detailLoadFailed;
     const detailsReady = !shouldLoadDetailData || !!detailData;
     const workspaceData = detailData ?? data;
-    const allowedTimeRanges = detailsReady ? undefined : OVERVIEW_ONLY_TIME_RANGES;
     const showImportHealthPanel = !import.meta.env.PROD
         && detailsReady
         && isFeatureEnabled('operationsImportHealth');
@@ -271,6 +270,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     }, [latestAvailableDate, maxAvailableDate, minAvailableDate]);
 
     const filteredData = useMemo((): PerformanceDataSummary => {
+        if (isPendingDetailLoad) {
+            return data;
+        }
         const dailySummaries = filterDailySummaries(
             workspaceData.dailySummaries,
             timeRange,
@@ -279,7 +281,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
             customDateRange,
         );
         return withFilteredMetadata(workspaceData, dailySummaries);
-    }, [workspaceData, timeRange, dayTypeFilter, selectedDate, customDateRange]);
+    }, [customDateRange, data, dayTypeFilter, isPendingDetailLoad, selectedDate, timeRange, workspaceData]);
 
     const ridershipComparisonPeriod = useMemo(() => {
         if (activeTab !== 'ridership' || timeRange === 'all') return null;
@@ -401,8 +403,8 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <div className="h-4 w-px bg-gray-300" />
                     <h2 className="text-lg font-bold text-gray-900">Operations Dashboard</h2>
                     <span className="text-xs text-gray-500">
-                        {data.metadata.dateRange.start} — {data.metadata.dateRange.end}
-                        {' · '}{data.metadata.dayCount} day{data.metadata.dayCount !== 1 ? 's' : ''}
+                        {filteredData.metadata.dateRange.start} — {filteredData.metadata.dateRange.end}
+                        {' · '}{filteredData.metadata.dayCount} day{filteredData.metadata.dayCount !== 1 ? 's' : ''}
                         {' · '}{routeScopeLabel}
                     </span>
                 </div>
@@ -448,9 +450,15 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                 </>
             )}
 
-            {!detailsReady && !detailLoadFailed && (
-                <div className="mb-3 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-800">
-                    Showing the most recent 7 days on Overview first. {routeScopeLabel} details are still loading in the background.
+            {isPendingDetailLoad && (
+                <div role="status" className="mb-3 flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-800">
+                    <Loader2 className="shrink-0 animate-spin" size={16} aria-hidden="true" />
+                    <span>
+                        {timeRange === 'custom' && customDateRange
+                            ? `Loading ${customDateRange.start} to ${customDateRange.end}. `
+                            : `Loading ${routeScopeLabel} details. `}
+                        Showing {data.metadata.dateRange.start} to {data.metadata.dateRange.end} on Overview until the requested data is ready.
+                    </span>
                 </div>
             )}
 

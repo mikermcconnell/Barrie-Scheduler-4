@@ -1,8 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-    LineChart, Line, PieChart, Pie, Cell, ReferenceLine, ComposedChart,
-} from 'recharts';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import {
     Clock, Users, AlertTriangle, ArrowRight, ArrowUpDown, ChevronDown, ChevronUp,
     Calendar, Database, ClipboardList,
@@ -14,9 +10,20 @@ import {
     aggregateStoredMissedTrips,
     computeAggregatedMissedTrips,
 } from '../../utils/performanceMissedTrips';
-import { compareDateStrings, longWeekdayDateLabel, normalizeToISODate, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
+import { compareDateStrings, normalizeToISODate, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { PerformanceScopeProvider } from './performanceScope';
 import type { PerformanceDataScope } from '../../utils/performanceDataScope';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
+
+const SystemOverviewOtpCharts = lazyWithRetry(
+    () => import('./SystemOverviewCharts').then(module => ({ default: module.SystemOverviewOtpCharts })),
+    'performance-system-overview-otp-charts',
+);
+
+const SystemOverviewRidershipCharts = lazyWithRetry(
+    () => import('./SystemOverviewCharts').then(module => ({ default: module.SystemOverviewRidershipCharts })),
+    'performance-system-overview-ridership-charts',
+);
 
 interface SystemOverviewModuleProps {
     data: PerformanceDataSummary;
@@ -53,23 +60,6 @@ interface ActionQueueItem {
     band: ActionQueueBand;
     daysObserved: number;
     daysBreaching: number;
-}
-
-/** BPH color: ≥30 emerald, ≤10 red, linear interpolation in between. */
-function bphColor(value: number): string {
-    if (value >= 30) return '#10b981'; // emerald-500
-    if (value <= 10) return '#ef4444'; // red-500
-    // 10–30 range: red → amber → emerald
-    const t = (value - 10) / 20; // 0..1
-    if (t < 0.5) {
-        // red → amber (0..0.5)
-        const r = 239, g = Math.round(68 + (158 - 68) * (t * 2)), b = Math.round(68 + (11 - 68) * (t * 2));
-        return `rgb(${r},${g},${b})`;
-    }
-    // amber → emerald (0.5..1)
-    const s = (t - 0.5) * 2;
-    const r = Math.round(245 + (16 - 245) * s), g = Math.round(158 + (185 - 158) * s), b = Math.round(11 + (129 - 11) * s);
-    return `rgb(${r},${g},${b})`;
 }
 
 function formatDateShort(dateStr: string): string {
@@ -179,6 +169,18 @@ function SortableHeader({
     );
 }
 
+function OverviewChartsFallback({ titles, subtitles }: { titles: string[]; subtitles?: string[] }) {
+    return (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="overview-charts-loading">
+            {titles.map((title, index) => (
+                <ChartCard key={title} title={title} subtitle={subtitles?.[index] ?? 'Loading visualization...'}>
+                    <div className="h-[250px] rounded-lg bg-gray-50 animate-pulse" aria-hidden="true" />
+                </ChartCard>
+            ))}
+        </div>
+    );
+}
+
 
 export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data, allData, onNavigate, scope, scopeLabel, dayTypeFilter }) => {
     const filtered = data.dailySummaries;
@@ -187,6 +189,13 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const [routeScoreSortDir, setRouteScoreSortDir] = React.useState<SortDir>('desc');
     const [computedMissedTrips, setComputedMissedTrips] = useState<ReturnType<typeof aggregateStoredMissedTrips> | null>(null);
     const [isLoadingMissedTripsFallback, setIsLoadingMissedTripsFallback] = useState(false);
+    const [shouldRenderCharts, setShouldRenderCharts] = useState(false);
+
+    useEffect(() => {
+        // Keep Recharts parsing and layout out of the first useful overview paint.
+        const timer = window.setTimeout(() => setShouldRenderCharts(true), 0);
+        return () => window.clearTimeout(timer);
+    }, []);
 
     const selectedDayTypes = useMemo(() => new Set(filtered.map(day => day.dayType)), [filtered]);
 
@@ -823,63 +832,25 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             )}
 
             {/* ── 4. Charts Row: OTP Donut + OTP Trend ─────────────── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <ChartCard title="OTP Breakdown" subtitle="Early / On Time / Late distribution">
-                    <div className="relative">
-                        <ResponsiveContainer width="100%" height={250}>
-                            <PieChart>
-                                <Pie
-                                    data={otpDonutData}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={70}
-                                    outerRadius={100}
-                                    paddingAngle={2}
-                                    dataKey="value"
-                                >
-                                    {otpDonutData.map((entry, i) => (
-                                        <Cell key={i} fill={entry.color} />
-                                    ))}
-                                </Pie>
-                                <Tooltip formatter={(v: number, name: string) => [v.toLocaleString(), name]} />
-                            </PieChart>
-                        </ResponsiveContainer>
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <div className="text-center">
-                                <p className="text-2xl font-bold text-gray-900">{systemAvg.otp}%</p>
-                                <p className="text-xs text-gray-400">On Time</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="flex justify-center gap-4 mt-2">
-                        {otpDonutData.map(d => (
-                            <div key={d.name} className="flex items-center gap-1 text-xs text-gray-500">
-                                <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: d.color }} />
-                                {d.name}
-                            </div>
-                        ))}
-                    </div>
-                </ChartCard>
-
-                <ChartCard title="OTP Trend" subtitle={`${otpTrend.length}-day trend`}>
-                    {otpTrend.length > 1 ? (
-                        <ResponsiveContainer width="100%" height={250}>
-                            <LineChart data={otpTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                                <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
-                                <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={v => `${v}%`} />
-                                <Tooltip formatter={(v: number) => [`${v}%`, 'OTP']} />
-                                <ReferenceLine y={85} stroke="#9CA3AF" strokeDasharray="6 4" label={{ value: '85% target', position: 'right', fontSize: 10, fill: '#9CA3AF' }} />
-                                <Line type="monotone" dataKey="otp" stroke="#06b6d4" strokeWidth={2} dot={false} />
-                            </LineChart>
-                        </ResponsiveContainer>
-                    ) : (
-                        <div className="flex items-center justify-center h-[250px] text-gray-400 text-sm">
-                            Need 2+ days for trend chart
-                        </div>
-                    )}
-                </ChartCard>
-            </div>
+            {shouldRenderCharts ? (
+                <Suspense fallback={(
+                    <OverviewChartsFallback
+                        titles={['OTP Breakdown', 'OTP Trend']}
+                        subtitles={['Early / On Time / Late distribution', `${otpTrend.length}-day trend`]}
+                    />
+                )}>
+                    <SystemOverviewOtpCharts
+                        otpDonutData={otpDonutData}
+                        otpTrend={otpTrend}
+                        otpPercent={systemAvg.otp}
+                    />
+                </Suspense>
+            ) : (
+                <OverviewChartsFallback
+                    titles={['OTP Breakdown', 'OTP Trend']}
+                    subtitles={['Early / On Time / Late distribution', `${otpTrend.length}-day trend`]}
+                />
+            )}
 
             {/* ── 5. Route Scorecard Table ────────────────────────── */}
             <ChartCard title="Route Scorecard" subtitle="OTP and ridership by route" headerExtra={
@@ -945,91 +916,27 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             </ChartCard>
 
             {/* ── 6. Charts Row: Ridership Trend + Ridership by Route ─ */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <ChartCard title="Daily Ridership" subtitle="Boardings per day">
-                    {otpTrend.length > 1 ? (
-                        <ResponsiveContainer width="100%" height={250}>
-                            <BarChart data={otpTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                                <XAxis dataKey="weekdayDate" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
-                                <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={v => v.toLocaleString()} />
-                                <Tooltip
-                                    labelFormatter={(_, payload) => {
-                                        const row = payload?.[0]?.payload as { fullDate?: string; weekdayDate?: string } | undefined;
-                                        return row?.fullDate ? longWeekdayDateLabel(row.fullDate) : (row?.weekdayDate || '');
-                                    }}
-                                    formatter={(v: number) => [v.toLocaleString(), 'Boardings']}
-                                />
-                                <Bar dataKey="ridership" fill="#06b6d4" radius={[4, 4, 0, 0]} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    ) : (
-                        <div className="flex items-center justify-center h-[250px] text-gray-400 text-sm">
-                            Need 2+ days for ridership trend
-                        </div>
-                    )}
-                </ChartCard>
-
-                <ChartCard title="Boardings per Hour" subtitle="All routes ranked by BPH efficiency (dashed lines = 10 and 30 BPH thresholds)">
-                    <ResponsiveContainer width="100%" height={Math.max(250, routeRanking.length * 28)}>
-                        <BarChart data={[...routeRanking].sort((a, b) => b.bph - a.bph)} layout="vertical" margin={{ top: 20, right: 10, bottom: 5, left: 10 }}>
-                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
-                            <XAxis type="number" domain={[0, (max: number) => Math.max(max, 30)]} tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <YAxis type="category" dataKey="routeId" width={40} tick={{ fontSize: 11, fontWeight: 600, fill: '#6B7280' }} interval={0} />
-                            <Tooltip formatter={(v: number) => [v.toFixed(1), 'BPH']} />
-                            <ReferenceLine x={10} stroke="#ef4444" strokeDasharray="6 4" label={{ value: '10 BPH: Service review', position: 'top', fontSize: 10, fill: '#ef4444' }} />
-                            <ReferenceLine x={30} stroke="#10b981" strokeDasharray="6 4" label={{ value: '30 BPH: Frequency review', position: 'top', fontSize: 10, fill: '#10b981' }} />
-                            <Bar dataKey="bph" radius={[0, 4, 4, 0]}>
-                                {[...routeRanking].sort((a, b) => b.bph - a.bph).map((r) => (
-                                    <Cell key={r.routeId} fill={bphColor(r.bph)} />
-                                ))}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
-                    <div className="flex justify-center gap-4 mt-1">
-                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                            <span className="inline-block w-3 border-t border-dashed border-red-500" />
-                            10 BPH: Service review threshold
-                        </div>
-                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                            <span className="inline-block w-3 border-t border-dashed border-emerald-500" />
-                            30 BPH: Frequency review threshold
-                        </div>
-                    </div>
-                </ChartCard>
-            </div>
+            {shouldRenderCharts ? (
+                <Suspense fallback={(
+                    <OverviewChartsFallback
+                        titles={['Daily Ridership', 'Boardings per Hour']}
+                        subtitles={['Boardings per day', 'All routes ranked by BPH efficiency']}
+                    />
+                )}>
+                    <SystemOverviewRidershipCharts
+                        otpTrend={otpTrend}
+                        routeRanking={routeRanking}
+                        hourlyData={hourlyData}
+                    />
+                </Suspense>
+            ) : (
+                <OverviewChartsFallback
+                    titles={['Daily Ridership', 'Boardings per Hour']}
+                    subtitles={['Boardings per day', 'All routes ranked by BPH efficiency']}
+                />
+            )}
 
             {/* ── 6. Boardings by Hour of Day ────────────────────────── */}
-            {hourlyData.length > 0 && (
-                <ChartCard title="Boardings by Hour" subtitle="Total boardings (bars) and estimated boardings per service-hour proxy (line)">
-                    <ResponsiveContainer width="100%" height={280}>
-                        <ComposedChart data={hourlyData} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                            <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <YAxis yAxisId="total" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={v => v.toLocaleString()} />
-                            <YAxis yAxisId="bph" orientation="right" tick={{ fontSize: 10, fill: '#8b5cf6' }} />
-                            <Tooltip
-                                formatter={(v: number, name: string) => [
-                                    name === 'boardings' ? v.toLocaleString() : v.toFixed(1),
-                                    name === 'boardings' ? 'Total Boardings' : 'Estimated BPH',
-                                ]}
-                            />
-                            <Bar yAxisId="total" dataKey="boardings" fill="#06b6d4" radius={[4, 4, 0, 0]} opacity={0.8} />
-                            <Line yAxisId="bph" type="monotone" dataKey="bph" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3, fill: '#8b5cf6' }} />
-                        </ComposedChart>
-                    </ResponsiveContainer>
-                    <div className="flex justify-center gap-4 mt-1">
-                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                            <span className="inline-block w-3 h-2.5 rounded-sm bg-cyan-500 opacity-80" />
-                            Total Boardings
-                        </div>
-                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                            <span className="inline-block w-3 h-0.5 bg-purple-500 rounded" />
-                            Estimated BPH proxy
-                        </div>
-                    </div>
-                </ChartCard>
-            )}
 
             {/* ── 8. Data Quality Footer ───────────────────────────── */}
             {dataQuality && (

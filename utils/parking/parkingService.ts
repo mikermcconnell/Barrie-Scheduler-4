@@ -84,6 +84,22 @@ function readDepartmentLegendSort(value: unknown): ParkingSettings['departmentLe
   };
 }
 
+function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .filter(item => item !== undefined)
+      .map(item => stripUndefinedDeep(item)) as T;
+  }
+  if (value && typeof value === 'object') {
+    const cleaned: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry !== undefined) cleaned[key] = stripUndefinedDeep(entry);
+    }
+    return cleaned as T;
+  }
+  return value;
+}
+
 export function readParkingSettingsFromDocument(data: Record<string, unknown> | undefined): ParkingSettings {
   const settingsValue = data?.settings;
   if (!settingsValue || typeof settingsValue !== 'object') {
@@ -147,11 +163,11 @@ export async function getParkingSettings(teamId: string): Promise<ParkingSetting
 }
 
 export async function saveParkingSettings(teamId: string, userId: string, settings: ParkingSettings): Promise<ParkingSettings> {
-  const nextSettings: ParkingSettings = {
+  const nextSettings = stripUndefinedDeep<ParkingSettings>({
     ...mergeParkingSettings(DEFAULT_PARKING_SETTINGS, settings),
     updatedAt: new Date().toISOString(),
     updatedBy: userId,
-  };
+  });
   await setDoc(getParkingDefaultRef(teamId), {
     settings: nextSettings,
     settingsUpdatedAt: serverTimestamp(),
@@ -210,12 +226,19 @@ export interface ParkingWorkspaceData {
   revenueSummary: ParkingRevenueSummary | null;
 }
 
-export async function loadParkingWorkspaceData(teamId: string): Promise<ParkingWorkspaceData> {
+export type ParkingWorkspaceLoadScope = 'all' | 'plate-monitor' | 'lot-data';
+
+export async function loadParkingWorkspaceData(
+  teamId: string,
+  scope: ParkingWorkspaceLoadScope = 'all',
+): Promise<ParkingWorkspaceData> {
   const snap = await getDoc(getParkingDefaultRef(teamId));
   const data = snap.exists() ? snap.data() : undefined;
   const [summary, revenueSummary] = await Promise.all([
     loadParkingDataFromDocument(data),
-    loadParkingRevenueDataFromDocument(data),
+    scope === 'plate-monitor'
+      ? Promise.resolve(null)
+      : loadParkingRevenueDataFromDocument(data),
   ]);
 
   return {
@@ -397,4 +420,3 @@ export async function saveParkingRevenueDatasets(
 
   return summary;
 }
-

@@ -116,6 +116,31 @@ describe('parking Firebase service', () => {
     expect(saved.codeFamilies.find(mapping => mapping.familyKey === 'IF')?.ignoreData).toBe(true);
   });
 
+  it('removes undefined values recursively before saving Parking settings', async () => {
+    const { saveParkingSettings } = await import('../utils/parking/parkingService');
+    const settingsWithUndefined: ParkingSettings = {
+      ...strictSettings,
+      revenueLocations: [{
+        id: 'custom-location',
+        displayName: 'Custom location',
+        locationKind: undefined,
+        latitude: null,
+        longitude: null,
+        sourceRefs: [{ source: 'hotspot' as const, sourceId: '1234', label: undefined }],
+      }],
+    };
+
+    const saved = await saveParkingSettings('team-1', 'user-1', settingsWithUndefined);
+    const savedLocation = saved.revenueLocations?.find(location => location.id === 'custom-location');
+    const setPayload = firestoreMock.setDoc.mock.calls[0]?.[1] as { settings: ParkingSettings };
+    const storedLocation = setPayload.settings.revenueLocations?.find(location => location.id === 'custom-location');
+
+    expect(savedLocation).not.toHaveProperty('locationKind');
+    expect(savedLocation?.sourceRefs[0]).not.toHaveProperty('label');
+    expect(storedLocation).not.toHaveProperty('locationKind');
+    expect(storedLocation?.sourceRefs[0]).not.toHaveProperty('label');
+  });
+
   it('saves imported month data with active thresholds without overwriting shared settings', async () => {
     const { parseParkingWorkbook } = await import('../utils/parking/parkingParser');
     const { saveParkingMonthData } = await import('../utils/parking/parkingService');
@@ -178,7 +203,7 @@ describe('parking Firebase service', () => {
   });
 
   it('saves Parking revenue data separately from department-code usage data', async () => {
-    const { parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenue');
+    const { parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenueParser');
     const { saveParkingRevenueDatasets } = await import('../utils/parking/parkingService');
     const dataset = parseParkingRevenueWorkbook(workbookBuffer([
       ['HotSpot'],
@@ -229,7 +254,8 @@ describe('parking Firebase service', () => {
   });
 
   it('auto-save persistence preserves other revenue source/month datasets when replacing one import', async () => {
-    const { buildParkingRevenueReplacementSummary, parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenue');
+    const { buildParkingRevenueReplacementSummary } = await import('../utils/parking/parkingRevenue');
+    const { parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenueParser');
     const { saveParkingRevenueDatasets } = await import('../utils/parking/parkingService');
     const replacementHotspot = parseParkingRevenueWorkbook(workbookBuffer([
       ['HotSpot'],

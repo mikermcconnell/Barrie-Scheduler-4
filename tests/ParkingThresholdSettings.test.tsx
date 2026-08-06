@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildSelectedMonthParkingAnalysis,
   SettingNumber,
-} from '../components/workspaces/ParkingWorkspace';
+} from '../components/workspaces/ParkingDataWorkspace';
 import {
   DEFAULT_PARKING_SETTINGS,
   type ParkingMonthlyDataset,

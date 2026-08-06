@@ -205,6 +205,13 @@ describe('SystemOverviewModule', () => {
     expect(otpMetric?.textContent).not.toContain('50%');
   });
 
+  it('renders operational KPIs before loading the chart bundle', () => {
+    render(summary([buildDay('2026-03-10')]));
+
+    expect(container.querySelector('[data-testid="metric-On-Time Performance"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="overview-charts-loading"]')).not.toBeNull();
+  });
+
   it('weights worst-hour OTP by raw observations across days', () => {
     render(summary([
       buildDay('2026-03-10', { systemOtp: otp(10, 0, 0, 10) }),
@@ -266,10 +273,12 @@ describe('SystemOverviewModule', () => {
     expect(container.textContent).toContain('Missing APC: 2 (0%)');
   });
 
-  it('labels hourly BPH as an estimate instead of an exact service-hour metric', () => {
+  it('labels hourly BPH as an estimate instead of an exact service-hour metric', async () => {
     render(summary([buildDay('2026-03-10')]));
 
-    expect(container.textContent).toContain('estimated boardings per service-hour proxy');
-    expect(container.textContent).toContain('Estimated BPH proxy');
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('estimated boardings per service-hour proxy');
+      expect(container.textContent).toContain('Estimated BPH proxy');
+    });
   });
 });

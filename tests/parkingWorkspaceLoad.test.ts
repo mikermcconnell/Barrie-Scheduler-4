@@ -126,4 +126,31 @@ describe('consolidated Parking workspace loading', () => {
       storagePath: 'teams/team-1/parking/revenue/current.json',
     });
   });
+
+  it('skips the revenue payload for Plate Monitor', async () => {
+    firestoreMock.getDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        storagePath: 'teams/team-1/parking/current.json',
+        revenueStoragePath: 'teams/team-1/parking/revenue/current.json',
+        settings: {},
+      }),
+    });
+    storageMock.getDownloadURL.mockImplementation(async ({ path }: { path: string }) => `https://storage.example/${path}`);
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => storedDepartmentSummary,
+    } as Response));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { loadParkingWorkspaceData } = await import('../utils/parking/parkingService');
+    const result = await loadParkingWorkspaceData('team-1', 'plate-monitor');
+
+    expect(firestoreMock.getDoc).toHaveBeenCalledTimes(1);
+    expect(storageMock.getDownloadURL).toHaveBeenCalledTimes(1);
+    expect(storageMock.getDownloadURL).toHaveBeenCalledWith({ path: 'teams/team-1/parking/current.json' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.summary).not.toBeNull();
+    expect(result.revenueSummary).toBeNull();
+  });
 });

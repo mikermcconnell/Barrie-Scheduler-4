@@ -8,10 +8,12 @@ import { getParkingCodeFamilyKey, parseParkingDurationMinutes, parseParkingFile,
 import {
   buildParkingRevenueAnalytics,
   buildParkingRevenueReplacementSummary,
+} from '../utils/parking/parkingRevenue';
+import {
   parseParkingRevenueFile,
   parseParkingRevenueDurationMinutes,
   parseParkingRevenueWorkbook,
-} from '../utils/parking/parkingRevenue';
+} from '../utils/parking/parkingRevenueParser';
 import {
   buildParkingMapRevenueCoverage,
   buildParkingRevenueMapDisplayLocations,
@@ -394,8 +396,23 @@ describe('parking replacement and export', () => {
       longitude: null,
       capacitySpaces: null,
       categoryId: 'special-events',
-      sourceRefs: [{ source: 'hotspot', sourceId: '9000', label: 'Special Events' }],
+      sourceRefs: [
+        { source: 'hotspot', sourceId: '9000', label: 'Special Events' },
+        { source: 'qr', sourceId: '9000', label: 'Event Parking' },
+      ],
     });
+  });
+
+  it('does not materialize undefined location kinds when persisted settings are loaded again', () => {
+    const firstLoad = readParkingSettingsFromDocument(undefined);
+    const reloaded = readParkingSettingsFromDocument({
+      settings: JSON.parse(JSON.stringify(firstLoad)),
+    });
+
+    expect(reloaded.revenueLocations?.filter(location => (
+      Object.prototype.hasOwnProperty.call(location, 'locationKind')
+      && location.locationKind === undefined
+    ))).toEqual([]);
   });
 
   it('migrates the legacy H-Block default category from Hospital to Downtown', () => {
@@ -637,6 +654,36 @@ describe('parking revenue parser and analytics', () => {
     expect(parseParkingRevenueDurationMinutes('0')).toBe(0);
   });
 
+  it('corrects shifted QR export columns and maps QR 9000 to Special Events', () => {
+    const settings = readParkingSettingsFromDocument(undefined);
+    const result = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'Meter #', 'Tap Sign', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type', 'Moneris ID'],
+      ['', '9000', 'Event Parking', '2026-07-31 18:00:00', 'EVENT1', '13.27 $', '1.73 $', '0.35 $', '15.00 $', '1', 'mastercard'],
+    ]), { fileName: 'shifted-qr.xlsx', importedBy: 'user-1', settings });
+    const summary = buildParkingRevenueReplacementSummary(null, [result.dataset], 'user-1', 'revenue.json');
+    const analytics = buildParkingRevenueAnalytics(summary, settings, { categoryId: 'special-events' });
+
+    expect(result.dataset).toMatchObject({
+      rowCount: 1,
+      totalRevenue: 13.27,
+      totalTax: 1.73,
+      totalPaid: 15,
+    });
+    expect(result.dataset.rows[0]).toMatchObject({
+      physicalLocationId: 'hotspot-9000',
+      durationMinutes: 60,
+      total: 15,
+      paymentType: 'mastercard',
+    });
+    expect(result.warnings).toContain('The QR export used shifted Total, Length, and Card Type columns; their positions were corrected during import.');
+    expect(analytics).toMatchObject({ rowCount: 1, totalRevenue: 13.27 });
+    expect(analytics.locationSummaries[0]).toMatchObject({
+      locationKind: 'non_spatial',
+      categoryId: 'special-events',
+    });
+  });
+
   it('replaces revenue by source/month and aggregates reviewed physical locations', () => {
     const settings = revenueSettings();
     const hotspot = parseParkingRevenueWorkbook(workbookBuffer([
@@ -684,6 +731,34 @@ describe('parking revenue parser and analytics', () => {
     expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'madison.shortt' }).totalRevenue).toBe(10);
     expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'user-2' }).totalRevenue).toBe(5);
     expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'all' }).totalRevenue).toBe(15);
+  });
+
+  it('does not scan rows from monthly datasets outside the requested period', () => {
+    const settings = revenueSettings();
+    const januaryDataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'JAN', '10.00', '1.30', '11.30', '1', 'visa'],
+    ]), { fileName: 'january.xlsx', importedBy: 'user-1', settings }).dataset;
+    const februaryDataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-02-01 09:00:00', 'FEB', '20.00', '2.60', '22.60', '1', 'visa'],
+    ]), { fileName: 'february.xlsx', importedBy: 'user-1', settings }).dataset;
+    Object.defineProperty(februaryDataset, 'rows', {
+      configurable: true,
+      get: () => {
+        throw new Error('Unrelated month rows were scanned');
+      },
+    });
+    const summary = buildParkingRevenueReplacementSummary(
+      null,
+      [januaryDataset, februaryDataset],
+      'user-1',
+      'revenue.json',
+    );
+
+    expect(buildParkingRevenueAnalytics(summary, settings, { months: ['2026-01'] }).totalRevenue).toBe(10);
   });
 
   it('filters revenue analytics by weekdays, Saturdays, and Sundays separately', () => {

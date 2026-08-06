@@ -1994,6 +1994,11 @@ export const DEFAULT_PARKING_REVENUE_LOCATIONS = [
         "source": "hotspot",
         "sourceId": "9000",
         "label": "Special Events"
+      },
+      {
+        "source": "qr",
+        "sourceId": "9000",
+        "label": "Event Parking"
       }
     ]
   }

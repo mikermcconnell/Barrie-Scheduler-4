@@ -40,6 +40,8 @@ import { filterPerformanceSummaryByRoute, getAvailablePerformanceRoutes } from '
 
 // ============ HELPERS ============
 
+const PERFORMANCE_DOWNLOAD_CONCURRENCY = 4;
+
 function getMetadataRef(teamId: string) {
     return doc(db, 'teams', teamId, 'performanceData', 'metadata');
 }
@@ -232,7 +234,7 @@ function applyPerformanceLoadOptions(
     });
 }
 
-async function mapWithConcurrency<T>(
+export async function mapWithConcurrency<T>(
     items: T[],
     concurrency: number,
     task: (item: T) => Promise<void>,
@@ -268,8 +270,13 @@ async function loadMonthlyPerformanceSummary(
         .filter(month => monthOverlapsRange(month, options?.dateRange))
         .sort();
     if (months.length === 0) return null;
-    const monthSummaries = await Promise.all(
-        months.map(month => downloadStorageJson<PerformanceDataSummary>(paths[month]))
+    const monthSummaries: Array<PerformanceDataSummary | null> = new Array(months.length).fill(null);
+    await mapWithConcurrency(
+        months.map((month, index) => ({ month, index })),
+        PERFORMANCE_DOWNLOAD_CONCURRENCY,
+        async ({ month, index }) => {
+            monthSummaries[index] = await downloadStorageJson<PerformanceDataSummary>(paths[month]);
+        },
     );
     const dailySummaries = monthSummaries.flatMap(summary => summary?.dailySummaries || []);
     if (dailySummaries.length === 0) return null;

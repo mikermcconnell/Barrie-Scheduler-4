@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     buildStorageJsonUploadData,
     getTotalRecordsForSummary,
+    mapWithConcurrency,
     mergePerformanceSummaryMetadata,
     resolveMergedCleanHistoryStartDate,
 } from '../utils/performanceDataService';
@@ -118,5 +119,32 @@ describe('performanceDataService merge helpers', () => {
         expect(resolveMergedCleanHistoryStartDate('2026-04-16', '2026-03-30')).toBe('2026-03-30');
         expect(resolveMergedCleanHistoryStartDate('2026-03-29', '2026-03-30')).toBe('2026-03-29');
         expect(resolveMergedCleanHistoryStartDate(undefined, '2026-03-30')).toBe('2026-03-30');
+    });
+});
+
+describe('performanceDataService bounded work', () => {
+    it('caps concurrent tasks while processing every item', async () => {
+        let active = 0;
+        let maxActive = 0;
+        const completed: number[] = [];
+        let release: (() => void) | undefined;
+        const gate = new Promise<void>(resolve => {
+            release = resolve;
+        });
+
+        const work = mapWithConcurrency([1, 2, 3, 4, 5, 6], 4, async item => {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await gate;
+            completed.push(item);
+            active -= 1;
+        });
+
+        await vi.waitFor(() => expect(maxActive).toBe(4));
+        release?.();
+        await work;
+
+        expect(maxActive).toBe(4);
+        expect(completed.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6]);
     });
 });
