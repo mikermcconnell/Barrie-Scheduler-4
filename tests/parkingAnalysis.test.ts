@@ -12,6 +12,8 @@ import type {
 } from '../utils/parking/parkingTypes';
 
 function row(patch: Partial<ParkingRevenueRawRow>): ParkingRevenueRawRow {
+  const amount = patch.amount ?? 10;
+  const tax = patch.tax ?? 0;
   return {
     id: patch.id || 'row',
     source: patch.source || 'hotspot',
@@ -29,9 +31,10 @@ function row(patch: Partial<ParkingRevenueRawRow>): ParkingRevenueRawRow {
     weekday: patch.weekday ?? 4,
     isWeekend: patch.isWeekend || false,
     durationMinutes: patch.durationMinutes ?? 60,
-    amount: patch.amount ?? 10,
-    tax: patch.tax ?? 1.3,
-    total: patch.total ?? 11.3,
+    amount,
+    tax,
+    taxInclusiveAmount: patch.taxInclusiveAmount,
+    total: patch.total ?? amount + tax,
     paymentType: patch.paymentType ?? 'visa',
   };
 }

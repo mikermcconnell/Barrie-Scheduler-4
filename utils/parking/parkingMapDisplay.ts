@@ -205,6 +205,6 @@ export function getParkingMapMetricValue(location: ParkingRevenueMapDisplayLocat
 export function getParkingMapMetricLabel(metric: ParkingMapMetric): string {
   if (metric === 'sessions') return 'Sessions';
   if (metric === 'averageStay') return 'Average stay';
-  if (metric === 'revenuePerSpace') return 'Revenue/space';
-  return 'Revenue';
+  if (metric === 'revenuePerSpace') return 'Revenue incl. tax/space';
+  return 'Revenue incl. tax';
 }

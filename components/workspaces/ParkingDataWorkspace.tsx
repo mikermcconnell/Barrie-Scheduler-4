@@ -66,6 +66,7 @@ import {
   buildParkingRevenueReplacementSummary,
   getParkingRevenueAvailableMonths,
   getParkingRevenueSourceLabel,
+  getParkingTaxInclusiveRevenue,
 } from '../../utils/parking/parkingRevenue';
 import {
   BARRIE_PUBLIC_PARKING_VIEWER_URL,
@@ -212,10 +213,10 @@ const PARKING_COMPARISON_METRICS: Array<{
   label: string;
   color: string;
 }> = [
-  { id: 'revenue', label: 'Revenue', color: '#059669' },
+  { id: 'revenue', label: 'Revenue incl. tax', color: '#059669' },
   { id: 'sessions', label: 'Sessions', color: '#2563EB' },
   { id: 'averageStayMinutes', label: 'Average stay', color: '#D97706' },
-  { id: 'revenuePerSpace', label: 'Revenue/known space', color: '#7C3AED' },
+  { id: 'revenuePerSpace', label: 'Revenue incl. tax/known space', color: '#7C3AED' },
   { id: 'utilizationPercent', label: 'Estimated utilization', color: '#DB2777' },
 ];
 
@@ -506,7 +507,7 @@ const HourlyRevenueChart: React.FC<{ data: ParkingAnalysisChartPoint[]; compact?
         />
         <YAxis tickFormatter={compactMoney} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
         <Tooltip formatter={tooltipValue} labelFormatter={formatHourlyTooltipLabel} labelClassName="font-bold text-slate-700" />
-        <Bar dataKey="revenue" name="Revenue" fill="#059669" radius={[8, 8, 0, 0]} />
+        <Bar dataKey="revenue" name="Revenue incl. tax" fill="#059669" radius={[8, 8, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   ) : <EmptyChartState label="No hourly activity in this filter." />
@@ -537,7 +538,7 @@ const TrendAreaChart: React.FC<{ data: ParkingAnalysisChartPoint[]; color?: stri
         />
         <YAxis tickFormatter={compactMoney} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
         <Tooltip formatter={tooltipValue} labelFormatter={formatTrendTooltipLabel} labelClassName="font-bold text-slate-700" />
-        <Area type="monotone" dataKey="revenue" name="Revenue" stroke={color} strokeWidth={3} fill={`url(#${gradientId})`} connectNulls={false} />
+        <Area type="monotone" dataKey="revenue" name="Revenue incl. tax" stroke={color} strokeWidth={3} fill={`url(#${gradientId})`} connectNulls={false} />
       </AreaChart>
     </ResponsiveContainer>
   ) : <EmptyChartState label="Import more revenue data to show a trend." />;
@@ -623,7 +624,7 @@ const CapacityOpportunityTooltip: React.FC<{
     <div className="max-w-xs rounded-2xl border border-slate-200 bg-white p-3 text-xs shadow-xl">
       <div className="font-black text-slate-950">{row.label}</div>
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-bold text-slate-500">
-        <span>Revenue/space</span>
+        <span>Revenue incl. tax/space</span>
         <span className="text-right text-slate-900">{row.revenuePerSpace == null ? '—' : money(row.revenuePerSpace)}</span>
         <span>Utilization</span>
         <span className="text-right text-slate-900">{formatUtilization(row.utilizationPercent)}</span>
@@ -654,7 +655,7 @@ const CapacityOpportunityChart: React.FC<{ data: ParkingLotComparisonPoint[] }> 
         <XAxis
           type="number"
           dataKey="revenuePerSpace"
-          name="Revenue per space"
+          name="Revenue incl. tax per space"
           tickFormatter={compactMoney}
           tick={{ fontSize: 10, fill: '#64748B' }}
           tickLine={false}
@@ -3291,7 +3292,7 @@ export const ParkingDataWorkspace: React.FC = () => {
 
             <div className="mt-3 grid shrink-0 grid-cols-2 gap-2">
               <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
-                <div className="text-[10px] font-black uppercase tracking-wide text-emerald-500">Revenue</div>
+                <div className="text-[10px] font-black uppercase tracking-wide text-emerald-500">Revenue incl. tax</div>
                 <div className="mt-1 text-lg font-black text-emerald-950">{money(revenueAnalytics.totalRevenue)}</div>
               </div>
               <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
@@ -3446,7 +3447,7 @@ export const ParkingDataWorkspace: React.FC = () => {
 
               <div className="grid gap-3 lg:grid-cols-[1.35fr_repeat(3,minmax(0,0.9fr))]">
                 <div className="rounded-3xl bg-gradient-to-br from-emerald-600 to-slate-950 p-5 text-white shadow-sm">
-                  <div className="text-xs font-black uppercase tracking-wide text-emerald-100">Filtered revenue</div>
+                  <div className="text-xs font-black uppercase tracking-wide text-emerald-100">Filtered revenue incl. tax</div>
                   <div className="mt-1 text-3xl font-black">{money(revenueAnalytics.totalRevenue)}</div>
                   <p className="mt-1 text-xs font-bold text-emerald-100">{revenueAnalytics.rowCount.toLocaleString()} sessions</p>
                 </div>
@@ -3739,7 +3740,7 @@ export const ParkingDataWorkspace: React.FC = () => {
                       </p>
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-right text-xs font-black text-slate-600 sm:grid-cols-4">
-                      <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-800">Rev/space<br /><span className="text-base">{parkingPlannerAnalysis.selectedLot.revenuePerSpace == null ? '—' : money(parkingPlannerAnalysis.selectedLot.revenuePerSpace)}</span></div>
+                      <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-800">Revenue incl. tax/space<br /><span className="text-base">{parkingPlannerAnalysis.selectedLot.revenuePerSpace == null ? '—' : money(parkingPlannerAnalysis.selectedLot.revenuePerSpace)}</span></div>
                       <div className="rounded-2xl bg-blue-50 p-3 text-blue-800">Utilization<br /><span className="text-base">{formatUtilization(parkingPlannerAnalysis.selectedLot.utilizationPercent)}</span></div>
                       <div className="rounded-2xl bg-amber-50 p-3 text-amber-800">Avg stay<br /><span className="text-base">{minutesToDuration(activeLocation?.averageStayMinutes || 0)}</span></div>
                       <div className="rounded-2xl bg-violet-50 p-3 text-violet-800">System avg<br /><span className="text-base">{minutesToDuration(parkingPlannerAnalysis.selectedLot.systemAverageStayMinutes)}</span></div>
@@ -3770,11 +3771,11 @@ export const ParkingDataWorkspace: React.FC = () => {
                     <div className="max-h-80 overflow-auto">
                       <table className="min-w-full text-left text-xs">
                         <thead className="sticky top-0 bg-white text-[10px] font-black uppercase tracking-wide text-slate-400">
-                          <tr><th className="px-4 py-2">Date</th><th className="px-4 py-2">Time</th><th className="px-4 py-2">Source</th><th className="px-4 py-2">ID</th><th className="px-4 py-2">Plate</th><th className="px-4 py-2 text-right">Amount</th></tr>
+                          <tr><th className="px-4 py-2">Date</th><th className="px-4 py-2">Time</th><th className="px-4 py-2">Source</th><th className="px-4 py-2">ID</th><th className="px-4 py-2">Plate</th><th className="px-4 py-2 text-right">Amount incl. tax</th></tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white font-semibold text-slate-700">
                           {parkingPlannerAnalysis.selectedLot.rows.slice(0, 100).map(row => (
-                            <tr key={row.id}><td className="px-4 py-2">{row.startDate}</td><td className="px-4 py-2">{minutesToTime(row.startMinutes)}</td><td className="px-4 py-2">{getParkingRevenueSourceLabel(row.source)}</td><td className="px-4 py-2">{row.sourceId}</td><td className="px-4 py-2">{row.plate || 'Missing'}</td><td className="px-4 py-2 text-right font-black text-emerald-700">{money(row.amount)}</td></tr>
+                            <tr key={row.id}><td className="px-4 py-2">{row.startDate}</td><td className="px-4 py-2">{minutesToTime(row.startMinutes)}</td><td className="px-4 py-2">{getParkingRevenueSourceLabel(row.source)}</td><td className="px-4 py-2">{row.sourceId}</td><td className="px-4 py-2">{row.plate || 'Missing'}</td><td className="px-4 py-2 text-right font-black text-emerald-700">{money(getParkingTaxInclusiveRevenue(row))}</td></tr>
                           ))}
                         </tbody>
                       </table>
@@ -3821,7 +3822,7 @@ export const ParkingDataWorkspace: React.FC = () => {
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   <div className="rounded-2xl bg-white p-3">
-                    <div className="text-[10px] font-black uppercase text-emerald-500">Revenue</div>
+                    <div className="text-[10px] font-black uppercase text-emerald-500">Revenue incl. tax</div>
                     <div className="mt-1 text-lg font-black text-emerald-950">{money(activeMapLocation?.totalRevenue ?? activeLocation?.totalRevenue ?? revenueAnalytics.totalRevenue)}</div>
                   </div>
                   <div className="rounded-2xl bg-white p-3">
@@ -4198,7 +4199,7 @@ export const ParkingDataWorkspace: React.FC = () => {
                     <div>
                       <div className="font-black text-emerald-950">{saving ? 'Auto-saving revenue import' : 'Revenue import needs attention'}</div>
                       <div className="mt-1 text-sm font-semibold text-emerald-800">
-                        {previewRevenueDatasets.reduce((sum, dataset) => sum + dataset.rowCount, 0).toLocaleString()} rows · {money(previewRevenueDatasets.reduce((sum, dataset) => sum + dataset.totalRevenue, 0))} revenue.
+                        {previewRevenueDatasets.reduce((sum, dataset) => sum + dataset.rowCount, 0).toLocaleString()} rows · {money(previewRevenueDatasets.reduce((sum, dataset) => sum + dataset.totalRevenue, 0))} tax-inclusive revenue.
                         {saving ? ' Saving automatically...' : ' Auto-save did not finish. You can retry below.'}
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">

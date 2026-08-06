@@ -237,7 +237,7 @@ describe('parking Firebase service', () => {
       revenueDatasetCount: 1,
       revenueMonthCount: 1,
       revenueTotalRows: 1,
-      revenueTotalValue: 10,
+      revenueTotalValue: 11.3,
       revenueStoragePath: expect.stringMatching(/^teams\/team-1\/parking\/revenue\/2026-01_hotspot_223456789-/),
     }));
     expect(defaultWrite?.[1]).not.toHaveProperty('settings');
@@ -247,10 +247,10 @@ describe('parking Firebase service', () => {
         month: '2026-01',
         source: 'hotspot',
         kind: 'revenue',
-        totalValue: 10,
+        totalValue: 11.3,
       }),
     );
-    expect(summary.metadata).toMatchObject({ datasetCount: 1, totalRows: 1, totalRevenue: 10 });
+    expect(summary.metadata).toMatchObject({ datasetCount: 1, totalRows: 1, totalRevenue: 11.3 });
   });
 
   it('auto-save persistence preserves other revenue source/month datasets when replacing one import', async () => {
@@ -287,11 +287,11 @@ describe('parking Firebase service', () => {
     const summary = await saveParkingRevenueDatasets('team-1', 'user-1', [replacementHotspot], strictSettings);
 
     expect(summary.datasets.map(dataset => `${dataset.month}:${dataset.source}:${dataset.totalRevenue}`)).toEqual([
-      '2025-12:hotspot:7',
-      '2026-01:hotspot:10',
-      '2026-01:qr:5',
+      '2025-12:hotspot:7.91',
+      '2026-01:hotspot:11.3',
+      '2026-01:qr:5.65',
     ]);
-    expect(summary.metadata).toMatchObject({ datasetCount: 3, monthCount: 2, totalRows: 3, totalRevenue: 22 });
+    expect(summary.metadata).toMatchObject({ datasetCount: 3, monthCount: 2, totalRows: 3, totalRevenue: 24.86 });
     expect(storageMock.deleteObject).toHaveBeenCalledWith({ path: 'old-revenue.json' });
   });
 

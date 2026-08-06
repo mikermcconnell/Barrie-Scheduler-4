@@ -8,6 +8,7 @@ import { getParkingCodeFamilyKey, parseParkingDurationMinutes, parseParkingFile,
 import {
   buildParkingRevenueAnalytics,
   buildParkingRevenueReplacementSummary,
+  normalizeParkingRevenueSummary,
 } from '../utils/parking/parkingRevenue';
 import {
   parseParkingRevenueFile,
@@ -17,6 +18,7 @@ import {
 import {
   buildParkingMapRevenueCoverage,
   buildParkingRevenueMapDisplayLocations,
+  getParkingMapMetricLabel,
   getParkingMapMetricValue,
 } from '../utils/parking/parkingMapDisplay';
 import {
@@ -569,6 +571,11 @@ describe('parking replacement and export', () => {
 });
 
 describe('parking revenue parser and analytics', () => {
+  it('labels map revenue metrics as tax-inclusive', () => {
+    expect(getParkingMapMetricLabel('revenue')).toBe('Revenue incl. tax');
+    expect(getParkingMapMetricLabel('revenuePerSpace')).toBe('Revenue incl. tax/space');
+  });
+
   it('rejects oversized revenue workbooks before reading them', async () => {
     const arrayBuffer = vi.fn();
     const file = {
@@ -599,7 +606,7 @@ describe('parking revenue parser and analytics', () => {
     };
   }
 
-  it('parses HotSpot app revenue workbooks and uses Amount as revenue', () => {
+  it('parses HotSpot app revenue workbooks and includes Tax in revenue', () => {
     const result = parseParkingRevenueWorkbook(workbookBuffer([
       ['HotSpot'],
       ['', 'HotSpot #', 'City #', 'Start Time', 'User', 'Plate', 'Make', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
@@ -614,7 +621,7 @@ describe('parking revenue parser and analytics', () => {
     expect(result.dataset.source).toBe('hotspot');
     expect(result.dataset.month).toBe('2026-01');
     expect(result.dataset.rowCount).toBe(2);
-    expect(result.dataset.totalRevenue).toBe(11.06);
+    expect(result.dataset.totalRevenue).toBe(12.5);
     expect(result.dataset.totalPaid).toBe(12.5);
     expect(result.dataset.rows[0]).toMatchObject({
       source: 'hotspot',
@@ -623,9 +630,53 @@ describe('parking revenue parser and analytics', () => {
       physicalLocationId: 'collier-parkade',
       durationMinutes: 15,
       amount: 2.21,
+      tax: 0.29,
+      taxInclusiveAmount: 2.5,
       total: 2.5,
     });
     expect(result.dataset.rows.every(row => row.source === 'hotspot')).toBe(true);
+  });
+
+  it('normalizes schema-v1 revenue rows without requiring re-import', () => {
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '1.30', '11.30', '1', 'Wallet Transaction'],
+    ]), { fileName: 'legacy.xlsx', importedBy: 'user-1', settings: revenueSettings() }).dataset;
+    const legacyRow = { ...dataset.rows[0] };
+    delete legacyRow.taxInclusiveAmount;
+    const normalized = normalizeParkingRevenueSummary({
+      schemaVersion: 1,
+      datasets: [{ ...dataset, totalRevenue: 10, rows: [legacyRow] }],
+      metadata: {
+        importedAt: dataset.importedAt,
+        importedBy: dataset.importedBy,
+        datasetCount: 1,
+        monthCount: 1,
+        totalRows: 1,
+        totalRevenue: 10,
+      },
+    });
+
+    expect(normalized).toMatchObject({ schemaVersion: 2, metadata: { totalRevenue: 11.3 } });
+    expect(normalized.datasets[0]).toMatchObject({ totalRevenue: 11.3 });
+    expect(normalized.datasets[0].rows[0]).toMatchObject({ taxInclusiveAmount: 11.3 });
+  });
+
+  it('requires tax columns and warns when Amount plus Tax differs from Total', () => {
+    const mismatched = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '1.30', '12.00', '1', 'Wallet Transaction'],
+    ]), { fileName: 'mismatch.xlsx', importedBy: 'user-1', settings: revenueSettings() });
+
+    expect(mismatched.dataset.totalRevenue).toBe(11.3);
+    expect(mismatched.warnings).toContain('1 revenue rows have Amount plus Tax that does not match the source Total.');
+    expect(() => parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '11.30', '1', 'Wallet Transaction'],
+    ]), { fileName: 'missing-tax.xlsx', importedBy: 'user-1', settings: revenueSettings() })).toThrow('Amount, Tax, Total');
   });
 
   it('parses QR revenue workbooks and keeps zero-amount activity', () => {
@@ -642,14 +693,14 @@ describe('parking revenue parser and analytics', () => {
 
     expect(result.dataset.source).toBe('qr');
     expect(result.dataset.rowCount).toBe(2);
-    expect(result.dataset.totalRevenue).toBe(1.28);
+    expect(result.dataset.totalRevenue).toBe(1.45);
     expect(result.dataset.rows[0]).toMatchObject({
       sourceId: '8105',
       physicalLocationId: null,
       durationMinutes: 60,
       amount: 0,
     });
-    expect(result.warnings).toContain('1 revenue rows have $0 Amount and are included in activity counts.');
+    expect(result.warnings).toContain('1 revenue rows have $0 tax-inclusive revenue and are included in activity counts.');
     expect(parseParkingRevenueDurationMinutes('0.972')).toBe(58);
     expect(parseParkingRevenueDurationMinutes('0')).toBe(0);
   });
@@ -666,7 +717,7 @@ describe('parking revenue parser and analytics', () => {
 
     expect(result.dataset).toMatchObject({
       rowCount: 1,
-      totalRevenue: 13.27,
+      totalRevenue: 15,
       totalTax: 1.73,
       totalPaid: 15,
     });
@@ -677,7 +728,7 @@ describe('parking revenue parser and analytics', () => {
       paymentType: 'mastercard',
     });
     expect(result.warnings).toContain('The QR export used shifted Total, Length, and Card Type columns; their positions were corrected during import.');
-    expect(analytics).toMatchObject({ rowCount: 1, totalRevenue: 13.27 });
+    expect(analytics).toMatchObject({ rowCount: 1, totalRevenue: 15 });
     expect(analytics.locationSummaries[0]).toMatchObject({
       locationKind: 'non_spatial',
       categoryId: 'special-events',
@@ -702,14 +753,14 @@ describe('parking revenue parser and analytics', () => {
     const collier = analytics.locationSummaries.find(location => location.key === 'collier-parkade');
 
     expect(summary.datasets.map(dataset => `${dataset.month}:${dataset.source}`)).toEqual(['2026-01:hotspot', '2026-01:qr']);
-    expect(analytics.totalRevenue).toBe(15);
+    expect(analytics.totalRevenue).toBe(16.95);
     expect(collier).toMatchObject({
       displayName: 'Collier Parkade',
       isMapped: true,
-      totalRevenue: 15,
+      totalRevenue: 16.95,
       rowCount: 2,
-      hotspotRevenue: 10,
-      qrRevenue: 5,
+      hotspotRevenue: 11.3,
+      qrRevenue: 5.65,
     });
   });
 
@@ -728,9 +779,9 @@ describe('parking revenue parser and analytics', () => {
 
     const summary = buildParkingRevenueReplacementSummary(null, [madisonDataset, otherDataset], 'user-1', 'revenue.json');
 
-    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'madison.shortt' }).totalRevenue).toBe(10);
-    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'user-2' }).totalRevenue).toBe(5);
-    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'all' }).totalRevenue).toBe(15);
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'madison.shortt' }).totalRevenue).toBe(11.3);
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'user-2' }).totalRevenue).toBe(5.65);
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'all' }).totalRevenue).toBe(16.95);
   });
 
   it('does not scan rows from monthly datasets outside the requested period', () => {
@@ -758,7 +809,7 @@ describe('parking revenue parser and analytics', () => {
       'revenue.json',
     );
 
-    expect(buildParkingRevenueAnalytics(summary, settings, { months: ['2026-01'] }).totalRevenue).toBe(10);
+    expect(buildParkingRevenueAnalytics(summary, settings, { months: ['2026-01'] }).totalRevenue).toBe(11.3);
   });
 
   it('filters revenue analytics by weekdays, Saturdays, and Sundays separately', () => {
@@ -773,10 +824,10 @@ describe('parking revenue parser and analytics', () => {
 
     const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
 
-    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekday' }).totalRevenue).toBe(10);
-    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'saturday' }).totalRevenue).toBe(20);
-    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'sunday' }).totalRevenue).toBe(30);
-    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekend' }).totalRevenue).toBe(50);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekday' }).totalRevenue).toBe(11.3);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'saturday' }).totalRevenue).toBe(22.6);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'sunday' }).totalRevenue).toBe(33.9);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekend' }).totalRevenue).toBe(56.5);
   });
 
   it('filters revenue by lot category and estimates time-based utilization', () => {
@@ -818,7 +869,7 @@ describe('parking revenue parser and analytics', () => {
       'collier-parkade': { spaces: 10 },
     });
 
-    expect(downtown.totalRevenue).toBe(25);
+    expect(downtown.totalRevenue).toBe(28.25);
     expect(downtown.locationSummaries.map(location => location.categoryLabel)).toEqual(['Downtown']);
     expect(downtown.paidMinutes).toBe(150);
     expect(downtown.activeDayCount).toBe(3);
@@ -851,7 +902,7 @@ describe('parking revenue parser and analytics', () => {
     const coverage = buildParkingMapRevenueCoverage(analytics.locationSummaries, displayLocations);
 
     expect(analytics).toMatchObject({
-      totalRevenue: 25,
+      totalRevenue: 28.25,
       rowCount: 1,
       mappedLocationSummaries: [],
       unmappedLocationSummaries: [],
@@ -873,7 +924,7 @@ describe('parking revenue parser and analytics', () => {
       coveredRevenue: 0,
       spatialRevenue: 0,
       uncoveredSpatialRevenue: 0,
-      nonSpatialRevenue: 25,
+      nonSpatialRevenue: 28.25,
       coveragePercent: null,
     });
   });
@@ -969,7 +1020,7 @@ describe('parking revenue parser and analytics', () => {
 
     const result = buildParkingRevenueAnalytics(summary, settings, { categoryId: 'downtown' });
 
-    expect(result.totalRevenue).toBe(10);
+    expect(result.totalRevenue).toBe(11.3);
     expect(result.rows.map(entry => entry.sourceId)).toEqual(['100']);
     expect(result.locationSummaries.map(entry => entry.key)).toEqual(['downtown-bayfield']);
   });
@@ -990,7 +1041,7 @@ describe('parking revenue parser and analytics', () => {
       isMapped: true,
       latitude: 44.389,
       longitude: -79.69,
-      totalRevenue: 10,
+      totalRevenue: 11.3,
     });
   });
 });

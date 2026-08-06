@@ -23,9 +23,11 @@ function normalizeText(value: unknown): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 
-function parseMoney(value: unknown): number {
+function parseMoney(value: unknown): number | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
   const parsed = Number(String(value ?? '').replace(/[^0-9.-]/g, ''));
-  return Number.isFinite(parsed) ? parsed : 0;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function parseDate(value: unknown): { date: string; month: string; minutes: number; weekday: number; raw: string } | null {
@@ -65,7 +67,15 @@ function findHeaderRow(rows: unknown[][]): { index: number; source: ParkingReven
   for (let index = 0; index < rows.length; index += 1) {
     const headers = rows[index].map(normalizeHeader);
     const source = detectRevenueSource(headers);
-    if (source && headers.includes('starttime') && headers.includes('plate') && headers.includes('amount') && headers.includes('length')) {
+    if (
+      source
+      && headers.includes('starttime')
+      && headers.includes('plate')
+      && headers.includes('amount')
+      && headers.includes('tax')
+      && headers.includes('total')
+      && headers.includes('length')
+    ) {
       return { index, source, headers: rows[index] };
     }
   }
@@ -153,7 +163,7 @@ export function parseParkingRevenueWorkbook(
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false, blankrows: false });
   const header = findHeaderRow(rows);
   if (!header) {
-    throw new Error('Could not find a Parking revenue header row. Expected HotSpot #/City # or Meter #/Tap Sign with Start Time, Plate, Amount, Total, and Length.');
+    throw new Error('Could not find a Parking revenue header row. Expected HotSpot #/City # or Meter #/Tap Sign with Start Time, Plate, Amount, Tax, Total, and Length.');
   }
 
   const source = header.source;
@@ -164,6 +174,7 @@ export function parseParkingRevenueWorkbook(
   const parsedRows: ParkingRevenueRawRow[] = [];
   const months = new Set<string>();
   let skippedRows = 0;
+  let totalMismatchRows = 0;
 
   dataRows.forEach((row, rowOffset) => {
     const start = parseDate(row[indices.start]);
@@ -180,6 +191,12 @@ export function parseParkingRevenueWorkbook(
     const amount = parseMoney(row[indices.amount]);
     const tax = parseMoney(row[indices.tax]);
     const total = parseMoney(row[indices.total]);
+    if (amount == null || tax == null || total == null) {
+      skippedRows += 1;
+      return;
+    }
+    const taxInclusiveAmount = roundMoney(amount + tax);
+    if (Math.abs(taxInclusiveAmount - total) > 0.01) totalMismatchRows += 1;
     months.add(start.month);
     parsedRows.push({
       id: `${source}-${start.date}-${rowOffset + 1}-${sourceId}-${plate || 'missing'}`,
@@ -200,6 +217,7 @@ export function parseParkingRevenueWorkbook(
       durationMinutes,
       amount,
       tax,
+      taxInclusiveAmount,
       total,
       paymentType: normalizeText(row[indices.paymentType]),
     });
@@ -220,7 +238,7 @@ export function parseParkingRevenueWorkbook(
     sourceFileName: options.fileName,
     rowCount: parsedRows.length,
     skippedRows,
-    totalRevenue: roundMoney(parsedRows.reduce((sum, row) => sum + row.amount, 0)),
+    totalRevenue: roundMoney(parsedRows.reduce((sum, row) => sum + (row.taxInclusiveAmount || 0), 0)),
     totalTax: roundMoney(parsedRows.reduce((sum, row) => sum + row.tax, 0)),
     totalPaid: roundMoney(parsedRows.reduce((sum, row) => sum + row.total, 0)),
     rows: parsedRows,
@@ -229,10 +247,11 @@ export function parseParkingRevenueWorkbook(
   const warnings: string[] = [];
   if (correctedShiftedQrColumns) warnings.push('The QR export used shifted Total, Length, and Card Type columns; their positions were corrected during import.');
   if (skippedRows > 0) warnings.push(`${skippedRows.toLocaleString()} rows were skipped because required revenue fields were missing or invalid.`);
+  if (totalMismatchRows > 0) warnings.push(`${totalMismatchRows.toLocaleString()} revenue rows have Amount plus Tax that does not match the source Total.`);
   const missingPlateCount = parsedRows.filter(row => row.hasMissingPlate).length;
   if (missingPlateCount > 0) warnings.push(`${missingPlateCount.toLocaleString()} revenue rows have missing plates.`);
-  const zeroAmountCount = parsedRows.filter(row => row.amount === 0).length;
-  if (zeroAmountCount > 0) warnings.push(`${zeroAmountCount.toLocaleString()} revenue rows have $0 Amount and are included in activity counts.`);
+  const zeroAmountCount = parsedRows.filter(row => row.taxInclusiveAmount === 0).length;
+  if (zeroAmountCount > 0) warnings.push(`${zeroAmountCount.toLocaleString()} revenue rows have $0 tax-inclusive revenue and are included in activity counts.`);
 
   return { dataset, warnings };
 }

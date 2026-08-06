@@ -6,6 +6,7 @@ import {
   type ParkingRevenueSource,
   type ParkingRevenueTrendPoint,
 } from './parkingTypes';
+import { getParkingTaxInclusiveRevenue } from './parkingRevenue';
 
 export interface ParkingCapacityInfo {
   spaces: number | null;
@@ -184,7 +185,7 @@ function rowsForMonth(rows: ParkingRevenueRawRow[], month: string): ParkingReven
 }
 
 function revenueForRows(rows: ParkingRevenueRawRow[]): number {
-  return roundMoney(rows.reduce((sum, row) => sum + row.amount, 0));
+  return roundMoney(rows.reduce((sum, row) => sum + getParkingTaxInclusiveRevenue(row), 0));
 }
 
 function trendDirection(changeValue: number | null): ParkingTrendDirection {
@@ -246,7 +247,7 @@ function buildActiveDayMonthlyTrend(
       durationCount: 0,
       activeDates: new Set<string>(),
     };
-    group.revenue += row.amount;
+    group.revenue += getParkingTaxInclusiveRevenue(row);
     group.sessions += 1;
     if (row.durationMinutes > 0) {
       group.durationTotal += row.durationMinutes;
@@ -288,13 +289,13 @@ function buildFastestGrowingLot(rows: ParkingRevenueRawRow[], targetMonth: strin
   for (const row of previousRows) {
     const key = lotTrendKey(row);
     const group = groups.get(key) || { label: lotTrendLabel(row), current: 0, previous: 0 };
-    group.previous += row.amount;
+    group.previous += getParkingTaxInclusiveRevenue(row);
     groups.set(key, group);
   }
   for (const row of currentRows) {
     const key = lotTrendKey(row);
     const group = groups.get(key) || { label: lotTrendLabel(row), current: 0, previous: 0 };
-    group.current += row.amount;
+    group.current += getParkingTaxInclusiveRevenue(row);
     groups.set(key, group);
   }
 
@@ -347,7 +348,7 @@ function buildTrend(
       durationTotal: 0,
       durationCount: 0,
     };
-    group.revenue += row.amount;
+    group.revenue += getParkingTaxInclusiveRevenue(row);
     group.sessions += 1;
     if (row.durationMinutes > 0) {
       group.durationTotal += row.durationMinutes;
@@ -392,7 +393,7 @@ function buildHourlyProfile(rows: ParkingRevenueRawRow[]): ParkingAnalysisChartP
         durationTotal: 0,
         durationCount: 0,
       };
-      bucket.revenue += row.amount * (overlap / duration);
+      bucket.revenue += getParkingTaxInclusiveRevenue(row) * (overlap / duration);
       bucket.sessions += 1;
       if (row.durationMinutes > 0) {
         bucket.durationTotal += row.durationMinutes;
@@ -430,7 +431,7 @@ function buildSourceMix(rows: ParkingRevenueRawRow[]): ParkingSourceMixPoint[] {
   for (const row of rows) {
     const total = totals.get(row.source);
     if (!total) continue;
-    total.revenue += row.amount;
+    total.revenue += getParkingTaxInclusiveRevenue(row);
     total.sessions += 1;
   }
   return (['hotspot', 'qr'] as ParkingRevenueSource[]).map(source => {

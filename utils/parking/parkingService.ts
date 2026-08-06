@@ -13,7 +13,7 @@ import {
 } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { buildParkingReplacementSummaryForMonths, buildParkingSummary, mergeParkingSettings } from './parkingAggregation';
-import { buildParkingRevenueReplacementSummary } from './parkingRevenue';
+import { buildParkingRevenueReplacementSummary, normalizeParkingRevenueSummary } from './parkingRevenue';
 import {
   DEFAULT_PARKING_SETTINGS,
   type ParkingMonthlyDataset,
@@ -200,12 +200,15 @@ async function loadParkingRevenueDataFromDocument(data: Record<string, unknown> 
   const url = await getDownloadURL(ref(storage, metadata.storagePath));
   const response = await fetch(url);
   if (!response.ok) return null;
-  const summary = await response.json() as ParkingRevenueSummary;
+  const summary = normalizeParkingRevenueSummary(await response.json() as ParkingRevenueSummary);
+  const hasDatasetMetadata = summary.datasets.length > 0;
   return {
     ...summary,
     metadata: {
       ...summary.metadata,
       ...metadata,
+      totalRows: hasDatasetMetadata ? summary.metadata.totalRows : metadata.totalRows,
+      totalRevenue: hasDatasetMetadata ? summary.metadata.totalRevenue : metadata.totalRevenue,
     },
   };
 }
@@ -370,7 +373,7 @@ export async function saveParkingRevenueDatasets(
     const oldUrl = await getDownloadURL(ref(storage, oldPath));
     const response = await fetch(oldUrl);
     if (!response.ok) throw new Error('Existing Parking revenue data could not be downloaded.');
-    oldSummary = await response.json() as ParkingRevenueSummary;
+    oldSummary = normalizeParkingRevenueSummary(await response.json() as ParkingRevenueSummary);
   }
 
   const summary = buildParkingRevenueReplacementSummary(oldSummary, datasets, userId, storagePath);

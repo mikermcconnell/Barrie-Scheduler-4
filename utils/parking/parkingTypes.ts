@@ -1,5 +1,5 @@
 export const PARKING_SCHEMA_VERSION = 1;
-export const PARKING_REVENUE_SCHEMA_VERSION = 1;
+export const PARKING_REVENUE_SCHEMA_VERSION = 2;
 
 export type ParkingYearCodeFormat = 'yyyy' | 'yy';
 export type ParkingDepartmentLegendSortKey = 'color' | 'code' | 'department' | 'ignoreData' | 'ignoreFlags';
@@ -208,6 +208,8 @@ export interface ParkingRevenueRawRow {
   durationMinutes: number;
   amount: number;
   tax: number;
+  /** Canonical revenue value used by analytics. Derived as Amount + Tax. */
+  taxInclusiveAmount?: number;
   total: number;
   paymentType: string;
 }
