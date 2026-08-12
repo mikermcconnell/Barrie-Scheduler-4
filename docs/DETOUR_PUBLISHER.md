@@ -14,7 +14,7 @@ Detour Publisher replaces the routine Illustrator workflow for standard fixed-ro
 4. Mark the bypassed section and draw a road-snapped replacement path.
 5. Review suggested closed stops and add temporary or replacement stops.
 6. Adjust preset labels and closure markers within the printable map frame.
-7. Preview and export a landscape-letter PDF, 2200 x 1700 PNG, and MyRide-ready text package.
+7. Preview and export a landscape-letter publication PDF, 2200 x 1700 master-notice PNG, and MyRide-ready text package.
 8. Upload manually to MyRide, then record the public URL with **Mark posted**.
 
 Editing a posted notice is allowed. When the working revision is newer than the posted revision, the notice must show **Update needed** until the revised notice is exported and marked posted again.
@@ -69,17 +69,25 @@ When a time is blank, the start date begins at 12:00 a.m. and a fixed end date r
 The fixed Barrie notice template contains:
 
 - Barrie Transit header and warning treatment
-- notice title and affected routes/directions
+- large notice-type title and affected route/direction subtitle
 - printable map with north arrow and route direction arrows
 - effective-date panel and rider details
 - automatic active/out-of-service/closed/temporary legend
 - contact footer and map attribution
 
-The map is captured from the app. PDF page text and chrome stay vector-based for print clarity. The supplied Barrie Transit logo is shared by the on-screen preview, PNG capture, and PDF export. Keep the explicit asset seam for future approved brand replacements and the City of Barrie footer artwork.
+Route-detour publication PDFs are multi-page packages. The blue master detour notice is page 1, followed by one red physical sign for each unique reviewed closed stop and one green physical sign for each unique reviewed temporary stop. Closed stops are grouped by their snapshotted GTFS stop identity. Temporary stops with the same stop code are grouped across route overlays and list every route serving that location; uncoded temporary stops remain separate. Pages are ordered as the master notice, closed stops by stop code/name, then temporary stops by stop code/name.
 
-Publication previews and exports preserve the planner's current map viewport; capture must not automatically zoom out to the entire route. The explicit **Fit map** tool remains available when full-notice framing is desired. Closed routing is a red dashed line with no solid-route underlay. Replacement routing retains the route colour with a restrained orange outer casing, consistently spaced direction arrows, and a small white route-number capsule with dark text and border offset above the path. Confirmed street-specific service labels replace the generic **DETOUR** and **DETOUR CLOSED** badges; the generic badges remain only as authoring fallbacks until street labels are confirmed. Route, detour, and closure labels follow the angle of the line segment beneath them while remaining upright. Temporary stops use a larger green circle with its label fixed directly above; closed stops use a larger red circle and nearby explicit **STOP {code} CLOSED** wording. Public view hides authoring handles and map controls without changing planner data; secondary basemap and ordinary stop labels may be de-emphasized or collision-managed, while critical detour, closure, temporary-stop, and planner-authored labels remain visible.
+The preview exposes the same ordered page list and count as the PDF. Selecting a stop sheet shows its stop-specific header, colour, icon, and a **You Are Here** callout projected onto the planner's preserved map viewport. The package export captures the same annotated map for that page. The MyRide PNG remains the blue master notice rather than a selected physical stop sheet.
+
+The map is captured from the app. PDF page text and chrome stay vector-based for print clarity. Preview and PDF use the same landscape-letter composition: a 105-point header, 73-point footer, thick rounded map-and-legend card on the left, and matching **Effective Dates** and **Details** cards on the right. The browser prefers Bahnschrift with Arial fallbacks; the PDF uses its built-in print-safe Helvetica fallback until an approved embeddable Barrie font asset is supplied. The supplied Barrie Transit logo is shared by the on-screen preview, PNG capture, and PDF export. Keep the explicit asset seam for future approved brand replacements and the City of Barrie footer artwork. In the absence of approved City artwork, the footer uses a vector Barrie wordmark treatment rather than a raster placeholder.
+
+Publication previews and exports preserve the planner's current map viewport; capture must not automatically zoom out to the entire route. The explicit **Fit map** tool remains available when full-notice framing is desired. Closed routing is a red dashed line with no solid-route underlay. Replacement routing retains the route-colour casing and dark centre line; the orange review outline is authoring-only and is omitted from public captures. Direction arrows carry compact route/direction labels such as **8B-SB**, while separate route-number labels render as upright coloured shields. Confirmed street-specific service labels replace the generic **DETOUR** and **DETOUR CLOSED** badges; the generic badges remain only as authoring fallbacks until street labels are confirmed. Route, detour, and closure labels follow the angle of the line segment beneath them while remaining upright. Active, closed, and temporary stops use circular Barrie bus pictograms. A closed stop adds a red slash and the nearby **Stop {code}** label; a temporary stop uses a green ring with a two-line **Temp Stop {code}** and stop-name label. Public view hides authoring handles and map controls without changing planner data; secondary basemap and ordinary stop labels may be de-emphasized or collision-managed, while critical detour, closure, temporary-stop, and planner-authored labels remain visible.
 
 The notice header uses an oversized warning icon while preserving its established outline weight. Footer contact details pair phone, email, and website text with matching white vector icons.
+
+Date-only effective ranges remain on one line in both preview and PDF, even when the reference artwork wraps shorter dates over two lines. This preserves the established publisher rule while the renderer scales the text to fit the fixed card.
+
+Master headers and footers use Barrie blue `#07557F`. Closed-stop sheets use red `#BF1E2D` with a crossed-out stop icon and **STOP CLOSURE NOTICE** heading. Temporary-stop sheets use green `#066839` with a stop icon and **TEMPORARY STOP {code}** heading. Temporary stops without a code may still export with a warning and the generic **TEMPORARY STOP** heading. Reusing one temporary-stop code at materially conflicting locations blocks export.
 
 Export is blocked when required public copy, effective dates, route paths, stop review, bus-suitability confirmation, or map capture is incomplete. Label collisions and missing alternatives may warn without silently changing planner work.
 

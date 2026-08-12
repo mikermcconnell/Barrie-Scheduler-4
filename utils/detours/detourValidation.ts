@@ -10,6 +10,8 @@ const sameCoordinate = (first: { latitude: number; longitude: number } | undefin
 export const validateDetourNotice = (notice: DetourNotice): DetourValidationResult => {
     const errors: DetourValidationIssue[] = [];
     const warnings: DetourValidationIssue[] = [];
+    const temporaryStopPositions = new Map<string, { latitude: number; longitude: number }>();
+    const conflictingTemporaryStopCodes = new Set<string>();
     if (!notice.title.trim()) errors.push(issue('title-required', 'Enter a public notice title.', 'title'));
     if (!notice.publicDetails.trim()) errors.push(issue('details-required', 'Enter rider details.', 'publicDetails'));
     if (!DATE.test(notice.schedule.startDate)) {
@@ -64,6 +66,22 @@ export const validateDetourNotice = (notice: DetourNotice): DetourValidationResu
             overlay.stopImpacts.forEach((stop, stopIndex) => {
                 if (stop.status === 'temporary' && (!stop.temporaryStopName?.trim() || !stop.temporaryStopPosition)) {
                     errors.push(issue('temporary-stop-incomplete', 'Temporary stops need a name and map location.', `${path}.stopImpacts.${stopIndex}`));
+                }
+                if (stop.status === 'temporary' && !stop.temporaryStopCode?.trim()) {
+                    warnings.push(issue('temporary-stop-code-recommended', 'Add a stop code so the temporary-stop sheet has a specific title.', `${path}.stopImpacts.${stopIndex}`));
+                }
+                if (stop.status === 'temporary' && stop.temporaryStopCode?.trim() && stop.temporaryStopPosition) {
+                    const code = stop.temporaryStopCode.trim().toUpperCase();
+                    const previous = temporaryStopPositions.get(code);
+                    const differs = previous
+                        && (Math.abs(previous.latitude - stop.temporaryStopPosition.latitude) > 0.00025
+                            || Math.abs(previous.longitude - stop.temporaryStopPosition.longitude) > 0.00025);
+                    if (differs && !conflictingTemporaryStopCodes.has(code)) {
+                        errors.push(issue('temporary-stop-code-location-conflict', `Temporary stop ${code} is mapped in conflicting locations.`, `${path}.stopImpacts.${stopIndex}`));
+                        conflictingTemporaryStopCodes.add(code);
+                    } else if (!previous) {
+                        temporaryStopPositions.set(code, stop.temporaryStopPosition);
+                    }
                 }
                 if (stop.status === 'closed' && !stop.replacementStopId && !stop.riderInstructions?.trim()) {
                     warnings.push(issue('closed-stop-no-alternative', 'Add a replacement stop or rider instructions for the closed stop.', `${path}.stopImpacts.${stopIndex}`));

@@ -29,6 +29,7 @@ import {
     splitDetourRoute,
     type DetourRouteAnchor,
 } from '../../utils/detours/detourGeometry';
+import { formatDetourPublicationRoute } from '../../utils/detours/detourStopSheets';
 
 const ORIGINAL_LINE_ID = 'detour-original-line';
 const BYPASS_LINE_ID = 'detour-bypassed-line';
@@ -36,6 +37,11 @@ const DETOUR_LINE_ID = 'detour-active-line';
 const BYPASS_HIT_LAYER_ID = 'detour-bypassed-hit-area';
 const DETOUR_HIT_LAYER_ID = 'detour-active-hit-area';
 const STOPS_LAYER_ID = 'detour-stops';
+const STOP_ICON_NAMES = {
+    active: 'detour-stop-active-icon',
+    closed: 'detour-stop-closed-icon',
+    temporary: 'detour-stop-temporary-icon',
+} as const;
 
 export type DetourMapMode = 'select' | 'closure-start' | 'closure-end' | 'add-waypoint' | 'add-temporary-stop';
 export type DetourMapSelection =
@@ -56,7 +62,16 @@ export type DetourMapLabel = DetourDomainMapLabel;
 
 export interface DetourMapCanvasHandle {
     fitToNotice: () => void;
-    captureImage: (mimeType?: 'image/png' | 'image/jpeg', quality?: number) => Promise<string | null>;
+    captureImage: (
+        mimeType?: 'image/png' | 'image/jpeg',
+        quality?: number,
+        annotation?: DetourMapCaptureAnnotation,
+    ) => Promise<string | null>;
+}
+
+export interface DetourMapCaptureAnnotation {
+    kind: 'closed' | 'temporary';
+    position: DetourCoordinate;
 }
 
 export interface DetourMapCanvasProps {
@@ -193,18 +208,19 @@ const directionArrowLayer: LayerProps = {
     type: 'symbol',
     layout: {
         'symbol-placement': 'line',
-        'symbol-spacing': 130,
-        'text-field': '▶',
-        'text-size': 15,
+        'symbol-spacing': 190,
+        'text-field': ['concat', '▶ ', ['get', 'directionLabel']],
+        'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+        'text-size': 12,
         'text-rotation-alignment': 'map',
         'text-keep-upright': false,
         'text-allow-overlap': true,
         'text-ignore-placement': true,
     },
     paint: {
-        'text-color': '#ffffff',
-        'text-halo-color': '#111827',
-        'text-halo-width': 1.5,
+        'text-color': '#231F20',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 2.5,
         'text-halo-blur': 0.5,
     },
 };
@@ -235,22 +251,22 @@ const routeBadgeLayer: LayerProps = {
 
 const stopLayer: LayerProps = {
     id: STOPS_LAYER_ID,
-    type: 'circle',
-    paint: {
-        'circle-radius': [
+    type: 'symbol',
+    layout: {
+        'icon-image': [
             'match', ['get', 'status'],
-            'temporary', 8,
-            'closed', 7,
-            5,
+            'closed', STOP_ICON_NAMES.closed,
+            'temporary', STOP_ICON_NAMES.temporary,
+            STOP_ICON_NAMES.active,
         ],
-        'circle-color': [
+        'icon-size': [
             'match', ['get', 'status'],
-            'closed', '#dc2626',
-            'temporary', '#16a34a',
-            '#2563eb',
+            'temporary', 0.56,
+            'closed', 0.52,
+            0.4,
         ],
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 2,
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
     },
 };
 
@@ -344,18 +360,17 @@ const routeNumberCasingLayer: LayerProps = {
         'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
         'text-size': 13,
         'text-letter-spacing': 0.02,
-        'text-anchor': 'bottom',
-        'text-offset': [0, -0.75],
+        'text-anchor': 'center',
+        'text-offset': [0, 0],
         'text-allow-overlap': true,
         'text-ignore-placement': true,
-        'text-rotation-alignment': 'map',
-        'text-pitch-alignment': 'map',
-        'text-rotate': ['get', 'angle'],
+        'text-rotation-alignment': 'viewport',
+        'text-pitch-alignment': 'viewport',
     },
     paint: {
         'text-color': '#ffffff',
         'text-halo-color': '#111827',
-        'text-halo-width': 6,
+        'text-halo-width': 9,
         'text-halo-blur': 0.5,
     },
 };
@@ -364,9 +379,9 @@ const routeNumberLabelLayer: LayerProps = {
     ...routeNumberCasingLayer,
     id: 'detour-route-number',
     paint: {
-        'text-color': '#111827',
-        'text-halo-color': '#ffffff',
-        'text-halo-width': 4,
+        'text-color': '#ffffff',
+        'text-halo-color': ['coalesce', ['get', 'color'], '#07557F'],
+        'text-halo-width': 7,
         'text-halo-blur': 0.25,
     },
 };
@@ -384,8 +399,8 @@ const closedStopLabelLayer: LayerProps = {
         'text-justify': 'auto',
         'text-padding': 4,
         'text-optional': false,
-        'text-allow-overlap': false,
-        'text-ignore-placement': false,
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
     },
     paint: {
         'text-color': '#991b1b',
@@ -500,6 +515,7 @@ function buildRouteNumberGeoJson(overlay: DetourRouteOverlay) {
     const placement = getRouteNumberPlacement(overlay);
     return buildDetourPointsGeoJson(placement ? [{ id: overlay.id, position: placement.position }] : [], () => ({
         routeLabel: overlay.routeSnapshot.routeShortName,
+        color: overlay.routeSnapshot.routeColor || '#07557F',
         angle: placement?.angle ?? 0,
     }));
 }
@@ -589,6 +605,154 @@ function stopImpactPosition(impact: DetourStopImpact): DetourCoordinate | null {
         : impact.sourceStop?.position ?? null;
 }
 
+function stopImpactLabel(impact: DetourStopImpact): string {
+    if (impact.status === 'temporary') {
+        const heading = impact.temporaryStopCode?.trim()
+            ? `Temp Stop ${impact.temporaryStopCode.trim()}`
+            : 'Temporary Stop';
+        const name = impact.temporaryStopName?.trim();
+        return name ? `${heading}\n${name}` : heading;
+    }
+    if (impact.status === 'closed') {
+        return impact.sourceStop?.stopCode?.trim()
+            ? `Stop ${impact.sourceStop.stopCode.trim()}`
+            : impact.sourceStop?.name?.trim() || 'Closed Stop';
+    }
+    return impact.sourceStop?.stopCode?.trim()
+        ? `Stop ${impact.sourceStop.stopCode.trim()}`
+        : impact.sourceStop?.name?.trim() || 'Stop';
+}
+
+function createStopMarkerImage(kind: keyof typeof STOP_ICON_NAMES): ImageData | null {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+
+    const ringColor = kind === 'temporary' ? '#066839' : '#07557F';
+    context.clearRect(0, 0, 64, 64);
+    context.fillStyle = '#ffffff';
+    context.strokeStyle = ringColor;
+    context.lineWidth = 5;
+    context.beginPath();
+    context.arc(32, 32, 28, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#07557F';
+    context.beginPath();
+    context.arc(32, 32, 22, 0, Math.PI * 2);
+    context.fill();
+
+    context.fillStyle = '#ffffff';
+    roundedRectPath(context, 20, 16, 24, 29, 4);
+    context.fill();
+    context.fillStyle = '#07557F';
+    roundedRectPath(context, 23, 20, 18, 10, 2);
+    context.fill();
+    context.fillRect(23, 34, 18, 4);
+    context.fillStyle = '#ffffff';
+    context.beginPath();
+    context.arc(25, 45, 4, 0, Math.PI * 2);
+    context.arc(39, 45, 4, 0, Math.PI * 2);
+    context.fill();
+
+    if (kind === 'closed') {
+        context.strokeStyle = '#BF1E2D';
+        context.lineWidth = 6;
+        context.lineCap = 'round';
+        context.beginPath();
+        context.moveTo(12, 52);
+        context.lineTo(52, 12);
+        context.stroke();
+    }
+    return context.getImageData(0, 0, 64, 64);
+}
+
+function ensureStopMarkerImages(map: unknown): void {
+    const imageMap = map as {
+        hasImage?: (name: string) => boolean;
+        addImage?: (name: string, image: ImageData, options?: { pixelRatio?: number }) => void;
+    };
+    if (!imageMap.hasImage || !imageMap.addImage) return;
+    (Object.keys(STOP_ICON_NAMES) as Array<keyof typeof STOP_ICON_NAMES>).forEach((kind) => {
+        const name = STOP_ICON_NAMES[kind];
+        if (imageMap.hasImage?.(name)) return;
+        const image = createStopMarkerImage(kind);
+        if (image) imageMap.addImage?.(name, image, { pixelRatio: 2 });
+    });
+}
+
+function roundedRectPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
+    const safeRadius = Math.min(radius, width / 2, height / 2);
+    context.beginPath();
+    context.moveTo(x + safeRadius, y);
+    context.lineTo(x + width - safeRadius, y);
+    context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+    context.lineTo(x + width, y + height - safeRadius);
+    context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+    context.lineTo(x + safeRadius, y + height);
+    context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+    context.lineTo(x, y + safeRadius);
+    context.quadraticCurveTo(x, y, x + safeRadius, y);
+    context.closePath();
+}
+
+function drawYouAreHereAnnotation(
+    context: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    targetX: number,
+    targetY: number,
+    kind: DetourMapCaptureAnnotation['kind'],
+): void {
+    const scale = Math.max(1, Math.min(canvas.width, canvas.height) / 700);
+    const color = kind === 'closed' ? '#BF1E2D' : '#066839';
+    const boxWidth = 126 * scale;
+    const boxHeight = 72 * scale;
+    const margin = 12 * scale;
+    const pointerGap = 34 * scale;
+    let boxX = targetX - boxWidth - pointerGap;
+    if (boxX < margin) boxX = targetX + pointerGap;
+    boxX = Math.max(margin, Math.min(canvas.width - boxWidth - margin, boxX));
+    const boxY = Math.max(margin, Math.min(canvas.height - boxHeight - margin, targetY - boxHeight - pointerGap));
+    const originX = boxX + (targetX < boxX ? 0 : targetX > boxX + boxWidth ? boxWidth : boxWidth / 2);
+    const originY = boxY + boxHeight;
+
+    context.save();
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.strokeStyle = '#231F20';
+    context.lineWidth = 4 * scale;
+    context.beginPath();
+    context.moveTo(originX, originY);
+    context.lineTo(targetX, targetY);
+    context.stroke();
+
+    const angle = Math.atan2(targetY - originY, targetX - originX);
+    const arrowSize = 12 * scale;
+    context.fillStyle = color;
+    context.beginPath();
+    context.moveTo(targetX, targetY);
+    context.lineTo(targetX - arrowSize * Math.cos(angle - Math.PI / 6), targetY - arrowSize * Math.sin(angle - Math.PI / 6));
+    context.lineTo(targetX - arrowSize * Math.cos(angle + Math.PI / 6), targetY - arrowSize * Math.sin(angle + Math.PI / 6));
+    context.closePath();
+    context.fill();
+
+    roundedRectPath(context, boxX, boxY, boxWidth, boxHeight, 13 * scale);
+    context.fillStyle = 'rgba(255,255,255,0.96)';
+    context.fill();
+    context.strokeStyle = '#231F20';
+    context.lineWidth = 2.5 * scale;
+    context.stroke();
+    context.fillStyle = color;
+    context.font = `800 ${25 * scale}px Arial, Helvetica, sans-serif`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('You Are', boxX + boxWidth / 2, boxY + boxHeight * 0.34);
+    context.fillText('Here', boxX + boxWidth / 2, boxY + boxHeight * 0.72);
+    context.restore();
+}
+
 function getFitCoordinates(props: Pick<DetourMapCanvasProps, 'overlay' | 'additionalOverlays' | 'labels' | 'walkingGeometry' | 'stopClosureMarkers'>): DetourCoordinate[] {
     const allOverlays = [props.overlay, ...(props.additionalOverlays ?? [])];
     return [
@@ -641,6 +805,10 @@ export const DetourMapCanvas = forwardRef<DetourMapCanvasHandle, DetourMapCanvas
             overlayId: overlay.id,
             color: overlay.routeSnapshot.routeColor || '#2563eb',
             routeLabel: overlay.routeSnapshot.routeShortName,
+            directionLabel: formatDetourPublicationRoute({
+                routeShortName: overlay.routeSnapshot.routeShortName,
+                directionLabel: overlay.routeSnapshot.directionLabel,
+            }),
         },
     ), [overlay]);
     const routeBadgeGeoJson = useMemo(() => buildRouteBadgeGeoJson(overlay, !publicationMode), [overlay, publicationMode]);
@@ -657,13 +825,7 @@ export const DetourMapCanvas = forwardRef<DetourMapCanvasHandle, DetourMapCanvas
             id: impact.id,
             status: impact.status,
             reviewed: impact.reviewed,
-            label: impact.status === 'temporary'
-                ? [impact.temporaryStopCode?.trim(), (impact.temporaryStopName ?? 'Temporary stop').trim().toUpperCase()].filter(Boolean).join(' · ')
-                : impact.status === 'closed'
-                    ? impact.sourceStop?.stopCode
-                        ? `STOP ${impact.sourceStop.stopCode} CLOSED`
-                        : `${impact.sourceStop?.name ?? 'STOP'} CLOSED`
-                    : impact.sourceStop?.stopCode ?? impact.sourceStop?.name ?? 'Stop',
+            label: stopImpactLabel(impact),
         }),
     ), [overlay.stopImpacts]);
     const labelGeoJson = useMemo(() => buildDetourPointsGeoJson(
@@ -700,7 +862,11 @@ export const DetourMapCanvas = forwardRef<DetourMapCanvasHandle, DetourMapCanvas
         });
     }, [props]);
 
-    const captureImage = useCallback(async (mimeType: 'image/png' | 'image/jpeg' = 'image/png', quality?: number) => {
+    const captureImage = useCallback(async (
+        mimeType: 'image/png' | 'image/jpeg' = 'image/png',
+        quality?: number,
+        annotation?: DetourMapCaptureAnnotation,
+    ) => {
         try {
             const map = mapRef.current?.getMap();
             if (!map) return null;
@@ -720,8 +886,24 @@ export const DetourMapCanvas = forwardRef<DetourMapCanvasHandle, DetourMapCanvas
                     requestAnimationFrame(() => requestAnimationFrame(finish));
                 }
             });
-            const dataUrl = map.getCanvas().toDataURL(mimeType, quality);
-            if (dataUrl) props.onCaptureImage?.(dataUrl);
+            const sourceCanvas = map.getCanvas();
+            let dataUrl: string;
+            if (annotation) {
+                const output = document.createElement('canvas');
+                output.width = sourceCanvas.width;
+                output.height = sourceCanvas.height;
+                const context = output.getContext('2d');
+                if (!context) return null;
+                context.drawImage(sourceCanvas, 0, 0);
+                const point = map.project([annotation.position.longitude, annotation.position.latitude]);
+                const scaleX = sourceCanvas.width / Math.max(1, sourceCanvas.clientWidth);
+                const scaleY = sourceCanvas.height / Math.max(1, sourceCanvas.clientHeight);
+                drawYouAreHereAnnotation(context, output, point.x * scaleX, point.y * scaleY, annotation.kind);
+                dataUrl = output.toDataURL(mimeType, quality);
+            } else {
+                dataUrl = sourceCanvas.toDataURL(mimeType, quality);
+            }
+            if (dataUrl && !annotation) props.onCaptureImage?.(dataUrl);
             return dataUrl;
         } catch (error) {
             console.error('Unable to capture detour map image', error);
@@ -731,6 +913,7 @@ export const DetourMapCanvas = forwardRef<DetourMapCanvasHandle, DetourMapCanvas
 
     const handleMapLoad = useCallback(() => {
         const map = mapRef.current?.getMap();
+        ensureStopMarkerImages(map);
         for (const layer of map?.getStyle().layers ?? []) {
             if (layer.type !== 'symbol' || layer.id.startsWith('detour-')) continue;
             const layout = (layer as { layout?: Record<string, unknown> }).layout;
@@ -818,13 +1001,7 @@ export const DetourMapCanvas = forwardRef<DetourMapCanvasHandle, DetourMapCanvas
                         ({ impact }) => ({
                             id: impact.id,
                             status: impact.status,
-                            label: impact.status === 'temporary'
-                                ? [impact.temporaryStopCode?.trim(), (impact.temporaryStopName ?? 'Temporary stop').trim().toUpperCase()].filter(Boolean).join(' · ')
-                                : impact.status === 'closed'
-                                    ? impact.sourceStop?.stopCode
-                                        ? `STOP ${impact.sourceStop.stopCode} CLOSED`
-                                        : `${impact.sourceStop?.name ?? 'STOP'} CLOSED`
-                                    : impact.sourceStop?.stopCode ?? impact.sourceStop?.name ?? 'Stop',
+                            label: stopImpactLabel(impact),
                         }),
                     );
                     return (
@@ -842,8 +1019,12 @@ export const DetourMapCanvas = forwardRef<DetourMapCanvasHandle, DetourMapCanvas
                             <Source id={`${prefix}-active-source`} type="geojson" data={buildDetourLineGeoJson(additional.detourGeometry.coordinates, {
                                 color: additional.routeSnapshot.routeColor || '#2563eb',
                                 routeLabel: additional.routeSnapshot.routeShortName,
+                                directionLabel: formatDetourPublicationRoute({
+                                    routeShortName: additional.routeSnapshot.routeShortName,
+                                    directionLabel: additional.routeSnapshot.directionLabel,
+                                }),
                             })}>
-                                <Layer {...detourWarningOutlineLayer} id={`${prefix}-warning-outline`} />
+                                {!publicationMode && <Layer {...detourWarningOutlineLayer} id={`${prefix}-warning-outline`} />}
                                 <Layer {...detourCasingLayer} id={`${prefix}-casing-line`} />
                                 <Layer {...detourLayer} id={`${prefix}-active-line`} />
                                 <Layer {...directionArrowLayer} id={`${prefix}-arrows`} />
@@ -883,7 +1064,7 @@ export const DetourMapCanvas = forwardRef<DetourMapCanvasHandle, DetourMapCanvas
                 </Source>
                 <Source id="detour-active-source" type="geojson" data={activeGeoJson}>
                     {!publicationMode && <Layer {...editableLineHitLayer} id={DETOUR_HIT_LAYER_ID} />}
-                    <Layer {...detourWarningOutlineLayer} />
+                    {!publicationMode && <Layer {...detourWarningOutlineLayer} />}
                     <Layer {...detourCasingLayer} />
                     <Layer {...detourLayer} />
                     <Layer {...directionArrowLayer} />

@@ -95,6 +95,32 @@ describe('detour domain', () => {
         expect(result.canExport).toBe(false);
     });
 
+    it('warns for uncoded temporary sheets and blocks one code mapped to conflicting locations', () => {
+        const notice = createDetourNotice({ teamId: 'team-a', userId: 'user-a' });
+        Object.assign(notice, { title: 'Detour', publicDetails: 'Details' });
+        const first = overlay();
+        first.stopImpacts = [{
+            id: 'temporary-uncoded', status: 'temporary', reviewed: true,
+            temporaryStopName: 'Unsigned temporary stop', temporaryStopPosition: { latitude: 44.38, longitude: -79.69 },
+        }];
+        const second = overlay();
+        second.id = 'route-100';
+        first.stopImpacts.push({
+            id: 'temporary-1420-a', status: 'temporary', reviewed: true, temporaryStopCode: '1420',
+            temporaryStopName: 'Codrington at Puget', temporaryStopPosition: { latitude: 44.38, longitude: -79.69 },
+        });
+        second.stopImpacts = [{
+            id: 'temporary-1420-b', status: 'temporary', reviewed: true, temporaryStopCode: '1420',
+            temporaryStopName: 'Codrington at Puget', temporaryStopPosition: { latitude: 44.39, longitude: -79.68 },
+        }];
+        notice.overlays = [first, second];
+
+        const result = validateDetourNotice(notice);
+        expect(result.warnings.map(item => item.code)).toContain('temporary-stop-code-recommended');
+        expect(result.errors.map(item => item.code)).toContain('temporary-stop-code-location-conflict');
+        expect(result.canExport).toBe(false);
+    });
+
     it('blocks export until an edited closed section is reviewed', () => {
         const notice = createDetourNotice({ teamId: 'team-a', userId: 'user-a' });
         Object.assign(notice, { title: 'Detour', publicDetails: 'Details' });
