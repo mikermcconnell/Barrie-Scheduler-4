@@ -30,9 +30,19 @@ describe('security rules regression checks', () => {
   });
 
   it('requires Operations workspace access to read raw performance files', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
     const storageRules = readRepoFile('storage.rules');
 
     expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/performanceData\/\{allPaths=\*\*\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'workspaceOperations'\) \|\| canSupportReadTeamData\(teamId\);/);
+    expect(firestoreRules).toMatch(/accessLevel == 'admin' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
+    expect(firestoreRules).toMatch(/accessLevel == 'planner' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
+    expect(firestoreRules).toMatch(/accessLevel == 'production' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
+    expect(storageRules).toMatch(/accessLevel == 'admin' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
+    expect(storageRules).toMatch(/accessLevel == 'planner' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
+    expect(storageRules).toMatch(/accessLevel == 'production' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
+    expect(storageRules).not.toMatch(/accessLevel == 'external-planner' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
+    expect(storageRules).not.toMatch(/accessLevel == 'transit-app-only' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
+    expect(storageRules).not.toMatch(/accessLevel == 'parking' &&[\s\S]*?feature in \[[^\]]*'workspaceOperations'[^\]]*\]/);
   });
 
   it('allows own-team managers or scoped developer edit sessions to update team settings', () => {
