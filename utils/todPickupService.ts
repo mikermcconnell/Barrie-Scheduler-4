@@ -12,7 +12,7 @@ import {
   uploadBytes,
 } from 'firebase/storage';
 import { db, storage } from './firebase';
-import type { TodPickupMetadata, TodPickupMonthlyDataset, TodPickupSummary } from './todPickupTypes';
+import type { TodDailyKpiDataset, TodPickupMetadata, TodPickupMonthlyDataset, TodPickupSummary } from './todPickupTypes';
 import { TOD_PICKUP_SCHEMA_VERSION } from './todPickupTypes';
 
 function getMetadataRef(teamId: string) {
@@ -31,13 +31,23 @@ function buildUploadPayload(value: unknown): Blob | Uint8Array {
   return new TextEncoder().encode(json);
 }
 
-function buildMetadata(months: TodPickupMonthlyDataset[], importedBy: string): TodPickupMetadata {
+function buildMetadata(
+  months: TodPickupMonthlyDataset[],
+  dailyReports: TodDailyKpiDataset[],
+  importedBy: string,
+): TodPickupMetadata {
+  const dailyDates = dailyReports.map(report => report.date).sort();
   return {
     importedAt: new Date().toISOString(),
     importedBy,
     monthCount: months.length,
     totalRows: months.reduce((sum, month) => sum + month.rowCount, 0),
     totalPickups: months.reduce((sum, month) => sum + month.totalPickups, 0),
+    dailyReportCount: dailyReports.length,
+    dailyDateRange: dailyDates.length > 0
+      ? { start: dailyDates[0], end: dailyDates[dailyDates.length - 1] }
+      : undefined,
+    totalCompletedTrips: dailyReports.reduce((sum, report) => sum + report.totalCompletedTrips, 0),
   };
 }
 
@@ -49,13 +59,33 @@ export function buildTodPickupReplacementSummary(
 ): TodPickupSummary {
   const keptMonths = (existingSummary?.months || []).filter(month => month.month !== dataset.month);
   const months = [...keptMonths, dataset].sort((a, b) => a.month.localeCompare(b.month));
-  const metadata = buildMetadata(months, importedBy);
+  const dailyReports = existingSummary?.dailyReports || [];
+  const metadata = buildMetadata(months, dailyReports, importedBy);
   return {
     months,
+    dailyReports,
     metadata: {
       ...metadata,
       storagePath,
     },
+    schemaVersion: TOD_PICKUP_SCHEMA_VERSION,
+  };
+}
+
+export function buildTodDailyKpiReplacementSummary(
+  existingSummary: TodPickupSummary | null,
+  dataset: TodDailyKpiDataset,
+  importedBy: string,
+  storagePath: string,
+): TodPickupSummary {
+  const months = existingSummary?.months || [];
+  const keptReports = (existingSummary?.dailyReports || []).filter(report => report.date !== dataset.date);
+  const dailyReports = [...keptReports, dataset].sort((a, b) => a.date.localeCompare(b.date));
+  const metadata = buildMetadata(months, dailyReports, importedBy);
+  return {
+    months,
+    dailyReports,
+    metadata: { ...metadata, storagePath },
     schemaVersion: TOD_PICKUP_SCHEMA_VERSION,
   };
 }
@@ -70,6 +100,9 @@ function mergeSummaryMetadata(summary: TodPickupSummary, metadata: TodPickupMeta
       monthCount: metadata.monthCount || summary.metadata.monthCount,
       totalRows: metadata.totalRows || summary.metadata.totalRows,
       totalPickups: metadata.totalPickups || summary.metadata.totalPickups,
+      dailyReportCount: metadata.dailyReportCount ?? summary.metadata.dailyReportCount,
+      dailyDateRange: metadata.dailyDateRange ?? summary.metadata.dailyDateRange,
+      totalCompletedTrips: metadata.totalCompletedTrips ?? summary.metadata.totalCompletedTrips,
       storagePath: metadata.storagePath || summary.metadata.storagePath,
     },
   };
@@ -99,6 +132,11 @@ export async function getTodPickupMetadata(teamId: string): Promise<TodPickupMet
       monthCount: Number(data.monthCount || 0),
       totalRows: Number(data.totalRows || 0),
       totalPickups: Number(data.totalPickups || 0),
+      dailyReportCount: Number(data.dailyReportCount || 0),
+      dailyDateRange: data.dailyDateRange?.start && data.dailyDateRange?.end
+        ? { start: String(data.dailyDateRange.start), end: String(data.dailyDateRange.end) }
+        : undefined,
+      totalCompletedTrips: Number(data.totalCompletedTrips || 0),
       storagePath: data.storagePath || '',
     };
   } catch (error) {
@@ -127,10 +165,10 @@ export async function getTodPickupData(
   }
 }
 
-export async function saveTodPickupMonthData(
+async function saveTodSummary(
   teamId: string,
   userId: string,
-  dataset: TodPickupMonthlyDataset,
+  buildSummary: (existing: TodPickupSummary | null, storagePath: string) => TodPickupSummary,
 ): Promise<void> {
   const timestamp = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const storagePath = getStoragePath(teamId, timestamp);
@@ -153,7 +191,7 @@ export async function saveTodPickupMonthData(
     }
   }
 
-  const summary = buildTodPickupReplacementSummary(oldSummary, dataset, userId, storagePath);
+  const summary = buildSummary(oldSummary, storagePath);
   const metadata = summary.metadata;
 
   let uploadedNewFile = false;
@@ -173,6 +211,9 @@ export async function saveTodPickupMonthData(
         monthCount: metadata.monthCount,
         totalRows: metadata.totalRows,
         totalPickups: metadata.totalPickups,
+        dailyReportCount: metadata.dailyReportCount || 0,
+        dailyDateRange: metadata.dailyDateRange || null,
+        totalCompletedTrips: metadata.totalCompletedTrips || 0,
         storagePath,
       });
     });
@@ -194,6 +235,30 @@ export async function saveTodPickupMonthData(
       // Ignore stale storage cleanup failures.
     }
   }
+}
+
+export async function saveTodPickupMonthData(
+  teamId: string,
+  userId: string,
+  dataset: TodPickupMonthlyDataset,
+): Promise<void> {
+  return saveTodSummary(
+    teamId,
+    userId,
+    (existing, storagePath) => buildTodPickupReplacementSummary(existing, dataset, userId, storagePath),
+  );
+}
+
+export async function saveTodDailyKpiData(
+  teamId: string,
+  userId: string,
+  dataset: TodDailyKpiDataset,
+): Promise<void> {
+  return saveTodSummary(
+    teamId,
+    userId,
+    (existing, storagePath) => buildTodDailyKpiReplacementSummary(existing, dataset, userId, storagePath),
+  );
 }
 
 export async function deleteTodPickupData(teamId: string): Promise<void> {

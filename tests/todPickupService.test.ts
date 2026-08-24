@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertTodPickupStoragePathUnchanged,
+  buildTodDailyKpiReplacementSummary,
   buildTodPickupReplacementSummary,
   normalizeTodPickupStoragePath,
 } from '../utils/todPickupService';
-import type { TodPickupMonthlyDataset, TodPickupSummary } from '../utils/todPickupTypes';
+import type { TodDailyKpiDataset, TodPickupMonthlyDataset, TodPickupSummary } from '../utils/todPickupTypes';
 
 function dataset(month: string, pickups: number): TodPickupMonthlyDataset {
   return {
@@ -25,6 +26,21 @@ function dataset(month: string, pickups: number): TodPickupMonthlyDataset {
         pickups,
       },
     ],
+  };
+}
+
+function dailyReport(date: string, trips: number): TodDailyKpiDataset {
+  return {
+    date,
+    importedAt: '2026-08-24T00:00:00.000Z',
+    importedBy: 'user-1',
+    sourceFileName: `${date}.xlsx`,
+    rowCount: 2,
+    totalCompletedTrips: trips,
+    totalDropoffs: trips,
+    locations: [{
+      id: 'stop-1', name: 'Stop 1', lat: 44.38, lon: -79.69, pickups: trips, dropoffs: trips,
+    }],
   };
 }
 
@@ -72,5 +88,33 @@ describe('todPickupService replacement summary', () => {
     expect(() => assertTodPickupStoragePathUnchanged('old-path.json', 'new-path.json')).toThrow(
       'TOD pickup data changed while importing. Refresh and try again.',
     );
+  });
+
+  it('replaces one daily KPI date while preserving monthly and other daily data', () => {
+    const existing: TodPickupSummary = {
+      months: [dataset('2026-07', 50)],
+      dailyReports: [dailyReport('2026-08-22', 100), dailyReport('2026-08-23', 110)],
+      metadata: { importedAt: '', importedBy: 'old-user', monthCount: 1, totalRows: 50, totalPickups: 50 },
+      schemaVersion: 2,
+    };
+
+    const next = buildTodDailyKpiReplacementSummary(
+      existing,
+      dailyReport('2026-08-23', 126),
+      'user-2',
+      'new-path.json',
+    );
+
+    expect(next.months).toHaveLength(1);
+    expect(next.dailyReports?.map(report => [report.date, report.totalCompletedTrips])).toEqual([
+      ['2026-08-22', 100],
+      ['2026-08-23', 126],
+    ]);
+    expect(next.metadata).toMatchObject({
+      dailyReportCount: 2,
+      dailyDateRange: { start: '2026-08-22', end: '2026-08-23' },
+      totalCompletedTrips: 226,
+      storagePath: 'new-path.json',
+    });
   });
 });

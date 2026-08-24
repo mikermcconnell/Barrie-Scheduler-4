@@ -4,6 +4,55 @@ Automatically imports your daily STREETS CSV email attachment into the Performan
 
 **Flow:** Outlook Email → Power Automate → Cloud Function → Firebase (same place manual imports go)
 
+## Transit On Demand daily KPI automation
+
+The daily `custom_api3_Licensee KPI.xlsx` email uses the same authenticated ingestion pattern through the `ingestTodDailyKpi` Cloud Function. Its workbook contains no service date, so the automation assigns the previous Toronto calendar day from the email's received timestamp.
+
+### Cloud Function request
+
+Power Automate sends one workbook attachment at a time:
+
+```text
+POST INGEST_TOD_FUNCTION_URL?teamId=YOUR_TEAM_ID&serviceDate=YYYY-MM-DD
+x-api-key: INGEST_API_KEY
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+x-file-name: Attachment Name
+Body: attachment Content Bytes
+```
+
+The endpoint accepts raw Excel bytes or Power Automate's base64 attachment content. It validates the workbook, archives the raw attachment, aborts if current history cannot be read, and replaces only the matching service date. A repeated flow run is therefore idempotent at the daily-summary level.
+
+Use `dryRun=true` during setup to parse and reconcile a workbook without writing Firebase data.
+
+### Power Automate flow
+
+1. Clone the working STREETS daily-import flow and name it `Transit On Demand Daily KPI Import`.
+2. Configure **When a new email arrives (V3)** with the On Demand sender and subject filter, **Has Attachment = Yes**, and **Include Attachments = Yes**.
+3. Keep **Get Attachment (V2)** and its **Apply to each** attachment loop.
+4. Continue only when the attachment name ends with `.xlsx` and contains `Licensee KPI`.
+5. Add a **Compose** action named `Service Date` with this expression:
+
+```text
+formatDateTime(
+  addDays(
+    convertTimeZone(
+      triggerBody()?['receivedDateTime'],
+      'UTC',
+      'Eastern Standard Time'
+    ),
+    -1
+  ),
+  'yyyy-MM-dd'
+)
+```
+
+6. Add the HTTP POST described above. Insert the Compose output after `serviceDate=` and use **Content Bytes** from Get Attachment as the body.
+7. Keep flow concurrency at one. Retain the connector's normal retry policy; a retry safely replaces the same service date.
+8. First call the URL with `&dryRun=true`. Confirm the response totals match the email, then remove `dryRun=true` and test once more.
+9. Verify the selected service date in Ops → Ridership and check the next morning's Power Automate run history.
+
+For the August 24, 2026 sample email, the expected service date is August 23, 2026 and the expected reconciliation is 126 completed pickups, 126 completed drop-offs, and 73 locations.
+
 ---
 
 ## Overview

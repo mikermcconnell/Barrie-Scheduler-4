@@ -11,6 +11,7 @@ vi.mock('../components/Analytics/AnalyticsShared', () => ({
 vi.mock('../components/Performance/RidershipHeatmapSection', () => ({ RidershipHeatmapSection: (): null => null }));
 vi.mock('../components/Performance/StopActivityMap', () => ({ StopActivityMap: (): null => null }));
 vi.mock('../components/Performance/TodPickupSection', () => ({ TodPickupSection: (): null => null }));
+vi.mock('../components/Performance/TodDailyKpiSection', () => ({ TodDailyKpiSection: (): null => null }));
 
 vi.mock('recharts', () => {
   const Chart = ({ data, children }: { data?: unknown; children?: React.ReactNode }) => (

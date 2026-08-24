@@ -7,6 +7,7 @@ import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import { StopActivityMap } from './StopActivityMap';
 import { TodPickupSection } from './TodPickupSection';
+import { TodDailyKpiSection } from './TodDailyKpiSection';
 import type { DailySummary, PerformanceDataSummary, PerformanceLoadCapacityConfig } from '../../utils/performanceDataTypes';
 import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
@@ -247,6 +248,8 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
 
     return (
         <div className="space-y-6">
+            <TodDailyKpiSection includedDates={filtered.map(day => day.date)} />
+
             {/* Stop Activity Map */}
             <ChartCard title="Stop Activity Map" subtitle="View activity totals or compare average daily activity with the equivalent prior period">
                 <StopActivityMap
