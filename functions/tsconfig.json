@@ -12,7 +12,8 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@google/generative-ai": ["./node_modules/@google/generative-ai"]
+      "@google/generative-ai": ["./node_modules/@google/generative-ai"],
+      "xlsx": ["./node_modules/xlsx"]
     }
   },
   "compileOnSave": true,
