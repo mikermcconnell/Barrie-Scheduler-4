@@ -2,12 +2,13 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
+import type { TodActivityMetric } from '../utils/todPickupAggregation';
+import type { TodDailyKpiLocation } from '../utils/todPickupTypes';
 
 vi.mock('../components/Analytics/AnalyticsShared', () => ({
   ChartCard: ({ title, children }: { title: string; children?: React.ReactNode }) => <section><h3>{title}</h3>{children}</section>,
 }));
-vi.mock('../components/contexts/AuthContext', () => ({ useAuth: () => ({ user: { uid: 'user-1' } }) }));
-vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => ({ team: { id: 'team-1' }, canManageTeam: true }) }));
+vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => ({ team: { id: 'team-1' } }) }));
 vi.mock('../hooks/useTodPickupData', () => ({
   useTodPickupMetadataQuery: () => ({ data: { storagePath: 'test.json' }, isLoading: false }),
   useTodPickupDataQuery: () => ({
@@ -15,23 +16,32 @@ vi.mock('../hooks/useTodPickupData', () => ({
     data: {
       dailyReports: [
         {
-          date: '2026-08-22', totalCompletedTrips: 100, totalDropoffs: 100,
-          locations: [{ id: 'stop-1', name: 'Stop 1', lat: 44.38, lon: -79.69, pickups: 100, dropoffs: 100 }],
+          date: '2026-08-22', totalCompletedTrips: 100, totalDropoffs: 90,
+          locations: [{ id: 'stop-1', name: 'Stop 1', lat: 44.38, lon: -79.69, pickups: 100, dropoffs: 90 }],
         },
         {
-          date: '2026-08-23', totalCompletedTrips: 126, totalDropoffs: 126,
-          locations: [{ id: 'stop-1', name: 'Stop 1', lat: 44.38, lon: -79.69, pickups: 126, dropoffs: 126 }],
+          date: '2026-08-23', totalCompletedTrips: 126, totalDropoffs: 120,
+          locations: [{ id: 'stop-1', name: 'Stop 1', lat: 44.38, lon: -79.69, pickups: 126, dropoffs: 120 }],
         },
       ],
     },
   }),
-  useSaveTodDailyKpi: () => ({ isPending: false, mutateAsync: vi.fn() }),
 }));
-vi.mock('recharts', () => {
-  const Pass = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
-  const Empty = (): null => null;
-  return { ResponsiveContainer: Pass, LineChart: Pass, Line: Empty, XAxis: Empty, YAxis: Empty, Tooltip: Empty };
-});
+vi.mock('../components/Performance/TodActivityMap', () => ({
+  TodActivityMap: ({
+    locations,
+    metric,
+  }: {
+    locations: TodDailyKpiLocation[];
+    metric: TodActivityMetric;
+  }) => (
+    <div
+      data-testid="tod-map"
+      data-metric={metric}
+      data-locations={JSON.stringify(locations)}
+    />
+  ),
+}));
 
 import { TodDailyKpiSection } from '../components/Performance/TodDailyKpiSection';
 
@@ -50,12 +60,32 @@ describe('TodDailyKpiSection', () => {
     container.remove();
   });
 
-  it('uses only reports included by the Ridership period', () => {
+  it('renders one automatic map card using only the active Ridership period', () => {
     flushSync(() => root.render(<TodDailyKpiSection includedDates={['2026-08-23']} />));
 
-    expect(container.textContent).toContain('Transit On Demand Ridership');
-    expect(container.textContent).toContain('126');
+    expect(container.textContent).toContain('Transit On Demand Activity Map');
+    expect(container.textContent).toContain('126 pickups');
     expect(container.textContent).toContain('1 imported day');
     expect(container.textContent).not.toContain('226');
+    expect(container.textContent).not.toContain('Choose File');
+    expect(container.textContent).not.toContain('Import day');
+    expect(container.textContent).not.toContain('Top pickup locations');
+    expect(container.textContent).not.toContain('Average per imported day');
+
+    const map = container.querySelector('[data-testid="tod-map"]');
+    expect(map?.getAttribute('data-metric')).toBe('pickups');
+    expect(map?.getAttribute('data-locations')).toContain('"pickups":126');
+  });
+
+  it('switches the total and map metric to drop-offs', () => {
+    flushSync(() => root.render(<TodDailyKpiSection includedDates={['2026-08-23']} />));
+    const dropoffButton = [...container.querySelectorAll('button')]
+      .find(button => button.textContent === 'Drop-offs');
+
+    expect(dropoffButton).toBeDefined();
+    flushSync(() => dropoffButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    expect(container.textContent).toContain('120 drop-offs');
+    expect(container.querySelector('[data-testid="tod-map"]')?.getAttribute('data-metric')).toBe('dropoffs');
   });
 });

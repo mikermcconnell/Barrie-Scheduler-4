@@ -1,11 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  getTodPickupData,
-  getTodPickupMetadata,
-  saveTodDailyKpiData,
-  saveTodPickupMonthData,
-} from '../utils/todPickupService';
-import type { TodDailyKpiDataset, TodPickupMetadata, TodPickupMonthlyDataset } from '../utils/todPickupTypes';
+import { useQuery } from '@tanstack/react-query';
+import { getTodPickupData, getTodPickupMetadata } from '../utils/todPickupService';
+import type { TodPickupMetadata } from '../utils/todPickupTypes';
 
 const TOD_PICKUP_QUERY_STALE_MS = 1000 * 60 * 30;
 const TOD_PICKUP_QUERY_GC_MS = 1000 * 60 * 60;
@@ -39,37 +34,5 @@ export function useTodPickupDataQuery(
     staleTime: TOD_PICKUP_QUERY_STALE_MS,
     gcTime: TOD_PICKUP_QUERY_GC_MS,
     refetchOnWindowFocus: false,
-  });
-}
-
-export function useSaveTodPickupMonth(teamId: string | undefined) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ userId, dataset }: { userId: string; dataset: TodPickupMonthlyDataset }) => {
-      if (!teamId) throw new Error('Team ID is required');
-      await saveTodPickupMonthData(teamId, userId, dataset);
-    },
-    onSuccess: () => {
-      if (!teamId) return;
-      queryClient.invalidateQueries({ queryKey: ['todPickupMetadata', teamId] });
-      queryClient.invalidateQueries({ queryKey: ['todPickupData', teamId] });
-    },
-  });
-}
-
-export function useSaveTodDailyKpi(teamId: string | undefined) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ userId, dataset }: { userId: string; dataset: TodDailyKpiDataset }) => {
-      if (!teamId) throw new Error('Team ID is required');
-      await saveTodDailyKpiData(teamId, userId, dataset);
-    },
-    onSuccess: () => {
-      if (!teamId) return;
-      queryClient.invalidateQueries({ queryKey: ['todPickupMetadata', teamId] });
-      queryClient.invalidateQueries({ queryKey: ['todPickupData', teamId] });
-    },
   });
 }

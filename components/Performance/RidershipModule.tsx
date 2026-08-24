@@ -6,7 +6,6 @@ import {
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import { StopActivityMap } from './StopActivityMap';
-import { TodPickupSection } from './TodPickupSection';
 import { TodDailyKpiSection } from './TodDailyKpiSection';
 import type { DailySummary, PerformanceDataSummary, PerformanceLoadCapacityConfig } from '../../utils/performanceDataTypes';
 import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
@@ -260,8 +259,6 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                     comparisonRange={comparisonRange}
                 />
             </ChartCard>
-
-            <TodPickupSection />
 
             {/* Daily Ridership Trend */}
             <ChartCard title="Daily Ridership" subtitle="Total boardings per day">

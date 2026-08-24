@@ -58,11 +58,6 @@ export interface TodPickupSummary {
   schemaVersion: number;
 }
 
-export interface TodPickupParseResult {
-  dataset: TodPickupMonthlyDataset;
-  warnings: string[];
-}
-
 export interface TodDailyKpiParseResult {
   dataset: TodDailyKpiDataset;
   warnings: string[];

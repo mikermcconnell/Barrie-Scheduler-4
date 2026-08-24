@@ -1,57 +1,64 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateTodPickupStops, getLatestTodPickupMonth } from '../utils/todPickupAggregation';
-import type { TodPickupMonthlyDataset, TodPickupSummary } from '../utils/todPickupTypes';
+import {
+  aggregateTodDailyLocations,
+  getTodActivityValue,
+} from '../utils/todPickupAggregation';
+import type { TodDailyKpiDataset } from '../utils/todPickupTypes';
 
-function month(monthId: string, pickups: number): TodPickupMonthlyDataset {
+function report(
+  date: string,
+  locations: TodDailyKpiDataset['locations'],
+): TodDailyKpiDataset {
   return {
-    month: monthId,
-    importedAt: '2026-06-01T00:00:00.000Z',
-    importedBy: 'user-1',
-    sourceFileName: `${monthId}.csv`,
-    rowCount: pickups,
-    mappableRows: pickups,
-    skippedRows: 0,
-    totalPickups: pickups,
-    stops: [
-      {
-        id: 'downtown_44.38900_-79.69000',
-        name: 'Downtown',
-        lat: 44.389,
-        lon: -79.69,
-        pickups,
-      },
-    ],
+    date,
+    importedAt: `${date}T12:00:00.000Z`,
+    importedBy: 'auto-ingest',
+    sourceFileName: `${date}.xlsx`,
+    rowCount: locations.length * 2,
+    totalCompletedTrips: locations.reduce((sum, location) => sum + location.pickups, 0),
+    totalDropoffs: locations.reduce((sum, location) => sum + location.dropoffs, 0),
+    locations,
   };
 }
 
-describe('todPickupAggregation', () => {
-  it('returns the latest uploaded month', () => {
-    const summary: TodPickupSummary = {
-      months: [month('2026-04', 2), month('2026-05', 3)],
-      metadata: {
-        importedAt: '',
-        importedBy: '',
-        monthCount: 2,
-        totalRows: 5,
-        totalPickups: 5,
-      },
-      schemaVersion: 1,
-    };
+describe('TOD daily activity aggregation', () => {
+  it('aggregates only reports included by the Ridership period', () => {
+    const locations = aggregateTodDailyLocations([
+      report('2026-08-22', [
+        { id: 'stop-777', name: 'Stop 777', lat: 44.38, lon: -79.69, pickups: 4, dropoffs: 6 },
+      ]),
+      report('2026-08-23', [
+        { id: 'stop-777', name: 'Stop 777', lat: 44.39, lon: -79.68, pickups: 13, dropoffs: 19 },
+        { id: 'stop-9009', name: 'Stop 9009', lat: 44.4, lon: -79.67, pickups: 10, dropoffs: 15 },
+      ]),
+    ], ['2026-08-23']);
 
-    expect(getLatestTodPickupMonth(summary)).toBe('2026-05');
+    expect(locations).toEqual([
+      expect.objectContaining({ id: 'stop-777', pickups: 13, dropoffs: 19, lat: 44.39, lon: -79.68 }),
+      expect.objectContaining({ id: 'stop-9009', pickups: 10, dropoffs: 15 }),
+    ]);
   });
 
-  it('aggregates selected months by stop id', () => {
-    const stops = aggregateTodPickupStops(
-      [month('2026-04', 2), month('2026-05', 3)],
-      ['2026-04', '2026-05'],
-    );
+  it('sums both metrics and weights coordinates across selected reports', () => {
+    const locations = aggregateTodDailyLocations([
+      report('2026-08-22', [
+        { id: 'stop-777', name: 'Stop 777', lat: 44, lon: -79, pickups: 2, dropoffs: 2 },
+      ]),
+      report('2026-08-23', [
+        { id: 'stop-777', name: 'Stop 777', lat: 46, lon: -81, pickups: 6, dropoffs: 6 },
+      ]),
+    ], ['2026-08-22', '2026-08-23']);
 
-    expect(stops).toEqual([
+    expect(locations).toEqual([
       expect.objectContaining({
-        id: 'downtown_44.38900_-79.69000',
-        pickups: 5,
+        id: 'stop-777',
+        pickups: 8,
+        dropoffs: 8,
+        lat: 45.5,
+        lon: -80.5,
       }),
     ]);
+    expect(getTodActivityValue(locations[0], 'pickups')).toBe(8);
+    expect(getTodActivityValue(locations[0], 'dropoffs')).toBe(8);
   });
 });

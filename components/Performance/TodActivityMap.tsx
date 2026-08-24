@@ -2,25 +2,28 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Layer, Popup, Source } from 'react-map-gl/mapbox';
 import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import { HeatmapDotLayer, MapBase, toGeoJSON } from '../shared';
-import type { TodPickupStop } from '../../utils/todPickupTypes';
+import { getTodActivityValue, type TodActivityMetric } from '../../utils/todPickupAggregation';
+import type { TodDailyKpiLocation } from '../../utils/todPickupTypes';
 
-interface TodPickupMapProps {
-  stops: TodPickupStop[];
+interface TodActivityMapProps {
+  locations: TodDailyKpiLocation[];
+  metric: TodActivityMetric;
 }
 
-interface RenderedStop extends TodPickupStop {
+interface RenderedLocation extends TodDailyKpiLocation {
   bin: number;
   sortKey: number;
+  value: number;
 }
 
 interface HoverInfo {
-  stopId: string;
+  locationId: string;
   latitude: number;
   longitude: number;
 }
 
 const BARRIE_CENTER: [number, number] = [44.38, -79.69];
-const TOD_PICKUP_LAYER_ID = 'tod-pickup-circles';
+const TOD_ACTIVITY_LAYER_ID = 'tod-activity-circles';
 const OUTLINE_COLOR = '#374151';
 const BINS = [
   { fill: 'transparent', fillOpacity: 0, radius: 3, label: 'Zero' },
@@ -45,13 +48,17 @@ function assignBins(values: number[]): number[] {
   ));
 }
 
-function hasValidCoords(stop: TodPickupStop): boolean {
-  return Number.isFinite(stop.lat) && Number.isFinite(stop.lon);
+function hasValidCoords(location: TodDailyKpiLocation): boolean {
+  return Number.isFinite(location.lat) && Number.isFinite(location.lon);
 }
 
-const Legend = () => (
+function metricLabel(metric: TodActivityMetric): string {
+  return metric === 'pickups' ? 'pickups' : 'drop-offs';
+}
+
+const Legend: React.FC<{ metric: TodActivityMetric }> = ({ metric }) => (
   <div className="absolute bottom-6 left-2 z-[1000] rounded-lg border border-gray-200 bg-white/95 px-2.5 py-2 text-[10px] shadow-md">
-    <div className="mb-1 text-[11px] font-bold text-gray-600">TOD pickups</div>
+    <div className="mb-1 text-[11px] font-bold text-gray-600">TOD {metricLabel(metric)}</div>
     {BINS.map((bin, index) => (
       <div key={bin.label} className="flex items-center gap-1.5 py-[1px]">
         <span
@@ -68,50 +75,57 @@ const Legend = () => (
   </div>
 );
 
-export const TodPickupMap: React.FC<TodPickupMapProps> = ({ stops }) => {
+export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metric }) => {
   const mapRef = useRef<MapRef | null>(null);
   const hasFittedRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
-  const [selectedStop, setSelectedStop] = useState<TodPickupStop | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<TodDailyKpiLocation | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
+  const label = metricLabel(metric);
 
-  const renderedStops = useMemo(() => {
-    const mappable = stops.filter(hasValidCoords);
-    const bins = assignBins(mappable.map(stop => stop.pickups));
+  const renderedLocations = useMemo(() => {
+    const mappable = locations.filter(hasValidCoords);
+    const values = mappable.map(location => getTodActivityValue(location, metric));
+    const bins = assignBins(values);
     return mappable
-      .map((stop, index) => ({ ...stop, bin: bins[index], sortKey: index }))
-      .sort((a, b) => a.bin - b.bin) as RenderedStop[];
-  }, [stops]);
+      .map((location, index) => ({
+        ...location,
+        value: values[index],
+        bin: bins[index],
+        sortKey: index,
+      }))
+      .sort((a, b) => a.bin - b.bin) as RenderedLocation[];
+  }, [locations, metric]);
 
-  const renderedStopMap = useMemo(
-    () => new Map(renderedStops.map(stop => [stop.id, stop])),
-    [renderedStops],
+  const renderedLocationMap = useMemo(
+    () => new Map(renderedLocations.map(location => [location.id, location])),
+    [renderedLocations],
   );
 
   const labelGeoJSON = useMemo((): GeoJSON.FeatureCollection => ({
     type: 'FeatureCollection',
-    features: renderedStops.map(stop => ({
+    features: renderedLocations.map(location => ({
       type: 'Feature',
-      properties: { id: stop.id, name: stop.name, bin: stop.bin, sortKey: stop.sortKey },
-      geometry: { type: 'Point', coordinates: toGeoJSON([stop.lat, stop.lon]) },
+      properties: { id: location.id, name: location.name, bin: location.bin, sortKey: location.sortKey },
+      geometry: { type: 'Point', coordinates: toGeoJSON([location.lat, location.lon]) },
     })),
-  }), [renderedStops]);
+  }), [renderedLocations]);
 
-  const hoveredStop = hoverInfo ? renderedStopMap.get(hoverInfo.stopId) ?? null : null;
+  const hoveredLocation = hoverInfo ? renderedLocationMap.get(hoverInfo.locationId) ?? null : null;
 
   const handleMapMouseMove = useCallback((event: MapMouseEvent) => {
     const rawId = event.features?.[0]?.properties?.id;
-    const stopId = rawId == null || Array.isArray(rawId) ? null : String(rawId);
-    if (!stopId || !renderedStopMap.has(stopId)) {
+    const locationId = rawId == null || Array.isArray(rawId) ? null : String(rawId);
+    if (!locationId || !renderedLocationMap.has(locationId)) {
       setHoverInfo(null);
       mapRef.current?.getMap().getCanvas().style.setProperty('cursor', '');
       return;
     }
 
-    const stop = renderedStopMap.get(stopId)!;
-    setHoverInfo({ stopId, latitude: stop.lat, longitude: stop.lon });
+    const location = renderedLocationMap.get(locationId)!;
+    setHoverInfo({ locationId, latitude: location.lat, longitude: location.lon });
     mapRef.current?.getMap().getCanvas().style.setProperty('cursor', 'pointer');
-  }, [renderedStopMap]);
+  }, [renderedLocationMap]);
 
   const handleMapMouseLeave = useCallback(() => {
     setHoverInfo(null);
@@ -120,36 +134,36 @@ export const TodPickupMap: React.FC<TodPickupMapProps> = ({ stops }) => {
 
   const handleMapClick = useCallback((event: MapMouseEvent) => {
     const rawId = event.features?.[0]?.properties?.id;
-    const stopId = rawId == null || Array.isArray(rawId) ? null : String(rawId);
-    if (!stopId) return;
-    const stop = renderedStopMap.get(stopId);
-    if (stop) setSelectedStop(stop);
-  }, [renderedStopMap]);
+    const locationId = rawId == null || Array.isArray(rawId) ? null : String(rawId);
+    if (!locationId) return;
+    const location = renderedLocationMap.get(locationId);
+    if (location) setSelectedLocation(location);
+  }, [renderedLocationMap]);
 
   useEffect(() => {
     hasFittedRef.current = false;
-    setSelectedStop(null);
+    setSelectedLocation(null);
     setHoverInfo(null);
-  }, [stops]);
+  }, [locations, metric]);
 
   useEffect(() => {
-    if (!mapReady || renderedStops.length === 0 || hasFittedRef.current) return;
+    if (!mapReady || renderedLocations.length === 0 || hasFittedRef.current) return;
     mapRef.current?.fitBounds(
       [
-        [Math.min(...renderedStops.map(stop => stop.lon)), Math.min(...renderedStops.map(stop => stop.lat))],
-        [Math.max(...renderedStops.map(stop => stop.lon)), Math.max(...renderedStops.map(stop => stop.lat))],
+        [Math.min(...renderedLocations.map(location => location.lon)), Math.min(...renderedLocations.map(location => location.lat))],
+        [Math.max(...renderedLocations.map(location => location.lon)), Math.max(...renderedLocations.map(location => location.lat))],
       ],
       { padding: 40, duration: 0 },
     );
     hasFittedRef.current = true;
-  }, [mapReady, renderedStops]);
+  }, [mapReady, renderedLocations]);
 
-  if (renderedStops.length === 0) {
+  if (renderedLocations.length === 0) {
     return (
       <div className="grid h-[520px] place-items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 p-6 text-center">
         <div>
-          <div className="text-sm font-bold text-amber-900">No mappable TOD pickups</div>
-          <p className="mt-1 text-sm text-amber-800">Upload data with pickup latitude and longitude to show the map.</p>
+          <div className="text-sm font-bold text-amber-900">No mappable TOD activity</div>
+          <p className="mt-1 text-sm text-amber-800">The selected daily reports do not contain usable location coordinates.</p>
         </div>
       </div>
     );
@@ -157,25 +171,31 @@ export const TodPickupMap: React.FC<TodPickupMapProps> = ({ stops }) => {
 
   return (
     <div className="relative h-[620px] w-full overflow-hidden rounded-lg">
-      <Legend />
+      <Legend metric={metric} />
       <div className="absolute right-2 top-2 z-[1000] max-w-xs rounded-lg border border-purple-200 bg-white/95 px-3 py-2 text-xs shadow-md">
         <div className="font-extrabold uppercase tracking-wide text-purple-700">Transit On Demand only</div>
         <div className="mt-0.5 text-[11px] leading-snug text-gray-500">
-          Pickup demand map; fixed-route ridership is not included.
+          Daily {label} for the selected Ridership period; fixed-route boardings are not included.
         </div>
       </div>
-      {selectedStop && (
+      {selectedLocation && (
         <div className="absolute left-2 top-2 z-[1000] w-72 rounded-lg border border-gray-200 bg-white/95 p-3 shadow-lg">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-bold leading-tight text-gray-900">{selectedStop.name}</div>
-              <div className="mt-1 text-[10px] uppercase tracking-wide text-gray-400">Transit On Demand pickups</div>
+              <div className="text-sm font-bold leading-tight text-gray-900">{selectedLocation.name}</div>
+              <div className="mt-1 text-[10px] uppercase tracking-wide text-gray-400">Transit On Demand {label}</div>
             </div>
-            <button type="button" onClick={() => setSelectedStop(null)} className="text-gray-400 hover:text-gray-600">×</button>
+            <button type="button" onClick={() => setSelectedLocation(null)} className="text-gray-400 hover:text-gray-600" aria-label="Close location details">×</button>
           </div>
           <div className="mt-3 rounded-lg bg-amber-50 p-3 text-center">
-            <div className="text-2xl font-extrabold text-amber-700">{selectedStop.pickups.toLocaleString()}</div>
-            <div className="text-[10px] font-bold uppercase tracking-wide text-amber-600">TOD pickups only</div>
+            <div className="text-2xl font-extrabold text-amber-700">
+              {getTodActivityValue(selectedLocation, metric).toLocaleString()}
+            </div>
+            <div className="text-[10px] font-bold uppercase tracking-wide text-amber-600">TOD {label}</div>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-center text-xs">
+            <div className="rounded-md bg-gray-50 px-2 py-1.5 text-gray-600">Pickups <strong className="text-gray-900">{selectedLocation.pickups.toLocaleString()}</strong></div>
+            <div className="rounded-md bg-gray-50 px-2 py-1.5 text-gray-600">Drop-offs <strong className="text-gray-900">{selectedLocation.dropoffs.toLocaleString()}</strong></div>
           </div>
         </div>
       )}
@@ -186,26 +206,26 @@ export const TodPickupMap: React.FC<TodPickupMapProps> = ({ stops }) => {
         zoom={12}
         showNavigation
         onLoad={() => setMapReady(true)}
-        interactiveLayerIds={[TOD_PICKUP_LAYER_ID]}
+        interactiveLayerIds={[TOD_ACTIVITY_LAYER_ID]}
         onMouseMove={handleMapMouseMove}
         onMouseLeave={handleMapMouseLeave}
         onClick={handleMapClick}
         style={{ borderRadius: '0.5rem' }}
       >
         <HeatmapDotLayer
-          idPrefix="tod-pickup"
-          points={renderedStops.map(stop => ({
-            id: stop.id,
-            lat: stop.lat,
-            lon: stop.lon,
-            value: stop.pickups,
+          idPrefix="tod-activity"
+          points={renderedLocations.map(location => ({
+            id: location.id,
+            lat: location.lat,
+            lon: location.lon,
+            value: location.value,
           }))}
           bins={BINS}
           outlineColor={OUTLINE_COLOR}
         />
-        <Source id="tod-pickup-labels-src" type="geojson" data={labelGeoJSON}>
+        <Source id="tod-activity-labels-src" type="geojson" data={labelGeoJSON}>
           <Layer
-            id="tod-pickup-labels-major"
+            id="tod-activity-labels-major"
             type="symbol"
             minzoom={14}
             filter={['>=', ['get', 'bin'], 4] as unknown as mapboxgl.FilterSpecification}
@@ -225,19 +245,21 @@ export const TodPickupMap: React.FC<TodPickupMapProps> = ({ stops }) => {
             }}
           />
         </Source>
-        {hoveredStop && (
+        {hoveredLocation && (
           <Popup
-            longitude={hoverInfo?.longitude ?? hoveredStop.lon}
-            latitude={hoverInfo?.latitude ?? hoveredStop.lat}
+            longitude={hoverInfo?.longitude ?? hoveredLocation.lon}
+            latitude={hoverInfo?.latitude ?? hoveredLocation.lat}
             closeButton={false}
             closeOnClick={false}
             anchor="bottom"
             offset={8}
           >
             <div style={{ fontSize: 12, lineHeight: 1.4 }}>
-              <strong>{hoveredStop.name}</strong>
+              <strong>{hoveredLocation.name}</strong>
               <br />
-              Pickups: {hoveredStop.pickups.toLocaleString()}
+              {metric === 'pickups' ? 'Pickups' : 'Drop-offs'}: {hoveredLocation.value.toLocaleString()}
+              <br />
+              <span style={{ color: '#6b7280' }}>Pickups {hoveredLocation.pickups.toLocaleString()} · Drop-offs {hoveredLocation.dropoffs.toLocaleString()}</span>
             </div>
           </Popup>
         )}
