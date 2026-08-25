@@ -79,11 +79,13 @@ service firebase.storage {
     function workspaceAllowedByProfile(accessLevel, feature) {
       return accessLevel == 'internal' ||
              (accessLevel == 'admin' &&
-              (feature in ['workspaceFixedRoute', 'workspaceOperations', 'workspaceParking', 'analyticsFarePrograms'])) ||
+              (feature in ['workspaceFixedRoute', 'workspaceOperations', 'workspaceParking', 'analyticsTransitApp', 'analyticsFarePrograms', 'analyticsStrategicPlan', 'analyticsRidershipTrend'])) ||
              (accessLevel == 'planner' &&
-              (feature in ['workspaceFixedRoute', 'workspaceOperations', 'analyticsFarePrograms'])) ||
+              (feature in ['workspaceFixedRoute', 'workspaceOperations', 'analyticsTransitApp', 'analyticsFarePrograms', 'analyticsStrategicPlan', 'analyticsRidershipTrend'])) ||
              (accessLevel == 'production' &&
               (feature in ['workspaceFixedRoute', 'workspaceOperations'])) ||
+             (accessLevel == 'external-planner' && feature == 'analyticsTransitApp') ||
+             (accessLevel == 'transit-app-only' && feature == 'analyticsTransitApp') ||
              (accessLevel == 'parking' && feature == 'workspaceParking');
     }
 
@@ -110,7 +112,8 @@ service firebase.storage {
       return hasUserTeam() &&
         userTeamId() != sourceTeamId &&
         isTeamMember(userTeamId()) &&
-        canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') &&
+        (canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') ||
+         canAccessWorkspace(userTeamId(), 'analyticsStrategicPlan')) &&
         configuredMasterScheduleSource(userTeamId()) == sourceTeamId;
     }
 
@@ -145,6 +148,7 @@ service firebase.storage {
     // Team master schedules - restricted to members of the team
     match /teams/{teamId}/masterSchedules/{allPaths=**} {
       allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+        canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
         canReadSharedMasterSchedules(teamId) ||
         canSupportReadTeamData(teamId);
       allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
@@ -176,8 +180,10 @@ service firebase.storage {
 
     // Team transit app data (aggregated JSON)
     match /teams/{teamId}/transitAppData/{allPaths=**} {
-      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
-      allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+      allow read: if canAccessWorkspace(teamId, 'analyticsTransitApp') ||
+        canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+        canSupportReadTeamData(teamId);
+      allow write: if canAccessWorkspace(teamId, 'analyticsTransitApp') || canSupportWriteTeamData(teamId);
     }
 
     // Team performance data (STREETS summaries)
@@ -215,8 +221,20 @@ service firebase.storage {
 
     // Team Fleet Plan data
     match /teams/{teamId}/fleetPlan/{allPaths=**} {
-      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan') ||
+                     canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                     canSupportReadTeamData(teamId);
       allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
+    }
+
+    // Compact long-term fixed-route ridership projection. Unlike the broader
+    // Operations archives, this view has its own Planning Data permission.
+    match /teams/{teamId}/performanceViews/ridership-trends/{generation} {
+      allow read: if generation.matches('^[0-9]+[.]json$') &&
+        (canAccessWorkspace(teamId, 'analyticsRidershipTrend') ||
+         canSupportReadTeamData(teamId));
+      allow write: if generation.matches('^[0-9]+[.]json$') &&
+        (isTeamManager(teamId) || canSupportWriteTeamData(teamId));
     }
 
     // Team Residential Growth planning data

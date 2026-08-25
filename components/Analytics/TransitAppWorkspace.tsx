@@ -41,6 +41,10 @@ interface TransitAppWorkspaceProps {
     onBack: () => void;
 }
 
+interface TransitAppAnalysisViewProps {
+    data: TransitAppDataSummary;
+}
+
 interface TabConfig {
     id: string;
     label: string;
@@ -59,11 +63,7 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'app-usage', label: 'App Usage', icon: Smartphone, status: 'complete' },
 ];
 
-export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
-    data,
-    onReimport,
-    onBack,
-}) => {
+export const TransitAppAnalysisView: React.FC<TransitAppAnalysisViewProps> = ({ data }) => {
     const allowIncompleteTabs = true;
     const tabs = useMemo(
         () => TAB_CONFIG.map(tab => ({
@@ -128,31 +128,6 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
 
     return (
         <div className="space-y-0">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                    <button
-                        onClick={onBack}
-                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                    >
-                        <ArrowLeft size={20} />
-                    </button>
-                    <div>
-                        <h2 className="text-xl font-bold text-gray-900">Transit App Data</h2>
-                        <p className="text-sm text-gray-500">
-                            {data.metadata.dateRange.start} to {data.metadata.dateRange.end}
-                        </p>
-                    </div>
-                </div>
-                <button
-                    onClick={onReimport}
-                    className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
-                >
-                    <RefreshCw size={16} />
-                    Re-import Data
-                </button>
-            </div>
-
             {/* Tab Bar */}
             <div className="border-b border-gray-200 bg-gray-50/50 rounded-t-lg -mx-1 px-1">
                 <div
@@ -208,6 +183,40 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
         </div>
     );
 };
+
+export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
+    data,
+    onReimport,
+    onBack,
+}) => (
+    <div className="space-y-0">
+        <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+                <button
+                    onClick={onBack}
+                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                    <ArrowLeft size={20} />
+                </button>
+                <div>
+                    <h2 className="text-xl font-bold text-gray-900">Transit App Data</h2>
+                    <p className="text-sm text-gray-500">
+                        {data.metadata.dateRange.start} to {data.metadata.dateRange.end}
+                    </p>
+                </div>
+            </div>
+            <button
+                onClick={onReimport}
+                className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
+            >
+                <RefreshCw size={16} />
+                Re-import Data
+            </button>
+        </div>
+
+        <TransitAppAnalysisView data={data} />
+    </div>
+);
 
 const TransitAppPanelLoading: React.FC = () => (
     <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm" role="status" aria-live="polite">

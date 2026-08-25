@@ -12,6 +12,8 @@ Use this document when changing dashboard calculations, filters, labels, imports
 
 `STREETS import -> parser -> daily aggregation -> stored overview/monthly summaries -> authorized route/date/day filters -> dashboard modules`
 
+The Planning Data Ridership Trends workspace reuses only each day's system fixed-route boarding total. A separate compact projection retains those post-cutover daily totals beyond the detailed dashboard's 380-day history and combines them with the reported workbook baseline through July 2026. It does not add Transit On Demand activity or expose route, stop, trip, operator, load, or alighting detail. See `docs/RIDERSHIP_TRENDS.md`.
+
 The dashboard uses one shared time-range and day-type filter across Overview, OTP Analysis, Ridership, Load Profiles, and Dwell Incident Review. Preset ranges and the inclusive custom start/end range persist when moving between tabs, and every module must apply the same selected dates and day type to its numerator and denominator.
 
 Primary calculation locations:

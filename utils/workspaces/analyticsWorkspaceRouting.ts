@@ -16,7 +16,8 @@ export type AnalyticsWorkspaceView =
     | 'network-connections'
     | 'shuttle-planner'
     | 'fare-programs'
-    | 'strategic-plan';
+    | 'strategic-plan'
+    | 'ridership-trends';
 
 const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'dashboard',
@@ -37,6 +38,7 @@ const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'shuttle-planner',
     'fare-programs',
     'strategic-plan',
+    'ridership-trends',
 ]);
 
 const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = {
@@ -57,7 +59,8 @@ const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = 
     'network-connections': 'Network Connections',
     'shuttle-planner': 'Shuttle Planner',
     'fare-programs': 'Fare Programs',
-    'strategic-plan': '5-Year Strategic Plan',
+    'strategic-plan': '2027–2032 Strategic Plan',
+    'ridership-trends': 'Ridership Trends',
 };
 
 const normalizeHashParts = (value: string): string[] =>

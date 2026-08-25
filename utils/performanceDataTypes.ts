@@ -667,6 +667,7 @@ export interface PerformanceMetadata {
     monthlyStoragePaths?: Record<string, string>;
     routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
     loadProfileMonthlyStoragePaths?: Record<string, string>;
+    ridershipTrendStoragePath?: string;
   }
 
 /** One compact day in the monthly Load Profiles read model. */

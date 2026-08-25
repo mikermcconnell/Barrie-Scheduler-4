@@ -89,6 +89,26 @@ describe('workspace access', () => {
         expect(allowed).toEqual(['analyticsTransitApp']);
     });
 
+    it('supports a Strategic Plan-only workspace override', () => {
+        const allowed = getAllowedWorkspaceFeatures('none', { analyticsStrategicPlan: true });
+
+        expect(allowed).toEqual(['analyticsStrategicPlan']);
+        expect(canAccessWorkspaceFeature('analyticsTransitApp', member({
+            accessLevel: 'none',
+            workspaceOverrides: { analyticsStrategicPlan: true },
+        }))).toBe(false);
+    });
+
+    it('gives planners Ridership Trends access with an independent override', () => {
+        expect(getAllowedWorkspaceFeatures('planner')).toContain('analyticsRidershipTrend');
+        expect(getAllowedWorkspaceFeatures('admin')).toContain('analyticsRidershipTrend');
+        expect(getAllowedWorkspaceFeatures('internal')).toContain('analyticsRidershipTrend');
+        expect(canAccessWorkspaceFeature('analyticsRidershipTrend', member({
+            accessLevel: 'planner',
+            workspaceOverrides: { analyticsRidershipTrend: false },
+        }))).toBe(false);
+    });
+
     it('gives Parking staff only the Parking workspace by default', () => {
         const allowed = getAllowedWorkspaceFeatures('parking');
 

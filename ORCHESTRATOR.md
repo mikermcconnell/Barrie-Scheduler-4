@@ -80,6 +80,8 @@ Parking owns parking-code usage, revenue review, map/location settings, and plat
 
 Planning Data includes the static-GTFS 5-Year Strategic Plan baseline, Transit App analytics, OD analysis, Camp Shuttle Planner, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Fleet Plan, and related tools.
 
+Ridership Trends uses a generated workbook baseline through July 2026 plus a compact daily STREETS boarding projection from August 2026 onward. Keep its versioned Storage pointer synchronized in every automatic and manual performance publisher; detailed performance retention is not the long-range source of truth.
+
 Important boundaries:
 
 - Camp Shuttle Planner is the current Camp and address-based shuttle tool; its stable internal code name remains `Route Planner 2`. `docs/route-planner-2/README.md` routes to its product, workflow, architecture, data, runtime, and test contracts.

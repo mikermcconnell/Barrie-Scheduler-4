@@ -2,11 +2,19 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrategicPlanWorkspace } from '../components/Analytics/StrategicPlanWorkspace';
+import type { TransitAppDataSummary } from '../utils/transit-app/transitAppTypes';
+import type { FleetPlanWorkbook } from '../utils/fleet-plan/types';
 
 const loadProfile = vi.fn();
 
 vi.mock('../utils/strategic-plan/serviceProfileData', () => ({
     loadStrategicPlanServiceProfile: () => loadProfile(),
+}));
+
+vi.mock('../components/MasterScheduleBrowser', () => ({
+    MasterScheduleBrowser: ({ readOnly }: { readOnly?: boolean }) => (
+        <div>Canonical Master Schedule {readOnly ? 'read-only evidence' : 'editable'}</div>
+    ),
 }));
 
 const row = (routeShortName: string, routeName: string, revenueHours: number) => ({
@@ -19,6 +27,72 @@ const row = (routeShortName: string, routeName: string, revenueHours: number) =>
     offPeakFrequencySpan: '8:00 PM–1:00 AM (+1)',
     revenueHours,
 });
+
+const transitAppData: TransitAppDataSummary = {
+    routeMetrics: { daily: [], summary: [] },
+    tripDistribution: { hourly: [], daily: [] },
+    locationDensity: {
+        cells: [],
+        bounds: { minLat: 0, maxLat: 0, minLon: 0, maxLon: 0 },
+        totalPoints: 0,
+    },
+    transferPatterns: [],
+    routeLegs: [],
+    appUsage: [],
+    metadata: {
+        importedAt: '2026-08-25T12:00:00.000Z',
+        importedBy: 'test-user',
+        dateRange: { start: '2026-01-01', end: '2026-07-31' },
+        fileStats: {
+            totalFiles: 1,
+            dateRange: { start: '2026-01-01', end: '2026-07-31' },
+            filesByType: {
+                lines: 0,
+                trips: 0,
+                locations: 0,
+                go_trip_legs: 0,
+                planned_go_trip_legs: 0,
+                tapped_trip_view_legs: 0,
+                users: 1,
+            },
+            rowsParsed: 0,
+            rowsSkipped: 0,
+        },
+    },
+};
+
+const fleetPlanData: FleetPlanWorkbook = {
+    schemaVersion: 1,
+    metadata: {
+        templateVersion: 'test-v1',
+        sourceFileName: 'Fleet Plan 2026.xlsx',
+        importedAt: '2026-08-01T12:00:00.000Z',
+        importedBy: 'planner-a',
+        updatedAt: '2026-08-25T12:00:00.000Z',
+        updatedBy: 'planner-b',
+        currentVersion: 7,
+        storagePath: 'teams/team-a/fleetPlan/v7.json',
+    },
+    sheets: [{
+        key: 'diesel-12m',
+        name: '12m Buses',
+        title: '12m Diesel Buses',
+        rows: [{
+            id: 'bus-2201',
+            unitNumber: '2201',
+            makeModel: 'Nova LFS',
+            year: '2022',
+            timeline: {
+                '2027': '2201',
+                '2028': 'RETIRE',
+                '2029': 'PURCHASE',
+                '2030': '2301',
+                '2031': '2301',
+                '2032': '2301',
+            },
+        }],
+    }],
+};
 
 describe('StrategicPlanWorkspace', () => {
     let container: HTMLDivElement;
@@ -42,7 +116,14 @@ describe('StrategicPlanWorkspace', () => {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
-        await act(async () => root.render(<StrategicPlanWorkspace onBack={onBack} />));
+        await act(async () => root.render(
+            <StrategicPlanWorkspace
+                onBack={onBack}
+                transitAppData={transitAppData}
+                transitAppAvailable
+                fleetPlanData={fleetPlanData}
+            />,
+        ));
     });
 
     afterEach(() => {
@@ -52,7 +133,13 @@ describe('StrategicPlanWorkspace', () => {
 
     it('loads the static-GTFS table and switches service days', async () => {
         await act(async () => { await Promise.resolve(); });
-        expect(container.textContent).toContain('5-Year Strategic Plan');
+        expect(container.textContent).toContain('2027–2032 Strategic Plan');
+        expect(container.textContent).toContain('Strategic Plan workspaces');
+
+        const serviceWorkspace = Array.from(container.querySelectorAll('button'))
+            .find(button => button.textContent?.includes('Existing Service Baseline')) as HTMLButtonElement;
+        act(() => serviceWorkspace.click());
+
         expect(container.textContent).toContain('EXPRESS');
         expect(container.textContent).toContain('Version test-feed');
 
@@ -69,5 +156,50 @@ describe('StrategicPlanWorkspace', () => {
         const back = container.querySelector('[aria-label="Back to Planning Data"]') as HTMLButtonElement;
         act(() => back.click());
         expect(onBack).toHaveBeenCalledOnce();
+    });
+
+    it('shows the complete shared Transit App analysis without import controls', async () => {
+        await act(async () => { await Promise.resolve(); });
+        const transitAppSection = Array.from(container.querySelectorAll('button'))
+            .find(button => button.textContent?.includes('Transit App Evidence')) as HTMLButtonElement;
+
+        act(() => transitAppSection.click());
+
+        expect(container.textContent).toContain('same complete aggregated summary');
+        expect(container.textContent).toContain('Evidence period: 2026-01-01 to 2026-07-31');
+        expect(container.textContent).toContain('Overview');
+        expect(container.textContent).toContain('OD Pair');
+        expect(container.textContent).not.toContain('Re-import Data');
+    });
+
+    it('opens the canonical Master Schedule as a read-only workspace card', async () => {
+        await act(async () => { await Promise.resolve(); });
+        const masterScheduleWorkspace = Array.from(container.querySelectorAll('button'))
+            .find(button => button.textContent?.includes('Master Schedule')) as HTMLButtonElement;
+
+        await act(async () => {
+            masterScheduleWorkspace.click();
+            await Promise.resolve();
+        });
+
+        expect(container.textContent).toContain('Published Master Schedule Evidence');
+        expect(container.textContent).toContain('Canonical Master Schedule read-only evidence');
+        expect(container.textContent).toContain('creates no copied schedule');
+    });
+
+    it('shows the canonical Fleet Plan as read-only 2027–2032 evidence', async () => {
+        await act(async () => { await Promise.resolve(); });
+        const fleetPlanWorkspace = Array.from(container.querySelectorAll('button'))
+            .find(button => button.textContent?.includes('Fleet Plan')) as HTMLButtonElement;
+
+        act(() => fleetPlanWorkspace.click());
+
+        expect(container.textContent).toContain('Fleet Plan Evidence');
+        expect(container.textContent).toContain('same canonical shared workbook');
+        expect(container.textContent).toContain('Fleet Plan 2026.xlsx');
+        expect(container.textContent).toContain('2201');
+        expect(container.textContent).toContain('RETIRE');
+        expect(container.textContent).not.toContain('Save shared plan');
+        expect(container.textContent).not.toContain('Replace workbook');
     });
 });

@@ -42,4 +42,17 @@ describe('performance metadata read failures', () => {
 
         await expect(getPerformanceMetadata('team-1')).resolves.toBeNull();
     });
+
+    it('returns the active Ridership Trends projection pointer', async () => {
+        firebaseMocks.getDoc.mockResolvedValueOnce({
+            exists: () => true,
+            data: () => ({
+                ridershipTrendStoragePath: 'teams/team-1/performanceViews/ridership-trends/123.json',
+            }),
+        });
+
+        await expect(getPerformanceMetadata('team-1')).resolves.toMatchObject({
+            ridershipTrendStoragePath: 'teams/team-1/performanceViews/ridership-trends/123.json',
+        });
+    });
 });

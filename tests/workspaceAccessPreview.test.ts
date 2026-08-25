@@ -79,8 +79,9 @@ describe('workspace access preview', () => {
         });
 
         expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('Fare Programs');
-        expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('5-Year Strategic Plan');
+        expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('2027–2032 Strategic Plan');
+        expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('Ridership Trends');
         expect(partnerPreview.analyticsCards.map(card => card.label)).not.toContain('Fare Programs');
-        expect(partnerPreview.analyticsCards.map(card => card.label)).not.toContain('5-Year Strategic Plan');
+        expect(partnerPreview.analyticsCards.map(card => card.label)).not.toContain('2027–2032 Strategic Plan');
     });
 });

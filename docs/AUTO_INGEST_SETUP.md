@@ -239,6 +239,7 @@ The next morning after the daily email arrives:
 6. **Merge** — loads existing data, adds the new day (or replaces if same date), saves back
 7. **Firebase Storage** stores monthly performance JSON chunks plus lightweight overview/report snapshots, **Firestore** stores the metadata and chunk pointers
 8. **Performance Dashboard** shows the updated data next time you open it
+9. **Ridership Trends** replaces the matching service date in its compact long-range boarding projection, so annual Planning Data history survives detailed-data retention
 
 Data accumulates over time — each day appends to your history. The app stores performance history in monthly chunks so the daily import does not have to rebuild one huge all-history JSON file.
 

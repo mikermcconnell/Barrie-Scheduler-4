@@ -116,6 +116,7 @@ service cloud.firestore {
       // Master Schedules
       match /masterSchedules/{scheduleId} {
         allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                       canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
                        canReadSharedMasterSchedules(teamId) ||
                        canSupportReadTeamData(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
@@ -123,6 +124,7 @@ service cloud.firestore {
         // Version History
         match /versions/{versionId} {
           allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                         canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
                          canReadSharedMasterSchedules(teamId) ||
                          canSupportReadTeamData(teamId);
           allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
@@ -205,7 +207,9 @@ service cloud.firestore {
 
       // Transit App Data
       match /transitAppData/{docId} {
-        allow read: if canAccessWorkspace(teamId, 'analyticsTransitApp') || canSupportReadTeamData(teamId);
+        allow read: if canAccessWorkspace(teamId, 'analyticsTransitApp') ||
+                       canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                       canSupportReadTeamData(teamId);
         allow write: if canAccessWorkspace(teamId, 'analyticsTransitApp') || canSupportWriteTeamData(teamId);
       }
 
@@ -274,7 +278,9 @@ service cloud.firestore {
 
       // Fleet Plan data
       match /fleetPlan/{docId} {
-        allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan') || canSupportReadTeamData(teamId);
+        allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan') ||
+                       canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                       canSupportReadTeamData(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
 
         // Fleet Plan version history
@@ -406,7 +412,8 @@ service cloud.firestore {
       return hasUserTeam() &&
              userTeamId() != sourceTeamId &&
              isTeamMember(userTeamId()) &&
-             canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') &&
+             (canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') ||
+              canAccessWorkspace(userTeamId(), 'analyticsStrategicPlan')) &&
              configuredMasterScheduleSource(userTeamId()) == sourceTeamId;
     }
 
@@ -621,6 +628,8 @@ service cloud.firestore {
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
                 'analyticsFarePrograms',
+                'analyticsStrategicPlan',
+                'analyticsRidershipTrend',
                 'operationsLoadProfiles',
                 'operationsOperatorDwell'
               ])) ||
@@ -634,7 +643,9 @@ service cloud.firestore {
                 'analyticsFleetPlan',
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
-                'analyticsFarePrograms'
+                'analyticsFarePrograms',
+                'analyticsStrategicPlan',
+                'analyticsRidershipTrend'
               ])) ||
              (accessLevel == 'production' &&
               (feature in ['workspaceFixedRoute', 'workspaceOperations'])) ||

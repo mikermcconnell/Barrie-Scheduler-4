@@ -49,8 +49,10 @@ interface CalendarRecord {
 interface TripTiming {
     firstSequence: number;
     firstDeparture: number;
+    firstStopId: string;
     lastSequence: number;
     lastArrival: number;
+    lastStopId: string;
 }
 
 interface FrequencyRun {
@@ -58,6 +60,12 @@ interface FrequencyRun {
     start: number;
     end: number;
     duration: number;
+}
+
+interface HeadwayInterval {
+    start: number;
+    end: number;
+    headway: number;
 }
 
 interface RouteFrequencySummary {
@@ -70,6 +78,11 @@ interface RouteFrequencySummary {
 interface RouteFamilyDefinition {
     shortName: string;
     memberShortNames: string[];
+}
+
+interface TimedTrip {
+    trip: TripRecord;
+    timing: TripTiming;
 }
 
 const DAY_TYPES: StrategicPlanDayType[] = ['Weekday', 'Saturday', 'Sunday'];
@@ -163,68 +176,118 @@ function formatRoundedSpan(start: number, end: number): string {
     return `${formatClock(roundToNearest(start, 15))}–${formatClock(roundToNearest(end, 15))}`;
 }
 
-function buildStableRuns(departures: number[]): FrequencyRun[] {
+const MIN_INTERVALS_PER_BAND = 3;
+const MAX_BANDS_PER_SEQUENCE = 3;
+const MIN_BAND_DIFFERENCE_MINUTES = 10;
+const BOUNDARY_OUTLIER_DIFFERENCE_MINUTES = 15;
+
+function meanHeadway(intervals: HeadwayInterval[]): number {
+    return intervals.reduce((sum, interval) => sum + interval.headway, 0) / intervals.length;
+}
+
+function squaredError(intervals: HeadwayInterval[]): number {
+    const mean = meanHeadway(intervals);
+    return intervals.reduce((sum, interval) => sum + ((interval.headway - mean) ** 2), 0);
+}
+
+function trimBoundaryOutliers(intervals: HeadwayInterval[]): HeadwayInterval[] {
+    const trimmed = [...intervals];
+    while (trimmed.length >= MIN_INTERVALS_PER_BAND + 1) {
+        const comparison = trimmed.slice(1, MIN_INTERVALS_PER_BAND + 1);
+        const comparisonRange = Math.max(...comparison.map(interval => interval.headway))
+            - Math.min(...comparison.map(interval => interval.headway));
+        if (
+            comparisonRange > 5
+            || Math.abs(trimmed[0].headway - meanHeadway(comparison)) < BOUNDARY_OUTLIER_DIFFERENCE_MINUTES
+        ) break;
+        trimmed.shift();
+    }
+    while (trimmed.length >= MIN_INTERVALS_PER_BAND + 1) {
+        const comparison = trimmed.slice(-(MIN_INTERVALS_PER_BAND + 1), -1);
+        const comparisonRange = Math.max(...comparison.map(interval => interval.headway))
+            - Math.min(...comparison.map(interval => interval.headway));
+        if (
+            comparisonRange > 5
+            || Math.abs(trimmed[trimmed.length - 1].headway - meanHeadway(comparison)) < BOUNDARY_OUTLIER_DIFFERENCE_MINUTES
+        ) break;
+        trimmed.pop();
+    }
+    return trimmed;
+}
+
+function segmentHeadwaySequence(intervals: HeadwayInterval[]): HeadwayInterval[][] {
+    const segments: HeadwayInterval[][] = [intervals];
+
+    while (segments.length < MAX_BANDS_PER_SEQUENCE) {
+        let best: { segmentIndex: number; splitIndex: number; gain: number } | null = null;
+
+        segments.forEach((segment, segmentIndex) => {
+            if (segment.length < MIN_INTERVALS_PER_BAND * 2) return;
+            const unsplitError = squaredError(segment);
+
+            for (
+                let splitIndex = MIN_INTERVALS_PER_BAND;
+                splitIndex <= segment.length - MIN_INTERVALS_PER_BAND;
+                splitIndex++
+            ) {
+                const left = segment.slice(0, splitIndex);
+                const right = segment.slice(splitIndex);
+                if (Math.abs(meanHeadway(left) - meanHeadway(right)) < MIN_BAND_DIFFERENCE_MINUTES) continue;
+                const gain = unsplitError - squaredError(left) - squaredError(right);
+                if (gain > 0 && (!best || gain > best.gain)) {
+                    best = { segmentIndex, splitIndex, gain };
+                }
+            }
+        });
+
+        if (!best) break;
+        const selected = segments[best.segmentIndex];
+        segments.splice(
+            best.segmentIndex,
+            1,
+            selected.slice(0, best.splitIndex),
+            selected.slice(best.splitIndex),
+        );
+    }
+
+    return segments;
+}
+
+function buildAveragedBands(departures: number[]): FrequencyRun[] {
     const ordered = [...new Set(departures)].sort((a, b) => a - b);
     if (ordered.length < 2) return [];
 
-    const intervals = ordered.slice(1).map((departure, index) => ({
-        start: ordered[index],
-        end: departure,
-        headway: departure - ordered[index],
-    })).filter(interval => interval.headway >= 5 && interval.headway <= 120);
-
-    if (intervals.length === 0) return [];
-
-    const runs: FrequencyRun[] = [];
-    let runStart = 0;
-
-    const flushRun = (runEnd: number) => {
-        const slice = intervals.slice(runStart, runEnd + 1);
-        if (slice.length < 2) return;
-        const headway = roundToNearest(slice.reduce((sum, interval) => sum + interval.headway, 0) / slice.length, 5);
-        runs.push({
-            headway,
-            start: slice[0].start,
-            end: slice[slice.length - 1].end,
-            duration: slice.reduce((sum, interval) => sum + interval.headway, 0),
-        });
-    };
-
-    for (let index = 1; index <= intervals.length; index++) {
-        const previousRounded = roundToNearest(intervals[index - 1]?.headway || 0, 5);
-        const currentRounded = index < intervals.length ? roundToNearest(intervals[index].headway, 5) : null;
-        if (currentRounded !== previousRounded) {
-            flushRun(index - 1);
-            runStart = index;
+    const sequences: HeadwayInterval[][] = [];
+    let currentSequence: HeadwayInterval[] = [];
+    ordered.slice(1).forEach((departure, index) => {
+        const interval = {
+            start: ordered[index],
+            end: departure,
+            headway: departure - ordered[index],
+        };
+        if (interval.headway < 5 || interval.headway > 120) {
+            if (currentSequence.length > 0) sequences.push(currentSequence);
+            currentSequence = [];
+            return;
         }
-    }
-
-    if (runs.length > 0) return runs;
-
-    const byHeadway = new Map<number, { count: number; duration: number }>();
-    intervals.forEach(interval => {
-        const rounded = roundToNearest(interval.headway, 5);
-        const existing = byHeadway.get(rounded) || { count: 0, duration: 0 };
-        existing.count++;
-        existing.duration += interval.headway;
-        byHeadway.set(rounded, existing);
+        currentSequence.push(interval);
     });
-    const fallbackHeadway = [...byHeadway.entries()]
-        .sort((a, b) => b[1].count - a[1].count || b[1].duration - a[1].duration || a[0] - b[0])[0]?.[0];
-    if (fallbackHeadway === undefined) return [];
+    if (currentSequence.length > 0) sequences.push(currentSequence);
 
-    return intervals
-        .filter(interval => roundToNearest(interval.headway, 5) === fallbackHeadway)
-        .map(interval => ({
-            headway: fallbackHeadway,
-            start: interval.start,
-            end: interval.end,
-            duration: interval.headway,
+    return sequences.flatMap(sequence => {
+        const trimmed = trimBoundaryOutliers(sequence);
+        if (trimmed.length < 2) return [];
+        return segmentHeadwaySequence(trimmed).map(segment => ({
+            headway: roundToNearest(meanHeadway(segment), 5),
+            start: segment[0].start,
+            end: segment[segment.length - 1].end,
+            duration: segment[segment.length - 1].end - segment[0].start,
         }));
+    });
 }
 
 function summarizeRouteFrequency(departureGroups: number[][]): RouteFrequencySummary {
-    const groupRuns = departureGroups.map(buildStableRuns);
+    const groupRuns = departureGroups.map(buildAveragedBands);
     const boundaries = [...new Set(groupRuns.flatMap(runs => runs.flatMap(run => [run.start, run.end])))]
         .sort((a, b) => a - b);
     const routeRuns: FrequencyRun[] = [];
@@ -239,10 +302,14 @@ function summarizeRouteFrequency(departureGroups: number[][]): RouteFrequencySum
             .filter((headway): headway is number => headway !== undefined);
         if (activeHeadways.length === 0) continue;
 
-        const headway = roundToNearest(
-            activeHeadways.reduce((sum, value) => sum + value, 0) / activeHeadways.length,
-            5,
-        );
+        // A route may have multiple simultaneous directions or partial
+        // patterns. Use the prevailing scheduled headway rather than an
+        // arithmetic mean, which can invent values such as 45 minutes from
+        // real 30- and 60-minute patterns.
+        const headwayCounts = new Map<number, number>();
+        activeHeadways.forEach(headway => headwayCounts.set(headway, (headwayCounts.get(headway) || 0) + 1));
+        const headway = [...headwayCounts.entries()]
+            .sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
         const previous = routeRuns[routeRuns.length - 1];
         if (previous && previous.headway === headway && previous.end === start) {
             previous.end = end;
@@ -264,34 +331,142 @@ function summarizeRouteFrequency(departureGroups: number[][]): RouteFrequencySum
         return { peakHeadway, peakRuns, offPeakHeadway: null, offPeakRuns: [] };
     }
 
-    const durationByHeadway = new Map<number, number>();
-    slowerRuns.forEach(run => durationByHeadway.set(
-        run.headway,
-        (durationByHeadway.get(run.headway) || 0) + run.duration,
-    ));
-    const offPeakHeadway = [...durationByHeadway.entries()]
-        .sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
+    const totalSlowerDuration = slowerRuns.reduce((sum, run) => sum + run.duration, 0);
+    const offPeakHeadway = roundToNearest(
+        slowerRuns.reduce((sum, run) => sum + (run.headway * run.duration), 0) / totalSlowerDuration,
+        5,
+    );
 
     return {
         peakHeadway,
         peakRuns,
         offPeakHeadway,
-        offPeakRuns: slowerRuns.filter(run => run.headway === offPeakHeadway),
+        offPeakRuns: slowerRuns,
     };
 }
 
-function mergeAndFormatRuns(runs: FrequencyRun[]): string {
+/**
+ * Apply the small number of service-plan conventions that cannot be inferred
+ * from sustained origin headways alone.
+ *
+ * Route 2 is communicated as 30/60-minute service even though its interlaced
+ * 2A/2B departure gaps average to an artificial 45/50-minute value. Routes
+ * 10/11 have short trailing 60-minute regimes that the sustained-band filter
+ * would otherwise omit. Routes 100/101 use their 41-minute scheduled loop
+ * runtime as the simplified off-peak planning value. On Monday-Saturday that
+ * period is only the final loop; Sunday retains the sustained off-peak windows
+ * found by the headway analysis. Uniform Sunday service at 60-minute or longer
+ * headways is classified as off-peak rather than peak.
+ */
+function applyStrategicFrequencyConventions(
+    routeShortName: string,
+    dayType: StrategicPlanDayType,
+    summary: RouteFrequencySummary,
+    timedTrips: TimedTrip[],
+): RouteFrequencySummary {
+    if (routeShortName === '2') {
+        if (dayType === 'Sunday') {
+            const allDayRuns = [...summary.peakRuns, ...summary.offPeakRuns];
+            return {
+                peakHeadway: null,
+                peakRuns: [],
+                offPeakHeadway: 60,
+                offPeakRuns: allDayRuns.map(run => ({ ...run, headway: 60 })),
+            };
+        }
+        if (summary.offPeakRuns.length > 0) {
+            return {
+                ...summary,
+                offPeakHeadway: 60,
+                offPeakRuns: summary.offPeakRuns.map(run => ({ ...run, headway: 60 })),
+            };
+        }
+        return summary;
+    }
+
+    if (
+        dayType === 'Sunday'
+        && routeShortName !== '100'
+        && routeShortName !== '101'
+        && summary.offPeakHeadway === null
+        && summary.peakHeadway !== null
+        && summary.peakHeadway >= 60
+    ) {
+        return {
+            peakHeadway: null,
+            peakRuns: [],
+            offPeakHeadway: summary.peakHeadway,
+            offPeakRuns: summary.peakRuns,
+        };
+    }
+
+    if ((routeShortName === '10' || routeShortName === '11') && dayType !== 'Sunday') {
+        const departures = [...new Set(timedTrips.map(entry => entry.timing.firstDeparture))]
+            .sort((a, b) => a - b);
+        let firstOffPeakIndex = departures.length - 1;
+        while (
+            firstOffPeakIndex > 0
+            && Math.abs(departures[firstOffPeakIndex] - departures[firstOffPeakIndex - 1] - 60) <= 5
+        ) {
+            firstOffPeakIndex--;
+        }
+        if (firstOffPeakIndex < departures.length - 1) {
+            const offPeakRun: FrequencyRun = {
+                headway: 60,
+                start: departures[firstOffPeakIndex],
+                end: departures[departures.length - 1],
+                duration: departures[departures.length - 1] - departures[firstOffPeakIndex],
+            };
+            return {
+                ...summary,
+                offPeakHeadway: 60,
+                offPeakRuns: [offPeakRun],
+            };
+        }
+        return summary;
+    }
+
+    if (routeShortName !== '100' && routeShortName !== '101') return summary;
+
+    if (dayType === 'Sunday') {
+        return summary.offPeakRuns.length > 0
+            ? { ...summary, offPeakHeadway: 41 }
+            : summary;
+    }
+
+    const finalTrip = timedTrips.reduce<TimedTrip | null>((latest, candidate) => (
+        !latest || candidate.timing.firstDeparture > latest.timing.firstDeparture ? candidate : latest
+    ), null);
+    if (!finalTrip) return summary;
+
+    const finalRun: FrequencyRun = {
+        headway: 41,
+        start: finalTrip.timing.firstDeparture,
+        end: finalTrip.timing.lastArrival,
+        duration: finalTrip.timing.lastArrival - finalTrip.timing.firstDeparture,
+    };
+    return {
+        ...summary,
+        offPeakHeadway: 41,
+        offPeakRuns: [finalRun],
+    };
+}
+
+function formatFrequencyRuns(runs: FrequencyRun[]): string {
     if (runs.length === 0) return 'N/A';
     const rounded = runs
         .map(run => ({ start: roundToNearest(run.start, 15), end: roundToNearest(run.end, 15) }))
         .sort((a, b) => a.start - b.start || a.end - b.end);
-    const firstStart = rounded[0].start;
-    const lastEnd = Math.max(...rounded.map(span => span.end));
-
-    // This is a planning-level summary rather than a published timetable.
-    // Intermittent appearances of the selected regime are intentionally shown
-    // as one approximate first-to-last window so the table remains scannable.
-    return `${formatClock(firstStart)}–${formatClock(lastEnd)}`;
+    const merged: Array<{ start: number; end: number }> = [];
+    rounded.forEach(span => {
+        const previous = merged[merged.length - 1];
+        if (previous && span.start <= previous.end + 15) {
+            previous.end = Math.max(previous.end, span.end);
+        } else {
+            merged.push({ ...span });
+        }
+    });
+    return merged.map(span => formatRoundedSpan(span.start, span.end)).join('; ');
 }
 
 function parseSource(source: StrategicPlanGtfsSource) {
@@ -333,16 +508,20 @@ function parseSource(source: StrategicPlanGtfsSource) {
         const current = timings.get(row.trip_id) || {
             firstSequence: Number.POSITIVE_INFINITY,
             firstDeparture: departure,
+            firstStopId: row.stop_id,
             lastSequence: Number.NEGATIVE_INFINITY,
             lastArrival: arrival,
+            lastStopId: row.stop_id,
         };
         if (sequence < current.firstSequence) {
             current.firstSequence = sequence;
             current.firstDeparture = departure;
+            current.firstStopId = row.stop_id;
         }
         if (sequence > current.lastSequence) {
             current.lastSequence = sequence;
             current.lastArrival = arrival;
+            current.lastStopId = row.stop_id;
         }
         timings.set(row.trip_id, current);
     });
@@ -364,8 +543,6 @@ function parseSource(source: StrategicPlanGtfsSource) {
 export function buildStrategicPlanServiceProfile(source: StrategicPlanGtfsSource): StrategicPlanServiceProfile {
     const parsed = parseSource(source);
     const routeById = new Map(parsed.routes.map(route => [route.routeId, route]));
-    const familyByMemberShortName = new Map<string, RouteFamilyDefinition>();
-    ROUTE_FAMILIES.forEach(family => family.memberShortNames.forEach(member => familyByMemberShortName.set(member, family)));
 
     const rowsByDayType = {} as Record<StrategicPlanDayType, StrategicPlanServiceProfileRow[]>;
 
@@ -380,7 +557,7 @@ export function buildStrategicPlanServiceProfile(source: StrategicPlanGtfsSource
             const familyTrips = parsed.trips.filter(trip => activeServices.has(trip.serviceId) && memberRouteIds.has(trip.routeId));
             const timedTrips = familyTrips
                 .map(trip => ({ trip, timing: parsed.timings.get(trip.tripId) }))
-                .filter((entry): entry is { trip: TripRecord; timing: TripTiming } => Boolean(entry.timing));
+                .filter((entry): entry is TimedTrip => Boolean(entry.timing));
 
             const longNames = family.memberShortNames
                 .map(member => memberRoutes.find(route => route.shortName === member)?.longName)
@@ -411,24 +588,30 @@ export function buildStrategicPlanServiceProfile(source: StrategicPlanGtfsSource
                 const route = routeById.get(trip.routeId);
                 if (!route) return;
                 const directionKey = trip.directionId || trip.headsign || 'service';
+                const patternKey = `${timing.firstStopId}->${timing.lastStopId}`;
                 const frequencyKey = family.memberShortNames.length > 1
-                    ? `${route.shortName}:${directionKey}`
-                    : `${family.shortName}:${directionKey}`;
+                    ? `${route.shortName}:${directionKey}:${patternKey}`
+                    : `${family.shortName}:${directionKey}:${patternKey}`;
                 const departures = departuresByGroup.get(frequencyKey) || [];
                 departures.push(timing.firstDeparture);
                 departuresByGroup.set(frequencyKey, departures);
             });
 
-            const frequencySummary = summarizeRouteFrequency([...departuresByGroup.values()]);
+            const frequencySummary = applyStrategicFrequencyConventions(
+                family.shortName,
+                dayType,
+                summarizeRouteFrequency([...departuresByGroup.values()]),
+                timedTrips,
+            );
 
             return {
                 routeName,
                 routeShortName: family.shortName,
                 serviceSpan: formatRoundedSpan(firstDeparture, lastArrival),
                 peakFrequencyMinutes: frequencySummary.peakHeadway,
-                peakFrequencySpan: mergeAndFormatRuns(frequencySummary.peakRuns),
+                peakFrequencySpan: formatFrequencyRuns(frequencySummary.peakRuns),
                 offPeakFrequencyMinutes: frequencySummary.offPeakHeadway,
-                offPeakFrequencySpan: mergeAndFormatRuns(frequencySummary.offPeakRuns),
+                offPeakFrequencySpan: formatFrequencyRuns(frequencySummary.offPeakRuns),
                 revenueHours: Math.round((revenueMinutes / 60) * 10) / 10,
             };
         });

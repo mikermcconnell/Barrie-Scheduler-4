@@ -667,4 +667,5 @@ export interface PerformanceMetadata {
   monthlyStoragePaths?: Record<string, string>;
   routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
   loadProfileMonthlyStoragePaths?: Record<string, string>;
+  ridershipTrendStoragePath?: string;
 }

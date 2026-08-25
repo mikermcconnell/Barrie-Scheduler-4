@@ -59,6 +59,7 @@ Load feature docs only when the task directly touches that feature.
 
 ### Planning-data workspaces
 
+- Ridership Trends: `docs/RIDERSHIP_TRENDS.md`; add `docs/OPERATIONS_DASHBOARD_METRICS.md` and `docs/SCHEMA.md` when changing its STREETS projection or access boundary
 - Camp Shuttle Planner (`Route Planner 2` internally): start with `docs/route-planner-2/README.md`, then load only the numbered docs selected by its task router
 - Route Concept Planner: `docs/route-concept-planner/README.md`, then its product and technical contracts
 - Shuttle Planner: use `docs/SHUTTLE_PLANNER_PRD.md` for product/domain work; add `docs/SHUTTLE_PLANNER_UI_SPEC.md` only for UI, interaction, or layout work
@@ -67,7 +68,7 @@ Load feature docs only when the task directly touches that feature.
 - Residential Growth: `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
 - Transit App data validation: `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md`
 - Corridor Performance: `docs/CORRIDOR_PERFORMANCE.md`; add `docs/rules/LOCKED_LOGIC.md` when changing runtime semantics
-- 5-Year Strategic Plan: `docs/STRATEGIC_PLAN.md`; add `docs/rules/LOCKED_LOGIC.md` only if changing shared schedule semantics rather than its read-only GTFS summary
+- 2027–2032 Strategic Plan: `docs/STRATEGIC_PLAN.md`; add `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md` when changing its shared Transit App evidence, and add `docs/SCHEMA.md` plus `docs/rules/LOCKED_LOGIC.md` when changing its read-only Master Schedule access or interpreting schedule semantics
 
 ### Important route-planning boundaries
 

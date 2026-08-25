@@ -6,16 +6,16 @@
  */
 
 import React, { Suspense, useState, useEffect, useCallback } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Ticket, CalendarRange } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Ticket, CalendarRange, ChartNoAxesCombined } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
 import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, setActiveODMatrixImport } from '../../utils/od-matrix/odMatrixService';
 import { getFleetPlanMetadata, getFleetPlanWorkbook, isFleetPlanPermissionError } from '../../utils/fleet-plan/fleetPlanService';
 import { getResidentialGrowthDataset, getResidentialGrowthMetadata } from '../../utils/residential-growth/service';
 import { TeamManagement } from '../TeamManagement';
 import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
+import { useTransitAppDataQuery, useTransitAppMetadataQuery } from '../../hooks/useTransitAppData';
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import type { FeatureKey } from '../../utils/features';
 import { isFeatureUnderConstruction } from '../../utils/features';
@@ -23,7 +23,6 @@ import {
     buildAnalyticsWorkspaceHash,
     type AnalyticsWorkspaceView,
 } from '../../utils/workspaces/analyticsWorkspaceRouting';
-import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
 import type { ResidentialGrowthMonthlyDataset } from '../../utils/residential-growth/types';
@@ -96,6 +95,10 @@ const FareProgramsWorkspace = lazyWithRetry(
 const StrategicPlanWorkspace = lazyWithRetry(
     () => import('./StrategicPlanWorkspace').then(module => ({ default: module.StrategicPlanWorkspace })),
     'analytics-strategic-plan-workspace'
+);
+const RidershipTrendsWorkspace = lazyWithRetry(
+    () => import('./RidershipTrendsWorkspace').then(module => ({ default: module.RidershipTrendsWorkspace })),
+    'analytics-ridership-trends-workspace'
 );
 
 interface AnalyticsCardProps {
@@ -193,6 +196,7 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'shuttle-planner': 'analyticsShuttlePlanner',
     'fare-programs': 'analyticsFarePrograms',
     'strategic-plan': 'analyticsStrategicPlan',
+    'ridership-trends': 'analyticsRidershipTrend',
 };
 
 const AnalyticsFeatureNotice: React.FC<{ feature: Parameters<typeof isFeatureUnderConstruction>[0] }> = ({ feature }) => {
@@ -222,22 +226,36 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     const { user } = useAuth();
     const toast = useToast();
     const [view, setView] = useState<AnalyticsView>('dashboard');
-    const [transitData, setTransitData] = useState<TransitAppDataSummary | null>(null);
     const [odData, setOdData] = useState<ODMatrixDataSummary | null>(null);
     const [odGeocodeCache, setOdGeocodeCache] = useState<GeocodeCache | null>(null);
     const [fleetPlanData, setFleetPlanData] = useState<FleetPlanWorkbook | null>(null);
+    const [fleetPlanEvidenceLoading, setFleetPlanEvidenceLoading] = useState(false);
+    const [fleetPlanEvidenceError, setFleetPlanEvidenceError] = useState<string | null>(null);
     const [residentialGrowthData, setResidentialGrowthData] = useState<ResidentialGrowthMonthlyDataset | null>(null);
     const [loading, setLoading] = useState(true);
-    const [hasExistingData, setHasExistingData] = useState(false);
     const [hasODData, setHasODData] = useState(false);
     const [hasFleetPlanData, setHasFleetPlanData] = useState(false);
     const [hasResidentialGrowthData, setHasResidentialGrowthData] = useState(false);
     const transitAppDataTeamId = team?.dataSourceTeamIds?.transitApp || team?.id;
     const performanceDataTeamId = team?.dataSourceTeamIds?.performance || team?.id;
     const usesSharedTransitAppData = !!team?.dataSourceTeamIds?.transitApp && team.dataSourceTeamIds.transitApp !== team.id;
+    const { canAccess, loading: accessLoading } = useWorkspaceAccess();
+    const canReadTransitAppEvidence = canAccess('analyticsTransitApp') || canAccess('analyticsStrategicPlan');
+    const transitAppMetadataQuery = useTransitAppMetadataQuery(
+        transitAppDataTeamId,
+        team?.id,
+        !accessLoading && canReadTransitAppEvidence,
+    );
+    const transitAppDataQuery = useTransitAppDataQuery(
+        transitAppDataTeamId,
+        team?.id,
+        canReadTransitAppEvidence && (view === 'transit-data' || view === 'strategic-plan'),
+        transitAppMetadataQuery.data,
+    );
+    const hasExistingData = !!transitAppMetadataQuery.data;
+    const transitData = transitAppDataQuery.data ?? null;
     const performanceMetadataQuery = usePerformanceMetadataQuery(performanceDataTeamId, team?.id);
     const hasPerformanceData = !!performanceMetadataQuery.data;
-    const { canAccess, loading: accessLoading } = useWorkspaceAccess();
     const initialViewHandledRef = React.useRef(false);
 
     const canAccessAnalyticsView = useCallback((nextView: AnalyticsView): boolean => {
@@ -251,6 +269,32 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         }
     }, [view, canAccessAnalyticsView]);
 
+    useEffect(() => {
+        if (view !== 'strategic-plan' || !team?.id || accessLoading || !canAccess('analyticsStrategicPlan')) return;
+
+        let active = true;
+        setFleetPlanEvidenceLoading(true);
+        setFleetPlanEvidenceError(null);
+
+        getFleetPlanWorkbook(team.id)
+            .then(workbook => {
+                if (!active) return;
+                setFleetPlanData(workbook);
+                setHasFleetPlanData(!!workbook);
+            })
+            .catch(error => {
+                if (!active) return;
+                console.error('Error loading Fleet Plan evidence:', error);
+                setFleetPlanData(null);
+                setFleetPlanEvidenceError(error instanceof Error ? error.message : 'Failed to load the canonical Fleet Plan.');
+            })
+            .finally(() => {
+                if (active) setFleetPlanEvidenceLoading(false);
+            });
+
+        return () => { active = false; };
+    }, [accessLoading, canAccess, team?.id, view]);
+
     // Check for existing data on mount
     useEffect(() => {
         if (!team?.id) {
@@ -259,17 +303,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         }
         (async () => {
             try {
-                const canReadTransitApp = canAccess('analyticsTransitApp');
                 const canReadODMatrix = canAccess('analyticsOdMatrix');
                 const canReadFleetPlan = canAccess('analyticsFleetPlan');
                 const canReadResidentialGrowth = canAccess('analyticsResidentialGrowth');
-                const [transitMeta, odMeta, fleetPlanMeta, residentialGrowthMeta] = await Promise.all([
-                    canReadTransitApp && transitAppDataTeamId ? getTransitAppMetadata(transitAppDataTeamId, team.id) : Promise.resolve(null),
+                const [odMeta, fleetPlanMeta, residentialGrowthMeta] = await Promise.all([
                     canReadODMatrix ? getODMatrixMetadata(team.id) : Promise.resolve(null),
                     canReadFleetPlan ? getFleetPlanMetadata(team.id) : Promise.resolve(null),
                     canReadResidentialGrowth ? getResidentialGrowthMetadata(team.id) : Promise.resolve(null),
                 ]);
-                setHasExistingData(!!transitMeta);
                 setHasODData(!!odMeta);
                 setHasFleetPlanData(!!fleetPlanMeta);
                 setHasResidentialGrowthData(!!residentialGrowthMeta);
@@ -279,30 +320,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 setLoading(false);
             }
         })();
-    }, [team?.id, transitAppDataTeamId, canAccess]);
+    }, [team?.id, canAccess]);
 
     // Handle clicking the Transit App Data card
-    const handleTransitAppClick = async () => {
+    const handleTransitAppClick = () => {
         if (!team?.id || !transitAppDataTeamId) return;
 
         if (hasExistingData) {
-            // Load full data and show dashboard
-            setLoading(true);
-            try {
-                const data = await getTransitAppData(transitAppDataTeamId, team.id);
-                if (data) {
-                    setTransitData(data);
-                    setView('transit-data');
-                } else {
-                    // Data disappeared — show import
-                    setHasExistingData(false);
-                    setView(usesSharedTransitAppData ? 'dashboard' : 'import');
-                }
-            } catch (error) {
-                console.error('Error loading transit app data:', error);
-            } finally {
-                setLoading(false);
-            }
+            setView('transit-data');
         } else if (!usesSharedTransitAppData) {
             setView('import');
         }
@@ -313,10 +338,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         if (!team?.id || !transitAppDataTeamId) return;
         setLoading(true);
         try {
-            const data = await getTransitAppData(transitAppDataTeamId, team.id);
-            if (data) {
-                setTransitData(data);
-                setHasExistingData(true);
+            const refreshedMetadata = await transitAppMetadataQuery.refetch();
+            if (refreshedMetadata.data) {
                 setView('transit-data');
             }
         } catch (error) {
@@ -441,7 +464,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     };
 
     useEffect(() => {
-        if (initialViewHandledRef.current || loading || accessLoading) return;
+        if (initialViewHandledRef.current || loading || accessLoading || transitAppMetadataQuery.isLoading) return;
         initialViewHandledRef.current = true;
 
         if (!canAccessAnalyticsView(initialView)) {
@@ -460,16 +483,16 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         }
 
         setView(initialView);
-    }, [accessLoading, canAccessAnalyticsView, handleFleetPlanClick, handleTransitAppClick, initialView, loading]);
+    }, [accessLoading, canAccessAnalyticsView, handleFleetPlanClick, handleTransitAppClick, initialView, loading, transitAppMetadataQuery.isLoading]);
 
     useEffect(() => {
-        if (!routePrefix || loading || accessLoading || !initialViewHandledRef.current) return;
+        if (!routePrefix || loading || accessLoading || transitAppMetadataQuery.isLoading || !initialViewHandledRef.current) return;
 
         const nextHash = buildAnalyticsWorkspaceHash(routePrefix, view);
         if (window.location.hash !== nextHash) {
             window.location.hash = nextHash;
         }
-    }, [accessLoading, loading, routePrefix, view]);
+    }, [accessLoading, loading, routePrefix, transitAppMetadataQuery.isLoading, view]);
 
     // No team guard: show direct team setup instead of a dead-end message.
     if (!team) {
@@ -487,7 +510,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     }
 
     // Loading state
-    if (loading || accessLoading) {
+    if (loading || accessLoading || transitAppMetadataQuery.isLoading) {
         return (
             <div className="h-full flex items-center justify-center">
                 <Loader2 className="text-cyan-500 animate-spin" size={32} />
@@ -512,7 +535,25 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     }
 
     // Transit data workspace view
-    if (view === 'transit-data' && transitData) {
+    if (view === 'transit-data') {
+        if (transitAppDataQuery.isLoading || transitAppDataQuery.isFetching) {
+            return <AnalyticsPanelLoading label="Loading Transit App workspace..." />;
+        }
+
+        if (!transitData) {
+            return (
+                <div className="h-full overflow-auto custom-scrollbar p-6">
+                    <div className="mx-auto max-w-3xl rounded-xl border border-amber-200 bg-amber-50 p-5 text-amber-900">
+                        <h2 className="font-bold">Transit App data unavailable</h2>
+                        <p className="mt-1 text-sm">The current data source does not have a readable aggregated summary.</p>
+                        <button type="button" className="mt-4 text-sm font-bold underline" onClick={() => setView('dashboard')}>
+                            Back to Planning Data
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
@@ -791,8 +832,31 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         return (
             <div className="h-full overflow-auto custom-scrollbar">
                 <AnalyticsFeatureNotice feature="analyticsStrategicPlan" />
-                <Suspense fallback={<AnalyticsPanelLoading label="Loading 5-Year Strategic Plan..." />}>
-                    <StrategicPlanWorkspace onBack={() => setView('dashboard')} />
+                <Suspense fallback={<AnalyticsPanelLoading label="Loading 2027–2032 Strategic Plan..." />}>
+                    <StrategicPlanWorkspace
+                        onBack={() => setView('dashboard')}
+                        transitAppData={transitData}
+                        transitAppAvailable={hasExistingData}
+                        transitAppLoading={transitAppDataQuery.isLoading || transitAppDataQuery.isFetching}
+                        fleetPlanData={fleetPlanData}
+                        fleetPlanLoading={fleetPlanEvidenceLoading}
+                        fleetPlanError={fleetPlanEvidenceError}
+                    />
+                </Suspense>
+            </div>
+        );
+    }
+
+    if (view === 'ridership-trends') {
+        return (
+            <div className="h-full overflow-auto custom-scrollbar bg-[#F7F7F7]">
+                <AnalyticsFeatureNotice feature="analyticsRidershipTrend" />
+                <Suspense fallback={<AnalyticsPanelLoading label="Loading Ridership Trends..." />}>
+                    <RidershipTrendsWorkspace
+                        teamId={performanceDataTeamId || team.id}
+                        requestingTeamId={team.id}
+                        onBack={() => setView('dashboard')}
+                    />
                 </Suspense>
             </div>
         );
@@ -808,12 +872,23 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {canAccess('analyticsRidershipTrend') && (
+                        <AnalyticsCard
+                            color="blue"
+                            icon={<ChartNoAxesCombined size={20} />}
+                            title="Ridership Trends"
+                            description="Track long-term fixed-route boardings, annual change, and current-year progress as daily data arrives."
+                            hasData={hasPerformanceData}
+                            underConstruction={isFeatureUnderConstruction('analyticsRidershipTrend')}
+                            onClick={() => setView('ridership-trends')}
+                        />
+                    )}
                     {canAccess('analyticsStrategicPlan') && (
                         <AnalyticsCard
                             color="blue"
                             icon={<CalendarRange size={20} />}
-                            title="5-Year Strategic Plan"
-                            description="Establish the current fixed-route service baseline for strategic-plan analysis and future network comparisons."
+                            title="2027–2032 Strategic Plan"
+                            description="Open source-specific workspaces for the service baseline, Transit App evidence, and canonical Master Schedule."
                             hasData
                             underConstruction={isFeatureUnderConstruction('analyticsStrategicPlan')}
                             onClick={() => setView('strategic-plan')}

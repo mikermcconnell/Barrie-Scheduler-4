@@ -7,7 +7,8 @@
     "build": "tsc",
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
-    "admin:scheduler": "node scripts/set-scheduler-admin.mjs"
+    "admin:scheduler": "node scripts/set-scheduler-admin.mjs",
+    "bootstrap:ridership-trends": "npm run build && node scripts/bootstrap-ridership-trends.mjs"
   },
   "engines": {
     "node": "22"

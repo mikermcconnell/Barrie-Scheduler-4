@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowLeft, CalendarRange, Database, Loader2 } from 'lucide-react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, ArrowRight, Bus, BusFront, CalendarRange, ClipboardList, Database, Loader2, Smartphone } from 'lucide-react';
+import { TransitAppAnalysisView } from './TransitAppWorkspace';
 import {
     loadStrategicPlanServiceProfile,
 } from '../../utils/strategic-plan/serviceProfileData';
@@ -8,12 +9,71 @@ import type {
     StrategicPlanServiceProfile,
     StrategicPlanServiceProfileRow,
 } from '../../utils/strategic-plan/serviceProfile';
+import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
+import { buildStrategicFleetPlanEvidence } from '../../utils/strategic-plan/fleetPlanEvidence';
+import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
 
 interface StrategicPlanWorkspaceProps {
     onBack: () => void;
+    transitAppData?: TransitAppDataSummary | null;
+    transitAppAvailable?: boolean;
+    transitAppLoading?: boolean;
+    fleetPlanData?: FleetPlanWorkbook | null;
+    fleetPlanLoading?: boolean;
+    fleetPlanError?: string | null;
 }
 
 const DAY_TYPES: StrategicPlanDayType[] = ['Weekday', 'Saturday', 'Sunday'];
+type StrategicPlanSection = 'overview' | 'service-baseline' | 'transit-app' | 'fleet-plan' | 'master-schedule';
+
+const MasterScheduleBrowser = React.lazy(() =>
+    import('../MasterScheduleBrowser').then(module => ({ default: module.MasterScheduleBrowser }))
+);
+
+interface EvidenceWorkspaceCardProps {
+    title: string;
+    description: string;
+    source: string;
+    icon: React.ReactNode;
+    accentClassName: string;
+    onClick: () => void;
+}
+
+const EvidenceWorkspaceCard: React.FC<EvidenceWorkspaceCardProps> = ({
+    title,
+    description,
+    source,
+    icon,
+    accentClassName,
+    onClick,
+}) => (
+    <button
+        type="button"
+        onClick={onClick}
+        className="group flex min-h-64 flex-col rounded-2xl border border-slate-200 bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[#001C80] focus:ring-offset-2"
+    >
+        <span className={`inline-flex h-12 w-12 items-center justify-center rounded-xl ${accentClassName}`}>
+            {icon}
+        </span>
+        <span className="mt-6 text-lg font-black text-slate-900">{title}</span>
+        <span className="mt-2 flex-1 text-sm leading-relaxed text-slate-600">{description}</span>
+        <span className="mt-5 text-xs font-bold uppercase tracking-[0.12em] text-slate-400">{source}</span>
+        <span className="mt-4 inline-flex items-center gap-2 text-sm font-black text-[#001C80]">
+            Open workspace <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
+        </span>
+    </button>
+);
+
+const EvidenceWorkspaceBack: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+    <button
+        type="button"
+        onClick={onClick}
+        className="mb-5 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+    >
+        <ArrowLeft size={16} />
+        Strategic Plan workspaces
+    </button>
+);
 
 function formatFrequency(value: number | null): string {
     return value === null ? 'N/A' : `${value} min`;
@@ -69,8 +129,101 @@ const MobileRouteCard: React.FC<{ row: StrategicPlanServiceProfileRow }> = ({ ro
     </article>
 );
 
-export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({ onBack }) => {
+function formatFleetPlanTimestamp(value: string): string {
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) return value || 'Unknown';
+    return new Intl.DateTimeFormat('en-CA', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+    }).format(new Date(timestamp));
+}
+
+const FleetTimelineValue: React.FC<{ value: string }> = ({ value }) => {
+    const normalized = value.trim().toUpperCase();
+    const className = normalized === 'RETIRE'
+        ? 'bg-red-50 text-red-700 ring-red-200'
+        : normalized === 'GROWTH'
+            ? 'bg-amber-50 text-amber-800 ring-amber-200'
+            : normalized.startsWith('PURCHASE')
+                ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                : value
+                    ? 'bg-blue-50 text-[#001C80] ring-blue-200'
+                    : 'bg-slate-50 text-slate-400 ring-slate-200';
+
+    return (
+        <span className={`inline-flex min-w-16 justify-center rounded-md px-2 py-1 text-xs font-bold ring-1 ring-inset ${className}`}>
+            {value || '—'}
+        </span>
+    );
+};
+
+const StrategicFleetPlanView: React.FC<{ workbook: FleetPlanWorkbook }> = ({ workbook }) => {
+    const evidence = useMemo(() => buildStrategicFleetPlanEvidence(workbook), [workbook]);
+
+    return (
+        <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+                {evidence.summaries.map(summary => (
+                    <article key={summary.year} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="text-xs font-black uppercase tracking-[0.14em] text-[#001C80]">{summary.year}</div>
+                        <div className="mt-2 text-3xl font-black text-slate-900">{summary.fleetTotal}</div>
+                        <div className="text-xs font-semibold text-slate-500">planned fleet total</div>
+                        <dl className="mt-3 space-y-1 border-t border-slate-200 pt-3 text-xs">
+                            <div className="flex justify-between gap-2"><dt className="text-slate-500">Retiring</dt><dd className="font-bold text-red-700">{summary.retiring}</dd></div>
+                            <div className="flex justify-between gap-2"><dt className="text-slate-500">Replacement</dt><dd className="font-bold text-emerald-700">{summary.replacementPurchases}</dd></div>
+                            <div className="flex justify-between gap-2"><dt className="text-slate-500">Growth</dt><dd className="font-bold text-amber-700">{summary.growthPurchases}</dd></div>
+                        </dl>
+                    </article>
+                ))}
+            </div>
+
+            <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full min-w-[1120px] border-collapse text-sm">
+                    <thead className="bg-[#001C80] text-white">
+                        <tr>
+                            <th scope="col" className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wide">Unit</th>
+                            <th scope="col" className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wide">Bus type</th>
+                            <th scope="col" className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wide">Make / model</th>
+                            <th scope="col" className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wide">Model year</th>
+                            {evidence.years.map(year => (
+                                <th key={year} scope="col" className="px-3 py-3 text-center text-xs font-bold uppercase tracking-wide">{year}</th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                        {evidence.rows.map((row, index) => (
+                            <tr key={row.id} className={index % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
+                                <td className="whitespace-nowrap px-3 py-3 font-black text-slate-900">{row.unitNumber || 'Unassigned'}</td>
+                                <td className="whitespace-nowrap px-3 py-3 font-semibold text-slate-600">{row.busType}</td>
+                                <td className="px-3 py-3 font-medium text-slate-700">{row.makeModel || '—'}</td>
+                                <td className="whitespace-nowrap px-3 py-3 font-semibold text-slate-600">{row.modelYear || '—'}</td>
+                                {evidence.years.map(year => (
+                                    <td key={year} className="px-3 py-3 text-center"><FleetTimelineValue value={row.timeline[year]} /></td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                {evidence.rows.length === 0 && (
+                    <div className="bg-white px-4 py-10 text-center text-sm font-semibold text-slate-500">The canonical Fleet Plan contains no populated rows.</div>
+                )}
+            </div>
+        </>
+    );
+};
+
+export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
+    onBack,
+    transitAppData = null,
+    transitAppAvailable = false,
+    transitAppLoading = false,
+    fleetPlanData = null,
+    fleetPlanLoading = false,
+    fleetPlanError = null,
+}) => {
     const [dayType, setDayType] = useState<StrategicPlanDayType>('Weekday');
+    const [section, setSection] = useState<StrategicPlanSection>('overview');
     const [profile, setProfile] = useState<StrategicPlanServiceProfile | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -107,9 +260,9 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({ 
                                 <CalendarRange size={18} />
                                 <span className="text-xs font-bold uppercase tracking-[0.18em]">Planning baseline</span>
                             </div>
-                            <h1 className="text-2xl font-black tracking-tight sm:text-3xl">5-Year Strategic Plan</h1>
+                            <h1 className="text-2xl font-black tracking-tight sm:text-3xl">2027–2032 Strategic Plan</h1>
                             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-blue-100 sm:text-base">
-                                Existing fixed-route service profile for strategic-plan baselining and future service comparisons.
+                                Source-specific workspaces for the existing service baseline, complete Transit App analysis, canonical Fleet Plan, and published Master Schedule.
                             </p>
                         </div>
                         {profile && (
@@ -123,6 +276,61 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({ 
             </header>
 
             <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">
+                {section === 'overview' && (
+                    <section aria-labelledby="evidence-workspaces-heading">
+                        <div className="mb-6 max-w-3xl">
+                            <p className="text-xs font-black uppercase tracking-[0.16em] text-[#001C80]">Evidence library</p>
+                            <h2 id="evidence-workspaces-heading" className="mt-2 text-2xl font-black text-slate-900">Strategic Plan workspaces</h2>
+                            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                                Open a source-specific workspace to examine the current service baseline, rider-planning evidence, fleet-capital outlook, or canonical published schedule. Each source remains separate and read-only.
+                            </p>
+                        </div>
+                        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+                            <EvidenceWorkspaceCard
+                                title="Existing Service Baseline"
+                                description="Compare static-GTFS service spans, scheduled frequency regimes, and revenue hours by service day."
+                                source={profile ? `GTFS ${profile.feedStartDate} to ${profile.feedEndDate}` : 'Bundled static GTFS'}
+                                icon={<BusFront size={24} />}
+                                accentClassName="bg-blue-50 text-[#001C80]"
+                                onClick={() => setSection('service-baseline')}
+                            />
+                            <EvidenceWorkspaceCard
+                                title="Transit App Evidence"
+                                description="Review the complete aggregate for demand, trip patterns, stops, transfers, heatmaps, route engagement, and app usage."
+                                source={transitAppData
+                                    ? `Transit App ${transitAppData.metadata.dateRange.start} to ${transitAppData.metadata.dateRange.end}`
+                                    : transitAppAvailable ? 'Configured Transit App source' : 'Transit App source not configured'}
+                                icon={<Smartphone size={24} />}
+                                accentClassName="bg-cyan-50 text-cyan-700"
+                                onClick={() => setSection('transit-app')}
+                            />
+                            <EvidenceWorkspaceCard
+                                title="Fleet Plan"
+                                description="Review the canonical 2027–2032 fleet outlook, including planned totals, retirements, replacements, growth, and unit timelines."
+                                source={fleetPlanData
+                                    ? `Fleet Plan v${fleetPlanData.metadata.currentVersion ?? '—'} · ${fleetPlanData.metadata.sourceFileName}`
+                                    : fleetPlanError ? 'Fleet Plan unavailable' : 'Canonical team Fleet Plan'}
+                                icon={<Bus size={24} />}
+                                accentClassName="bg-amber-50 text-amber-700"
+                                onClick={() => setSection('fleet-plan')}
+                            />
+                            <EvidenceWorkspaceCard
+                                title="Master Schedule"
+                                description="Inspect current published route schedules, service hours, route tables, platform activity, and source versions."
+                                source="Canonical team Master Schedule"
+                                icon={<ClipboardList size={24} />}
+                                accentClassName="bg-emerald-50 text-emerald-700"
+                                onClick={() => setSection('master-schedule')}
+                            />
+                        </div>
+                        <div className="mt-6 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs leading-relaxed text-slate-500">
+                            Source boundary: static GTFS describes a dated feed snapshot; Transit App describes app engagement and requested-trip evidence; Fleet Plan describes the current planning record for fleet lifecycle and capital timing; Master Schedule shows the currently published schedule. None is observed operations, approved funding, or delivered outcomes on its own.
+                        </div>
+                    </section>
+                )}
+
+                {section === 'service-baseline' && <>
+                <EvidenceWorkspaceBack onClick={() => setSection('overview')} />
                 <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
                     <div className="flex flex-col gap-4 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
                         <div>
@@ -199,8 +407,120 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({ 
                 </section>
 
                 <p className="mt-4 text-xs leading-relaxed text-slate-500">
-                    Source: {profile?.feedPublisherName || 'Barrie Transit'} static GTFS. Revenue hours sum scheduled trip time and exclude terminal recovery or deadhead. Frequency periods are derived independently by direction and summarized to the nearest five minutes; “N/A” means the feed does not contain a distinct second frequency regime.
+                    Source: {profile?.feedPublisherName || 'Barrie Transit'} static GTFS. Revenue hours sum scheduled trip time and exclude terminal recovery or deadhead. Frequencies average sustained time bands within matching direction and origin-to-destination patterns. Planning conventions show Route 2 as 30/60-minute service, retain the trailing 60-minute periods on Routes 10/11, and show Routes 100/101 as 41 minutes off-peak. Uniform Sunday service at 60-minute or longer headways is classified as off-peak; Routes 100/101 retain their peak and off-peak split. “N/A” means there is no service in that frequency category.
                 </p>
+                </>}
+
+                {section === 'transit-app' && (
+                    <div>
+                    <EvidenceWorkspaceBack onClick={() => setSection('overview')} />
+                    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                        <div className="mb-5 border-b border-slate-200 pb-4">
+                            <h2 className="text-lg font-black text-slate-900">Transit App Evidence</h2>
+                            <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                                This is the same complete aggregated summary used by the standalone Transit App workspace. It is read-only here and is not a second import or copied dataset.
+                            </p>
+                            {transitAppData && (
+                                <p className="mt-2 text-xs font-semibold text-slate-500">
+                                    Evidence period: {transitAppData.metadata.dateRange.start} to {transitAppData.metadata.dateRange.end}
+                                </p>
+                            )}
+                        </div>
+
+                        {transitAppLoading && (
+                            <div className="flex min-h-[20rem] items-center justify-center gap-3 text-slate-500" role="status" aria-live="polite">
+                                <Loader2 className="animate-spin text-cyan-600" size={24} />
+                                <span className="text-sm font-semibold">Loading the canonical Transit App summary…</span>
+                            </div>
+                        )}
+
+                        {!transitAppLoading && transitAppData && <TransitAppAnalysisView data={transitAppData} />}
+
+                        {!transitAppLoading && !transitAppData && (
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-5 text-sm text-amber-900">
+                                <div className="font-bold">Transit App evidence unavailable</div>
+                                <div className="mt-1">
+                                    {transitAppAvailable
+                                        ? 'The configured source has metadata, but its aggregated summary could not be loaded.'
+                                        : 'No Transit App dataset is configured for this team.'}
+                                </div>
+                            </div>
+                        )}
+
+                        <p className="mt-5 text-xs leading-relaxed text-slate-500">
+                            Transit App records describe app engagement, requested trips, inferred origins and destinations, itinerary stop mentions, and transfer patterns. They do not by themselves prove boardings, unique riders, residence, trip completion, or service need.
+                        </p>
+                    </section>
+                    </div>
+                )}
+
+                {section === 'fleet-plan' && (
+                    <div>
+                        <EvidenceWorkspaceBack onClick={() => setSection('overview')} />
+                        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                            <div className="mb-5 border-b border-slate-200 pb-4">
+                                <h2 className="text-lg font-black text-slate-900">Fleet Plan Evidence</h2>
+                                <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                                    This is a read-only view of the same canonical shared workbook used by the Fleet Plan workspace. It creates no Strategic Plan copy, snapshot, or second import.
+                                </p>
+                                {fleetPlanData && (
+                                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold text-slate-500">
+                                        <span>Source: {fleetPlanData.metadata.sourceFileName}</span>
+                                        <span>Version: {fleetPlanData.metadata.currentVersion ?? 'Unknown'}</span>
+                                        <span>Updated: {formatFleetPlanTimestamp(fleetPlanData.metadata.updatedAt)}</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {fleetPlanLoading && (
+                                <div className="flex min-h-[20rem] items-center justify-center gap-3 text-slate-500" role="status" aria-live="polite">
+                                    <Loader2 className="animate-spin text-amber-600" size={24} />
+                                    <span className="text-sm font-semibold">Loading the canonical Fleet Plan…</span>
+                                </div>
+                            )}
+
+                            {!fleetPlanLoading && fleetPlanData && <StrategicFleetPlanView workbook={fleetPlanData} />}
+
+                            {!fleetPlanLoading && !fleetPlanData && (
+                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-5 text-sm text-amber-900">
+                                    <div className="font-bold">Fleet Plan evidence unavailable</div>
+                                    <div className="mt-1">{fleetPlanError || 'No Fleet Plan dataset is configured for this team.'}</div>
+                                </div>
+                            )}
+
+                            <p className="mt-5 text-xs leading-relaxed text-slate-500">
+                                Fleet Plan records describe current planning assumptions for vehicle lifecycle, replacements, and growth. They do not by themselves establish approved capital funding, procurement timing, vehicle availability, operating cost, or Council approval.
+                            </p>
+                        </section>
+                    </div>
+                )}
+
+                {section === 'master-schedule' && (
+                    <div>
+                        <EvidenceWorkspaceBack onClick={() => setSection('overview')} />
+                        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                            <div className="border-b border-slate-200 px-5 py-4">
+                                <h2 className="text-lg font-black text-slate-900">Published Master Schedule Evidence</h2>
+                                <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                                    This workspace reads the same canonical Master Schedule used by Scheduled Transit. It is read-only here and creates no copied schedule or strategic-plan snapshot.
+                                </p>
+                            </div>
+                            <div className="h-[calc(100vh-15rem)] min-h-[48rem] overflow-hidden">
+                                <Suspense fallback={(
+                                    <div className="flex h-full items-center justify-center gap-3 text-slate-500" role="status" aria-live="polite">
+                                        <Loader2 className="animate-spin text-emerald-600" size={24} />
+                                        <span className="text-sm font-semibold">Loading the canonical Master Schedule…</span>
+                                    </div>
+                                )}>
+                                    <MasterScheduleBrowser readOnly />
+                                </Suspense>
+                            </div>
+                            <p className="border-t border-slate-200 px-5 py-4 text-xs leading-relaxed text-slate-500">
+                                Master Schedule records are the current published planning source. They do not establish actual service delivered, reliability, ridership, cost, or future Strategic Plan approval.
+                            </p>
+                        </section>
+                    </div>
+                )}
             </main>
         </div>
     );

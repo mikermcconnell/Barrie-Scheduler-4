@@ -8,6 +8,7 @@ import type {
   PerformanceDetailMode,
   PerformanceMetadata,
 } from './types';
+import { parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
 import { PERFORMANCE_SCHEMA_VERSION } from './types';
 import { filterPerformanceSummaryByRoute } from './performanceRouteFilter';
 import {
@@ -21,7 +22,8 @@ type SharedWorkspace =
   | 'transitAppData'
   | 'performanceMetadata'
   | 'performanceOverview'
-  | 'performanceData';
+  | 'performanceData'
+  | 'ridershipTrend';
 
 type DataSourceKind = 'transitApp' | 'performance';
 
@@ -66,6 +68,7 @@ function isWorkspace(value: unknown): value is SharedWorkspace {
     'performanceMetadata',
     'performanceOverview',
     'performanceData',
+    'ridershipTrend',
   ].includes(String(value));
 }
 
@@ -121,6 +124,71 @@ export function canReadOperatorDwell(
     ? member.accessLevel
     : (member.role === 'owner' || member.role === 'admin' ? 'internal' : 'planner');
   return accessLevel === 'admin' || accessLevel === 'internal';
+}
+
+function memberAccessLevel(member: admin.firestore.DocumentData): string {
+  if (typeof member.accessLevel === 'string') return member.accessLevel;
+  return member.role === 'owner' || member.role === 'admin' ? 'internal' : 'planner';
+}
+
+function memberCanAccessFeature(
+  member: admin.firestore.DocumentData,
+  feature: 'analyticsTransitApp' | 'analyticsStrategicPlan' | 'analyticsRidershipTrend',
+): boolean {
+  const override = member.workspaceOverrides?.[feature];
+  if (typeof override === 'boolean') return override;
+
+  const accessLevel = memberAccessLevel(member);
+  if (feature === 'analyticsTransitApp') {
+    return ['planner', 'external-planner', 'transit-app-only', 'admin', 'internal'].includes(accessLevel);
+  }
+  if (feature === 'analyticsRidershipTrend') {
+    return ['planner', 'admin', 'internal'].includes(accessLevel);
+  }
+  return ['planner', 'admin', 'internal'].includes(accessLevel);
+}
+
+export function canReadRidershipTrend(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  return !!member && memberCanAccessFeature(member, 'analyticsRidershipTrend');
+}
+
+async function assertCanReadRidershipTrend(
+  uid: string,
+  requestingTeamId: string,
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): Promise<void> {
+  if (decoded.schedulerAdmin !== true) {
+    if (!canReadRidershipTrend(member, decoded)) {
+      throw Object.assign(new Error('Ridership Trends access is required.'), { status: 403 });
+    }
+    return;
+  }
+  if (member) return;
+  const supportSnap = await getDb().doc(`developerSupportSessions/${uid}`).get();
+  const support = supportSnap.data();
+  const expiresAtMs = support?.expiresAt?.toMillis?.();
+  if (!supportSnap.exists
+      || support?.teamId !== requestingTeamId
+      || (support?.mode !== 'inspect' && support?.mode !== 'edit')
+      || typeof expiresAtMs !== 'number'
+      || expiresAtMs <= Date.now()) {
+    throw Object.assign(new Error('An active support session for this team is required.'), { status: 403 });
+  }
+}
+
+export function canReadTransitAppEvidence(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  if (!member) return false;
+  return memberCanAccessFeature(member, 'analyticsTransitApp')
+    || memberCanAccessFeature(member, 'analyticsStrategicPlan');
 }
 
 export function canReadLoadProfiles(
@@ -220,6 +288,9 @@ function normalizePerformanceMetadata(data: admin.firestore.DocumentData): Perfo
     monthlyStoragePaths: readStringRecord(data.monthlyStoragePaths),
     routeMonthlyStoragePaths: readNestedStringRecord(data.routeMonthlyStoragePaths),
     loadProfileMonthlyStoragePaths: readStringRecord(data.loadProfileMonthlyStoragePaths),
+    ridershipTrendStoragePath: typeof data.ridershipTrendStoragePath === 'string'
+      ? data.ridershipTrendStoragePath
+      : undefined,
   };
 }
 
@@ -560,7 +631,13 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
       return getTransitAppMetadata(payload.sourceTeamId);
     case 'transitAppData': {
       const metadata = await getTransitAppMetadata(payload.sourceTeamId);
-      return metadata?.storagePath ? readStorageJson(metadata.storagePath) : null;
+      if (!metadata?.storagePath) return null;
+      const expectedPrefix = `teams/${payload.sourceTeamId}/transitAppData/`;
+      const filename = metadata.storagePath.slice(expectedPrefix.length);
+      if (!metadata.storagePath.startsWith(expectedPrefix) || !/^\d+[.]json$/.test(filename)) {
+        throw new Error('Stored Transit App data path is invalid.');
+      }
+      return readStorageJson(metadata.storagePath);
     }
     case 'performanceMetadata':
       return getPerformanceMetadata(payload.sourceTeamId);
@@ -578,6 +655,18 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
         dateRange: isDateRange(payload.dateRange) ? payload.dateRange : undefined,
         detailMode: isPerformanceDetailMode(payload.detailMode) ? payload.detailMode : 'all',
       });
+    case 'ridershipTrend': {
+      const metadata = await getPerformanceMetadata(payload.sourceTeamId);
+      if (!metadata?.ridershipTrendStoragePath) return null;
+      const expectedPrefix = `teams/${payload.sourceTeamId}/performanceViews/ridership-trends/`;
+      const filename = metadata.ridershipTrendStoragePath.slice(expectedPrefix.length);
+      if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
+          || !/^\d+[.]json$/.test(filename)) {
+        throw new Error('Stored Ridership Trends projection path is invalid.');
+      }
+      const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);
+      return projection ? parseRidershipTrendProjection(projection) : null;
+    }
     default:
       return null;
   }
@@ -616,6 +705,17 @@ export const sharedWorkspaceData = onRequest(
         dataSourceKindForWorkspace(payload.workspace),
         decoded,
       );
+      if (payload.workspace.startsWith('transitApp') && !canReadTransitAppEvidence(requestingMember, decoded)) {
+        throw Object.assign(new Error('Transit App or Strategic Plan access is required.'), { status: 403 });
+      }
+      if (payload.workspace === 'ridershipTrend') {
+        await assertCanReadRidershipTrend(
+          decoded.uid,
+          payload.requestingTeamId,
+          requestingMember,
+          decoded,
+        );
+      }
       const operatorDwellAllowed = canReadOperatorDwell(requestingMember, decoded);
       const operatorDwellRequested = payload.workspace === 'performanceData'
         && payload.detailMode === 'operator-dwell';

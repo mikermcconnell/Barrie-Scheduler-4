@@ -132,8 +132,14 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
     },
     {
         feature: 'analyticsStrategicPlan',
-        label: '5-Year Strategic Plan',
-        description: 'Static-GTFS service baseline for strategic planning.',
+        label: '2027–2032 Strategic Plan',
+        description: 'Static-GTFS, Transit App, and canonical Master Schedule evidence for strategic planning.',
+        previewKind: 'analytics-card',
+    },
+    {
+        feature: 'analyticsRidershipTrend',
+        label: 'Ridership Trends',
+        description: 'Long-term fixed-route boardings, annual change, and current-year progress.',
         previewKind: 'analytics-card',
     },
 ];

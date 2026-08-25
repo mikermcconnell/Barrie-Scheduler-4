@@ -25,6 +25,12 @@ import {
 import { filterPerformanceSummaryByRoute, getAvailablePerformanceRoutes } from './performanceRouteFilter';
 import { buildLoadProfileMonthlyView } from './performanceLoadProfileView';
 import {
+  createRidershipTrendProjection,
+  mergeRidershipTrendProjection,
+  parseRidershipTrendProjection,
+} from '../../utils/ridership-trends/model';
+import { RIDERSHIP_TREND_BASELINE_HASH } from '../../utils/ridership-trends/types';
+import {
   DEFAULT_PERFORMANCE_LOAD_CAPACITY_CONFIG,
   normalizePerformanceLoadCapacityConfig,
 } from './performanceLoadCapacity';
@@ -152,6 +158,7 @@ interface ExistingPerformanceSummaryLoad {
   monthlyStoragePaths?: Record<string, string>;
   routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
   loadProfileMonthlyStoragePaths?: Record<string, string>;
+  ridershipTrendStoragePath?: string;
   metadata: Partial<PerformanceMetadata> | null;
   readError?: Error;
 }
@@ -331,6 +338,10 @@ function buildPerformanceRouteMonthlyStoragePath(teamId: string, timestamp: stri
 
 function buildPerformanceLoadProfileMonthlyStoragePath(teamId: string, timestamp: string, month: string) {
   return `teams/${teamId}/performanceViews/load-profiles/${timestamp}-${month}.json`;
+}
+
+function buildRidershipTrendStoragePath(teamId: string, timestamp: string) {
+  return `teams/${teamId}/performanceViews/ridership-trends/${timestamp}.json`;
 }
 
 function buildRawPerformanceImportStoragePath(teamId: string, timestamp: string) {
@@ -727,6 +738,9 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
   const monthlyStoragePaths = readStringRecord(meta.monthlyStoragePaths);
   const routeMonthlyStoragePaths = readNestedStringRecord(meta.routeMonthlyStoragePaths);
   const loadProfileMonthlyStoragePaths = readStringRecord(meta.loadProfileMonthlyStoragePaths);
+  const ridershipTrendStoragePath = typeof meta.ridershipTrendStoragePath === 'string'
+    ? meta.ridershipTrendStoragePath
+    : undefined;
   const metadata: Partial<PerformanceMetadata> = {
     importedAt: meta.importedAt?.toDate?.()?.toISOString?.(),
     importedBy: typeof meta.importedBy === 'string' ? meta.importedBy : undefined,
@@ -743,6 +757,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
     monthlyStoragePaths,
     routeMonthlyStoragePaths,
     loadProfileMonthlyStoragePaths,
+    ridershipTrendStoragePath,
   };
 
   if (monthlyStoragePaths && Object.keys(monthlyStoragePaths).length > 0) {
@@ -766,7 +781,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
         schemaVersion: PERFORMANCE_SCHEMA_VERSION,
       };
       const summary = buildPerformanceSummaryFromBase(base, dailySummaries, metadata);
-      return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
+      return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, ridershipTrendStoragePath, metadata };
     } catch (error) {
       return {
         summary: null,
@@ -777,6 +792,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
         monthlyStoragePaths,
         routeMonthlyStoragePaths,
         loadProfileMonthlyStoragePaths,
+        ridershipTrendStoragePath,
         metadata,
         readError: error instanceof Error ? error : new Error(String(error)),
       };
@@ -784,14 +800,14 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
   }
 
   if (!storagePath) {
-    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
+    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, ridershipTrendStoragePath, metadata };
   }
 
   try {
     const file = getBucket().file(storagePath);
     const [content] = await file.download();
     const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
-    return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
+    return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, ridershipTrendStoragePath, metadata };
   } catch (error) {
     return {
       summary: null,
@@ -802,6 +818,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
       monthlyStoragePaths,
       routeMonthlyStoragePaths,
       loadProfileMonthlyStoragePaths,
+      ridershipTrendStoragePath,
       metadata,
       readError: error instanceof Error ? error : new Error(String(error)),
     };
@@ -950,11 +967,43 @@ async function savePerformanceSummary(params: {
   const timestamp = Date.now().toString();
   const overviewStoragePath = buildPerformanceDataStoragePath(params.teamId, timestamp, `${params.suffix ?? ''}-overview`);
   const reportStoragePath = buildPerformanceDataStoragePath(params.teamId, timestamp, `${params.suffix ?? ''}-report`);
+  const ridershipTrendStoragePath = buildRidershipTrendStoragePath(params.teamId, timestamp);
   const overviewJsonStr = JSON.stringify(buildPerformanceOverviewSummary(params.summary));
   const reportJsonStr = JSON.stringify(buildPerformanceReportSummary(params.summary));
   const monthlyStoragePaths: Record<string, string> = {};
   const routeMonthlyStoragePaths: Record<string, Record<string, string>> = {};
   const loadProfileMonthlyStoragePaths: Record<string, string> = {};
+
+  // Ridership Trends is a long-lived projection, so it must be read and merged
+  // before any metadata pointer is replaced. An unreadable existing pointer is
+  // fatal: continuing would silently discard dates already outside retention.
+  const metadataSnap = await getPerformanceMetadataRef(params.teamId).get();
+  const oldRidershipTrendStoragePath = metadataSnap.exists
+    && typeof metadataSnap.data()?.ridershipTrendStoragePath === 'string'
+    ? metadataSnap.data()?.ridershipTrendStoragePath as string
+    : null;
+  let ridershipTrend = createRidershipTrendProjection({
+    baselineHash: RIDERSHIP_TREND_BASELINE_HASH,
+    updatedAt: new Date().toISOString(),
+  });
+  if (oldRidershipTrendStoragePath) {
+    const expectedPrefix = `teams/${params.teamId}/performanceViews/ridership-trends/`;
+    if (!oldRidershipTrendStoragePath.startsWith(expectedPrefix)
+        || !/^\d+[.]json$/.test(oldRidershipTrendStoragePath.slice(expectedPrefix.length))) {
+      throw new Error('Stored Ridership Trends projection path is invalid.');
+    }
+    const [storedProjection] = await getBucket().file(oldRidershipTrendStoragePath).download();
+    ridershipTrend = parseRidershipTrendProjection(JSON.parse(storedProjection.toString('utf8')));
+  }
+  ridershipTrend = mergeRidershipTrendProjection(
+    ridershipTrend,
+    params.summary.dailySummaries.map(day => ({
+      date: day.date,
+      boardings: day.system.totalRidership,
+      performanceSchemaVersion: params.summary.schemaVersion,
+    })),
+    new Date().toISOString(),
+  );
 
   await mapWithConcurrency([...buildMonthlyPerformanceSummaries(params.summary).entries()], 3, async ([month, monthSummary]) => {
     const monthPath = buildPerformanceMonthlyStoragePath(params.teamId, timestamp, month);
@@ -970,6 +1019,9 @@ async function savePerformanceSummary(params: {
   });
   await getBucket().file(overviewStoragePath).save(overviewJsonStr, { contentType: 'application/json' });
   await getBucket().file(reportStoragePath).save(reportJsonStr, { contentType: 'application/json' });
+  await getBucket().file(ridershipTrendStoragePath).save(JSON.stringify(ridershipTrend), {
+    contentType: 'application/json',
+  });
 
   await mapWithConcurrency(getAvailablePerformanceRoutes(params.summary), 2, async route => {
     const routeSummary = filterPerformanceSummaryByRoute(params.summary, route.routeId);
@@ -991,6 +1043,7 @@ async function savePerformanceSummary(params: {
     monthlyStoragePaths,
     routeMonthlyStoragePaths,
     loadProfileMonthlyStoragePaths,
+    ridershipTrendStoragePath,
     dateRange: params.summary.metadata.dateRange,
     dayCount: params.summary.metadata.dayCount,
     totalRecords: params.summary.metadata.totalRecords,
@@ -1011,6 +1064,9 @@ async function savePerformanceSummary(params: {
     }
     Object.values(params.oldRouteMonthlyStoragePaths || {}).flatMap(months => Object.values(months)).forEach(path => path && cleanupPaths.add(path));
     Object.values(params.oldLoadProfileMonthlyStoragePaths || {}).forEach(path => path && cleanupPaths.add(path));
+    if (oldRidershipTrendStoragePath && oldRidershipTrendStoragePath !== ridershipTrendStoragePath) {
+      cleanupPaths.add(oldRidershipTrendStoragePath);
+    }
 
     const newPaths = new Set([
       overviewStoragePath,
@@ -1018,6 +1074,7 @@ async function savePerformanceSummary(params: {
       ...Object.values(monthlyStoragePaths),
       ...Object.values(routeMonthlyStoragePaths).flatMap(months => Object.values(months)),
       ...Object.values(loadProfileMonthlyStoragePaths),
+      ridershipTrendStoragePath,
     ]);
 
     await Promise.all([...cleanupPaths].map(async path => {

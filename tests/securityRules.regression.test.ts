@@ -51,20 +51,23 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).toMatch(/match \/teams\/\{teamId\} \{[\s\S]*allow update: if request\.auth != null &&[\s\S]*isTeamOwnerOrAdmin\(teamId\)[\s\S]*canSupportWriteTeamData\(teamId\)[\s\S]*allow delete: if request\.auth != null/);
   });
 
-  it('restricts master schedule writes to team managers instead of all team members', () => {
+  it('shares read-only Master Schedule evidence with Strategic Plan while keeping writes manager-only', () => {
     const firestoreRules = readRepoFile('firestore.rules');
     const storageRules = readRepoFile('storage.rules');
 
-    expect(firestoreRules).toMatch(/match \/masterSchedules\/\{scheduleId\} \{[\s\S]*canReadSharedMasterSchedules\(teamId\) \|\|[\s\S]*canSupportReadTeamData\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| canSupportWriteTeamData\(teamId\);/);
-    expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/masterSchedules\/\{allPaths=\*\*\} \{[\s\S]*canReadSharedMasterSchedules\(teamId\) \|\|[\s\S]*canSupportReadTeamData\(teamId\);[\s\S]*allow write: if isTeamManager\(teamId\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(firestoreRules).toMatch(/match \/masterSchedules\/\{scheduleId\} \{[\s\S]*canAccessWorkspace\(teamId, 'workspaceFixedRoute'\) \|\|[\s\S]*canAccessWorkspace\(teamId, 'analyticsStrategicPlan'\) \|\|[\s\S]*canReadSharedMasterSchedules\(teamId\) \|\|[\s\S]*canSupportReadTeamData\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/masterSchedules\/\{allPaths=\*\*\} \{[\s\S]*canAccessWorkspace\(teamId, 'workspaceFixedRoute'\) \|\|[\s\S]*canAccessWorkspace\(teamId, 'analyticsStrategicPlan'\) \|\|[\s\S]*canReadSharedMasterSchedules\(teamId\) \|\|[\s\S]*canSupportReadTeamData\(teamId\);[\s\S]*allow write: if isTeamManager\(teamId\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(firestoreRules).toMatch(/function canReadSharedMasterSchedules\(sourceTeamId\) \{[\s\S]*canAccessWorkspace\(userTeamId\(\), 'workspaceFixedRoute'\) \|\|[\s\S]*canAccessWorkspace\(userTeamId\(\), 'analyticsStrategicPlan'\)[\s\S]*configuredMasterScheduleSource\(userTeamId\(\)\) == sourceTeamId;/);
+    expect(storageRules).toMatch(/function canReadSharedMasterSchedules\(sourceTeamId\) \{[\s\S]*canAccessWorkspace\(userTeamId\(\), 'workspaceFixedRoute'\) \|\|[\s\S]*canAccessWorkspace\(userTeamId\(\), 'analyticsStrategicPlan'\)[\s\S]*configuredMasterScheduleSource\(userTeamId\(\)\) == sourceTeamId;/);
   });
 
-  it('restricts Fleet Plan writes to team managers and reads to users with Fleet Plan access', () => {
+  it('shares active Fleet Plan evidence with Strategic Plan while keeping writes manager-only', () => {
     const firestoreRules = readRepoFile('firestore.rules');
     const storageRules = readRepoFile('storage.rules');
 
-    expect(firestoreRules).toMatch(/match \/fleetPlan\/\{docId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsFleetPlan'\) \|\| canSupportReadTeamData\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| canSupportWriteTeamData\(teamId\);/);
-    expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/fleetPlan\/\{allPaths=\*\*\} \{[\s\S]*allow read: if isTeamMember\(teamId\) \|\| canSupportReadTeamData\(teamId\);[\s\S]*allow write: if isTeamManager\(teamId\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(firestoreRules).toMatch(/match \/fleetPlan\/\{docId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsFleetPlan'\) \|\|[\s\S]*canAccessWorkspace\(teamId, 'analyticsStrategicPlan'\) \|\|[\s\S]*canSupportReadTeamData\(teamId\);[\s\S]*allow create, update, delete: if isTeamOwnerOrAdmin\(teamId\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/fleetPlan\/\{allPaths=\*\*\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsFleetPlan'\) \|\|[\s\S]*canAccessWorkspace\(teamId, 'analyticsStrategicPlan'\) \|\|[\s\S]*canSupportReadTeamData\(teamId\);[\s\S]*allow write: if isTeamManager\(teamId\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(firestoreRules).toMatch(/match \/versions\/\{versionId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsFleetPlan'\) \|\| canSupportReadTeamData\(teamId\);/);
   });
 
   it('gates Route Planner 2 saved route concepts by workspace access', () => {
@@ -74,10 +77,19 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).toMatch(/match \/runtimeSnapshots\/\{snapshotId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsRoutePlanner2'\) \|\| canSupportReadTeamData\(teamId\);[\s\S]*allow write: if canAccessWorkspace\(teamId, 'analyticsRoutePlanner2'\) \|\| canSupportWriteTeamData\(teamId\);/);
   });
 
-  it('gates Transit App Data and OD Matrix by workspace access', () => {
+  it('shares Transit App reads with Strategic Plan while keeping writes under Transit App access', () => {
     const firestoreRules = readRepoFile('firestore.rules');
+    const storageRules = readRepoFile('storage.rules');
+    const transitAppStorageBlock = storageRules.match(
+      /match \/teams\/\{teamId\}\/transitAppData\/\{allPaths=\*\*\} \{([\s\S]*?)\n {4}\}/,
+    )?.[1] ?? '';
 
-    expect(firestoreRules).toMatch(/match \/transitAppData\/\{docId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsTransitApp'\) \|\| canSupportReadTeamData\(teamId\);/);
+    expect(firestoreRules).toMatch(/match \/transitAppData\/\{docId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsTransitApp'\) \|\|[\s\S]*canAccessWorkspace\(teamId, 'analyticsStrategicPlan'\) \|\|[\s\S]*canSupportReadTeamData\(teamId\);[\s\S]*allow write: if canAccessWorkspace\(teamId, 'analyticsTransitApp'\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(storageRules).toMatch(/match \/teams\/\{teamId\}\/transitAppData\/\{allPaths=\*\*\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsTransitApp'\) \|\|[\s\S]*canAccessWorkspace\(teamId, 'analyticsStrategicPlan'\) \|\|[\s\S]*canSupportReadTeamData\(teamId\);[\s\S]*allow write: if canAccessWorkspace\(teamId, 'analyticsTransitApp'\) \|\| canSupportWriteTeamData\(teamId\);/);
+    expect(firestoreRules).toMatch(/accessLevel == 'planner' &&[\s\S]*?feature in \[[^\]]*'analyticsStrategicPlan'[^\]]*\]/);
+    expect(storageRules).toMatch(/accessLevel == 'planner' &&[\s\S]*?feature in \[[^\]]*'analyticsStrategicPlan'[^\]]*\]/);
+    expect(transitAppStorageBlock).not.toMatch(/allow write: if isTeamMember\(teamId\)/);
+
     expect(firestoreRules).toMatch(/match \/odMatrixData\/\{docId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsOdMatrix'\) \|\| canSupportReadTeamData\(teamId\);/);
     expect(firestoreRules).toMatch(/accessLevel == 'transit-app-only' &&[\s\S]*feature == 'analyticsTransitApp'/);
     expect(firestoreRules).toMatch(/accessLevel == 'external-planner' &&[\s\S]*feature == 'analyticsTransitApp'/);

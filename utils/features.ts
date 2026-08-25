@@ -34,6 +34,7 @@ export const FEATURE_DEFINITIONS = {
     analyticsShuttlePlanner: { defaultEnabled: true, hideInDemoMode: true },
     analyticsFarePrograms: { defaultEnabled: true, hideInDemoMode: false },
     analyticsStrategicPlan: { defaultEnabled: true, hideInDemoMode: true },
+    analyticsRidershipTrend: { defaultEnabled: true, hideInDemoMode: false },
 
     operationsPerformanceDashboard: { defaultEnabled: true, hideInDemoMode: false },
     operationsPerfReports: { defaultEnabled: true, hideInDemoMode: false },

@@ -26,6 +26,18 @@ describe('workspace access packages', () => {
         expect(selection.workspaceParking).toBe(false);
     });
 
+    it('provides a Strategic Plan-only package without standalone Transit App access', () => {
+        const pkg = getWorkspaceAccessPackage('strategic-plan-only');
+        const selection = buildWorkspaceSelectionFromPackage('strategic-plan-only');
+
+        expect(pkg.label).toBe('2027–2032 Strategic Plan only');
+        expect(pkg.accessLevel).toBe('none');
+        expect(selection.analyticsStrategicPlan).toBe(true);
+        expect(selection.analyticsTransitApp).toBe(false);
+        expect(selection.workspaceFixedRoute).toBe(false);
+        expect(selection.workspaceOperations).toBe(false);
+    });
+
     it('keeps internal developer access as the only full-access package', () => {
         const developerPackage = getWorkspaceAccessPackage('internal-developer');
         const nonDeveloperPackages = WORKSPACE_ACCESS_PACKAGES.filter(pkg => pkg.id !== 'internal-developer');
