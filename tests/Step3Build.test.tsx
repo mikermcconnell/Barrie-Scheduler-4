@@ -25,6 +25,40 @@ describe('Step3Build', () => {
         vi.clearAllMocks();
     });
 
+    it('shows blocking validation for unsafe recovery and duplicate block IDs', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step3Build
+                    dayType="Weekday"
+                    bands={[]}
+                    config={{
+                        routeNumber: '99',
+                        cycleMode: 'Floating',
+                        cycleTime: 0,
+                        recoveryRatio: -100,
+                        blocks: [
+                            { id: '99-1', startTime: '06:00', endTime: '07:00' },
+                            { id: '99-1', startTime: '07:00', endTime: '08:00' },
+                        ],
+                    }}
+                    setConfig={vi.fn()}
+                    stopSuggestions={[]}
+                    autofillFromMaster={false}
+                    onAutofillFromMasterChange={() => {}}
+                />
+            );
+        });
+
+        const alert = container.querySelector('[data-testid="step3-config-validation"]');
+        expect(alert?.textContent).toContain('Target recovery must be between 0% and 100%');
+        expect(alert?.textContent).toContain('Block ID "99-1" is duplicated');
+        expect(container.querySelectorAll('input[aria-invalid="true"]')).toHaveLength(2);
+    });
+
     it('clears stale blocks when master autofill finds no schedule', async () => {
         vi.mocked(getMasterSchedule).mockResolvedValue(null);
         const setConfig = vi.fn();

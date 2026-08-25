@@ -333,6 +333,67 @@ describe('Step4Schedule', () => {
         expect(container.textContent).toContain('30 min');
     });
 
+    it('does not allow a headway preview with block overlaps to be applied', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+        const onUpdateSchedules = vi.fn();
+
+        const overlappingTable = makeTable('10 (Weekday)', [
+            makeTrip('north-a', 'North', 360, {
+                blockId: '10-1',
+                endTime: 390,
+                stopMinutes: { Terminal: 390 },
+                stops: { Terminal: '6:30 AM' },
+                arrivalTimes: { Terminal: '6:30 AM' },
+                isBlockEnd: false,
+            }),
+            makeTrip('south-a', 'South', 385, {
+                blockId: '10-1',
+                endTime: 415,
+                stopMinutes: { Terminal: 415 },
+                stops: { Terminal: '6:55 AM' },
+                arrivalTimes: { Terminal: '6:55 AM' },
+            }),
+            makeTrip('north-b', 'North', 410, {
+                blockId: '10-2',
+                endTime: 440,
+                stopMinutes: { Terminal: 440 },
+                stops: { Terminal: '7:20 AM' },
+                arrivalTimes: { Terminal: '7:20 AM' },
+            }),
+        ]);
+
+        flushSync(() => {
+            root?.render(
+                <Step4Schedule
+                    initialSchedules={[overlappingTable]}
+                    originalSchedules={[overlappingTable]}
+                    editorSessionKey={1}
+                    bands={[]}
+                    analysis={[]}
+                    segmentNames={[]}
+                    onUpdateSchedules={onUpdateSchedules}
+                    projectName="Test Project"
+                    targetHeadway={30}
+                    approvedRuntimeContract={null}
+                    approvedRuntimeModel={null}
+                />
+            );
+        });
+
+        expect(container.textContent).toContain('would overlap. Resolve the overlap before applying.');
+        const applyButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.includes('Regularize to 30 min')
+        )) as HTMLButtonElement | undefined;
+        expect(applyButton?.disabled).toBe(true);
+
+        flushSync(() => {
+            applyButton?.click();
+        });
+        expect(onUpdateSchedules).not.toHaveBeenCalled();
+    });
+
     it('keeps undo available when edited schedules sync back from the parent', async () => {
         container = document.createElement('div');
         document.body.appendChild(container);

@@ -69,6 +69,9 @@ function mapDirection(dir: string, routeId?: string, tripName?: string): RouteDi
   const parsedRoute = parseRouteHint(routeId);
   const parsedHint = parsedTrip?.direction ? parsedTrip : parsedRoute;
 
+  // Some AVL exports label a one-way loop as N/S. Route structure is the
+  // stronger signal: a configured loop must remain a single Loop contract.
+  if (parsedTrip?.isLoop || parsedRoute?.isLoop) return 'Loop';
   if (upper === 'N' || upper === 'NB' || upper === 'NORTH') return 'North';
   if (upper === 'S' || upper === 'SB' || upper === 'SOUTH') return 'South';
   // Loop routes: CW/CCW both map to 'Loop'
@@ -302,8 +305,61 @@ export type RuntimePatternStrategy = 'normal-only' | 'detour-fallback' | 'detour
 
 interface CycleBucketCandidate {
   bucket: string;
+  departureMinutes: number;
+  departureEndMinutes: number;
   totalRuntime: number;
   details: Array<{ segment: CanonicalSegmentDefinition; runtimeMinutes: number }>;
+  startTerminal: CycleTerminalIdentity;
+  endTerminal: CycleTerminalIdentity;
+}
+
+interface CycleTerminalIdentity {
+  stopId?: string;
+  stopName?: string;
+}
+
+const CYCLE_PAIRING_EARLY_TOLERANCE_MINUTES = 5;
+const MAX_CYCLE_PAIRING_GAP_MINUTES = 30;
+
+function terminalIdentitiesMatch(
+  arrival: CycleTerminalIdentity,
+  departure: CycleTerminalIdentity,
+): boolean {
+  const arrivalId = arrival.stopId?.trim();
+  const departureId = departure.stopId?.trim();
+  if (arrivalId && departureId && arrivalId === departureId) return true;
+
+  const arrivalName = arrival.stopName?.trim();
+  const departureName = departure.stopName?.trim();
+  if (arrivalName && departureName) {
+    return stopNamesLikelyMatch(arrivalName, departureName);
+  }
+
+  // Continuity cannot be asserted when neither the source data nor a trusted
+  // canonical/anchor chain identifies both sides of the handoff.
+  return !((arrivalId || arrivalName) && (departureId || departureName));
+}
+
+function candidatePairingGap(
+  first: CycleBucketCandidate,
+  second: CycleBucketCandidate,
+): number | null {
+  if (!terminalIdentitiesMatch(first.endTerminal, second.startTerminal)) return null;
+  const earliestGap = second.departureMinutes - (first.departureEndMinutes + first.totalRuntime);
+  const latestGap = second.departureEndMinutes - (first.departureMinutes + first.totalRuntime);
+  if (
+    !Number.isFinite(earliestGap)
+    || !Number.isFinite(latestGap)
+    || latestGap < -CYCLE_PAIRING_EARLY_TOLERANCE_MINUTES
+    || earliestGap > MAX_CYCLE_PAIRING_GAP_MINUTES
+  ) {
+    return null;
+  }
+
+  const viableStart = Math.max(earliestGap, -CYCLE_PAIRING_EARLY_TOLERANCE_MINUTES);
+  const viableEnd = Math.min(latestGap, MAX_CYCLE_PAIRING_GAP_MINUTES);
+  if (viableStart <= 0 && viableEnd >= 0) return 0;
+  return Math.abs(viableStart) <= Math.abs(viableEnd) ? viableStart : viableEnd;
 }
 
 function resolveCanonicalStopToStopName(
@@ -1116,6 +1172,46 @@ function buildTripBucketedRuntimesFromTrips(
     });
   };
 
+  const getConfiguredTerminalNames = (
+    direction: RouteDirection,
+  ): { start?: string; end?: string } => {
+    const stops = canonicalDirectionStops?.[direction];
+    if (stops && stops.length >= 2) {
+      return { start: stops[0], end: stops[stops.length - 1] };
+    }
+    const anchors = patternAnchorStops?.[direction];
+    if (anchors && anchors.length >= 2) {
+      return { start: anchors[0], end: anchors[anchors.length - 1] };
+    }
+    return {};
+  };
+
+  const getTripTerminalIdentities = (
+    trip: DailyTripStopSegmentRuntimeEntry,
+    direction: RouteDirection,
+  ): { start: CycleTerminalIdentity; end: CycleTerminalIdentity } => {
+    const orderedLegs = [...trip.segments].sort((a, b) => {
+      if (a.fromRouteStopIndex !== b.fromRouteStopIndex) {
+        return a.fromRouteStopIndex - b.fromRouteStopIndex;
+      }
+      return a.toRouteStopIndex - b.toRouteStopIndex;
+    });
+    const firstLeg = orderedLegs[0];
+    const lastLeg = orderedLegs[orderedLegs.length - 1];
+    const lookup = rawStopNameLookup.get(direction);
+    const configured = getConfiguredTerminalNames(direction);
+    return {
+      start: {
+        stopId: firstLeg?.fromStopId,
+        stopName: configured.start || (firstLeg ? lookup?.get(firstLeg.fromStopId) : undefined),
+      },
+      end: {
+        stopId: lastLeg?.toStopId,
+        stopName: configured.end || (lastLeg ? lookup?.get(lastLeg.toStopId) : undefined),
+      },
+    };
+  };
+
   const buildPerTripSegments = (
     trip: DailyTripStopSegmentRuntimeEntry,
     direction: RouteDirection,
@@ -1161,6 +1257,7 @@ function buildTripBucketedRuntimesFromTrips(
       : tripMatchesPreferredPattern(trip, preferredPatternsByDirection.get(direction), preferStopIdsForPatterns))
     .map((trip) => {
       const details = buildPerTripSegments(trip, direction);
+      const terminals = getTripTerminalIdentities(trip, direction);
       const definitions = canonicalSegmentsByDirection.get(direction);
       if (
         fullPatternOnly
@@ -1173,8 +1270,12 @@ function buildTripBucketedRuntimesFromTrips(
       if (details.length === 0) return null;
       return {
         bucket: toHalfHourBucket(trip.terminalDepartureTime),
+        departureMinutes: parseClockMinutes(trip.terminalDepartureTime),
+        departureEndMinutes: parseClockMinutes(trip.terminalDepartureTime),
         totalRuntime: details.reduce((sum, detail) => sum + detail.runtimeMinutes, 0),
         details,
+        startTerminal: terminals.start,
+        endTerminal: terminals.end,
       };
     }).filter((value): value is CycleBucketCandidate => value !== null)
   );
@@ -1239,6 +1340,9 @@ function buildTripBucketedRuntimesFromTrips(
 
     const firstSegmentOptions = resolvedSegmentOptions[0];
     if (!firstSegmentOptions || firstSegmentOptions.buckets.length === 0) return [];
+    const firstEntry = entriesBySegment.get(orderedSegments[0].segmentKey);
+    const lastEntry = entriesBySegment.get(orderedSegments[orderedSegments.length - 1].segmentKey);
+    const configuredTerminals = getConfiguredTerminalNames(direction);
 
     return firstSegmentOptions.buckets.map((startOption) => {
       const details: Array<{ segment: CanonicalSegmentDefinition; runtimeMinutes: number }> = [];
@@ -1263,10 +1367,20 @@ function buildTripBucketedRuntimesFromTrips(
 
       return {
         bucket: startOption.bucket,
+        departureMinutes: startOption.bucketRange.start,
+        departureEndMinutes: startOption.bucketRange.end,
         totalRuntime,
         details,
+        startTerminal: {
+          stopId: firstEntry?.fromStopId,
+          stopName: configuredTerminals.start || firstEntry?.fromStopName,
+        },
+        endTerminal: {
+          stopId: lastEntry?.toStopId,
+          stopName: configuredTerminals.end || lastEntry?.toStopName,
+        },
       };
-    }).filter((value): value is CycleBucketCandidate => value !== null);
+    }).filter(value => value !== null);
   };
 
   const allDays = new Set<string>([
@@ -1296,16 +1410,14 @@ function buildTripBucketedRuntimesFromTrips(
         const southUsed = new Set<number>();
 
         northCandidates.forEach((northCandidate) => {
-          const northBucketRange = getHalfHourBucketRange(northCandidate.bucket);
-          const earliestExpectedSouthDeparture = northBucketRange.start + northCandidate.totalRuntime - 5;
-
           let chosenSouthIndex = -1;
+          let closestGap = Number.POSITIVE_INFINITY;
           for (let index = 0; index < southCandidates.length; index += 1) {
             if (southUsed.has(index)) continue;
-            const candidateRange = getHalfHourBucketRange(southCandidates[index].bucket);
-            if (candidateRange.end >= earliestExpectedSouthDeparture) {
+            const gap = candidatePairingGap(northCandidate, southCandidates[index]);
+            if (gap !== null && Math.abs(gap) < closestGap) {
               chosenSouthIndex = index;
-              break;
+              closestGap = Math.abs(gap);
             }
           }
 
@@ -1318,16 +1430,14 @@ function buildTripBucketedRuntimesFromTrips(
 
         const northUsed = new Set<number>();
         southCandidates.forEach((southCandidate) => {
-          const southBucketRange = getHalfHourBucketRange(southCandidate.bucket);
-          const earliestExpectedNorthDeparture = southBucketRange.start + southCandidate.totalRuntime - 5;
-
           let chosenNorthIndex = -1;
+          let closestGap = Number.POSITIVE_INFINITY;
           for (let index = 0; index < northCandidates.length; index += 1) {
             if (northUsed.has(index)) continue;
-            const candidateRange = getHalfHourBucketRange(northCandidates[index].bucket);
-            if (candidateRange.end >= earliestExpectedNorthDeparture) {
+            const gap = candidatePairingGap(southCandidate, northCandidates[index]);
+            if (gap !== null && Math.abs(gap) < closestGap) {
               chosenNorthIndex = index;
-              break;
+              closestGap = Math.abs(gap);
             }
           }
 

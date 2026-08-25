@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildSelectedMonthParkingAnalysis,
+  ParkingFilterPendingIndicator,
   SettingNumber,
 } from '../components/workspaces/ParkingDataWorkspace';
 import {
@@ -78,6 +79,33 @@ describe('Parking indicator threshold editing', () => {
 
     expect(onChange).not.toHaveBeenCalled();
     expect(input.value).toBe('50');
+  });
+});
+
+describe('Parking revenue filter feedback', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('announces filter application only while deferred results are pending', () => {
+    act(() => root.render(<ParkingFilterPendingIndicator pending />));
+
+    const status = container.querySelector<HTMLElement>('[role="status"]');
+    expect(status?.textContent).toContain('Applying filters');
+    expect(status?.getAttribute('aria-live')).toBe('polite');
+
+    act(() => root.render(<ParkingFilterPendingIndicator pending={false} />));
+    expect(container.querySelector('[role="status"]')).toBeNull();
   });
 });
 

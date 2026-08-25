@@ -65,6 +65,7 @@ Load feature docs only when the task directly touches that feature.
 - OD workspace: `docs/OD_WORKSPACE_GUIDE.md`
 - Residential Growth: `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
 - Transit App data validation: `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md`
+- Corridor Performance: `docs/CORRIDOR_PERFORMANCE.md`; add `docs/rules/LOCKED_LOGIC.md` when changing runtime semantics
 
 ### Important route-planning boundaries
 

@@ -50,10 +50,6 @@ firebase/
 │   ├── routePlanner2Projects/{projectId} # Camp Shuttle Planner saved projects (internal Route Planner 2 key)
 │   │   └── scenarios/{scenarioId}        # Saved editable route concepts
 │   │       └── runtimeSnapshots/{snapshotId} # Accepted/rejected Mapbox runtime decisions
-│   ├── councilIntelligence/default       # Council Intelligence pilot metadata/source health
-│   │   ├── meetings/{meetingId}          # Bounded official meeting text, topics, hashes, status
-│   │   ├── councillors/{profileId}       # Evidence-counted mover/seconder/recorded-vote profile
-│   │   └── registers/{registerId}         # Transit-relevant decisions/actions/funding/deadlines
 │   ├── detourNotices/{noticeId}           # Team-authored route detour or stop-closure notice
 │   │   ├── overlays/{overlayId}           # Snapshotted GTFS route/direction and editable detour geometry
 │   │   └── publications/{publicationId}   # Immutable manual MyRide posting record
@@ -74,7 +70,6 @@ firebase/
 `teams/{teamId}/members/{userId}` is the durable source of team membership. The `userId` field must match the document ID so a collection-group query filtered to the signed-in user can safely enumerate only that user's teams. The required collection-group `userId` index is declared in `firestore.indexes.json`. `users/{userId}.teamId` selects the active team; joining an additional team does not replace an existing active-team pointer unless activation is explicitly requested.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
 `teams/{teamId}/routePlanner2Projects/{projectId}` stores Camp Shuttle Planner project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection. The existing `routePlanner2Projects` path remains stable to avoid a data migration.
-`teams/{teamId}/councilIntelligence/default` stores the Council Intelligence 90-day pilot window, last sync timestamp, and bounded source-health counts. Its `meetings` subcollection stores normalized eSCRIBE meeting metadata, official source links, extraction status, content hash, transit topics, and bounded plain text; external HTML is never rendered. `councillors` stores evidence counts and only treats explicitly named recorded votes as votes—movers and seconders remain separate signals. `registers` stores transit-relevant official-record summaries with confidence and source links. Reads require `analyticsCouncilIntelligence`; refresh is performed by a scheduled Function or an authenticated owner/admin callable.
 `teams/{teamId}/detourNotices/{noticeId}` stores editable notice copy, effective schedule, map frame, workflow status, and optimistic revision. Route overlays snapshot GTFS geometry/stops so later feed changes do not rewrite saved notices. Each overlay stores immutable operational `closureStart`/`closureEnd` anchors, sparse interior `closureWaypoints` used only to reshape the published closed-section line, sparse `detourWaypoints`, dense closure/detour geometry, and an optional `routeLabelPosition` that is re-snapped to the detour line. Temporary stop impacts may store an optional `temporaryStopCode` alongside their public name and position. Older overlays without `closureWaypoints` load with an empty list. Publication records store the posted revision, generated filenames, MyRide URL, and posting audit fields; version 1 keeps PDF/PNG files as browser downloads rather than Cloud Storage objects.
 `teams/{teamId}/routeConceptPlannerProjects/{projectId}` is separate neutral Route Concept Planner storage. Its integer `revision` supports optimistic conflict detection; alternatives and their patterns are saved atomically with the root document.
 `teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
@@ -226,6 +221,8 @@ interface TeamMember {
 `role` controls team permissions and writes. Team owners and admins can manage team settings and members. `accessLevel` controls which app workspaces are visible. Use `none` for brand-new users or newly created teams that should see only Team Management until access is explicitly granted. Use `parking` for staff who should see only the Parking workspace by default. Use `external-planner` or `transit-app-only` for external agencies that should see only Transit App Data through the top-level Planning Data view. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
 
 `defaultMemberAccessLevel` and `defaultMemberWorkspaceOverrides` control the access assigned to future members who join with the team's invite code or invite link. The Developer Access Wizard in Team Management can set both the team default and individual member `workspaceOverrides`.
+
+Persisted `analyticsCouncilIntelligence` overrides from the retired Council Intelligence workspace are ignored when access data is read or rewritten. Other unknown override keys remain invalid.
 
 Partner agency onboarding uses invite links in the form `?invite=CODE` or `#/join/CODE`. A signed-out user is prompted to sign in; after authentication, the app joins them to the matching team automatically. Invite lookup documents denormalize `defaultMemberAccessLevel` and optional `defaultMemberWorkspaceOverrides` so new members can receive the correct external profile before they are allowed to read the team document.
 
@@ -856,6 +853,7 @@ interface NewScheduleProject {
     dateRange: { start: string; end: string } | null;
   };
   routeNumber?: string;
+  wizardStep?: 1 | 2 | 3 | 4 | 5;
 
   // Runtime review and trust contract (Step 2)
   analysis?: TripBucketAnalysis[];
@@ -869,6 +867,7 @@ interface NewScheduleProject {
   // Generated output (Step 4)
   generatedSchedules?: MasterRouteTable[];
   originalGeneratedSchedules?: MasterRouteTable[];
+  generatedScheduleInputFingerprint?: string;
   parsedData?: RuntimeData[];      // Raw data for regeneration
 
   isGenerated: boolean;
@@ -882,7 +881,7 @@ interface NewScheduleProject {
 }
 ```
 
-The schema v2 contract separates visible `reviewBuckets` from trusted `approvedBuckets`. Normal v2 saves write `runtimeTrustSchemaVersion: 2` and `runtimeTrustMigrationVersion: 2`, but readers still validate the contract itself; a marker alone never makes old Storage content trusted. Save payloads retain any completed Step 3 configuration and Step 4 schedules already loaded in memory even when the current screen is temporarily gated at Step 2. Old analysis, bands, approvals, parsed runtime results, and generated schedule artifacts can be cleared by `functions/scripts/migrate-new-schedule-runtime-v2.mjs`. The script is dry-run by default, requires matching `--project` and `--confirm-project` values for `--apply`, uses update-time checks, and keeps a 30-day backup under `migration-backups/new-schedule-runtime-v2/` before replacing an active Storage object. `cleanupNewScheduleRuntimeMigrationBackups` runs daily and deletes only expired objects under that exact migration prefix. Project identity, performance selection, and planner configuration are preserved. The app uses the same upload-verify-commit-cleanup order when it durably resets a legacy project on load.
+The schema v2 contract separates visible `reviewBuckets` from trusted `approvedBuckets`. Its optional `plannerOverrides` snapshot reconstructs independent North-start and South-start bucket exclusions after resume. Normal v2 saves write `runtimeTrustSchemaVersion: 2` and `runtimeTrustMigrationVersion: 2`, but readers still validate the contract itself; a marker alone never makes old Storage content trusted. Save payloads retain any completed Step 3 configuration and Step 4 schedules already loaded in memory even when the current screen is temporarily gated at Step 2. `generatedScheduleInputFingerprint` is required for restored output to reopen Steps 4 or 5; older or drifted output remains saved but is routed to Step 3 for regeneration. Old analysis, bands, approvals, parsed runtime results, and generated schedule artifacts can be cleared by `functions/scripts/migrate-new-schedule-runtime-v2.mjs`. The script is dry-run by default, requires matching `--project` and `--confirm-project` values for `--apply`, uses update-time checks, and keeps a 30-day backup under `migration-backups/new-schedule-runtime-v2/` before replacing an active Storage object. `cleanupNewScheduleRuntimeMigrationBackups` runs daily and deletes only expired objects under that exact migration prefix. Project identity, performance selection, and planner configuration are preserved. The app uses the same upload-verify-commit-cleanup order when it durably resets a legacy project on load.
 
 ### TimeBand
 
@@ -1055,4 +1054,3 @@ Routes like 2A+2B share a downtown terminus:
 | Shift, Requirement, TOD day/zone types | `utils/demandTypes.ts` |
 | RideCo/MVT parser result and import report types | `utils/parsers/csvParsers.ts` |
 | Parking import, revenue import, settings, summaries, and flags | `utils/parking/parkingTypes.ts` |
-| Council meetings, items, motions, votes, evidence, actions, and funding | `utils/council/types.ts` |

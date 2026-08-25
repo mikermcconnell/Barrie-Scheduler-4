@@ -569,7 +569,9 @@ export async function getPerformanceMetadata(teamId: string, requestingTeamId?: 
         };
     } catch (error) {
         console.error('Error getting performance metadata:', error);
-        return null;
+        throw error instanceof Error
+            ? error
+            : new Error('Failed to load performance metadata.');
     }
 }
 

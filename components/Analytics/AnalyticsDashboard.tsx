@@ -6,7 +6,7 @@
  */
 
 import React, { Suspense, useState, useEffect, useCallback } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Landmark, Ticket } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Ticket } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -88,10 +88,6 @@ const RouteConceptPlannerWorkspace = lazyWithRetry(
 const NetworkConnectionsWorkspace = lazyWithRetry(
     () => import('./NetworkConnectionsWorkspace').then(module => ({ default: module.NetworkConnectionsWorkspace })),
     'analytics-network-connections-workspace'
-);
-const CouncilIntelligenceWorkspace = lazyWithRetry(
-    () => import('./CouncilIntelligenceWorkspace').then(module => ({ default: module.CouncilIntelligenceWorkspace })),
-    'analytics-council-intelligence-workspace'
 );
 const FareProgramsWorkspace = lazyWithRetry(
     () => import('./FareProgramsWorkspace').then(module => ({ default: module.FareProgramsWorkspace })),
@@ -187,7 +183,6 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'network-connections': 'analyticsNetworkConnections',
     'shuttle-planner': 'analyticsShuttlePlanner',
     'fare-programs': 'analyticsFarePrograms',
-    'council-intelligence': 'analyticsCouncilIntelligence',
 };
 
 const AnalyticsFeatureNotice: React.FC<{ feature: Parameters<typeof isFeatureUnderConstruction>[0] }> = ({ feature }) => {
@@ -213,7 +208,7 @@ const AnalyticsPanelLoading: React.FC<{ label?: string }> = ({ label = 'Loading 
 );
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose, initialView = 'dashboard', routePrefix }) => {
-    const { team, teamRole } = useTeam();
+    const { team } = useTeam();
     const { user } = useAuth();
     const toast = useToast();
     const [view, setView] = useState<AnalyticsView>('dashboard');
@@ -682,7 +677,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                     <AnalyticsFeatureNotice feature="analyticsCorridorSpeed" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <Suspense fallback={<AnalyticsPanelLoading label="Loading corridor speed map..." />}>
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Corridor Performance..." />}>
                         <CorridorSpeedMap onBack={() => setView('dashboard')} teamId={performanceDataTeamId ?? team.id} accessTeamId={team.id} />
                     </Suspense>
                 </div>
@@ -767,26 +762,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         );
     }
 
-    if (view === 'council-intelligence') {
-        return (
-            <div className="flex h-full flex-col overflow-hidden">
-                <div className="px-6 pt-6 shrink-0">
-                    <AnalyticsFeatureNotice feature="analyticsCouncilIntelligence" />
-                </div>
-                <div className="min-h-0 flex-1 overflow-hidden">
-                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Council Intelligence..." />}>
-                        <CouncilIntelligenceWorkspace
-                            onBack={() => setView('dashboard')}
-                            teamId={team.id}
-                            userId={user?.uid ?? null}
-                            canRefresh={teamRole === 'owner' || teamRole === 'admin'}
-                        />
-                    </Suspense>
-                </div>
-            </div>
-        );
-    }
-
     if (view === 'fare-programs') {
         return (
             <div className="flex h-full flex-col overflow-hidden">
@@ -838,8 +813,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                         <AnalyticsCard
                             color="teal"
                             icon={<Map size={20} />}
-                            title="Corridor Speed"
-                            description="Compare observed STREETS travel times to GTFS schedule by roadway corridor, period, and direction."
+                            title="Corridor Performance"
+                            description="Find runtime pressure and reliability by corridor with visible STREETS and GTFS evidence quality."
                             hasData={hasPerformanceData}
                             underConstruction={isFeatureUnderConstruction('analyticsCorridorSpeed')}
                             onClick={() => setView('corridor-speed')}
@@ -909,17 +884,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                             hasData={false}
                             underConstruction={isFeatureUnderConstruction('analyticsRoutePlanner2')}
                             onClick={() => setView('route-planner-2')}
-                        />
-                    )}
-                    {canAccess('analyticsCouncilIntelligence') && (
-                        <AnalyticsCard
-                            color="violet"
-                            icon={<Landmark size={20} />}
-                            title="Council Intelligence"
-                            description="Review council and committee meetings, decisions, votes, and transit-related actions with source-linked evidence."
-                            hasData={false}
-                            underConstruction={isFeatureUnderConstruction('analyticsCouncilIntelligence')}
-                            onClick={() => setView('council-intelligence')}
                         />
                     )}
                     {canAccess('analyticsFarePrograms') && (

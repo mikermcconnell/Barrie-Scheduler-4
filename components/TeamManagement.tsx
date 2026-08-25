@@ -88,7 +88,7 @@ const WORKSPACE_FEATURE_LABELS: Partial<Record<WorkspaceAccessFeatureKey, string
     workspaceParking: 'Parking',
     analyticsTransitApp: 'Transit App Data',
     analyticsOdMatrix: 'OD Matrix',
-    analyticsCorridorSpeed: 'Corridor Speed',
+    analyticsCorridorSpeed: 'Corridor Performance',
     analyticsCorridorHeadway: 'Corridor Headway',
     analyticsStudentPass: 'Student Pass',
     analyticsFleetPlan: 'Fleet Plan',
@@ -98,7 +98,6 @@ const WORKSPACE_FEATURE_LABELS: Partial<Record<WorkspaceAccessFeatureKey, string
     analyticsRouteConceptPlanner: 'Route Concept Planner',
     analyticsShuttlePlanner: 'Shuttle Planner',
     analyticsFarePrograms: 'Fare Programs',
-    analyticsCouncilIntelligence: 'Council Intelligence',
     operationsOperatorDwell: 'Dwell Incident Review',
 };
 

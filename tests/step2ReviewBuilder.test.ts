@@ -207,7 +207,7 @@ describe('step2ReviewBuilder', () => {
         expect(blockedResult.troubleshooting.canRenderFullPath).toBe(false);
     });
 
-    it('warns but does not block when no planning stop chain is available for generation', () => {
+    it('blocks approval when no trusted planning stop chain is available for generation', () => {
         const result = buildStep2ReviewResult({
             routeIdentity: '7-Weekday',
             routeNumber: '7',
@@ -253,9 +253,9 @@ describe('step2ReviewBuilder', () => {
             runtimeDiagnostics: diagnostics,
         });
 
-        expect(result.health.status).toBe('warning');
-        expect(result.health.warnings).toContain('No planning stop chain is available; schedule generation will infer timepoints from the runtime data.');
-        expect(result.approvalEligible).toBe(true);
+        expect(result.health.status).toBe('blocked');
+        expect(result.health.blockers).toContain('No trusted planning stop chain is available. Resolve or select the canonical route stops before approval.');
+        expect(result.approvalEligible).toBe(false);
     });
 
     it('can build a source snapshot from the performance diagnostics metadata', () => {

@@ -126,7 +126,7 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         });
 
         expect(result).toHaveLength(1);
-        expect(result[0].detectedDirection).toBe('North');
+        expect(result[0].detectedDirection).toBe('Loop');
         expect(result[0].detectedRouteNumber).toBe('10');
         expect(result[0].allTimeBuckets).toEqual(['06:00']);
 
@@ -327,7 +327,7 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
                         tripName: '7B - 15:35',
                         routeId: '7',
                         direction: '',
-                        terminalDepartureTime: '15:35',
+                        terminalDepartureTime: '15:55',
                         segments: [
                             { fromStopId: 'rose', toStopId: 'park', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 48, timeBucket: '15:30' },
                         ],
@@ -1522,13 +1522,79 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(calculateTotalTripTimes(fourDayResults)[0].evidence?.planningEligible).toBe(false);
     });
 
+    it('does not pair an opposite-direction trip that departs hours after the first trip arrives', () => {
+        const summaries = [makeSummary({
+            date: '2026-04-02',
+            dayType: 'weekday',
+            routeNames: { '7A': 'North', '7B': 'South' },
+            tripEntries: [
+                {
+                    tripId: 'north-early', tripName: '7A 06:00', routeId: '7A', direction: 'N', terminalDepartureTime: '06:00',
+                    segments: [{
+                        fromStopId: 'A', toStopId: 'B', fromRouteStopIndex: 1, toRouteStopIndex: 2,
+                        runtimeMinutes: 20, timeBucket: '06:00',
+                    }],
+                },
+                {
+                    tripId: 'south-late', tripName: '7B 20:00', routeId: '7B', direction: 'S', terminalDepartureTime: '20:00',
+                    segments: [{
+                        fromStopId: 'B', toStopId: 'A', fromRouteStopIndex: 1, toRouteStopIndex: 2,
+                        runtimeMinutes: 20, timeBucket: '20:00',
+                    }],
+                },
+            ],
+        })];
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['B', 'A'] },
+            fullPatternOnly: true,
+        });
+
+        expect(result).toEqual([]);
+    });
+
+    it('does not pair nearby trips whose canonical terminal handoff does not match', () => {
+        const summaries = [makeSummary({
+            date: '2026-04-02',
+            dayType: 'weekday',
+            routeNames: { '7A': 'North', '7B': 'South' },
+            tripEntries: [
+                {
+                    tripId: 'north', tripName: '7A 06:00', routeId: '7A', direction: 'N', terminalDepartureTime: '06:00',
+                    segments: [{
+                        fromStopId: 'A', toStopId: 'B', fromRouteStopIndex: 1, toRouteStopIndex: 2,
+                        runtimeMinutes: 20, timeBucket: '06:00',
+                    }],
+                },
+                {
+                    tripId: 'south-wrong-terminal', tripName: '7B 06:25', routeId: '7B', direction: 'S', terminalDepartureTime: '06:25',
+                    segments: [{
+                        fromStopId: 'C', toStopId: 'A', fromRouteStopIndex: 1, toRouteStopIndex: 2,
+                        runtimeMinutes: 20, timeBucket: '06:00',
+                    }],
+                },
+            ],
+        })];
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['C', 'A'] },
+            fullPatternOnly: true,
+        });
+
+        expect(result).toEqual([]);
+    });
+
     it('keeps a canonical cycle stable when history adds a harmless raw stop variation', () => {
         const makeDay = (date: string, withExtraStop: boolean) => makeSummary({
             date, dayType: 'weekday', routeNames: { '12A': '12A', '12B': '12B' },
             stopEntries: [
                 { routeId: '12A', direction: 'N', fromStopId: 'a', toStopId: 'b', fromStopName: 'A', toStopName: 'B', fromRouteStopIndex: 1, toRouteStopIndex: 2, segmentName: 'A to B', observations: [] },
                 { routeId: '12A', direction: 'N', fromStopId: 'x', toStopId: 'b', fromStopName: 'Extra', toStopName: 'B', fromRouteStopIndex: 2, toRouteStopIndex: 3, segmentName: 'Extra to B', observations: [] },
-                { routeId: '12B', direction: 'S', fromStopId: 'c', toStopId: 'd', fromStopName: 'C', toStopName: 'D', fromRouteStopIndex: 1, toRouteStopIndex: 2, segmentName: 'C to D', observations: [] },
+                { routeId: '12B', direction: 'S', fromStopId: 'b', toStopId: 'a', fromStopName: 'B', toStopName: 'A', fromRouteStopIndex: 1, toRouteStopIndex: 2, segmentName: 'B to A', observations: [] },
             ],
             tripEntries: [
                 {
@@ -1541,14 +1607,14 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
                         : [{ fromStopId: 'a', toStopId: 'b', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 55, timeBucket: '10:00' }],
                 },
                 {
-                    tripId: `${date}-s`, tripName: '12B 10:52', routeId: '12B', direction: 'S', terminalDepartureTime: '10:52',
-                    segments: [{ fromStopId: 'c', toStopId: 'd', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 60.93, timeBucket: '10:30' }],
+                    tripId: `${date}-s`, tripName: '12B 11:25', routeId: '12B', direction: 'S', terminalDepartureTime: '11:25',
+                    segments: [{ fromStopId: 'b', toStopId: 'a', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 60.93, timeBucket: '11:00' }],
                 },
             ],
         });
         const options = {
             routeId: '12', dayType: 'weekday' as const, fullPatternOnly: true,
-            canonicalDirectionStops: { North: ['A', 'B'], South: ['C', 'D'] },
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['B', 'A'] },
         };
         const day = makeDay('2026-04-01', true);
         const alone = calculateTotalTripTimes(computeRuntimesFromPerformance([day], options));
@@ -1684,7 +1750,7 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
                         tripId: 'loop-1',
                         tripName: '10 06:00',
                         routeId: '10',
-                        direction: 'CW',
+                        direction: 'N',
                         terminalDepartureTime: '06:00',
                         segments: [
                             { fromStopId: 'Downtown', toStopId: 'Georgian College', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 8, timeBucket: '06:00' },

@@ -92,6 +92,12 @@ const normalizeFingerprintPayload = (input: Step2ReviewInput): NormalizedFingerp
     canonicalDirectionStops: normalizeCanonicalDirectionStops(input.canonicalDirectionStops),
     plannerOverrides: {
         excludedBuckets: normalizeExcludedBuckets(input.plannerOverrides.excludedBuckets),
+        excludedCycleBucketsByStartDirection: input.plannerOverrides.excludedCycleBucketsByStartDirection
+            ? {
+                North: normalizeExcludedBuckets(input.plannerOverrides.excludedCycleBucketsByStartDirection.North ?? []),
+                South: normalizeExcludedBuckets(input.plannerOverrides.excludedCycleBucketsByStartDirection.South ?? []),
+            }
+            : undefined,
     },
 });
 

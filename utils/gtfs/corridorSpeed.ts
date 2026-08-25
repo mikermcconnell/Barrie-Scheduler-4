@@ -14,6 +14,19 @@ import {
 } from '../transit-app/transitAppGtfsNormalization';
 import { haversineDistance } from '../routing/geometryUtils';
 import { getAllStopsWithCoords } from './gtfsStopLookup';
+import type { RuntimePatternKind } from '../performanceDataTypes';
+import {
+    buildCorridorEvidenceQuality,
+    calculateMedian,
+    calculatePercentile,
+    isEligibleCorridorPattern,
+} from '../corridor-performance/corridorPerformanceEvidence';
+import {
+    BUNDLED_CORRIDOR_GTFS_PROVENANCE,
+    isCorridorServiceDateCovered,
+} from '../corridor-performance/corridorPerformanceProvenance';
+
+export { getCorridorSpeedStyle, getMetricDisplayValue } from '../corridor-performance/corridorPerformancePresentation';
 
 export type CorridorSpeedMetric = 'delay-minutes' | 'delay-percent' | 'observed-speed' | 'scheduled-speed';
 
@@ -26,6 +39,11 @@ export interface CorridorSpeedRouteBreakdown {
     runtimeDeltaPct: number | null;
     scheduledSpeedKmh: number | null;
     observedSpeedKmh: number | null;
+    distinctDayCount?: number;
+    p80ObservedRuntimeMin?: number | null;
+    p90ObservedRuntimeMin?: number | null;
+    confidenceLevel?: 'none' | 'low' | 'usable';
+    confidenceReasons?: string[];
 }
 
 export interface CorridorSpeedSegment {
@@ -58,6 +76,11 @@ export interface CorridorSpeedStats {
     scheduledSpeedKmh: number | null;
     observedSpeedKmh: number | null;
     routeBreakdown: CorridorSpeedRouteBreakdown[];
+    distinctDayCount?: number;
+    p80ObservedRuntimeMin?: number | null;
+    p90ObservedRuntimeMin?: number | null;
+    confidenceLevel?: 'none' | 'low' | 'usable';
+    confidenceReasons?: string[];
 }
 
 export interface ScheduledStopSegmentSample {
@@ -76,6 +99,8 @@ export interface CorridorTraversalSample {
     directionId: string;
     departureMinutes: number;
     runtimeMinutes: number;
+    serviceDate?: string;
+    patternKind?: RuntimePatternKind;
 }
 
 export interface CorridorSpeedIndex {
@@ -120,11 +145,13 @@ interface StaticCorridorTraversalModel {
 interface RouteAccumulator {
     scheduledRuntimes: number[];
     observedRuntimes: number[];
+    observedDates: Set<string>;
 }
 
 interface StatAccumulator {
     scheduledRuntimes: number[];
     observedRuntimes: number[];
+    observedDates: Set<string>;
     routes: Map<string, RouteAccumulator>;
 }
 
@@ -135,14 +162,6 @@ const MAX_SPEED_MAP_SEGMENT_LENGTH_METERS = 1200;
 
 let cachedStaticModel: StaticSpeedModel | null = null;
 let cachedStaticCorridorTraversalModel: StaticCorridorTraversalModel | null = null;
-
-function median(values: readonly number[]): number | null {
-    if (values.length === 0) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    if (sorted.length % 2 === 1) return sorted[mid];
-    return (sorted[mid - 1] + sorted[mid]) / 2;
-}
 
 export function normalizeRouteId(routeId: string): string {
     return routeId.trim().toUpperCase();
@@ -715,8 +734,10 @@ function buildObservedCorridorTraversalSamples(
     const samples: CorridorTraversalSample[] = [];
 
     for (const daySummary of dailySummaries) {
+        if (!isCorridorServiceDateCovered(daySummary.date, BUNDLED_CORRIDOR_GTFS_PROVENANCE)) continue;
         const tripEntries = daySummary.tripStopSegmentRuntimes?.entries ?? [];
         for (const tripEntry of tripEntries) {
+            if (!isEligibleCorridorPattern(tripEntry.patternKind)) continue;
             const route = normalizeRouteId(tripEntry.routeId);
             const directionId = resolveObservedDirectionLabel(route, tripEntry.direction);
             const candidates = segmentsByRouteDirection.get(`${route}|${directionId}`) ?? [];
@@ -732,6 +753,8 @@ function buildObservedCorridorTraversalSamples(
                     directionId,
                     departureMinutes: match.departureMinutes,
                     runtimeMinutes: match.runtimeMinutes,
+                    serviceDate: daySummary.date,
+                    patternKind: tripEntry.patternKind,
                 });
             }
         }
@@ -974,6 +997,7 @@ function createEmptyAccumulator(): StatAccumulator {
     return {
         scheduledRuntimes: [],
         observedRuntimes: [],
+        observedDates: new Set<string>(),
         routes: new Map<string, RouteAccumulator>(),
     };
 }
@@ -1007,6 +1031,7 @@ function getOrCreateRouteAccumulator(acc: StatAccumulator, route: string): Route
     const created: RouteAccumulator = {
         scheduledRuntimes: [],
         observedRuntimes: [],
+        observedDates: new Set<string>(),
     };
     acc.routes.set(route, created);
     return created;
@@ -1074,9 +1099,14 @@ function finalizeStats(
                 const acc = byPeriodAcc.get(period);
                 if (!acc) continue;
 
-                const scheduledRuntimeMin = median(acc.scheduledRuntimes);
-                const observedRuntimeMin = median(acc.observedRuntimes);
+                const scheduledRuntimeMin = calculateMedian(acc.scheduledRuntimes);
+                const observedRuntimeMin = calculateMedian(acc.observedRuntimes);
                 const sampleCount = acc.observedRuntimes.length;
+                const distinctDayCount = acc.observedDates.size;
+                const reportedDistinctDayCount = sampleCount > 0 && distinctDayCount === 0
+                    ? undefined
+                    : distinctDayCount;
+                const evidenceQuality = buildCorridorEvidenceQuality(sampleCount, distinctDayCount);
                 const runtimeDeltaMin =
                     scheduledRuntimeMin !== null && observedRuntimeMin !== null
                         ? Math.round((observedRuntimeMin - scheduledRuntimeMin) * 100) / 100
@@ -1089,8 +1119,14 @@ function finalizeStats(
                 const routeBreakdown: CorridorSpeedRouteBreakdown[] = segment.routes
                     .map(route => {
                         const routeAcc = acc.routes.get(route);
-                        const routeObservedRuntime = median(routeAcc?.observedRuntimes ?? []);
-                        const routeScheduledRuntime = median(routeAcc?.scheduledRuntimes ?? []);
+                        const routeObservedRuntime = calculateMedian(routeAcc?.observedRuntimes ?? []);
+                        const routeScheduledRuntime = calculateMedian(routeAcc?.scheduledRuntimes ?? []);
+                        const routeSampleCount = routeAcc?.observedRuntimes.length ?? 0;
+                        const routeDistinctDayCount = routeAcc?.observedDates.size ?? 0;
+                        const reportedRouteDistinctDayCount = routeSampleCount > 0 && routeDistinctDayCount === 0
+                            ? undefined
+                            : routeDistinctDayCount;
+                        const routeEvidenceQuality = buildCorridorEvidenceQuality(routeSampleCount, routeDistinctDayCount);
                         const routeRuntimeDeltaMin =
                             routeScheduledRuntime !== null && routeObservedRuntime !== null
                                 ? Math.round((routeObservedRuntime - routeScheduledRuntime) * 100) / 100
@@ -1101,13 +1137,18 @@ function finalizeStats(
                                 : null;
                         return {
                             route,
-                            sampleCount: routeAcc?.observedRuntimes.length ?? 0,
+                            sampleCount: routeSampleCount,
                             scheduledRuntimeMin: routeScheduledRuntime,
                             observedRuntimeMin: routeObservedRuntime,
                             runtimeDeltaMin: routeRuntimeDeltaMin,
                             runtimeDeltaPct: routeRuntimeDeltaPct,
                             scheduledSpeedKmh: toKmh(getRouteLengthMeters(segment, route), routeScheduledRuntime),
                             observedSpeedKmh: toKmh(getRouteLengthMeters(segment, route), routeObservedRuntime),
+                            distinctDayCount: reportedRouteDistinctDayCount,
+                            p80ObservedRuntimeMin: calculatePercentile(routeAcc?.observedRuntimes ?? [], 0.8),
+                            p90ObservedRuntimeMin: calculatePercentile(routeAcc?.observedRuntimes ?? [], 0.9),
+                            confidenceLevel: routeEvidenceQuality.level,
+                            confidenceReasons: routeEvidenceQuality.reasons,
                         };
                     })
                     .sort((a, b) => a.route.localeCompare(b.route, undefined, { numeric: true }));
@@ -1126,6 +1167,11 @@ function finalizeStats(
                     runtimeDeltaPct,
                     scheduledSpeedKmh: toKmh(segment.lengthMeters, scheduledRuntimeMin),
                     observedSpeedKmh: toKmh(segment.lengthMeters, observedRuntimeMin),
+                    distinctDayCount: reportedDistinctDayCount,
+                    p80ObservedRuntimeMin: calculatePercentile(acc.observedRuntimes, 0.8),
+                    p90ObservedRuntimeMin: calculatePercentile(acc.observedRuntimes, 0.9),
+                    confidenceLevel: evidenceQuality.level,
+                    confidenceReasons: evidenceQuality.reasons,
                     routeBreakdown,
                 });
             }
@@ -1214,6 +1260,7 @@ export function buildCorridorSpeedIndexFromTraversalData(
     }
 
     for (const sample of observedSamples) {
+        if (!isEligibleCorridorPattern(sample.patternKind)) continue;
         const periods = getMatchingPeriods(sample.departureMinutes);
         for (const period of periods) {
             observedStatKeys.add(getTraversalStatKey(sample.segmentId, sample.dayType, period));
@@ -1226,8 +1273,10 @@ export function buildCorridorSpeedIndexFromTraversalData(
             ));
             const acc = getOrCreateStatAccumulator(accumulators, sample.segmentId, sample.dayType, period);
             acc.observedRuntimes.push(sample.runtimeMinutes);
+            if (sample.serviceDate) acc.observedDates.add(sample.serviceDate);
             const routeAcc = getOrCreateRouteAccumulator(acc, sample.route);
             routeAcc.observedRuntimes.push(sample.runtimeMinutes);
+            if (sample.serviceDate) routeAcc.observedDates.add(sample.serviceDate);
         }
     }
 
@@ -1301,62 +1350,11 @@ export function scopeStatsToRoute(
         runtimeDeltaPct: routeStats.runtimeDeltaPct,
         scheduledSpeedKmh: routeStats.scheduledSpeedKmh,
         observedSpeedKmh: routeStats.observedSpeedKmh,
+        distinctDayCount: routeStats.distinctDayCount,
+        p80ObservedRuntimeMin: routeStats.p80ObservedRuntimeMin,
+        p90ObservedRuntimeMin: routeStats.p90ObservedRuntimeMin,
+        confidenceLevel: routeStats.confidenceLevel,
+        confidenceReasons: routeStats.confidenceReasons,
         routeBreakdown: [routeStats],
     };
-}
-
-export function getCorridorSpeedStyle(
-    stats: CorridorSpeedStats | null,
-    metric: CorridorSpeedMetric = 'delay-minutes',
-): { color: string; weight: number; opacity: number } {
-    if (!stats) return { color: '#d1d5db', weight: 2, opacity: 0.45 };
-    if (stats.sampleCount === 0 || stats.observedRuntimeMin === null || stats.scheduledRuntimeMin === null) {
-        return { color: '#cbd5e1', weight: 2, opacity: 0.45 };
-    }
-    if (stats.lowConfidence) return { color: '#9ca3af', weight: 3, opacity: 0.72 };
-
-    const sampleWeight = Math.min(6, 2 + Math.floor(Math.min(stats.sampleCount, 24) / 6));
-    if (metric === 'delay-percent') {
-        const deltaPct = stats.runtimeDeltaPct ?? 0;
-        if (deltaPct <= -10) return { color: '#16a34a', weight: sampleWeight, opacity: 0.88 };
-        if (deltaPct <= 5) return { color: '#3b82f6', weight: sampleWeight, opacity: 0.84 };
-        if (deltaPct <= 20) return { color: '#f59e0b', weight: sampleWeight, opacity: 0.88 };
-        return { color: '#dc2626', weight: sampleWeight + 1, opacity: 0.92 };
-    }
-
-    if (metric === 'observed-speed' || metric === 'scheduled-speed') {
-        const speed = metric === 'observed-speed' ? stats.observedSpeedKmh : stats.scheduledSpeedKmh;
-        if (speed === null) return { color: '#cbd5e1', weight: 2, opacity: 0.45 };
-        if (speed < 16) return { color: '#dc2626', weight: sampleWeight + 1, opacity: 0.92 };
-        if (speed < 22) return { color: '#f59e0b', weight: sampleWeight, opacity: 0.88 };
-        if (speed < 28) return { color: '#3b82f6', weight: sampleWeight, opacity: 0.84 };
-        return { color: '#16a34a', weight: sampleWeight, opacity: 0.88 };
-    }
-
-    const delta = stats.runtimeDeltaMin ?? 0;
-    if (delta <= -1.5) return { color: '#16a34a', weight: sampleWeight, opacity: 0.88 };
-    if (delta <= 1) return { color: '#3b82f6', weight: sampleWeight, opacity: 0.84 };
-    if (delta <= 3) return { color: '#f59e0b', weight: sampleWeight, opacity: 0.88 };
-    return { color: '#dc2626', weight: sampleWeight + 1, opacity: 0.92 };
-}
-
-export function getMetricDisplayValue(stats: CorridorSpeedStats | null, metric: CorridorSpeedMetric): string {
-    if (!stats) return 'No data';
-
-    switch (metric) {
-        case 'delay-minutes':
-            return stats.runtimeDeltaMin === null
-                ? 'No observed data'
-                : `${stats.runtimeDeltaMin > 0 ? '+' : ''}${stats.runtimeDeltaMin.toFixed(1)} min`;
-        case 'delay-percent':
-            return stats.runtimeDeltaPct === null
-                ? 'No observed data'
-                : `${stats.runtimeDeltaPct > 0 ? '+' : ''}${stats.runtimeDeltaPct.toFixed(1)}%`;
-        case 'observed-speed':
-            return stats.observedSpeedKmh === null ? 'No observed data' : `${stats.observedSpeedKmh.toFixed(1)} km/h`;
-        case 'scheduled-speed':
-            return stats.scheduledSpeedKmh === null ? 'No scheduled data' : `${stats.scheduledSpeedKmh.toFixed(1)} km/h`;
-        default:
-            return 'No data';
-    }
 }

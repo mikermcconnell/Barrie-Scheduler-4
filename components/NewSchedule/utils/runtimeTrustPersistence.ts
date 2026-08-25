@@ -151,6 +151,23 @@ export const isStructurallyValidRuntimeTrustContract = (
         return false;
     }
     if (!hasValidSourceSnapshotShape(contract.sourceSnapshot)) return false;
+    if (contract.plannerOverrides !== undefined) {
+        if (!isRecord(contract.plannerOverrides)) return false;
+        const overrides = contract.plannerOverrides;
+        if (
+            !Array.isArray(overrides.excludedBuckets)
+            || overrides.excludedBuckets.some(bucket => typeof bucket !== 'string' || !bucket.trim())
+        ) return false;
+        const cycleOverrides = overrides.excludedCycleBucketsByStartDirection;
+        if (cycleOverrides !== undefined) {
+            if (!isRecord(cycleOverrides)) return false;
+            if (Object.entries(cycleOverrides).some(([direction, buckets]) => (
+                !['North', 'South'].includes(direction)
+                || !Array.isArray(buckets)
+                || buckets.some(bucket => typeof bucket !== 'string' || !bucket.trim())
+            ))) return false;
+        }
+    }
 
     const planning = contract.planning;
     if (!planning || typeof planning !== 'object') return false;

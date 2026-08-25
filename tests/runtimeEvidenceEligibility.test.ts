@@ -55,4 +55,56 @@ describe('runtime evidence eligibility', () => {
         expect(result[3].isOutlier).toBe(false);
         expect(result[3].ignored).toBe(false);
     });
+
+    it.each([
+        { label: 'missing P50', detail: { p80: 12, n: 10 } },
+        { label: 'zero P50', detail: { p50: 0, p80: 12, n: 10 } },
+        { label: 'non-finite P50', detail: { p50: Number.NaN, p80: 12, n: 10 } },
+        { label: 'missing P80', detail: { p50: 10, n: 10 } },
+        { label: 'zero P80', detail: { p50: 10, p80: 0, n: 10 } },
+        { label: 'non-finite P80', detail: { p50: 10, p80: Number.POSITIVE_INFINITY, n: 10 } },
+    ])('rejects otherwise sufficient uploaded evidence with $label', ({ detail }) => {
+        const result = evaluateRuntimeBucketEligibility({
+            totalP50: 10,
+            assignedBand: 'A',
+            ignored: false,
+            isOutlier: false,
+            expectedSegmentCount: 1,
+            observedSegmentCount: 1,
+            sampleCountMode: 'observations',
+            details: [detail],
+            evidence: {
+                kind: 'uploaded-percentiles',
+                qualifyingCount: 10,
+                requiredCount: 10,
+                planningEligible: true,
+                exclusionReasons: [],
+            },
+        }, { requireAssignedBand: true });
+
+        expect(result.eligible).toBe(false);
+        expect(result.reasons).toContain('Every segment needs positive finite P50 and P80 runtimes');
+    });
+
+    it('accepts positive finite segment percentiles when all other evidence is sufficient', () => {
+        const result = evaluateRuntimeBucketEligibility({
+            totalP50: 10,
+            assignedBand: 'A',
+            ignored: false,
+            isOutlier: false,
+            expectedSegmentCount: 1,
+            observedSegmentCount: 1,
+            sampleCountMode: 'observations',
+            details: [{ p50: 10, p80: 12, n: 10 }],
+            evidence: {
+                kind: 'uploaded-percentiles',
+                qualifyingCount: 10,
+                requiredCount: 10,
+                planningEligible: true,
+                exclusionReasons: [],
+            },
+        }, { requireAssignedBand: true });
+
+        expect(result).toEqual({ eligible: true, reasons: [] });
+    });
 });

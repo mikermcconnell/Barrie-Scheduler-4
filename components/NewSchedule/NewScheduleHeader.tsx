@@ -13,10 +13,12 @@ import {
 } from 'lucide-react';
 
 type CloudSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+export type NewScheduleWizardStep = 1 | 2 | 3 | 4 | 5;
+export type SaveVersionResult = boolean | void;
 
 interface NewScheduleHeaderProps {
     // Step info
-    currentStep: number;
+    currentStep: NewScheduleWizardStep;
     totalSteps?: number;
     stepLabel: string;
 
@@ -25,13 +27,13 @@ interface NewScheduleHeaderProps {
     onRenameProject?: (newName: string) => void;
     onOpenProjects?: () => void;
     onNewProject?: () => void;
-    onSaveVersion?: (label?: string) => Promise<void> | void;
+    onSaveVersion?: (label?: string) => Promise<SaveVersionResult> | SaveVersionResult;
     onExport?: () => void;
     onClose: () => void;
 
     // Navigation
-    onStepClick?: (step: number) => void;
-    maxStepReached?: number;
+    onStepClick?: (step: NewScheduleWizardStep) => void;
+    maxStepReached?: NewScheduleWizardStep;
 
     // Unified save status (replaces autoSaveStatus/lastSaved)
     cloudSaveStatus?: CloudSaveStatus;
@@ -48,7 +50,7 @@ interface NewScheduleHeaderProps {
 
 export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
     currentStep,
-    totalSteps = 4,
+    totalSteps = 5,
     stepLabel,
     projectName,
     onRenameProject,
@@ -71,6 +73,7 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
     const [renameValue, setRenameValue] = useState(projectName);
     const [showExitModal, setShowExitModal] = useState(false);
     const [isExitSaving, setIsExitSaving] = useState(false);
+    const [exitSaveError, setExitSaveError] = useState<string | null>(null);
 
     // Sync rename value when projectName changes
     useEffect(() => {
@@ -90,27 +93,36 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
             onClose();
             return;
         }
+        setExitSaveError(null);
         setShowExitModal(true);
     };
 
     const handleSaveAndExit = async () => {
         if (!onSaveVersion) {
-            setShowExitModal(false);
-            onClose();
+            setExitSaveError('Saving is unavailable. Cancel and try again, or exit without saving.');
             return;
         }
 
         setIsExitSaving(true);
+        setExitSaveError(null);
         try {
-            await onSaveVersion('Save before exit');
+            const result = await onSaveVersion('Save before exit');
+            if (result === false) {
+                setExitSaveError('The project could not be saved. Your changes are still open.');
+                return;
+            }
             setShowExitModal(false);
             onClose();
+        } catch (error) {
+            console.error('Failed to save project before exit:', error);
+            setExitSaveError('The project could not be saved. Your changes are still open.');
         } finally {
             setIsExitSaving(false);
         }
     };
 
     const handleExitWithoutSaving = () => {
+        setExitSaveError(null);
         setShowExitModal(false);
         onClose();
     };
@@ -119,8 +131,9 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
         { num: 1, label: 'Upload' },
         { num: 2, label: 'Analysis' },
         { num: 3, label: 'Build' },
-        { num: 4, label: 'Schedule' }
-    ];
+        { num: 4, label: 'Schedule' },
+        { num: 5, label: 'Connections' }
+    ].slice(0, Math.max(1, Math.min(totalSteps, 5))) as Array<{ num: NewScheduleWizardStep; label: string }>;
 
     // Render the unified save status indicator
     const renderSaveStatus = () => {
@@ -187,7 +200,7 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
         <>
             <div className="sticky top-0 z-[60] border-b border-gray-200 bg-white/95 shadow-sm backdrop-blur">
                 <div className={`relative flex flex-col px-4 lg:px-6 ${
-                    currentStep === 4 ? 'gap-1 py-1.5' : 'gap-2 py-2.5'
+                    currentStep >= 4 ? 'gap-1 py-1.5' : 'gap-2 py-2.5'
                 }`}>
                     {/* Top row: project identity + project actions */}
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -272,7 +285,7 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
 
                     {/* Stepper */}
                     <div className={`overflow-x-auto pb-0.5 ${
-                        currentStep === 4
+                        currentStep >= 4
                             ? '2xl:absolute 2xl:left-1/2 2xl:top-1/2 2xl:w-auto 2xl:-translate-x-1/2 2xl:-translate-y-1/2 2xl:overflow-visible 2xl:pb-0'
                             : ''
                     }`}>
@@ -323,14 +336,24 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
                 <div className="fixed inset-0 z-[100] flex items-center justify-center">
                     <div
                         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-                        onClick={() => setShowExitModal(false)}
+                        onClick={() => {
+                            if (!isExitSaving) {
+                                setExitSaveError(null);
+                                setShowExitModal(false);
+                            }
+                        }}
                     />
                     <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden animate-in zoom-in-95 duration-200">
                         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                             <h3 className="text-base font-bold text-gray-900">Exit Project?</h3>
                             <button
-                                onClick={() => setShowExitModal(false)}
-                                className="text-gray-400 hover:text-gray-600 p-1 rounded transition-colors"
+                                onClick={() => {
+                                    setExitSaveError(null);
+                                    setShowExitModal(false);
+                                }}
+                                disabled={isExitSaving}
+                                aria-label="Close exit confirmation"
+                                className="text-gray-400 hover:text-gray-600 p-1 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 <X size={18} />
                             </button>
@@ -346,6 +369,12 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
                             {lastCloudSaveTime && (
                                 <p className="text-xs text-gray-500 mb-4">
                                     Last cloud save: {lastCloudSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                            )}
+
+                            {exitSaveError && (
+                                <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                                    {exitSaveError}
                                 </p>
                             )}
 
@@ -365,7 +394,10 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
                                     Exit Without Saving
                                 </button>
                                 <button
-                                    onClick={() => setShowExitModal(false)}
+                                    onClick={() => {
+                                        setExitSaveError(null);
+                                        setShowExitModal(false);
+                                    }}
                                     disabled={isExitSaving}
                                     className="w-full px-4 py-2.5 rounded-lg text-gray-500 font-medium text-sm hover:text-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-70"
                                 >

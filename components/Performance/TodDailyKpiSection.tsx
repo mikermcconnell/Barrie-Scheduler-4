@@ -1,17 +1,19 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { CalendarDays, Database, Loader2 } from 'lucide-react';
 import { ChartCard } from '../Analytics/AnalyticsShared';
-import { useTeam } from '../contexts/TeamContext';
-import { useTodPickupDataQuery, useTodPickupMetadataQuery } from '../../hooks/useTodPickupData';
 import {
-  aggregateTodDailyLocations,
   getTodActivityValue,
   type TodActivityMetric,
 } from '../../utils/todPickupAggregation';
+import type { TodDailyKpiDataset, TodDailyKpiLocation } from '../../utils/todPickupTypes';
 import { TodActivityMap } from './TodActivityMap';
 
 interface TodDailyKpiSectionProps {
-  includedDates: string[];
+  reports: TodDailyKpiDataset[];
+  locations: TodDailyKpiLocation[];
+  isLoading: boolean;
+  error: unknown;
+  hasStoredReports: boolean;
 }
 
 function formatDate(date: string): string {
@@ -30,28 +32,21 @@ function formatPeriod(dates: string[]): string {
 }
 
 function metricLabel(metric: TodActivityMetric): string {
-  return metric === 'pickups' ? 'pickups' : 'drop-offs';
+  if (metric === 'pickups') return 'pickups';
+  if (metric === 'dropoffs') return 'drop-offs';
+  return 'activity';
 }
 
-export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({ includedDates }) => {
-  const { team } = useTeam();
-  const [metric, setMetric] = useState<TodActivityMetric>('pickups');
-  const metadataQuery = useTodPickupMetadataQuery(team?.id);
-  const dataQuery = useTodPickupDataQuery(team?.id, !!metadataQuery.data, metadataQuery.data);
-  const includedDateSet = useMemo(() => new Set(includedDates), [includedDates]);
-  const reports = useMemo(
-    () => (dataQuery.data?.dailyReports || []).filter(report => includedDateSet.has(report.date)),
-    [dataQuery.data?.dailyReports, includedDateSet],
-  );
-  const locations = useMemo(
-    () => aggregateTodDailyLocations(dataQuery.data?.dailyReports || [], includedDates),
-    [dataQuery.data?.dailyReports, includedDates],
-  );
+export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
+  reports,
+  locations,
+  isLoading,
+  error,
+  hasStoredReports,
+}) => {
+  const [metric, setMetric] = useState<TodActivityMetric>('activity');
   const total = locations.reduce((sum, location) => sum + getTodActivityValue(location, metric), 0);
   const reportDates = reports.map(report => report.date);
-  const isLoading = metadataQuery.isLoading || dataQuery.isLoading;
-  const error = metadataQuery.error || dataQuery.error;
-  const hasStoredReports = (dataQuery.data?.dailyReports?.length || 0) > 0;
   const label = metricLabel(metric);
 
   return (
@@ -62,7 +57,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({ included
       <div className="space-y-4">
         <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="inline-flex w-fit rounded-lg border border-gray-200 bg-white p-1 shadow-sm" aria-label="TOD map metric">
-            {(['pickups', 'dropoffs'] as TodActivityMetric[]).map(value => (
+            {(['activity', 'pickups', 'dropoffs'] as TodActivityMetric[]).map(value => (
               <button
                 key={value}
                 type="button"
@@ -74,7 +69,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({ included
                     : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
                 }`}
               >
-                {value === 'pickups' ? 'Pickups' : 'Drop-offs'}
+                {value === 'activity' ? 'Activity' : value === 'pickups' ? 'Pickups' : 'Drop-offs'}
               </button>
             ))}
           </div>

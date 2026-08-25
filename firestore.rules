@@ -292,18 +292,6 @@ service cloud.firestore {
         }
       }
 
-      // Council and committee meeting intelligence root document.
-      match /councilIntelligence/{docId} {
-        allow read: if canAccessWorkspace(teamId, 'analyticsCouncilIntelligence') || canSupportReadTeamData(teamId);
-        allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
-
-        // Meetings, councillors, registers, and their nested evidence.
-        match /{nestedDoc=**} {
-          allow read: if canAccessWorkspace(teamId, 'analyticsCouncilIntelligence') || canSupportReadTeamData(teamId);
-          allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
-        }
-      }
-
       // Route Concept Planner projects are isolated from the working Camp Route Planner.
       // Every nested write is coupled to the revision-checked project root so a stale
       // client cannot silently overwrite newer team work.
@@ -570,7 +558,6 @@ service cloud.firestore {
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
                 'analyticsFarePrograms',
-                'analyticsCouncilIntelligence',
                 'operationsLoadProfiles',
                 'operationsOperatorDwell'
               ])) ||
@@ -584,8 +571,7 @@ service cloud.firestore {
                 'analyticsFleetPlan',
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
-                'analyticsFarePrograms',
-                'analyticsCouncilIntelligence'
+                'analyticsFarePrograms'
               ])) ||
              (accessLevel == 'production' &&
               (feature in ['workspaceFixedRoute', 'workspaceOperations'])) ||

@@ -6,11 +6,11 @@ import {
 } from '../utils/workspaceAccessPackages';
 
 describe('workspace access packages', () => {
-    it('includes Council Intelligence in the Barrie planner package', () => {
+    it('includes Fare Programs in the Barrie planner package', () => {
         const selection = buildWorkspaceSelectionFromPackage('barrie-planner');
 
-        expect(selection.analyticsCouncilIntelligence).toBe(true);
         expect(selection.analyticsFarePrograms).toBe(true);
+        expect(selection).not.toHaveProperty('analyticsCouncilIntelligence');
     });
 
     it('includes the WATT-style Transit App plus STREETS dashboard package', () => {
@@ -24,7 +24,6 @@ describe('workspace access packages', () => {
         expect(selection.workspaceFixedRoute).toBe(false);
         expect(selection.workspaceOndemand).toBe(false);
         expect(selection.workspaceParking).toBe(false);
-        expect(selection.analyticsCouncilIntelligence).toBe(false);
     });
 
     it('keeps internal developer access as the only full-access package', () => {

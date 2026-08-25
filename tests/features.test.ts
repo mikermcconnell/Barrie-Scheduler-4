@@ -9,8 +9,8 @@ describe('feature flags', () => {
     expect(flags.analyticsRoutePlanner2).toBe(true);
     expect(flags.analyticsRouteConceptPlanner).toBe(false);
     expect(flags.analyticsNetworkConnections).toBe(true);
-    expect(flags.analyticsCouncilIntelligence).toBe(true);
     expect(flags.analyticsFarePrograms).toBe(true);
+    expect(flags).not.toHaveProperty('analyticsCouncilIntelligence');
     expect(flags.fixedAnalytics).toBe(true);
     expect(flags.fixedDetours).toBe(true);
     expect(flags.workspaceParking).toBe(true);
@@ -35,7 +35,6 @@ describe('feature flags', () => {
     expect(flags.analyticsCorridorHeadway).toBe(true);
     expect(flags.analyticsRoutePlanner2).toBe(true);
     expect(flags.analyticsNetworkConnections).toBe(true);
-    expect(flags.analyticsCouncilIntelligence).toBe(true);
     expect(flags.operationsImportHealth).toBe(true);
     expect(flags.operationsLoadProfiles).toBe(true);
     expect(flags.operationsOperatorDwell).toBe(true);

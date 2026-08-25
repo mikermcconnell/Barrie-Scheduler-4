@@ -144,6 +144,8 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
     };
 }
 
+const RETIRED_WORKSPACE_OVERRIDE_KEYS = new Set(['analyticsCouncilIntelligence']);
+
 function sanitizeWorkspaceOverrides(overrides: unknown): WorkspaceAccessOverrides | undefined {
     if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
         return undefined;
@@ -151,6 +153,7 @@ function sanitizeWorkspaceOverrides(overrides: unknown): WorkspaceAccessOverride
 
     const sanitized: WorkspaceAccessOverrides = {};
     Object.entries(overrides as Record<string, unknown>).forEach(([key, value]) => {
+        if (RETIRED_WORKSPACE_OVERRIDE_KEYS.has(key)) return;
         if (!isWorkspaceAccessFeature(key as any)) {
             throw new Error(`Invalid workspace override key: ${key}`);
         }

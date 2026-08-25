@@ -6,6 +6,7 @@ import type {
     CorridorSpeedStats
 } from '../../utils/gtfs/corridorSpeed';
 import { getMetricDisplayValue } from '../../utils/gtfs/corridorSpeed';
+import { formatCorridorEvidenceDays } from '../../utils/corridor-performance/corridorPerformancePresentation';
 
 interface CorridorSpeedDetailPanelProps {
     segment: CorridorSpeedSegment;
@@ -45,13 +46,14 @@ export const CorridorSpeedDetailPanel: React.FC<CorridorSpeedDetailPanelProps> =
             observedSpeedKmh: null,
         }));
     const selectedRoute = routeBreakdown.length === 1 ? routeBreakdown[0]?.route ?? null : null;
+    const confidenceReasons = stats?.confidenceReasons ?? [];
 
     return (
     <div className="absolute top-2 left-2 z-[1000] bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 w-80 pointer-events-auto">
         <div className="flex items-start justify-between px-3 pt-2.5 pb-1">
             <div className="min-w-0 flex-1">
                 <div className="font-bold text-gray-900 text-sm leading-tight truncate">
-                    Stop-to-Stop Speed
+                    Corridor Performance
                 </div>
                 <div className="text-[10px] text-gray-400 mt-0.5">
                     {segment.directionId} · {selectedRoute ? `Route ${selectedRoute} · ` : ''}{periodLabel} · {dayTypeLabel}
@@ -79,9 +81,9 @@ export const CorridorSpeedDetailPanel: React.FC<CorridorSpeedDetailPanelProps> =
         <div className="px-3 py-2 border-t border-gray-100">
             <div className="text-[9px] text-gray-400 uppercase mb-1">Selected Metric</div>
             <div className="text-lg font-bold text-cyan-700">{getMetricDisplayValue(stats, metric)}</div>
-            {stats?.lowConfidence && (
+            {(stats?.confidenceLevel === 'low' || stats?.lowConfidence) && (
                 <div className="text-[10px] text-amber-700 mt-1">
-                    Low confidence: only {stats.sampleCount} observed runs in this period.
+                    Low confidence: {confidenceReasons[0] ?? `only ${stats.sampleCount} observed runs in this period`}.
                 </div>
             )}
         </div>
@@ -95,7 +97,7 @@ export const CorridorSpeedDetailPanel: React.FC<CorridorSpeedDetailPanelProps> =
             <div className="px-3 py-2">
                 <div className="text-[9px] text-gray-400 uppercase">Observed</div>
                 <div className="text-sm font-semibold text-gray-800">{formatRuntime(stats?.observedRuntimeMin ?? null)}</div>
-                <div className="text-[10px] text-gray-500">{formatSpeed(stats?.observedSpeedKmh ?? null)}</div>
+                <div className="text-[10px] text-gray-500">{formatSpeed(stats?.observedSpeedKmh ?? null)} operating speed</div>
             </div>
         </div>
 
@@ -103,12 +105,25 @@ export const CorridorSpeedDetailPanel: React.FC<CorridorSpeedDetailPanelProps> =
             <div className="px-3 py-2 border-r border-gray-100">
                 <div className="text-[9px] text-gray-400 uppercase">Delay Delta</div>
                 <div className="text-sm font-semibold text-gray-800">
-                    {stats?.runtimeDeltaMin === null ? 'No data' : `${stats.runtimeDeltaMin > 0 ? '+' : ''}${stats.runtimeDeltaMin.toFixed(1)} min`}
+                    {stats?.runtimeDeltaMin == null ? 'No data' : `${stats.runtimeDeltaMin > 0 ? '+' : ''}${stats.runtimeDeltaMin.toFixed(1)} min`}
                 </div>
             </div>
             <div className="px-3 py-2">
-                <div className="text-[9px] text-gray-400 uppercase">Sample Count</div>
-                <div className="text-sm font-semibold text-gray-800">{stats?.sampleCount ?? 0}</div>
+                <div className="text-[9px] text-gray-400 uppercase">Evidence</div>
+                <div className="text-sm font-semibold text-gray-800">
+                    {stats?.sampleCount ?? 0} trips · {formatCorridorEvidenceDays(stats?.distinctDayCount)}
+                </div>
+            </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-0 border-t border-gray-100">
+            <div className="px-3 py-2 border-r border-gray-100">
+                <div className="text-[9px] text-gray-400 uppercase">P80 Runtime</div>
+                <div className="text-sm font-semibold text-gray-800">{formatRuntime(stats?.p80ObservedRuntimeMin ?? null)}</div>
+            </div>
+            <div className="px-3 py-2">
+                <div className="text-[9px] text-gray-400 uppercase">P90 Runtime</div>
+                <div className="text-sm font-semibold text-gray-800">{formatRuntime(stats?.p90ObservedRuntimeMin ?? null)}</div>
             </div>
         </div>
 

@@ -5,15 +5,15 @@
  * Offers "Resume" or "Start Fresh" options.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Clock, RotateCcw, Plus, X, HardDrive, Cloud } from 'lucide-react';
 import type { WizardProgress } from '../../hooks/useWizardProgress';
 
 interface Props {
     isOpen: boolean;
     progress: WizardProgress | null;
-    onResume: () => void;
-    onStartFresh: () => void;
+    onResume: () => boolean | void | Promise<boolean | void>;
+    onStartFresh: () => boolean | void | Promise<boolean | void>;
     onClose: () => void;
     isAuthenticated?: boolean;
 }
@@ -26,7 +26,44 @@ export const ResumeWizardModal: React.FC<Props> = ({
     onClose,
     isAuthenticated
 }) => {
+    const [pendingDecision, setPendingDecision] = useState<'resume' | 'fresh' | null>(null);
+    const [decisionError, setDecisionError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!isOpen) {
+            setPendingDecision(null);
+            setDecisionError(null);
+        }
+    }, [isOpen]);
+
     if (!isOpen || !progress) return null;
+
+    const handleDecision = async (
+        decision: 'resume' | 'fresh',
+        action: () => boolean | void | Promise<boolean | void>
+    ) => {
+        setPendingDecision(decision);
+        setDecisionError(null);
+        try {
+            const result = await action();
+            if (result === false) {
+                setDecisionError(
+                    decision === 'resume'
+                        ? 'This saved progress could not be restored. You can try again or start fresh.'
+                        : 'The saved progress could not be cleared. Please try again.'
+                );
+            }
+        } catch (error) {
+            console.error(`Failed to ${decision === 'resume' ? 'resume' : 'clear'} wizard progress:`, error);
+            setDecisionError(
+                decision === 'resume'
+                    ? 'This saved progress could not be restored. You can try again or start fresh.'
+                    : 'The saved progress could not be cleared. Please try again.'
+            );
+        } finally {
+            setPendingDecision(null);
+        }
+    };
 
     const formatDate = (dateStr: string) => {
         const date = new Date(dateStr);
@@ -46,17 +83,18 @@ export const ResumeWizardModal: React.FC<Props> = ({
         1: 'Upload Data',
         2: 'Runtime Analysis',
         3: 'Build Schedule',
-        4: 'Generated Schedule'
+        4: 'Generated Schedule',
+        5: 'Connections'
     };
 
     const hasGeneratedSchedules = progress.generatedSchedules && progress.generatedSchedules.length > 0;
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="resume-wizard-title">
             {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-                onClick={onClose}
+                onClick={() => !pendingDecision && onClose()}
             />
 
             {/* Modal */}
@@ -65,13 +103,16 @@ export const ResumeWizardModal: React.FC<Props> = ({
                 <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-4 text-white">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h2 className="text-lg font-bold">Resume Progress?</h2>
+                            <h2 id="resume-wizard-title" className="text-lg font-bold">Resume Progress?</h2>
                             {progress.projectName && (
                                 <p className="text-sm text-emerald-50/90 mt-0.5">{progress.projectName}</p>
                             )}
                         </div>
                         <button
+                            type="button"
                             onClick={onClose}
+                            disabled={pendingDecision !== null}
+                            aria-label="Close resume prompt"
                             className="text-white/70 hover:text-white p-1 rounded transition-colors"
                         >
                             <X size={20} />
@@ -82,7 +123,7 @@ export const ResumeWizardModal: React.FC<Props> = ({
                 {/* Content */}
                 <div className="p-6">
                     <p className="text-gray-600 mb-4">
-                        You have unsaved wizard progress. Would you like to continue where you left off?
+                        You have locally saved wizard progress. Would you like to continue where you left off?
                     </p>
 
                     {/* Progress Summary */}
@@ -128,21 +169,31 @@ export const ResumeWizardModal: React.FC<Props> = ({
                         )}
                     </div>
 
+                    {decisionError && (
+                        <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                            {decisionError}
+                        </p>
+                    )}
+
                     {/* Actions */}
                     <div className="flex gap-3">
                         <button
-                            onClick={onStartFresh}
-                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-gray-200 text-gray-700 font-bold hover:bg-gray-50 transition-colors"
+                            type="button"
+                            onClick={() => handleDecision('fresh', onStartFresh)}
+                            disabled={pendingDecision !== null}
+                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-gray-200 text-gray-700 font-bold hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            <Plus size={18} />
-                            Start Fresh
+                            {pendingDecision === 'fresh' ? <Clock size={18} className="animate-pulse" /> : <Plus size={18} />}
+                            {pendingDecision === 'fresh' ? 'Clearing...' : 'Start Fresh'}
                         </button>
                         <button
-                            onClick={onResume}
-                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-500 text-white font-bold hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/25"
+                            type="button"
+                            onClick={() => handleDecision('resume', onResume)}
+                            disabled={pendingDecision !== null}
+                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-500 text-white font-bold hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            <RotateCcw size={18} />
-                            Resume
+                            <RotateCcw size={18} className={pendingDecision === 'resume' ? 'animate-spin' : ''} />
+                            {pendingDecision === 'resume' ? 'Restoring...' : 'Resume'}
                         </button>
                     </div>
                 </div>

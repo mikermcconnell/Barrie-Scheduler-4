@@ -72,8 +72,8 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
     },
     {
         feature: 'analyticsCorridorSpeed',
-        label: 'Corridor Speed',
-        description: 'Observed versus scheduled travel time by corridor.',
+        label: 'Corridor Performance',
+        description: 'Evidence-backed observed versus scheduled runtime by corridor.',
         previewKind: 'analytics-card',
     },
     {
@@ -128,12 +128,6 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
         feature: 'analyticsFarePrograms',
         label: 'Fare Programs',
         description: 'Fare-program use, school-area proxies, and map-ready data quality.',
-        previewKind: 'analytics-card',
-    },
-    {
-        feature: 'analyticsCouncilIntelligence',
-        label: 'Council Intelligence',
-        description: 'Council and committee meeting records, decisions, votes, and transit-related actions.',
         previewKind: 'analytics-card',
     },
 ];

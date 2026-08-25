@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -100,5 +100,71 @@ describe('NewScheduleHeader', () => {
         expect(progressRow?.className).toContain('2xl:absolute');
         expect(progressRow?.className).toContain('2xl:top-1/2');
         expect(headerContent?.className).toContain('py-1.5');
+    });
+
+    it('shows the Connections step in the five-step flow by default', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <NewScheduleHeader
+                    currentStep={5}
+                    stepLabel="Connections"
+                    projectName="Project 1"
+                    onClose={vi.fn()}
+                    maxStepReached={5}
+                />
+            );
+        });
+
+        const connectionsButton = Array.from(container.querySelectorAll('button')).find(
+            button => button.textContent?.includes('Connections')
+        );
+
+        expect(connectionsButton).toBeTruthy();
+        expect(connectionsButton?.getAttribute('disabled')).toBeNull();
+    });
+
+    it('keeps the exit dialog open when the save reports failure', async () => {
+        const onClose = vi.fn();
+        const onSaveVersion = vi.fn().mockResolvedValue(false);
+
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <NewScheduleHeader
+                    currentStep={3}
+                    stepLabel="Build"
+                    projectName="Project 1"
+                    onClose={onClose}
+                    onSaveVersion={onSaveVersion}
+                    isDirty={true}
+                />
+            );
+        });
+
+        const exitButton = Array.from(container.querySelectorAll('button')).find(
+            button => button.textContent?.trim() === 'Exit'
+        );
+        flushSync(() => {
+            exitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        const saveAndExitButton = Array.from(container.querySelectorAll('button')).find(
+            button => button.textContent?.includes('Save & Exit')
+        );
+        await act(async () => {
+            saveAndExitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            await Promise.resolve();
+        });
+
+        expect(onClose).not.toHaveBeenCalled();
+        expect(container.querySelector('[role="alert"]')?.textContent).toContain('could not be saved');
+        expect(container.textContent).toContain('Exit Project?');
     });
 });

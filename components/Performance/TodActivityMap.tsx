@@ -53,7 +53,15 @@ function hasValidCoords(location: TodDailyKpiLocation): boolean {
 }
 
 function metricLabel(metric: TodActivityMetric): string {
-  return metric === 'pickups' ? 'pickups' : 'drop-offs';
+  if (metric === 'pickups') return 'pickups';
+  if (metric === 'dropoffs') return 'drop-offs';
+  return 'activity';
+}
+
+function metricTitle(metric: TodActivityMetric): string {
+  if (metric === 'pickups') return 'Pickups';
+  if (metric === 'dropoffs') return 'Drop-offs';
+  return 'Activity';
 }
 
 const Legend: React.FC<{ metric: TodActivityMetric }> = ({ metric }) => (
@@ -257,7 +265,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
             <div style={{ fontSize: 12, lineHeight: 1.4 }}>
               <strong>{hoveredLocation.name}</strong>
               <br />
-              {metric === 'pickups' ? 'Pickups' : 'Drop-offs'}: {hoveredLocation.value.toLocaleString()}
+              {metricTitle(metric)}: {hoveredLocation.value.toLocaleString()}
               <br />
               <span style={{ color: '#6b7280' }}>Pickups {hoveredLocation.pickups.toLocaleString()} · Drop-offs {hoveredLocation.dropoffs.toLocaleString()}</span>
             </div>

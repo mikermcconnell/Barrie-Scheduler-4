@@ -436,7 +436,8 @@ describe('newSchedule wizard state helpers', () => {
         expect(shouldShowNextStepAction(1, 'gtfs')).toBe(false);
         expect(shouldShowNextStepAction(1, 'csv')).toBe(true);
         expect(shouldShowNextStepAction(3, 'gtfs')).toBe(true);
-        expect(shouldShowNextStepAction(4, 'csv')).toBe(false);
+        expect(shouldShowNextStepAction(4, 'csv')).toBe(true);
+        expect(shouldShowNextStepAction(5, 'performance')).toBe(true);
     });
 
     it('builds a blocked Step 2 health report when a bidirectional route is missing a direction and has no complete buckets', () => {

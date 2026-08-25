@@ -273,7 +273,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     ), [headwayTargetMinutes, schedules]);
 
     const handleRegularizeHeadway = useCallback(() => {
-        if (!headwayTargetMinutes) return;
+        if (!headwayTargetMinutes || (headwayPreview?.overlapCount ?? 0) > 0) return;
 
         const result = regularizeScheduleHeadways(schedules, {
             targetHeadwayMinutes: headwayTargetMinutes,
@@ -281,7 +281,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
         });
         setSchedules(result.schedules);
         setLastHeadwayRegularization(result.summary);
-    }, [headwayTargetMinutes, schedules, setSchedules]);
+    }, [headwayPreview?.overlapCount, headwayTargetMinutes, schedules, setSchedules]);
 
     const reviewToolsSlot = (
         <div className="space-y-3">
@@ -339,7 +339,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                         {(headwayPreview.tightRecoveryCount > 0 || headwayPreview.overlapCount > 0) && (
                             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
                                 {headwayPreview.overlapCount > 0
-                                    ? `${headwayPreview.overlapCount} block connection${headwayPreview.overlapCount === 1 ? '' : 's'} would overlap.`
+                                    ? `${headwayPreview.overlapCount} block connection${headwayPreview.overlapCount === 1 ? '' : 's'} would overlap. Resolve the overlap before applying.`
                                     : `${headwayPreview.tightRecoveryCount} recovery window${headwayPreview.tightRecoveryCount === 1 ? '' : 's'} would be under 5 minutes.`}
                             </div>
                         )}
@@ -357,7 +357,8 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                         <button
                             type="button"
                             onClick={handleRegularizeHeadway}
-                            disabled={headwayPreview.before.totalHeadways === 0}
+                            disabled={headwayPreview.before.totalHeadways === 0 || headwayPreview.overlapCount > 0}
+                            title={headwayPreview.overlapCount > 0 ? 'Resolve block overlaps before applying this change.' : undefined}
                             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             <RefreshCw size={15} />

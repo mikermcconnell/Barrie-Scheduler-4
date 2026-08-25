@@ -68,7 +68,7 @@ describe('workspace access preview', () => {
         expect(preview.operationsTools).toEqual([]);
     });
 
-    it('shows Council Intelligence to planners but not Transit App-only partners', () => {
+    it('shows Fare Programs to planners but not Transit App-only partners', () => {
         const plannerPreview = buildWorkspaceAccessPreview({
             accessLevel: 'planner',
             flags: allFeaturesEnabled,
@@ -78,9 +78,7 @@ describe('workspace access preview', () => {
             flags: allFeaturesEnabled,
         });
 
-        expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('Council Intelligence');
         expect(plannerPreview.analyticsCards.map(card => card.label)).toContain('Fare Programs');
-        expect(partnerPreview.analyticsCards.map(card => card.label)).not.toContain('Council Intelligence');
         expect(partnerPreview.analyticsCards.map(card => card.label)).not.toContain('Fare Programs');
     });
 });

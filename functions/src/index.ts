@@ -7,7 +7,6 @@ export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
 export { developerSupportAccess } from './developerSupportAccess';
 export { ingestTodDailyKpi } from './todDailyKpi';
-export { refreshCouncilIntelligence, scheduledCouncilIntelligenceSync } from './councilIntelligence';
 export { cleanupNewScheduleRuntimeMigrationBackups } from './newScheduleRuntimeBackupCleanup';
 import {
   decodeExcelRequestBody,

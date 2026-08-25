@@ -58,7 +58,6 @@ describe('workspace access', () => {
         expect(allowed).toContain('analyticsStudentPass');
         expect(allowed).toContain('analyticsFleetPlan');
         expect(allowed).toContain('analyticsRoutePlanner2');
-        expect(allowed).toContain('analyticsCouncilIntelligence');
         expect(allowed).toContain('analyticsFarePrograms');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
@@ -78,7 +77,6 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('workspaceOperations');
         expect(allowed).not.toContain('analyticsStudentPass');
         expect(allowed).not.toContain('analyticsFleetPlan');
-        expect(allowed).not.toContain('analyticsCouncilIntelligence');
         expect(allowed).not.toContain('analyticsFarePrograms');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
@@ -113,7 +111,6 @@ describe('workspace access', () => {
         const allowed = getAllowedWorkspaceFeatures('admin');
 
         expect(allowed).toContain('analyticsRoutePlanner2');
-        expect(allowed).toContain('analyticsCouncilIntelligence');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).toContain('operationsOperatorDwell');
         expect(allowed).toContain('workspaceParking');
@@ -140,7 +137,6 @@ describe('workspace access', () => {
 
         expect(canAccessWorkspaceFeature('workspaceOndemand', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRoutePlanner2', internal)).toBe(true);
-        expect(canAccessWorkspaceFeature('analyticsCouncilIntelligence', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('workspaceParking', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRouteConceptPlanner', internal, flags)).toBe(true);
     });

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -1442,6 +1442,22 @@ const DepartmentChip: React.FC<{ department: string; codeFamilyKey?: string; cod
   );
 };
 
+export const ParkingFilterPendingIndicator: React.FC<{ pending: boolean }> = ({ pending }) => {
+  if (!pending) return null;
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="parking-filter-pending"
+      className="pointer-events-none absolute left-1/2 top-20 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-4 py-2 text-sm font-black text-slate-700 shadow-xl backdrop-blur"
+    >
+      <Loader2 className="animate-spin text-emerald-600" size={16} aria-hidden="true" />
+      Applying filters…
+    </div>
+  );
+};
+
 export const ParkingDataWorkspace: React.FC = () => {
   const { user, isGlobalAdmin } = useAuth();
   const { team, teamMember, canManageTeam, developerPreview } = useTeam();
@@ -1628,11 +1644,37 @@ export const ParkingDataWorkspace: React.FC = () => {
       .filter(month => selectedRevenueYear === 'all' || month.startsWith(`${selectedRevenueYear}-`))
       .sort((a, b) => b.localeCompare(a))
   ), [revenueMonths, selectedRevenueYear]);
+  const revenueFilterSelection = useMemo(() => ({
+    year: selectedRevenueYear,
+    month: selectedRevenueMonth,
+    category: selectedRevenueCategory,
+    uploader: selectedRevenueUploader,
+    source: revenueSourceFilter,
+    dayType: revenueDayTypeFilter,
+    hourStart: revenueHourStart,
+    hourEnd: revenueHourEnd,
+  }), [
+    revenueDayTypeFilter,
+    revenueHourEnd,
+    revenueHourStart,
+    revenueSourceFilter,
+    selectedRevenueCategory,
+    selectedRevenueMonth,
+    selectedRevenueUploader,
+    selectedRevenueYear,
+  ]);
+  const appliedRevenueFilterSelection = useDeferredValue(revenueFilterSelection);
+  const isRevenueFilterPending = appliedRevenueFilterSelection !== revenueFilterSelection;
+  const appliedRevenueMonthsForSelectedYear = useMemo(() => (
+    revenueMonths
+      .filter(month => appliedRevenueFilterSelection.year === 'all' || month.startsWith(`${appliedRevenueFilterSelection.year}-`))
+      .sort((a, b) => b.localeCompare(a))
+  ), [appliedRevenueFilterSelection.year, revenueMonths]);
   const revenueFilterMonths = useMemo(() => {
-    if (selectedRevenueMonth !== 'all') return [selectedRevenueMonth];
-    if (selectedRevenueYear !== 'all') return revenueMonths.filter(month => month.startsWith(`${selectedRevenueYear}-`));
+    if (appliedRevenueFilterSelection.month !== 'all') return [appliedRevenueFilterSelection.month];
+    if (appliedRevenueFilterSelection.year !== 'all') return revenueMonths.filter(month => month.startsWith(`${appliedRevenueFilterSelection.year}-`));
     return undefined;
-  }, [revenueMonths, selectedRevenueMonth, selectedRevenueYear]);
+  }, [appliedRevenueFilterSelection.month, appliedRevenueFilterSelection.year, revenueMonths]);
   const revenueCategoryOptions = useMemo(() => [
     ...(settings.revenueLocationCategories || []).filter(category => !category.archived),
   ], [settings.revenueLocationCategories]);
@@ -1663,13 +1705,13 @@ export const ParkingDataWorkspace: React.FC = () => {
   ), [displayRevenueSummary?.datasets]);
   const revenueFilters = useMemo<ParkingRevenueFilters>(() => ({
     months: revenueFilterMonths,
-    source: revenueSourceFilter,
-    importedBy: selectedRevenueUploader,
-    dayType: revenueDayTypeFilter,
-    categoryId: selectedRevenueCategory,
-    hourStart: revenueHourStart,
-    hourEnd: revenueHourEnd,
-  }), [revenueDayTypeFilter, revenueFilterMonths, revenueHourEnd, revenueHourStart, revenueSourceFilter, selectedRevenueCategory, selectedRevenueUploader]);
+    source: appliedRevenueFilterSelection.source,
+    importedBy: appliedRevenueFilterSelection.uploader,
+    dayType: appliedRevenueFilterSelection.dayType,
+    categoryId: appliedRevenueFilterSelection.category,
+    hourStart: appliedRevenueFilterSelection.hourStart,
+    hourEnd: appliedRevenueFilterSelection.hourEnd,
+  }), [appliedRevenueFilterSelection, revenueFilterMonths]);
   const revenueAnalysisSettings = useMemo<ParkingSettings>(() => ({
     ...DEFAULT_PARKING_SETTINGS,
     revenueLocations: settings.revenueLocations,
@@ -1680,10 +1722,10 @@ export const ParkingDataWorkspace: React.FC = () => {
     [displayRevenueSummary, revenueAnalysisSettings, revenueFilters],
   );
   const revenueTrendFilterMonths = useMemo(() => {
-    if (selectedRevenueYear === 'all') return undefined;
-    if (selectedRevenueMonth === 'all') return revenueFilterMonths;
-    return revenueMonths.filter(month => month.startsWith(`${selectedRevenueYear}-`));
-  }, [revenueFilterMonths, revenueMonths, selectedRevenueMonth, selectedRevenueYear]);
+    if (appliedRevenueFilterSelection.year === 'all') return undefined;
+    if (appliedRevenueFilterSelection.month === 'all') return revenueFilterMonths;
+    return revenueMonths.filter(month => month.startsWith(`${appliedRevenueFilterSelection.year}-`));
+  }, [appliedRevenueFilterSelection.month, appliedRevenueFilterSelection.year, revenueFilterMonths, revenueMonths]);
   const revenueTrendFilters = useMemo<ParkingRevenueFilters>(() => ({
     ...revenueFilters,
     months: revenueTrendFilterMonths,
@@ -1766,10 +1808,10 @@ export const ParkingDataWorkspace: React.FC = () => {
       || null;
   }, [revenueTrendAnalytics.locationSummaries, selectedRevenueLocation, selectedRevenueLocationKey]);
   const utilizationTrendMonths = useMemo(() => (
-    selectedRevenueYear === 'all'
+    appliedRevenueFilterSelection.year === 'all'
       ? revenueMonths
-      : revenueMonths.filter(month => month.startsWith(`${selectedRevenueYear}-`))
-  ), [revenueMonths, selectedRevenueYear]);
+      : revenueMonths.filter(month => month.startsWith(`${appliedRevenueFilterSelection.year}-`))
+  ), [appliedRevenueFilterSelection.year, revenueMonths]);
   const parkingUtilizationTrend = useMemo(() => {
     const periods = utilizationTrendMonths.map(month => {
       const analytics = buildParkingRevenueAnalytics(displayRevenueSummary, revenueAnalysisSettings, {
@@ -1798,10 +1840,10 @@ export const ParkingDataWorkspace: React.FC = () => {
     buildParkingTrendOverview(
       revenueTrendAnalytics,
       selectedTrendLocation,
-      selectedRevenueMonth === 'all' ? revenueMonthsForSelectedYear[0] : selectedRevenueMonth,
+      appliedRevenueFilterSelection.month === 'all' ? appliedRevenueMonthsForSelectedYear[0] : appliedRevenueFilterSelection.month,
       revenueComparisonAnalytics,
     )
-  ), [revenueComparisonAnalytics, revenueMonthsForSelectedYear, revenueTrendAnalytics, selectedRevenueMonth, selectedTrendLocation]);
+  ), [appliedRevenueFilterSelection.month, appliedRevenueMonthsForSelectedYear, revenueComparisonAnalytics, revenueTrendAnalytics, selectedTrendLocation]);
   const activeMapLocation = useMemo(() => (
     selectedRevenueLocation ? mapLocationSummaries.find(entry => entry.sourceLocationKeys.includes(selectedRevenueLocation.key)) || null : null
   ), [mapLocationSummaries, selectedRevenueLocation]);
@@ -1841,6 +1883,18 @@ export const ParkingDataWorkspace: React.FC = () => {
       ? ''
       : revenueUploaderOptions.find(option => option.id === selectedRevenueUploader)?.label || selectedRevenueUploader
   ), [revenueUploaderOptions, selectedRevenueUploader]);
+  const appliedRevenueCategoryLabel = useMemo(() => (
+    appliedRevenueFilterSelection.category === 'all'
+      ? ''
+      : appliedRevenueFilterSelection.category === UNCATEGORIZED_PARKING_CATEGORY_ID
+        ? 'Uncategorized'
+        : revenueCategoryOptions.find(category => category.id === appliedRevenueFilterSelection.category)?.label || appliedRevenueFilterSelection.category
+  ), [appliedRevenueFilterSelection.category, revenueCategoryOptions]);
+  const appliedRevenueUploaderLabel = useMemo(() => (
+    appliedRevenueFilterSelection.uploader === 'all'
+      ? ''
+      : revenueUploaderOptions.find(option => option.id === appliedRevenueFilterSelection.uploader)?.label || appliedRevenueFilterSelection.uploader
+  ), [appliedRevenueFilterSelection.uploader, revenueUploaderOptions]);
   const categoryComparisonMetricConfig = PARKING_COMPARISON_METRICS.find(option => option.id === categoryComparisonMetric)
     || PARKING_COMPARISON_METRICS[0];
   const primaryTrendCard = parkingTrendOverview.comparisonCards[0] || null;
@@ -1873,25 +1927,20 @@ export const ParkingDataWorkspace: React.FC = () => {
   }, [revenueAnalytics.peakHour, revenueAnalytics.rowCount, topRevenueLot, topUtilizationLot]);
   const analysisFilterChips = useMemo(() => {
     const chips: string[] = [];
-    if (selectedRevenueYear !== 'all') chips.push(`Year ${selectedRevenueYear}`);
-    if (selectedRevenueMonth !== 'all') chips.push(selectedRevenueMonth);
-    if (selectedRevenueCategoryLabel) chips.push(selectedRevenueCategoryLabel);
-    if (selectedRevenueUploaderLabel) chips.push(`Uploaded by ${selectedRevenueUploaderLabel}`);
-    if (revenueDayTypeFilter !== 'all') chips.push(REVENUE_DAY_TYPE_LABELS[revenueDayTypeFilter]);
-    if (revenueSourceFilter !== 'all') chips.push(getParkingRevenueSourceLabel(revenueSourceFilter));
-    if (revenueHourStart !== 0 || revenueHourEnd !== 23) chips.push(`${formatHourOption(revenueHourStart)}–${formatHourOption(revenueHourEnd)}`);
+    if (appliedRevenueFilterSelection.year !== 'all') chips.push(`Year ${appliedRevenueFilterSelection.year}`);
+    if (appliedRevenueFilterSelection.month !== 'all') chips.push(appliedRevenueFilterSelection.month);
+    if (appliedRevenueCategoryLabel) chips.push(appliedRevenueCategoryLabel);
+    if (appliedRevenueUploaderLabel) chips.push(`Uploaded by ${appliedRevenueUploaderLabel}`);
+    if (appliedRevenueFilterSelection.dayType !== 'all') chips.push(REVENUE_DAY_TYPE_LABELS[appliedRevenueFilterSelection.dayType]);
+    if (appliedRevenueFilterSelection.source !== 'all') chips.push(getParkingRevenueSourceLabel(appliedRevenueFilterSelection.source));
+    if (appliedRevenueFilterSelection.hourStart !== 0 || appliedRevenueFilterSelection.hourEnd !== 23) chips.push(`${formatHourOption(appliedRevenueFilterSelection.hourStart)}–${formatHourOption(appliedRevenueFilterSelection.hourEnd)}`);
     if (selectedRevenueLocation) chips.push(`Lot drilldown: ${selectedRevenueLocation.displayName}`);
     return chips.length ? chips : ['All imported revenue data'];
   }, [
-    revenueDayTypeFilter,
-    revenueHourEnd,
-    revenueHourStart,
-    revenueSourceFilter,
-    selectedRevenueCategoryLabel,
+    appliedRevenueCategoryLabel,
+    appliedRevenueFilterSelection,
+    appliedRevenueUploaderLabel,
     selectedRevenueLocation,
-    selectedRevenueMonth,
-    selectedRevenueUploaderLabel,
-    selectedRevenueYear,
   ]);
   const collapsedRevenueFilterSummary = useMemo(() => {
     const summaryParts = [
@@ -1918,8 +1967,8 @@ export const ParkingDataWorkspace: React.FC = () => {
   ]);
   const peakPeriodScopeLabel = parkingPlannerAnalysis.selectedLot
     ? 'Selected location or group'
-    : selectedRevenueCategoryLabel
-      ? selectedRevenueCategoryLabel
+    : appliedRevenueCategoryLabel
+      ? appliedRevenueCategoryLabel
       : 'Current filters';
   const peakPeriodRows = useMemo(() => (
     (parkingPlannerAnalysis.selectedLot?.hourlyProfile || parkingPlannerAnalysis.hourlyProfile)
@@ -2969,8 +3018,10 @@ export const ParkingDataWorkspace: React.FC = () => {
         <main
           data-testid="parking-lot-data-map-first-shell"
           data-layout="map-first"
+          aria-busy={isRevenueFilterPending}
           className="relative h-full min-h-0 overflow-hidden bg-slate-100"
         >
+          <ParkingFilterPendingIndicator pending={isRevenueFilterPending} />
           <div className={`absolute inset-0 transition-opacity ${lotViewMode === 'analysis' ? 'opacity-25' : 'opacity-100'}`}>
             <MapBase latitude={44.389} longitude={-79.69} zoom={13} showNavigation showScale>
               {lotMapMode === 'heatmap' && mapLocationSummaries.length > 0 ? (
@@ -3472,10 +3523,10 @@ export const ParkingDataWorkspace: React.FC = () => {
                 <div className="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="grid gap-4 xl:grid-cols-2">
                     <ParkingChartCard
-                      title={selectedRevenueMonth === 'all' ? 'Revenue Trend' : 'Daily Revenue Trend'}
+                      title={appliedRevenueFilterSelection.month === 'all' ? 'Revenue Trend' : 'Daily Revenue Trend'}
                       subtitle="The main movement line for the current filter."
                     >
-                      <TrendAreaChart data={selectedRevenueMonth === 'all' ? parkingPlannerAnalysis.monthlyTrend : parkingPlannerAnalysis.dailyTrend} />
+                      <TrendAreaChart data={appliedRevenueFilterSelection.month === 'all' ? parkingPlannerAnalysis.monthlyTrend : parkingPlannerAnalysis.dailyTrend} />
                     </ParkingChartCard>
                     <ParkingChartCard title="Hourly Demand Profile" subtitle="Shows when paid activity concentrates during the day.">
                       <HourlyRevenueChart data={parkingPlannerAnalysis.hourlyProfile} />
@@ -3698,7 +3749,7 @@ export const ParkingDataWorkspace: React.FC = () => {
                     </div>
                     <div className="xl:col-span-2">
                       <ParkingChartCard
-                        title={selectedTrendLocation ? 'Selected-Lot Utilization Trend' : selectedRevenueCategoryLabel ? `${selectedRevenueCategoryLabel} Utilization Trend` : 'Utilization Trend'}
+                        title={selectedTrendLocation ? 'Selected-Lot Utilization Trend' : appliedRevenueCategoryLabel ? `${appliedRevenueCategoryLabel} Utilization Trend` : 'Utilization Trend'}
                         subtitle="Monthly estimated occupancy using matched known spaces, active imported days, and the selected hour window."
                         tall
                       >
@@ -3751,10 +3802,10 @@ export const ParkingDataWorkspace: React.FC = () => {
                       <HourlyRevenueChart data={parkingPlannerAnalysis.selectedLot.hourlyProfile} compact />
                     </ParkingChartCard>
                     <ParkingChartCard
-                      title={selectedRevenueMonth === 'all' ? 'Selected Activity Trend' : 'Selected Activity Daily Trend'}
-                      subtitle={selectedRevenueMonth === 'all' ? 'Revenue trend for this selection only.' : 'Daily movement for this selection in the selected month.'}
+                      title={appliedRevenueFilterSelection.month === 'all' ? 'Selected Activity Trend' : 'Selected Activity Daily Trend'}
+                      subtitle={appliedRevenueFilterSelection.month === 'all' ? 'Revenue trend for this selection only.' : 'Daily movement for this selection in the selected month.'}
                     >
-                      <TrendAreaChart data={selectedRevenueMonth === 'all' ? parkingPlannerAnalysis.selectedLot.monthlyTrend : parkingPlannerAnalysis.selectedLot.dailyTrend} color="#059669" />
+                      <TrendAreaChart data={appliedRevenueFilterSelection.month === 'all' ? parkingPlannerAnalysis.selectedLot.monthlyTrend : parkingPlannerAnalysis.selectedLot.dailyTrend} color="#059669" />
                     </ParkingChartCard>
                     <ParkingChartCard title="Selected Activity Payment Mix" subtitle="App compared with QR for this selection.">
                       <SourceMixChart data={parkingPlannerAnalysis.selectedLot.sourceMix} />
@@ -3820,18 +3871,18 @@ export const ParkingDataWorkspace: React.FC = () => {
                   </div>
                   <BarChart3 className="text-emerald-700" size={22} />
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <div className="rounded-2xl bg-white p-3">
-                    <div className="text-[10px] font-black uppercase text-emerald-500">Revenue incl. tax</div>
-                    <div className="mt-1 text-lg font-black text-emerald-950">{money(activeMapLocation?.totalRevenue ?? activeLocation?.totalRevenue ?? revenueAnalytics.totalRevenue)}</div>
+                <div className="mt-4 grid grid-cols-[minmax(0,1.25fr)_minmax(0,0.875fr)_minmax(0,0.875fr)] gap-2">
+                  <div className="flex min-h-24 min-w-0 flex-col items-center justify-center rounded-2xl bg-white px-2 py-3 text-center">
+                    <div className="flex min-h-7 items-center justify-center text-[10px] font-black uppercase leading-tight tracking-wide text-emerald-500">Revenue incl. tax</div>
+                    <div className="mt-1 max-w-full whitespace-nowrap text-base font-black tracking-tight text-emerald-950 tabular-nums">{money(activeMapLocation?.totalRevenue ?? activeLocation?.totalRevenue ?? revenueAnalytics.totalRevenue)}</div>
                   </div>
-                  <div className="rounded-2xl bg-white p-3">
-                    <div className="text-[10px] font-black uppercase text-blue-500">Sessions</div>
-                    <div className="mt-1 text-lg font-black text-blue-950">{(activeMapLocation?.rowCount ?? activeLocation?.rowCount ?? revenueAnalytics.rowCount).toLocaleString()}</div>
+                  <div className="flex min-h-24 min-w-0 flex-col items-center justify-center rounded-2xl bg-white px-2 py-3 text-center">
+                    <div className="flex min-h-7 items-center justify-center text-[10px] font-black uppercase leading-tight tracking-wide text-blue-500">Sessions</div>
+                    <div className="mt-1 max-w-full whitespace-nowrap text-lg font-black text-blue-950 tabular-nums">{(activeMapLocation?.rowCount ?? activeLocation?.rowCount ?? revenueAnalytics.rowCount).toLocaleString()}</div>
                   </div>
-                  <div className="rounded-2xl bg-white p-3">
-                    <div className="text-[10px] font-black uppercase text-amber-500">Peak</div>
-                    <div className="mt-1 text-lg font-black text-amber-950">{formatHour(activeMapLocation?.peakHour ?? activeLocation?.peakHour ?? revenueAnalytics.peakHour)}</div>
+                  <div className="flex min-h-24 min-w-0 flex-col items-center justify-center rounded-2xl bg-white px-2 py-3 text-center">
+                    <div className="flex min-h-7 items-center justify-center text-[10px] font-black uppercase leading-tight tracking-wide text-amber-500">Peak</div>
+                    <div className="mt-1 max-w-full whitespace-nowrap text-lg font-black text-amber-950 tabular-nums">{formatHour(activeMapLocation?.peakHour ?? activeLocation?.peakHour ?? revenueAnalytics.peakHour)}</div>
                   </div>
                 </div>
                 {(activeMapLocation || activeLocation) ? (

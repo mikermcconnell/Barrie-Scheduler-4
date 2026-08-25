@@ -618,6 +618,85 @@ describe('stopOrderResolver.resolveStopOrderFromPerformance', () => {
     expect(result.resolvedDirections.South?.tripCountUsed).toBe(8);
   });
 
+  it('requires planner review when repeated short-turn patterns have no trusted terminal anchors', () => {
+    const summaries = ['2026-03-24', '2026-03-25', '2026-03-26'].map((date, index) => makeSummary({
+      date,
+      dayType: 'weekday',
+      routeNames: { '12A': 'Georgian Mall', '12B': 'Barrie South GO' },
+      tripEntries: [
+        buildPartialNorthTrip(date, index),
+        buildPartialSouthTrip(date, index),
+      ],
+    }));
+
+    const result = resolveStopOrderFromPerformance(summaries, {
+      routeId: '12',
+      dayType: 'weekday',
+    });
+
+    expect(result.decision).toBe('review');
+    expect(result.confidence).toBe('medium');
+    expect(result.resolvedDirections.North?.stopIds).toEqual(['dt', 'pp', 'sg']);
+    expect(result.resolvedDirections.South?.stopIds).toEqual(['pp', 'dt', 'gm']);
+    expect(result.warnings).toContain(
+      'North stop order has no trusted start/end terminal anchors and requires planner review.',
+    );
+    expect(result.warnings).toContain(
+      'South stop order has no trusted start/end terminal anchors and requires planner review.',
+    );
+  });
+
+  it('normalizes N-labelled performance trips to the configured Loop stop order', () => {
+    const summaries = ['2026-03-24', '2026-03-25'].map(date => makeSummary({
+      date,
+      dayType: 'weekday',
+      routeNames: { '10': 'Route Ten' },
+      stopEntries: [
+        {
+          routeId: '10', direction: 'N', fromStopId: 'dt', toStopId: 'gc',
+          fromStopName: 'Downtown', toStopName: 'Georgian College',
+          fromRouteStopIndex: 1, toRouteStopIndex: 2,
+          segmentName: 'Downtown to Georgian College', observations: [],
+        },
+        {
+          routeId: '10', direction: 'N', fromStopId: 'gc', toStopId: 'rvh',
+          fromStopName: 'Georgian College', toStopName: 'RVH',
+          fromRouteStopIndex: 2, toRouteStopIndex: 3,
+          segmentName: 'Georgian College to RVH', observations: [],
+        },
+        {
+          routeId: '10', direction: 'N', fromStopId: 'rvh', toStopId: 'dt',
+          fromStopName: 'RVH', toStopName: 'Downtown',
+          fromRouteStopIndex: 3, toRouteStopIndex: 4,
+          segmentName: 'RVH to Downtown', observations: [],
+        },
+      ],
+      tripEntries: [{
+        tripId: `loop-${date}`,
+        tripName: `10 ${date}`,
+        routeId: '10',
+        direction: 'N',
+        terminalDepartureTime: '12:00',
+        segments: [
+          { fromStopId: 'dt', toStopId: 'gc', fromRouteStopIndex: 1, toRouteStopIndex: 2, runtimeMinutes: 8, timeBucket: '12:00' },
+          { fromStopId: 'gc', toStopId: 'rvh', fromRouteStopIndex: 2, toRouteStopIndex: 3, runtimeMinutes: 7, timeBucket: '12:00' },
+          { fromStopId: 'rvh', toStopId: 'dt', fromRouteStopIndex: 3, toRouteStopIndex: 4, runtimeMinutes: 9, timeBucket: '12:00' },
+        ],
+      }],
+    }));
+
+    const result = resolveStopOrderFromPerformance(summaries, {
+      routeId: '10',
+      dayType: 'weekday',
+      patternAnchorStops: { Loop: ['Downtown', 'Downtown'] },
+    });
+
+    expect(result.decision).toBe('accept');
+    expect(result.resolvedDirections.Loop?.stopIds).toEqual(['dt', 'gc', 'rvh', 'dt']);
+    expect(result.resolvedDirections.North).toBeUndefined();
+    expect(result.resolvedDirections.South).toBeUndefined();
+  });
+
   it('does not promote detour-only trips into the normal Step 2 stop order', () => {
     const northDetour = {
       ...buildFullNorthTrip('detour'),

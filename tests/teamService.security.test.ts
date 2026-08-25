@@ -523,6 +523,23 @@ describe('teamService security-sensitive flows', () => {
     );
   });
 
+  it('drops retired workspace override keys without rejecting existing access data', async () => {
+    await updateMemberWorkspaceAccess('lane-transit', 'lane-user', 'planner', {
+      analyticsTransitApp: true,
+      analyticsCouncilIntelligence: true,
+    } as any);
+
+    expect(updateDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
+      {
+        accessLevel: 'planner',
+        workspaceOverrides: {
+          analyticsTransitApp: true,
+        },
+      }
+    );
+  });
+
   it('rejects unknown workspace override keys', async () => {
     await expect(
       updateMemberWorkspaceAccess('lane-transit', 'lane-user', 'planner', {

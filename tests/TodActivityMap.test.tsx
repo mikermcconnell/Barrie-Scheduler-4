@@ -44,6 +44,11 @@ describe('TodActivityMap', () => {
       dropoffs: 19,
     }];
 
+    flushSync(() => root.render(<TodActivityMap locations={locations} metric="activity" />));
+    expect(container.textContent).toContain('TOD activity');
+    expect(container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points'))
+      .toContain('"value":32');
+
     flushSync(() => root.render(<TodActivityMap locations={locations} metric="pickups" />));
     expect(container.textContent).toContain('TOD pickups');
     expect(container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points'))

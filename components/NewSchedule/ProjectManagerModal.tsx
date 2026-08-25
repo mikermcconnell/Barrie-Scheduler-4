@@ -5,17 +5,25 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, FolderOpen, Clock, Trash2, Edit3, Check, Plus, CalendarPlus, Loader2, Copy, Search } from 'lucide-react';
+import { X, FolderOpen, Clock, Trash2, Plus, CalendarPlus, Loader2, Copy, Search } from 'lucide-react';
 import { getAllProjects, deleteProject, getProject, duplicateProject, NewScheduleProject } from '../../utils/services/newScheduleProjectService';
+
+export type ProjectSwitchTarget = {
+    destination: 'new' | 'wizard' | 'generated';
+    project?: NewScheduleProject;
+};
+
+export type ProjectSwitchResult = boolean | void;
 
 interface Props {
     isOpen: boolean;
     userId: string | null;
     currentProjectId?: string;
     onClose: () => void;
-    onLoadProject: (project: NewScheduleProject) => void | Promise<void>;
-    onLoadGeneratedSchedule?: (project: NewScheduleProject) => void | Promise<void>;
-    onNewProject: () => void;
+    onLoadProject: (project: NewScheduleProject) => ProjectSwitchResult | Promise<ProjectSwitchResult>;
+    onLoadGeneratedSchedule?: (project: NewScheduleProject) => ProjectSwitchResult | Promise<ProjectSwitchResult>;
+    onNewProject: () => ProjectSwitchResult | Promise<ProjectSwitchResult>;
+    onBeforeProjectSwitch?: (target: ProjectSwitchTarget) => ProjectSwitchResult | Promise<ProjectSwitchResult>;
 }
 
 export const ProjectManagerModal: React.FC<Props> = ({
@@ -25,7 +33,8 @@ export const ProjectManagerModal: React.FC<Props> = ({
     onClose,
     onLoadProject,
     onLoadGeneratedSchedule,
-    onNewProject
+    onNewProject,
+    onBeforeProjectSwitch
 }) => {
     const [projects, setProjects] = useState<NewScheduleProject[]>([]);
     const [filteredProjects, setFilteredProjects] = useState<NewScheduleProject[]>([]);
@@ -34,6 +43,8 @@ export const ProjectManagerModal: React.FC<Props> = ({
     const [selectedProject, setSelectedProject] = useState<NewScheduleProject | null>(null);
     const [deleting, setDeleting] = useState<string | null>(null);
     const [duplicating, setDuplicating] = useState<string | null>(null);
+    const [switchingTarget, setSwitchingTarget] = useState<'new' | string | null>(null);
+    const [switchError, setSwitchError] = useState<string | null>(null);
 
     // Load projects on open
     useEffect(() => {
@@ -102,6 +113,66 @@ export const ProjectManagerModal: React.FC<Props> = ({
         }
     };
 
+    const canSwitchProject = async (target: ProjectSwitchTarget): Promise<boolean> => {
+        if (!onBeforeProjectSwitch) return true;
+        return (await onBeforeProjectSwitch(target)) !== false;
+    };
+
+    const handleNewProject = async () => {
+        setSwitchingTarget('new');
+        setSwitchError(null);
+        try {
+            if (!await canSwitchProject({ destination: 'new' })) return;
+            if (await onNewProject() === false) {
+                setSwitchError('A new project could not be started. Your current project is still open.');
+                return;
+            }
+            onClose();
+        } catch (error) {
+            console.error('Failed to start a new project:', error);
+            setSwitchError('A new project could not be started. Your current project is still open.');
+        } finally {
+            setSwitchingTarget(null);
+        }
+    };
+
+    const handleLoadSelectedProject = async () => {
+        if (!selectedProject || !userId) return;
+
+        const destination = selectedProject.isGenerated && onLoadGeneratedSchedule
+            ? 'generated'
+            : 'wizard';
+        setSwitchingTarget(selectedProject.id);
+        setSwitchError(null);
+
+        try {
+            if (!await canSwitchProject({ destination, project: selectedProject })) return;
+
+            if (destination === 'generated' && onLoadGeneratedSchedule) {
+                const fullProject = await getProject(userId, selectedProject.id);
+                if (fullProject?.generatedSchedules?.length) {
+                    if (await onLoadGeneratedSchedule(fullProject) === false) {
+                        setSwitchError('The selected schedule could not be opened. Your current project is still open.');
+                        return;
+                    }
+                    onClose();
+                    return;
+                }
+            }
+
+            if (await onLoadProject(selectedProject) === false) {
+                setSwitchError('The selected project could not be loaded. Your current project is still open.');
+                return;
+            }
+            onClose();
+        } catch (error) {
+            console.error('Failed to load project:', error);
+            setSwitchError('The selected project could not be loaded. Your current project is still open.');
+        } finally {
+            setSwitchingTarget(null);
+        }
+    };
+
     const formatTime = (date: Date) => {
         const now = new Date();
         const diff = now.getTime() - date.getTime();
@@ -141,25 +212,26 @@ export const ProjectManagerModal: React.FC<Props> = ({
 
     return (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[80vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[80vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200" role="dialog" aria-modal="true" aria-labelledby="project-manager-title">
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 to-teal-50">
                     <div className="flex items-center gap-3">
                         <CalendarPlus className="text-emerald-600" size={24} />
                         <div>
-                            <h2 className="text-lg font-bold text-gray-900">Your Projects</h2>
+                            <h2 id="project-manager-title" className="text-lg font-bold text-gray-900">Your Projects</h2>
                             <p className="text-sm text-gray-500">{projects.length} saved project{projects.length !== 1 ? 's' : ''}</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
                         <button
-                            onClick={() => { onNewProject(); onClose(); }}
-                            className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors font-medium"
+                            onClick={handleNewProject}
+                            disabled={switchingTarget !== null}
+                            className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors font-medium disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            <Plus size={16} />
-                            New Project
+                            {switchingTarget === 'new' ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                            {switchingTarget === 'new' ? 'Starting...' : 'New Project'}
                         </button>
-                        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-2">
+                        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-2" aria-label="Close project manager">
                             <X size={20} />
                         </button>
                     </div>
@@ -172,11 +244,17 @@ export const ProjectManagerModal: React.FC<Props> = ({
                         <input
                             type="text"
                             placeholder="Search projects..."
+                            aria-label="Search projects"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                         />
                     </div>
+                    {switchError && (
+                        <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                            {switchError}
+                        </p>
+                    )}
                 </div>
 
                 {/* Content */}
@@ -256,27 +334,13 @@ export const ProjectManagerModal: React.FC<Props> = ({
 
                                 <div className="flex gap-2 pt-4">
                                     <button
-                                        onClick={async () => {
-                                            // If generated and we have the handler, load directly to editor
-                                            if (selectedProject.isGenerated && onLoadGeneratedSchedule && userId) {
-                                                try {
-                                                    const fullProject = await getProject(userId, selectedProject.id);
-                                                    if (fullProject?.generatedSchedules && fullProject.generatedSchedules.length > 0) {
-                                                        await onLoadGeneratedSchedule(fullProject);
-                                                        onClose();
-                                                        return;
-                                                    }
-                                                } catch (e) {
-                                                    console.error('Failed to load generated schedule:', e);
-                                                }
-                                            }
-                                            // Fallback to normal project load (resume wizard)
-                                            await onLoadProject(selectedProject);
-                                            onClose();
-                                        }}
-                                        className="flex-1 bg-emerald-500 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-600 transition-colors"
+                                        onClick={handleLoadSelectedProject}
+                                        disabled={switchingTarget !== null}
+                                        className="flex-1 bg-emerald-500 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                                     >
-                                        {selectedProject.isGenerated ? 'Open Schedule' : 'Resume Wizard'}
+                                        {switchingTarget === selectedProject.id
+                                            ? 'Opening...'
+                                            : selectedProject.isGenerated ? 'Open Schedule' : 'Resume Wizard'}
                                     </button>
                                     <button
                                         onClick={() => handleDuplicate(selectedProject.id)}

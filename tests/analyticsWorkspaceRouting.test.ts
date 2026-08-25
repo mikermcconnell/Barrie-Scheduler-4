@@ -13,19 +13,10 @@ describe('analytics workspace routing', () => {
         expect(getAnalyticsWorkspaceViewLabel('fare-programs')).toBe('Fare Programs');
     });
 
-    it('deep-links to Council Intelligence from Planning Data', () => {
-        expect(buildAnalyticsWorkspaceHash('planning', 'council-intelligence'))
-            .toBe('#planning/council-intelligence');
+    it('falls back to Planning Data for a retired Council Intelligence deep link', () => {
         expect(parseAnalyticsWorkspaceViewFromHash('#planning/council-intelligence', 'planning'))
-            .toBe('council-intelligence');
-        expect(getAnalyticsWorkspaceViewLabel('council-intelligence'))
-            .toBe('Council Intelligence');
-    });
-
-    it('deep-links to Council Intelligence from the fixed-route analytics shell', () => {
-        expect(buildAnalyticsWorkspaceHash('fixed/analytics', 'council-intelligence'))
-            .toBe('#fixed/analytics/council-intelligence');
+            .toBe('dashboard');
         expect(parseAnalyticsWorkspaceViewFromHash('#fixed/analytics/council-intelligence', 'fixed/analytics'))
-            .toBe('council-intelligence');
+            .toBe('dashboard');
     });
 });

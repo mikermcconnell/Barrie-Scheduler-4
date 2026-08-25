@@ -21,7 +21,7 @@ import {
     type OrderedSegmentColumn,
 } from './wizardState';
 
-type WizardStep = 1 | 2 | 3 | 4;
+type WizardStep = 1 | 2 | 3 | 4 | 5;
 
 type WizardDayType = 'Weekday' | 'Saturday' | 'Sunday';
 
@@ -38,6 +38,7 @@ export interface WizardPersistenceState {
     config: ScheduleConfig;
     generatedSchedules: MasterRouteTable[];
     originalGeneratedSchedules: MasterRouteTable[];
+    generatedScheduleInputFingerprint?: string;
     parsedData: RuntimeData[];
     approvedRuntimeContract?: ApprovedRuntimeContract;
     approvedRuntimeModel?: ApprovedRuntimeModel;
@@ -49,6 +50,7 @@ export interface WizardPersistenceOverrides {
     name?: string;
     generatedSchedules?: MasterRouteTable[];
     originalGeneratedSchedules?: MasterRouteTable[];
+    generatedScheduleInputFingerprint?: string;
     isGenerated?: boolean;
 }
 
@@ -65,11 +67,13 @@ export interface WizardFirebaseSaveData {
     autofillFromMaster: boolean;
     performanceConfig: PerformanceConfig;
     routeNumber: string;
+    wizardStep: WizardStep;
     analysis?: TripBucketAnalysis[];
     bands?: TimeBand[];
     config?: ScheduleConfig;
     generatedSchedules?: MasterRouteTable[];
     originalGeneratedSchedules?: MasterRouteTable[];
+    generatedScheduleInputFingerprint?: string;
     parsedData?: RuntimeData[];
     approvedRuntimeContract?: ApprovedRuntimeContract;
     approvedRuntimeModel?: ApprovedRuntimeModel;
@@ -86,6 +90,7 @@ export interface WizardRestorableStateInput {
     config?: ScheduleConfig;
     generatedSchedules?: MasterRouteTable[];
     originalGeneratedSchedules?: MasterRouteTable[];
+    generatedScheduleInputFingerprint?: string;
     parsedData?: RuntimeData[];
     approvedRuntimeContract?: ApprovedRuntimeContract;
     approvedRuntimeModel?: ApprovedRuntimeModel;
@@ -101,6 +106,7 @@ export interface NormalizedRestoredWizardState {
     config: ScheduleConfig;
     generatedSchedules: MasterRouteTable[];
     originalGeneratedSchedules: MasterRouteTable[];
+    generatedScheduleInputFingerprint?: string;
     parsedData: RuntimeData[];
     approvedRuntimeContract?: ApprovedRuntimeContract;
     approvedRuntimeModel?: ApprovedRuntimeModel;
@@ -206,6 +212,9 @@ export const buildLocalWizardProgress = (
         config: persistenceStep >= 3 ? state.config : undefined,
         generatedSchedules: persistenceStep >= 4 ? baselines.generatedSchedules : undefined,
         originalGeneratedSchedules: persistenceStep >= 4 ? baselines.originalGeneratedSchedules : undefined,
+        generatedScheduleInputFingerprint: persistenceStep >= 4
+            ? overrides?.generatedScheduleInputFingerprint ?? state.generatedScheduleInputFingerprint
+            : undefined,
         parsedData: persistenceStep >= 1 ? state.parsedData : undefined,
         approvedRuntimeContract: persistenceStep >= 2 ? state.approvedRuntimeContract : undefined,
         approvedRuntimeModel: undefined,
@@ -243,11 +252,15 @@ export const buildFirebaseWizardSaveData = (
         autofillFromMaster: state.autofillFromMaster,
         performanceConfig: state.performanceConfig,
         routeNumber: state.config.routeNumber,
+        wizardStep: persistenceStep,
         analysis: persistenceStep >= 2 ? state.analysis : undefined,
         bands: persistenceStep >= 2 ? state.bands : undefined,
         config: persistenceStep >= 3 ? state.config : undefined,
         generatedSchedules: persistenceStep >= 4 ? baselines.generatedSchedules : undefined,
         originalGeneratedSchedules: persistenceStep >= 4 ? baselines.originalGeneratedSchedules : undefined,
+        generatedScheduleInputFingerprint: persistenceStep >= 4
+            ? overrides?.generatedScheduleInputFingerprint ?? state.generatedScheduleInputFingerprint
+            : undefined,
         parsedData: persistenceStep >= 1 ? state.parsedData : undefined,
         approvedRuntimeContract: persistenceStep >= 2 ? state.approvedRuntimeContract : undefined,
         approvedRuntimeModel: undefined,
@@ -300,6 +313,9 @@ export const normalizeRestoredWizardState = (
         config: input.config || createDefaultScheduleConfig(),
         generatedSchedules: normalizedBaselines.generatedSchedules,
         originalGeneratedSchedules: normalizedBaselines.originalGeneratedSchedules,
+        generatedScheduleInputFingerprint: hasLegacyDerivedRuntime
+            ? undefined
+            : input.generatedScheduleInputFingerprint?.trim() || undefined,
         parsedData,
         approvedRuntimeContract: approvedContract,
         approvedRuntimeModel: undefined,

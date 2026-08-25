@@ -2,8 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   aggregateTodDailyLocations,
   getTodActivityValue,
+  mergeTodIntoStopActivity,
 } from '../utils/todPickupAggregation';
 import type { TodDailyKpiDataset } from '../utils/todPickupTypes';
+import type { StopMetrics } from '../utils/performanceDataTypes';
+
+function stop(overrides: Partial<StopMetrics> = {}): StopMetrics {
+  return {
+    stopName: 'Stop 777', stopId: '777', lat: 44.38, lon: -79.69, isTimepoint: true,
+    otp: { total: 1, onTime: 1, early: 0, late: 0, onTimePercent: 100, earlyPercent: 0, latePercent: 0, avgDeviationSeconds: 0 },
+    boardings: 20, alightings: 10, avgLoad: 0, routeCount: 1, routes: ['10'],
+    ...overrides,
+  };
+}
 
 function report(
   date: string,
@@ -60,5 +71,33 @@ describe('TOD daily activity aggregation', () => {
     ]);
     expect(getTodActivityValue(locations[0], 'pickups')).toBe(8);
     expect(getTodActivityValue(locations[0], 'dropoffs')).toBe(8);
+    expect(getTodActivityValue(locations[0], 'activity')).toBe(16);
+  });
+
+  it('adds TOD pickups and drop-offs to matching fixed-route stops and retains unmatched locations', () => {
+    const merged = mergeTodIntoStopActivity([stop()], [
+      { id: 'stop-777', name: 'Stop 777', lat: 44.39, lon: -79.68, pickups: 3, dropoffs: 4 },
+      { id: 'custom-zone', name: 'Hospital Zone', lat: 44.4, lon: -79.67, pickups: 5, dropoffs: 6 },
+    ]);
+
+    expect(merged[0]).toEqual(expect.objectContaining({
+      stopId: '777',
+      boardings: 23,
+      alightings: 14,
+      fixedRouteBoardings: 20,
+      fixedRouteAlightings: 10,
+      todPickups: 3,
+      todDropoffs: 4,
+      activitySource: 'combined',
+    }));
+    expect(merged[1]).toEqual(expect.objectContaining({
+      stopId: 'tod:custom-zone',
+      stopName: 'Hospital Zone',
+      boardings: 5,
+      alightings: 6,
+      routeCount: 0,
+      routes: [],
+      activitySource: 'transit-on-demand',
+    }));
   });
 });

@@ -130,6 +130,7 @@ const makeState = (): WizardPersistenceState => ({
         trips: [] as never[],
     }],
     originalGeneratedSchedules: [],
+    generatedScheduleInputFingerprint: 'generated-schedule-input:v1:trusted',
     parsedData: [],
     approvedRuntimeContract: makeContract(),
     approvedRuntimeModel: {
@@ -205,6 +206,7 @@ describe('wizardProjectState helpers', () => {
         expect(payload.step).toBe(4);
         expect(payload.generatedSchedules).toEqual(state.generatedSchedules);
         expect(payload.originalGeneratedSchedules).toEqual(state.generatedSchedules);
+        expect(payload.generatedScheduleInputFingerprint).toBe(state.generatedScheduleInputFingerprint);
         expect(payload.approvedRuntimeContract).toEqual(state.approvedRuntimeContract);
         expect(payload.approvedRuntimeModel).toBeUndefined();
     });
@@ -219,6 +221,8 @@ describe('wizardProjectState helpers', () => {
 
         expect(payload.generatedSchedules).toEqual(state.generatedSchedules);
         expect(payload.originalGeneratedSchedules).toEqual(state.generatedSchedules);
+        expect(payload.generatedScheduleInputFingerprint).toBe(state.generatedScheduleInputFingerprint);
+        expect(payload.wizardStep).toBe(4);
         expect(payload.isGenerated).toBe(true);
         expect(payload.approvedRuntimeContract).toEqual(state.approvedRuntimeContract);
         expect(payload.approvedRuntimeModel).toBeUndefined();

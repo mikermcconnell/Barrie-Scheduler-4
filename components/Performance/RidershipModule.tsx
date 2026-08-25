@@ -14,6 +14,9 @@ import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { RidershipStopProfileChart } from './RidershipStopProfileChart';
 import { buildRidershipStopProfiles } from '../../utils/performanceRidershipStopProfile';
 import { PerformanceLoadCapacityPanel } from './PerformanceLoadCapacityPanel';
+import { useTeam } from '../contexts/TeamContext';
+import { useTodPickupDataQuery, useTodPickupMetadataQuery } from '../../hooks/useTodPickupData';
+import { aggregateTodDailyLocations } from '../../utils/todPickupAggregation';
 
 interface RidershipModuleProps {
     data: PerformanceDataSummary;
@@ -90,6 +93,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     loadConfigUserId,
     canManageLoadConfig = false,
 }) => {
+    const { team } = useTeam();
     const filtered = data.dailySummaries;
     const [routeSortKey, setRouteSortKey] = useState<RouteSortKey>('ridership');
     const [routeSortDir, setRouteSortDir] = useState<SortDir>('desc');
@@ -215,6 +219,21 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     // Aggregate stop activity across filtered days (merges routes + hourly arrays)
     const stopActivity = useMemo(() => aggregateStopActivity(filtered), [filtered]);
     const comparisonStopActivity = useMemo(() => aggregateStopActivity(comparisonDays), [comparisonDays]);
+    const includedDates = useMemo(() => filtered.map(day => day.date), [filtered]);
+    const includedDateSet = useMemo(() => new Set(includedDates), [includedDates]);
+    const todMetadataQuery = useTodPickupMetadataQuery(team?.id);
+    const todDataQuery = useTodPickupDataQuery(team?.id, !!todMetadataQuery.data, todMetadataQuery.data);
+    const todReports = useMemo(
+        () => (todDataQuery.data?.dailyReports || []).filter(report => includedDateSet.has(report.date)),
+        [includedDateSet, todDataQuery.data?.dailyReports],
+    );
+    const todLocations = useMemo(
+        () => aggregateTodDailyLocations(todDataQuery.data?.dailyReports || [], includedDates),
+        [includedDates, todDataQuery.data?.dailyReports],
+    );
+    const todIsLoading = todMetadataQuery.isLoading || todDataQuery.isLoading;
+    const todError = todMetadataQuery.error || todDataQuery.error;
+    const hasStoredTodReports = (todDataQuery.data?.dailyReports?.length || 0) > 0;
     const stopProfiles = useMemo(
         () => buildRidershipStopProfiles(filtered, loadCapacityConfig),
         [filtered, loadCapacityConfig],
@@ -247,18 +266,25 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
 
     return (
         <div className="space-y-6">
-            <TodDailyKpiSection includedDates={filtered.map(day => day.date)} />
-
             {/* Stop Activity Map */}
-            <ChartCard title="Stop Activity Map" subtitle="View activity totals or compare average daily activity with the equivalent prior period">
+            <ChartCard title="Stop Activity Map" subtitle="Fixed-route and Transit On Demand activity for the selected Ridership period">
                 <StopActivityMap
                     stops={stopActivity}
+                    todLocations={todLocations}
                     comparisonStops={comparisonStopActivity}
                     currentDayCount={filtered.length}
                     comparisonDayCount={comparisonDays.length}
                     comparisonRange={comparisonRange}
                 />
             </ChartCard>
+
+            <TodDailyKpiSection
+                reports={todReports}
+                locations={todLocations}
+                isLoading={todIsLoading}
+                error={todError}
+                hasStoredReports={hasStoredTodReports}
+            />
 
             {/* Daily Ridership Trend */}
             <ChartCard title="Daily Ridership" subtitle="Total boardings per day">

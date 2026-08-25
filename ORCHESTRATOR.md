@@ -78,14 +78,13 @@ Parking owns parking-code usage, revenue review, map/location settings, and plat
 
 ### Planning Data
 
-Planning Data includes Transit App analytics, OD analysis, Camp Shuttle Planner, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Council Intelligence, Fleet Plan, and related tools.
+Planning Data includes Transit App analytics, OD analysis, Camp Shuttle Planner, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Fleet Plan, and related tools.
 
 Important boundaries:
 
 - Camp Shuttle Planner is the current Camp and address-based shuttle tool; its stable internal code name remains `Route Planner 2`. `docs/route-planner-2/README.md` routes to its product, workflow, architecture, data, runtime, and test contracts.
 - Route Concept Planner is a separate neutral internal-beta workspace. Keep it isolated from Camp Shuttle Planner and load `docs/route-concept-planner/README.md` plus its contracts.
 - The removed legacy Route Planner is historical. Remaining `utils/route-planner/` code is legacy support used by Shuttle Planner, not Route Planner 2.
-- Council Intelligence must distinguish official named votes from movers, seconders, procedural signals, and unknown evidence.
 - Fleet Plan is team-shared and versioned. Ordinary writes are owner/admin-only; an audited support session in edit mode is the explicit cross-team exception. The UI gates saves on workbook validation, while the persistence service enforces version conflicts, so preserve both layers.
 - Transit App schema and data-quality cautions live in `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md`; re-import saved data when that checklist or schema contract says regeneration is required.
 
@@ -151,7 +150,7 @@ Use the relevant `.agents/skills/` danger-zone skill and focused tests before ca
 - New Schedule runtime approvals use schema version 2. Visible `reviewBuckets` are evidence; only independently revalidated `approvedBuckets` may generate schedules.
 - Performance runtime buckets require five complete paired-cycle days; CSV buckets require ten explicit observations on every segment. Detours, estimates, outliers, partial trips, and stop-only evidence remain review-only.
 - Strict generation uses the exact approved half-hour bucket. The North cycle-start bucket supplies both paired legs; South-start pairs and missing buckets fail closed without closest-bucket, band, raw-segment, or default-runtime fallback.
-- Missing or stale approval blocks later wizard steps, generation, export, and Master upload. Pre-v2 projects are durably reset while preserving planner settings; schema-v2 saves are serialized and revision-checked.
+- Missing or stale approval blocks later wizard steps, generation, connection optimization, and draft handoff. Generated output also carries an input fingerprint and must be regenerated when approved evidence or Step 3 configuration changes. The wizard never writes Master directly; it hands Step 5 output to the protected draft/review/publish workflow. Pre-v2 projects are durably reset while preserving planner settings; schema-v2 saves are serialized and revision-checked.
 - Dwell Incident Review is incident-first, read-only, and map-first. Current UX and metric rules live in `docs/DWELL_CASCADE_FEATURE.md` and `docs/OPERATIONS_DASHBOARD_METRICS.md`.
 - Passenger Flow inferred loads must remain visibly distinct from verified APC values. The canonical fallback and rejection rules live in `docs/OPERATIONS_DASHBOARD_METRICS.md`.
 - Public timetable content is team-managed configuration. Its persistence contract lives in `docs/SCHEMA.md`.

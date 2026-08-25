@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { TimeBand, TripBucketAnalysis } from '../../../utils/ai/runtimeAnalysis';
-import { Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database, RefreshCw, RotateCcw, FilePlus2, Info, Lock } from 'lucide-react';
+import { AlertTriangle, Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database, RefreshCw, RotateCcw, FilePlus2, Info, Lock } from 'lucide-react';
 import { getMasterSchedule } from '../../../utils/services/masterScheduleService';
 import type { MasterScheduleEntry, RouteIdentity } from '../../../utils/masterScheduleTypes';
 import { shouldShowStartDirectionForRoute, normalizeDirectionHint, inferBlockStartDirection } from '../utils/blockStartDirection';
@@ -11,6 +11,10 @@ import { buildStep2ApprovedRuntimeModelFromContract } from '../utils/step2Approv
 import type { ApprovedRuntimeContract } from '../utils/step2ReviewTypes';
 import type { ApprovedRuntimeModel } from '../utils/wizardState';
 import { getStep3RouteDefaults } from '../utils/step3RouteDefaults';
+import {
+    MAX_RECOVERY_RATIO_PERCENT,
+    validateScheduleGenerationConfig,
+} from '../../../utils/schedule/scheduleGenerator';
 
 // Configuration Constants
 export const SCHEDULE_DEFAULTS = {
@@ -132,10 +136,12 @@ export const Step3Build: React.FC<Step3Props> = ({
         }
     }, [usePerBandRecovery, displayBandDefaults, config, setConfig]);
 
-    // Floating mode guardrail: always prefill target recovery at 15% when missing/zero.
+    // Floating mode guardrail: prefill target recovery only when it is missing.
+    // Explicit zero is valid; invalid negative/out-of-range values stay visible
+    // so the planner can correct them instead of being silently rewritten.
     React.useEffect(() => {
         if (config.cycleMode !== 'Floating') return;
-        if ((config.recoveryRatio ?? 0) > 0) return;
+        if (config.recoveryRatio !== undefined) return;
         setConfig({ ...config, recoveryRatio: SCHEDULE_DEFAULTS.RECOVERY_RATIO });
     }, [config, setConfig]);
 
@@ -655,6 +661,20 @@ export const Step3Build: React.FC<Step3Props> = ({
     const strictCycleButtonLabel = isHighConfidenceStrictCycle
         ? `Use suggested ${suggestedStrictCycle}m`
         : `Use reference ${suggestedStrictCycle}m`;
+    const configValidationIssues = React.useMemo(
+        () => validateScheduleGenerationConfig(config),
+        [config]
+    );
+    const blockValidationIssues = React.useMemo(() => {
+        const byIndex = new Map<number, string[]>();
+        configValidationIssues.forEach(issue => {
+            if (issue.blockIndex === undefined) return;
+            const messages = byIndex.get(issue.blockIndex) || [];
+            messages.push(issue.message);
+            byIndex.set(issue.blockIndex, messages);
+        });
+        return byIndex;
+    }, [configValidationIssues]);
 
     return (
         <div className="h-full flex flex-col animate-in fade-in duration-500 overflow-hidden">
@@ -836,8 +856,10 @@ export const Step3Build: React.FC<Step3Props> = ({
                             <div className="relative">
                                 <input
                                     type="number"
+                                    min={config.cycleMode === 'Floating' ? 0 : 1}
+                                    step={1}
                                     value={config.cycleTime}
-                                    onChange={e => setConfig({ ...config, cycleTime: parseInt(e.target.value) || 0 })}
+                                    onChange={e => setConfig({ ...config, cycleTime: Number(e.target.value) })}
                                     placeholder={config.cycleMode === 'Floating' ? 'Optional' : undefined}
                                     className={`w-full rounded-lg border py-1.5 pl-8 pr-8 text-sm font-bold focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20 ${config.cycleMode === 'Floating' ? 'border-gray-200 bg-gray-50 text-gray-600' : 'border-brand-blue/30 bg-white text-gray-900'}`}
                                 />
@@ -852,8 +874,11 @@ export const Step3Build: React.FC<Step3Props> = ({
                                 <div className="relative">
                                     <input
                                         type="number"
+                                        min={0}
+                                        max={MAX_RECOVERY_RATIO_PERCENT}
+                                        step={1}
                                         value={config.recoveryRatio ?? SCHEDULE_DEFAULTS.RECOVERY_RATIO}
-                                        onChange={e => setConfig({ ...config, recoveryRatio: parseInt(e.target.value) || SCHEDULE_DEFAULTS.RECOVERY_RATIO })}
+                                        onChange={e => setConfig({ ...config, recoveryRatio: Number(e.target.value) })}
                                         className="w-full rounded-lg border border-brand-blue/30 bg-blue-50/50 py-1.5 pl-3 pr-7 text-sm font-bold text-brand-blue focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-brand-blue/50">%</span>
@@ -895,6 +920,23 @@ export const Step3Build: React.FC<Step3Props> = ({
                             {!isHighConfidenceStrictCycle && (
                                 <p className="mt-1 text-[10px] text-gray-600">This is reference evidence, not a high-confidence planner default.</p>
                             )}
+                        </div>
+                    )}
+
+                    {configValidationIssues.length > 0 && (
+                        <div
+                            role="alert"
+                            data-testid="step3-config-validation"
+                            className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-800"
+                        >
+                            <div className="flex items-center gap-2 text-xs font-bold">
+                                <AlertTriangle size={14} /> Fix the service plan before generating
+                            </div>
+                            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[11px] font-medium">
+                                {configValidationIssues.map((issue, index) => (
+                                    <li key={`${issue.code}-${issue.blockIndex ?? 'global'}-${index}`}>{issue.message}</li>
+                                ))}
+                            </ul>
                         </div>
                     )}
 
@@ -1024,6 +1066,10 @@ export const Step3Build: React.FC<Step3Props> = ({
                                         Boolean(masterBlock)
                                         && String(block[field] ?? '') !== String(masterBlock?.[field] ?? '')
                                     );
+                                    const rowValidationMessages = blockValidationIssues.get(idx) || [];
+                                    const hasBlockIdError = rowValidationMessages.some(message => (
+                                        message.includes('block ID') || message.includes('Block ID')
+                                    ));
                                     return (
                                     <tr
                                         key={idx}
@@ -1040,8 +1086,15 @@ export const Step3Build: React.FC<Step3Props> = ({
                                                 type="text"
                                                 value={block.id}
                                                 onChange={e => updateBlock(idx, 'id', e.target.value)}
-                                                className="w-24 bg-transparent font-bold text-gray-900 focus:outline-none focus:underline"
+                                                aria-invalid={hasBlockIdError}
+                                                aria-describedby={hasBlockIdError ? `block-${idx}-id-error` : undefined}
+                                                className={`w-24 bg-transparent font-bold focus:outline-none focus:underline ${hasBlockIdError ? 'text-red-700 underline decoration-red-400' : 'text-gray-900'}`}
                                             />
+                                            {hasBlockIdError && (
+                                                <span id={`block-${idx}-id-error`} className="mt-1 block max-w-40 text-[10px] font-semibold text-red-700">
+                                                    {rowValidationMessages.find(message => message.includes('block ID') || message.includes('Block ID'))}
+                                                </span>
+                                            )}
                                             {blockStatus !== 'master' && (
                                                 <span className={`mt-1 block w-fit rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${blockStatus === 'edited' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
                                                     {blockStatus}
