@@ -59,4 +59,29 @@ describe('TodActivityMap', () => {
     expect(container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points'))
       .toContain('"value":19');
   });
+
+  it('keeps the map-specific notice off the map and supports fullscreen with Escape', () => {
+    const locations = [{
+      id: 'stop-777',
+      name: 'Stop 777',
+      lat: 44.38,
+      lon: -79.69,
+      pickups: 13,
+      dropoffs: 19,
+    }];
+
+    flushSync(() => root.render(<TodActivityMap locations={locations} metric="activity" />));
+    expect(container.textContent).not.toContain('Transit On Demand only');
+
+    const fullscreenButton = [...container.querySelectorAll('button')]
+      .find(button => button.textContent === 'Fullscreen');
+    expect(fullscreenButton).toBeDefined();
+
+    flushSync(() => fullscreenButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(container.firstElementChild?.className).toContain('fixed inset-0');
+    expect(container.textContent).toContain('Exit');
+
+    flushSync(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+    expect(container.firstElementChild?.className).not.toContain('fixed inset-0');
+  });
 });

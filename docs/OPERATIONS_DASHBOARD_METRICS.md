@@ -23,7 +23,7 @@ Primary calculation locations:
 - loading and date-range trimming: `utils/performanceDataService.ts`
 - legacy compact load-profile projection retained for backward-compatible API reads: `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts`
 
-Passenger load is presented in **Ridership -> Passenger Flow by Stop**; there is no standalone Load Profiles tab. The legacy compact load-profile read model, backend detail mode, and access key remain temporarily for backward compatibility and repair workflows, not as a supported navigation surface. Multi-day average load uses `loadObservationCount` weighting when every included value has reliable counts; mixed legacy history falls back to a daily-average estimate, and ambiguous legacy zeroes are omitted. Missing or non-positive APC source values are excluded from observed load calculations rather than treated as valid zero loads.
+Passenger load is presented in **Ridership -> Passenger Flow by Stop** only for Admin and Developer/internal access profiles; Planner access does not render this section. There is no standalone Load Profiles tab. The legacy compact load-profile read model, backend detail mode, and access key remain temporarily for backward compatibility and repair workflows, not as a supported navigation surface. Multi-day average load uses `loadObservationCount` weighting when every included value has reliable counts; mixed legacy history falls back to a daily-average estimate, and ambiguous legacy zeroes are omitted. Missing or non-positive APC source values are excluded from observed load calculations rather than treated as valid zero loads.
 
 ## Metric contracts
 

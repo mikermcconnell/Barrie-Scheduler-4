@@ -98,6 +98,7 @@ const WORKSPACE_FEATURE_LABELS: Partial<Record<WorkspaceAccessFeatureKey, string
     analyticsRouteConceptPlanner: 'Route Concept Planner',
     analyticsShuttlePlanner: 'Shuttle Planner',
     analyticsFarePrograms: 'Fare Programs',
+    analyticsStrategicPlan: '5-Year Strategic Plan',
     operationsOperatorDwell: 'Dwell Incident Review',
 };
 

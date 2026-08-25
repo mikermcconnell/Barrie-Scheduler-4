@@ -6,13 +6,24 @@ import type { StopMetrics } from '../utils/performanceDataTypes';
 
 vi.mock('react-map-gl/mapbox', () => ({
   Layer: (): null => null,
-  Popup: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  Popup: ({ children }: { children?: React.ReactNode }) => <div data-testid="stop-popup">{children}</div>,
   Source: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock('../utils/gtfs/gtfsStopLookup', () => ({ findStopCoords: (): null => null }));
 vi.mock('../utils/gtfs/gtfsShapesLoader', () => ({ loadGtfsRouteShapes: (): never[] => [] }));
 vi.mock('../components/shared', () => ({
-  MapBase: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  MapBase: ({ children, onMouseMove }: { children?: React.ReactNode; onMouseMove?: (event: unknown) => void }) => (
+    <div>
+      <button
+        type="button"
+        data-testid="hover-stop"
+        onClick={() => onMouseMove?.({ features: [{ properties: { id: '777' } }] })}
+      >
+        Hover stop
+      </button>
+      {children}
+    </div>
+  ),
   HeatmapDotLayer: ({ points }: { points: unknown[] }) => <div data-testid="heatmap-points" data-points={JSON.stringify(points)} />,
   LassoControl: (): null => null,
   RouteOverlay: (): null => null,
@@ -61,6 +72,16 @@ describe('StopActivityMap Transit On Demand integration', () => {
     expect(container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points')).toContain('"value":37');
     expect(container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points')).toContain('"value":11');
     expect(container.textContent).toContain('2 TOD locations included.');
+    expect([...container.querySelectorAll('button')].some(button => button.textContent === 'Board')).toBe(true);
+    expect([...container.querySelectorAll('button')].some(button => button.textContent === 'Alight')).toBe(true);
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-testid="hover-stop"]')?.click());
+    const popupText = container.querySelector('[data-testid="stop-popup"]')?.textContent || '';
+    expect(popupText).toContain('Board: 23');
+    expect(popupText).toContain('Alight: 14');
+    expect(popupText).toContain('Activity: 37');
+    expect(popupText).not.toContain('TOD:');
+    expect(popupText).not.toContain('pickup');
 
     const routeSelect = container.querySelector('select');
     expect(routeSelect).not.toBeNull();

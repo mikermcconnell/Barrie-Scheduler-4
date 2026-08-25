@@ -59,6 +59,7 @@ describe('workspace access', () => {
         expect(allowed).toContain('analyticsFleetPlan');
         expect(allowed).toContain('analyticsRoutePlanner2');
         expect(allowed).toContain('analyticsFarePrograms');
+        expect(allowed).toContain('analyticsStrategicPlan');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
         expect(allowed).not.toContain('workspaceParking');

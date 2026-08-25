@@ -6,7 +6,7 @@
  */
 
 import React, { Suspense, useState, useEffect, useCallback } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Ticket } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, Bus, Building2, GitBranch, Ticket, CalendarRange } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -93,9 +93,13 @@ const FareProgramsWorkspace = lazyWithRetry(
     () => import('./FareProgramsWorkspace').then(module => ({ default: module.FareProgramsWorkspace })),
     'analytics-fare-programs-workspace'
 );
+const StrategicPlanWorkspace = lazyWithRetry(
+    () => import('./StrategicPlanWorkspace').then(module => ({ default: module.StrategicPlanWorkspace })),
+    'analytics-strategic-plan-workspace'
+);
 
 interface AnalyticsCardProps {
-    color: 'cyan' | 'violet' | 'teal' | 'amber';
+    color: 'cyan' | 'violet' | 'teal' | 'amber' | 'blue';
     icon: React.ReactNode;
     title: string;
     description: string;
@@ -124,6 +128,11 @@ const cardStyles = {
         hover: 'hover:border-amber-300',
         bg: 'bg-amber-50/50 text-amber-600 group-hover:bg-amber-100',
         arrow: 'group-hover:text-amber-500',
+    },
+    blue: {
+        hover: 'hover:border-blue-300',
+        bg: 'bg-blue-50/50 text-[#001C80] group-hover:bg-blue-100',
+        arrow: 'group-hover:text-[#001C80]',
     },
 };
 
@@ -183,6 +192,7 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'network-connections': 'analyticsNetworkConnections',
     'shuttle-planner': 'analyticsShuttlePlanner',
     'fare-programs': 'analyticsFarePrograms',
+    'strategic-plan': 'analyticsStrategicPlan',
 };
 
 const AnalyticsFeatureNotice: React.FC<{ feature: Parameters<typeof isFeatureUnderConstruction>[0] }> = ({ feature }) => {
@@ -777,6 +787,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         );
     }
 
+    if (view === 'strategic-plan') {
+        return (
+            <div className="h-full overflow-auto custom-scrollbar">
+                <AnalyticsFeatureNotice feature="analyticsStrategicPlan" />
+                <Suspense fallback={<AnalyticsPanelLoading label="Loading 5-Year Strategic Plan..." />}>
+                    <StrategicPlanWorkspace onBack={() => setView('dashboard')} />
+                </Suspense>
+            </div>
+        );
+    }
+
     // Main dashboard with cards
     return (
         <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -787,6 +808,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {canAccess('analyticsStrategicPlan') && (
+                        <AnalyticsCard
+                            color="blue"
+                            icon={<CalendarRange size={20} />}
+                            title="5-Year Strategic Plan"
+                            description="Establish the current fixed-route service baseline for strategic-plan analysis and future network comparisons."
+                            hasData
+                            underConstruction={isFeatureUnderConstruction('analyticsStrategicPlan')}
+                            onClick={() => setView('strategic-plan')}
+                        />
+                    )}
                     {canAccess('analyticsTransitApp') && (
                         <AnalyticsCard
                             color="cyan"

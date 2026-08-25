@@ -87,6 +87,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
   const mapRef = useRef<MapRef | null>(null);
   const hasFittedRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<TodDailyKpiLocation | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const label = metricLabel(metric);
@@ -120,6 +121,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
   }), [renderedLocations]);
 
   const hoveredLocation = hoverInfo ? renderedLocationMap.get(hoverInfo.locationId) ?? null : null;
+  const toggleFullscreen = useCallback(() => setIsFullscreen(previous => !previous), []);
 
   const handleMapMouseMove = useCallback((event: MapMouseEvent) => {
     const rawId = event.features?.[0]?.properties?.id;
@@ -155,6 +157,27 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
   }, [locations, metric]);
 
   useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFullscreen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const resize = () => mapRef.current?.getMap().resize();
+    const frame = requestAnimationFrame(resize);
+    const firstTimer = setTimeout(resize, 100);
+    const secondTimer = setTimeout(resize, 300);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(firstTimer);
+      clearTimeout(secondTimer);
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
     if (!mapReady || renderedLocations.length === 0 || hasFittedRef.current) return;
     mapRef.current?.fitBounds(
       [
@@ -178,14 +201,16 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
   }
 
   return (
-    <div className="relative h-[620px] w-full overflow-hidden rounded-lg">
+    <div className={isFullscreen ? 'fixed inset-0 z-50 flex flex-col bg-white' : 'relative h-[620px] w-full overflow-hidden rounded-lg'}>
       <Legend metric={metric} />
-      <div className="absolute right-2 top-2 z-[1000] max-w-xs rounded-lg border border-purple-200 bg-white/95 px-3 py-2 text-xs shadow-md">
-        <div className="font-extrabold uppercase tracking-wide text-purple-700">Transit On Demand only</div>
-        <div className="mt-0.5 text-[11px] leading-snug text-gray-500">
-          Daily {label} for the selected Ridership period; fixed-route boardings are not included.
-        </div>
-      </div>
+      <button
+        type="button"
+        onClick={toggleFullscreen}
+        className="pointer-events-auto absolute right-2 top-2 z-[1000] rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:bg-gray-50"
+        title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+      >
+        {isFullscreen ? 'Exit' : 'Fullscreen'}
+      </button>
       {selectedLocation && (
         <div className="absolute left-2 top-2 z-[1000] w-72 rounded-lg border border-gray-200 bg-white/95 p-3 shadow-lg">
           <div className="flex items-start justify-between gap-3">
@@ -207,19 +232,20 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
           </div>
         </div>
       )}
-      <MapBase
-        mapRef={mapRef}
-        latitude={BARRIE_CENTER[0]}
-        longitude={BARRIE_CENTER[1]}
-        zoom={12}
-        showNavigation
-        onLoad={() => setMapReady(true)}
-        interactiveLayerIds={[TOD_ACTIVITY_LAYER_ID]}
-        onMouseMove={handleMapMouseMove}
-        onMouseLeave={handleMapMouseLeave}
-        onClick={handleMapClick}
-        style={{ borderRadius: '0.5rem' }}
-      >
+      <div className={isFullscreen ? 'min-h-0 w-full flex-1' : 'h-full w-full'}>
+        <MapBase
+          mapRef={mapRef}
+          latitude={BARRIE_CENTER[0]}
+          longitude={BARRIE_CENTER[1]}
+          zoom={12}
+          showNavigation
+          onLoad={() => setMapReady(true)}
+          interactiveLayerIds={[TOD_ACTIVITY_LAYER_ID]}
+          onMouseMove={handleMapMouseMove}
+          onMouseLeave={handleMapMouseLeave}
+          onClick={handleMapClick}
+          style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}
+        >
         <HeatmapDotLayer
           idPrefix="tod-activity"
           points={renderedLocations.map(location => ({
@@ -271,7 +297,8 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
             </div>
           </Popup>
         )}
-      </MapBase>
+        </MapBase>
+      </div>
     </div>
   );
 };

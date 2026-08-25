@@ -5,10 +5,14 @@ import { flushSync } from 'react-dom';
 import type { DailySummary, OTPBreakdown, PerformanceDataSummary, RouteMetrics } from '../utils/performanceDataTypes';
 import type { TodDailyKpiDataset } from '../utils/todPickupTypes';
 
+const teamContext = vi.hoisted(() => ({
+  current: { team: { id: 'team-1' }, accessLevel: 'internal' },
+}));
+
 vi.mock('../components/Analytics/AnalyticsShared', () => ({
   ChartCard: ({ title, children }: { title: string; children?: React.ReactNode }) => <section><h3>{title}</h3>{children}</section>,
 }));
-vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => ({ team: { id: 'team-1' } }) }));
+vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => teamContext.current }));
 vi.mock('../hooks/useTodPickupData', () => ({
   useTodPickupMetadataQuery: () => ({ data: { storagePath: 'tod.json' }, isLoading: false, error: null as Error | null }),
   useTodPickupDataQuery: () => ({ data: { dailyReports: [] as TodDailyKpiDataset[] }, isLoading: false, error: null as Error | null }),
@@ -99,6 +103,7 @@ describe('performance dashboard metric rollups', () => {
   let root: Root;
 
   beforeEach(() => {
+    teamContext.current.accessLevel = 'internal';
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -120,6 +125,22 @@ describe('performance dashboard metric rollups', () => {
     const combinedRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('7A/7B'));
     expect(combinedRow?.querySelectorAll('td')[2].textContent).toBe('600');
     expect(combinedRow?.querySelectorAll('td')[3].textContent).toBe('300');
+  });
+
+  it('shows Passenger Flow by Stop only for admin and developer access', () => {
+    const data = summary([day('2026-03-10', [route('1', 100)])]);
+
+    teamContext.current.accessLevel = 'planner';
+    flushSync(() => root.render(<RidershipModule data={data} />));
+    expect(container.textContent).not.toContain('Passenger Flow by Stop');
+
+    teamContext.current.accessLevel = 'admin';
+    flushSync(() => root.render(<RidershipModule data={data} />));
+    expect(container.textContent).toContain('Passenger Flow by Stop');
+
+    teamContext.current.accessLevel = 'internal';
+    flushSync(() => root.render(<RidershipModule data={data} />));
+    expect(container.textContent).toContain('Passenger Flow by Stop');
   });
 
   it('places the Transit On Demand module immediately after the combined stop activity map', () => {

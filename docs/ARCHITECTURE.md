@@ -153,6 +153,7 @@ Notable areas:
 - Route Concept Planner → a separate internal-beta, map-first workspace under `components/Analytics/` with a neutral domain/persistence layer under `utils/route-concept-planner/`; it models complete alternatives and may reuse GTFS, Mapbox, and map capabilities only through neutral adapters. Its contract lives in `docs/route-concept-planner/`.
 - Shuttle Planner → `components/Analytics/ShuttlePlannerWorkspace.tsx`, `utils/shuttle/`
 - Network Connections → `components/Analytics/NetworkConnectionsWorkspace.tsx`, `utils/network-connections/`
+- 5-Year Strategic Plan → `components/Analytics/StrategicPlanWorkspace.tsx`, `utils/strategic-plan/`; a read-only, lazily loaded static-GTFS service baseline with no persistence or Master Schedule dependency
 - Corridor Performance → compatibility UI entry point `components/Mapping/CorridorSpeedMap.tsx`, evidence/provenance/presentation modules under `utils/corridor-performance/`, and the current trip-linked traversal adapter in `utils/gtfs/corridorSpeed.ts`; its durable contract is `docs/CORRIDOR_PERFORMANCE.md`
 - student-pass planning → `components/Analytics/StudentPass*`
 - Residential Growth → `components/Analytics/ResidentialGrowthWorkspace.tsx`, `utils/residential-growth/`; imports monthly Issuance Listing and Certificate of Occupancy Excel reports, maps issued/planned and occupied/completed residential units as separate Mapbox tabs, and stores team-scoped planning datasets.

@@ -130,6 +130,12 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
         description: 'Fare-program use, school-area proxies, and map-ready data quality.',
         previewKind: 'analytics-card',
     },
+    {
+        feature: 'analyticsStrategicPlan',
+        label: '5-Year Strategic Plan',
+        description: 'Static-GTFS service baseline for strategic planning.',
+        previewKind: 'analytics-card',
+    },
 ];
 
 const OPERATIONS_TOOLS: WorkspacePreviewItem[] = [

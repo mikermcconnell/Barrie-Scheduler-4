@@ -13,6 +13,12 @@ describe('analytics workspace routing', () => {
         expect(getAnalyticsWorkspaceViewLabel('fare-programs')).toBe('Fare Programs');
     });
 
+    it('deep-links to the 5-Year Strategic Plan workspace', () => {
+        expect(buildAnalyticsWorkspaceHash('planning', 'strategic-plan')).toBe('#planning/strategic-plan');
+        expect(parseAnalyticsWorkspaceViewFromHash('#planning/strategic-plan', 'planning')).toBe('strategic-plan');
+        expect(getAnalyticsWorkspaceViewLabel('strategic-plan')).toBe('5-Year Strategic Plan');
+    });
+
     it('falls back to Planning Data for a retired Council Intelligence deep link', () => {
         expect(parseAnalyticsWorkspaceViewFromHash('#planning/council-intelligence', 'planning'))
             .toBe('dashboard');

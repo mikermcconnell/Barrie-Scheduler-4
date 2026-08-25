@@ -78,7 +78,7 @@ Parking owns parking-code usage, revenue review, map/location settings, and plat
 
 ### Planning Data
 
-Planning Data includes Transit App analytics, OD analysis, Camp Shuttle Planner, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Fleet Plan, and related tools.
+Planning Data includes the static-GTFS 5-Year Strategic Plan baseline, Transit App analytics, OD analysis, Camp Shuttle Planner, Route Concept Planner, Shuttle Planner, Network Connections, student-pass planning, Residential Growth, Fleet Plan, and related tools.
 
 Important boundaries:
 

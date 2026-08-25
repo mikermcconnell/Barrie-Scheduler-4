@@ -12,7 +12,7 @@ import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayD
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
 import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { RidershipStopProfileChart } from './RidershipStopProfileChart';
-import { buildRidershipStopProfiles } from '../../utils/performanceRidershipStopProfile';
+import { buildRidershipStopProfiles, type RidershipStopProfileResult } from '../../utils/performanceRidershipStopProfile';
 import { PerformanceLoadCapacityPanel } from './PerformanceLoadCapacityPanel';
 import { useTeam } from '../contexts/TeamContext';
 import { useTodPickupDataQuery, useTodPickupMetadataQuery } from '../../hooks/useTodPickupData';
@@ -93,7 +93,8 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     loadConfigUserId,
     canManageLoadConfig = false,
 }) => {
-    const { team } = useTeam();
+    const { team, accessLevel } = useTeam();
+    const canViewPassengerFlow = accessLevel === 'admin' || accessLevel === 'internal';
     const filtered = data.dailySummaries;
     const [routeSortKey, setRouteSortKey] = useState<RouteSortKey>('ridership');
     const [routeSortDir, setRouteSortDir] = useState<SortDir>('desc');
@@ -235,8 +236,10 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     const todError = todMetadataQuery.error || todDataQuery.error;
     const hasStoredTodReports = (todDataQuery.data?.dailyReports?.length || 0) > 0;
     const stopProfiles = useMemo(
-        () => buildRidershipStopProfiles(filtered, loadCapacityConfig),
-        [filtered, loadCapacityConfig],
+        (): RidershipStopProfileResult => canViewPassengerFlow
+            ? buildRidershipStopProfiles(filtered, loadCapacityConfig)
+            : { options: [], defaultOptionKey: null },
+        [canViewPassengerFlow, filtered, loadCapacityConfig],
     );
 
     // Route daily trend (multi-line)
@@ -330,10 +333,12 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                 onConfigChange={handleLoadConfigChange}
             />
 
-            <RidershipStopProfileChart
-                data={stopProfiles}
-                periodMode={filtered.length === 1 ? 'single-day' : 'multi-day'}
-            />
+            {canViewPassengerFlow && (
+                <RidershipStopProfileChart
+                    data={stopProfiles}
+                    periodMode={filtered.length === 1 ? 'single-day' : 'multi-day'}
+                />
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Route Ranking */}
