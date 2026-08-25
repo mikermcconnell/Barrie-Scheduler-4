@@ -15,6 +15,7 @@ import { RidershipStopProfileChart } from './RidershipStopProfileChart';
 import { buildRidershipStopProfiles, type RidershipStopProfileResult } from '../../utils/performanceRidershipStopProfile';
 import { PerformanceLoadCapacityPanel } from './PerformanceLoadCapacityPanel';
 import { useTeam } from '../contexts/TeamContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useTodPickupDataQuery, useTodPickupMetadataQuery } from '../../hooks/useTodPickupData';
 import { aggregateTodDailyLocations } from '../../utils/todPickupAggregation';
 
@@ -93,7 +94,8 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     loadConfigUserId,
     canManageLoadConfig = false,
 }) => {
-    const { team, accessLevel } = useTeam();
+    const { team, accessLevel, canManageTeam } = useTeam();
+    const { user } = useAuth();
     const canViewPassengerFlow = accessLevel === 'admin' || accessLevel === 'internal';
     const filtered = data.dailySummaries;
     const [routeSortKey, setRouteSortKey] = useState<RouteSortKey>('ridership');
@@ -287,6 +289,9 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                 isLoading={todIsLoading}
                 error={todError}
                 hasStoredReports={hasStoredTodReports}
+                teamId={team?.id}
+                userId={user?.uid}
+                canManageZones={canManageTeam}
             />
 
             {/* Daily Ridership Trend */}

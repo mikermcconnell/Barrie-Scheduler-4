@@ -4,13 +4,22 @@ import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import { HeatmapDotLayer, MapBase, toGeoJSON } from '../shared';
 import { getTodActivityValue, type TodActivityMetric } from '../../utils/todPickupAggregation';
 import type { TodDailyKpiLocation } from '../../utils/todPickupTypes';
+import type { TodCityStop, TodZoneVersion } from '../../utils/todZones/todZoneTypes';
+
+export interface ZonedTodActivityLocation extends TodDailyKpiLocation {
+  zoneCodes?: string[];
+}
 
 interface TodActivityMapProps {
-  locations: TodDailyKpiLocation[];
+  locations: ZonedTodActivityLocation[];
   metric: TodActivityMetric;
+  zoneVersion?: TodZoneVersion | null;
+  cityStops?: TodCityStop[];
+  showAllStops?: boolean;
 }
 
 interface RenderedLocation extends TodDailyKpiLocation {
+  zoneCodes: string[];
   bin: number;
   sortKey: number;
   value: number;
@@ -83,12 +92,12 @@ const Legend: React.FC<{ metric: TodActivityMetric }> = ({ metric }) => (
   </div>
 );
 
-export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metric }) => {
+export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metric, zoneVersion, cityStops = [], showAllStops = false }) => {
   const mapRef = useRef<MapRef | null>(null);
   const hasFittedRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [selectedLocation, setSelectedLocation] = useState<TodDailyKpiLocation | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<RenderedLocation | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const label = metricLabel(metric);
 
@@ -99,6 +108,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
     return mappable
       .map((location, index) => ({
         ...location,
+        zoneCodes: location.zoneCodes ?? [],
         value: values[index],
         bin: bins[index],
         sortKey: index,
@@ -119,6 +129,24 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
       geometry: { type: 'Point', coordinates: toGeoJSON([location.lat, location.lon]) },
     })),
   }), [renderedLocations]);
+  const zoneGeoJSON = useMemo((): GeoJSON.FeatureCollection => ({
+    type: 'FeatureCollection',
+    features: (zoneVersion?.polygons ?? []).map(polygon => ({
+      type: 'Feature',
+      properties: {
+        id: polygon.id,
+        zoneCode: polygon.zoneCode,
+        color: zoneVersion?.definitions.find(zone => zone.code === polygon.zoneCode)?.color ?? '#7c3aed',
+      },
+      geometry: { type: 'Polygon', coordinates: [polygon.coordinates] },
+    })),
+  }), [zoneVersion]);
+  const cityStopsGeoJSON = useMemo((): GeoJSON.FeatureCollection => ({
+    type: 'FeatureCollection',
+    features: cityStops.map(stop => ({
+      type: 'Feature', properties: { id: stop.id }, geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
+    })),
+  }), [cityStops]);
 
   const hoveredLocation = hoverInfo ? renderedLocationMap.get(hoverInfo.locationId) ?? null : null;
   const toggleFullscreen = useCallback(() => setIsFullscreen(previous => !previous), []);
@@ -189,7 +217,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
     hasFittedRef.current = true;
   }, [mapReady, renderedLocations]);
 
-  if (renderedLocations.length === 0) {
+  if (renderedLocations.length === 0 && !zoneVersion && !showAllStops) {
     return (
       <div className="grid h-[520px] place-items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 p-6 text-center">
         <div>
@@ -203,6 +231,11 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
   return (
     <div className={isFullscreen ? 'fixed inset-0 z-50 flex flex-col bg-white' : 'relative h-[620px] w-full overflow-hidden rounded-lg'}>
       <Legend metric={metric} />
+      {renderedLocations.length === 0 && (
+        <div className="pointer-events-none absolute right-2 top-12 z-[1000] max-w-xs rounded-lg border border-violet-200 bg-white/95 px-3 py-2 text-xs font-semibold text-violet-900 shadow">
+          No activity locations match the selected zone filter. Published boundaries remain visible for context.
+        </div>
+      )}
       <button
         type="button"
         onClick={toggleFullscreen}
@@ -230,6 +263,11 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
             <div className="rounded-md bg-gray-50 px-2 py-1.5 text-gray-600">Pickups <strong className="text-gray-900">{selectedLocation.pickups.toLocaleString()}</strong></div>
             <div className="rounded-md bg-gray-50 px-2 py-1.5 text-gray-600">Drop-offs <strong className="text-gray-900">{selectedLocation.dropoffs.toLocaleString()}</strong></div>
           </div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {selectedLocation.zoneCodes.length > 0
+              ? selectedLocation.zoneCodes.map(code => <span key={code} className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-extrabold text-violet-800">Zone {code}</span>)
+              : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">Unassigned</span>}
+          </div>
         </div>
       )}
       <div className={isFullscreen ? 'min-h-0 w-full flex-1' : 'h-full w-full'}>
@@ -246,6 +284,17 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
           onClick={handleMapClick}
           style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}
         >
+        {zoneVersion && (
+          <Source id="tod-zone-polygons-src" type="geojson" data={zoneGeoJSON}>
+            <Layer id="tod-zone-polygons-fill" type="fill" paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': 0.13 }} />
+            <Layer id="tod-zone-polygons-line" type="line" paint={{ 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.8 }} />
+          </Source>
+        )}
+        {showAllStops && (
+          <Source id="tod-zone-city-stops-src" type="geojson" data={cityStopsGeoJSON}>
+            <Layer id="tod-zone-city-stops" type="circle" paint={{ 'circle-radius': 2.5, 'circle-color': '#64748b', 'circle-opacity': 0.55, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 0.5 }} />
+          </Source>
+        )}
         <HeatmapDotLayer
           idPrefix="tod-activity"
           points={renderedLocations.map(location => ({
@@ -294,6 +343,8 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
               {metricTitle(metric)}: {hoveredLocation.value.toLocaleString()}
               <br />
               <span style={{ color: '#6b7280' }}>Pickups {hoveredLocation.pickups.toLocaleString()} · Drop-offs {hoveredLocation.dropoffs.toLocaleString()}</span>
+              <br />
+              <span style={{ color: '#6d28d9', fontWeight: 700 }}>{hoveredLocation.zoneCodes.length > 0 ? `Zone ${hoveredLocation.zoneCodes.join(' / ')}` : 'Unassigned'}</span>
             </div>
           </Popup>
         )}

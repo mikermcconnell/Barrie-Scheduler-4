@@ -53,6 +53,7 @@ Load feature docs only when the task directly touches that feature.
 - GTFS/STREETS auto-ingest: `docs/AUTO_INGEST_SETUP.md`
 - Dwell Incident Review: `docs/DWELL_CASCADE_FEATURE.md`
 - Operations metrics and schemas: `docs/OPERATIONS_DASHBOARD_METRICS.md`
+- Transit On Demand zone editor and assignment: `docs/TOD_ZONES.md`
 - Detour Publisher: `docs/DETOUR_PUBLISHER.md`
 - Route colors: `docs/route-colors.md`
 

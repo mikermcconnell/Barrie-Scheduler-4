@@ -221,6 +221,28 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
       }
 
+      // Shared, effective-dated Transit On Demand zone geometry. Team members
+      // may view published assignments; only owners/admins may edit the draft.
+      match /todZoneConfig/{configId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) || canSupportReadTeamData(teamId);
+        allow create: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                        configId == 'default' &&
+                        isValidTodZoneConfig(request.resource.data) &&
+                        request.resource.data.revision == 1;
+        allow update: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                        configId == 'default' &&
+                        isValidTodZoneConfig(request.resource.data) &&
+                        request.resource.data.revision == resource.data.revision + 1;
+        allow delete: if false;
+
+        match /versions/{versionId} {
+          allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+          allow create: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                          isValidTodZoneVersion(teamId, versionId);
+          allow update, delete: if false;
+        }
+      }
+
       // Shared department parking code usage
       match /parking/{docId} {
         allow read: if canAccessWorkspace(teamId, 'workspaceParking') || canSupportReadTeamData(teamId);
@@ -441,6 +463,47 @@ service cloud.firestore {
              data.version is int && data.version > 0 &&
              data.updatedAt == request.time &&
              data.updatedBy == request.auth.uid;
+    }
+
+    function isValidTodZoneConfig(data) {
+      return isValidTodZoneCore(data) &&
+             data.keys().hasAll([
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'overrides',
+               'effectiveFrom', 'source', 'reviewNote', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'overrides',
+               'effectiveFrom', 'source', 'reviewNote', 'lastPublishedVersionId',
+               'updatedAt', 'updatedBy'
+             ]);
+    }
+
+    function isValidTodZoneCore(data) {
+      return data is map &&
+             data.schemaVersion == 1 && data.revision is int && data.revision > 0 &&
+             data.definitions is list && data.definitions.size() > 0 && data.definitions.size() <= 26 &&
+             data.polygons is list && data.polygons.size() <= 80 &&
+             data.overrides is list && data.overrides.size() <= 1000 &&
+             data.effectiveFrom is string && data.effectiveFrom.matches('20[0-9][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') &&
+             data.source is string && data.source.size() > 0 && data.source.size() <= 1000 &&
+             data.reviewNote is string && data.reviewNote.size() > 0 && data.reviewNote.size() <= 2000 &&
+             data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function isValidTodZoneVersion(teamId, versionId) {
+      let data = request.resource.data;
+      let root = getAfter(/databases/$(database)/documents/teams/$(teamId)/todZoneConfig/default);
+      return isValidTodZoneCore(data) &&
+             data.polygons.size() > 0 &&
+             data.keys().hasAll(['stopSnapshot', 'publishedAt', 'publishedBy']) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'overrides',
+               'effectiveFrom', 'source', 'reviewNote', 'lastPublishedVersionId',
+               'updatedAt', 'updatedBy', 'stopSnapshot', 'publishedAt', 'publishedBy'
+             ]) &&
+             data.stopSnapshot is list && data.stopSnapshot.size() <= 1500 &&
+             data.publishedAt == request.time && data.publishedBy == request.auth.uid &&
+             root.data.revision == data.revision && root.data.lastPublishedVersionId == versionId;
     }
 
     function isValidScheduleReviewSummary(summary) {

@@ -6,13 +6,15 @@ import type { DailySummary, OTPBreakdown, PerformanceDataSummary, RouteMetrics }
 import type { TodDailyKpiDataset } from '../utils/todPickupTypes';
 
 const teamContext = vi.hoisted(() => ({
-  current: { team: { id: 'team-1' }, accessLevel: 'internal' },
+  current: { team: { id: 'team-1' }, accessLevel: 'internal', canManageTeam: true },
 }));
+const todSectionProps = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
 vi.mock('../components/Analytics/AnalyticsShared', () => ({
   ChartCard: ({ title, children }: { title: string; children?: React.ReactNode }) => <section><h3>{title}</h3>{children}</section>,
 }));
 vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => teamContext.current }));
+vi.mock('../components/contexts/AuthContext', () => ({ useAuth: () => ({ user: { uid: 'user-1' } }) }));
 vi.mock('../hooks/useTodPickupData', () => ({
   useTodPickupMetadataQuery: () => ({ data: { storagePath: 'tod.json' }, isLoading: false, error: null as Error | null }),
   useTodPickupDataQuery: () => ({ data: { dailyReports: [] as TodDailyKpiDataset[] }, isLoading: false, error: null as Error | null }),
@@ -20,7 +22,10 @@ vi.mock('../hooks/useTodPickupData', () => ({
 
 vi.mock('../components/Performance/RidershipHeatmapSection', () => ({ RidershipHeatmapSection: (): null => null }));
 vi.mock('../components/Performance/StopActivityMap', () => ({ StopActivityMap: () => <div data-testid="stop-activity-map" /> }));
-vi.mock('../components/Performance/TodDailyKpiSection', () => ({ TodDailyKpiSection: () => <div data-testid="tod-activity-module" /> }));
+vi.mock('../components/Performance/TodDailyKpiSection', () => ({ TodDailyKpiSection: (props: Record<string, unknown>) => {
+  todSectionProps.current = props;
+  return <div data-testid="tod-activity-module" />;
+} }));
 
 vi.mock('recharts', () => {
   const Chart = ({ data, children }: { data?: unknown; children?: React.ReactNode }) => (
@@ -150,6 +155,15 @@ describe('performance dashboard metric rollups', () => {
     const stopCard = container.querySelector('[data-testid="stop-activity-map"]')?.closest('section');
     const todModule = container.querySelector('[data-testid="tod-activity-module"]');
     expect(stopCard?.nextElementSibling).toBe(todModule);
+  });
+
+  it('scopes TOD zones to the active team rather than a shared performance source', () => {
+    const data = summary([day('2026-03-10', [route('1', 100)])]);
+    flushSync(() => root.render(<RidershipModule data={data} loadConfigTeamId="shared-performance-team" loadConfigUserId="legacy-user" canManageLoadConfig={false} />));
+
+    expect(todSectionProps.current.teamId).toBe('team-1');
+    expect(todSectionProps.current.userId).toBe('user-1');
+    expect(todSectionProps.current.canManageZones).toBe(true);
   });
 
   it('weights route average deviation by OTP observations', () => {
