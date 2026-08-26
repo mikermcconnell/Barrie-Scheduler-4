@@ -108,4 +108,19 @@ describe('TodZoneEditor', () => {
     expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['todZoneVersions', 'team-a'] });
     expect(container.textContent).toContain('Published a new effective-dated zone version.');
   });
+
+  it('lists the complete Zone A connection-stop set', async () => {
+    await renderEditor();
+    expect(container.textContent).toContain('17 connection stops:');
+    expect(container.textContent).toContain('58, 59, 60, 61, 76, 215, 216, 416, 440, 441, 447, 449, 453, 454, 628, 634, 913');
+  });
+
+  it('lists the complete Zone B connection-stop set', async () => {
+    await renderEditor();
+    const zoneB = [...container.querySelectorAll('button')].find(button => button.textContent === 'B');
+    await act(async () => zoneB?.click());
+    expect(container.textContent).toContain('13 connection stops:');
+    expect(container.textContent).toContain('10, 67, 68, 129, 135, 136, 255, 333, 583, 586, 612, 938, 959');
+    expect(container.textContent).toContain('0/10 ordinary stops labelled on the Zone B PDF are included.');
+  });
 });

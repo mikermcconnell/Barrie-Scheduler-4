@@ -113,7 +113,7 @@ describe('TodDailyKpiSection', () => {
       { code: 'B', label: 'Zone B', color: '#2563eb', kind: 'permanent', active: true },
     ];
     const version = (id: string, effectiveFrom: string, zoneCode: string): TodZoneVersion => ({
-      id, schemaVersion: 1, revision: id === 'v1' ? 1 : 2, definitions, polygons: [], overrides: [],
+      id, schemaVersion: 1, revision: id === 'v1' ? 1 : 2, definitions, polygons: [], connectionStops: [], overrides: [],
       effectiveFrom, source: 'test', reviewNote: 'reviewed', publishedBy: 'owner', publishedAt: `${effectiveFrom}T12:00:00Z`,
       stopSnapshot: [{ stopId: '1', name: 'Stop 1', lat: 44.38, lon: -79.69, zoneCodes: [zoneCode] }],
     });
@@ -137,7 +137,7 @@ describe('TodDailyKpiSection', () => {
     const zoneA: TodZoneDefinition[] = [{ code: 'A', label: 'Zone A', color: '#7c3aed', kind: 'permanent', active: true }];
     const zoneB: TodZoneDefinition[] = [{ code: 'B', label: 'Zone B', color: '#2563eb', kind: 'permanent', active: true }];
     const version = (id: string, effectiveFrom: string, definitions: TodZoneDefinition[], code: string): TodZoneVersion => ({
-      id, schemaVersion: 1, revision: id === 'v1' ? 1 : 2, definitions, polygons: [], overrides: [],
+      id, schemaVersion: 1, revision: id === 'v1' ? 1 : 2, definitions, polygons: [], connectionStops: [], overrides: [],
       effectiveFrom, source: 'test', reviewNote: 'reviewed', publishedBy: 'owner', publishedAt: `${effectiveFrom}T12:00:00Z`,
       stopSnapshot: [{ stopId: '1', name: 'Stop 1', lat: 44.38, lon: -79.69, zoneCodes: [code] }],
     });

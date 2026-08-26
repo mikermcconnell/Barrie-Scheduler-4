@@ -7,7 +7,7 @@ import { TodZoneDrawControl } from './TodZoneDrawControl';
 import { useBarrieTransitStopsQuery, useTodZoneDraftQuery } from '../../hooks/useTodZones';
 import { assignTodZoneMembership, normalizeTodZoneStopId, validateTodZoneDraft } from '../../utils/todZones/todZoneGeometry';
 import { exportTodZoneGeoJson, parseTodZoneGeoJson } from '../../utils/todZones/todZoneGeoJson';
-import { ZONE_A_REFERENCE_STOP_IDS } from '../../utils/todZones/todZoneSeed';
+import { ZONE_A_REFERENCE_STOP_IDS, ZONE_B_REFERENCE_STOP_IDS } from '../../utils/todZones/todZoneSeed';
 import { getTodZoneErrorMessage, publishTodZoneVersion, saveTodZoneDraft } from '../../utils/todZones/todZoneService';
 import type { TodStopOverride, TodZoneDraft, TodZonePolygon } from '../../utils/todZones/todZoneTypes';
 
@@ -25,6 +25,7 @@ function editableSignature(draft: TodZoneDraft): string {
     return JSON.stringify({
         definitions: draft.definitions,
         polygons: draft.polygons,
+        connectionStops: draft.connectionStops,
         overrides: draft.overrides,
         effectiveFrom: draft.effectiveFrom,
         source: draft.source,
@@ -96,18 +97,25 @@ export const TodZoneEditor: React.FC<TodZoneEditorProps> = ({ open, teamId, user
     const stops = useMemo(() => stopsQuery.data ?? [], [stopsQuery.data]);
     const stopMemberships = useMemo(() => {
         if (!draft) return [];
-        return stops.map(stop => ({
-            ...stop,
-            zoneCodes: assignTodZoneMembership(stop, draft.definitions, draft.polygons, draft.overrides).zoneCodes,
-        }));
+        return stops.map(stop => {
+            const membership = assignTodZoneMembership(stop, draft.definitions, draft.polygons, draft.overrides, draft.connectionStops);
+            return { ...stop, zoneCodes: membership.zoneCodes, isConnectionStop: membership.isConnectionStop };
+        });
     }, [draft, stops]);
     const activeCount = stopMemberships.filter(stop => stop.zoneCodes.includes(activeZoneCode)).length;
-    const zoneAReferenceCount = stopMemberships.filter(stop => ZONE_A_REFERENCE_STOP_IDS.includes(stop.id) && stop.zoneCodes.includes('A')).length;
+    const activeConnectionStops = draft?.connectionStops
+        .filter(stop => stop.zoneCodes.includes(activeZoneCode))
+        .map(stop => normalizeTodZoneStopId(stop.stopId))
+        .sort((a, b) => Number(a) - Number(b)) ?? [];
+    const activeReferenceStopIds = activeZoneCode === 'A'
+        ? ZONE_A_REFERENCE_STOP_IDS
+        : activeZoneCode === 'B' ? ZONE_B_REFERENCE_STOP_IDS : [];
+    const activeReferenceCount = stopMemberships.filter(stop => activeReferenceStopIds.includes(stop.id) && stop.zoneCodes.includes(activeZoneCode)).length;
     const stopGeoJson = useMemo((): GeoJSON.FeatureCollection => ({
         type: 'FeatureCollection',
         features: stopMemberships.map(stop => ({
             type: 'Feature',
-            properties: { id: stop.id, zoneCodes: stop.zoneCodes.join(',') },
+            properties: { id: stop.id, zoneCodes: stop.zoneCodes.join(','), isConnectionStop: stop.isConnectionStop },
             geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
         })),
     }), [stopMemberships]);
@@ -214,7 +222,7 @@ export const TodZoneEditor: React.FC<TodZoneEditorProps> = ({ open, teamId, user
                 <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
                     <div>
                         <div className="flex items-center gap-2"><MapPinned size={19} className="text-violet-700" /><h2 className="font-extrabold text-slate-950">Transit On Demand zone editor</h2></div>
-                        <p className="mt-1 text-xs text-slate-500">Codex Zone A seed · draw and validate against current City stops · publish only after planner review</p>
+                        <p className="mt-1 text-xs text-slate-500">Codex TOD zone seeds · draw and validate against current City stops · publish only after planner review</p>
                     </div>
                     <button type="button" onClick={requestClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close zone editor"><X size={18} /></button>
                 </header>
@@ -239,7 +247,8 @@ export const TodZoneEditor: React.FC<TodZoneEditorProps> = ({ open, teamId, user
                             <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs text-violet-900">
                                 <strong>{activeCount} current stops assigned to Zone {activeZoneCode}</strong>
                                 <div className="mt-1">{draft.polygons.filter(item => item.zoneCode === activeZoneCode).length} polygon pockets · {draft.overrides.length} stop overrides</div>
-                                {activeZoneCode === 'A' && <div className="mt-1">{zoneAReferenceCount}/25 stops labelled on the Zone A PDF are included.</div>}
+                                <div className="mt-1"><strong>{activeConnectionStops.length} connection stops:</strong> {activeConnectionStops.join(', ') || 'None'}</div>
+                                {activeReferenceStopIds.length > 0 && <div className="mt-1">{activeReferenceCount}/{activeReferenceStopIds.length} ordinary stops labelled on the Zone {activeZoneCode} PDF are included.</div>}
                                 {stopsQuery.isError && <div className="mt-1 font-bold text-red-700">The City stop layer is unavailable; publishing is disabled.</div>}
                             </div>
                             <div className="mt-4 grid gap-3">
@@ -277,7 +286,11 @@ export const TodZoneEditor: React.FC<TodZoneEditorProps> = ({ open, teamId, user
                                 <button type="button" onClick={() => setMapStyle('mapbox://styles/mapbox/satellite-streets-v12')} className={`rounded px-2 py-1 text-xs font-bold ${mapStyle.includes('satellite') ? 'bg-slate-900 text-white' : ''}`}>Satellite</button>
                             </div>
                             <MapBase latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={12} mapStyle={mapStyle} showNavigation>
-                                <Source id="tod-zone-editor-stops" type="geojson" data={stopGeoJson}><Layer id="tod-zone-editor-stop-points" type="circle" paint={{ 'circle-radius': 4, 'circle-color': ['case', ['!=', ['get', 'zoneCodes'], ''], '#7c3aed', '#475569'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1 }} /></Source>
+                                <Source id="tod-zone-editor-stops" type="geojson" data={stopGeoJson}>
+                                    <Layer id="tod-zone-editor-stop-points" type="circle" paint={{ 'circle-radius': 4, 'circle-color': ['case', ['!=', ['get', 'zoneCodes'], ''], '#7c3aed', '#475569'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1 }} />
+                                    <Layer id="tod-zone-editor-connection-points" type="circle" filter={['==', ['get', 'isConnectionStop'], true]} paint={{ 'circle-radius': 8, 'circle-color': '#ffffff', 'circle-stroke-color': '#0284c7', 'circle-stroke-width': 2 }} />
+                                    <Layer id="tod-zone-editor-connection-labels" type="symbol" filter={['==', ['get', 'isConnectionStop'], true]} layout={{ 'text-field': ['get', 'zoneCodes'], 'text-size': 10, 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], 'text-allow-overlap': true }} paint={{ 'text-color': '#0284c7' }} />
+                                </Source>
                                 <TodZoneDrawControl polygons={draft.polygons} activeZoneCode={activeZoneCode} onChange={updatePolygons} />
                             </MapBase>
                         </main>

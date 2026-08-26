@@ -19,10 +19,11 @@ const polygon = {
 
 function zoneData(userId: string, revision: number, polygons: Array<Record<string, unknown>> = [polygon]) {
     return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         revision,
         definitions: [{ code: 'A', label: 'Zone A', color: '#7c3aed', kind: 'permanent', active: true }],
         polygons,
+        connectionStops: [{ stopId: '58', zoneCodes: ['A'] }],
         overrides: [] as Array<Record<string, unknown>>,
         effectiveFrom: '2025-09-21',
         source: 'Planner-reviewed Zone A PDF',

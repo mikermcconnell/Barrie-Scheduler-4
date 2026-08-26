@@ -475,11 +475,11 @@ service cloud.firestore {
     function isValidTodZoneConfig(data) {
       return isValidTodZoneCore(data) &&
              data.keys().hasAll([
-               'schemaVersion', 'revision', 'definitions', 'polygons', 'overrides',
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'connectionStops', 'overrides',
                'effectiveFrom', 'source', 'reviewNote', 'updatedAt', 'updatedBy'
              ]) &&
              data.keys().hasOnly([
-               'schemaVersion', 'revision', 'definitions', 'polygons', 'overrides',
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'connectionStops', 'overrides',
                'effectiveFrom', 'source', 'reviewNote', 'lastPublishedVersionId',
                'updatedAt', 'updatedBy'
              ]);
@@ -487,9 +487,10 @@ service cloud.firestore {
 
     function isValidTodZoneCore(data) {
       return data is map &&
-             data.schemaVersion == 1 && data.revision is int && data.revision > 0 &&
+             data.schemaVersion == 2 && data.revision is int && data.revision > 0 &&
              data.definitions is list && data.definitions.size() > 0 && data.definitions.size() <= 26 &&
              data.polygons is list && data.polygons.size() <= 80 &&
+             data.connectionStops is list && data.connectionStops.size() <= 1500 &&
              data.overrides is list && data.overrides.size() <= 1000 &&
              data.effectiveFrom is string && data.effectiveFrom.matches('20[0-9][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') &&
              data.source is string && data.source.size() > 0 && data.source.size() <= 1000 &&
@@ -504,7 +505,7 @@ service cloud.firestore {
              data.polygons.size() > 0 &&
              data.keys().hasAll(['stopSnapshot', 'publishedAt', 'publishedBy']) &&
              data.keys().hasOnly([
-               'schemaVersion', 'revision', 'definitions', 'polygons', 'overrides',
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'connectionStops', 'overrides',
                'effectiveFrom', 'source', 'reviewNote', 'lastPublishedVersionId',
                'updatedAt', 'updatedBy', 'stopSnapshot', 'publishedAt', 'publishedBy'
              ]) &&

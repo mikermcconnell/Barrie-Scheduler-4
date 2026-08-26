@@ -18,6 +18,7 @@ vi.mock('../components/shared', () => ({
 }));
 
 import { TodActivityMap } from '../components/Performance/TodActivityMap';
+import { createTodZoneASeedDraft } from '../utils/todZones/todZoneSeed';
 
 describe('TodActivityMap', () => {
   let container: HTMLDivElement;
@@ -83,5 +84,23 @@ describe('TodActivityMap', () => {
 
     flushSync(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
     expect(container.firstElementChild?.className).not.toContain('fixed inset-0');
+  });
+
+  it('identifies published connection stops in the legend and location details', () => {
+    const draft = createTodZoneASeedDraft();
+    const location = {
+      id: '58', name: 'Stop 58', lat: 44.38, lon: -79.69, pickups: 3, dropoffs: 2,
+      zoneCodes: ['A'], isConnectionStop: true,
+    };
+    const version = {
+      ...draft,
+      id: 'zone-a-v1',
+      revision: 1,
+      stopSnapshot: [{ stopId: '58', name: 'Stop 58', lat: 44.38, lon: -79.69, zoneCodes: ['A'], isConnectionStop: true }],
+      publishedBy: 'owner-a',
+    };
+
+    flushSync(() => root.render(<TodActivityMap locations={[location]} metric="activity" zoneVersion={version} />));
+    expect(container.textContent).toContain('Connection stop');
   });
 });

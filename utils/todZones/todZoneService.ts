@@ -8,8 +8,8 @@ import {
     Timestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { buildTodStopSnapshot, validateTodZoneDraft } from './todZoneGeometry';
-import { createTodZoneASeedDraft } from './todZoneSeed';
+import { buildTodStopSnapshot, normalizeTodZoneStopId, validateTodZoneDraft } from './todZoneGeometry';
+import { createTodZoneSeedDraft } from './todZoneSeed';
 import type { TodCityStop, TodZoneDraft, TodZoneVersion } from './todZoneTypes';
 
 interface StoredTodZonePosition {
@@ -35,6 +35,10 @@ function versionsRef(teamId: string) {
 function timestampToISO(value: unknown): string | undefined {
     if (value instanceof Timestamp) return value.toDate().toISOString();
     return typeof value === 'string' && value ? value : undefined;
+}
+
+function normalizeStopConnectionKey(stop: TodZoneDraft['connectionStops'][number]): string {
+    return `${normalizeTodZoneStopId(stop.stopId)}:${[...stop.zoneCodes].sort().join(',')}`;
 }
 
 export function deserializeTodZonePolygonsFromFirestore(value: unknown): TodZoneDraft['polygons'] | null {
@@ -76,17 +80,36 @@ export function serializeTodZonePolygonsForFirestore(polygons: TodZoneDraft['pol
     }));
 }
 
-function normalizeDraft(data: Record<string, unknown>): TodZoneDraft {
-    const seed = createTodZoneASeedDraft();
+export function normalizeTodZoneDraftFromFirestore(data: Record<string, unknown>, migrateLegacySeed = true): TodZoneDraft {
+    const seed = createTodZoneSeedDraft();
+    const storedSchemaVersion = data.schemaVersion === 2 ? 2 : 1;
+    const storedPolygons = deserializeTodZonePolygonsFromFirestore(data.polygons) ?? seed.polygons;
+    const shouldMigrate = migrateLegacySeed && storedSchemaVersion < seed.schemaVersion;
+    const polygons = shouldMigrate
+        ? [...storedPolygons, ...seed.polygons.filter(seedPolygon => seedPolygon.zoneCode === 'B' && !storedPolygons.some(polygon => polygon.id === seedPolygon.id))]
+        : storedPolygons;
+    const storedConnectionStops = Array.isArray(data.connectionStops)
+        ? data.connectionStops as TodZoneDraft['connectionStops']
+        : [];
+    const connectionStops = shouldMigrate
+        ? [...storedConnectionStops, ...seed.connectionStops.filter(seedStop => !storedConnectionStops.some(stop => normalizeStopConnectionKey(stop) === normalizeStopConnectionKey(seedStop)))]
+        : storedConnectionStops;
+    const storedSource = typeof data.source === 'string' ? data.source : seed.source;
+    const storedReviewNote = typeof data.reviewNote === 'string' ? data.reviewNote : seed.reviewNote;
     return {
-        schemaVersion: 1,
+        schemaVersion: shouldMigrate ? seed.schemaVersion : storedSchemaVersion,
         revision: Number.isInteger(data.revision) ? Number(data.revision) : 0,
         definitions: Array.isArray(data.definitions) ? data.definitions as TodZoneDraft['definitions'] : seed.definitions,
-        polygons: deserializeTodZonePolygonsFromFirestore(data.polygons) ?? seed.polygons,
+        polygons,
+        connectionStops,
         overrides: Array.isArray(data.overrides) ? data.overrides as TodZoneDraft['overrides'] : [],
         effectiveFrom: typeof data.effectiveFrom === 'string' ? data.effectiveFrom : seed.effectiveFrom,
-        source: typeof data.source === 'string' ? data.source : seed.source,
-        reviewNote: typeof data.reviewNote === 'string' ? data.reviewNote : seed.reviewNote,
+        source: shouldMigrate
+            ? `${storedSource}; Transit ON Demand Zone B map, effective Sept. 21, 2025`.slice(0, 1_000)
+            : storedSource,
+        reviewNote: shouldMigrate
+            ? `${storedReviewNote} Zone B draft added from the schematic source map; planner review required before publication.`.slice(0, 2_000)
+            : storedReviewNote,
         ...(typeof data.lastPublishedVersionId === 'string' ? { lastPublishedVersionId: data.lastPublishedVersionId } : {}),
         ...(timestampToISO(data.updatedAt) ? { updatedAt: timestampToISO(data.updatedAt) } : {}),
         ...(typeof data.updatedBy === 'string' ? { updatedBy: data.updatedBy } : {}),
@@ -95,20 +118,21 @@ function normalizeDraft(data: Record<string, unknown>): TodZoneDraft {
 
 export async function getTodZoneDraft(teamId: string): Promise<TodZoneDraft> {
     const snapshot = await getDoc(rootRef(teamId));
-    return snapshot.exists() ? normalizeDraft(snapshot.data()) : createTodZoneASeedDraft();
+    return snapshot.exists() ? normalizeTodZoneDraftFromFirestore(snapshot.data()) : createTodZoneSeedDraft();
 }
 
 export async function getTodZoneVersions(teamId: string): Promise<TodZoneVersion[]> {
     const snapshot = await getDocs(versionsRef(teamId));
     return snapshot.docs.map(versionDoc => {
         const data = versionDoc.data();
-        const draft = normalizeDraft(data);
+        const draft = normalizeTodZoneDraftFromFirestore(data, false);
         return {
             id: versionDoc.id,
-            schemaVersion: 1,
+            schemaVersion: draft.schemaVersion,
             revision: draft.revision,
             definitions: draft.definitions,
             polygons: draft.polygons,
+            connectionStops: draft.connectionStops,
             overrides: draft.overrides,
             effectiveFrom: draft.effectiveFrom,
             source: draft.source,
@@ -122,10 +146,11 @@ export async function getTodZoneVersions(teamId: string): Promise<TodZoneVersion
 
 function writableDraft(draft: TodZoneDraft, revision: number, userId: string, includePublishedPointer = true) {
     return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         revision,
         definitions: draft.definitions,
         polygons: serializeTodZonePolygonsForFirestore(draft.polygons),
+        connectionStops: draft.connectionStops,
         overrides: draft.overrides,
         effectiveFrom: draft.effectiveFrom,
         source: draft.source.trim(),
@@ -180,7 +205,7 @@ export async function publishTodZoneVersion(
             throw error;
         }
         const nextRevision = currentRevision + 1;
-        const stopSnapshot = buildTodStopSnapshot(stops, draft.definitions, draft.polygons, draft.overrides);
+        const stopSnapshot = buildTodStopSnapshot(stops, draft.definitions, draft.polygons, draft.overrides, draft.connectionStops);
         transaction.set(versionReference, {
             ...writableDraft(draft, nextRevision, userId, false),
             stopSnapshot,

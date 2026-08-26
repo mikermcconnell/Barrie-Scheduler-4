@@ -68,22 +68,28 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
   const overlayVersion = selectEffectiveTodZoneVersion(versions, reportDates);
   const { filteredLocations, usedVersionIds, unversionedDateCount } = React.useMemo(() => {
     const used = new Set<string>();
-    const snapshots = new Map(versions.map(version => [version.id, new Map(version.stopSnapshot.map(stop => [normalizeTodZoneStopId(stop.stopId), stop.zoneCodes]))]));
+    const snapshots = new Map(versions.map(version => [version.id, new Map(version.stopSnapshot.map(stop => [normalizeTodZoneStopId(stop.stopId), stop]))]));
     const aggregates = new Map<string, {
       location: TodDailyKpiLocation;
       coordinateWeight: number;
       latWeightedSum: number;
       lonWeightedSum: number;
       zoneCodes: Set<string>;
+      isConnectionStop: boolean;
     }>();
     reports.forEach(report => {
       const version = effectiveVersionsByDate.get(report.date) ?? null;
       if (version) used.add(version.id);
       report.locations.forEach(location => {
-        const codes = version
-          ? snapshots.get(version.id)?.get(normalizeTodZoneStopId(location.id))
-            ?? assignTodZoneMembership(location, version.definitions, version.polygons, version.overrides).zoneCodes
-          : [];
+        const snapshotStop = version ? snapshots.get(version.id)?.get(normalizeTodZoneStopId(location.id)) : undefined;
+        const membership = version && !snapshotStop
+          ? assignTodZoneMembership(location, version.definitions, version.polygons, version.overrides, version.connectionStops)
+          : null;
+        const codes = snapshotStop?.zoneCodes ?? membership?.zoneCodes ?? [];
+        const isConnectionStop = snapshotStop?.isConnectionStop
+          ?? membership?.isConnectionStop
+          ?? version?.connectionStops.some(stop => normalizeTodZoneStopId(stop.stopId) === normalizeTodZoneStopId(location.id))
+          ?? false;
         if (!filterByTodZone(codes, zoneFilter)) return;
         const weight = Math.max(location.pickups + location.dropoffs, 1);
         const aggregate = aggregates.get(location.id);
@@ -94,6 +100,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
           aggregate.coordinateWeight += weight;
           aggregate.latWeightedSum += location.lat * weight;
           aggregate.lonWeightedSum += location.lon * weight;
+          aggregate.isConnectionStop ||= isConnectionStop;
           codes.forEach(code => aggregate.zoneCodes.add(code));
         } else {
           aggregates.set(location.id, {
@@ -102,6 +109,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
             latWeightedSum: location.lat * weight,
             lonWeightedSum: location.lon * weight,
             zoneCodes: new Set(codes),
+            isConnectionStop,
           });
         }
       });
@@ -112,6 +120,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
         lat: aggregate.latWeightedSum / aggregate.coordinateWeight,
         lon: aggregate.lonWeightedSum / aggregate.coordinateWeight,
         zoneCodes: [...aggregate.zoneCodes].sort(),
+        isConnectionStop: aggregate.isConnectionStop,
       })).sort((a, b) => (b.pickups + b.dropoffs) - (a.pickups + a.dropoffs)),
       usedVersionIds: used,
       unversionedDateCount: [...effectiveVersionsByDate.values()].filter(version => version === null).length,

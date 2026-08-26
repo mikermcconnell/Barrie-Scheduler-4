@@ -1,5 +1,6 @@
 import type {
     TodCityStop,
+    TodConnectionStop,
     TodStopOverride,
     TodZoneDraft,
     TodZoneDefinition,
@@ -13,6 +14,7 @@ const MAX_POLYGONS = 80;
 const MAX_VERTICES_PER_POLYGON = 250;
 const MAX_TOTAL_VERTICES = 5_000;
 const MAX_DEFINITIONS = 26;
+const MAX_CONNECTION_STOPS = 1_500;
 const MAX_OVERRIDES = 1_000;
 const COORDINATE_EPSILON = 1e-10;
 
@@ -62,13 +64,15 @@ export function assignTodZoneMembership(
     definitions: TodZoneDefinition[],
     polygons: TodZonePolygon[],
     overrides: TodStopOverride[],
+    connectionStops: TodConnectionStop[] = [],
 ): TodZoneMembership {
     const polygonCodes = polygons
         .filter(polygon => pointInTodPolygon([stop.lon, stop.lat], polygon.coordinates))
         .map(polygon => polygon.zoneCode);
     const normalizedStopId = normalizeTodZoneStopId(stop.id);
+    const connectionStop = connectionStops.find(candidate => normalizeTodZoneStopId(candidate.stopId) === normalizedStopId);
     const override = overrides.find(candidate => normalizeTodZoneStopId(candidate.stopId) === normalizedStopId);
-    let zoneCodes = normalizedCodes(polygonCodes, definitions);
+    let zoneCodes = normalizedCodes([...polygonCodes, ...(connectionStop?.zoneCodes ?? [])], definitions);
     if (override) {
         const overrideCodes = normalizedCodes(override.zoneCodes, definitions);
         if (override.action === 'replace') zoneCodes = overrideCodes;
@@ -77,7 +81,8 @@ export function assignTodZoneMembership(
     }
     return {
         zoneCodes,
-        source: override ? 'override' : zoneCodes.length > 0 ? 'polygon' : 'unassigned',
+        source: override ? 'override' : connectionStop ? 'connection' : zoneCodes.length > 0 ? 'polygon' : 'unassigned',
+        isConnectionStop: !!connectionStop,
     };
 }
 
@@ -86,14 +91,19 @@ export function buildTodStopSnapshot(
     definitions: TodZoneDefinition[],
     polygons: TodZonePolygon[],
     overrides: TodStopOverride[],
+    connectionStops: TodConnectionStop[] = [],
 ): TodZoneStopSnapshot[] {
-    return stops.map(stop => ({
-        stopId: stop.id,
-        name: stop.name,
-        lat: stop.lat,
-        lon: stop.lon,
-        zoneCodes: assignTodZoneMembership(stop, definitions, polygons, overrides).zoneCodes,
-    }));
+    return stops.map(stop => {
+        const membership = assignTodZoneMembership(stop, definitions, polygons, overrides, connectionStops);
+        return {
+            stopId: stop.id,
+            name: stop.name,
+            lat: stop.lat,
+            lon: stop.lon,
+            zoneCodes: membership.zoneCodes,
+            isConnectionStop: membership.isConnectionStop,
+        };
+    });
 }
 
 export function selectEffectiveTodZoneVersion(versions: TodZoneVersion[], dates: string[]): TodZoneVersion | null {
@@ -197,8 +207,20 @@ export function validateTodZoneGeometry(polygons: TodZonePolygon[], definitions:
 
 export function validateTodZoneDraft(draft: TodZoneDraft): void {
     validateTodZoneGeometry(draft.polygons, draft.definitions);
-    if (draft.overrides.length > MAX_OVERRIDES) throw new Error(`A maximum of ${MAX_OVERRIDES} stop overrides is supported.`);
+    if (draft.connectionStops.length > MAX_CONNECTION_STOPS) throw new Error(`A maximum of ${MAX_CONNECTION_STOPS} connection stops is supported.`);
     const activeCodes = new Set(draft.definitions.filter(zone => zone.active).map(zone => zone.code));
+    const connectionStopIds = new Set<string>();
+    draft.connectionStops.forEach(connectionStop => {
+        const stopId = normalizeTodZoneStopId(connectionStop.stopId);
+        if (!stopId || stopId.length > 64) throw new Error('Every connection stop needs a stop ID of 64 characters or fewer.');
+        if (connectionStopIds.has(stopId)) throw new Error(`Connection stop ${stopId} is duplicated.`);
+        connectionStopIds.add(stopId);
+        const uniqueCodes = new Set(connectionStop.zoneCodes);
+        if (connectionStop.zoneCodes.length === 0 || uniqueCodes.size !== connectionStop.zoneCodes.length || [...uniqueCodes].some(code => !activeCodes.has(code))) {
+            throw new Error(`Connection stop ${stopId} uses an invalid or duplicated zone.`);
+        }
+    });
+    if (draft.overrides.length > MAX_OVERRIDES) throw new Error(`A maximum of ${MAX_OVERRIDES} stop overrides is supported.`);
     const stopIds = new Set<string>();
     draft.overrides.forEach(override => {
         const stopId = normalizeTodZoneStopId(override.stopId);

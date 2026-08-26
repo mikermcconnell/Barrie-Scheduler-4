@@ -12,6 +12,8 @@ describe('TOD zone security rules', () => {
         expect(block).toContain('match /versions/{versionId}');
         expect(block).toContain('allow update, delete: if false;');
         expect(rules).toContain('data.polygons.size() <= 80');
+        expect(rules).toContain('data.connectionStops.size() <= 1500');
+        expect(rules).toContain('data.schemaVersion == 2');
         expect(rules).toContain('data.polygons.size() > 0');
         expect(rules).toContain('(0[1-9]|1[0-2])');
         expect(rules).toContain('root.data.lastPublishedVersionId == versionId');

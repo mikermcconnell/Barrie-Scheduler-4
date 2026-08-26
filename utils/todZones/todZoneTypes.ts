@@ -24,11 +24,17 @@ export interface TodStopOverride {
     reason: string;
 }
 
+export interface TodConnectionStop {
+    stopId: string;
+    zoneCodes: string[];
+}
+
 export interface TodZoneDraft {
-    schemaVersion: 1;
+    schemaVersion: 1 | 2;
     revision: number;
     definitions: TodZoneDefinition[];
     polygons: TodZonePolygon[];
+    connectionStops: TodConnectionStop[];
     overrides: TodStopOverride[];
     effectiveFrom: string;
     source: string;
@@ -44,6 +50,7 @@ export interface TodZoneStopSnapshot {
     lat: number;
     lon: number;
     zoneCodes: string[];
+    isConnectionStop?: boolean;
 }
 
 export interface TodZoneVersion extends Omit<TodZoneDraft, 'revision' | 'lastPublishedVersionId' | 'updatedAt' | 'updatedBy'> {
@@ -64,7 +71,8 @@ export interface TodCityStop {
 
 export interface TodZoneMembership {
     zoneCodes: string[];
-    source: 'polygon' | 'override' | 'unassigned';
+    source: 'polygon' | 'connection' | 'override' | 'unassigned';
+    isConnectionStop: boolean;
 }
 
 export type TodZoneFilter = 'all' | 'multi-zone' | 'unassigned' | string;
