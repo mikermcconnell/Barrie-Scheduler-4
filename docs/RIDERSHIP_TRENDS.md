@@ -48,6 +48,8 @@ If a referenced projection cannot be read, the save fails before pointer replace
 
 `analyticsRidershipTrend` is a Planning Data permission enabled by default for Planner, Admin, and Internal access levels. It is independently overrideable.
 
+The read-only view embedded in the 2027–2032 Strategic Plan may instead be read with `analyticsStrategicPlan`. That contextual read goes through `sharedWorkspaceData`; it does not expose the standalone Ridership Trends route or grant write access.
+
 Same-team users read only the compact projection. Partner teams may use their configured performance source through the authenticated `sharedWorkspaceData` endpoint. Ridership Trends access does not grant access to the complete Operations payload. Projection writes remain restricted to team managers, authorized support, and server-side ingestion.
 
 ## Operational verification

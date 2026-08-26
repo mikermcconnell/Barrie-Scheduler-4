@@ -7,7 +7,9 @@ type SharedWorkspaceRequest = {
         | 'performanceMetadata'
         | 'performanceOverview'
         | 'performanceData'
-        | 'ridershipTrend';
+        | 'ridershipTrend'
+        | 'strategicPlanRidershipTrend'
+        | 'fleetPlan';
     requestingTeamId: string;
     sourceTeamId: string;
     routeId?: string | null;

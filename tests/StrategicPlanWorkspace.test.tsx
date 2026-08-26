@@ -17,6 +17,16 @@ vi.mock('../components/MasterScheduleBrowser', () => ({
     ),
 }));
 
+vi.mock('../components/Analytics/RidershipTrendsWorkspace', () => ({
+    RidershipTrendsWorkspace: ({
+        accessContext,
+        backLabel,
+    }: {
+        accessContext?: string;
+        backLabel?: string;
+    }) => <div>Annual Ridership module · {accessContext} · {backLabel}</div>,
+}));
+
 const row = (routeShortName: string, routeName: string, revenueHours: number) => ({
     routeName,
     routeShortName,
@@ -122,6 +132,8 @@ describe('StrategicPlanWorkspace', () => {
                 transitAppData={transitAppData}
                 transitAppAvailable
                 fleetPlanData={fleetPlanData}
+                ridershipTeamId="barrie-team"
+                requestingTeamId="dillon-team"
             />,
         ));
     });
@@ -201,5 +213,20 @@ describe('StrategicPlanWorkspace', () => {
         expect(container.textContent).toContain('RETIRE');
         expect(container.textContent).not.toContain('Save shared plan');
         expect(container.textContent).not.toContain('Replace workbook');
+    });
+
+    it('opens annual Ridership Trends with Strategic Plan access context', async () => {
+        await act(async () => { await Promise.resolve(); });
+        const ridershipWorkspace = Array.from(container.querySelectorAll('button'))
+            .find(button => button.textContent?.includes('Annual Ridership')) as HTMLButtonElement;
+
+        await act(async () => {
+            ridershipWorkspace.click();
+            await Promise.resolve();
+        });
+
+        expect(container.textContent).toContain('Annual Ridership module');
+        expect(container.textContent).toContain('strategicPlan');
+        expect(container.textContent).toContain('Strategic Plan workspaces');
     });
 });

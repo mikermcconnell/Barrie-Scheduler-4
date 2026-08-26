@@ -7,12 +7,13 @@ export function useRidershipTrendQuery(
     teamId: string | undefined,
     requestingTeamId?: string,
     enabled = true,
+    accessContext: 'ridershipTrend' | 'strategicPlan' = 'ridershipTrend',
 ) {
     return useQuery({
-        queryKey: ['ridershipTrend', teamId, requestingTeamId ?? teamId ?? ''],
+        queryKey: ['ridershipTrend', teamId, requestingTeamId ?? teamId ?? '', accessContext],
         queryFn: async () => {
             if (!teamId) return null;
-            return getRidershipTrendProjection(teamId, requestingTeamId);
+            return getRidershipTrendProjection(teamId, requestingTeamId, accessContext);
         },
         enabled: Boolean(teamId) && enabled,
         staleTime: RIDERSHIP_TREND_STALE_MS,

@@ -238,6 +238,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     const [hasResidentialGrowthData, setHasResidentialGrowthData] = useState(false);
     const transitAppDataTeamId = team?.dataSourceTeamIds?.transitApp || team?.id;
     const performanceDataTeamId = team?.dataSourceTeamIds?.performance || team?.id;
+    const fleetPlanDataTeamId = team?.dataSourceTeamIds?.fleetPlan || team?.id;
     const usesSharedTransitAppData = !!team?.dataSourceTeamIds?.transitApp && team.dataSourceTeamIds.transitApp !== team.id;
     const { canAccess, loading: accessLoading } = useWorkspaceAccess();
     const canReadTransitAppEvidence = canAccess('analyticsTransitApp') || canAccess('analyticsStrategicPlan');
@@ -270,13 +271,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     }, [view, canAccessAnalyticsView]);
 
     useEffect(() => {
-        if (view !== 'strategic-plan' || !team?.id || accessLoading || !canAccess('analyticsStrategicPlan')) return;
+        if (view !== 'strategic-plan' || !team?.id || !fleetPlanDataTeamId || accessLoading || !canAccess('analyticsStrategicPlan')) return;
 
         let active = true;
         setFleetPlanEvidenceLoading(true);
         setFleetPlanEvidenceError(null);
 
-        getFleetPlanWorkbook(team.id)
+        getFleetPlanWorkbook(fleetPlanDataTeamId, team.id)
             .then(workbook => {
                 if (!active) return;
                 setFleetPlanData(workbook);
@@ -293,7 +294,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
             });
 
         return () => { active = false; };
-    }, [accessLoading, canAccess, team?.id, view]);
+    }, [accessLoading, canAccess, fleetPlanDataTeamId, team?.id, view]);
 
     // Check for existing data on mount
     useEffect(() => {
@@ -841,6 +842,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                         fleetPlanData={fleetPlanData}
                         fleetPlanLoading={fleetPlanEvidenceLoading}
                         fleetPlanError={fleetPlanEvidenceError}
+                        ridershipTeamId={performanceDataTeamId || team.id}
+                        requestingTeamId={team.id}
                     />
                 </Suspense>
             </div>

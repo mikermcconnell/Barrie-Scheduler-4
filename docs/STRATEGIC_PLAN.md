@@ -4,7 +4,7 @@ Current contract for the Planning Data workspace at `#planning/strategic-plan`.
 
 ## Purpose
 
-The workspace provides a controlled evidence base for the 2027–2032 strategic plan. Its landing page uses source-specific workspace cards for the read-only existing-service baseline, the complete aggregated Transit App analysis, the canonical shared Fleet Plan, and the canonical published Master Schedule. It does not modify schedules, Master Schedule records, GTFS, Transit App source data, or Fleet Plan records.
+The workspace provides a controlled evidence base for the 2027–2032 strategic plan. Its landing page uses source-specific workspace cards for the read-only existing-service baseline, annual Ridership Trends, the complete aggregated Transit App analysis, the canonical shared Fleet Plan, and the canonical published Master Schedule. It does not modify schedules, Master Schedule records, GTFS, performance data, Transit App source data, or Fleet Plan records.
 
 ## Source and calculations
 
@@ -33,8 +33,17 @@ Transit App records are evidence of app engagement, requested trips, inferred or
 - The standalone Fleet Plan editor and Strategic Plan evidence card read that same current workbook through `utils/fleet-plan/fleetPlanService.ts`. The Strategic Plan does not import, copy, transform, version, or persist another workbook.
 - The embedded evidence is a read-only 2027–2032 view of the current workbook. It shows planned fleet totals, retirements, replacement purchases, growth purchases, and unit-level timeline values while omitting all save, replace, issue-resolution, and export controls.
 - A same-team user may read the active Fleet Plan with either `analyticsFleetPlan` or `analyticsStrategicPlan`. Fleet Plan version-history reads remain under `analyticsFleetPlan`; all writes remain restricted to team owners/admins or an audited support edit session.
+- `dataSourceTeamIds.fleetPlan` may point a restricted Strategic Plan team at Barrie's canonical Fleet Plan. Cross-team reads use `sharedWorkspaceData`, which verifies the configured source-team link and either Fleet Plan or Strategic Plan permission. The source selector grants no write or version-history access.
 
 Fleet Plan records describe current planning assumptions for vehicle lifecycle, replacements, and growth. They do not by themselves establish approved capital funding, procurement timing, vehicle availability, operating cost, or Council approval.
+
+## Annual Ridership evidence and source of truth
+
+- The Strategic Plan embeds the existing Ridership Trends workspace and reads the same compact projection referenced by `teams/{sourceTeamId}/performanceData/metadata.ridershipTrendStoragePath`.
+- `dataSourceTeamIds.performance` selects the STREETS source for a partner team. Strategic Plan reads use `sharedWorkspaceData`, including for same-team access, so the endpoint can enforce the Strategic Plan context without granting the standalone Ridership Trends route.
+- A member with `analyticsStrategicPlan` can read this embedded annual view. The standalone Planning Data module continues to require `analyticsRidershipTrend`, and projection writes retain their existing manager/support/server restrictions.
+
+Annual Ridership is fixed-route boarding activity, not unique riders. It does not include Transit On Demand, establish causation, or justify a service change without operational context.
 
 ## Master Schedule evidence and source of truth
 

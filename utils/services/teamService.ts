@@ -756,6 +756,7 @@ export async function updateTeamDataSourceTeamIds(
     const normalized = {
         ...(dataSourceTeamIds?.transitApp ? { transitApp: dataSourceTeamIds.transitApp } : {}),
         ...(dataSourceTeamIds?.performance ? { performance: dataSourceTeamIds.performance } : {}),
+        ...(dataSourceTeamIds?.fleetPlan ? { fleetPlan: dataSourceTeamIds.fleetPlan } : {}),
         ...(dataSourceTeamIds?.masterSchedules ? { masterSchedules: dataSourceTeamIds.masterSchedules } : {}),
     };
 

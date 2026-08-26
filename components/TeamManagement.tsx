@@ -212,6 +212,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     const [savingWizardMemberAccess, setSavingWizardMemberAccess] = useState(false);
     const [transitAppSourceTeamId, setTransitAppSourceTeamId] = useState('');
     const [performanceSourceTeamId, setPerformanceSourceTeamId] = useState('');
+    const [fleetPlanSourceTeamId, setFleetPlanSourceTeamId] = useState('');
     const [masterScheduleSourceTeamId, setMasterScheduleSourceTeamId] = useState('');
     const [savingDataSources, setSavingDataSources] = useState(false);
     const [activeTab, setActiveTab] = useState<TeamManagementTab>('users');
@@ -277,6 +278,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     );
     const transitAppSourceTeam = availableTeams.find(teamOption => teamOption.id === transitAppSourceTeamId) ?? null;
     const performanceSourceTeam = availableTeams.find(teamOption => teamOption.id === performanceSourceTeamId) ?? null;
+    const fleetPlanSourceTeam = availableTeams.find(teamOption => teamOption.id === fleetPlanSourceTeamId) ?? null;
     const masterScheduleSourceTeam = availableTeams.find(teamOption => teamOption.id === masterScheduleSourceTeamId) ?? null;
 
     // Load full team details with members
@@ -345,11 +347,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
         if (!activeTeamDetails) return;
         setTransitAppSourceTeamId(activeTeamDetails.dataSourceTeamIds?.transitApp ?? '');
         setPerformanceSourceTeamId(activeTeamDetails.dataSourceTeamIds?.performance ?? '');
+        setFleetPlanSourceTeamId(activeTeamDetails.dataSourceTeamIds?.fleetPlan ?? '');
         setMasterScheduleSourceTeamId(activeTeamDetails.dataSourceTeamIds?.masterSchedules ?? '');
     }, [
         activeTeamDetails?.id,
         activeTeamDetails?.dataSourceTeamIds?.transitApp,
         activeTeamDetails?.dataSourceTeamIds?.performance,
+        activeTeamDetails?.dataSourceTeamIds?.fleetPlan,
         activeTeamDetails?.dataSourceTeamIds?.masterSchedules,
     ]);
 
@@ -606,6 +610,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
             await updateTeamDataSourceTeamIds(activeTeamId, {
                 transitApp: transitAppSourceTeamId || undefined,
                 performance: performanceSourceTeamId || undefined,
+                fleetPlan: fleetPlanSourceTeamId || undefined,
                 masterSchedules: masterScheduleSourceTeamId || undefined,
             });
             await Promise.all([
@@ -1728,7 +1733,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                     </div>
 
                     <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                        Strategic Plan setup: select <span className="font-semibold">2027–2032 Strategic Plan only</span>, then set Barrie as the Transit App and Master Schedule source. Lane Transit setup: select <span className="font-semibold">Transit App Data only</span>. WATT setup: select <span className="font-semibold">Transit App + STREETS Dashboard</span>.
+                        Strategic Plan setup: select <span className="font-semibold">2027–2032 Strategic Plan only</span>, then set Barrie as the Transit App, STREETS, Fleet Plan, and Master Schedule source. Lane Transit setup: select <span className="font-semibold">Transit App Data only</span>. WATT setup: select <span className="font-semibold">Transit App + STREETS Dashboard</span>.
                     </p>
                 </div>
             )}
@@ -1864,7 +1869,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                         </div>
                     </div>
 
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <div className="rounded-xl border border-emerald-200 bg-white p-4">
                             <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Transit App data source</p>
                             <select
@@ -1902,6 +1907,26 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                             </select>
                             <p className="mt-2 text-xs text-gray-500">
                                 FROM: {performanceSourceTeam?.name ?? activeTeamDetails.name}. TO/viewed by: {activeTeamDetails.name}.
+                            </p>
+                        </div>
+
+                        <div className="rounded-xl border border-emerald-200 bg-white p-4">
+                            <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Fleet Plan source</p>
+                            <select
+                                value={fleetPlanSourceTeamId}
+                                onChange={(event) => setFleetPlanSourceTeamId(event.target.value)}
+                                disabled={!canEditActiveTeam}
+                                className="mt-2 w-full min-w-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-950 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            >
+                                <option value="">Use {activeTeamDetails.name}'s own plan</option>
+                                {dataSourceTeamOptions.map(teamOption => (
+                                    <option key={teamOption.id} value={teamOption.id}>
+                                        Read from {teamOption.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <p className="mt-2 text-xs text-gray-500">
+                                FROM: {fleetPlanSourceTeam?.name ?? activeTeamDetails.name}. TO/viewed by: {activeTeamDetails.name}.
                             </p>
                         </div>
 
@@ -1948,7 +1973,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                     </div>
 
                     <p className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs text-emerald-800">
-                        For a shared Strategic Plan workspace, set Transit App and Master Schedule sources to Barrie Transit. Any source left as “own data” will read from {activeTeamDetails.name}.
+                        For a shared Strategic Plan workspace, set Transit App, STREETS, Fleet Plan, and Master Schedule sources to Barrie Transit. Any source left as “own data” will read from {activeTeamDetails.name}.
                     </p>
                 </div>
             )}

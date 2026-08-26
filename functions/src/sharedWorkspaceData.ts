@@ -23,9 +23,11 @@ type SharedWorkspace =
   | 'performanceMetadata'
   | 'performanceOverview'
   | 'performanceData'
-  | 'ridershipTrend';
+  | 'ridershipTrend'
+  | 'strategicPlanRidershipTrend'
+  | 'fleetPlan';
 
-type DataSourceKind = 'transitApp' | 'performance';
+type DataSourceKind = 'transitApp' | 'performance' | 'fleetPlan';
 
 interface SharedWorkspacePayload {
   workspace?: SharedWorkspace;
@@ -69,11 +71,15 @@ function isWorkspace(value: unknown): value is SharedWorkspace {
     'performanceOverview',
     'performanceData',
     'ridershipTrend',
+    'strategicPlanRidershipTrend',
+    'fleetPlan',
   ].includes(String(value));
 }
 
 function dataSourceKindForWorkspace(workspace: SharedWorkspace): DataSourceKind {
-  return workspace.startsWith('transitApp') ? 'transitApp' : 'performance';
+  if (workspace.startsWith('transitApp')) return 'transitApp';
+  if (workspace === 'fleetPlan') return 'fleetPlan';
+  return 'performance';
 }
 
 async function verifyBearerToken(authHeader: unknown): Promise<admin.auth.DecodedIdToken | null> {
@@ -133,7 +139,7 @@ function memberAccessLevel(member: admin.firestore.DocumentData): string {
 
 function memberCanAccessFeature(
   member: admin.firestore.DocumentData,
-  feature: 'analyticsTransitApp' | 'analyticsStrategicPlan' | 'analyticsRidershipTrend',
+  feature: 'analyticsTransitApp' | 'analyticsFleetPlan' | 'analyticsStrategicPlan' | 'analyticsRidershipTrend',
 ): boolean {
   const override = member.workspaceOverrides?.[feature];
   if (typeof override === 'boolean') return override;
@@ -143,6 +149,9 @@ function memberCanAccessFeature(
     return ['planner', 'external-planner', 'transit-app-only', 'admin', 'internal'].includes(accessLevel);
   }
   if (feature === 'analyticsRidershipTrend') {
+    return ['planner', 'admin', 'internal'].includes(accessLevel);
+  }
+  if (feature === 'analyticsFleetPlan') {
     return ['planner', 'admin', 'internal'].includes(accessLevel);
   }
   return ['planner', 'admin', 'internal'].includes(accessLevel);
@@ -189,6 +198,24 @@ export function canReadTransitAppEvidence(
   if (!member) return false;
   return memberCanAccessFeature(member, 'analyticsTransitApp')
     || memberCanAccessFeature(member, 'analyticsStrategicPlan');
+}
+
+export function canReadFleetPlanEvidence(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  if (!member) return false;
+  return memberCanAccessFeature(member, 'analyticsFleetPlan')
+    || memberCanAccessFeature(member, 'analyticsStrategicPlan');
+}
+
+export function canReadStrategicPlanRidership(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  return !!member && memberCanAccessFeature(member, 'analyticsStrategicPlan');
 }
 
 export function canReadLoadProfiles(
@@ -472,6 +499,33 @@ async function getPerformanceMetadata(sourceTeamId: string): Promise<Performance
   return snap.exists ? normalizePerformanceMetadata(snap.data() || {}) : null;
 }
 
+async function getFleetPlan(sourceTeamId: string) {
+  const snap = await getDb().doc(`teams/${sourceTeamId}/fleetPlan/default`).get();
+  if (!snap.exists) return null;
+  const metadata = snap.data() || {};
+  const storagePath = typeof metadata.storagePath === 'string' ? metadata.storagePath : '';
+  const expectedPrefix = `teams/${sourceTeamId}/fleetPlan/`;
+  const filename = storagePath.slice(expectedPrefix.length);
+  if (!storagePath.startsWith(expectedPrefix) || !/^[A-Za-z0-9._-]+[.]json$/.test(filename)) {
+    throw new Error('Stored Fleet Plan path is invalid.');
+  }
+  const workbook = await readStorageJson<Record<string, unknown>>(storagePath);
+  if (!workbook) return null;
+  const workbookMetadata = workbook.metadata && typeof workbook.metadata === 'object'
+    ? workbook.metadata as Record<string, unknown>
+    : {};
+  return {
+    ...workbook,
+    metadata: {
+      ...workbookMetadata,
+      ...metadata,
+      updatedAt: typeof metadata.updatedAt === 'string'
+        ? metadata.updatedAt
+        : timestampToIso(metadata.updatedAtServer),
+    },
+  };
+}
+
 function buildSummaryFromDays(
   base: PerformanceDataSummary,
   dailySummaries: PerformanceDataSummary['dailySummaries'],
@@ -667,6 +721,20 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
       const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);
       return projection ? parseRidershipTrendProjection(projection) : null;
     }
+    case 'strategicPlanRidershipTrend': {
+      const metadata = await getPerformanceMetadata(payload.sourceTeamId);
+      if (!metadata?.ridershipTrendStoragePath) return null;
+      const expectedPrefix = `teams/${payload.sourceTeamId}/performanceViews/ridership-trends/`;
+      const filename = metadata.ridershipTrendStoragePath.slice(expectedPrefix.length);
+      if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
+          || !/^\d+[.]json$/.test(filename)) {
+        throw new Error('Stored Ridership Trends projection path is invalid.');
+      }
+      const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);
+      return projection ? parseRidershipTrendProjection(projection) : null;
+    }
+    case 'fleetPlan':
+      return getFleetPlan(payload.sourceTeamId);
     default:
       return null;
   }
@@ -715,6 +783,13 @@ export const sharedWorkspaceData = onRequest(
           requestingMember,
           decoded,
         );
+      }
+      if (payload.workspace === 'strategicPlanRidershipTrend'
+          && !canReadStrategicPlanRidership(requestingMember, decoded)) {
+        throw Object.assign(new Error('Strategic Plan access is required.'), { status: 403 });
+      }
+      if (payload.workspace === 'fleetPlan' && !canReadFleetPlanEvidence(requestingMember, decoded)) {
+        throw Object.assign(new Error('Fleet Plan or Strategic Plan access is required.'), { status: 403 });
       }
       const operatorDwellAllowed = canReadOperatorDwell(requestingMember, decoded);
       const operatorDwellRequested = payload.workspace === 'performanceData'

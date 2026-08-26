@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, Bus, BusFront, CalendarRange, ClipboardList, Database, Loader2, Smartphone } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bus, BusFront, CalendarRange, ChartNoAxesCombined, ClipboardList, Database, Loader2, Smartphone } from 'lucide-react';
 import { TransitAppAnalysisView } from './TransitAppWorkspace';
 import {
     loadStrategicPlanServiceProfile,
@@ -21,13 +21,19 @@ interface StrategicPlanWorkspaceProps {
     fleetPlanData?: FleetPlanWorkbook | null;
     fleetPlanLoading?: boolean;
     fleetPlanError?: string | null;
+    ridershipTeamId?: string;
+    requestingTeamId?: string;
 }
 
 const DAY_TYPES: StrategicPlanDayType[] = ['Weekday', 'Saturday', 'Sunday'];
-type StrategicPlanSection = 'overview' | 'service-baseline' | 'transit-app' | 'fleet-plan' | 'master-schedule';
+type StrategicPlanSection = 'overview' | 'service-baseline' | 'transit-app' | 'ridership-trends' | 'fleet-plan' | 'master-schedule';
 
 const MasterScheduleBrowser = React.lazy(() =>
     import('../MasterScheduleBrowser').then(module => ({ default: module.MasterScheduleBrowser }))
+);
+
+const RidershipTrendsWorkspace = React.lazy(() =>
+    import('./RidershipTrendsWorkspace').then(module => ({ default: module.RidershipTrendsWorkspace }))
 );
 
 interface EvidenceWorkspaceCardProps {
@@ -221,6 +227,8 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
     fleetPlanData = null,
     fleetPlanLoading = false,
     fleetPlanError = null,
+    ridershipTeamId,
+    requestingTeamId,
 }) => {
     const [dayType, setDayType] = useState<StrategicPlanDayType>('Weekday');
     const [section, setSection] = useState<StrategicPlanSection>('overview');
@@ -262,7 +270,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                             </div>
                             <h1 className="text-2xl font-black tracking-tight sm:text-3xl">2027–2032 Strategic Plan</h1>
                             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-blue-100 sm:text-base">
-                                Source-specific workspaces for the existing service baseline, complete Transit App analysis, canonical Fleet Plan, and published Master Schedule.
+                                Source-specific workspaces for service, ridership, rider-planning, fleet, and published schedule evidence.
                             </p>
                         </div>
                         {profile && (
@@ -282,10 +290,10 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                             <p className="text-xs font-black uppercase tracking-[0.16em] text-[#001C80]">Evidence library</p>
                             <h2 id="evidence-workspaces-heading" className="mt-2 text-2xl font-black text-slate-900">Strategic Plan workspaces</h2>
                             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                                Open a source-specific workspace to examine the current service baseline, rider-planning evidence, fleet-capital outlook, or canonical published schedule. Each source remains separate and read-only.
+                                Open a source-specific workspace to examine the current service baseline, annual boardings, rider-planning evidence, fleet-capital outlook, or canonical published schedule. Each source remains separate and read-only.
                             </p>
                         </div>
-                        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
                             <EvidenceWorkspaceCard
                                 title="Existing Service Baseline"
                                 description="Compare static-GTFS service spans, scheduled frequency regimes, and revenue hours by service day."
@@ -303,6 +311,14 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                                 icon={<Smartphone size={24} />}
                                 accentClassName="bg-cyan-50 text-cyan-700"
                                 onClick={() => setSection('transit-app')}
+                            />
+                            <EvidenceWorkspaceCard
+                                title="Annual Ridership"
+                                description="Track long-range fixed-route boardings, annual change, and current-year progress as daily STREETS data arrives."
+                                source="Workbook baseline + STREETS"
+                                icon={<ChartNoAxesCombined size={24} />}
+                                accentClassName="bg-violet-50 text-violet-700"
+                                onClick={() => setSection('ridership-trends')}
                             />
                             <EvidenceWorkspaceCard
                                 title="Fleet Plan"
@@ -324,7 +340,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                             />
                         </div>
                         <div className="mt-6 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs leading-relaxed text-slate-500">
-                            Source boundary: static GTFS describes a dated feed snapshot; Transit App describes app engagement and requested-trip evidence; Fleet Plan describes the current planning record for fleet lifecycle and capital timing; Master Schedule shows the currently published schedule. None is observed operations, approved funding, or delivered outcomes on its own.
+                            Source boundary: static GTFS describes a dated feed snapshot; Annual Ridership sums fixed-route boardings; Transit App describes app engagement and requested-trip evidence; Fleet Plan describes the current planning record for fleet lifecycle and capital timing; Master Schedule shows the currently published schedule. None establishes causation, approved funding, or delivered outcomes on its own.
                         </div>
                     </section>
                 )}
@@ -492,6 +508,33 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                                 Fleet Plan records describe current planning assumptions for vehicle lifecycle, replacements, and growth. They do not by themselves establish approved capital funding, procurement timing, vehicle availability, operating cost, or Council approval.
                             </p>
                         </section>
+                    </div>
+                )}
+
+                {section === 'ridership-trends' && ridershipTeamId && (
+                    <Suspense fallback={(
+                        <div className="flex min-h-[28rem] items-center justify-center gap-3 text-slate-500" role="status" aria-live="polite">
+                            <Loader2 className="animate-spin text-violet-600" size={24} />
+                            <span className="text-sm font-semibold">Loading annual ridership evidence…</span>
+                        </div>
+                    )}>
+                        <RidershipTrendsWorkspace
+                            teamId={ridershipTeamId}
+                            requestingTeamId={requestingTeamId}
+                            accessContext="strategicPlan"
+                            backLabel="Strategic Plan workspaces"
+                            onBack={() => setSection('overview')}
+                        />
+                    </Suspense>
+                )}
+
+                {section === 'ridership-trends' && !ridershipTeamId && (
+                    <div>
+                        <EvidenceWorkspaceBack onClick={() => setSection('overview')} />
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-5 text-sm text-amber-900">
+                            <div className="font-bold">Annual Ridership evidence unavailable</div>
+                            <div className="mt-1">No STREETS source is configured for this team.</div>
+                        </div>
                     </div>
                 )}
 

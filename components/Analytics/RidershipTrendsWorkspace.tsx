@@ -31,6 +31,8 @@ interface RidershipTrendsWorkspaceProps {
     teamId: string;
     requestingTeamId?: string;
     onBack: () => void;
+    accessContext?: 'ridershipTrend' | 'strategicPlan';
+    backLabel?: string;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -125,8 +127,10 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
     teamId,
     requestingTeamId,
     onBack,
+    accessContext = 'ridershipTrend',
+    backLabel = 'Back to Planning Data',
 }) => {
-    const trendQuery = useRidershipTrendQuery(teamId, requestingTeamId);
+    const trendQuery = useRidershipTrendQuery(teamId, requestingTeamId, true, accessContext);
     const referenceDate = getTorontoDate();
     const projection = trendQuery.data ?? createRidershipTrendProjection({
         baselineHash: RIDERSHIP_TREND_BASELINE.source.sha256,
@@ -151,6 +155,7 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
     const comparisonLabel = comparison.throughMonth > 0
         ? `Jan-${MONTHS[comparison.throughMonth - 1]} vs. ${view.activeYear - 1}`
         : 'No completed months yet';
+    const WorkspaceRoot = accessContext === 'strategicPlan' ? 'div' : 'main';
 
     if (trendQuery.isLoading) {
         return (
@@ -162,7 +167,7 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
     }
 
     return (
-        <main className="min-h-full bg-[#F7F7F7] px-4 py-5 sm:px-6 lg:px-8">
+        <WorkspaceRoot className="min-h-full bg-[#F7F7F7] px-4 py-5 sm:px-6 lg:px-8">
             <div className="mx-auto max-w-7xl space-y-5">
                 <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div>
@@ -172,7 +177,7 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                             className="mb-3 inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm font-bold text-gray-600 hover:bg-white hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
                             <ArrowLeft className="h-4 w-4" />
-                            Back to Planning Data
+                            {backLabel}
                         </button>
                         <div className="flex items-start gap-3">
                             <div className="rounded-2xl bg-blue-600 p-3 text-white shadow-sm" aria-hidden="true">
@@ -390,7 +395,7 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                     </div>
                 </section>
             </div>
-        </main>
+        </WorkspaceRoot>
     );
 };
 

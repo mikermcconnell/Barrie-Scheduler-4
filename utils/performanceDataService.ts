@@ -641,11 +641,12 @@ export async function getPerformanceMetadata(teamId: string, requestingTeamId?: 
 export async function getRidershipTrendProjection(
     teamId: string,
     requestingTeamId?: string,
+    accessContext: 'ridershipTrend' | 'strategicPlan' = 'ridershipTrend',
 ): Promise<RidershipTrendProjectionV1 | null> {
-    if (requestingTeamId && requestingTeamId !== teamId) {
+    if (accessContext === 'strategicPlan' || (requestingTeamId && requestingTeamId !== teamId)) {
         return requestSharedWorkspaceData<RidershipTrendProjectionV1>({
-            workspace: 'ridershipTrend',
-            requestingTeamId,
+            workspace: accessContext === 'strategicPlan' ? 'strategicPlanRidershipTrend' : 'ridershipTrend',
+            requestingTeamId: requestingTeamId || teamId,
             sourceTeamId: teamId,
         });
     }
