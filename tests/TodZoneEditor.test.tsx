@@ -123,4 +123,20 @@ describe('TodZoneEditor', () => {
     expect(container.textContent).toContain('10, 67, 68, 129, 135, 136, 255, 333, 583, 586, 612, 938, 959');
     expect(container.textContent).toContain('0/10 ordinary stops labelled on the Zone B PDF are included.');
   });
+
+  it.each([
+    ['C', '20 connection stops:', '20, 117, 120, 704, 705, 715, 716, 717, 718, 722, 725, 741, 752, 764, 775, 777, 784, 968, 969, 9009', '0/20'],
+    ['D', '18 connection stops:', '20, 116, 704, 705, 715, 716, 717, 718, 722, 725, 741, 751, 752, 777, 784, 968, 969, 9009', '0/47'],
+    ['E', '4 connection stops:', '119, 596, 597, 725', '0/8'],
+    ['F', '8 connection stops:', '512, 513, 725, 741, 752, 764, 775, 777', '0/21'],
+    ['H', '8 connection stops:', '312, 487, 488, 494, 495, 538, 539, 847', '0/15'],
+    ['T', '1 connection stop:', '725', '0/2'],
+  ])('lists the complete Zone %s connection-stop set', async (zoneCode, countLabel, stopList, referenceCount) => {
+    await renderEditor();
+    const zoneButton = [...container.querySelectorAll('button')].find(button => button.textContent === zoneCode);
+    await act(async () => zoneButton?.click());
+    expect(container.textContent).toContain(countLabel);
+    expect(container.textContent).toContain(stopList);
+    expect(container.textContent).toContain(`${referenceCount} ordinary stops labelled on the Zone ${zoneCode} PDF are included.`);
+  });
 });

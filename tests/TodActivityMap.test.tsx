@@ -90,17 +90,17 @@ describe('TodActivityMap', () => {
     const draft = createTodZoneASeedDraft();
     const location = {
       id: '58', name: 'Stop 58', lat: 44.38, lon: -79.69, pickups: 3, dropoffs: 2,
-      zoneCodes: ['A'], isConnectionStop: true,
+      zoneCodes: ['A'], isConnectionStop: true, connectionZoneCodes: ['A'],
     };
     const version = {
       ...draft,
       id: 'zone-a-v1',
       revision: 1,
-      stopSnapshot: [{ stopId: '58', name: 'Stop 58', lat: 44.38, lon: -79.69, zoneCodes: ['A'], isConnectionStop: true }],
+      stopSnapshot: [{ stopId: '58', name: 'Stop 58', lat: 44.38, lon: -79.69, zoneCodes: ['A'], isConnectionStop: true, connectionZoneCodes: ['A'] }],
       publishedBy: 'owner-a',
     };
 
     flushSync(() => root.render(<TodActivityMap locations={[location]} metric="activity" zoneVersion={version} />));
-    expect(container.textContent).toContain('Connection stop');
+    expect(container.textContent).toContain('Zone A connection');
   });
 });

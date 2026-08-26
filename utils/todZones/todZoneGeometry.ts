@@ -71,8 +71,9 @@ export function assignTodZoneMembership(
         .map(polygon => polygon.zoneCode);
     const normalizedStopId = normalizeTodZoneStopId(stop.id);
     const connectionStop = connectionStops.find(candidate => normalizeTodZoneStopId(candidate.stopId) === normalizedStopId);
+    const connectionZoneCodes = normalizedCodes(connectionStop?.zoneCodes ?? [], definitions);
     const override = overrides.find(candidate => normalizeTodZoneStopId(candidate.stopId) === normalizedStopId);
-    let zoneCodes = normalizedCodes([...polygonCodes, ...(connectionStop?.zoneCodes ?? [])], definitions);
+    let zoneCodes = normalizedCodes([...polygonCodes, ...connectionZoneCodes], definitions);
     if (override) {
         const overrideCodes = normalizedCodes(override.zoneCodes, definitions);
         if (override.action === 'replace') zoneCodes = overrideCodes;
@@ -83,6 +84,7 @@ export function assignTodZoneMembership(
         zoneCodes,
         source: override ? 'override' : connectionStop ? 'connection' : zoneCodes.length > 0 ? 'polygon' : 'unassigned',
         isConnectionStop: !!connectionStop,
+        connectionZoneCodes,
     };
 }
 
@@ -102,6 +104,7 @@ export function buildTodStopSnapshot(
             lon: stop.lon,
             zoneCodes: membership.zoneCodes,
             isConnectionStop: membership.isConnectionStop,
+            connectionZoneCodes: membership.connectionZoneCodes,
         };
     });
 }

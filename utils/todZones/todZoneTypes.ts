@@ -30,7 +30,7 @@ export interface TodConnectionStop {
 }
 
 export interface TodZoneDraft {
-    schemaVersion: 1 | 2;
+    schemaVersion: 1 | 2 | 3 | 4;
     revision: number;
     definitions: TodZoneDefinition[];
     polygons: TodZonePolygon[];
@@ -51,6 +51,7 @@ export interface TodZoneStopSnapshot {
     lon: number;
     zoneCodes: string[];
     isConnectionStop?: boolean;
+    connectionZoneCodes?: string[];
 }
 
 export interface TodZoneVersion extends Omit<TodZoneDraft, 'revision' | 'lastPublishedVersionId' | 'updatedAt' | 'updatedBy'> {
@@ -73,6 +74,7 @@ export interface TodZoneMembership {
     zoneCodes: string[];
     source: 'polygon' | 'connection' | 'override' | 'unassigned';
     isConnectionStop: boolean;
+    connectionZoneCodes: string[];
 }
 
 export type TodZoneFilter = 'all' | 'multi-zone' | 'unassigned' | string;

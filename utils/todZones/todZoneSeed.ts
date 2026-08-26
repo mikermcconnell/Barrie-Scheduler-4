@@ -1,14 +1,14 @@
 import type { TodZoneDraft } from './todZoneTypes';
 
 export const DEFAULT_TOD_ZONE_DEFINITIONS = [
-    { code: 'A', label: 'Zone A', color: '#7c3aed', kind: 'permanent', active: true },
-    { code: 'B', label: 'Zone B', color: '#2563eb', kind: 'permanent', active: true },
-    { code: 'C', label: 'Zone C', color: '#0891b2', kind: 'permanent', active: true },
-    { code: 'D', label: 'Zone D', color: '#059669', kind: 'permanent', active: true },
-    { code: 'E', label: 'Zone E', color: '#65a30d', kind: 'permanent', active: true },
-    { code: 'F', label: 'Zone F', color: '#d97706', kind: 'permanent', active: true },
-    { code: 'H', label: 'Zone H', color: '#dc2626', kind: 'permanent', active: true },
-    { code: 'T', label: 'Temporary Zone T', color: '#db2777', kind: 'temporary', active: true },
+    { code: 'A', label: 'Zone A', color: '#117db6', kind: 'permanent', active: true },
+    { code: 'B', label: 'Zone B', color: '#f58645', kind: 'permanent', active: true },
+    { code: 'C', label: 'Zone C', color: '#dd1f33', kind: 'permanent', active: true },
+    { code: 'D', label: 'Zone D', color: '#8dc73f', kind: 'permanent', active: true },
+    { code: 'E', label: 'Zone E', color: '#9c3220', kind: 'permanent', active: true },
+    { code: 'F', label: 'Zone F', color: '#cb9f2c', kind: 'permanent', active: true },
+    { code: 'H', label: 'Zone H', color: '#7e489c', kind: 'permanent', active: true },
+    { code: 'T', label: 'Temporary Zone T', color: '#606161', kind: 'temporary', active: true },
 ] as const;
 
 export const ZONE_A_REFERENCE_STOP_IDS = [
@@ -30,9 +30,75 @@ export const ZONE_B_CONNECTION_STOP_IDS = [
     '938', '959',
 ];
 
+export const ZONE_C_REFERENCE_STOP_IDS = [
+    '368', '369', '370', '371', '372', '373', '374', '375', '376', '377',
+    '378', '379', '380', '653', '654', '655', '656', '657', '658', '728',
+];
+
+export const ZONE_C_CONNECTION_STOP_IDS = [
+    '20', '117', '120', '704', '705', '715', '716', '717', '718', '722',
+    '725', '741', '752', '764', '775', '777', '784', '968', '969', '9009',
+];
+
+export const ZONE_D_REFERENCE_STOP_IDS = [
+    '364', '365', '366', '367', '426', '427', '430', '431', '433', '434',
+    '436', '437', '555', '674', '744', '745', '746', '747', '759', '760',
+    '761', '762', '763', '764', '775', '778', '779', '780', '781', '803',
+    '805', '806', '807', '808', '809', '810', '812', '813', '815', '819',
+    '821', '832', '833', '880', '881', '935', '985',
+];
+
+export const ZONE_D_CONNECTION_STOP_IDS = [
+    '20', '116', '704', '705', '715', '716', '717', '718', '722', '725',
+    '741', '751', '752', '777', '784', '968', '969', '9009',
+];
+
+export const ZONE_E_REFERENCE_STOP_IDS = [
+    '770', '771', '772', '773', '785', '786', '787', '788',
+];
+
+export const ZONE_E_CONNECTION_STOP_IDS = ['119', '596', '597', '725'];
+
+export const ZONE_F_REFERENCE_STOP_IDS = [
+    '153', '952', '958', '960', '961', '962', '964', '975', '976', '980',
+    '981', '988', '989', '990', '991', '992', '993', '994', '995', '996', '997',
+];
+
+export const ZONE_F_CONNECTION_STOP_IDS = ['512', '513', '725', '741', '752', '764', '775', '777'];
+
+export const ZONE_H_REFERENCE_STOP_IDS = [
+    '33', '43', '44', '51', '52', '53', '66', '78', '79', '606', '613', '614', '615', '616', '640',
+];
+
+export const ZONE_H_CONNECTION_STOP_IDS = ['312', '487', '488', '494', '495', '538', '539', '847'];
+
+export const ZONE_T_REFERENCE_STOP_IDS = ['973', '974'];
+
+export const ZONE_T_CONNECTION_STOP_IDS = ['725'];
+
+function buildSeedConnectionStops() {
+    const zoneGroups = [
+        ['A', ZONE_A_CONNECTION_STOP_IDS],
+        ['B', ZONE_B_CONNECTION_STOP_IDS],
+        ['C', ZONE_C_CONNECTION_STOP_IDS],
+        ['D', ZONE_D_CONNECTION_STOP_IDS],
+        ['E', ZONE_E_CONNECTION_STOP_IDS],
+        ['F', ZONE_F_CONNECTION_STOP_IDS],
+        ['H', ZONE_H_CONNECTION_STOP_IDS],
+        ['T', ZONE_T_CONNECTION_STOP_IDS],
+    ] as const;
+    const byStop = new Map<string, string[]>();
+    zoneGroups.forEach(([zoneCode, stopIds]) => stopIds.forEach(stopId => {
+        byStop.set(stopId, [...(byStop.get(stopId) ?? []), zoneCode]);
+    }));
+    return [...byStop.entries()]
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([stopId, zoneCodes]) => ({ stopId, zoneCodes }));
+}
+
 export function createTodZoneSeedDraft(): TodZoneDraft {
     return {
-        schemaVersion: 2,
+        schemaVersion: 4,
         revision: 0,
         definitions: DEFAULT_TOD_ZONE_DEFINITIONS.map(zone => ({ ...zone })),
         polygons: [
@@ -44,15 +110,30 @@ export function createTodZoneSeedDraft(): TodZoneDraft {
             { id: 'b-marion', zoneCode: 'B', pocketName: 'B Marion', coordinates: [[-79.676556,44.402056],[-79.674535,44.402056],[-79.674535,44.403292],[-79.676556,44.403292],[-79.676556,44.402056]] },
             { id: 'b-wellington', zoneCode: 'B', pocketName: 'B Wellington', coordinates: [[-79.69115,44.39485],[-79.68985,44.3948],[-79.68648,44.39634],[-79.68355,44.39742],[-79.6819,44.39814],[-79.68192,44.39896],[-79.6826,44.39908],[-79.68412,44.39851],[-79.68663,44.39756],[-79.69105,44.39576],[-79.69115,44.39485]] },
             { id: 'b-amelia', zoneCode: 'B', pocketName: 'B Amelia', coordinates: [[-79.677436,44.394286],[-79.676236,44.394286],[-79.676236,44.395186],[-79.677436,44.395186],[-79.677436,44.394286]] },
+            { id: 'c-hurst', zoneCode: 'C', pocketName: 'C Hurst', coordinates: [[-79.664601,44.372493],[-79.668529,44.372765],[-79.668331,44.37321],[-79.664518,44.372954],[-79.660257,44.370884],[-79.657591,44.369564],[-79.655699,44.368571],[-79.6521,44.367462],[-79.651452,44.367297],[-79.647936,44.365202],[-79.643223,44.364004],[-79.636098,44.363761],[-79.632678,44.3626],[-79.632341,44.361267],[-79.636621,44.36323],[-79.643658,44.363491],[-79.648447,44.364979],[-79.64993,44.365852],[-79.65572,44.368054],[-79.660804,44.370525],[-79.664601,44.372493]] },
+            { id: 'd-west', zoneCode: 'D', pocketName: 'D West', coordinates: [[-79.692556,44.359982],[-79.693636,44.359893],[-79.693642,44.359932],[-79.689662,44.360824],[-79.688849,44.35566],[-79.683924,44.361956],[-79.683344,44.362219],[-79.677044,44.363414],[-79.676485,44.363677],[-79.673218,44.357145],[-79.670221,44.357828],[-79.667587,44.360915],[-79.671616,44.364606],[-79.669988,44.365137],[-79.66843,44.36506],[-79.668585,44.364958],[-79.667455,44.361197],[-79.664393,44.360615],[-79.664172,44.360501],[-79.666483,44.358578],[-79.665455,44.355127],[-79.665648,44.35511],[-79.667748,44.355623],[-79.667499,44.355751],[-79.670045,44.357673],[-79.672752,44.354583],[-79.670233,44.352165],[-79.670069,44.35179],[-79.672947,44.354262],[-79.673316,44.356924],[-79.686008,44.351305],[-79.683482,44.348914],[-79.684429,44.348957],[-79.686461,44.351357],[-79.689291,44.355428],[-79.690394,44.360466],[-79.692556,44.359982]] },
+            { id: 'd-east', zoneCode: 'D', pocketName: 'D East', coordinates: [[-79.648099,44.353921],[-79.648563,44.354601],[-79.644326,44.353077],[-79.642657,44.352472],[-79.639053,44.3504],[-79.638738,44.35023],[-79.634398,44.350202],[-79.633419,44.350442],[-79.63334,44.35019],[-79.637744,44.34851],[-79.63823,44.348525],[-79.643496,44.352255],[-79.648099,44.353921]] },
+            { id: 'e-east', zoneCode: 'E', pocketName: 'E East', coordinates: [[-79.603516,44.353734],[-79.603531,44.354151],[-79.597907,44.355789],[-79.599006,44.358566],[-79.598541,44.358668],[-79.597511,44.35579],[-79.603516,44.353734]] },
+            { id: 'e-gateway', zoneCode: 'E', pocketName: 'E Gateway', coordinates: [[-79.614848,44.348198],[-79.614199,44.348198],[-79.614199,44.348606],[-79.614848,44.348606],[-79.614848,44.348198]] },
+            { id: 'f-bayview', zoneCode: 'F', pocketName: 'F Bayview', coordinates: [[-79.680776,44.330406],[-79.681389,44.330798],[-79.681369,44.330836],[-79.676414,44.328823],[-79.675528,44.325422],[-79.676188,44.325435],[-79.679165,44.324661],[-79.679775,44.324672],[-79.677057,44.328428],[-79.680776,44.330406]] },
+            { id: 'f-huronia', zoneCode: 'F', pocketName: 'F Huronia', coordinates: [[-79.664776,44.33495],[-79.66504,44.335161],[-79.661856,44.336013],[-79.661445,44.335868],[-79.664184,44.329674],[-79.664364,44.330002],[-79.664776,44.33495]] },
+            { id: 'f-hooper', zoneCode: 'F', pocketName: 'F Hooper', coordinates: [[-79.674605,44.335082],[-79.673817,44.335082],[-79.673817,44.335586],[-79.674605,44.335586],[-79.674605,44.335082]] },
+            { id: 'f-madelaine', zoneCode: 'F', pocketName: 'F Madelaine', coordinates: [[-79.641837,44.341667],[-79.642159,44.342324],[-79.637601,44.340125],[-79.634685,44.340774],[-79.634668,44.3407],[-79.638069,44.339877],[-79.641837,44.341667]] },
+            { id: 'h-sundew', zoneCode: 'H', pocketName: 'H Sundew', coordinates: [[-79.733458,44.327755],[-79.733148,44.327755],[-79.733148,44.328137],[-79.733458,44.328137],[-79.733458,44.327755]] },
+            { id: 'h-brown-bear', zoneCode: 'H', pocketName: 'H Brown Bear', coordinates: [[-79.722385,44.317148],[-79.725849,44.317573],[-79.725757,44.317899],[-79.722281,44.317657],[-79.721794,44.317724],[-79.722385,44.317148]] },
+            { id: 'h-salem', zoneCode: 'H', pocketName: 'H Salem', coordinates: [[-79.711164,44.31687],[-79.71092,44.31687],[-79.71092,44.317241],[-79.711164,44.317241],[-79.711164,44.31687]] },
+            { id: 'h-king', zoneCode: 'H', pocketName: 'H King', coordinates: [[-79.710875,44.326211],[-79.711552,44.326239],[-79.711553,44.3263],[-79.702341,44.326797],[-79.702677,44.326508],[-79.710875,44.326211]] },
+            { id: 'h-pearen', zoneCode: 'H', pocketName: 'H Pearen', coordinates: [[-79.700177,44.306366],[-79.699933,44.306366],[-79.699933,44.306942],[-79.700177,44.306942],[-79.700177,44.306366]] },
+            { id: 't-fenchurch', zoneCode: 'T', pocketName: 'T Fenchurch', coordinates: [[-79.655439,44.331218],[-79.652781,44.331218],[-79.652781,44.331643],[-79.655439,44.331643],[-79.655439,44.331218]] },
         ],
-        connectionStops: [
-            ...ZONE_A_CONNECTION_STOP_IDS.map(stopId => ({ stopId, zoneCodes: ['A'] })),
-            ...ZONE_B_CONNECTION_STOP_IDS.map(stopId => ({ stopId, zoneCodes: ['B'] })),
+        connectionStops: buildSeedConnectionStops(),
+        overrides: [
+            ...['82', '83', '99', '100'].map(stopId => ({ stopId, action: 'exclude' as const, zoneCodes: ['D'], reason: 'Active fixed-route stop inside schematic Zone D boundary; not labelled as a TOD stop on the source map.' })),
+            ...['977', '978', '979', '986'].map(stopId => ({ stopId, action: 'exclude' as const, zoneCodes: ['F'], reason: 'Marked out of service on the July 2, 2026 Zone F construction-impact map.' })),
         ],
-        overrides: [],
-        effectiveFrom: '2025-09-21',
-        source: 'Transit ON Demand Zone A and Zone B maps, effective Sept. 21, 2025; Codex drafts from official stop locations',
-        reviewNote: 'Draft geometry for planner review. Four disconnected pockets per zone; not official GIS boundaries.',
+        effectiveFrom: '2026-07-02',
+        source: 'Transit ON Demand Zone A-F, H, and temporary Zone T maps; Codex drafts from official stop locations',
+        reviewNote: 'Draft geometry for planner review. Source maps are schematic, not official GIS boundaries. Zone H stop 33 is absent from the current City GIS layer.',
     };
 }
 

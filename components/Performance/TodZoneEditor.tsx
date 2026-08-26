@@ -7,7 +7,7 @@ import { TodZoneDrawControl } from './TodZoneDrawControl';
 import { useBarrieTransitStopsQuery, useTodZoneDraftQuery } from '../../hooks/useTodZones';
 import { assignTodZoneMembership, normalizeTodZoneStopId, validateTodZoneDraft } from '../../utils/todZones/todZoneGeometry';
 import { exportTodZoneGeoJson, parseTodZoneGeoJson } from '../../utils/todZones/todZoneGeoJson';
-import { ZONE_A_REFERENCE_STOP_IDS, ZONE_B_REFERENCE_STOP_IDS } from '../../utils/todZones/todZoneSeed';
+import { ZONE_A_REFERENCE_STOP_IDS, ZONE_B_REFERENCE_STOP_IDS, ZONE_C_REFERENCE_STOP_IDS, ZONE_D_REFERENCE_STOP_IDS, ZONE_E_REFERENCE_STOP_IDS, ZONE_F_REFERENCE_STOP_IDS, ZONE_H_REFERENCE_STOP_IDS, ZONE_T_REFERENCE_STOP_IDS } from '../../utils/todZones/todZoneSeed';
 import { getTodZoneErrorMessage, publishTodZoneVersion, saveTodZoneDraft } from '../../utils/todZones/todZoneService';
 import type { TodStopOverride, TodZoneDraft, TodZonePolygon } from '../../utils/todZones/todZoneTypes';
 
@@ -20,6 +20,16 @@ interface TodZoneEditorProps {
 
 const BARRIE_CENTER: [number, number] = [44.39, -79.69];
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
+const REFERENCE_STOP_IDS_BY_ZONE: Record<string, string[]> = {
+    A: ZONE_A_REFERENCE_STOP_IDS,
+    B: ZONE_B_REFERENCE_STOP_IDS,
+    C: ZONE_C_REFERENCE_STOP_IDS,
+    D: ZONE_D_REFERENCE_STOP_IDS,
+    E: ZONE_E_REFERENCE_STOP_IDS,
+    F: ZONE_F_REFERENCE_STOP_IDS,
+    H: ZONE_H_REFERENCE_STOP_IDS,
+    T: ZONE_T_REFERENCE_STOP_IDS,
+};
 
 function editableSignature(draft: TodZoneDraft): string {
     return JSON.stringify({
@@ -99,7 +109,8 @@ export const TodZoneEditor: React.FC<TodZoneEditorProps> = ({ open, teamId, user
         if (!draft) return [];
         return stops.map(stop => {
             const membership = assignTodZoneMembership(stop, draft.definitions, draft.polygons, draft.overrides, draft.connectionStops);
-            return { ...stop, zoneCodes: membership.zoneCodes, isConnectionStop: membership.isConnectionStop };
+            const connectionColors = membership.connectionZoneCodes.map(code => draft.definitions.find(zone => zone.code === code)?.color ?? '#64748b');
+            return { ...stop, zoneCodes: membership.zoneCodes, isConnectionStop: membership.isConnectionStop, connectionZoneCodes: membership.connectionZoneCodes, connectionColors };
         });
     }, [draft, stops]);
     const activeCount = stopMemberships.filter(stop => stop.zoneCodes.includes(activeZoneCode)).length;
@@ -107,15 +118,23 @@ export const TodZoneEditor: React.FC<TodZoneEditorProps> = ({ open, teamId, user
         .filter(stop => stop.zoneCodes.includes(activeZoneCode))
         .map(stop => normalizeTodZoneStopId(stop.stopId))
         .sort((a, b) => Number(a) - Number(b)) ?? [];
-    const activeReferenceStopIds = activeZoneCode === 'A'
-        ? ZONE_A_REFERENCE_STOP_IDS
-        : activeZoneCode === 'B' ? ZONE_B_REFERENCE_STOP_IDS : [];
+    const activeReferenceStopIds = REFERENCE_STOP_IDS_BY_ZONE[activeZoneCode] ?? [];
     const activeReferenceCount = stopMemberships.filter(stop => activeReferenceStopIds.includes(stop.id) && stop.zoneCodes.includes(activeZoneCode)).length;
     const stopGeoJson = useMemo((): GeoJSON.FeatureCollection => ({
         type: 'FeatureCollection',
         features: stopMemberships.map(stop => ({
             type: 'Feature',
-            properties: { id: stop.id, zoneCodes: stop.zoneCodes.join(','), isConnectionStop: stop.isConnectionStop },
+            properties: {
+                id: stop.id,
+                zoneCodes: stop.zoneCodes.join(','),
+                connectionZoneCodes: stop.connectionZoneCodes.join('/'),
+                isConnectionStop: stop.isConnectionStop,
+                primaryConnectionColor: stop.connectionColors[0] ?? '#64748b',
+                secondaryConnectionColor: stop.connectionColors[1] ?? '',
+                tertiaryConnectionColor: stop.connectionColors[2] ?? '',
+                quaternaryConnectionColor: stop.connectionColors[3] ?? '',
+                quinaryConnectionColor: stop.connectionColors[4] ?? '',
+            },
             geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
         })),
     }), [stopMemberships]);
@@ -247,7 +266,7 @@ export const TodZoneEditor: React.FC<TodZoneEditorProps> = ({ open, teamId, user
                             <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs text-violet-900">
                                 <strong>{activeCount} current stops assigned to Zone {activeZoneCode}</strong>
                                 <div className="mt-1">{draft.polygons.filter(item => item.zoneCode === activeZoneCode).length} polygon pockets · {draft.overrides.length} stop overrides</div>
-                                <div className="mt-1"><strong>{activeConnectionStops.length} connection stops:</strong> {activeConnectionStops.join(', ') || 'None'}</div>
+                                <div className="mt-1"><strong>{activeConnectionStops.length} connection stop{activeConnectionStops.length === 1 ? '' : 's'}:</strong> {activeConnectionStops.join(', ') || 'None'}</div>
                                 {activeReferenceStopIds.length > 0 && <div className="mt-1">{activeReferenceCount}/{activeReferenceStopIds.length} ordinary stops labelled on the Zone {activeZoneCode} PDF are included.</div>}
                                 {stopsQuery.isError && <div className="mt-1 font-bold text-red-700">The City stop layer is unavailable; publishing is disabled.</div>}
                             </div>
@@ -288,8 +307,12 @@ export const TodZoneEditor: React.FC<TodZoneEditorProps> = ({ open, teamId, user
                             <MapBase latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={12} mapStyle={mapStyle} showNavigation>
                                 <Source id="tod-zone-editor-stops" type="geojson" data={stopGeoJson}>
                                     <Layer id="tod-zone-editor-stop-points" type="circle" paint={{ 'circle-radius': 4, 'circle-color': ['case', ['!=', ['get', 'zoneCodes'], ''], '#7c3aed', '#475569'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1 }} />
-                                    <Layer id="tod-zone-editor-connection-points" type="circle" filter={['==', ['get', 'isConnectionStop'], true]} paint={{ 'circle-radius': 8, 'circle-color': '#ffffff', 'circle-stroke-color': '#0284c7', 'circle-stroke-width': 2 }} />
-                                    <Layer id="tod-zone-editor-connection-labels" type="symbol" filter={['==', ['get', 'isConnectionStop'], true]} layout={{ 'text-field': ['get', 'zoneCodes'], 'text-size': 10, 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], 'text-allow-overlap': true }} paint={{ 'text-color': '#0284c7' }} />
+                                    <Layer id="tod-zone-editor-connection-points" type="circle" filter={['==', ['get', 'isConnectionStop'], true]} paint={{ 'circle-radius': 9, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'primaryConnectionColor'], 'circle-stroke-width': 1.5 }} />
+                                    <Layer id="tod-zone-editor-shared-connection-points" type="circle" filter={['!=', ['get', 'secondaryConnectionColor'], '']} paint={{ 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'secondaryConnectionColor'], 'circle-stroke-width': 1.5 }} />
+                                    <Layer id="tod-zone-editor-tertiary-connection-points" type="circle" filter={['!=', ['get', 'tertiaryConnectionColor'], '']} paint={{ 'circle-radius': 5.25, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'tertiaryConnectionColor'], 'circle-stroke-width': 1.25 }} />
+                                    <Layer id="tod-zone-editor-quaternary-connection-points" type="circle" filter={['!=', ['get', 'quaternaryConnectionColor'], '']} paint={{ 'circle-radius': 3.75, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'quaternaryConnectionColor'], 'circle-stroke-width': 1.25 }} />
+                                    <Layer id="tod-zone-editor-quinary-connection-points" type="circle" filter={['!=', ['get', 'quinaryConnectionColor'], '']} paint={{ 'circle-radius': 2.25, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'quinaryConnectionColor'], 'circle-stroke-width': 1 }} />
+                                    <Layer id="tod-zone-editor-connection-labels" type="symbol" filter={['==', ['get', 'isConnectionStop'], true]} layout={{ 'text-field': ['get', 'connectionZoneCodes'], 'text-size': 9, 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], 'text-allow-overlap': true }} paint={{ 'text-color': ['get', 'primaryConnectionColor'] }} />
                                 </Source>
                                 <TodZoneDrawControl polygons={draft.polygons} activeZoneCode={activeZoneCode} onChange={updatePolygons} />
                             </MapBase>

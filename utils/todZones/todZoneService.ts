@@ -37,10 +37,6 @@ function timestampToISO(value: unknown): string | undefined {
     return typeof value === 'string' && value ? value : undefined;
 }
 
-function normalizeStopConnectionKey(stop: TodZoneDraft['connectionStops'][number]): string {
-    return `${normalizeTodZoneStopId(stop.stopId)}:${[...stop.zoneCodes].sort().join(',')}`;
-}
-
 export function deserializeTodZonePolygonsFromFirestore(value: unknown): TodZoneDraft['polygons'] | null {
     if (!Array.isArray(value)) return null;
     const polygons = value.flatMap(item => {
@@ -82,33 +78,67 @@ export function serializeTodZonePolygonsForFirestore(polygons: TodZoneDraft['pol
 
 export function normalizeTodZoneDraftFromFirestore(data: Record<string, unknown>, migrateLegacySeed = true): TodZoneDraft {
     const seed = createTodZoneSeedDraft();
-    const storedSchemaVersion = data.schemaVersion === 2 ? 2 : 1;
+    const storedSchemaVersion = data.schemaVersion === 4 ? 4 : data.schemaVersion === 3 ? 3 : data.schemaVersion === 2 ? 2 : 1;
     const storedPolygons = deserializeTodZonePolygonsFromFirestore(data.polygons) ?? seed.polygons;
     const shouldMigrate = migrateLegacySeed && storedSchemaVersion < seed.schemaVersion;
+    const introducedZoneCodes = new Set(storedSchemaVersion === 1
+        ? ['B', 'C', 'D', 'E', 'F', 'H', 'T']
+        : storedSchemaVersion === 2 ? ['C', 'D', 'E', 'F', 'H', 'T']
+            : ['E', 'F', 'H', 'T']);
+    const introducedConnectionZoneCodes = storedSchemaVersion === 1
+        ? new Set(seed.definitions.map(definition => definition.code))
+        : introducedZoneCodes;
+    const migrationZoneDescription = storedSchemaVersion === 1
+        ? 'B-F, H, and temporary T'
+        : storedSchemaVersion === 2 ? 'C-F, H, and temporary T'
+            : 'E, F, H, and temporary T';
     const polygons = shouldMigrate
-        ? [...storedPolygons, ...seed.polygons.filter(seedPolygon => seedPolygon.zoneCode === 'B' && !storedPolygons.some(polygon => polygon.id === seedPolygon.id))]
+        ? [...storedPolygons, ...seed.polygons.filter(seedPolygon => introducedZoneCodes.has(seedPolygon.zoneCode) && !storedPolygons.some(polygon => polygon.id === seedPolygon.id))]
         : storedPolygons;
     const storedConnectionStops = Array.isArray(data.connectionStops)
         ? data.connectionStops as TodZoneDraft['connectionStops']
         : [];
-    const connectionStops = shouldMigrate
-        ? [...storedConnectionStops, ...seed.connectionStops.filter(seedStop => !storedConnectionStops.some(stop => normalizeStopConnectionKey(stop) === normalizeStopConnectionKey(seedStop)))]
-        : storedConnectionStops;
+    const connectionStops = shouldMigrate ? (() => {
+        const byStop = new Map(storedConnectionStops.map(stop => [normalizeTodZoneStopId(stop.stopId), { ...stop, zoneCodes: [...stop.zoneCodes] }]));
+        seed.connectionStops.forEach(seedStop => {
+            const introducedCodes = seedStop.zoneCodes.filter(code => introducedConnectionZoneCodes.has(code));
+            if (introducedCodes.length === 0) return;
+            const normalizedStopId = normalizeTodZoneStopId(seedStop.stopId);
+            const storedStop = byStop.get(normalizedStopId);
+            byStop.set(normalizedStopId, storedStop
+                ? { ...storedStop, zoneCodes: [...new Set([...storedStop.zoneCodes, ...introducedCodes])].sort() }
+                : { stopId: seedStop.stopId, zoneCodes: introducedCodes });
+        });
+        return [...byStop.values()].sort((a, b) => Number(a.stopId) - Number(b.stopId));
+    })() : storedConnectionStops;
+    const storedDefinitions = Array.isArray(data.definitions) ? data.definitions as TodZoneDraft['definitions'] : seed.definitions;
+    const definitions = shouldMigrate
+        ? [...storedDefinitions.map(definition => ({
+            ...definition,
+            color: seed.definitions.find(seedDefinition => seedDefinition.code === definition.code)?.color ?? definition.color,
+        })), ...seed.definitions.filter(seedDefinition => !storedDefinitions.some(definition => definition.code === seedDefinition.code))]
+        : storedDefinitions;
+    const storedOverrides = Array.isArray(data.overrides) ? data.overrides as TodZoneDraft['overrides'] : [];
+    const overrides = shouldMigrate
+        ? [...storedOverrides, ...seed.overrides.filter(seedOverride => !storedOverrides.some(override => normalizeTodZoneStopId(override.stopId) === normalizeTodZoneStopId(seedOverride.stopId)))]
+        : storedOverrides;
     const storedSource = typeof data.source === 'string' ? data.source : seed.source;
     const storedReviewNote = typeof data.reviewNote === 'string' ? data.reviewNote : seed.reviewNote;
     return {
         schemaVersion: shouldMigrate ? seed.schemaVersion : storedSchemaVersion,
         revision: Number.isInteger(data.revision) ? Number(data.revision) : 0,
-        definitions: Array.isArray(data.definitions) ? data.definitions as TodZoneDraft['definitions'] : seed.definitions,
+        definitions,
         polygons,
         connectionStops,
-        overrides: Array.isArray(data.overrides) ? data.overrides as TodZoneDraft['overrides'] : [],
-        effectiveFrom: typeof data.effectiveFrom === 'string' ? data.effectiveFrom : seed.effectiveFrom,
+        overrides,
+        effectiveFrom: shouldMigrate && data.effectiveFrom === '2025-09-21'
+            ? seed.effectiveFrom
+            : typeof data.effectiveFrom === 'string' ? data.effectiveFrom : seed.effectiveFrom,
         source: shouldMigrate
-            ? `${storedSource}; Transit ON Demand Zone B map, effective Sept. 21, 2025`.slice(0, 1_000)
+            ? `${storedSource}; Transit ON Demand Zones ${migrationZoneDescription} source maps`.slice(0, 1_000)
             : storedSource,
         reviewNote: shouldMigrate
-            ? `${storedReviewNote} Zone B draft added from the schematic source map; planner review required before publication.`.slice(0, 2_000)
+            ? `${storedReviewNote} Zones ${migrationZoneDescription} drafts added from schematic source maps; planner review required before publication.`.slice(0, 2_000)
             : storedReviewNote,
         ...(typeof data.lastPublishedVersionId === 'string' ? { lastPublishedVersionId: data.lastPublishedVersionId } : {}),
         ...(timestampToISO(data.updatedAt) ? { updatedAt: timestampToISO(data.updatedAt) } : {}),
@@ -146,7 +176,7 @@ export async function getTodZoneVersions(teamId: string): Promise<TodZoneVersion
 
 function writableDraft(draft: TodZoneDraft, revision: number, userId: string, includePublishedPointer = true) {
     return {
-        schemaVersion: 2,
+        schemaVersion: 4,
         revision,
         definitions: draft.definitions,
         polygons: serializeTodZonePolygonsForFirestore(draft.polygons),

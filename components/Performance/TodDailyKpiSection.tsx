@@ -76,6 +76,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
       lonWeightedSum: number;
       zoneCodes: Set<string>;
       isConnectionStop: boolean;
+      connectionZoneCodes: Set<string>;
     }>();
     reports.forEach(report => {
       const version = effectiveVersionsByDate.get(report.date) ?? null;
@@ -90,6 +91,10 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
           ?? membership?.isConnectionStop
           ?? version?.connectionStops.some(stop => normalizeTodZoneStopId(stop.stopId) === normalizeTodZoneStopId(location.id))
           ?? false;
+        const connectionZoneCodes = snapshotStop?.connectionZoneCodes
+          ?? membership?.connectionZoneCodes
+          ?? version?.connectionStops.find(stop => normalizeTodZoneStopId(stop.stopId) === normalizeTodZoneStopId(location.id))?.zoneCodes
+          ?? [];
         if (!filterByTodZone(codes, zoneFilter)) return;
         const weight = Math.max(location.pickups + location.dropoffs, 1);
         const aggregate = aggregates.get(location.id);
@@ -101,6 +106,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
           aggregate.latWeightedSum += location.lat * weight;
           aggregate.lonWeightedSum += location.lon * weight;
           aggregate.isConnectionStop ||= isConnectionStop;
+          connectionZoneCodes.forEach(code => aggregate.connectionZoneCodes.add(code));
           codes.forEach(code => aggregate.zoneCodes.add(code));
         } else {
           aggregates.set(location.id, {
@@ -110,6 +116,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
             lonWeightedSum: location.lon * weight,
             zoneCodes: new Set(codes),
             isConnectionStop,
+            connectionZoneCodes: new Set(connectionZoneCodes),
           });
         }
       });
@@ -121,6 +128,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
         lon: aggregate.lonWeightedSum / aggregate.coordinateWeight,
         zoneCodes: [...aggregate.zoneCodes].sort(),
         isConnectionStop: aggregate.isConnectionStop,
+        connectionZoneCodes: [...aggregate.connectionZoneCodes].sort(),
       })).sort((a, b) => (b.pickups + b.dropoffs) - (a.pickups + a.dropoffs)),
       usedVersionIds: used,
       unversionedDateCount: [...effectiveVersionsByDate.values()].filter(version => version === null).length,

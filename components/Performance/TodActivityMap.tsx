@@ -10,6 +10,7 @@ import type { TodCityStop, TodZoneVersion } from '../../utils/todZones/todZoneTy
 export interface ZonedTodActivityLocation extends TodDailyKpiLocation {
   zoneCodes?: string[];
   isConnectionStop?: boolean;
+  connectionZoneCodes?: string[];
 }
 
 interface TodActivityMapProps {
@@ -23,6 +24,7 @@ interface TodActivityMapProps {
 interface RenderedLocation extends TodDailyKpiLocation {
   zoneCodes: string[];
   isConnectionStop?: boolean;
+  connectionZoneCodes?: string[];
   bin: number;
   sortKey: number;
   value: number;
@@ -76,7 +78,7 @@ function metricTitle(metric: TodActivityMetric): string {
   return 'Activity';
 }
 
-const Legend: React.FC<{ metric: TodActivityMetric; showConnectionStops: boolean }> = ({ metric, showConnectionStops }) => (
+const Legend: React.FC<{ metric: TodActivityMetric; connectionZones: { code: string; color: string }[] }> = ({ metric, connectionZones }) => (
   <div className="absolute bottom-6 left-2 z-[1000] rounded-lg border border-gray-200 bg-white/95 px-2.5 py-2 text-[10px] shadow-md">
     <div className="mb-1 text-[11px] font-bold text-gray-600">TOD {metricLabel(metric)}</div>
     {BINS.map((bin, index) => (
@@ -92,10 +94,14 @@ const Legend: React.FC<{ metric: TodActivityMetric; showConnectionStops: boolean
         <span className="text-gray-500">{bin.label}</span>
       </div>
     ))}
-    {showConnectionStops && (
-      <div className="mt-1 flex items-center gap-1.5 border-t border-gray-200 pt-1.5">
-        <span className="inline-grid h-4 w-4 place-items-center rounded-full border-2 border-sky-600 bg-white text-[9px] font-extrabold leading-none text-sky-700">A</span>
-        <span className="font-semibold text-gray-600">Connection stop</span>
+    {connectionZones.length > 0 && (
+      <div className="mt-1 space-y-1 border-t border-gray-200 pt-1.5">
+        {connectionZones.map(zone => (
+          <div key={zone.code} className="flex items-center gap-1.5">
+            <span className="inline-grid h-4 w-4 place-items-center rounded-full border-2 bg-white text-[9px] font-extrabold leading-none" style={{ borderColor: zone.color, color: zone.color }}>{zone.code}</span>
+            <span className="font-semibold text-gray-600">Zone {zone.code} connection</span>
+          </div>
+        ))}
       </div>
     )}
   </div>
@@ -165,14 +171,29 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
         const stopId = normalizeTodZoneStopId(connectionStop.stopId);
         const stop = snapshotStops.get(stopId) ?? currentStops.get(stopId);
         if (!stop) return [];
+        const colors = connectionStop.zoneCodes.map(code => zoneVersion?.definitions.find(zone => zone.code === code)?.color ?? '#64748b');
         return [{
           type: 'Feature' as const,
-          properties: { id: stopId, zoneCodes: connectionStop.zoneCodes.join('/') },
+          properties: {
+            id: stopId,
+            zoneCodes: connectionStop.zoneCodes.join('/'),
+            primaryColor: colors[0] ?? '#64748b',
+            secondaryColor: colors[1] ?? '',
+            tertiaryColor: colors[2] ?? '',
+            quaternaryColor: colors[3] ?? '',
+            quinaryColor: colors[4] ?? '',
+          },
           geometry: { type: 'Point' as const, coordinates: [stop.lon, stop.lat] },
         }];
       }),
     };
   }, [cityStops, zoneVersion]);
+  const connectionLegendZones = useMemo(() => {
+    const codes = new Set((zoneVersion?.connectionStops ?? []).flatMap(stop => stop.zoneCodes));
+    return (zoneVersion?.definitions ?? [])
+      .filter(zone => codes.has(zone.code))
+      .map(zone => ({ code: zone.code, color: zone.color }));
+  }, [zoneVersion]);
 
   const hoveredLocation = hoverInfo ? renderedLocationMap.get(hoverInfo.locationId) ?? null : null;
   const toggleFullscreen = useCallback(() => setIsFullscreen(previous => !previous), []);
@@ -256,7 +277,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
 
   return (
     <div className={isFullscreen ? 'fixed inset-0 z-50 flex flex-col bg-white' : 'relative h-[620px] w-full overflow-hidden rounded-lg'}>
-      <Legend metric={metric} showConnectionStops={connectionStopsGeoJSON.features.length > 0} />
+      <Legend metric={metric} connectionZones={connectionLegendZones} />
       {renderedLocations.length === 0 && (
         <div className="pointer-events-none absolute right-2 top-12 z-[1000] max-w-xs rounded-lg border border-violet-200 bg-white/95 px-3 py-2 text-xs font-semibold text-violet-900 shadow">
           No activity locations match the selected zone filter. Published boundaries remain visible for context.
@@ -294,7 +315,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
               ? selectedLocation.zoneCodes.map(code => <span key={code} className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-extrabold text-violet-800">Zone {code}</span>)
               : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">Unassigned</span>}
           </div>
-          {selectedLocation.isConnectionStop && <div className="mt-2 text-xs font-bold text-sky-700">Connection stop</div>}
+          {selectedLocation.isConnectionStop && <div className="mt-2 text-xs font-bold text-slate-700">Connection for Zone {selectedLocation.connectionZoneCodes?.join(' / ')}</div>}
         </div>
       )}
       <div className={isFullscreen ? 'min-h-0 w-full flex-1' : 'h-full w-full'}>
@@ -335,8 +356,12 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
         />
         {connectionStopsGeoJSON.features.length > 0 && (
           <Source id="tod-zone-connection-stops-src" type="geojson" data={connectionStopsGeoJSON}>
-            <Layer id="tod-zone-connection-stops" type="circle" paint={{ 'circle-radius': 8, 'circle-color': '#ffffff', 'circle-stroke-color': '#0284c7', 'circle-stroke-width': 2 }} />
-            <Layer id="tod-zone-connection-stop-labels" type="symbol" layout={{ 'text-field': ['get', 'zoneCodes'], 'text-size': 10, 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], 'text-allow-overlap': true }} paint={{ 'text-color': '#0369a1' }} />
+            <Layer id="tod-zone-connection-stops" type="circle" paint={{ 'circle-radius': 9, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'primaryColor'], 'circle-stroke-width': 1.5 }} />
+            <Layer id="tod-zone-shared-connection-stops" type="circle" filter={['!=', ['get', 'secondaryColor'], '']} paint={{ 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'secondaryColor'], 'circle-stroke-width': 1.5 }} />
+            <Layer id="tod-zone-tertiary-connection-stops" type="circle" filter={['!=', ['get', 'tertiaryColor'], '']} paint={{ 'circle-radius': 5.25, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'tertiaryColor'], 'circle-stroke-width': 1.25 }} />
+            <Layer id="tod-zone-quaternary-connection-stops" type="circle" filter={['!=', ['get', 'quaternaryColor'], '']} paint={{ 'circle-radius': 3.75, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'quaternaryColor'], 'circle-stroke-width': 1.25 }} />
+            <Layer id="tod-zone-quinary-connection-stops" type="circle" filter={['!=', ['get', 'quinaryColor'], '']} paint={{ 'circle-radius': 2.25, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'quinaryColor'], 'circle-stroke-width': 1 }} />
+            <Layer id="tod-zone-connection-stop-labels" type="symbol" layout={{ 'text-field': ['get', 'zoneCodes'], 'text-size': 9, 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], 'text-allow-overlap': true }} paint={{ 'text-color': ['get', 'primaryColor'] }} />
           </Source>
         )}
         <Source id="tod-activity-labels-src" type="geojson" data={labelGeoJSON}>

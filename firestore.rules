@@ -487,7 +487,7 @@ service cloud.firestore {
 
     function isValidTodZoneCore(data) {
       return data is map &&
-             data.schemaVersion == 2 && data.revision is int && data.revision > 0 &&
+             data.schemaVersion == 4 && data.revision is int && data.revision > 0 &&
              data.definitions is list && data.definitions.size() > 0 && data.definitions.size() <= 26 &&
              data.polygons is list && data.polygons.size() <= 80 &&
              data.connectionStops is list && data.connectionStops.size() <= 1500 &&

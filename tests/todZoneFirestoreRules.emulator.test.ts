@@ -19,7 +19,7 @@ const polygon = {
 
 function zoneData(userId: string, revision: number, polygons: Array<Record<string, unknown>> = [polygon]) {
     return {
-        schemaVersion: 2,
+        schemaVersion: 4,
         revision,
         definitions: [{ code: 'A', label: 'Zone A', color: '#7c3aed', kind: 'permanent', active: true }],
         polygons,
