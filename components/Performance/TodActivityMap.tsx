@@ -73,8 +73,8 @@ function metricTitle(metric: TodActivityMetric): string {
   return 'Activity';
 }
 
-const Legend: React.FC<{ metric: TodActivityMetric }> = ({ metric }) => (
-  <div className="absolute bottom-6 left-2 z-[1000] rounded-lg border border-gray-200 bg-white/95 px-2.5 py-2 text-[10px] shadow-md">
+const Legend: React.FC<{ metric: TodActivityMetric; zoneDefinitions: TodZoneDefinition[] }> = ({ metric, zoneDefinitions }) => (
+  <div className="absolute bottom-6 left-2 z-[1000] min-w-[150px] rounded-lg border border-gray-200 bg-white/95 px-2.5 py-2 text-[10px] shadow-md">
     <div className="mb-1 text-[11px] font-bold text-gray-600">TOD {metricLabel(metric)}</div>
     {BINS.map((bin, index) => (
       <div key={bin.label} className="flex items-center gap-1.5 py-[1px]">
@@ -89,6 +89,22 @@ const Legend: React.FC<{ metric: TodActivityMetric }> = ({ metric }) => (
         <span className="text-gray-500">{bin.label}</span>
       </div>
     ))}
+    {zoneDefinitions.length > 0 && (
+      <div className="mt-1.5 border-t border-gray-200 pt-1.5">
+        <div className="mb-1 text-[10px] font-bold text-gray-600">Bubble outlines</div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+          {zoneDefinitions.map(zone => (
+            <div key={zone.code} className="flex items-center gap-1.5">
+              <span
+                className="inline-block h-3 w-3 rounded-full border-2 bg-white"
+                style={{ borderColor: zone.color }}
+              />
+              <span className="font-semibold text-gray-500">Zone {zone.code}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
   </div>
 );
 
@@ -104,8 +120,8 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({
   const [selectedLocation, setSelectedLocation] = useState<RenderedLocation | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const label = metricLabel(metric);
-  const zoneColorByCode = useMemo(
-    () => new Map(zoneDefinitions.map(zone => [zone.code, zone.color])),
+  const zoneDefinitionByCode = useMemo(
+    () => new Map(zoneDefinitions.map(zone => [zone.code, zone])),
     [zoneDefinitions],
   );
 
@@ -220,7 +236,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({
 
   return (
     <div className={isFullscreen ? 'fixed inset-0 z-50 flex flex-col bg-white' : 'relative h-[620px] w-full overflow-hidden rounded-lg'}>
-      <Legend metric={metric} />
+      <Legend metric={metric} zoneDefinitions={zoneDefinitions} />
       <button
         type="button"
         onClick={toggleFullscreen}
@@ -271,7 +287,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({
             lat: location.lat,
             lon: location.lon,
             value: location.value,
-            outlineColor: zoneColorByCode.get(location.zoneCodes[0]) ?? OUTLINE_COLOR,
+            outlineColor: zoneDefinitionByCode.get(location.zoneCodes[0])?.color ?? OUTLINE_COLOR,
           }))}
           bins={BINS}
           outlineColor={OUTLINE_COLOR}
@@ -314,6 +330,24 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({
               {metricTitle(metric)}: {hoveredLocation.value.toLocaleString()}
               <br />
               <span style={{ color: '#6b7280' }}>Pickups {hoveredLocation.pickups.toLocaleString()} · Drop-offs {hoveredLocation.dropoffs.toLocaleString()}</span>
+              <div style={{ marginTop: 5, paddingTop: 5, borderTop: '1px solid #e5e7eb' }}>
+                <span style={{ color: '#4b5563', fontWeight: 700 }}>
+                  {hoveredLocation.zoneCodes.length === 1 ? 'Zone: ' : 'Zones: '}
+                </span>
+                {hoveredLocation.zoneCodes.length > 0
+                  ? hoveredLocation.zoneCodes.map((code, index) => {
+                    const zone = zoneDefinitionByCode.get(code);
+                    return (
+                      <React.Fragment key={code}>
+                        {index > 0 && <span style={{ color: '#9ca3af' }}> · </span>}
+                        <span style={{ color: zone?.color ?? OUTLINE_COLOR, fontWeight: 800 }}>
+                          {zone?.label ?? `Zone ${code}`}
+                        </span>
+                      </React.Fragment>
+                    );
+                  })
+                  : <span style={{ color: OUTLINE_COLOR, fontWeight: 700 }}>Unassigned</span>}
+              </div>
             </div>
           </Popup>
         )}

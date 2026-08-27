@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -10,7 +10,22 @@ vi.mock('react-map-gl/mapbox', () => ({
 }));
 
 vi.mock('../components/shared', () => ({
-  MapBase: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  MapBase: ({
+    children,
+    onMouseMove,
+  }: {
+    children?: React.ReactNode;
+    onMouseMove?: (event: { features: Array<{ properties: { id: string } }> }) => void;
+  }) => (
+    <div>
+      <button
+        type="button"
+        data-testid="hover-stop-58"
+        onMouseOver={() => onMouseMove?.({ features: [{ properties: { id: '58' } }] })}
+      />
+      {children}
+    </div>
+  ),
   HeatmapDotLayer: ({ points, outlineWidth }: { points: unknown[]; outlineWidth?: number }) => (
     <div data-testid="heatmap-points" data-points={JSON.stringify(points)} data-outline-width={outlineWidth} />
   ),
@@ -87,7 +102,7 @@ describe('TodActivityMap', () => {
 
   it('uses the published zone colour as the activity-bubble outline without zone overlays', () => {
     const locations = [
-      { id: '58', name: 'Stop 58', lat: 44.38, lon: -79.69, pickups: 3, dropoffs: 2, zoneCodes: ['A'] },
+      { id: '58', name: 'Stop 58', lat: 44.38, lon: -79.69, pickups: 3, dropoffs: 2, zoneCodes: ['A', 'B'] },
       { id: '68', name: 'Stop 68', lat: 44.39, lon: -79.68, pickups: 4, dropoffs: 3, zoneCodes: ['B'] },
       { id: 'other', name: 'Other', lat: 44.37, lon: -79.67, pickups: 1, dropoffs: 1, zoneCodes: [] },
     ];
@@ -104,6 +119,14 @@ describe('TodActivityMap', () => {
     expect(points.find(point => point.id === '68')?.outlineColor).toBe('#f58645');
     expect(points.find(point => point.id === 'other')?.outlineColor).toBe('#374151');
     expect(activity?.getAttribute('data-outline-width')).toBe('2.5');
+    expect(container.textContent).toContain('Bubble outlines');
+    expect(container.textContent).toContain('Zone A');
+    expect(container.textContent).toContain('Zone B');
+
+    act(() => container.querySelector('[data-testid="hover-stop-58"]')
+      ?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })));
+    expect(container.textContent).toContain('Zones:');
+    expect(container.textContent).toContain('Zone A · Zone B');
     expect(container.textContent).not.toContain('Connection stop');
     expect(container.querySelector('[data-layer-id^="tod-zone-"]')).toBeNull();
   });
