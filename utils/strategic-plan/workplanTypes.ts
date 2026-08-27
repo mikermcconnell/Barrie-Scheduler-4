@@ -73,6 +73,34 @@ export interface StrategicWorkplanDocument {
     updatedBy: string;
 }
 
+export type StrategicWorkplanAuditChangeKind = 'added' | 'updated' | 'deleted';
+
+export interface StrategicWorkplanAuditFieldChange {
+    field: string;
+    before: string;
+    after: string;
+}
+
+export interface StrategicWorkplanAuditTaskChange {
+    kind: StrategicWorkplanAuditChangeKind;
+    taskId: string;
+    wbs: string;
+    title: string;
+    fields: StrategicWorkplanAuditFieldChange[];
+}
+
+export interface StrategicWorkplanAuditEntry {
+    editedByUid: string;
+    editedByName: string;
+    editedAt: string;
+    summary: string;
+    changes: StrategicWorkplanAuditTaskChange[];
+}
+
+export interface StrategicWorkplanVersion extends StrategicWorkplanDocument {
+    audit: StrategicWorkplanAuditEntry;
+}
+
 export const STRATEGIC_WORKPLAN_STATUSES: ReadonlyArray<{
     value: StrategicWorkplanStatus;
     label: string;

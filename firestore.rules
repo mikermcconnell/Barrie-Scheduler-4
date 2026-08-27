@@ -290,19 +290,22 @@ service cloud.firestore {
         }
       }
 
-      // Team-shared Strategic Plan project-control work plan. Strategic Plan
-      // members may maintain their own team's schedule; source evidence remains
-      // under its existing read-only permissions.
+      // Team-shared Strategic Plan project-control work plan. A partner team may
+      // explicitly collaborate in one source team's plan; both teams still need
+      // Strategic Plan workspace access and every write remains user-attributed.
       match /strategicPlanWorkplans/{workplanId} {
         allow read: if canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                       canAccessSharedStrategicWorkplan(teamId) ||
                        canSupportReadTeamData(teamId);
         allow create: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                          canAccessSharedStrategicWorkplan(teamId) ||
                           canSupportWriteTeamData(teamId)) &&
                          workplanId == 'default' &&
                          request.resource.data.revision == 1 &&
                          isValidStrategicWorkplan(request.resource.data, teamId) &&
                          existsAfter(/databases/$(database)/documents/teams/$(teamId)/strategicPlanWorkplans/default/versions/$(request.resource.data.revision));
         allow update: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                          canAccessSharedStrategicWorkplan(teamId) ||
                           canSupportWriteTeamData(teamId)) &&
                          workplanId == 'default' &&
                          request.resource.data.revision == resource.data.revision + 1 &&
@@ -314,8 +317,10 @@ service cloud.firestore {
 
         match /versions/{versionId} {
           allow read: if canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                         canAccessSharedStrategicWorkplan(teamId) ||
                          canSupportReadTeamData(teamId);
           allow create: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                            canAccessSharedStrategicWorkplan(teamId) ||
                             canSupportWriteTeamData(teamId)) &&
                            workplanId == 'default' &&
                            isValidStrategicWorkplanVersion(request.resource.data, teamId);
@@ -450,6 +455,17 @@ service cloud.firestore {
              configuredMasterScheduleSource(userTeamId()) == sourceTeamId;
     }
 
+    function configuredStrategicWorkplanSource(teamId) {
+      return teamDataSources(teamId).get('strategicPlanWorkplan', '');
+    }
+
+    function canAccessSharedStrategicWorkplan(sourceTeamId) {
+      return hasUserTeam() &&
+             userTeamId() != sourceTeamId &&
+             canAccessWorkspace(userTeamId(), 'analyticsStrategicPlan') &&
+             configuredStrategicWorkplanSource(userTeamId()) == sourceTeamId;
+    }
+
     function canReadTeamForInviteJoin(teamId) {
       let inviteCode = resource.data.inviteCode;
       return request.auth != null &&
@@ -538,16 +554,35 @@ service cloud.firestore {
     function isValidStrategicWorkplanVersion(data, teamId) {
       let root = getAfter(/databases/$(database)/documents/teams/$(teamId)/strategicPlanWorkplans/default);
       return isValidStrategicWorkplanCore(data, teamId) &&
+             data.audit is map &&
+             data.audit.keys().hasAll(['editedByUid', 'editedByName', 'editedAt', 'summary', 'changes']) &&
+             data.audit.keys().hasOnly(['editedByUid', 'editedByName', 'editedAt', 'summary', 'changes']) &&
+             data.audit.editedByUid == request.auth.uid &&
+             data.audit.editedByName is string && data.audit.editedByName.size() > 0 && data.audit.editedByName.size() <= 160 &&
+             data.audit.editedAt == data.updatedAt &&
+             data.audit.summary is string && data.audit.summary.size() > 0 && data.audit.summary.size() <= 240 &&
+             data.audit.changes is list && data.audit.changes.size() <= 250 &&
+             root.data.schemaVersion == data.schemaVersion &&
+             root.data.teamId == data.teamId &&
+             root.data.revision == data.revision &&
+             root.data.name == data.name &&
+             root.data.scheduleStart == data.scheduleStart &&
+             root.data.scheduleEnd == data.scheduleEnd &&
+             root.data.source == data.source &&
+             root.data.tasks == data.tasks &&
+             root.data.createdAt == data.createdAt &&
+             root.data.createdBy == data.createdBy &&
+             root.data.updatedAt == data.updatedAt &&
+             root.data.updatedBy == data.updatedBy &&
              data.keys().hasAll([
                'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
-               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'savedAtServer'
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'audit', 'savedAtServer'
              ]) &&
              data.keys().hasOnly([
                'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
-               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'savedAtServer'
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'audit', 'savedAtServer'
              ]) &&
-             data.savedAtServer == request.time &&
-             root.data.revision == data.revision;
+             data.savedAtServer == request.time;
     }
 
     function isValidTodZoneConfig(data) {

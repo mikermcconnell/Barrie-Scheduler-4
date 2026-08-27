@@ -60,6 +60,7 @@ import {
   updateTeamDefaultMemberAccessLevel,
   updateTeamDefaultWorkspaceAccess,
   updateMemberWorkspaceAccess,
+  updateTeamDataSourceTeamIds,
 } from '../utils/services/teamService';
 
 describe('teamService security-sensitive flows', () => {
@@ -198,7 +199,15 @@ describe('teamService security-sensitive flows', () => {
       .mockResolvedValueOnce({
         exists: () => true,
         id: 'team-b',
-        data: () => ({ name: 'Zulu Team', createdBy: 'owner', inviteCode: 'ZULU01' }),
+        data: () => ({
+          name: 'Zulu Team',
+          createdBy: 'owner',
+          inviteCode: 'ZULU01',
+          dataSourceTeamIds: {
+            fleetPlan: 'team-a',
+            strategicPlanWorkplan: 'team-a',
+          },
+        }),
       })
       .mockResolvedValueOnce({
         exists: () => true,
@@ -211,6 +220,10 @@ describe('teamService security-sensitive flows', () => {
     expect(collectionGroupMock).toHaveBeenCalledWith(expect.anything(), 'members');
     expect(whereMock).toHaveBeenCalledWith('userId', '==', 'user-1');
     expect(teams.map(team => team.id)).toEqual(['team-a', 'team-b']);
+    expect(teams.find(team => team.id === 'team-b')?.dataSourceTeamIds).toEqual({
+      fleetPlan: 'team-a',
+      strategicPlanWorkplan: 'team-a',
+    });
   });
 
   it('verifies membership before changing the active team', async () => {
@@ -520,6 +533,25 @@ describe('teamService security-sensitive flows', () => {
           workspaceFixedRoute: false,
         },
       }
+    );
+  });
+
+  it('persists the explicit editable Strategic Plan work-plan source with evidence sources', async () => {
+    await updateTeamDataSourceTeamIds('dillon-team', {
+      transitApp: 'barrie-team',
+      fleetPlan: 'barrie-team',
+      strategicPlanWorkplan: 'barrie-team',
+    });
+
+    expect(updateDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/dillon-team' }),
+      {
+        dataSourceTeamIds: {
+          transitApp: 'barrie-team',
+          fleetPlan: 'barrie-team',
+          strategicPlanWorkplan: 'barrie-team',
+        },
+      },
     );
   });
 
