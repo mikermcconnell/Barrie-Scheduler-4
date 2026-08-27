@@ -35,7 +35,7 @@ describe('TOD zone geometry', () => {
         const exported = exportTodZoneGeoJson([{ id: 'a', zoneCode: 'A', pocketName: 'North', coordinates: square }]);
         expect(parseTodZoneGeoJson(exported, definitions)).toMatchObject([{ zoneCode: 'A', pocketName: 'North', coordinates: square }]);
         const seed = createTodZoneASeedDraft();
-        expect(seed.polygons.map(item => item.pocketName)).toEqual(['A North', 'A Ferris', 'A Lakeside', 'A Coulter', 'B Hospice', 'B Marion', 'B Wellington', 'B Amelia', 'C Hurst', 'D West', 'D East', 'E East', 'E Gateway', 'F Bayview', 'F Huronia', 'F Hooper', 'F Madelaine', 'H Sundew', 'H Brown Bear', 'H Salem', 'H King', 'H Pearen', 'T Fenchurch']);
+        expect(seed.polygons.map(item => item.pocketName)).toEqual(['A North', 'A Ferris', 'A Lakeside', 'A Coulter', 'B Hospice', 'B Marion', 'B Wellington', 'B Amelia', 'C Hurst', 'D West North', 'D West Central North', 'D West Central South', 'D West South', 'D East', 'E East', 'E Gateway', 'F Bayview', 'F Huronia', 'F Hooper', 'F Madelaine', 'H Sundew', 'H Brown Bear', 'H Salem', 'H King', 'H Pearen', 'T Fenchurch']);
         expect(seed.effectiveFrom).toBe('2026-07-02');
         expect(seed.schemaVersion).toBe(4);
         expect(seed.definitions.map(zone => zone.color)).toEqual(['#117db6', '#f58645', '#dd1f33', '#8dc73f', '#9c3220', '#cb9f2c', '#7e489c', '#606161']);
@@ -120,7 +120,7 @@ describe('TOD zone geometry', () => {
         expect(migrated.schemaVersion).toBe(4);
         expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'B')).toHaveLength(4);
         expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'C')).toHaveLength(1);
-        expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'D')).toHaveLength(2);
+        expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'D')).toHaveLength(5);
         expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'E')).toHaveLength(2);
         expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'F')).toHaveLength(4);
         expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'H')).toHaveLength(5);
@@ -150,10 +150,10 @@ describe('TOD zone geometry', () => {
         });
         expect(migrated.schemaVersion).toBe(4);
         expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'C')).toHaveLength(1);
-        expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'D')).toHaveLength(2);
+        expect(migrated.polygons.filter(polygon => polygon.zoneCode === 'D')).toHaveLength(5);
         expect(migrated.polygons.filter(polygon => ['E', 'F', 'H', 'T'].includes(polygon.zoneCode))).toHaveLength(12);
         expect(migrated.definitions.map(zone => zone.color)).toEqual(['#117db6', '#f58645', '#dd1f33', '#8dc73f', '#9c3220', '#cb9f2c', '#7e489c', '#606161']);
-        expect(migrated.overrides.map(override => override.stopId)).toEqual(['82', '83', '99', '100', '977', '978', '979', '986']);
+        expect(migrated.overrides.map(override => override.stopId)).toEqual(['82', '83', '99', '100', '429', '811', '977', '978', '979', '986']);
     });
 
     it('migrates a v3 A-D draft by merging shared E/F/T connection memberships', () => {
