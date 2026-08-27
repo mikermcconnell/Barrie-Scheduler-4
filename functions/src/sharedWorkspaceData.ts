@@ -9,6 +9,8 @@ import type {
   PerformanceMetadata,
 } from './types';
 import { parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
+import { createTodRidershipProjection } from '../../utils/ridership-trends/tod';
+import type { TodPickupSummary } from '../../utils/todPickupTypes';
 import { PERFORMANCE_SCHEMA_VERSION } from './types';
 import { filterPerformanceSummaryByRoute } from './performanceRouteFilter';
 import {
@@ -25,6 +27,8 @@ type SharedWorkspace =
   | 'performanceData'
   | 'ridershipTrend'
   | 'strategicPlanRidershipTrend'
+  | 'ridershipTrendTod'
+  | 'strategicPlanRidershipTod'
   | 'fleetPlan';
 
 type DataSourceKind = 'transitApp' | 'performance' | 'fleetPlan';
@@ -72,6 +76,8 @@ function isWorkspace(value: unknown): value is SharedWorkspace {
     'performanceData',
     'ridershipTrend',
     'strategicPlanRidershipTrend',
+    'ridershipTrendTod',
+    'strategicPlanRidershipTod',
     'fleetPlan',
   ].includes(String(value));
 }
@@ -526,6 +532,20 @@ async function getFleetPlan(sourceTeamId: string) {
   };
 }
 
+async function getTodRidershipProjection(sourceTeamId: string) {
+  const snap = await getDb().doc(`teams/${sourceTeamId}/todPickupData/metadata`).get();
+  if (!snap.exists) return null;
+  const metadata = snap.data() || {};
+  const storagePath = typeof metadata.storagePath === 'string' ? metadata.storagePath : '';
+  const expectedPrefix = `teams/${sourceTeamId}/todPickupData/`;
+  const filename = storagePath.slice(expectedPrefix.length);
+  if (!storagePath.startsWith(expectedPrefix) || !/^[A-Za-z0-9._-]+[.]json$/.test(filename)) {
+    throw new Error('Stored On Demand ridership path is invalid.');
+  }
+  const summary = await readStorageJson<TodPickupSummary>(storagePath);
+  return summary ? createTodRidershipProjection(summary) : null;
+}
+
 function buildSummaryFromDays(
   base: PerformanceDataSummary,
   dailySummaries: PerformanceDataSummary['dailySummaries'],
@@ -733,6 +753,9 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
       const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);
       return projection ? parseRidershipTrendProjection(projection) : null;
     }
+    case 'ridershipTrendTod':
+    case 'strategicPlanRidershipTod':
+      return getTodRidershipProjection(payload.sourceTeamId);
     case 'fleetPlan':
       return getFleetPlan(payload.sourceTeamId);
     default:
@@ -776,7 +799,7 @@ export const sharedWorkspaceData = onRequest(
       if (payload.workspace.startsWith('transitApp') && !canReadTransitAppEvidence(requestingMember, decoded)) {
         throw Object.assign(new Error('Transit App or Strategic Plan access is required.'), { status: 403 });
       }
-      if (payload.workspace === 'ridershipTrend') {
+      if (payload.workspace === 'ridershipTrend' || payload.workspace === 'ridershipTrendTod') {
         await assertCanReadRidershipTrend(
           decoded.uid,
           payload.requestingTeamId,
@@ -784,7 +807,7 @@ export const sharedWorkspaceData = onRequest(
           decoded,
         );
       }
-      if (payload.workspace === 'strategicPlanRidershipTrend'
+      if ((payload.workspace === 'strategicPlanRidershipTrend' || payload.workspace === 'strategicPlanRidershipTod')
           && !canReadStrategicPlanRidership(requestingMember, decoded)) {
         throw Object.assign(new Error('Strategic Plan access is required.'), { status: 403 });
       }

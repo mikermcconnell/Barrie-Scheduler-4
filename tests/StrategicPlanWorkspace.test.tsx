@@ -27,6 +27,12 @@ vi.mock('../components/Analytics/RidershipTrendsWorkspace', () => ({
     }) => <div>Annual Ridership module · {accessContext} · {backLabel}</div>,
 }));
 
+vi.mock('../components/Analytics/StrategicWorkplanWorkspace', () => ({
+    StrategicWorkplanWorkspace: ({ teamId }: { teamId: string }) => (
+        <div>Shared Strategic Workplan for {teamId}</div>
+    ),
+}));
+
 const row = (routeShortName: string, routeName: string, revenueHours: number) => ({
     routeName,
     routeShortName,
@@ -149,7 +155,7 @@ describe('StrategicPlanWorkspace', () => {
         expect(container.textContent).toContain('Strategic Plan workspaces');
 
         const serviceWorkspace = Array.from(container.querySelectorAll('button'))
-            .find(button => button.textContent?.includes('Existing Service Baseline')) as HTMLButtonElement;
+            .find(button => button.textContent?.includes('Current Scheduled Service Route Summaries')) as HTMLButtonElement;
         act(() => serviceWorkspace.click());
 
         expect(container.textContent).toContain('EXPRESS');
@@ -170,10 +176,23 @@ describe('StrategicPlanWorkspace', () => {
         expect(onBack).toHaveBeenCalledOnce();
     });
 
+    it('opens the team-shared Project Work Plan from the Strategic Plan landing page', async () => {
+        await act(async () => { await Promise.resolve(); });
+        const workplanWorkspace = Array.from(container.querySelectorAll('button'))
+            .find(button => button.textContent?.includes('Project Work Plan')) as HTMLButtonElement;
+
+        await act(async () => {
+            workplanWorkspace.click();
+            await Promise.resolve();
+        });
+
+        expect(container.textContent).toContain('Shared Strategic Workplan for dillon-team');
+    });
+
     it('shows the complete shared Transit App analysis without import controls', async () => {
         await act(async () => { await Promise.resolve(); });
         const transitAppSection = Array.from(container.querySelectorAll('button'))
-            .find(button => button.textContent?.includes('Transit App Evidence')) as HTMLButtonElement;
+            .find(button => button.textContent?.includes('Trip Planning Trends')) as HTMLButtonElement;
 
         act(() => transitAppSection.click());
 
@@ -187,14 +206,14 @@ describe('StrategicPlanWorkspace', () => {
     it('opens the canonical Master Schedule as a read-only workspace card', async () => {
         await act(async () => { await Promise.resolve(); });
         const masterScheduleWorkspace = Array.from(container.querySelectorAll('button'))
-            .find(button => button.textContent?.includes('Master Schedule')) as HTMLButtonElement;
+            .find(button => button.textContent?.includes('Published Route Schedules')) as HTMLButtonElement;
 
         await act(async () => {
             masterScheduleWorkspace.click();
             await Promise.resolve();
         });
 
-        expect(container.textContent).toContain('Published Master Schedule Evidence');
+        expect(container.textContent).toContain('Published Route Schedules');
         expect(container.textContent).toContain('Canonical Master Schedule read-only evidence');
         expect(container.textContent).toContain('creates no copied schedule');
     });
@@ -202,11 +221,11 @@ describe('StrategicPlanWorkspace', () => {
     it('shows the canonical Fleet Plan as read-only 2027–2032 evidence', async () => {
         await act(async () => { await Promise.resolve(); });
         const fleetPlanWorkspace = Array.from(container.querySelectorAll('button'))
-            .find(button => button.textContent?.includes('Fleet Plan')) as HTMLButtonElement;
+            .find(button => button.textContent?.includes('Bus Fleet Plan')) as HTMLButtonElement;
 
         act(() => fleetPlanWorkspace.click());
 
-        expect(container.textContent).toContain('Fleet Plan Evidence');
+        expect(container.textContent).toContain('Bus Fleet Plan');
         expect(container.textContent).toContain('same canonical shared workbook');
         expect(container.textContent).toContain('Fleet Plan 2026.xlsx');
         expect(container.textContent).toContain('2201');

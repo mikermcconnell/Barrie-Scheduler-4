@@ -844,6 +844,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                         fleetPlanError={fleetPlanEvidenceError}
                         ridershipTeamId={performanceDataTeamId || team.id}
                         requestingTeamId={team.id}
+                        currentUserId={user?.uid}
+                        currentUserLabel={user?.displayName || user?.email || 'Project team member'}
                     />
                 </Suspense>
             </div>

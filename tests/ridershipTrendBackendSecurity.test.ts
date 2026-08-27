@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { canReadRidershipTrend } from '../functions/src/sharedWorkspaceData';
 
 const storageRules = readFileSync('storage.rules', 'utf8');
+const sharedWorkspaceSource = readFileSync('functions/src/sharedWorkspaceData.ts', 'utf8');
 
 describe('Ridership Trends backend access', () => {
     const decoded = (schedulerAdmin = false) => ({ schedulerAdmin }) as never;
@@ -27,5 +28,13 @@ describe('Ridership Trends backend access', () => {
         expect(storageRules).not.toMatch(
             /performanceViews\/ridership-trends[\s\S]{0,300}workspaceOperations/,
         );
+    });
+
+    it('shares only a derived On Demand ridership projection through the same access boundary', () => {
+        expect(sharedWorkspaceSource).toContain("case 'ridershipTrendTod':");
+        expect(sharedWorkspaceSource).toContain("case 'strategicPlanRidershipTod':");
+        expect(sharedWorkspaceSource).toContain('return summary ? createTodRidershipProjection(summary) : null;');
+        expect(sharedWorkspaceSource).toContain("payload.workspace === 'ridershipTrendTod'");
+        expect(sharedWorkspaceSource).toContain("payload.workspace === 'strategicPlanRidershipTod'");
     });
 });

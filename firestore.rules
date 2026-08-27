@@ -290,6 +290,39 @@ service cloud.firestore {
         }
       }
 
+      // Team-shared Strategic Plan project-control work plan. Strategic Plan
+      // members may maintain their own team's schedule; source evidence remains
+      // under its existing read-only permissions.
+      match /strategicPlanWorkplans/{workplanId} {
+        allow read: if canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                       canSupportReadTeamData(teamId);
+        allow create: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                          canSupportWriteTeamData(teamId)) &&
+                         workplanId == 'default' &&
+                         request.resource.data.revision == 1 &&
+                         isValidStrategicWorkplan(request.resource.data, teamId) &&
+                         existsAfter(/databases/$(database)/documents/teams/$(teamId)/strategicPlanWorkplans/default/versions/$(request.resource.data.revision));
+        allow update: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                          canSupportWriteTeamData(teamId)) &&
+                         workplanId == 'default' &&
+                         request.resource.data.revision == resource.data.revision + 1 &&
+                         request.resource.data.createdAt == resource.data.createdAt &&
+                         request.resource.data.createdBy == resource.data.createdBy &&
+                         isValidStrategicWorkplan(request.resource.data, teamId) &&
+                         existsAfter(/databases/$(database)/documents/teams/$(teamId)/strategicPlanWorkplans/default/versions/$(request.resource.data.revision));
+        allow delete: if false;
+
+        match /versions/{versionId} {
+          allow read: if canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                         canSupportReadTeamData(teamId);
+          allow create: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                            canSupportWriteTeamData(teamId)) &&
+                           workplanId == 'default' &&
+                           isValidStrategicWorkplanVersion(request.resource.data, teamId);
+          allow update, delete: if false;
+        }
+      }
+
       // Residential Growth planning data
       match /residentialGrowth/{docId} {
         allow read: if canAccessWorkspace(teamId, 'analyticsResidentialGrowth') || canSupportReadTeamData(teamId);
@@ -470,6 +503,51 @@ service cloud.firestore {
              data.version is int && data.version > 0 &&
              data.updatedAt == request.time &&
              data.updatedBy == request.auth.uid;
+    }
+
+    function isValidStrategicWorkplanCore(data, teamId) {
+      return data is map &&
+             data.schemaVersion == 1 &&
+             data.teamId == teamId &&
+             data.revision is int && data.revision > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 160 &&
+             data.scheduleStart is string && data.scheduleStart.matches('20[0-9][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') &&
+             data.scheduleEnd is string && data.scheduleEnd.matches('20[0-9][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') &&
+             data.scheduleEnd >= data.scheduleStart &&
+             data.source is map && data.source.size() <= 9 &&
+             data.tasks is list && data.tasks.size() <= 250 &&
+             data.createdAt is string && data.createdAt.size() <= 40 &&
+             data.createdBy is string && data.createdBy.size() > 0 && data.createdBy.size() <= 128 &&
+             data.updatedAt is string && data.updatedAt.size() <= 40 &&
+             data.updatedBy == request.auth.uid;
+    }
+
+    function isValidStrategicWorkplan(data, teamId) {
+      return isValidStrategicWorkplanCore(data, teamId) &&
+             data.keys().hasAll([
+               'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'updatedAtServer'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'updatedAtServer'
+             ]) &&
+             data.updatedAtServer == request.time;
+    }
+
+    function isValidStrategicWorkplanVersion(data, teamId) {
+      let root = getAfter(/databases/$(database)/documents/teams/$(teamId)/strategicPlanWorkplans/default);
+      return isValidStrategicWorkplanCore(data, teamId) &&
+             data.keys().hasAll([
+               'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'savedAtServer'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'savedAtServer'
+             ]) &&
+             data.savedAtServer == request.time &&
+             root.data.revision == data.revision;
     }
 
     function isValidTodZoneConfig(data) {

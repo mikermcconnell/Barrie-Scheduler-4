@@ -70,6 +70,14 @@ describe('security rules regression checks', () => {
     expect(firestoreRules).toMatch(/match \/versions\/\{versionId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsFleetPlan'\) \|\| canSupportReadTeamData\(teamId\);/);
   });
 
+  it('keeps the team work plan under Strategic Plan access with validated revision history', () => {
+    const firestoreRules = readRepoFile('firestore.rules');
+
+    expect(firestoreRules).toMatch(/match \/strategicPlanWorkplans\/\{workplanId\} \{[\s\S]*allow read: if canAccessWorkspace\(teamId, 'analyticsStrategicPlan'\)[\s\S]*allow create:[\s\S]*workplanId == 'default'[\s\S]*request\.resource\.data\.revision == 1[\s\S]*allow update:[\s\S]*request\.resource\.data\.revision == resource\.data\.revision \+ 1[\s\S]*allow delete: if false;/);
+    expect(firestoreRules).toMatch(/match \/versions\/\{versionId\} \{[\s\S]*allow create:[\s\S]*isValidStrategicWorkplanVersion[\s\S]*allow update, delete: if false;/);
+    expect(firestoreRules).toMatch(/function isValidStrategicWorkplanCore[\s\S]*data\.tasks is list && data\.tasks\.size\(\) <= 250[\s\S]*data\.updatedBy == request\.auth\.uid;/);
+  });
+
   it('gates Route Planner 2 saved route concepts by workspace access', () => {
     const firestoreRules = readRepoFile('firestore.rules');
 

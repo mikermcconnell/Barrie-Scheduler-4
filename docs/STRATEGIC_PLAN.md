@@ -4,7 +4,16 @@ Current contract for the Planning Data workspace at `#planning/strategic-plan`.
 
 ## Purpose
 
-The workspace provides a controlled evidence base for the 2027–2032 strategic plan. Its landing page uses source-specific workspace cards for the read-only existing-service baseline, annual Ridership Trends, the complete aggregated Transit App analysis, the canonical shared Fleet Plan, and the canonical published Master Schedule. It does not modify schedules, Master Schedule records, GTFS, performance data, Transit App source data, or Fleet Plan records.
+The workspace combines project control with a controlled evidence base for the 2027–2032 strategic plan. Its landing page opens a team-shared Project Work Plan plus source-specific workspace cards for the read-only existing-service baseline, annual Ridership Trends, the complete aggregated Transit App analysis, the canonical shared Fleet Plan, and the canonical published Master Schedule. The Project Work Plan is editable; it does not modify schedules, Master Schedule records, GTFS, performance data, Transit App source data, or Fleet Plan records.
+
+## Project Work Plan and source baseline
+
+- The initial baseline is a week-precision transcription of Dillon Consulting Limited's June 16, 2026 `Work Plan and Schedule`, PDF pages 6-7 (proposal pages 5-5 to 5-6). It retains the four phases, WBS identifiers, chapter groupings, Staff/Consultant/Joint ownership, task windows, draft/final deliverables, City review windows, project meetings, working sessions, Council presentations, and engagement events shown in the proposal.
+- The proposal identifies timing and proposed responsibility; it does not establish current completion. Seeded tasks therefore start as `Unconfirmed` with 0% progress. Rows with no dated bar in the source remain unscheduled instead of receiving an inferred date.
+- The default user experience is the Update Desk for routine status/progress maintenance. Full Schedule provides the bulk Gantt view, while Timeline provides a phase-led leadership view. Search, phase, owner, status, and zoom controls share the same in-memory work plan. The History control lists recent immutable revisions and stages an earlier snapshot for restoration as a new revision.
+- Users with `analyticsStrategicPlan` may read and maintain the work plan belonging to their current/requesting team. Evidence-source selectors do not redirect the work plan to another team; a Dillon or other partner team therefore maintains its own project-control record even when its evidence cards read Barrie-owned sources.
+- The active document is `teams/{teamId}/strategicPlanWorkplans/default`. Each successful save uses the loaded `revision` for optimistic conflict detection, increments it by one, and creates an immutable full snapshot under `teams/{teamId}/strategicPlanWorkplans/default/versions/{revision}`. Client input and Firestore rules bound the payload to 250 tasks and bind writes to the authenticated user.
+- Current status, progress, notes, dependencies, and revised dates are project-control records. They are not approvals of recommendations, policies, funding, targets, or delivered outcomes.
 
 ## Source and calculations
 
@@ -58,6 +67,8 @@ Master Schedule records are the current published planning source. They are not 
 ## Implementation and verification
 
 - Workspace UI: `components/Analytics/StrategicPlanWorkspace.tsx`
+- Editable work-plan UI: `components/Analytics/StrategicWorkplanWorkspace.tsx`
+- Work-plan source model and persistence: `utils/strategic-plan/workplanBaseline.ts`, `workplanTypes.ts`, `workplanService.ts`
 - Reusable Transit App analysis UI: `components/Analytics/TransitAppWorkspace.tsx`
 - Reusable read-only Master Schedule UI: `components/MasterScheduleBrowser.tsx`
 - Shared Transit App metadata/data query: `hooks/useTransitAppData.ts`
@@ -65,6 +76,6 @@ Master Schedule records are the current published planning source. They are not 
 - Cross-team read gateway: `functions/src/sharedWorkspaceData.ts`
 - Pure calculations: `utils/strategic-plan/serviceProfile.ts`, `utils/strategic-plan/fleetPlanEvidence.ts`
 - Lazy bundled-data loading: `utils/strategic-plan/serviceProfileData.ts`
-- Focused tests: `tests/strategicPlanServiceProfile.test.ts`, `tests/strategicPlanFleetEvidence.test.ts`, `tests/StrategicPlanWorkspace.test.tsx`, `tests/sharedWorkspaceTransitAppAccess.test.ts`, security-rule regressions, and Planning Data routing/access tests
+- Focused tests: `tests/strategicPlanServiceProfile.test.ts`, `tests/strategicPlanFleetEvidence.test.ts`, `tests/strategicWorkplanBaseline.test.ts`, `tests/StrategicWorkplanWorkspace.test.tsx`, `tests/StrategicPlanWorkspace.test.tsx`, `tests/sharedWorkspaceTransitAppAccess.test.ts`, security-rule regressions, and Planning Data routing/access tests
 
-The workspace uses the standard Planning Data feature flag and access-profile registrations. It introduces no new persistence location or duplicated Transit App, Fleet Plan, or Master Schedule dataset.
+The workspace uses the standard Planning Data feature flag and access-profile registrations. It adds only the team-scoped Strategic Plan work-plan document and immutable versions; it does not duplicate Transit App, Fleet Plan, Master Schedule, GTFS, or performance datasets.

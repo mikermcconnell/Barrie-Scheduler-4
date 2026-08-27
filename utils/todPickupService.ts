@@ -2,6 +2,12 @@ import { doc, getDoc } from 'firebase/firestore';
 import { getDownloadURL, ref } from 'firebase/storage';
 import { db, storage } from './firebase';
 import type { TodPickupMetadata, TodPickupSummary } from './todPickupTypes';
+import { requestSharedWorkspaceData } from './sharedWorkspaceDataClient';
+import {
+  createTodRidershipProjection,
+  parseTodRidershipProjection,
+  type TodRidershipProjectionV1,
+} from './ridership-trends/tod';
 
 function getMetadataRef(teamId: string) {
   return doc(db, 'teams', teamId, 'todPickupData', 'metadata');
@@ -67,4 +73,21 @@ export async function getTodPickupData(
     console.error('Error getting TOD pickup data:', error);
     return null;
   }
+}
+
+export async function getTodRidershipProjection(
+  teamId: string,
+  requestingTeamId?: string,
+  accessContext: 'ridershipTrend' | 'strategicPlan' = 'ridershipTrend',
+): Promise<TodRidershipProjectionV1 | null> {
+  if (accessContext === 'strategicPlan' || (requestingTeamId && requestingTeamId !== teamId)) {
+    const projection = await requestSharedWorkspaceData<unknown>({
+      workspace: accessContext === 'strategicPlan' ? 'strategicPlanRidershipTod' : 'ridershipTrendTod',
+      requestingTeamId: requestingTeamId || teamId,
+      sourceTeamId: teamId,
+    });
+    return projection ? parseTodRidershipProjection(projection) : null;
+  }
+  const summary = await getTodPickupData(teamId);
+  return summary ? createTodRidershipProjection(summary) : null;
 }

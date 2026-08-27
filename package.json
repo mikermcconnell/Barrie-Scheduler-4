@@ -10,7 +10,7 @@
     "dev": "vite",
     "start": "vite",
     "test": "vitest",
-    "test:firestore-rules": "npx --yes firebase-tools@15.24.0 emulators:exec --only firestore,storage --project demo-scheduler-4 \"vitest run --no-file-parallelism tests/routeConceptPlannerFirestoreRules.emulator.test.ts tests/detourFirestoreRules.emulator.test.ts tests/transitAppEvidenceRules.emulator.test.ts tests/todZoneFirestoreRules.emulator.test.ts\"",
+    "test:firestore-rules": "npx --yes firebase-tools@15.24.0 emulators:exec --only firestore,storage --project demo-scheduler-4 \"vitest run --no-file-parallelism tests/routeConceptPlannerFirestoreRules.emulator.test.ts tests/detourFirestoreRules.emulator.test.ts tests/transitAppEvidenceRules.emulator.test.ts tests/todZoneFirestoreRules.emulator.test.ts tests/strategicWorkplanFirestoreRules.emulator.test.ts\"",
     "test:route-concept-browser": "node scripts/routeConceptPlannerBrowserSmoke.mjs",
     "test:coverage": "vitest run --coverage",
     "test:smoke": "npm run build && node scripts/browserSmoke.mjs",

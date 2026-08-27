@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, Bus, BusFront, CalendarRange, ChartNoAxesCombined, ClipboardList, Database, Loader2, Smartphone } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bus, BusFront, CalendarRange, ChartNoAxesCombined, ClipboardList, Database, GanttChartSquare, Loader2, Smartphone } from 'lucide-react';
 import { TransitAppAnalysisView } from './TransitAppWorkspace';
 import {
     loadStrategicPlanServiceProfile,
@@ -23,10 +23,12 @@ interface StrategicPlanWorkspaceProps {
     fleetPlanError?: string | null;
     ridershipTeamId?: string;
     requestingTeamId?: string;
+    currentUserId?: string;
+    currentUserLabel?: string;
 }
 
 const DAY_TYPES: StrategicPlanDayType[] = ['Weekday', 'Saturday', 'Sunday'];
-type StrategicPlanSection = 'overview' | 'service-baseline' | 'transit-app' | 'ridership-trends' | 'fleet-plan' | 'master-schedule';
+type StrategicPlanSection = 'overview' | 'project-workplan' | 'service-baseline' | 'transit-app' | 'ridership-trends' | 'fleet-plan' | 'master-schedule';
 
 const MasterScheduleBrowser = React.lazy(() =>
     import('../MasterScheduleBrowser').then(module => ({ default: module.MasterScheduleBrowser }))
@@ -34,6 +36,10 @@ const MasterScheduleBrowser = React.lazy(() =>
 
 const RidershipTrendsWorkspace = React.lazy(() =>
     import('./RidershipTrendsWorkspace').then(module => ({ default: module.RidershipTrendsWorkspace }))
+);
+
+const StrategicWorkplanWorkspace = React.lazy(() =>
+    import('./StrategicWorkplanWorkspace').then(module => ({ default: module.StrategicWorkplanWorkspace }))
 );
 
 interface EvidenceWorkspaceCardProps {
@@ -229,6 +235,8 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
     fleetPlanError = null,
     ridershipTeamId,
     requestingTeamId,
+    currentUserId,
+    currentUserLabel,
 }) => {
     const [dayType, setDayType] = useState<StrategicPlanDayType>('Weekday');
     const [section, setSection] = useState<StrategicPlanSection>('overview');
@@ -248,6 +256,24 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
     }, []);
 
     const rows = profile?.rowsByDayType[dayType] || [];
+
+    if (section === 'project-workplan' && requestingTeamId) {
+        return (
+            <Suspense fallback={(
+                <div className="flex min-h-[32rem] items-center justify-center gap-3 text-slate-500" role="status" aria-live="polite">
+                    <Loader2 className="animate-spin text-[#001C80]" size={24} />
+                    <span className="text-sm font-semibold">Loading the project work plan...</span>
+                </div>
+            )}>
+                <StrategicWorkplanWorkspace
+                    teamId={requestingTeamId}
+                    userId={currentUserId}
+                    userLabel={currentUserLabel}
+                    onBack={() => setSection('overview')}
+                />
+            </Suspense>
+        );
+    }
 
     return (
         <div className="min-h-full bg-slate-50">
@@ -270,7 +296,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                             </div>
                             <h1 className="text-2xl font-black tracking-tight sm:text-3xl">2027–2032 Strategic Plan</h1>
                             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-blue-100 sm:text-base">
-                                Source-specific workspaces for service, ridership, rider-planning, fleet, and published schedule evidence.
+                                Shared project control plus source-specific workspaces for service, ridership, rider-planning, fleet, and published schedule evidence.
                             </p>
                         </div>
                         {profile && (
@@ -290,12 +316,20 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                             <p className="text-xs font-black uppercase tracking-[0.16em] text-[#001C80]">Evidence library</p>
                             <h2 id="evidence-workspaces-heading" className="mt-2 text-2xl font-black text-slate-900">Strategic Plan workspaces</h2>
                             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                                Open a source-specific workspace to examine the current service baseline, annual boardings, rider-planning evidence, fleet-capital outlook, or canonical published schedule. Each source remains separate and read-only.
+                                Maintain the shared project work plan, then open source-specific evidence for the service baseline, annual boardings, rider-planning, fleet-capital outlook, or canonical published schedule. Evidence sources remain separate and read-only.
                             </p>
                         </div>
-                        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+                        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
                             <EvidenceWorkspaceCard
-                                title="Existing Service Baseline"
+                                title="Project Work Plan"
+                                description="Update task status, ownership, progress, dependencies, deliverables, and the shared Gantt schedule from the Dillon proposal baseline."
+                                source="Dillon schedule · June 16, 2026"
+                                icon={<GanttChartSquare size={24} />}
+                                accentClassName="bg-indigo-50 text-indigo-800"
+                                onClick={() => setSection('project-workplan')}
+                            />
+                            <EvidenceWorkspaceCard
+                                title="Current Scheduled Service Route Summaries"
                                 description="Compare static-GTFS service spans, scheduled frequency regimes, and revenue hours by service day."
                                 source={profile ? `GTFS ${profile.feedStartDate} to ${profile.feedEndDate}` : 'Bundled static GTFS'}
                                 icon={<BusFront size={24} />}
@@ -303,7 +337,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                                 onClick={() => setSection('service-baseline')}
                             />
                             <EvidenceWorkspaceCard
-                                title="Transit App Evidence"
+                                title="Trip Planning Trends"
                                 description="Review the complete aggregate for demand, trip patterns, stops, transfers, heatmaps, route engagement, and app usage."
                                 source={transitAppData
                                     ? `Transit App ${transitAppData.metadata.dateRange.start} to ${transitAppData.metadata.dateRange.end}`
@@ -321,7 +355,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                                 onClick={() => setSection('ridership-trends')}
                             />
                             <EvidenceWorkspaceCard
-                                title="Fleet Plan"
+                                title="Bus Fleet Plan"
                                 description="Review the canonical 2027–2032 fleet outlook, including planned totals, retirements, replacements, growth, and unit timelines."
                                 source={fleetPlanData
                                     ? `Fleet Plan v${fleetPlanData.metadata.currentVersion ?? '—'} · ${fleetPlanData.metadata.sourceFileName}`
@@ -331,7 +365,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                                 onClick={() => setSection('fleet-plan')}
                             />
                             <EvidenceWorkspaceCard
-                                title="Master Schedule"
+                                title="Published Route Schedules"
                                 description="Inspect current published route schedules, service hours, route tables, platform activity, and source versions."
                                 source="Canonical team Master Schedule"
                                 icon={<ClipboardList size={24} />}
@@ -350,7 +384,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                 <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
                     <div className="flex flex-col gap-4 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
                         <div>
-                            <h2 className="text-lg font-black text-slate-900">Existing Service Profile</h2>
+                            <h2 className="text-lg font-black text-slate-900">Current Scheduled Service Route Summaries</h2>
                             <p className="mt-1 text-sm text-slate-500">Service spans are rounded to 15 minutes; frequencies are simplified route-level scheduled headways.</p>
                         </div>
                         <div className="inline-flex self-start rounded-xl bg-slate-100 p-1" role="tablist" aria-label="Service day">
@@ -432,7 +466,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                     <EvidenceWorkspaceBack onClick={() => setSection('overview')} />
                     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                         <div className="mb-5 border-b border-slate-200 pb-4">
-                            <h2 className="text-lg font-black text-slate-900">Transit App Evidence</h2>
+                            <h2 className="text-lg font-black text-slate-900">Trip Planning Trends</h2>
                             <p className="mt-1 text-sm leading-relaxed text-slate-600">
                                 This is the same complete aggregated summary used by the standalone Transit App workspace. It is read-only here and is not a second import or copied dataset.
                             </p>
@@ -475,7 +509,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                         <EvidenceWorkspaceBack onClick={() => setSection('overview')} />
                         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                             <div className="mb-5 border-b border-slate-200 pb-4">
-                                <h2 className="text-lg font-black text-slate-900">Fleet Plan Evidence</h2>
+                                <h2 className="text-lg font-black text-slate-900">Bus Fleet Plan</h2>
                                 <p className="mt-1 text-sm leading-relaxed text-slate-600">
                                     This is a read-only view of the same canonical shared workbook used by the Fleet Plan workspace. It creates no Strategic Plan copy, snapshot, or second import.
                                 </p>
@@ -543,7 +577,7 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                         <EvidenceWorkspaceBack onClick={() => setSection('overview')} />
                         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
                             <div className="border-b border-slate-200 px-5 py-4">
-                                <h2 className="text-lg font-black text-slate-900">Published Master Schedule Evidence</h2>
+                                <h2 className="text-lg font-black text-slate-900">Published Route Schedules</h2>
                                 <p className="mt-1 text-sm leading-relaxed text-slate-600">
                                     This workspace reads the same canonical Master Schedule used by Scheduled Transit. It is read-only here and creates no copied schedule or strategic-plan snapshot.
                                 </p>

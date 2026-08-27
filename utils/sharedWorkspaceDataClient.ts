@@ -9,6 +9,8 @@ type SharedWorkspaceRequest = {
         | 'performanceData'
         | 'ridershipTrend'
         | 'strategicPlanRidershipTrend'
+        | 'ridershipTrendTod'
+        | 'strategicPlanRidershipTod'
         | 'fleetPlan';
     requestingTeamId: string;
     sourceTeamId: string;
