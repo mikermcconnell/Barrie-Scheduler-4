@@ -144,6 +144,24 @@ service cloud.firestore {
         allow delete: if canSupportWriteTeamData(teamId);
       }
 
+      // Team-scoped Codex-assisted block-audit, run-cutting, and rostering
+      // scenarios. Large immutable revisions live in Storage; this root is the
+      // bounded active pointer and approval workflow record.
+      match /operationsPlanningScenarios/{scenarioId} {
+        allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                       canSupportReadTeamData(teamId);
+        allow create: if (canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                          canSupportWriteTeamData(teamId)) &&
+                         isValidOperationsPlanningCreate(teamId, scenarioId);
+        allow update: if ((canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                           canSupportWriteTeamData(teamId)) &&
+                          (isValidOperationsPlanningDraftRevision(teamId, scenarioId) ||
+                           isValidOperationsPlanningSubmit())) ||
+                         ((isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                          isValidOperationsPlanningApproval());
+        allow delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
+      }
+
       // Team-authored detour notices and their map/publication records.
       match /detourNotices/{noticeId} {
         allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportReadTeamData(teamId);
@@ -700,6 +718,86 @@ service cloud.firestore {
              request.resource.data.reviewedBy == request.auth.uid &&
              request.resource.data.reviewedAt is timestamp && request.resource.data.reviewedAt == request.time &&
              request.resource.data.updatedAt is timestamp && request.resource.data.updatedAt == request.time;
+    }
+
+    function isValidOperationsPlanningCore(data, teamId, scenarioId) {
+      return data is map &&
+             data.keys().hasAll([
+               'schemaVersion', 'teamId', 'name', 'status', 'activeRevision',
+               'storagePath', 'payloadBytes', 'sourceManifestFingerprint',
+               'sourceIsStale', 'sourceCheckedAt', 'integrityBlockerCount',
+               'contractualBlockerCount', 'warningCount', 'createdAt',
+               'createdBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'teamId', 'name', 'status', 'activeRevision',
+               'storagePath', 'payloadBytes', 'sourceManifestFingerprint',
+               'sourceIsStale', 'sourceCheckedAt', 'integrityBlockerCount',
+               'contractualBlockerCount', 'warningCount', 'createdAt',
+               'createdBy', 'updatedAt', 'updatedBy', 'submittedAt',
+               'submittedBy', 'approvedAt', 'approvedBy'
+             ]) &&
+             data.schemaVersion == 1 && data.teamId == teamId &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 160 &&
+             data.status in ['draft', 'submitted', 'approved'] &&
+             data.activeRevision is int && data.activeRevision > 0 && data.activeRevision <= 1000000 &&
+             data.storagePath is string &&
+             data.storagePath.matches('teams/' + teamId + '/operationsPlanningScenarios/' + scenarioId + '/versions/[1-9][0-9]{0,6}[.]json') &&
+             data.payloadBytes is int && data.payloadBytes > 0 && data.payloadBytes <= 25 * 1024 * 1024 &&
+             data.sourceManifestFingerprint is string &&
+             data.sourceManifestFingerprint.size() > 0 && data.sourceManifestFingerprint.size() <= 256 &&
+             data.sourceIsStale is bool && data.sourceCheckedAt is timestamp &&
+             data.integrityBlockerCount is int && data.integrityBlockerCount >= 0 && data.integrityBlockerCount <= 100000 &&
+             data.contractualBlockerCount is int && data.contractualBlockerCount >= 0 && data.contractualBlockerCount <= 100000 &&
+             data.warningCount is int && data.warningCount >= 0 && data.warningCount <= 100000 &&
+             data.createdAt is timestamp &&
+             data.createdBy is string && data.createdBy.size() > 0 && data.createdBy.size() <= 128 &&
+             data.updatedAt is timestamp && data.updatedAt == request.time &&
+             data.updatedBy == request.auth.uid;
+    }
+
+    function isValidOperationsPlanningCreate(teamId, scenarioId) {
+      let data = request.resource.data;
+      return isValidOperationsPlanningCore(data, teamId, scenarioId) &&
+             data.status == 'draft' && data.activeRevision == 1 &&
+             data.createdAt == request.time && data.createdBy == request.auth.uid &&
+             data.sourceCheckedAt == request.time &&
+             !data.keys().hasAny(['submittedAt', 'submittedBy', 'approvedAt', 'approvedBy']);
+    }
+
+    function isValidOperationsPlanningDraftRevision(teamId, scenarioId) {
+      let data = request.resource.data;
+      return isValidOperationsPlanningCore(data, teamId, scenarioId) &&
+             resource.data.status in ['draft', 'submitted'] && data.status == 'draft' &&
+             data.activeRevision == resource.data.activeRevision + 1 &&
+             data.createdAt == resource.data.createdAt && data.createdBy == resource.data.createdBy &&
+             data.sourceCheckedAt == request.time &&
+             !data.keys().hasAny(['submittedAt', 'submittedBy', 'approvedAt', 'approvedBy']);
+    }
+
+    function isValidOperationsPlanningSubmit() {
+      let data = request.resource.data;
+      return resource.data.status == 'draft' && data.status == 'submitted' &&
+             data.activeRevision == resource.data.activeRevision &&
+             data.sourceIsStale == false && data.integrityBlockerCount == 0 &&
+             data.diff(resource.data).affectedKeys().hasOnly([
+               'status', 'submittedAt', 'submittedBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.submittedAt == request.time && data.submittedBy == request.auth.uid &&
+             data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function isValidOperationsPlanningApproval() {
+      let data = request.resource.data;
+      return resource.data.status == 'submitted' && data.status == 'approved' &&
+             data.activeRevision == resource.data.activeRevision &&
+             data.sourceIsStale == false && data.integrityBlockerCount == 0 &&
+             data.contractualBlockerCount == 0 &&
+             data.diff(resource.data).affectedKeys().hasOnly([
+               'status', 'approvedAt', 'approvedBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.approvedAt == request.time && data.approvedBy == request.auth.uid &&
+             data.updatedAt == request.time && data.updatedBy == request.auth.uid;
     }
 
     function memberAccessLevel(teamId) {

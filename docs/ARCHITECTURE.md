@@ -82,6 +82,7 @@ Main areas:
 - New Schedule wizard → `components/NewSchedule/`
 - Schedule editing → `components/ScheduleEditor.tsx`
 - Round-trip schedule display → `components/schedule/`
+- Operations Planning → `components/workspaces/RunCuttingWorkspace.tsx`, `utils/run-cutting/`, `utils/services/operationsPlanningService.ts`; source-pinned block audit, run cutting, and anonymous weekly rostering that never mutates Master Schedule content
 - GTFS import → `components/GTFSImport.tsx`, `utils/gtfs/`
 - Draft and publish workflow → `utils/services/draftService.ts`, `utils/services/publishService.ts`
 - System-wide GTFS drafts and multi-route editing → `utils/services/systemDraftService.ts`, `components/workspaces/SystemDraftEditorWorkspace.tsx`; this is a parallel user-scoped draft flow, not a replacement for single-route `draftSchedules`
@@ -93,6 +94,7 @@ The Schedule Editor is organized around compare → change → review → publis
 Core logic folders:
 - `utils/schedule/`
 - `utils/blocks/`
+- `utils/run-cutting/`
 - `utils/parsers/`
 - `utils/gtfs/`
 - `utils/connections/`
@@ -269,6 +271,21 @@ Key files:
 Key files:
 - `utils/parsers/masterScheduleParser.ts`
 - `utils/parsers/masterScheduleParserV2.ts`
+
+### Audit blocks and cut operator work
+`Pinned immutable Master versions → validated operations-planning input JSON → external Codex proposal → independent app validation and metrics → planner edits → revisioned team scenario → protected approval → Excel`
+
+Key files:
+- `components/workspaces/RunCuttingWorkspace.tsx`
+- `utils/run-cutting/`
+- `utils/services/operationsPlanningService.ts`
+- `.codex/skills/operations-planning/`
+
+The source adapter reads Master Schedule payloads but does not call block
+assignment or publish services. Proposal imports may group existing trips into
+operator pieces and runs, but cannot change trip times or vehicle-block
+membership. Firestore stores bounded workflow metadata; immutable scenario
+revisions live in Storage.
 
 ### Operations reporting
 `STREETS import → parser/aggregator → Firestore + Storage → performance dashboard + reports`

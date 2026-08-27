@@ -32,6 +32,7 @@ firebase/
 │   ├── masterSchedules/{routeIdentity}/  # Published schedules
 │   │   ├── versions/{versionId}          # Version history
 │   ├── scheduleReviews/{reviewId}         # Team-visible bounded review metadata/status
+│   ├── operationsPlanningScenarios/{scenarioId} # Team run-cutting workflow metadata + active revision pointer
 │   ├── connectionLibrary/default         # Shared connection targets used by app services
 │   ├── publicTimetable/default           # Team-managed brochure content defaults
 │   ├── routeConnectionConfigs/{routeIdentity} # Per-route connection settings
@@ -94,6 +95,7 @@ storage/
 └── teams/{teamId}/
     ├── masterSchedules/{routeIdentity}_v{version}_{nonce}.json
     ├── scheduleReviews/{reviewId}/{creatorId}/schedule.json
+    ├── operationsPlanningScenarios/{scenarioId}/versions/{revision}.json
     ├── routeMaps/{safeName}
     ├── transitAppData/{allPaths}
     ├── performanceData/{allPaths}
@@ -130,6 +132,20 @@ Ridership Trends projection schema v1 stores the cutover date, generated baselin
 Partner teams, such as WATT or Dillon, can use shared source mappings instead of copied JSON. `teams/{teamId}.dataSourceTeamIds.transitApp`, `.performance`, and `.fleetPlan` may point at a source team such as Barrie Transit. Transit App metadata at `teams/{sourceTeamId}/transitAppData/default` points to one canonical aggregate under `teams/{sourceTeamId}/transitAppData/{timestamp}.json`; both the standalone Transit App workspace and the Strategic Plan workspace read that same object. The app reads shared Transit App, STREETS, Ridership Trends, and Fleet Plan evidence through the `sharedWorkspaceData` Cloud Function, which verifies the signed-in user belongs to the requesting team, the requesting team is explicitly configured to read from the source team, and the member has the relevant standalone or Strategic Plan permission. Imports and writes remain scoped to their existing permissions and target team.
 
 Partner teams can read published master schedules from a configured source team when their member has Fixed Route or Strategic Plan access. `teams/{teamId}.dataSourceTeamIds.masterSchedules` may point at the source team; when omitted, the Master Schedule Browser retains its compatibility fallback to `dataSourceTeamIds.performance` for partner teams with no local schedules. Shared master-schedule access is read-only.
+
+`teams/{teamId}/operationsPlanningScenarios/{scenarioId}` stores bounded
+workflow metadata for a source-pinned block-audit, daily run-cut, and anonymous
+weekly roster scenario. The active pointer includes `activeRevision`, immutable
+Storage `storagePath`, payload byte count, source-manifest fingerprint,
+source-freshness state, validation counts, status, and create/update/submit/
+approve audit fields. Large normalized rules, source manifests, imported Codex
+proposal, recomputed assessment, and anonymous roster content are stored at
+`teams/{teamId}/operationsPlanningScenarios/{scenarioId}/versions/{revision}.json`.
+Fixed Route members may create, revise, and submit; approval is owner/admin or
+audited support-edit only. Integrity and stale-source state block submission;
+integrity, stale-source, and contractual state block approval. Approved
+scenarios and all historical revision objects are immutable. Source photographs
+and employee identity are not stored.
 
 The Strategic Plan reuses this same Master Schedule metadata and Storage content without copying it. A requesting member with `analyticsStrategicPlan` may read same-team schedules or a source explicitly configured by `dataSourceTeamIds.masterSchedules`; `workspaceFixedRoute` remains the alternate read permission for Scheduled Transit. Strategic Plan access does not satisfy any Master Schedule write rule.
 
@@ -549,6 +565,23 @@ interface MasterScheduleContent {
   };
 }
 ```
+
+## Operations Planning
+
+Canonical domain types live in `utils/run-cutting/types.ts`; persistence wire
+types live in `utils/services/operationsPlanningService.ts`.
+
+The external exchange uses numeric schema version `1` plus a discriminating
+`kind`: `operations-planning-input` for app exports and
+`operations-planning-proposal` for Codex imports. `PlanningSourceManifest`
+binds every route/day type to a source team, master version, Storage path,
+content fingerprint, block-membership fingerprint, and pin time.
+
+`OperationsPlanningRevisionPayload` uses kind
+`operations-planning-scenario-revision` and contains the full source manifest,
+normalized `RuleProfile`, `OperationsMatrix`, current app-recomputed
+`ProposalAssessment`, validation summary, and save audit fields. Weekly rosters
+use anonymous crew numbers and day/run references only.
 
 ---
 
