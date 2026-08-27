@@ -80,7 +80,7 @@ describe('TodDailyKpiSection', () => {
   it('renders one automatic map card using only the active Ridership period', () => {
     renderSection(root);
 
-    expect(container.textContent).toContain('Transit On Demand Activity Map');
+    expect(container.textContent).toContain('Transit On Demand Activity');
     expect(container.textContent).toContain('246 activity');
     expect(container.textContent).toContain('1 imported day');
     expect(container.textContent).not.toContain('226');
@@ -105,6 +105,30 @@ describe('TodDailyKpiSection', () => {
 
     expect(container.textContent).toContain('120 drop-offs');
     expect(container.querySelector('[data-testid="tod-map"]')?.getAttribute('data-metric')).toBe('dropoffs');
+  });
+
+  it('opens the integrated zone performance summary without leaving the TOD card', () => {
+    const definitions: TodZoneDefinition[] = [
+      { code: 'A', label: 'Zone A', color: '#117db6', kind: 'permanent', active: true },
+    ];
+    todZoneQueryState.versions = [{
+      id: 'published-a', schemaVersion: 4, revision: 1, definitions, polygons: [], connectionStops: [], overrides: [],
+      effectiveFrom: '2026-07-02', source: 'published test zones', reviewNote: 'reviewed', publishedBy: 'owner', publishedAt: '2026-07-02T12:00:00Z',
+      stopSnapshot: [{ stopId: '1', name: 'Stop 1', lat: 44.38, lon: -79.69, zoneCodes: ['A'], isConnectionStop: true, connectionZoneCodes: ['A'] }],
+    } satisfies TodZoneVersion];
+    renderSection(root);
+
+    const performanceButton = [...container.querySelectorAll('button')]
+      .find(button => button.textContent?.includes('Zone performance'));
+    expect(performanceButton).toBeDefined();
+    flushSync(() => performanceButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    expect(container.textContent).toContain('Zone performance summary');
+    expect(container.textContent).toContain('Coverage share');
+    expect(container.textContent).toContain('Connection share');
+    expect(container.textContent).toContain('Top stops · Zone A');
+    expect(container.textContent).not.toContain('Unassigned activity needs review');
+    expect(container.querySelector('[data-testid="tod-map"]')).toBeNull();
   });
 
   it('filters activity day by day with the effective published version', () => {

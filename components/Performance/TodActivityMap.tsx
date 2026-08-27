@@ -19,6 +19,7 @@ interface TodActivityMapProps {
   zoneVersion?: TodZoneVersion | null;
   cityStops?: TodCityStop[];
   showAllStops?: boolean;
+  focusZone?: string;
 }
 
 interface RenderedLocation extends TodDailyKpiLocation {
@@ -41,15 +42,11 @@ const TOD_ACTIVITY_LAYER_ID = 'tod-activity-circles';
 const OUTLINE_COLOR = '#374151';
 const BINS = [
   { fill: 'transparent', fillOpacity: 0, radius: 3, label: 'Zero' },
-  { fill: '#d1d5db', fillOpacity: 0.7, radius: 4, label: 'Minimal' },
-  { fill: '#b0b5bc', fillOpacity: 0.75, radius: 5, label: 'Very Low' },
-  { fill: '#fef9c3', fillOpacity: 0.8, radius: 6, label: 'Low' },
-  { fill: '#fde68a', fillOpacity: 0.82, radius: 7, label: 'Below Avg' },
-  { fill: '#fbbf24', fillOpacity: 0.85, radius: 9, label: 'Average' },
-  { fill: '#f59e0b', fillOpacity: 0.88, radius: 11, label: 'Above Avg' },
-  { fill: '#f97316', fillOpacity: 0.9, radius: 14, label: 'High' },
-  { fill: '#ef4444', fillOpacity: 0.93, radius: 17, label: 'Very High' },
-  { fill: '#b91c1c', fillOpacity: 0.95, radius: 21, label: 'Peak' },
+  { fill: '#d1d5db', fillOpacity: 0.75, radius: 5, label: 'Low' },
+  { fill: '#fde68a', fillOpacity: 0.84, radius: 7, label: 'Moderate' },
+  { fill: '#fbbf24', fillOpacity: 0.88, radius: 10, label: 'Busy' },
+  { fill: '#f97316', fillOpacity: 0.92, radius: 14, label: 'High' },
+  { fill: '#b91c1c', fillOpacity: 0.96, radius: 20, label: 'Peak' },
 ] as const;
 
 function assignBins(values: number[]): number[] {
@@ -58,7 +55,9 @@ function assignBins(values: number[]): number[] {
   const logMax = Math.log(Math.max(...nonZero) + 1);
   if (logMax === 0) return values.map(value => (value > 0 ? 1 : 0));
   return values.map(value => (
-    value === 0 ? 0 : Math.max(1, Math.min(9, Math.ceil((Math.log(value + 1) / logMax) * 9)))
+    value === 0
+      ? 0
+      : Math.max(1, Math.min(BINS.length - 1, Math.ceil((Math.log(value + 1) / logMax) * (BINS.length - 1))))
   ));
 }
 
@@ -78,7 +77,7 @@ function metricTitle(metric: TodActivityMetric): string {
   return 'Activity';
 }
 
-const Legend: React.FC<{ metric: TodActivityMetric; connectionZones: { code: string; color: string }[] }> = ({ metric, connectionZones }) => (
+const Legend: React.FC<{ metric: TodActivityMetric; hasConnectionStops: boolean }> = ({ metric, hasConnectionStops }) => (
   <div className="absolute bottom-6 left-2 z-[1000] rounded-lg border border-gray-200 bg-white/95 px-2.5 py-2 text-[10px] shadow-md">
     <div className="mb-1 text-[11px] font-bold text-gray-600">TOD {metricLabel(metric)}</div>
     {BINS.map((bin, index) => (
@@ -94,20 +93,26 @@ const Legend: React.FC<{ metric: TodActivityMetric; connectionZones: { code: str
         <span className="text-gray-500">{bin.label}</span>
       </div>
     ))}
-    {connectionZones.length > 0 && (
-      <div className="mt-1 space-y-1 border-t border-gray-200 pt-1.5">
-        {connectionZones.map(zone => (
-          <div key={zone.code} className="flex items-center gap-1.5">
-            <span className="inline-grid h-4 w-4 place-items-center rounded-full border-2 bg-white text-[9px] font-extrabold leading-none" style={{ borderColor: zone.color, color: zone.color }}>{zone.code}</span>
-            <span className="font-semibold text-gray-600">Zone {zone.code} connection</span>
-          </div>
-        ))}
+    {hasConnectionStops && (
+      <div className="mt-1.5 space-y-1 border-t border-gray-200 pt-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="inline-block h-4 w-4 rounded-full border-[3px] border-blue-600 bg-amber-300" />
+          <span className="font-semibold text-gray-600">Connection stop halo</span>
+        </div>
+        <div className="pl-[22px] text-[9px] leading-tight text-gray-400">Zone codes appear when zoomed in</div>
       </div>
     )}
   </div>
 );
 
-export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metric, zoneVersion, cityStops = [], showAllStops = false }) => {
+export const TodActivityMap: React.FC<TodActivityMapProps> = ({
+  locations,
+  metric,
+  zoneVersion,
+  cityStops = [],
+  showAllStops = false,
+  focusZone = 'all',
+}) => {
   const mapRef = useRef<MapRef | null>(null);
   const hasFittedRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
@@ -133,6 +138,10 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
 
   const renderedLocationMap = useMemo(
     () => new Map(renderedLocations.map(location => [location.id, location])),
+    [renderedLocations],
+  );
+  const renderedLocationsByStopId = useMemo(
+    () => new Map(renderedLocations.map(location => [normalizeTodZoneStopId(location.id), location])),
     [renderedLocations],
   );
 
@@ -172,28 +181,21 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
         const stop = snapshotStops.get(stopId) ?? currentStops.get(stopId);
         if (!stop) return [];
         const colors = connectionStop.zoneCodes.map(code => zoneVersion?.definitions.find(zone => zone.code === code)?.color ?? '#64748b');
+        const activityLocation = renderedLocationsByStopId.get(stopId);
+        const activityRadius = activityLocation ? BINS[activityLocation.bin]?.radius ?? BINS[0].radius : BINS[0].radius;
         return [{
           type: 'Feature' as const,
           properties: {
             id: stopId,
             zoneCodes: connectionStop.zoneCodes.join('/'),
             primaryColor: colors[0] ?? '#64748b',
-            secondaryColor: colors[1] ?? '',
-            tertiaryColor: colors[2] ?? '',
-            quaternaryColor: colors[3] ?? '',
-            quinaryColor: colors[4] ?? '',
+            activityRadius,
           },
           geometry: { type: 'Point' as const, coordinates: [stop.lon, stop.lat] },
         }];
       }),
     };
-  }, [cityStops, zoneVersion]);
-  const connectionLegendZones = useMemo(() => {
-    const codes = new Set((zoneVersion?.connectionStops ?? []).flatMap(stop => stop.zoneCodes));
-    return (zoneVersion?.definitions ?? [])
-      .filter(zone => codes.has(zone.code))
-      .map(zone => ({ code: zone.code, color: zone.color }));
-  }, [zoneVersion]);
+  }, [cityStops, renderedLocationsByStopId, zoneVersion]);
 
   const hoveredLocation = hoverInfo ? renderedLocationMap.get(hoverInfo.locationId) ?? null : null;
   const toggleFullscreen = useCallback(() => setIsFullscreen(previous => !previous), []);
@@ -229,7 +231,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
     hasFittedRef.current = false;
     setSelectedLocation(null);
     setHoverInfo(null);
-  }, [locations, metric]);
+  }, [focusZone, locations, metric, zoneVersion?.id]);
 
   useEffect(() => {
     if (!isFullscreen) return;
@@ -253,16 +255,24 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
   }, [isFullscreen]);
 
   useEffect(() => {
-    if (!mapReady || renderedLocations.length === 0 || hasFittedRef.current) return;
+    if (!mapReady || hasFittedRef.current) return;
+    const focusedPolygons = focusZone.length === 1
+      ? (zoneVersion?.polygons ?? []).filter(polygon => polygon.zoneCode === focusZone)
+      : [];
+    const fitPositions = [
+      ...renderedLocations.map(location => [location.lon, location.lat] as [number, number]),
+      ...focusedPolygons.flatMap(polygon => polygon.coordinates),
+    ];
+    if (fitPositions.length === 0) return;
     mapRef.current?.fitBounds(
       [
-        [Math.min(...renderedLocations.map(location => location.lon)), Math.min(...renderedLocations.map(location => location.lat))],
-        [Math.max(...renderedLocations.map(location => location.lon)), Math.max(...renderedLocations.map(location => location.lat))],
+        [Math.min(...fitPositions.map(position => position[0])), Math.min(...fitPositions.map(position => position[1]))],
+        [Math.max(...fitPositions.map(position => position[0])), Math.max(...fitPositions.map(position => position[1]))],
       ],
-      { padding: 40, duration: 0 },
+      { padding: focusZone.length === 1 ? 70 : 40, duration: 0, maxZoom: focusZone.length === 1 ? 14 : 13 },
     );
     hasFittedRef.current = true;
-  }, [mapReady, renderedLocations]);
+  }, [focusZone, mapReady, renderedLocations, zoneVersion]);
 
   if (renderedLocations.length === 0 && !zoneVersion && !showAllStops) {
     return (
@@ -277,7 +287,7 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
 
   return (
     <div className={isFullscreen ? 'fixed inset-0 z-50 flex flex-col bg-white' : 'relative h-[620px] w-full overflow-hidden rounded-lg'}>
-      <Legend metric={metric} connectionZones={connectionLegendZones} />
+      <Legend metric={metric} hasConnectionStops={connectionStopsGeoJSON.features.length > 0} />
       {renderedLocations.length === 0 && (
         <div className="pointer-events-none absolute right-2 top-12 z-[1000] max-w-xs rounded-lg border border-violet-200 bg-white/95 px-3 py-2 text-xs font-semibold text-violet-900 shadow">
           No activity locations match the selected zone filter. Published boundaries remain visible for context.
@@ -334,13 +344,49 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
         >
         {zoneVersion && (
           <Source id="tod-zone-polygons-src" type="geojson" data={zoneGeoJSON}>
-            <Layer id="tod-zone-polygons-fill" type="fill" paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': 0.13 }} />
-            <Layer id="tod-zone-polygons-line" type="line" paint={{ 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.8 }} />
+            <Layer
+              id="tod-zone-polygons-fill"
+              type="fill"
+              paint={{
+                'fill-color': ['get', 'color'],
+                'fill-opacity': focusZone.length === 1
+                  ? ['case', ['==', ['get', 'zoneCode'], focusZone], 0.2, 0.045]
+                  : 0.12,
+              }}
+            />
+            <Layer
+              id="tod-zone-polygons-line"
+              type="line"
+              paint={{
+                'line-color': ['get', 'color'],
+                'line-width': focusZone.length === 1
+                  ? ['case', ['==', ['get', 'zoneCode'], focusZone], 3, 1]
+                  : 2,
+                'line-opacity': focusZone.length === 1
+                  ? ['case', ['==', ['get', 'zoneCode'], focusZone], 0.95, 0.25]
+                  : 0.8,
+              }}
+            />
           </Source>
         )}
         {showAllStops && (
           <Source id="tod-zone-city-stops-src" type="geojson" data={cityStopsGeoJSON}>
             <Layer id="tod-zone-city-stops" type="circle" paint={{ 'circle-radius': 2.5, 'circle-color': '#64748b', 'circle-opacity': 0.55, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 0.5 }} />
+          </Source>
+        )}
+        {connectionStopsGeoJSON.features.length > 0 && (
+          <Source id="tod-zone-connection-halos-src" type="geojson" data={connectionStopsGeoJSON}>
+            <Layer
+              id="tod-zone-connection-halos"
+              type="circle"
+              paint={{
+                'circle-radius': ['+', ['get', 'activityRadius'], 4],
+                'circle-color': 'rgba(255,255,255,0.9)',
+                'circle-stroke-color': ['get', 'primaryColor'],
+                'circle-stroke-width': 2.5,
+                'circle-stroke-opacity': 0.95,
+              }}
+            />
           </Source>
         )}
         <HeatmapDotLayer
@@ -355,13 +401,27 @@ export const TodActivityMap: React.FC<TodActivityMapProps> = ({ locations, metri
           outlineColor={OUTLINE_COLOR}
         />
         {connectionStopsGeoJSON.features.length > 0 && (
-          <Source id="tod-zone-connection-stops-src" type="geojson" data={connectionStopsGeoJSON}>
-            <Layer id="tod-zone-connection-stops" type="circle" paint={{ 'circle-radius': 9, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'primaryColor'], 'circle-stroke-width': 1.5 }} />
-            <Layer id="tod-zone-shared-connection-stops" type="circle" filter={['!=', ['get', 'secondaryColor'], '']} paint={{ 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'secondaryColor'], 'circle-stroke-width': 1.5 }} />
-            <Layer id="tod-zone-tertiary-connection-stops" type="circle" filter={['!=', ['get', 'tertiaryColor'], '']} paint={{ 'circle-radius': 5.25, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'tertiaryColor'], 'circle-stroke-width': 1.25 }} />
-            <Layer id="tod-zone-quaternary-connection-stops" type="circle" filter={['!=', ['get', 'quaternaryColor'], '']} paint={{ 'circle-radius': 3.75, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'quaternaryColor'], 'circle-stroke-width': 1.25 }} />
-            <Layer id="tod-zone-quinary-connection-stops" type="circle" filter={['!=', ['get', 'quinaryColor'], '']} paint={{ 'circle-radius': 2.25, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'quinaryColor'], 'circle-stroke-width': 1 }} />
-            <Layer id="tod-zone-connection-stop-labels" type="symbol" layout={{ 'text-field': ['get', 'zoneCodes'], 'text-size': 9, 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], 'text-allow-overlap': true }} paint={{ 'text-color': ['get', 'primaryColor'] }} />
+          <Source id="tod-zone-connection-labels-src" type="geojson" data={connectionStopsGeoJSON}>
+            <Layer
+              id="tod-zone-connection-stop-labels"
+              type="symbol"
+              minzoom={13.25}
+              layout={{
+                'text-field': ['get', 'zoneCodes'],
+                'text-size': 9,
+                'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                'text-anchor': 'bottom-left',
+                'text-offset': [1.1, -1.1],
+                'text-padding': 3,
+                'text-allow-overlap': false,
+                'text-optional': true,
+              }}
+              paint={{
+                'text-color': ['get', 'primaryColor'],
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 2,
+              }}
+            />
           </Source>
         )}
         <Source id="tod-activity-labels-src" type="geojson" data={labelGeoJSON}>

@@ -14,7 +14,7 @@ The Zone B draft is derived from `Transit-ON-Demand-Zone-B.pdf`, also effective 
 
 The Zone C draft is derived from `Transit-ON-Demand_Zone-C.pdf`, updated June 8, 2025. Its Hurst-area polygon contains 20 labelled ordinary TOD stops. Its 20 connection stops are **20, 117, 120, 704, 705, 715, 716, 717, 718, 722, 725, 741, 752, 764, 775, 777, 784, 968, 969, and 9009**.
 
-The Zone D draft is derived from `Transit-ON-Demand-Zone-D-Map.pdf`, updated July 29, 2026. Its west and east polygons contain 47 labelled ordinary TOD stops. Its 18 connection stops are **20, 116, 704, 705, 715, 716, 717, 718, 722, 725, 741, 751, 752, 777, 784, 968, 969, and 9009**. Stops 764 and 775 illustrate the per-zone distinction: each is an ordinary Zone D stop and a Zone C connection stop. Four active fixed-route stops inside the conservative west boundary (82, 83, 99, and 100) receive explicit Zone D exclusions because they are not labelled as TOD stops on the source map.
+The Zone D draft is derived from `Transit-ON-Demand-Zone-D-Map.pdf`, updated July 29, 2026. Its four west pockets and one east pocket contain 47 labelled ordinary TOD stops. Keeping the PDF's disconnected pockets separate avoids the self-crossing stop-to-stop web produced by the earlier two-polygon approximation. Its 18 connection stops are **20, 116, 704, 705, 715, 716, 717, 718, 722, 725, 741, 751, 752, 777, 784, 968, 969, and 9009**. Stops 764 and 775 illustrate the per-zone distinction: each is an ordinary Zone D stop and a Zone C connection stop. Six active fixed-route stops inside the schematic west boundaries (82, 83, 99, 100, 429, and 811) receive explicit Zone D exclusions because they are not labelled as TOD stops on the source map.
 
 The Zone E draft is derived from `Transit-ON-Demand_Zone-E.pdf`, effective June 8, 2025. Its two pockets contain ordinary stops **770, 771, 772, 773, 785, 786, 787, and 788**. Its connection stops are **119, 596, 597, and 725**.
 
@@ -24,7 +24,7 @@ The Zone H draft is derived from `Transit-ON-Demand-Zone-H.pdf`, effective June 
 
 Temporary Zone T is derived from `Transit-ON-Demand-Temporary-Zone.pdf`, effective July 2, 2026 through Fall 2026. Its Fenchurch pocket contains ordinary stops **973 and 974**, temporarily reassigned from F, and connection stop **725**. T remains a managed temporary zone so it can be superseded by a later effective-dated publication when construction ends.
 
-Zone definitions use the source-map colors: A blue (`#117db6`), B orange (`#f58645`), C red (`#dd1f33`), D lime green (`#8dc73f`), E brown (`#9c3220`), F gold (`#cb9f2c`), H purple (`#7e489c`), and T gray (`#606161`). Polygon fills/outlines, editor connection markers, activity-map connection markers, and connection legends use the corresponding definition color. Shared connection stops use nested source-colored rings and retain every connection-zone code.
+Zone definitions use the source-map colors: A blue (`#117db6`), B orange (`#f58645`), C red (`#dd1f33`), D lime green (`#8dc73f`), E brown (`#9c3220`), F gold (`#cb9f2c`), H purple (`#7e489c`), and T gray (`#606161`). Polygon fills/outlines, editor connection markers, activity-map connection markers, and connection legends use the corresponding definition color. On the activity map a connection stop uses one source-colored outer halo behind the ridership dot, keeping the selected ridership metric visible; collision-aware zone-code labels appear only at close zoom. Shared connection stops retain every connection-zone code.
 
 The editor loads current active stops from the City layer at `https://gispublic.barrie.ca/arcgis/rest/services/Open_Data/FacilitiesStreets/MapServer/6`. A published version also snapshots stop coordinates, assigned zone codes, and connection-stop status so historical classifications remain reproducible if the live layer later changes.
 
@@ -44,6 +44,12 @@ The client and GeoJSON interchange use standard `[longitude, latitude]` position
 Team owners and admins open **Edit zones** from the TOD activity card. They can draw, select, reshape, and delete multiple polygons; switch between light and satellite imagery; inspect current City stops and assignment counts; maintain stop overrides; and import or export Polygon/MultiPolygon GeoJSON. Imported features require `zoneCode` (or `zone`/`code`) and may include `pocketName`.
 
 **Save draft** shares the working geometry without changing operational classification. **Publish** requires current City stops, an effective date, source, and review note, then creates an immutable version. Corrections are new superseding publications rather than edits to history.
+
+## Zone performance view
+
+The existing TOD activity card has **Map** and **Zone performance** views that share the selected Ridership period and Activity/Pickups/Drop-offs metric. Zone performance classifies every daily location with the immutable version effective on that service date, then shows each zone's selected metric, pickups, drop-offs, active-stop count, coverage share, connection-stop share, top five stops, and daily or weekly trend. Unassigned activity remains visible as a review queue. The F / Temporary T construction watch compares their current selected-period coverage and does not claim causality or supply a pre-construction baseline.
+
+Zone rows are intentionally non-additive. A shared stop contributes its full activity to every applicable zone, matching the map filters, so coverage shares may overlap and the rows may sum above the system total. Connection share is specific to the selected zone: a stop that is ordinary in Zone D but a connection for Zone C counts as connection activity only for C. Activity remains pickups plus drop-offs and therefore represents stop touches, not completed trips or unique riders.
 
 ## Managed codes and safeguards
 

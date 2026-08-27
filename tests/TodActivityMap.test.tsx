@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
 vi.mock('react-map-gl/mapbox', () => ({
-  Layer: (): null => null,
+  Layer: ({ id }: { id?: string }) => <div data-layer-id={id} />,
   Popup: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   Source: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
@@ -86,7 +86,7 @@ describe('TodActivityMap', () => {
     expect(container.firstElementChild?.className).not.toContain('fixed inset-0');
   });
 
-  it('identifies published connection stops in the legend and location details', () => {
+  it('renders one connection halo behind the activity point and a close-zoom label', () => {
     const draft = createTodZoneASeedDraft();
     const location = {
       id: '58', name: 'Stop 58', lat: 44.38, lon: -79.69, pickups: 3, dropoffs: 2,
@@ -101,6 +101,17 @@ describe('TodActivityMap', () => {
     };
 
     flushSync(() => root.render(<TodActivityMap locations={[location]} metric="activity" zoneVersion={version} />));
-    expect(container.textContent).toContain('Zone A connection');
+    expect(container.textContent).toContain('Connection stop halo');
+    expect(container.textContent).not.toContain('Zone A connection');
+
+    const halo = container.querySelector('[data-layer-id="tod-zone-connection-halos"]');
+    const activity = container.querySelector('[data-testid="heatmap-points"]');
+    const label = container.querySelector('[data-layer-id="tod-zone-connection-stop-labels"]');
+    expect(halo).not.toBeNull();
+    expect(label).not.toBeNull();
+    expect(container.querySelector('[data-layer-id="tod-zone-shared-connection-stops"]')).toBeNull();
+    expect(container.querySelector('[data-layer-id="tod-zone-quinary-connection-stops"]')).toBeNull();
+    expect(halo?.compareDocumentPosition(activity as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(activity?.compareDocumentPosition(label as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
