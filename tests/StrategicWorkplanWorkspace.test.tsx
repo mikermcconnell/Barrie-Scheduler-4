@@ -1,8 +1,10 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createStrategicWorkplanBaseline } from '../utils/strategic-plan/workplanBaseline';
+import { addStrategicWorkplanDays, createStrategicWorkplanBaseline } from '../utils/strategic-plan/workplanBaseline';
 import { StrategicWorkplanWorkspace } from '../components/Analytics/StrategicWorkplanWorkspace';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const loadWorkplan = vi.fn();
 const saveWorkplan = vi.fn();
@@ -63,6 +65,62 @@ describe('StrategicWorkplanWorkspace', () => {
         expect(container.querySelector('[role="dialog"]')).not.toBeNull();
         expect(container.textContent).toContain('Project-control details');
         expect(container.textContent).toContain('Milestones and review windows');
+    });
+
+    it('expands the Full Schedule into a viewport planning canvas', () => {
+        const fullScreen = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Full screen')) as HTMLButtonElement;
+        act(() => fullScreen.click());
+
+        expect(container.querySelector('[aria-label="Full-screen project schedule"]')).not.toBeNull();
+        expect(document.body.style.overflow).toBe('hidden');
+        expect(container.textContent).toContain('Exit full screen');
+        expect(container.textContent).toContain('Weekly snap');
+
+        const exit = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Exit full screen')) as HTMLButtonElement;
+        act(() => exit.click());
+        expect(container.querySelector('[aria-label="Full-screen project schedule"]')).toBeNull();
+    });
+
+    it('moves a task and its milestones one week from the keyboard-accessible Gantt bar', async () => {
+        const baseline = createStrategicWorkplanBaseline('team-a', 'planner-a');
+        const before = baseline.tasks.find(task => task.wbs === '1.01')!;
+        const move = container.querySelector('button[aria-label^="Move 1.01 "]') as HTMLButtonElement;
+
+        act(() => move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+        expect(container.textContent).toContain('Dependencies were not auto-shifted');
+
+        const publish = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Publish baseline')) as HTMLButtonElement;
+        await act(async () => {
+            publish.click();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const saved = saveWorkplan.mock.calls[0][1] as ReturnType<typeof createStrategicWorkplanBaseline>;
+        const after = saved.tasks.find(task => task.wbs === '1.01')!;
+        expect(after.startDate).toBe(addStrategicWorkplanDays(before.startDate!, 7));
+        expect(after.endDate).toBe(addStrategicWorkplanDays(before.endDate!, 7));
+        expect(after.segments[0].startDate).not.toBe(before.segments[0].startDate);
+    });
+
+    it('resizes a Gantt endpoint without moving its milestone dates', async () => {
+        const baseline = createStrategicWorkplanBaseline('team-a', 'planner-a');
+        const before = baseline.tasks.find(task => task.wbs === '1.02')!;
+        const finish = container.querySelector('[data-testid="timeline-end-1.02"]') as HTMLButtonElement;
+
+        act(() => finish.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+        const publish = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Publish baseline')) as HTMLButtonElement;
+        await act(async () => {
+            publish.click();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const saved = saveWorkplan.mock.calls[0][1] as ReturnType<typeof createStrategicWorkplanBaseline>;
+        const after = saved.tasks.find(task => task.wbs === '1.02')!;
+        expect(after.startDate).toBe(before.startDate);
+        expect(after.endDate).toBe(addStrategicWorkplanDays(before.endDate!, 7));
+        expect(after.segments).toEqual(before.segments);
     });
 
     it('explains version history before the baseline is first published', () => {
