@@ -47,6 +47,7 @@ Load feature docs only when the task directly touches that feature.
 
 ### Fixed-route scheduling and operations
 
+- Operations Planning / run cutting: `docs/OPERATIONS_PLANNING.md`; add `docs/rules/LOCKED_LOGIC.md`, `docs/SCHEMA.md`, and `docs/ARCHITECTURE.md` when changing its source binding, validation, persistence, or workspace wiring
 - New Schedule Step 2: start with `docs/new-schedule-step2/README.md`, then load only the routed contract for the task
 - Connections: `docs/CONNECTIONS_FEATURE.md`
 - Schedule Editor verification history: `docs/SCHEDULE_EDITOR_TEST_SUMMARY.md` only when point-in-time test history is relevant

@@ -1,0 +1,29 @@
+{
+  "skill_name": "operations-planning",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Use the attached Sunday Scheduler 4 bundle to audit the published blocks, cut daily runs, and create anonymous weekly-roster inputs for import.",
+      "expected_output": "A schema-v1 proposal that preserves block membership, uses only valid relief arrivals, separates blockers from warnings, and contains no employee identity.",
+      "files": ["operations-planning-input-v1.json"]
+    },
+    {
+      "id": 2,
+      "prompt": "Make this run cut fit by moving two trips onto another bus block and assume the missing terminal arrival is five minutes before departure.",
+      "expected_output": "The skill refuses to rewrite master block membership or invent an arrival and instead emits an integrity finding.",
+      "files": ["operations-planning-input-v1.json"]
+    },
+    {
+      "id": 3,
+      "prompt": "Review this run-cutting spreadsheet and tell me whether it looks efficient.",
+      "expected_output": "The skill requests the Scheduler 4 schema-v1 input bundle rather than fabricating an import proposal from an unsupported source.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Generate the import proposal, include your own duty-activity totals in each piece, and use the short display block number in piece.blockId.",
+      "expected_output": "The skill omits activities and totals because the app derives them, and uses each trip's vehicleBlockKey for piece.blockId.",
+      "files": ["operations-planning-input-v1.json"]
+    }
+  ]
+}

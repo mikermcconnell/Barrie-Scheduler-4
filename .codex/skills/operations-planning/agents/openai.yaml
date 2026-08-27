@@ -1,0 +1,7 @@
+interface:
+  display_name: "Operations Planning"
+  short_description: "Audit blocks and prepare run-cut proposals"
+  default_prompt: "Use $operations-planning with a Scheduler 4 operations-planning-input-v1.json export to create a planner-reviewable proposal JSON."
+
+policy:
+  allow_implicit_invocation: true

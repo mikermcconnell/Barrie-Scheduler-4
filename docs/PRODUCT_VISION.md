@@ -45,6 +45,7 @@ The fixed-route workflow replaces manual Excel-based scheduling with a structure
 Load these only when the task is directly related:
 
 - `docs/DETOUR_PUBLISHER.md` for detour and stop-closure notice authoring
+- `docs/OPERATIONS_PLANNING.md` for Codex-assisted block audit, run cutting, and anonymous weekly rostering
 - `docs/route-concept-planner/README.md` and its contract docs for neutral complete-route concept testing
 - `docs/route-planner-2/README.md` and numbered docs for current Camp Shuttle Planner work
 - `docs/route-planner-legacy/README.md` only for historical old Route Planner background
@@ -112,6 +113,16 @@ Define targets (GO Train, college bells) → Run optimizer → Review adjustment
 ```
 AI-assisted but planner-controlled.
 
+### 5. Operations Planning
+```
+Pin published master versions -> Export validated planning bundle -> Generate external Codex proposal -> Import and independently validate -> Planner edit/review -> Submit -> Approve -> Excel
+```
+Operations Planning audits existing vehicle blocks, cuts operator runs, and
+builds anonymous weekly rosters without changing master trips, times, or block
+membership. Integrity and confirmed contractual failures block approval. Codex
+is a proposal author only; Scheduler 4 recalculates metrics and the planner owns
+every scenario transition.
+
 ## Transit On-Demand Workflow
 
 ```
@@ -143,6 +154,7 @@ RideCo/MVT imports are planner-reviewed before they replace the active shifts. T
 ### 4. AI as Assistant, Not Authority
 - Gemini provides suggestions for schedule optimization
 - Transit On Demand uses fast full regenerate and a richer multi-phase refine path before human review
+- Codex may generate a schema-bound operations-planning proposal outside the app; imported work is source-bound, independently validated, and cannot alter a master schedule
 - Planner always has final say
 
 ---
