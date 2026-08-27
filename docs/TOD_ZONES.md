@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TOD zones are an operational classification layer in Ridership's existing Transit On Demand Activity Map. They answer which published service zone or zones underlie a stop and let planners filter the existing pickup/drop-off activity. They do not create route attribution, hourly detail, demand totals for stops with no recorded activity, or additive KPIs across overlapping zones.
+TOD zones are an operational classification layer for Ridership's existing Transit On Demand Activity Map. They determine the zone-coloured outline around each pickup/drop-off activity bubble without adding separate zone controls or map overlays. They do not create route attribution, hourly detail, demand totals for stops with no recorded activity, or additive KPIs across overlapping zones.
 
 ## Source and Zone A pilot
 
@@ -24,7 +24,7 @@ The Zone H draft is derived from `Transit-ON-Demand-Zone-H.pdf`, effective June 
 
 Temporary Zone T is derived from `Transit-ON-Demand-Temporary-Zone.pdf`, effective July 2, 2026 through Fall 2026. Its Fenchurch pocket contains ordinary stops **973 and 974**, temporarily reassigned from F, and connection stop **725**. T remains a managed temporary zone so it can be superseded by a later effective-dated publication when construction ends.
 
-Zone definitions use the source-map colors: A blue (`#117db6`), B orange (`#f58645`), C red (`#dd1f33`), D lime green (`#8dc73f`), E brown (`#9c3220`), F gold (`#cb9f2c`), H purple (`#7e489c`), and T gray (`#606161`). Polygon fills/outlines, editor connection markers, activity-map connection markers, and connection legends use the corresponding definition color. On the activity map a connection stop uses one source-colored outer halo behind the ridership dot, keeping the selected ridership metric visible; collision-aware zone-code labels appear only at close zoom. Shared connection stops retain every connection-zone code.
+Zone definitions use the source-map colors: A blue (`#117db6`), B orange (`#f58645`), C red (`#dd1f33`), D lime green (`#8dc73f`), E brown (`#9c3220`), F gold (`#cb9f2c`), H purple (`#7e489c`), and T gray (`#606161`). The activity map uses these colours only as a clear outline around the existing ridership bubbles; bubble fill and size continue to encode the selected activity metric. It does not render zone polygons, zone labels, connection-stop symbols, zone filters, or a zone legend. Unassigned bubbles use a neutral gray outline. If a stop has multiple published zone codes, its alphabetically first code supplies the single outline colour while the full membership remains preserved in the classified data.
 
 The editor loads current active stops from the City layer at `https://gispublic.barrie.ca/arcgis/rest/services/Open_Data/FacilitiesStreets/MapServer/6`. A published version also snapshots stop coordinates, assigned zone codes, and connection-stop status so historical classifications remain reproducible if the live layer later changes.
 
@@ -36,20 +36,14 @@ The client and GeoJSON interchange use standard `[longitude, latitude]` position
 - Disconnected polygons may share one zone code. Connection stops may intentionally have multiple codes.
 - Connection stops are explicit zone records, not polygon expansions or generic stop overrides. A connection stop inherits its listed zone membership and retains both an `isConnectionStop` flag and its specific `connectionZoneCodes` in the published snapshot.
 - An `include` override adds listed codes, `exclude` removes listed codes, and `replace` substitutes the full membership. Overrides require a reason.
-- Activity selected across multiple effective versions is classified day by day. The map displays the latest applicable outline and discloses that more than one version was used.
-- `Unassigned` is a visible, filterable outcome. Missing geometry must not be silently assigned to the nearest zone.
+- Activity selected across multiple effective versions is classified day by day. The combined bubble preserves every applicable membership and uses the alphabetically first code for its single outline colour.
+- `Unassigned` remains a visible neutral-gray bubble outcome. Missing geometry must not be silently assigned to the nearest zone.
 
 ## Planner workflow
 
-Team owners and admins open **Edit zones** from the TOD activity card. They can draw, select, reshape, and delete multiple polygons; switch between light and satellite imagery; inspect current City stops and assignment counts; maintain stop overrides; and import or export Polygon/MultiPolygon GeoJSON. Imported features require `zoneCode` (or `zone`/`code`) and may include `pocketName`.
+The zone editor and immutable publication workflow remain available as maintained implementation capabilities, but the Ridership activity card no longer exposes zone-management UI. The map consumes the published versions only to classify activity and select bubble-outline colours.
 
 **Save draft** shares the working geometry without changing operational classification. **Publish** requires current City stops, an effective date, source, and review note, then creates an immutable version. Corrections are new superseding publications rather than edits to history.
-
-## Zone performance view
-
-The existing TOD activity card has **Map** and **Zone performance** views that share the selected Ridership period and Activity/Pickups/Drop-offs metric. Zone performance classifies every daily location with the immutable version effective on that service date, then shows each zone's selected metric, pickups, drop-offs, active-stop count, coverage share, connection-stop share, top five stops, and daily or weekly trend. Unassigned activity remains visible as a review queue. The F / Temporary T construction watch compares their current selected-period coverage and does not claim causality or supply a pre-construction baseline.
-
-Zone rows are intentionally non-additive. A shared stop contributes its full activity to every applicable zone, matching the map filters, so coverage shares may overlap and the rows may sum above the system total. Connection share is specific to the selected zone: a stop that is ordinary in Zone D but a connection for Zone C counts as connection activity only for C. Activity remains pickups plus drop-offs and therefore represents stop touches, not completed trips or unique riders.
 
 ## Managed codes and safeguards
 
