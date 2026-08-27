@@ -17,7 +17,12 @@ import {
     type StrategicWorkplanSegmentType,
     type StrategicWorkplanStatus,
     type StrategicWorkplanTask,
+    type StrategicWorkplanAuditEntry,
+    type StrategicWorkplanAuditTaskChange,
+    type StrategicWorkplanVersion,
 } from './workplanTypes';
+import { buildStrategicWorkplanAudit } from './workplanAudit';
+import { createStrategicWorkplanBaseline } from './workplanBaseline';
 
 type StrategicWorkplanErrorCode = 'conflict' | 'invalid' | 'permission' | 'network' | 'unknown';
 
@@ -227,11 +232,11 @@ export async function loadStrategicWorkplan(teamId: string): Promise<StrategicWo
 export async function listStrategicWorkplanVersions(
     teamId: string,
     maximum = 20,
-): Promise<StrategicWorkplanDocument[]> {
+): Promise<StrategicWorkplanVersion[]> {
     try {
         const versions = collection(db, 'teams', teamId, 'strategicPlanWorkplans', 'default', 'versions');
         const snapshot = await getDocs(query(versions, orderBy('revision', 'desc'), limit(Math.min(50, Math.max(1, maximum)))));
-        return snapshot.docs.map(version => normalizeStrategicWorkplan(version.data(), teamId));
+        return snapshot.docs.map(version => normalizeStrategicWorkplanVersion(version.data(), teamId));
     } catch (error) {
         throw normalizeFirebaseError(error, 'load');
     }
@@ -241,6 +246,7 @@ export async function saveStrategicWorkplan(
     teamId: string,
     workplan: StrategicWorkplanDocument,
     userId: string,
+    userLabel: string,
 ): Promise<StrategicWorkplanDocument> {
     try {
         const normalized = normalizeStrategicWorkplan(workplan, teamId);
@@ -267,10 +273,13 @@ export async function saveStrategicWorkplan(
                 updatedAt: now,
                 updatedBy: userId,
             };
+            const auditBefore = existing ?? createStrategicWorkplanBaseline(teamId, normalized.createdBy);
+            const audit = buildStrategicWorkplanAudit(auditBefore, saved, { uid: userId, name: userLabel }, now);
             const persisted = { ...saved, updatedAtServer: serverTimestamp() };
             transaction.set(reference, persisted);
             transaction.set(workplanVersionRef(teamId, nextRevision), {
                 ...saved,
+                audit,
                 savedAtServer: serverTimestamp(),
             });
             return saved;
@@ -278,4 +287,54 @@ export async function saveStrategicWorkplan(
     } catch (error) {
         throw normalizeFirebaseError(error, 'save');
     }
+}
+
+function normalizeStrategicWorkplanAudit(
+    value: unknown,
+    workplan: StrategicWorkplanDocument,
+): StrategicWorkplanAuditEntry {
+    if (!isRecord(value)) {
+        return {
+            editedByUid: workplan.updatedBy,
+            editedByName: workplan.updatedBy,
+            editedAt: workplan.updatedAt,
+            summary: `Revision ${workplan.revision} saved before detailed change logging was enabled.`,
+            changes: [],
+        };
+    }
+    const rawChanges = Array.isArray(value.changes) ? value.changes.slice(0, 250) : [];
+    const changes = rawChanges.flatMap((change, index) => {
+        if (!isRecord(change)) return [];
+        const kind = change.kind;
+        if (kind !== 'added' && kind !== 'updated' && kind !== 'deleted') return [];
+        const rawFields = Array.isArray(change.fields) ? change.fields.slice(0, 20) : [];
+        const fields = rawFields.flatMap((field, fieldIndex) => {
+            if (!isRecord(field)) return [];
+            return [{
+                field: boundedString(field.field, `Audit field ${index + 1}.${fieldIndex + 1}`, 80),
+                before: boundedString(field.before, `Audit before ${index + 1}.${fieldIndex + 1}`, 500, true),
+                after: boundedString(field.after, `Audit after ${index + 1}.${fieldIndex + 1}`, 500, true),
+            }];
+        });
+        return [{
+            kind: kind as StrategicWorkplanAuditTaskChange['kind'],
+            taskId: boundedString(change.taskId, `Audit task ID ${index + 1}`, 120),
+            wbs: boundedString(change.wbs, `Audit WBS ${index + 1}`, 30),
+            title: boundedString(change.title, `Audit title ${index + 1}`, 240),
+            fields,
+        }];
+    });
+    return {
+        editedByUid: boundedString(value.editedByUid, 'Audit editor ID', 128),
+        editedByName: boundedString(value.editedByName, 'Audit editor name', 160),
+        editedAt: boundedString(value.editedAt, 'Audit timestamp', 40),
+        summary: boundedString(value.summary, 'Audit summary', 240),
+        changes,
+    };
+}
+
+function normalizeStrategicWorkplanVersion(value: unknown, teamId: string): StrategicWorkplanVersion {
+    const workplan = normalizeStrategicWorkplan(value, teamId);
+    const audit = isRecord(value) ? normalizeStrategicWorkplanAudit(value.audit, workplan) : normalizeStrategicWorkplanAudit(null, workplan);
+    return { ...workplan, audit };
 }

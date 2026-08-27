@@ -140,6 +140,7 @@ describe('StrategicPlanWorkspace', () => {
                 fleetPlanData={fleetPlanData}
                 ridershipTeamId="barrie-team"
                 requestingTeamId="dillon-team"
+                workplanTeamId="barrie-team"
             />,
         ));
     });
@@ -186,7 +187,14 @@ describe('StrategicPlanWorkspace', () => {
             await Promise.resolve();
         });
 
-        expect(container.textContent).toContain('Shared Strategic Workplan for dillon-team');
+        expect(container.textContent).toContain('Shared Strategic Workplan for barrie-team');
+    });
+
+    it('separates editable project control from the evidence-card library', async () => {
+        await act(async () => { await Promise.resolve(); });
+        expect(container.textContent).toContain('Shared project control');
+        expect(container.textContent).toContain('Open full schedule');
+        expect(container.textContent).toContain('Read-only source workspaces remain separate from project-control edits.');
     });
 
     it('shows the complete shared Transit App analysis without import controls', async () => {

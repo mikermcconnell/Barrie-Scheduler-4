@@ -38,6 +38,7 @@ import {
     type StrategicWorkplanSegmentType,
     type StrategicWorkplanStatus,
     type StrategicWorkplanTask,
+    type StrategicWorkplanVersion,
 } from '../../utils/strategic-plan/workplanTypes';
 
 type WorkplanView = 'update-desk' | 'full-schedule' | 'timeline';
@@ -48,7 +49,20 @@ interface StrategicWorkplanWorkspaceProps {
     userId?: string;
     userLabel?: string;
     onBack: () => void;
+    services?: StrategicWorkplanWorkspaceServices;
 }
+
+export interface StrategicWorkplanWorkspaceServices {
+    load: typeof loadStrategicWorkplan;
+    save: typeof saveStrategicWorkplan;
+    listVersions: typeof listStrategicWorkplanVersions;
+}
+
+const DEFAULT_SERVICES: StrategicWorkplanWorkspaceServices = {
+    load: loadStrategicWorkplan,
+    save: saveStrategicWorkplan,
+    listVersions: listStrategicWorkplanVersions,
+};
 
 const STATUS_STYLES: Record<StrategicWorkplanStatus, string> = {
     unconfirmed: 'bg-slate-100 text-slate-700 ring-slate-200',
@@ -147,7 +161,7 @@ const WorkplanTaskEditor: React.FC<{
     const milestones = task.segments.filter(segment => segment.type !== 'task');
 
     return (
-        <aside className="rounded-2xl border border-slate-200 bg-white shadow-lg" aria-label="Task editor">
+        <aside className="h-full overflow-y-auto bg-white shadow-2xl" role="dialog" aria-modal="true" aria-label={`Edit task ${task.wbs}`}>
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
                 <div>
                     <div className="text-xs font-black uppercase tracking-[0.14em] text-[#001C80]">Edit task {task.wbs}</div>
@@ -263,6 +277,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
     userId,
     userLabel = 'Project team member',
     onBack,
+    services = DEFAULT_SERVICES,
 }) => {
     const [workplan, setWorkplan] = useState<StrategicWorkplanDocument | null>(null);
     const [loading, setLoading] = useState(true);
@@ -270,7 +285,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
     const [dirty, setDirty] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
-    const [view, setView] = useState<WorkplanView>('update-desk');
+    const [view, setView] = useState<WorkplanView>('full-schedule');
     const [zoom, setZoom] = useState<TimelineZoom>('standard');
     const [search, setSearch] = useState('');
     const [phaseFilter, setPhaseFilter] = useState('all');
@@ -280,7 +295,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
     const [historyOpen, setHistoryOpen] = useState(false);
     const [historyLoading, setHistoryLoading] = useState(false);
     const [historyError, setHistoryError] = useState<string | null>(null);
-    const [versions, setVersions] = useState<StrategicWorkplanDocument[]>([]);
+    const [versions, setVersions] = useState<StrategicWorkplanVersion[]>([]);
 
     const load = async (confirmDiscard = false) => {
         if (confirmDiscard && dirty && !window.confirm('Discard your unsaved work-plan changes and reload the shared version?')) return;
@@ -288,7 +303,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
         setError(null);
         setNotice(null);
         try {
-            const persisted = await loadStrategicWorkplan(teamId);
+            const persisted = await services.load(teamId);
             setWorkplan(persisted ?? createStrategicWorkplanBaseline(teamId, userId ?? 'unpublished-baseline'));
             setDirty(false);
             setSelectedTaskId(null);
@@ -305,7 +320,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
     useEffect(() => {
         let active = true;
         setLoading(true);
-        loadStrategicWorkplan(teamId)
+        services.load(teamId)
             .then(persisted => {
                 if (!active) return;
                 setWorkplan(persisted ?? createStrategicWorkplanBaseline(teamId, userId ?? 'unpublished-baseline'));
@@ -318,7 +333,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
             })
             .finally(() => { if (active) setLoading(false); });
         return () => { active = false; };
-    }, [teamId, userId]);
+    }, [teamId, userId, services]);
 
     const changeWorkplan = (next: StrategicWorkplanDocument) => {
         setWorkplan(next);
@@ -340,7 +355,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
         setSaving(true);
         setError(null);
         try {
-            const saved = await saveStrategicWorkplan(teamId, workplan, userId);
+            const saved = await services.save(teamId, workplan, userId, userLabel);
             setWorkplan(saved);
             setDirty(false);
             setVersions([]);
@@ -360,7 +375,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
         setHistoryLoading(true);
         setHistoryError(null);
         try {
-            setVersions(await listStrategicWorkplanVersions(teamId));
+            setVersions(await services.listVersions(teamId));
         } catch (historyLoadError) {
             setHistoryError((historyLoadError as Error).message);
         } finally {
@@ -401,6 +416,20 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
     }, [workplan]);
 
     const selectedTask = workplan?.tasks.find(task => task.id === selectedTaskId) ?? null;
+
+    useEffect(() => {
+        if (!selectedTaskId) return;
+        const previousOverflow = document.body.style.overflow;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setSelectedTaskId(null);
+        };
+        document.body.style.overflow = 'hidden';
+        window.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            window.removeEventListener('keydown', onKeyDown);
+        };
+    }, [selectedTaskId]);
 
     const addTask = () => {
         if (!workplan) return;
@@ -537,32 +566,53 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
                         {historyError && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{historyError}</div>}
                         {!historyLoading && !historyError && versions.length === 0 && <div className="mt-4 rounded-lg bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-500">{workplan.revision === 0 ? 'Publish the baseline to create the first version.' : 'No saved versions were returned.'}</div>}
                         {versions.length > 0 && (
-                            <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                            <div className="mt-4 space-y-2">
                                 {versions.map(version => (
-                                    <article key={version.revision} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3">
-                                        <div>
-                                            <div className="text-sm font-black text-slate-900">Revision {version.revision}</div>
-                                            <div className="mt-0.5 text-xs font-semibold text-slate-500">{formatDate(version.updatedAt.slice(0, 10))} · {version.tasks.length} tasks</div>
+                                    <article key={version.revision} className="rounded-xl border border-slate-200 p-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <div className="text-sm font-black text-slate-900">Revision {version.revision} · {version.audit.editedByName}</div>
+                                                <div className="mt-0.5 text-xs font-semibold text-slate-500">{formatDate(version.audit.editedAt.slice(0, 10))} · {version.audit.summary}</div>
+                                                <div className="mt-1 text-[11px] font-semibold text-slate-400">Authenticated user: {version.audit.editedByUid}</div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                disabled={version.revision === workplan.revision && !dirty}
+                                                onClick={() => {
+                                                    const { audit: _audit, ...snapshot } = version;
+                                                    changeWorkplan({
+                                                        ...snapshot,
+                                                        revision: workplan.revision,
+                                                        createdAt: workplan.createdAt,
+                                                        createdBy: workplan.createdBy,
+                                                        updatedAt: workplan.updatedAt,
+                                                        updatedBy: workplan.updatedBy,
+                                                    });
+                                                    setHistoryOpen(false);
+                                                    setNotice(`Revision ${version.revision} is staged. Save to create a new shared revision.`);
+                                                }}
+                                                className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-black text-[#001C80] hover:bg-blue-50 disabled:opacity-40"
+                                            >
+                                                Restore
+                                            </button>
                                         </div>
-                                        <button
-                                            type="button"
-                                            disabled={version.revision === workplan.revision && !dirty}
-                                            onClick={() => {
-                                                changeWorkplan({
-                                                    ...version,
-                                                    revision: workplan.revision,
-                                                    createdAt: workplan.createdAt,
-                                                    createdBy: workplan.createdBy,
-                                                    updatedAt: workplan.updatedAt,
-                                                    updatedBy: workplan.updatedBy,
-                                                });
-                                                setHistoryOpen(false);
-                                                setNotice(`Revision ${version.revision} is staged. Save to create a new shared revision.`);
-                                            }}
-                                            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-black text-[#001C80] hover:bg-blue-50 disabled:opacity-40"
-                                        >
-                                            Restore
-                                        </button>
+                                        {version.audit.changes.length > 0 && (
+                                            <details className="mt-3 rounded-lg bg-slate-50 px-3 py-2">
+                                                <summary className="cursor-pointer text-xs font-black text-slate-700">Who changed what ({version.audit.changes.length} tasks)</summary>
+                                                <div className="mt-2 space-y-2">
+                                                    {version.audit.changes.map(change => (
+                                                        <div key={`${change.kind}-${change.taskId}`} className="border-t border-slate-200 pt-2 text-xs">
+                                                            <div className="font-black text-slate-800">{change.kind.toUpperCase()} · {change.wbs} · {change.title}</div>
+                                                            <ul className="mt-1 space-y-1 text-slate-600">
+                                                                {change.fields.map(field => (
+                                                                    <li key={field.field}><span className="font-bold">{field.field}:</span> {field.before} → {field.after}</li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </details>
+                                        )}
                                     </article>
                                 ))}
                             </div>
@@ -703,7 +753,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
                                 </div>
                                 {filteredTasks.map(task => (
                                     <div key={task.id} className="grid border-b border-slate-200" style={{ gridTemplateColumns: `390px ${timelineWidth}px` }}>
-                                        <button type="button" onClick={() => setSelectedTaskId(task.id)} className="sticky left-0 z-10 flex min-h-14 items-center justify-between gap-3 border-r border-slate-300 bg-white px-4 py-2 text-left hover:bg-slate-50">
+                                        <button type="button" onClick={() => setSelectedTaskId(task.id)} className="sticky left-0 z-10 flex min-h-14 items-center justify-between gap-3 border-r border-slate-300 bg-white px-4 py-2 text-left hover:bg-slate-50" aria-label={`Edit ${task.wbs} ${task.title}`}>
                                             <span className="min-w-0"><span className="block truncate text-sm font-black text-slate-900">{task.wbs} · {task.title}</span><span className="mt-0.5 block truncate text-xs font-semibold text-slate-500">{task.ownership} · {task.chapter ?? task.phaseName}</span></span>
                                             <StatusBadge status={task.status} />
                                         </button>
@@ -771,21 +821,26 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
                     )}
                 </section>
 
-                {selectedTask && (
-                    <WorkplanTaskEditor
-                        task={selectedTask}
-                        allTasks={workplan.tasks}
-                        onChange={updateTask}
-                        onDelete={deleteSelectedTask}
-                        onClose={() => setSelectedTaskId(null)}
-                    />
-                )}
-
                 <footer className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-500">
-                    <span><History size={14} className="mr-1.5 inline" />Each shared save creates an immutable Firestore version for audit and conflict recovery.</span>
+                    <span><History size={14} className="mr-1.5 inline" />Each shared save records the authenticated editor and task-field changes in an immutable Firestore version.</span>
                     <span>Current status is project-control information, not approval of Strategic Plan recommendations.</span>
                 </footer>
             </main>
+
+            {selectedTask && (
+                <div className="fixed inset-0 z-50 flex justify-end" aria-label="Task editing drawer">
+                    <button type="button" className="absolute inset-0 bg-slate-950/45 backdrop-blur-[1px]" onClick={() => setSelectedTaskId(null)} aria-label="Close task editor" />
+                    <div className="relative h-full w-full max-w-2xl">
+                        <WorkplanTaskEditor
+                            task={selectedTask}
+                            allTasks={workplan.tasks}
+                            onChange={updateTask}
+                            onDelete={deleteSelectedTask}
+                            onClose={() => setSelectedTaskId(null)}
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

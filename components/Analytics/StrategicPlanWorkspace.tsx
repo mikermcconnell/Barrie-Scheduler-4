@@ -12,6 +12,7 @@ import type {
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { buildStrategicFleetPlanEvidence } from '../../utils/strategic-plan/fleetPlanEvidence';
 import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
+import type { StrategicWorkplanWorkspaceServices } from './StrategicWorkplanWorkspace';
 
 interface StrategicPlanWorkspaceProps {
     onBack: () => void;
@@ -23,8 +24,10 @@ interface StrategicPlanWorkspaceProps {
     fleetPlanError?: string | null;
     ridershipTeamId?: string;
     requestingTeamId?: string;
+    workplanTeamId?: string;
     currentUserId?: string;
     currentUserLabel?: string;
+    workplanServices?: StrategicWorkplanWorkspaceServices;
 }
 
 const DAY_TYPES: StrategicPlanDayType[] = ['Weekday', 'Saturday', 'Sunday'];
@@ -72,6 +75,33 @@ const EvidenceWorkspaceCard: React.FC<EvidenceWorkspaceCardProps> = ({
         <span className="mt-5 text-xs font-bold uppercase tracking-[0.12em] text-slate-400">{source}</span>
         <span className="mt-4 inline-flex items-center gap-2 text-sm font-black text-[#001C80]">
             Open workspace <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
+        </span>
+    </button>
+);
+
+const ProjectControlWorkspaceCard: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+    <button
+        type="button"
+        onClick={onClick}
+        className="group relative w-full overflow-hidden rounded-3xl border border-indigo-300 bg-gradient-to-br from-[#001C80] via-indigo-900 to-slate-950 p-6 text-left text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-[#001C80] focus:ring-offset-2 sm:p-7"
+    >
+        <span className="absolute -right-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" aria-hidden="true" />
+        <span className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <span className="flex items-start gap-4">
+                <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-inset ring-white/25">
+                    <GanttChartSquare size={28} />
+                </span>
+                <span>
+                    <span className="text-xs font-black uppercase tracking-[0.18em] text-blue-200">Shared project control</span>
+                    <span className="mt-2 block text-2xl font-black">Project Work Plan</span>
+                    <span className="mt-2 block max-w-4xl text-sm leading-relaxed text-blue-100">
+                        Maintain the complete Dillon schedule, task ownership, status, progress, dates, dependencies, milestones, and update notes. Every shared save records who changed which task fields.
+                    </span>
+                </span>
+            </span>
+            <span className="relative inline-flex shrink-0 items-center gap-2 self-start rounded-xl bg-white px-4 py-3 text-sm font-black text-[#001C80] shadow-sm lg:self-center">
+                Open full schedule <ArrowRight size={17} className="transition-transform group-hover:translate-x-1" />
+            </span>
         </span>
     </button>
 );
@@ -235,8 +265,10 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
     fleetPlanError = null,
     ridershipTeamId,
     requestingTeamId,
+    workplanTeamId,
     currentUserId,
     currentUserLabel,
+    workplanServices,
 }) => {
     const [dayType, setDayType] = useState<StrategicPlanDayType>('Weekday');
     const [section, setSection] = useState<StrategicPlanSection>('overview');
@@ -266,9 +298,10 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
                 </div>
             )}>
                 <StrategicWorkplanWorkspace
-                    teamId={requestingTeamId}
+                    teamId={workplanTeamId ?? requestingTeamId}
                     userId={currentUserId}
                     userLabel={currentUserLabel}
+                    services={workplanServices}
                     onBack={() => setSection('overview')}
                 />
             </Suspense>
@@ -311,23 +344,20 @@ export const StrategicPlanWorkspace: React.FC<StrategicPlanWorkspaceProps> = ({
 
             <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">
                 {section === 'overview' && (
-                    <section aria-labelledby="evidence-workspaces-heading">
+                    <section aria-labelledby="strategic-workspaces-heading">
                         <div className="mb-6 max-w-3xl">
-                            <p className="text-xs font-black uppercase tracking-[0.16em] text-[#001C80]">Evidence library</p>
-                            <h2 id="evidence-workspaces-heading" className="mt-2 text-2xl font-black text-slate-900">Strategic Plan workspaces</h2>
+                            <p className="text-xs font-black uppercase tracking-[0.16em] text-[#001C80]">Project hub</p>
+                            <h2 id="strategic-workspaces-heading" className="mt-2 text-2xl font-black text-slate-900">Strategic Plan workspaces</h2>
                             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                                Maintain the shared project work plan, then open source-specific evidence for the service baseline, annual boardings, rider-planning, fleet-capital outlook, or canonical published schedule. Evidence sources remain separate and read-only.
+                                Maintain the shared project schedule, then use the evidence library for source-specific planning context.
                             </p>
                         </div>
-                        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-                            <EvidenceWorkspaceCard
-                                title="Project Work Plan"
-                                description="Update task status, ownership, progress, dependencies, deliverables, and the shared Gantt schedule from the Dillon proposal baseline."
-                                source="Dillon schedule · June 16, 2026"
-                                icon={<GanttChartSquare size={24} />}
-                                accentClassName="bg-indigo-50 text-indigo-800"
-                                onClick={() => setSection('project-workplan')}
-                            />
+                        <ProjectControlWorkspaceCard onClick={() => setSection('project-workplan')} />
+                        <div className="mb-4 mt-8">
+                            <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Evidence library</p>
+                            <p className="mt-1 text-sm text-slate-600">Read-only source workspaces remain separate from project-control edits.</p>
+                        </div>
+                        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
                             <EvidenceWorkspaceCard
                                 title="Current Scheduled Service Route Summaries"
                                 description="Compare static-GTFS service spans, scheduled frequency regimes, and revenue hours by service day."

@@ -31,6 +31,7 @@ export interface Team {
         performance?: string;
         fleetPlan?: string;
         masterSchedules?: string;
+        strategicPlanWorkplan?: string;
     };
     partnerTeam?: boolean;
 }

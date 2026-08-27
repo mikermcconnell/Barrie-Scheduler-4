@@ -126,6 +126,12 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
             ...(typeof rawDataSourceTeamIds.masterSchedules === 'string' && rawDataSourceTeamIds.masterSchedules
                 ? { masterSchedules: rawDataSourceTeamIds.masterSchedules }
                 : {}),
+            ...(typeof rawDataSourceTeamIds.fleetPlan === 'string' && rawDataSourceTeamIds.fleetPlan
+                ? { fleetPlan: rawDataSourceTeamIds.fleetPlan }
+                : {}),
+            ...(typeof rawDataSourceTeamIds.strategicPlanWorkplan === 'string' && rawDataSourceTeamIds.strategicPlanWorkplan
+                ? { strategicPlanWorkplan: rawDataSourceTeamIds.strategicPlanWorkplan }
+                : {}),
         }
         : undefined;
 
@@ -746,7 +752,8 @@ export async function updateTeamDefaultWorkspaceAccess(
 }
 
 /**
- * Set read-only source teams for partner workspaces.
+ * Set source teams for partner workspaces. Evidence sources are read-only;
+ * Strategic Plan work-plan collaboration is explicitly editable by rule.
  * Empty values remove the override and make the workspace use its own team data.
  */
 export async function updateTeamDataSourceTeamIds(
@@ -758,6 +765,7 @@ export async function updateTeamDataSourceTeamIds(
         ...(dataSourceTeamIds?.performance ? { performance: dataSourceTeamIds.performance } : {}),
         ...(dataSourceTeamIds?.fleetPlan ? { fleetPlan: dataSourceTeamIds.fleetPlan } : {}),
         ...(dataSourceTeamIds?.masterSchedules ? { masterSchedules: dataSourceTeamIds.masterSchedules } : {}),
+        ...(dataSourceTeamIds?.strategicPlanWorkplan ? { strategicPlanWorkplan: dataSourceTeamIds.strategicPlanWorkplan } : {}),
     };
 
     await updateDoc(doc(db, 'teams', teamId), {
