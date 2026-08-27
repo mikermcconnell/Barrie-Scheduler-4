@@ -7,8 +7,40 @@ import {
     type StrategicWorkplanTask,
 } from './workplanTypes';
 
-const BASELINE_START = '2026-07-06';
-const BASELINE_END = '2027-08-30';
+// The source is week-precision, so the requested one-month project-control
+// adjustment is represented as four complete schedule weeks.
+const BASELINE_START = '2026-08-03';
+const BASELINE_END = '2027-09-27';
+
+const DEPENDENCIES_BY_WBS: Readonly<Record<string, readonly string[]>> = {
+    '1.02': ['1.01'],
+    '1.03': ['1.01'],
+    '1.04': ['1.01'],
+    '2.01': ['1.01'],
+    '2.02': ['2.01'],
+    '2.03': ['2.01'],
+    '2.04': ['2.01'],
+    '2.05': ['2.01'],
+    '2.06': ['2.01'],
+    '2.07': ['2.01'],
+    '2.08': ['2.01'],
+    '2.09': ['2.03', '2.04', '2.05', '2.06', '2.07'],
+    '2.10': ['2.01'],
+    '3.03': ['3.01', '3.02'],
+    '3.07': ['3.04', '3.05', '3.06'],
+    '3.13': ['3.08', '3.09', '3.10', '3.11', '3.12'],
+    '3.18': ['3.14', '3.15', '3.16', '3.17'],
+    '3.25': ['3.19', '3.20', '3.21', '3.22', '3.23', '3.24'],
+    '3.29': ['3.26', '3.27', '3.28'],
+    '3.33': ['3.30', '3.31', '3.32'],
+    '3.40': ['3.34', '3.35', '3.36', '3.37', '3.38', '3.39'],
+    '3.44': ['3.41', '3.42', '3.43'],
+    '3.51': ['3.45', '3.46', '3.47', '3.48', '3.49', '3.50'],
+    '3.54': ['3.52', '3.53'],
+    '4.01': ['2.09', '3.03', '3.07', '3.13', '3.18', '3.25', '3.29', '3.33', '3.40', '3.44', '3.51', '3.54'],
+    '4.02': ['4.01'],
+    '4.03': ['4.02'],
+};
 
 type BaselineRow = readonly [
     wbs: string,
@@ -276,7 +308,7 @@ function buildTask(group: BaselineGroup, row: BaselineRow): StrategicWorkplanTas
         endDate: sortedEnds.at(-1) ?? null,
         status: 'unconfirmed',
         progress: 0,
-        dependencies: [],
+        dependencies: [...(DEPENDENCIES_BY_WBS[wbs] ?? [])],
         notes: '',
         segments,
     };
@@ -299,7 +331,7 @@ export function createStrategicWorkplanBaseline(teamId: string, userId: string):
             schedulePages: 'PDF pages 6-7 (proposal pages 5-5 to 5-6)',
             importedAt: '2026-08-27',
             datePrecision: 'week',
-            note: 'Baseline dates were transcribed from the proposal Gantt. Markers identify the week shown in the source; current status and progress require project-team confirmation.',
+            note: 'Task and milestone relationships were transcribed from the proposal Gantt, then all dated work was shifted four schedule weeks later for project control. Dependencies are planning assumptions inferred from the work-plan sequence and require project-team confirmation. Current status and progress also require confirmation.',
         },
         tasks: GROUPS.flatMap(group => group.rows.map(row => buildTask(group, row))),
         createdAt: now,

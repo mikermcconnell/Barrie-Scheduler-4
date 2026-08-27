@@ -45,7 +45,7 @@ describe('StrategicWorkplanWorkspace', () => {
         expect(container.textContent).toContain('Project Initiation Meeting');
         const fullSchedule = Array.from(container.querySelectorAll('[role="tab"]')).find(tab => tab.textContent?.includes('Full Schedule')) as HTMLButtonElement;
         expect(fullSchedule.getAttribute('aria-selected')).toBe('true');
-        expect(container.textContent).toContain('Jul 2026');
+        expect(container.textContent).toContain('Aug 2026');
     });
 
     it('switches to the leadership Timeline view', () => {
