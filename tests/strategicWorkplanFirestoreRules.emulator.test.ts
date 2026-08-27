@@ -38,6 +38,22 @@ function workplanData(userId: string, revision: number) {
     };
 }
 
+function auditData(userId: string) {
+    return {
+        editedByUid: userId,
+        editedByName: userId === 'dillon-user' ? 'Dillon Planner' : 'Barrie Planner',
+        editedAt: '2026-08-27T13:00:00.000Z',
+        summary: 'Changed 1 task across 1 field.',
+        changes: [{
+            kind: 'updated',
+            taskId: 'task-1',
+            wbs: '1.01',
+            title: 'Project initiation',
+            fields: [{ field: 'Status', before: 'Unconfirmed', after: 'In progress' }],
+        }],
+    };
+}
+
 describeWithEmulator('Strategic work-plan Firestore rules', () => {
     let environment: RulesTestEnvironment;
 
@@ -69,22 +85,33 @@ describeWithEmulator('Strategic work-plan Firestore rules', () => {
                     role: 'member',
                     accessLevel: 'none',
                 }),
-                setDoc(doc(db, 'teams/team-b/members/other-team-user'), {
+                setDoc(doc(db, 'teams/team-c/members/other-team-user'), {
                     role: 'member',
                     accessLevel: 'internal',
                 }),
+                setDoc(doc(db, 'teams/team-b/members/dillon-user'), {
+                    role: 'member',
+                    accessLevel: 'none',
+                    workspaceOverrides: { analyticsStrategicPlan: true },
+                }),
+                setDoc(doc(db, 'teams/team-b'), {
+                    dataSourceTeamIds: { strategicPlanWorkplan: 'team-a' },
+                }),
+                setDoc(doc(db, 'users/dillon-user'), { teamId: 'team-b' }),
+                setDoc(doc(db, 'teams/team-c'), { dataSourceTeamIds: {} }),
+                setDoc(doc(db, 'users/other-team-user'), { teamId: 'team-c' }),
             ]);
         });
     });
 
-    async function publishRevision(revision: number) {
-        const db = environment.authenticatedContext('strategic-user').firestore();
+    async function publishRevision(revision: number, userId = 'strategic-user') {
+        const db = environment.authenticatedContext(userId).firestore();
         const root = doc(db, 'teams/team-a/strategicPlanWorkplans/default');
         const version = doc(db, `teams/team-a/strategicPlanWorkplans/default/versions/${revision}`);
-        const data = workplanData('strategic-user', revision);
+        const data = workplanData(userId, revision);
         const batch = writeBatch(db);
         batch.set(root, { ...data, updatedAtServer: serverTimestamp() });
-        batch.set(version, { ...data, savedAtServer: serverTimestamp() });
+        batch.set(version, { ...data, audit: auditData(userId), savedAtServer: serverTimestamp() });
         return batch.commit();
     }
 
@@ -101,6 +128,42 @@ describeWithEmulator('Strategic work-plan Firestore rules', () => {
         const outsider = environment.authenticatedContext('other-team-user').firestore();
         await assertFails(getDoc(doc(noAccess, 'teams/team-a/strategicPlanWorkplans/default')));
         await assertFails(getDoc(doc(outsider, 'teams/team-a/strategicPlanWorkplans/default')));
+    });
+
+    it('allows a configured Dillon member to maintain the Barrie-owned work plan', async () => {
+        await assertSucceeds(publishRevision(1, 'dillon-user'));
+        const dillonDb = environment.authenticatedContext('dillon-user').firestore();
+        const barrieDb = environment.authenticatedContext('strategic-user').firestore();
+        await assertSucceeds(getDoc(doc(dillonDb, 'teams/team-a/strategicPlanWorkplans/default')));
+        await assertSucceeds(getDoc(doc(barrieDb, 'teams/team-a/strategicPlanWorkplans/default')));
+        await assertSucceeds(publishRevision(2, 'dillon-user'));
+    });
+
+    it('rejects an audit entry attributed to someone other than the caller', async () => {
+        const db = environment.authenticatedContext('strategic-user').firestore();
+        const data = workplanData('strategic-user', 1);
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'teams/team-a/strategicPlanWorkplans/default'), { ...data, updatedAtServer: serverTimestamp() });
+        batch.set(doc(db, 'teams/team-a/strategicPlanWorkplans/default/versions/1'), {
+            ...data,
+            audit: auditData('dillon-user'),
+            savedAtServer: serverTimestamp(),
+        });
+        await assertFails(batch.commit());
+    });
+
+    it('rejects a version snapshot that does not match the active work plan', async () => {
+        const db = environment.authenticatedContext('strategic-user').firestore();
+        const data = workplanData('strategic-user', 1);
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'teams/team-a/strategicPlanWorkplans/default'), { ...data, updatedAtServer: serverTimestamp() });
+        batch.set(doc(db, 'teams/team-a/strategicPlanWorkplans/default/versions/1'), {
+            ...data,
+            name: 'Different snapshot',
+            audit: auditData('strategic-user'),
+            savedAtServer: serverTimestamp(),
+        });
+        await assertFails(batch.commit());
     });
 
     it('requires consecutive revisions and immutable matching version snapshots', async () => {

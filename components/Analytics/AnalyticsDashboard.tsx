@@ -239,6 +239,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
     const transitAppDataTeamId = team?.dataSourceTeamIds?.transitApp || team?.id;
     const performanceDataTeamId = team?.dataSourceTeamIds?.performance || team?.id;
     const fleetPlanDataTeamId = team?.dataSourceTeamIds?.fleetPlan || team?.id;
+    const strategicWorkplanTeamId = team?.dataSourceTeamIds?.strategicPlanWorkplan || team?.id;
     const usesSharedTransitAppData = !!team?.dataSourceTeamIds?.transitApp && team.dataSourceTeamIds.transitApp !== team.id;
     const { canAccess, loading: accessLoading } = useWorkspaceAccess();
     const canReadTransitAppEvidence = canAccess('analyticsTransitApp') || canAccess('analyticsStrategicPlan');
@@ -844,6 +845,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                         fleetPlanError={fleetPlanEvidenceError}
                         ridershipTeamId={performanceDataTeamId || team.id}
                         requestingTeamId={team.id}
+                        workplanTeamId={strategicWorkplanTeamId || team.id}
                         currentUserId={user?.uid}
                         currentUserLabel={user?.displayName || user?.email || 'Project team member'}
                     />
