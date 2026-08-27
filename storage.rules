@@ -174,19 +174,20 @@ service firebase.storage {
 
     // Immutable operations-planning revisions. The Firestore root stores the
     // active pointer; only an audited support-edit session may clean up orphans.
-    match /teams/{teamId}/operationsPlanningScenarios/{scenarioId}/versions/{revision}.json {
+    match /teams/{teamId}/operationsPlanningScenarios/{scenarioId}/versions/{revisionFile} {
       allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
         canSupportReadTeamData(teamId);
-      allow create: if revision.matches('^[1-9][0-9]{0,6}$') &&
+      allow create: if revisionFile.matches('^[1-9][0-9]{0,6}\\.json$') &&
         (canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId)) &&
         request.resource.contentType == 'application/json' &&
         request.resource.size > 0 &&
         request.resource.size <= 25 * 1024 * 1024 &&
         request.resource.metadata.teamId == teamId &&
         request.resource.metadata.scenarioId == scenarioId &&
-        request.resource.metadata.revision == revision &&
+        request.resource.metadata.revision.matches('^[1-9][0-9]{0,6}$') &&
+        revisionFile == request.resource.metadata.revision + '.json' &&
         request.resource.metadata.savedBy == request.auth.uid &&
-        ((revision == '1' &&
+        ((request.resource.metadata.revision == '1' &&
           request.resource.metadata.previousStoragePath == '' &&
           !firestore.exists(/databases/(default)/documents/teams/$(teamId)/operationsPlanningScenarios/$(scenarioId))) ||
          (firestore.exists(/databases/(default)/documents/teams/$(teamId)/operationsPlanningScenarios/$(scenarioId)) &&

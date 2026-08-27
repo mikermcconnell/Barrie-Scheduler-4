@@ -22,13 +22,14 @@ describe('operations-planning security rules', () => {
   it('keeps revision JSON immutable for all ordinary members, including managers', () => {
     const rules = readFileSync('storage.rules', 'utf8');
     const revisionRules = rules.match(
-      /match \/teams\/\{teamId\}\/operationsPlanningScenarios\/\{scenarioId\}\/versions\/\{revision\}\.json \{([\s\S]*?)\/\/ Team route map images/
+      /match \/teams\/\{teamId\}\/operationsPlanningScenarios\/\{scenarioId\}\/versions\/\{revisionFile\} \{([\s\S]*?)\/\/ Team route map images/
     )?.[1] ?? '';
 
     expect(revisionRules).toMatch(/allow read: if canAccessWorkspace\(teamId, 'workspaceFixedRoute'\)/);
     expect(revisionRules).toMatch(/allow create:[\s\S]*request\.resource\.contentType == 'application\/json'/);
     expect(revisionRules).toMatch(/request\.resource\.size <= 25 \* 1024 \* 1024/);
     expect(revisionRules).toMatch(/request\.resource\.metadata\.savedBy == request\.auth\.uid/);
+    expect(revisionRules).toMatch(/revisionFile == request\.resource\.metadata\.revision \+ '\.json'/);
     expect(revisionRules).toMatch(/metadata\.previousStoragePath ==[\s\S]*\.data\.storagePath/);
     expect(revisionRules).toMatch(/\.data\.status in \['draft', 'submitted'\]/);
     expect(revisionRules).toMatch(/allow update: if false;/);
