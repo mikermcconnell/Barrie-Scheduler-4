@@ -1,6 +1,6 @@
 # Operations Dashboard Metric Register
 
-> Last reviewed: July 29, 2026
+> Last reviewed: August 27, 2026
 > Scope: STREETS AVL/APC Operations Dashboard  
 > Purpose: durable definitions and validation status for operational metrics
 
@@ -15,6 +15,8 @@ Use this document when changing dashboard calculations, filters, labels, imports
 The Planning Data Ridership Trends workspace reuses only each day's system fixed-route boarding total. A separate compact projection retains those post-cutover daily totals beyond the detailed dashboard's 380-day history and combines them with the reported workbook baseline through July 2026. It does not add Transit On Demand activity or expose route, stop, trip, operator, load, or alighting detail. See `docs/RIDERSHIP_TRENDS.md`.
 
 The dashboard uses one shared time-range and day-type filter across Overview, OTP Analysis, Ridership, Load Profiles, and Dwell Incident Review. Preset ranges and the inclusive custom start/end range persist when moving between tabs, and every module must apply the same selected dates and day type to its numerator and denominator.
+
+Scope badges describe the included service days (for example, `5 weekdays selected`) and do not imply that every card is an average. Additive overview metrics display the selected-period total and a separately labelled average per included service day. Percentage metrics retain their metric-specific denominator and are not presented as totals or simple averages of daily percentages.
 
 Primary calculation locations:
 
@@ -39,7 +41,7 @@ Passenger load is presented in **Ridership -> Passenger Flow by Stop** only for 
 | Stop activity change | Current average activity per included service day minus the equivalent prior-period average. The map supports boardings, alightings, and combined activity. Past-week, past-month, and past-three-month views compare with the immediately preceding equal-length calendar window; single-day views compare with the same weekday one week earlier. | Circle size reflects absolute activity change per day, while colour shows increase, decrease, or little change. Percentage change is supporting context only because low-volume stops can produce unstable percentages. Route, day-type, and time-of-day filters must apply consistently to both periods. Shared stops use route-level breakdowns when a route is selected; all-route activity must not be substituted. Stops without comparable hourly data in both periods are omitted and disclosed rather than mixing hourly and all-day totals. | Code-validated with synthetic period-selection, route-scope, and hourly-availability cases; operational interpretation remains advisory |
 | Average riders per day | Total boardings divided by distinct included service dates | A/B branches combined into one route must still count each date once | Code-validated |
 | Trips observed | Distinct STREETS `TripID` values | Indicates trips represented in AVL/APC data, not necessarily scheduled trips operated | Code-validated |
-| Trips operated | GTFS scheduled trips matched to STREETS observations | Display as suspected missed-trip analysis, not a final cancellation determination | Needs route-level scheduled/matched counts before route-scoped display can be fully validated |
+| Trips operated | GTFS scheduled trips matched to STREETS observations; period totals are summed and per-day averages divide by included days with GTFS missed-trip coverage | Display as suspected missed-trip analysis, not a final cancellation determination | Needs route-level scheduled/matched counts before route-scoped display can be fully validated |
 | Service hours | Sum of the scheduled operating span calculated for each observed trip | Used as the BPH denominator. The precise start/end fields require operational confirmation | Definition sign-off required |
 | Boards per service hour (BPH) | Boardings divided by service hours | Route BPH is a direct period ratio. The by-hour chart is only an explicitly labelled estimate because hourly service-hour denominators are not stored | Route calculation code-validated; business thresholds require sign-off |
 | Average load | Mean of APC-reliable departure-load observations, grouped by route-stop occurrence and weighted across days by reliable stop-level observation count; APC-backed zero is valid | A route-stop occurrence is the physical stop ID plus its zero-based visit number within the trip, so a loop may contain the same stop more than once. Only positive APC source identifiers are reliable; zero, negative, or missing source values are excluded. Version 10 history falls back to a disclosed average of daily averages; ambiguous legacy zeroes are omitted because v10 cannot distinguish missing APC from a genuine zero. Values above the configured load cap are capped and disclosed in data quality | Code-validated; legacy history remains explicitly estimated |

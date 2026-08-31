@@ -62,6 +62,7 @@ describe('performanceMissedTrips', () => {
         expect(summary.hasCoverage).toBe(true);
         expect(summary.skippedDays).toBe(1);
         expect(summary.missingStoredDays).toBe(1);
+        expect(summary.coveredDays).toBe(2);
         expect(summary.totalScheduled).toBe(190);
         expect(summary.totalObserved).toBe(184);
         expect(summary.totalMissed).toBe(6);
@@ -202,6 +203,7 @@ describe('performanceMissedTrips', () => {
         expect(summary.hasCoverage).toBe(true);
         expect(summary.skippedDays).toBe(0);
         expect(summary.missingStoredDays).toBe(0);
+        expect(summary.coveredDays).toBe(1);
         expect(summary.totalScheduled).toBe(10);
         expect(summary.totalObserved).toBe(9);
         expect(summary.totalMissed).toBe(1);

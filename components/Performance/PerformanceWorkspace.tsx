@@ -22,6 +22,7 @@ import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/featur
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import type { PerformanceRouteOption } from '../../utils/performanceRouteFilter';
 import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
+import { selectedDayScopeLabel } from '../../utils/performanceMetricDisplay';
 import { PerformanceLoadStatus } from './PerformanceLoadStatus';
 
 interface PerformanceWorkspaceProps {
@@ -55,8 +56,6 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
     { id: 'operator-dwell', label: 'Dwell Incident Review', icon: Timer, status: 'complete', badge: 'Testing', feature: 'operationsOperatorDwell' },
 ];
-
-const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 const isLocalhost = () => typeof window !== 'undefined' && LOCALHOST_HOSTNAMES.has(window.location.hostname);
@@ -341,10 +340,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
             }
             return 'Single day';
         }
-        if (dayTypeFilter !== 'all') {
-            return `${n} ${DAY_TYPE_LABELS[dayTypeFilter]}${n !== 1 ? 's' : ''} avg`;
-        }
-        return `${n}-day avg`;
+        return selectedDayScopeLabel(n, dayTypeFilter);
     }, [filteredData, filteredScope, dayTypeFilter]);
 
     const renderPanel = () => {
@@ -374,6 +370,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <RidershipModule
                             data={filteredData}
+                            dayTypeFilter={dayTypeFilter}
                             loadConfigTeamId={loadConfigTeamId}
                             loadConfigUserId={loadConfigUserId}
                             canManageLoadConfig={canManageLoadConfig}

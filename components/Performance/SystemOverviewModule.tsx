@@ -14,6 +14,7 @@ import { compareDateStrings, normalizeToISODate, shortDateLabel, shortWeekdayDat
 import { PerformanceScopeProvider } from './performanceScope';
 import type { PerformanceDataScope } from '../../utils/performanceDataScope';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { averagePerDayLabel, formatPerDayAverage, selectedDayScopeLabel } from '../../utils/performanceMetricDisplay';
 
 const SystemOverviewOtpCharts = lazyWithRetry(
     () => import('./SystemOverviewCharts').then(module => ({ default: module.SystemOverviewOtpCharts })),
@@ -658,6 +659,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const apcPct = dataQuality ? roundPercent(dataQuality.missingAPC, dataQuality.totalRecords) : 0;
     const singleDate = filtered[0]?.date;
     const displayedDateRange = filteredDateRangeLabel(filtered);
+    const averageLabel = averagePerDayLabel(dayTypeFilter);
+    const selectedDaysLabel = selectedDayScopeLabel(filtered.length, dayTypeFilter);
 
     return (
         <PerformanceScopeProvider scope={scope} label={scopeLabel}>
@@ -678,7 +681,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                             <p className="text-xs text-gray-400">
                                 {isSingleDate
                                     ? `${DAY_TYPE_LABELS[filtered[0]?.dayType ?? 'weekday']} snapshot · 1 of ${data.dailySummaries.length} days`
-                                    : `${filtered.length} day${filtered.length !== 1 ? 's' : ''} averaged${dayTypeFilter !== 'all' ? ` · ${DAY_TYPE_LABELS[dayTypeFilter]}s only` : ''}`}
+                                    : selectedDaysLabel}
                                 {data.metadata.importedAt ? ` · ${freshness(data.metadata.importedAt)}` : ''}
                             </p>
                         </div>
@@ -700,7 +703,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     label="Total Ridership"
                     value={systemAvg.ridership.toLocaleString()}
                     color="cyan"
-                    subValue={`${systemAvg.ridership.toLocaleString()} on · ${systemAvg.alightings.toLocaleString()} off`}
+                    subValue={`${systemAvg.alightings.toLocaleString()} total alightings`}
+                    secondaryMetric={{
+                        label: averageLabel,
+                        value: `${systemAvg.avgRidershipPerDay.toLocaleString()} boardings`,
+                    }}
                 />
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                     <div className="flex items-center justify-between mb-2">
@@ -752,6 +759,10 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         : missedTrips.totalMissed === 0
                             ? 'All scheduled trips operated'
                             : `${missedTrips.totalMissed} suspected missed trips (${missedTrips.missedPct.toFixed(1)}%)`}
+                    secondaryMetric={!isCheckingLegacyMissedTrips && missedTrips.totalScheduled > 0 ? {
+                        label: `${averageLabel} (operated / scheduled)`,
+                        value: `${formatPerDayAverage(missedTrips.totalObserved, missedTrips.coveredDays)} / ${formatPerDayAverage(missedTrips.totalScheduled, missedTrips.coveredDays)}`,
+                    } : undefined}
                     onClick={missedTrips.totalMissed > 0 ? () => onNavigate('otp') : undefined}
                 />
             </div>

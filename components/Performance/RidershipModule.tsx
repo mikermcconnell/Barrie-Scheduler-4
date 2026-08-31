@@ -18,9 +18,11 @@ import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useTodPickupDataQuery, useTodPickupMetadataQuery } from '../../hooks/useTodPickupData';
 import { aggregateTodDailyLocations } from '../../utils/todPickupAggregation';
+import { averagePerDayLabel, type PerformanceDayTypeFilter } from '../../utils/performanceMetricDisplay';
 
 interface RidershipModuleProps {
     data: PerformanceDataSummary;
+    dayTypeFilter?: PerformanceDayTypeFilter;
     comparisonDays?: DailySummary[];
     comparisonRange?: { start: string; end: string } | null;
     loadConfigTeamId?: string;
@@ -88,6 +90,7 @@ function SortableHeader({
 
 export const RidershipModule: React.FC<RidershipModuleProps> = ({
     data,
+    dayTypeFilter = 'all',
     comparisonDays = [],
     comparisonRange = null,
     loadConfigTeamId,
@@ -347,7 +350,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Route Ranking */}
-                <ChartCard title="Ridership by Route" subtitle="Total, daily average, and boards per service hour">
+                <ChartCard title="Ridership by Route" subtitle={`Total, ${averagePerDayLabel(dayTypeFilter).toLowerCase()}, and boards per service hour`}>
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
@@ -355,7 +358,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                                     <SortableHeader label="Route" sortKey="routeId" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} />
                                     <SortableHeader label="Name" sortKey="routeName" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} />
                                     <SortableHeader label="Total" sortKey="ridership" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
-                                    <SortableHeader label="Avg/Day" sortKey="avgPerDay" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
+                                    <SortableHeader label={averagePerDayLabel(dayTypeFilter, true)} sortKey="avgPerDay" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
                                     <SortableHeader label="Boards / Service Hr" sortKey="boardsPerServiceHour" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
                                 </tr>
                             </thead>

@@ -11,7 +11,9 @@ const teamContext = vi.hoisted(() => ({
 const todSectionProps = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
 vi.mock('../components/Analytics/AnalyticsShared', () => ({
-  ChartCard: ({ title, children }: { title: string; children?: React.ReactNode }) => <section><h3>{title}</h3>{children}</section>,
+  ChartCard: ({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) => (
+    <section><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}{children}</section>
+  ),
 }));
 vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => teamContext.current }));
 vi.mock('../components/contexts/AuthContext', () => ({ useAuth: () => ({ user: { uid: 'user-1' } }) }));
@@ -130,6 +132,17 @@ describe('performance dashboard metric rollups', () => {
     const combinedRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('7A/7B'));
     expect(combinedRow?.querySelectorAll('td')[2].textContent).toBe('600');
     expect(combinedRow?.querySelectorAll('td')[3].textContent).toBe('300');
+  });
+
+  it('labels route totals and averages for the selected weekday scope', () => {
+    const data = summary([
+      day('2026-03-10', [route('1', 100)]),
+      day('2026-03-11', [route('1', 200)]),
+    ]);
+    flushSync(() => root.render(<RidershipModule data={data} dayTypeFilter="weekday" />));
+
+    expect(container.textContent).toContain('Total, average per weekday, and boards per service hour');
+    expect(container.textContent).toContain('Avg / Weekday');
   });
 
   it('shows Passenger Flow by Stop only for admin and developer access', () => {
