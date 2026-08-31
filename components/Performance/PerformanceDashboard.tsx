@@ -14,6 +14,12 @@ import {
     filterPerformanceSummaryByRoute,
     getAvailablePerformanceRoutes,
 } from '../../utils/performanceRouteFilter';
+import type { PerformanceDataLoadProgress } from '../../utils/performanceDataTypes';
+import {
+    PERFORMANCE_METADATA_LOAD_PROFILE,
+    PERFORMANCE_OVERVIEW_LOAD_PROFILE,
+} from '../../utils/performanceLoadTiming';
+import { PerformanceLoadStatus } from './PerformanceLoadStatus';
 
 interface PerformanceDashboardProps {
     onClose: () => void;
@@ -32,11 +38,25 @@ const PerformanceWorkspace = lazyWithRetry(
     'performance-dashboard-workspace',
 );
 
-const DashboardLoadingState: React.FC<{ label: string }> = ({ label }) => (
+const DashboardLoadingState: React.FC<{
+    label: string;
+    loadLabel?: string;
+    profileKey?: string;
+    progress?: PerformanceDataLoadProgress | null;
+}> = ({ label, loadLabel, profileKey, progress }) => (
     <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-gray-500">
             <Loader2 className="text-cyan-500 animate-spin" size={32} />
             <span className="text-sm font-medium">{label}</span>
+            {profileKey && (
+                <PerformanceLoadStatus
+                    isLoading
+                    profileKey={profileKey}
+                    progress={progress}
+                    label={loadLabel ?? label.replace(/\.\.\.$/, '').toLowerCase()}
+                    compact
+                />
+            )}
         </div>
     </div>
 );
@@ -45,7 +65,9 @@ const PerformanceWorkspaceLoading: React.FC<{
     importedAt?: string;
     dateRange?: { start: string; end: string };
     dayCount?: number;
-}> = ({ importedAt, dateRange, dayCount }) => (
+    profileKey: string;
+    progress?: PerformanceDataLoadProgress | null;
+}> = ({ importedAt, dateRange, dayCount, profileKey, progress }) => (
     <div className="rounded-3xl border-2 border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-amber-50 p-6 shadow-sm">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-2xl">
@@ -57,6 +79,14 @@ const PerformanceWorkspaceLoading: React.FC<{
                 <p className="mt-2 text-sm leading-relaxed text-gray-600">
                     We already found the latest performance import. The full history file is loading in the background so the route, trip, and ridership views can open.
                 </p>
+                <div className="mt-4">
+                    <PerformanceLoadStatus
+                        isLoading
+                        profileKey={profileKey}
+                        progress={progress}
+                        label="dashboard overview"
+                    />
+                </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
@@ -234,7 +264,14 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     }
 
     if (view === 'loading') {
-        return <DashboardLoadingState label="Opening operations dashboard..." />;
+        return (
+            <DashboardLoadingState
+                label="Opening operations dashboard..."
+                loadLabel="operations dashboard"
+                profileKey={metadataQuery.loadProfileKey ?? PERFORMANCE_METADATA_LOAD_PROFILE}
+                progress={metadataQuery.loadProgress}
+            />
+        );
     }
 
     if (view === 'import' && user && canManageTeam) {
@@ -289,6 +326,8 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                             importedAt={metadataQuery.data.importedAt}
                             dateRange={metadataQuery.data.dateRange}
                             dayCount={metadataQuery.data.dayCount}
+                            profileKey={overviewQuery.loadProfileKey ?? PERFORMANCE_OVERVIEW_LOAD_PROFILE}
+                            progress={overviewQuery.loadProgress}
                         />
                     ) : (
                         <PerformanceWorkspaceError

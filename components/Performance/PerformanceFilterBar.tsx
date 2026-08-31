@@ -9,7 +9,7 @@ export interface PerformanceDateWindow {
     end: string;
 }
 
-const TIME_RANGE_LABELS: Record<TimeRange, string> = {
+export const TIME_RANGE_LABELS: Record<TimeRange, string> = {
     all: 'All Data',
     'past-three-months': 'Past 3 Months',
     'past-month': 'Past Month',

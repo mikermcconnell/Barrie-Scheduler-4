@@ -129,7 +129,7 @@ describe('PerformanceWorkspace custom range loading', () => {
     });
 
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Loading 2026-07-06 to 2026-07-10.');
+      expect(container.textContent).toContain('Loading 2026-07-06 to 2026-07-10');
     });
     expect(container.textContent).toContain('Showing 2026-07-29 to 2026-08-04 on Overview');
     expect(container.querySelector('[data-testid="overview-dates"]')?.textContent).toContain('2026-07-29');
@@ -154,7 +154,7 @@ describe('PerformanceWorkspace custom range loading', () => {
       root.render(<PerformanceWorkspace {...workspaceProps} />);
     });
 
-    expect(container.textContent).not.toContain('Loading 2026-07-06 to 2026-07-10.');
+    expect(container.textContent).not.toContain('Loading 2026-07-06 to 2026-07-10');
     expect(container.textContent).toContain('2026-07-06 — 2026-07-10 · 5 days');
     expect(container.querySelector('[data-testid="overview-dates"]')?.textContent).toBe(
       '2026-07-06,2026-07-07,2026-07-08,2026-07-09,2026-07-10',

@@ -649,6 +649,15 @@ export interface PerformanceDataLoadOptions {
   detailMode?: PerformanceDetailMode;
 }
 
+export interface PerformanceDataLoadProgress {
+  phase: 'downloading' | 'processing';
+  completedUnits: number;
+  totalUnits: number;
+  unitLabel: 'file' | 'monthly-file';
+}
+
+export type PerformanceDataLoadProgressListener = (progress: PerformanceDataLoadProgress) => void;
+
 // ─── Firebase Metadata ──────────────────────────────────────────────
 
 export interface PerformanceMetadata {

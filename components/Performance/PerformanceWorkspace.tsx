@@ -11,7 +11,7 @@ import type {
     PerformanceTab,
     DayType,
 } from '../../utils/performanceDataTypes';
-import { PerformanceFilterBar, filterDailySummaries, getPerformanceDateWindow, type PerformanceDateWindow, type TimeRange } from './PerformanceFilterBar';
+import { PerformanceFilterBar, TIME_RANGE_LABELS, filterDailySummaries, getPerformanceDateWindow, type PerformanceDateWindow, type TimeRange } from './PerformanceFilterBar';
 import { PerformanceScopeProvider } from './performanceScope';
 import { resolveFilteredScope } from '../../utils/performanceDataScope';
 import { addDaysToISODate } from '../../utils/performanceDateUtils';
@@ -22,6 +22,7 @@ import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/featur
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import type { PerformanceRouteOption } from '../../utils/performanceRouteFilter';
 import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
+import { PerformanceLoadStatus } from './PerformanceLoadStatus';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -322,6 +323,12 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         ? 'All routes'
         : `Route ${selectedRoute?.routeId ?? selectedRouteId}`;
     const filteredScope = useMemo(() => resolveFilteredScope(timeRange), [timeRange]);
+    const requestedLoadLabel = useMemo(() => {
+        const rangeLabel = timeRange === 'custom' && customDateRange
+            ? `${customDateRange.start} to ${customDateRange.end}`
+            : TIME_RANGE_LABELS[timeRange];
+        return `${rangeLabel} · ${routeScopeLabel} · ${activeTabConfig?.label ?? 'Overview'}`;
+    }, [activeTabConfig?.label, customDateRange, routeScopeLabel, timeRange]);
 
     const filteredScopeLabel = useMemo(() => {
         const n = filteredData.dailySummaries.length;
@@ -451,14 +458,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
             )}
 
             {isPendingDetailLoad && (
-                <div role="status" className="mb-3 flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-800">
-                    <Loader2 className="shrink-0 animate-spin" size={16} aria-hidden="true" />
-                    <span>
-                        {timeRange === 'custom' && customDateRange
-                            ? `Loading ${customDateRange.start} to ${customDateRange.end}. `
-                            : `Loading ${routeScopeLabel} details. `}
-                        Showing {data.metadata.dateRange.start} to {data.metadata.dateRange.end} on Overview until the requested data is ready.
-                    </span>
+                <div className="mb-3">
+                    <PerformanceLoadStatus
+                        isLoading={detailQuery.isFetching}
+                        profileKey={detailQuery.loadProfileKey ?? 'operations:detail'}
+                        progress={detailQuery.loadProgress}
+                        label={requestedLoadLabel}
+                        description={`Showing ${data.metadata.dateRange.start} to ${data.metadata.dateRange.end} on Overview until the requested data is ready.`}
+                    />
                 </div>
             )}
 
@@ -552,10 +559,15 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                         {filteredScopeLabel}
                     </span>
                     {detailQuery.isFetching && detailData && (
-                        <span className="ml-2 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-gray-50 text-gray-500 border border-gray-100">
-                            <Loader2 size={11} className="animate-spin" />
-                            Refreshing detail slice
-                        </span>
+                        <div className="ml-2 inline-block align-middle">
+                            <PerformanceLoadStatus
+                                isLoading
+                                profileKey={detailQuery.loadProfileKey ?? 'operations:detail'}
+                                progress={detailQuery.loadProgress}
+                                label={requestedLoadLabel}
+                                compact
+                            />
+                        </div>
                     )}
                 </div>
                 <Suspense fallback={<PerformancePanelLoading label="Loading panel..." />}>
