@@ -182,8 +182,12 @@ const validatePiece = (
     const audit = input.blockAudits.find(candidate =>
         candidate.vehicleBlockKey === piece.blockId,
     );
+    let firstPosition = -1;
+    let lastPosition = -1;
     if (audit && trips.length > 0) {
         const positions = trips.map(trip => audit.tripIds.indexOf(trip.id));
+        firstPosition = positions[0];
+        lastPosition = positions.at(-1) ?? -1;
         const contiguous = positions.every((position, index) => position >= 0 && (index === 0 || position === positions[index - 1] + 1));
         if (!contiguous) {
             finding(findings, 'integrity', 'piece-not-contiguous', `Piece ${piece.id} must use a contiguous, source-ordered section of block ${piece.blockId}.`, { runId: run.id, blockId: piece.blockId });
@@ -193,10 +197,20 @@ const validatePiece = (
     const last = trips.at(-1);
     const startRelief = findReliefPoint(input.ruleProfile, piece.startReliefPoint);
     const endRelief = findReliefPoint(input.ruleProfile, piece.endReliefPoint);
-    if (!startRelief || !first || !startRelief.aliases.some(alias => normalize(alias) === normalize(first.startStop)) && normalize(startRelief.name) !== normalize(first.startStop)) {
+    const startMatches = Boolean(first) && (
+        normalize(piece.startReliefPoint) === normalize(first.startStop)
+        || Boolean(startRelief && (startRelief.aliases.some(alias => normalize(alias) === normalize(first.startStop)) || normalize(startRelief.name) === normalize(first.startStop)))
+    );
+    const endMatches = Boolean(last) && (
+        normalize(piece.endReliefPoint) === normalize(last.endStop)
+        || Boolean(endRelief && (endRelief.aliases.some(alias => normalize(alias) === normalize(last.endStop)) || normalize(endRelief.name) === normalize(last.endStop)))
+    );
+    const startsAtBlockPullOut = firstPosition === 0;
+    const endsAtBlockPullIn = Boolean(audit) && lastPosition === audit.tripIds.length - 1;
+    if (!first || !startMatches || (!startsAtBlockPullOut && !startRelief)) {
         finding(findings, 'integrity', 'invalid-piece-start-relief', `Piece ${piece.id} does not start at a recognized relief point matching its first trip.`, { runId: run.id, tripId: first?.id });
     }
-    if (!endRelief || !last || !endRelief.aliases.some(alias => normalize(alias) === normalize(last.endStop)) && normalize(endRelief.name) !== normalize(last.endStop)) {
+    if (!last || !endMatches || (!endsAtBlockPullIn && !endRelief)) {
         finding(findings, 'integrity', 'invalid-piece-end-relief', `Piece ${piece.id} does not end at a recognized relief point matching its final trip arrival.`, { runId: run.id, tripId: last?.id });
     }
     if (last?.arrivalTime === null) {

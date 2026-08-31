@@ -8,6 +8,7 @@ import {
     calculateDailyRunMetrics,
     createOperationsPlanningWorkbook,
     createDefaultBarrieRuleProfile,
+    getTravelMinutes,
     parseOperationsPlanningProposal,
     PROPOSAL_IMPORT_LIMITS,
     splitDailyRun,
@@ -192,6 +193,161 @@ describe('run-cutting master adapter and rules', () => {
         ]));
     });
 
+    it('uses terminal recovery only when calculating occupied block time', () => {
+        const first = masterTrip('first', {
+            blockId: 'shared',
+            startTime: 588,
+            endTime: 624,
+            travelTime: 34,
+            recoveryTime: 13,
+            stops: { 'Cuthbert Street': '10:08 AM', 'Park Place': '10:24 AM' },
+            arrivalTimes: { 'Cuthbert Street': '10:08 AM', 'Park Place': '10:24 AM' },
+            recoveryTimes: { 'Cuthbert Street': 2, 'Park Place': 11 },
+        });
+        const second = masterTrip('second', {
+            blockId: 'shared',
+            startTime: 635,
+            endTime: 669,
+            travelTime: 34,
+            recoveryTime: 0,
+            stops: { 'Park Place': '10:35 AM' },
+            arrivalTimes: { 'Park Place': '11:09 AM' },
+        });
+        const input = buildOperationsPlanningInput({
+            scenarioId: 'scenario-terminal-recovery',
+            scenarioName: 'Terminal recovery proof',
+            exportedAt: '2026-08-27T13:00:00Z',
+            pinnedSchedules: [pinned('2', [first, second])],
+        });
+
+        expect(input.trips[0].occupiedEndTime).toBe(635);
+        expect(input.blockAudits[0].findings).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'block-overlap' }),
+        ]));
+    });
+
+    it('derives active loop endpoints and terminal arrival from populated stop columns', () => {
+        const schedule = pinned('12', [masterTrip('loop', {
+            startTime: 376,
+            endTime: 439,
+            travelTime: 53,
+            recoveryTime: 10,
+            stops: {
+                'Georgian Mall (3)': '6:16 AM',
+                'Downtown (4)': '6:30 AM',
+                'Barrie South GO (2)': '7:16 AM',
+                'Barrie South GO (4)': '7:19 AM',
+            },
+            stopMinutes: undefined,
+            arrivalTimes: undefined,
+            recoveryTimes: {
+                'Downtown (4)': 5,
+                'Barrie South GO (2)': 3,
+            },
+        })]);
+        schedule.content.northTable.stops = [
+            'Barrie South GO',
+            'Georgian Mall (3)',
+            'Downtown (4)',
+            'Barrie South GO (2)',
+            'Barrie South GO (4)',
+        ];
+        const input = buildOperationsPlanningInput({
+            scenarioId: 'scenario-loop-endpoints',
+            scenarioName: 'Loop endpoint proof',
+            exportedAt: '2026-08-27T13:00:00Z',
+            pinnedSchedules: [schedule],
+        });
+
+        expect(input.trips[0]).toMatchObject({
+            startStop: 'Georgian Mall',
+            endStop: 'Barrie South GO',
+            arrivalTime: 436,
+            occupiedEndTime: 439,
+            arrivalResolution: 'departure-minus-recovery',
+        });
+    });
+
+    it('uses an explicit final stop time as arrival when recovery exists only at earlier stops', () => {
+        const input = buildOperationsPlanningInput({
+            scenarioId: 'scenario-final-arrival',
+            scenarioName: 'Final arrival proof',
+            exportedAt: '2026-08-27T13:00:00Z',
+            pinnedSchedules: [pinned('101', [masterTrip('last-trip', {
+                startTime: 1252,
+                endTime: 1293,
+                travelTime: 40,
+                recoveryTime: 1,
+                stops: {
+                    'Downtown': '8:52 PM',
+                    'Johnson at Napier': '8:59 PM',
+                    'Downtown (2)': '9:33 PM',
+                },
+                stopMinutes: undefined,
+                arrivalTimes: undefined,
+                recoveryTimes: { 'Johnson at Napier': 1 },
+            })])],
+        });
+
+        expect(input.trips[0]).toMatchObject({
+            endStop: 'Downtown Hub',
+            arrivalTime: 1293,
+            occupiedEndTime: 1293,
+            arrivalResolution: 'end-time-is-arrival',
+        });
+    });
+
+    it('treats B.A.T.T. platform labels as one continuity location', () => {
+        const schedule = pinned('8A', [
+            masterTrip('8a', {
+                blockId: 'shared',
+                startTime: 660,
+                endTime: 727,
+                travelTime: 67,
+                recoveryTime: 0,
+                stops: {
+                    'Park Place': '11:00 AM',
+                    'Barrie Allandale Transit Terminal Platform 5': '12:07 PM',
+                },
+                arrivalTimes: { 'Barrie Allandale Transit Terminal Platform 5': '12:07 PM' },
+                recoveryTimes: { 'Barrie Allandale Transit Terminal Platform 5': 0 },
+            }),
+            masterTrip('8b', {
+                blockId: 'shared',
+                startTime: 732,
+                endTime: 792,
+                travelTime: 60,
+                recoveryTime: 0,
+                stops: {
+                    'Barrie Allandale Transit Terminal Platform 12': '12:12 PM',
+                    'Barrie South GO': '1:12 PM',
+                },
+                arrivalTimes: { 'Barrie South GO': '1:12 PM' },
+                recoveryTimes: { 'Barrie South GO': 0 },
+            }),
+        ]);
+        schedule.content.northTable.stops = [
+            'Park Place',
+            'Barrie Allandale Transit Terminal Platform 5',
+            'Barrie Allandale Transit Terminal Platform 12',
+            'Barrie South GO',
+        ];
+        const input = buildOperationsPlanningInput({
+            scenarioId: 'scenario-batt-platforms',
+            scenarioName: 'BATT platform continuity',
+            exportedAt: '2026-08-27T13:00:00Z',
+            pinnedSchedules: [schedule],
+        });
+
+        expect(input.trips.map(trip => [trip.startStop, trip.endStop])).toEqual([
+            ['Park Place', 'B.A.T.T.'],
+            ['B.A.T.T.', 'Barrie South GO'],
+        ]);
+        expect(input.blockAudits[0].findings).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'block-location-transition-review' }),
+        ]));
+    });
+
     it('groups exact GTFS block continuity across 8A and 8B without colliding generic route blocks', () => {
         const shared = { gtfsBlockId: 'gtfs-77', endTimeIncludesRecovery: false };
         const input = buildOperationsPlanningInput({
@@ -213,6 +369,24 @@ describe('run-cutting master adapter and rules', () => {
 });
 
 describe('proposal assessment and metrics', () => {
+    it('allows known pull-out and pull-in terminals at source block boundaries', () => {
+        const { input, proposal } = assessmentFixture();
+        input.trips[0].startStop = 'Sproule at Kraus';
+        input.trips[0].endStop = 'Barrie South GO Station';
+        proposal.dailyRuns[0].pieces[0].startReliefPoint = 'Sproule at Kraus';
+        proposal.dailyRuns[0].pieces[0].endReliefPoint = 'Barrie South GO Station';
+
+        const assessment = assessOperationsPlanningProposal(input, proposal);
+
+        expect(assessment.findings).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'invalid-piece-start-relief' }),
+            expect.objectContaining({ code: 'invalid-piece-end-relief' }),
+            expect.objectContaining({ code: 'pull-out-time-missing' }),
+            expect.objectContaining({ code: 'pull-in-time-missing' }),
+        ]));
+        expect(getTravelMinutes(input.ruleProfile, 'Garage', 'Barrie South GO Station')).toBe(8);
+    });
+
     it('recomputes metrics and treats Codex-authored findings as advisory', () => {
         const { input, proposal } = assessmentFixture();
         const assessment = assessOperationsPlanningProposal(input, proposal);
