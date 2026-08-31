@@ -47,7 +47,10 @@ each rule's source label, including planner-confirmed overrides.
 3. Cut daily runs at valid relief arrivals.
    - A piece is a chronological, contiguous list of whole master trips from one
      exported `vehicleBlockKey`.
-   - Use arrival time for relief and break boundaries.
+   - Use arrival time for internal relief and break boundaries. A first piece
+     may begin at its block's source pull-out location and a final piece may end
+     at its source pull-in location when the rule profile supplies Garage travel
+     time for that terminal.
    - Do not split a trip, change a trip time, change block membership, or invent
      a relief point or cross-route transition.
    - Do not write duty activities or calculated totals into a piece. Scheduler 4

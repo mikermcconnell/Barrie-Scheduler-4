@@ -218,15 +218,31 @@ export const createDefaultBarrieOperationsMatrix = (): OperationsMatrix => ({
 });
 
 export const findReliefPoint = (profile: RuleProfile, stopName: string) => {
-    const normalized = stopName.trim().toLocaleLowerCase();
+    const normalize = (value: string) => value
+        .replace(/\s+\(\d+\)\s*$/, '')
+        .replace(/\s+Platform\s+\d+\s*$/i, '')
+        .trim()
+        .toLocaleLowerCase();
+    const normalized = normalize(stopName);
     return profile.reliefPoints.find(point =>
-        point.name.toLocaleLowerCase() === normalized
-        || point.aliases.some(alias => alias.toLocaleLowerCase() === normalized),
+        normalize(point.name) === normalized
+        || point.aliases.some(alias => normalize(alias) === normalized),
     );
 };
 
 export const getTravelMinutes = (profile: RuleProfile, from: string, to: string): number | null => {
-    const normalize = (value: string) => value.trim().toLocaleLowerCase();
+    const normalize = (value: string) => {
+        const normalized = value
+            .replace(/\s+\(\d+\)\s*$/, '')
+            .replace(/\s+Platform\s+\d+\s*$/i, '')
+            .trim()
+            .toLocaleLowerCase();
+        if (normalized === 'barrie south go station') return 'barrie south go';
+        if (normalized === 'rvh main entrance') return 'rvh';
+        if (/^(barrie\s+)?allandale(?:\s+go|\s+transit\s+terminal)?$/.test(normalized)) return 'b.a.t.t.';
+        if (/^downtown(?:\s+hub|\s+terminal|\s+transit\s+terminal)?$/.test(normalized)) return 'downtown hub';
+        return normalized;
+    };
     const direct = profile.travelTimes.find(rule =>
         normalize(rule.from) === normalize(from) && normalize(rule.to) === normalize(to),
     );

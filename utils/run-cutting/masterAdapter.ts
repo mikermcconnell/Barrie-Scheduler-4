@@ -54,33 +54,86 @@ const parseClockTime = (value: string | undefined, notBefore: number): number | 
     return result;
 };
 
-const activeStops = (table: MasterRouteTable, trip: MasterTrip): { startStop: string; endStop: string } => {
+const stopBaseName = (value: string): string => value.replace(/\s+\(\d+\)\s*$/, '').trim();
+
+const canonicalLocationName = (value: string): string => {
+    const base = stopBaseName(value).replace(/\s+Platform\s+\d+\s*$/i, '').trim();
+    if (/^(Barrie\s+)?Allandale(?:\s+GO|\s+Transit\s+Terminal)?$/i.test(base)) return 'B.A.T.T.';
+    if (/^Downtown(?:\s+Hub|\s+Terminal|\s+Transit\s+Terminal)?$/i.test(base)) return 'Downtown Hub';
+    return base;
+};
+
+const activeStops = (table: MasterRouteTable, trip: MasterTrip): {
+    startStop: string;
+    endStop: string;
+    rawStartStop: string;
+    rawEndStop: string;
+    activeStopNames: string[];
+} => {
+    const populatedStops = Object.keys(trip.stops ?? {}).filter(stop => Boolean(trip.stops?.[stop]));
     const startIndex = Math.max(0, Math.min(trip.startStopIndex ?? 0, Math.max(0, table.stops.length - 1)));
     const endIndex = Math.max(startIndex, Math.min(trip.endStopIndex ?? table.stops.length - 1, Math.max(0, table.stops.length - 1)));
+    const rawStartStop = trip.startStopIndex === undefined
+        ? populatedStops[0] ?? table.stops[startIndex] ?? 'Unknown'
+        : table.stops[startIndex] ?? populatedStops[0] ?? 'Unknown';
+    const rawEndStop = trip.endStopIndex === undefined
+        ? populatedStops.at(-1) ?? table.stops[endIndex] ?? 'Unknown'
+        : table.stops[endIndex] ?? populatedStops.at(-1) ?? 'Unknown';
     return {
-        startStop: table.stops[startIndex] ?? 'Unknown',
-        endStop: table.stops[endIndex] ?? 'Unknown',
+        startStop: canonicalLocationName(rawStartStop),
+        endStop: canonicalLocationName(rawEndStop),
+        rawStartStop,
+        rawEndStop,
+        activeStopNames: populatedStops,
     };
+};
+
+const terminalRecoveryFor = (
+    trip: MasterTrip,
+    rawEndStop: string,
+    activeStopNames: string[],
+): number | null => {
+    const endBase = canonicalLocationName(rawEndStop).toLocaleLowerCase();
+    const active = new Set(activeStopNames);
+    const candidates = Object.entries(trip.recoveryTimes ?? {})
+        .filter(([stop, minutes]) => (
+            active.has(stop)
+            && canonicalLocationName(stop).toLocaleLowerCase() === endBase
+            && typeof minutes === 'number'
+            && Number.isFinite(minutes)
+            && minutes >= 0
+        ));
+    return candidates.at(-1)?.[1] ?? null;
 };
 
 const resolveArrival = (
     trip: MasterTrip,
-    endStop: string,
+    rawEndStop: string,
+    terminalRecovery: number | null,
 ): Pick<PlanningTrip, 'arrivalTime' | 'arrivalResolution'> => {
     const operationalStart = normalizeOperationalMinute(trip.startTime);
-    const explicitArrival = parseClockTime(trip.arrivalTimes?.[endStop], operationalStart);
+    const explicitArrival = parseClockTime(trip.arrivalTimes?.[rawEndStop], operationalStart);
     if (explicitArrival !== null) {
         return { arrivalTime: explicitArrival, arrivalResolution: 'explicit-arrival' };
     }
 
-    const terminalRecovery = trip.recoveryTimes?.[endStop];
-    const departureMinute = trip.stopMinutes?.[endStop]
-        ?? parseClockTime(trip.stops[endStop], operationalStart);
-    if (typeof departureMinute === 'number' && Number.isFinite(departureMinute)
-        && typeof terminalRecovery === 'number' && Number.isFinite(terminalRecovery) && terminalRecovery >= 0) {
+    const departureMinute = trip.stopMinutes?.[rawEndStop]
+        ?? parseClockTime(trip.stops[rawEndStop], operationalStart);
+    if (typeof departureMinute === 'number' && Number.isFinite(departureMinute) && terminalRecovery !== null) {
         return {
             arrivalTime: normalizeOperationalMinute(departureMinute) - terminalRecovery,
             arrivalResolution: 'departure-minus-recovery',
+        };
+    }
+    if (
+        typeof departureMinute === 'number'
+        && Number.isFinite(departureMinute)
+        && trip.recoveryTimes
+        && Object.keys(trip.recoveryTimes).length > 0
+    ) {
+        return {
+            arrivalTime: normalizeOperationalMinute(departureMinute),
+            arrivalResolution: 'end-time-is-arrival',
         };
     }
 
@@ -88,12 +141,13 @@ const resolveArrival = (
     if (trip.endTimeIncludesRecovery === false) {
         return { arrivalTime: operationalEnd, arrivalResolution: 'end-time-is-arrival' };
     }
-    if (trip.endTimeIncludesRecovery === true || trip.recoveryTime === 0) {
+    if (trip.endTimeIncludesRecovery === true && terminalRecovery !== null) {
         return {
-            arrivalTime: operationalEnd - trip.recoveryTime,
+            arrivalTime: operationalEnd - terminalRecovery,
             arrivalResolution: 'departure-minus-recovery',
         };
     }
+    if (trip.recoveryTime === 0) return { arrivalTime: operationalEnd, arrivalResolution: 'end-time-is-arrival' };
     return { arrivalTime: null, arrivalResolution: 'unresolved' };
 };
 
@@ -106,17 +160,20 @@ const vehicleBlockKey = (schedule: PinnedMasterSchedule, trip: MasterTrip): stri
 
 const adaptTableTrips = (schedule: PinnedMasterSchedule, table: MasterRouteTable): PlanningTrip[] =>
     table.trips.map(trip => {
-        const { startStop, endStop } = activeStops(table, trip);
-        const arrival = resolveArrival(trip, endStop);
+        const { startStop, endStop, rawEndStop, activeStopNames } = activeStops(table, trip);
+        const terminalRecovery = terminalRecoveryFor(trip, rawEndStop, activeStopNames);
+        const arrival = resolveArrival(trip, rawEndStop, terminalRecovery);
+        const resolvedTerminalRecovery = terminalRecovery
+            ?? (arrival.arrivalResolution === 'end-time-is-arrival' ? 0 : null);
         const operationalStart = normalizeOperationalMinute(trip.startTime);
         const operationalEnd = trip.endTime < operationalStart ? trip.endTime + 1440 : trip.endTime;
         const occupiedEndTime = trip.isBlockEnd || trip.endTimeIncludesRecovery === true
             ? operationalEnd
             : trip.endTimeIncludesRecovery === false
-                ? operationalEnd + trip.recoveryTime
-                : arrival.arrivalTime === null
+                ? resolvedTerminalRecovery === null ? null : operationalEnd + resolvedTerminalRecovery
+                : arrival.arrivalTime === null || resolvedTerminalRecovery === null
                     ? null
-                    : arrival.arrivalTime + trip.recoveryTime;
+                    : arrival.arrivalTime + resolvedTerminalRecovery;
         return {
             id: planningTripId(schedule.entry.id as RouteIdentity, schedule.entry.currentVersion, trip),
             sourceTripId: trip.id,

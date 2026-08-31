@@ -30,8 +30,11 @@ Despite its field name, `piece.blockId` must equal the source trip's
 `vehicleBlockKey`; it is not the shorter display `blockId`. `routeNumber` must
 match every trip in the piece. `startReliefPoint` must match the first trip's
 start location, and `endReliefPoint` must match the last trip's arrival
-location. Piece boundaries must occur at allowed relief arrivals. Every
-exported trip must be covered exactly once for its service-day instance.
+location. Internal piece boundaries must occur at allowed relief arrivals. The
+first source trip of a block may use its pull-out location and the last source
+trip may use its pull-in location when the rule profile contains the matching
+Garage travel time. Every exported trip must be covered exactly once for its
+service-day instance.
 
 Do not include duty activities or calculated totals. Scheduler 4 derives them
 from the referenced trips, relief points, travel-time rules, and break rules.
