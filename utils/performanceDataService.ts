@@ -25,6 +25,7 @@ import {
     PERFORMANCE_SCHEMA_VERSION,
     type DailySummary,
     type PerformanceDataLoadOptions,
+    type PerformanceDataLoadProgressListener,
     type PerformanceDataSummary,
     type PerformanceDetailMode,
     type PerformanceMetadata,
@@ -251,13 +252,17 @@ export async function mapWithConcurrency<T>(
     items: T[],
     concurrency: number,
     task: (item: T) => Promise<void>,
+    onComplete?: (completed: number, total: number) => void,
 ): Promise<void> {
     const queue = [...items];
+    let completed = 0;
     const workers = Array.from({ length: Math.min(Math.max(1, concurrency), queue.length) }, async () => {
         while (queue.length > 0) {
             const item = queue.shift();
             if (!item) continue;
             await task(item);
+            completed += 1;
+            onComplete?.(completed, items.length);
         }
     });
     await Promise.all(workers);
@@ -272,6 +277,7 @@ async function loadMonthlyPerformanceSummary(
     metadata: PerformanceMetadata,
     routeId?: string | null,
     options?: PerformanceDataLoadOptions,
+    onProgress?: PerformanceDataLoadProgressListener,
 ): Promise<PerformanceDataSummary | null> {
     const selectedRoutePaths = routeId && routeId !== 'all'
         ? metadata.routeMonthlyStoragePaths?.[routeId]
@@ -284,11 +290,25 @@ async function loadMonthlyPerformanceSummary(
         .sort();
     if (months.length === 0) return null;
     const monthSummaries: Array<PerformanceDataSummary | null> = new Array(months.length).fill(null);
+    onProgress?.({
+        phase: 'downloading',
+        completedUnits: 0,
+        totalUnits: months.length,
+        unitLabel: 'monthly-file',
+    });
     await mapWithConcurrency(
         months.map((month, index) => ({ month, index })),
         PERFORMANCE_DOWNLOAD_CONCURRENCY,
         async ({ month, index }) => {
             monthSummaries[index] = await downloadStorageJson<PerformanceDataSummary>(paths[month]);
+        },
+        (completedUnits, totalUnits) => {
+            onProgress?.({
+                phase: completedUnits === totalUnits ? 'processing' : 'downloading',
+                completedUnits,
+                totalUnits,
+                unitLabel: 'monthly-file',
+            });
         },
     );
     const dailySummaries = monthSummaries.flatMap(summary => summary?.dailySummaries || []);
@@ -667,13 +687,15 @@ export async function getPerformanceData(
     routeId?: string | null,
     requestingTeamId?: string,
     options?: PerformanceDataLoadOptions,
+    onProgress?: PerformanceDataLoadProgressListener,
 ): Promise<PerformanceDataSummary | null> {
     try {
         if (requestingTeamId && (
             requestingTeamId !== teamId
             || options?.detailMode === 'load-profiles'
         )) {
-            return await requestSharedWorkspaceData<PerformanceDataSummary>({
+            onProgress?.({ phase: 'downloading', completedUnits: 0, totalUnits: 1, unitLabel: 'file' });
+            const sharedSummary = await requestSharedWorkspaceData<PerformanceDataSummary>({
                 workspace: 'performanceData',
                 requestingTeamId,
                 sourceTeamId: teamId,
@@ -681,13 +703,15 @@ export async function getPerformanceData(
                 dateRange: options?.dateRange,
                 detailMode: options?.detailMode,
             });
+            onProgress?.({ phase: 'processing', completedUnits: 1, totalUnits: 1, unitLabel: 'file' });
+            return sharedSummary;
         }
 
         const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
         if (!metadata) return null;
 
         const monthlySummary = metadata.monthlyStoragePaths
-            ? await loadMonthlyPerformanceSummary(metadata, routeId, options)
+            ? await loadMonthlyPerformanceSummary(metadata, routeId, options, onProgress)
             : null;
         if (monthlySummary) {
             const filtered = filterPerformanceSummaryByRoute(
@@ -708,14 +732,18 @@ export async function getPerformanceData(
 
         let summary: PerformanceDataSummary | null = null;
         try {
+            onProgress?.({ phase: 'downloading', completedUnits: 0, totalUnits: 1, unitLabel: 'file' });
             summary = await downloadStorageJson<PerformanceDataSummary>(storagePathToLoad);
+            onProgress?.({ phase: 'processing', completedUnits: 1, totalUnits: 1, unitLabel: 'file' });
         } catch (routeError) {
             if (!selectedRoutePath) throw routeError;
             console.warn('Route-scoped performance data unavailable; falling back to full data:', routeError);
         }
 
         if (!summary && selectedRoutePath) {
+            onProgress?.({ phase: 'downloading', completedUnits: 0, totalUnits: 1, unitLabel: 'file' });
             summary = await downloadStorageJson<PerformanceDataSummary>(metadata.storagePath);
+            onProgress?.({ phase: 'processing', completedUnits: 1, totalUnits: 1, unitLabel: 'file' });
         }
         if (!summary) return null;
 
@@ -741,26 +769,32 @@ export async function getPerformanceOverviewData(
     teamId: string,
     metadataOverride?: PerformanceMetadata | null,
     requestingTeamId?: string,
+    onProgress?: PerformanceDataLoadProgressListener,
 ): Promise<PerformanceDataSummary | null> {
     try {
         if (requestingTeamId && requestingTeamId !== teamId) {
-            return await requestSharedWorkspaceData<PerformanceDataSummary>({
+            onProgress?.({ phase: 'downloading', completedUnits: 0, totalUnits: 1, unitLabel: 'file' });
+            const sharedSummary = await requestSharedWorkspaceData<PerformanceDataSummary>({
                 workspace: 'performanceOverview',
                 requestingTeamId,
                 sourceTeamId: teamId,
             });
+            onProgress?.({ phase: 'processing', completedUnits: 1, totalUnits: 1, unitLabel: 'file' });
+            return sharedSummary;
         }
 
         const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
         if (!metadata) return null;
 
         if (!metadata.overviewStoragePath) {
-            const fullSummary = await getPerformanceData(teamId, metadata);
+            const fullSummary = await getPerformanceData(teamId, metadata, undefined, undefined, undefined, onProgress);
             return fullSummary ? buildPerformanceOverviewSummary(fullSummary) : null;
         }
 
+        onProgress?.({ phase: 'downloading', completedUnits: 0, totalUnits: 1, unitLabel: 'file' });
         const summary = await downloadStorageJson<PerformanceDataSummary>(metadata.overviewStoragePath);
         if (!summary) return null;
+        onProgress?.({ phase: 'processing', completedUnits: 1, totalUnits: 1, unitLabel: 'file' });
         return mergePerformanceOverviewMetadata(summary, metadata);
     } catch (error) {
         console.error('Error getting performance overview data:', error);

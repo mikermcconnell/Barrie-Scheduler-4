@@ -147,4 +147,22 @@ describe('performanceDataService bounded work', () => {
         expect(maxActive).toBe(4);
         expect(completed.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6]);
     });
+
+    it('reports monotonic completion progress for concurrent work', async () => {
+        const progress: Array<[number, number]> = [];
+
+        await mapWithConcurrency(
+            [1, 2, 3, 4],
+            2,
+            async () => Promise.resolve(),
+            (completed, total) => progress.push([completed, total]),
+        );
+
+        expect(progress).toEqual([
+            [1, 4],
+            [2, 4],
+            [3, 4],
+            [4, 4],
+        ]);
+    });
 });
