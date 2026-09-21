@@ -26,6 +26,8 @@ Adjacent planning-data workspaces include the 2027–2032 Strategic Plan, Camp S
 
 Ridership Trends is the Planning Data replacement for the annual ridership workbook. It combines the reported monthly history through July 2026 with fixed-route STREETS boardings from August 2026 onward, keeps current-year and coverage limitations visible, excludes Transit On Demand activity, and does not turn boarding activity into a unique-rider or causal claim.
 
+Specialized Transit remains a distinct management source inside Dashboard & Reporting. Its manager-imported monthly reports support exact trip trend, reconciliation, scheduled day/time demand, recurring-booking indicators, and a Mapbox common-location view. Raw PDFs and rider/booking identifiers remain browser-only; the shared record contains privacy-minimized aggregates and reviewed public-location geography. Specialized Transit must not be blended into fixed-route OTP, productivity, or ridership measures without an explicit comparable source and definition. Its durable contract lives in `docs/SPECIALIZED_TRANSIT_DASHBOARD.md`.
+
 Use this document for the overall product frame and the fixed-route core workflow. Use feature-specific product briefs and UI specs for narrower planning-data modules when those tasks are directly relevant.
 
 Corridor Performance is a planning-only evidence workspace for observed-versus-scheduled runtime pressure and reliability. It must show the STREETS evidence range, GTFS baseline, and confidence basis, and it must not silently modify schedules or planner-accepted runtime decisions. Its feature contract lives in `docs/CORRIDOR_PERFORMANCE.md`.

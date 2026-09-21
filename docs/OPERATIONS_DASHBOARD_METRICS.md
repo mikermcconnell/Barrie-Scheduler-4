@@ -14,6 +14,8 @@ Use this document when changing dashboard calculations, filters, labels, imports
 
 The Planning Data Ridership Trends workspace reuses only each day's system fixed-route boarding total. A separate compact projection retains those post-cutover daily totals beyond the detailed dashboard's 380-day history and combines them with the reported workbook baseline through July 2026. It does not add Transit On Demand activity or expose route, stop, trip, operator, load, or alighting detail. See `docs/RIDERSHIP_TRENDS.md`.
 
+The Specialized Transit tab is a separate manager-imported source and does not reuse STREETS observations or shared STREETS filters. Its reported trips, common-location subset, recurring-booking indicators, scheduled pickup-time buckets, and endpoint map use the entire selected report month and must remain labelled as Specialized Transit. They must not be added to fixed-route OTP, missed-trip, productivity, or boarding metrics. See `docs/SPECIALIZED_TRANSIT_DASHBOARD.md`.
+
 The dashboard uses one shared time-range and day-type filter across Overview, OTP Analysis, Ridership, Load Profiles, and Dwell Incident Review. Preset ranges and the inclusive custom start/end range persist when moving between tabs, and every module must apply the same selected dates and day type to its numerator and denominator.
 
 Scope badges describe the included service days (for example, `5 weekdays selected`) and do not imply that every card is an average. Additive overview metrics display the selected-period total and a separately labelled average per included service day. Percentage metrics retain their metric-specific denominator and are not presented as totals or simple averages of daily percentages.
