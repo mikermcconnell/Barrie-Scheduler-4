@@ -1,0 +1,42 @@
+import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
+const browser = await chromium.launch({headless:true});
+const page = await browser.newPage({viewport:{width:1440,height:1000}});
+const errors = [];
+page.on('pageerror', error => errors.push(error.message));
+try {
+  await page.goto('http://localhost:3008', {waitUntil:'domcontentloaded'});
+  await page.waitForTimeout(1500);
+  console.log('Initial app:', (await page.locator('body').innerText()).slice(0,250));
+  await page.evaluate(async () => {
+    const React = await import('/node_modules/.vite/deps/react.js');
+    const ReactDOM = await import('/node_modules/.vite/deps/react-dom_client.js');
+    const createRoot = ReactDOM.createRoot ?? ReactDOM.default.createRoot;
+    const {SpecializedTransitMap} = await import('/components/Performance/SpecializedTransitMap.tsx');
+    document.getElementById('root').style.display = 'none';
+    const el = document.createElement('div');
+    document.body.append(el);
+    const points = Array.from({length:12}, (_,i) => ({location:{id:'fixture-'+i,displayName:i===0?'RVH (synthetic merged fixture)':'Example location '+i,normalizedName:'fixture '+i,aliases:[],latitude:i===11?null:44.39+i*0.001,longitude:i===11?null:-79.67+i*0.001,status:'automatic',coordinateSource:'known-place',relevance:1},pickups:30-i,dropoffs:20-i}));
+    createRoot(el).render((React.createElement ?? React.default.createElement)(SpecializedTransitMap,{points}));
+  });
+  await page.getByRole('heading',{name:'Common-location activity'}).waitFor();
+  assert.equal(await page.locator('tbody tr').count(),10);
+  await page.getByRole('button',{name:'All locations',exact:true}).click();
+  assert.equal(await page.locator('tbody tr').count(),12);
+  assert.equal(await page.getByText('Location unavailable',{exact:true}).count(),1);
+  await page.getByRole('button',{name:'Show RVH (synthetic merged fixture) on map'}).click();
+  await page.locator('.mapboxgl-popup').waitFor();
+  assert.match(await page.locator('.mapboxgl-popup').innerText(), /Activity: 50/);
+  await page.waitForTimeout(1200);
+  await page.getByRole('heading',{name:'Common-location activity'}).hover();
+  assert.equal(await page.locator('.mapboxgl-popup').count(),1);
+  await page.getByRole('button',{name:'Full screen',exact:true}).click();
+  await page.getByRole('button',{name:'Exit full screen',exact:true}).waitFor();
+  assert.equal(await page.evaluate(() => !!document.fullscreenElement),true);
+  await page.screenshot({path:'output/playwright/specialized-map-fullscreen.png'});
+  await page.getByRole('button',{name:'Exit full screen',exact:true}).click();
+  await page.waitForFunction(() => !document.fullscreenElement);
+  assert.equal(await page.evaluate(() => !!document.fullscreenElement),false);
+  await page.screenshot({path:'output/playwright/specialized-map-table.png'});
+  console.log(JSON.stringify({result:'PASS',checks:['Top 10','All 12 including unresolved','table selection popup with exact totals','persistent popup','native fullscreen enter/exit'],pageErrors:errors}));
+} finally { await browser.close(); }

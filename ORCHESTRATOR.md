@@ -71,6 +71,7 @@ Operations owns STREETS-backed imports, dashboards, summaries, and reporting.
 - Same-team and partner detail reads use bounded, access-checked backend views; do not restore broad direct browser reads or convert load/schema failures into empty data.
 - Canonical metric and schema-version behavior lives in `docs/OPERATIONS_DASHBOARD_METRICS.md`. Older stored summaries may require rebuild or re-import after schema changes.
 - Performance schema v14 gives heatmap trips stable identity and stores vehicle/applied capacity so same-time trips do not collide and inferred loads can enforce fleet-specific capacity.
+- Specialized Transit is a separate, manager-imported aggregate under `utils/specialized-transit/`, not a STREETS detail mode. Raw PDFs and client/booking identifiers stay browser-only; load `docs/SPECIALIZED_TRANSIT_DASHBOARD.md` before changing its reconciliation, Mapbox location review, access, or persistence contract.
 
 ### Parking
 

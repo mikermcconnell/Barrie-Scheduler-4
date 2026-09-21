@@ -1,7 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
-    ExternalLink, Timer, Loader2,
+    ExternalLink, Timer, Loader2, Accessibility,
 } from 'lucide-react';
 import type {
     PerformanceDataLoadOptions,
@@ -39,6 +39,10 @@ interface PerformanceWorkspaceProps {
     loadConfigTeamId?: string;
     loadConfigUserId?: string;
     canManageLoadConfig?: boolean;
+    specializedTransitTeamId?: string;
+    canManageSpecializedTransit?: boolean;
+    initialTab?: PerformanceTab;
+    onTabChange?: (tab: PerformanceTab) => void;
 }
 
 interface TabConfig {
@@ -54,6 +58,7 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'complete' },
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
+    { id: 'specialized-transit', label: 'Specialized Transit', icon: Accessibility, status: 'complete' },
     { id: 'operator-dwell', label: 'Dwell Incident Review', icon: Timer, status: 'complete', badge: 'Testing', feature: 'operationsOperatorDwell' },
 ];
 
@@ -95,6 +100,10 @@ const RidershipModule = lazyWithRetry(
 const OperatorDwellModule = lazyWithRetry(
     () => import('./OperatorDwellModule').then(module => ({ default: module.OperatorDwellModule })),
     'performance-operator-dwell-module',
+);
+const SpecializedTransitModule = lazyWithRetry(
+    () => import('./SpecializedTransitModule').then(module => ({ default: module.SpecializedTransitModule })),
+    'performance-specialized-transit-module',
 );
 
 const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
@@ -165,7 +174,9 @@ function resolveDetailDateRange(
 }
 
 function detailModeForTab(tab: PerformanceTab): PerformanceDetailMode {
-    return tab === 'reports' ? 'all' : tab;
+    if (tab === 'reports') return 'all';
+    if (tab === 'specialized-transit') return 'overview';
+    return tab;
 }
 
 export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
@@ -182,10 +193,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     loadConfigTeamId,
     loadConfigUserId,
     canManageLoadConfig = false,
+    specializedTransitTeamId,
+    canManageSpecializedTransit = false,
+    initialTab = 'overview',
+    onTabChange,
 }) => {
     const { canAccess } = useWorkspaceAccess();
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
-    const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
+    const [activeTab, setActiveTab] = useState<PerformanceTab>(initialTab);
     const [timeRange, setTimeRangeState] = useState<TimeRange>('past-week');
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [customDateRange, setCustomDateRange] = useState<PerformanceDateWindow | null>(null);
@@ -198,7 +213,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         dateRange: resolveDetailDateRange(metadata, timeRange, selectedDate, customDateRange, activeTab === 'ridership'),
         detailMode: detailModeForTab(activeTab),
     }), [activeTab, customDateRange, metadata, selectedDate, timeRange]);
-    const shouldLoadDetailData = !!teamId && !!metadata && hasValidCustomRange && (
+    const shouldLoadDetailData = activeTab !== 'specialized-transit' && !!teamId && !!metadata && hasValidCustomRange && (
         activeTab !== 'overview'
         || timeRange === 'all'
         || timeRange === 'past-month'
@@ -303,20 +318,30 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     }, [timeRange, selectedDate, availableDates, latestAvailableDate]);
 
     useEffect(() => {
-        if (tabs.some(tab => tab.id === activeTab)) return;
-        setActiveTab(tabs[0]?.id ?? 'overview');
-    }, [activeTab, tabs]);
+        const nextTab = tabs.find(tab => tab.id === initialTab && tab.enabled)?.id
+            ?? tabs[0]?.id
+            ?? 'overview';
+        setActiveTab(nextTab);
+        if (nextTab !== initialTab) onTabChange?.(nextTab);
+    }, [initialTab, onTabChange, tabs]);
+
+    const selectTab = (tabId: PerformanceTab) => {
+        const tab = tabs.find(candidate => candidate.id === tabId);
+        if (!tab?.enabled) return;
+        setActiveTab(tab.id);
+        onTabChange?.(tab.id);
+    };
 
     const handleNavigate = (tabId: string) => {
         const tab = tabs.find(t => t.id === tabId);
         if (tab?.enabled) {
-            setActiveTab(tab.id);
+            selectTab(tab.id);
             const tabEl = tabBarRef.current?.querySelector(`[data-tab="${tabId}"]`);
             tabEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
     };
 
-    const showFilterBar = true;
+    const showFilterBar = activeTab !== 'specialized-transit';
     const selectedRoute = routeOptions.find(route => route.routeId === selectedRouteId);
     const routeScopeLabel = selectedRouteId === 'all'
         ? 'All routes'
@@ -388,6 +413,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                         <OperatorDwellModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
+            case 'specialized-transit':
+                if (!specializedTransitTeamId) return <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">A team context is required for Specialized Transit data.</div>;
+                return (
+                    <SpecializedTransitModule
+                        teamId={specializedTransitTeamId}
+                        canManage={canManageSpecializedTransit}
+                    />
+                );
             default:
                 return null;
         }
@@ -406,14 +439,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     </button>
                     <div className="h-4 w-px bg-gray-300" />
                     <h2 className="text-lg font-bold text-gray-900">Operations Dashboard</h2>
-                    <span className="text-xs text-gray-500">
+                    {showFilterBar && <span className="text-xs text-gray-500">
                         {filteredData.metadata.dateRange.start} — {filteredData.metadata.dateRange.end}
                         {' · '}{filteredData.metadata.dayCount} day{filteredData.metadata.dayCount !== 1 ? 's' : ''}
                         {' · '}{routeScopeLabel}
-                    </span>
+                    </span>}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                    {onRouteChange && (
+                    {onRouteChange && activeTab !== 'specialized-transit' && (
                         <select
                             aria-label="Filter dashboard by route"
                             value={selectedRouteId}
@@ -487,7 +520,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                                 data-tab={tab.id}
                                 aria-pressed={isActive}
                                 disabled={!tab.enabled}
-                                onClick={() => tab.enabled && setActiveTab(tab.id)}
+                                onClick={() => selectTab(tab.id)}
                                 className={`relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
                                     isActive
                                         ? 'text-gray-900'
@@ -551,7 +584,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
 
             {/* Panel */}
             <div className="min-h-[500px] rounded-b-lg border border-t-0 border-gray-200 bg-white p-5">
-                <div className="mb-4">
+                {showFilterBar && <div className="mb-4">
                     <span className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100">
                         {filteredScopeLabel}
                     </span>
@@ -566,7 +599,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                             />
                         </div>
                     )}
-                </div>
+                </div>}
                 <Suspense fallback={<PerformancePanelLoading label="Loading panel..." />}>
                     {renderPanel()}
                 </Suspense>

@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Loader2, Activity, AlertTriangle, CheckCircle2, RefreshCw, ShieldAlert } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -14,7 +14,7 @@ import {
     filterPerformanceSummaryByRoute,
     getAvailablePerformanceRoutes,
 } from '../../utils/performanceRouteFilter';
-import type { PerformanceDataLoadProgress } from '../../utils/performanceDataTypes';
+import { PERFORMANCE_SCHEMA_VERSION, type PerformanceDataSummary, type PerformanceDataLoadProgress, type PerformanceTab } from '../../utils/performanceDataTypes';
 import {
     PERFORMANCE_METADATA_LOAD_PROFILE,
     PERFORMANCE_OVERVIEW_LOAD_PROFILE,
@@ -24,10 +24,20 @@ import { PerformanceLoadStatus } from './PerformanceLoadStatus';
 interface PerformanceDashboardProps {
     onClose: () => void;
     autoOpen?: boolean;
+    initialTab?: PerformanceTab;
+    onTabChange?: (tab: PerformanceTab) => void;
 }
 
 type PerformanceView = 'landing' | 'import' | 'workspace' | 'loading';
 type ImportReturnTarget = 'landing' | 'workspace' | 'close';
+
+// The shared tab shell needs a summary, but Specialized Transit reads its own data.
+// This empty shell is never used to render a STREETS panel.
+const SPECIALIZED_TRANSIT_SHELL: PerformanceDataSummary = {
+    schemaVersion: PERFORMANCE_SCHEMA_VERSION,
+    dailySummaries: [],
+    metadata: { importedAt: '', importedBy: '', dateRange: { start: '', end: '' }, dayCount: 0, totalRecords: 0 },
+};
 
 const PerformanceImport = lazyWithRetry(
     () => import('./PerformanceImport').then(module => ({ default: module.PerformanceImport })),
@@ -149,19 +159,27 @@ const PerformanceWorkspaceError: React.FC<{
     </div>
 );
 
-export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onClose, autoOpen = false }) => {
+export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
+    onClose,
+    autoOpen = false,
+    initialTab = 'overview',
+    onTabChange,
+}) => {
     const { team, canManageTeam } = useTeam();
     const { user } = useAuth();
     const { canAccess } = useWorkspaceAccess();
     const [view, setView] = useState<PerformanceView>(() => (autoOpen ? 'loading' : 'landing'));
     const [importReturnTarget, setImportReturnTarget] = useState<ImportReturnTarget>(() => (autoOpen ? 'close' : 'landing'));
     const [selectedRouteId, setSelectedRouteId] = useState<string>('all');
+    const [activeTab, setActiveTab] = useState<PerformanceTab>(initialTab);
+    const previousInitialTab = useRef(initialTab);
+    const isSpecializedTransit = activeTab === 'specialized-transit';
     const performanceDataTeamId = team?.dataSourceTeamIds?.performance || team?.id;
     const usesSharedPerformanceData = !!team?.dataSourceTeamIds?.performance && team.dataSourceTeamIds.performance !== team.id;
 
     const metadataQuery = usePerformanceMetadataQuery(performanceDataTeamId, team?.id);
     const hasExistingData = metadataQuery.data != null;
-    const shouldLoadOverviewData = hasExistingData && (view === 'landing' || view === 'workspace' || (autoOpen && view === 'loading'));
+    const shouldLoadOverviewData = !isSpecializedTransit && hasExistingData && (view === 'landing' || view === 'workspace' || view === 'loading');
     const overviewQuery = usePerformanceOverviewQuery(performanceDataTeamId, shouldLoadOverviewData, metadataQuery.data, team?.id);
     const routeOptions = useMemo(
         () => getAvailablePerformanceRoutes(overviewQuery.data),
@@ -187,15 +205,34 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     }, [team?.id, performanceDataTeamId, autoOpen]);
 
     useEffect(() => {
+        setActiveTab(initialTab);
+        if (initialTab === 'specialized-transit') setView('workspace');
+        else if (previousInitialTab.current !== initialTab) setView('loading');
+        previousInitialTab.current = initialTab;
+    }, [initialTab, team?.id]);
+
+    const handleTabChange = useCallback((tab: PerformanceTab) => {
+        setActiveTab(tab);
+        setView(tab === 'specialized-transit' ? 'workspace' : 'loading');
+        onTabChange?.(tab);
+    }, [onTabChange]);
+
+    useEffect(() => {
         if (selectedRouteId === 'all') return;
         if (routeOptions.some(route => route.routeId === selectedRouteId)) return;
         setSelectedRouteId('all');
     }, [routeOptions, selectedRouteId]);
 
     useEffect(() => {
-        if (!autoOpen || view !== 'loading' || !team?.id || metadataQuery.isLoading) {
+        if (view !== 'loading' || !team?.id) {
             return;
         }
+
+        if (isSpecializedTransit) {
+            setView('workspace');
+            return;
+        }
+        if (metadataQuery.isLoading) return;
 
         if (hasExistingData) {
             setImportReturnTarget('workspace');
@@ -210,10 +247,12 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
         }
 
         setView('landing');
-    }, [autoOpen, canManageTeam, hasExistingData, metadataQuery.isLoading, team?.id, user, usesSharedPerformanceData, view]);
+    }, [isSpecializedTransit, canManageTeam, hasExistingData, metadataQuery.isLoading, team?.id, user, usesSharedPerformanceData, view]);
 
     const handleCardClick = () => {
         if (!team?.id) return;
+        setActiveTab('overview');
+        onTabChange?.('overview');
         if (hasExistingData) {
             setView('workspace');
         } else if (canManageTeam && !usesSharedPerformanceData) {
@@ -290,11 +329,11 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     }
 
     if (view === 'workspace') {
-        if (metadataQuery.isLoading || !hasExistingData) {
+        if (!isSpecializedTransit && (metadataQuery.isLoading || !hasExistingData)) {
             return <DashboardLoadingState label="Loading performance data..." />;
         }
 
-        const workspaceData = scopedOverviewData;
+        const workspaceData = isSpecializedTransit ? SPECIALIZED_TRANSIT_SHELL : scopedOverviewData;
 
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -312,7 +351,11 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                                 loadConfigTeamId={usesSharedPerformanceData ? undefined : team.id}
                                 loadConfigUserId={usesSharedPerformanceData ? undefined : user?.uid}
                                 canManageLoadConfig={canManageTeam && !usesSharedPerformanceData}
-                                canReimport={canManageTeam && !usesSharedPerformanceData}
+                                specializedTransitTeamId={team.id}
+                                canManageSpecializedTransit={canManageTeam}
+                                canReimport={!isSpecializedTransit && canManageTeam && !usesSharedPerformanceData}
+                                initialTab={activeTab}
+                                onTabChange={handleTabChange}
                                 onReimport={() => {
                                     if (usesSharedPerformanceData || !canManageTeam) return;
                                     setImportReturnTarget('workspace');
@@ -375,6 +418,13 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <button
+                        onClick={() => handleTabChange('specialized-transit')}
+                        className="group rounded-xl border border-gray-200 bg-white p-6 text-left shadow-sm transition-all hover:border-cyan-300 hover:shadow-md"
+                    >
+                        <h3 className="mb-1 text-lg font-bold text-gray-900">Specialized Transit</h3>
+                        <p className="text-sm leading-relaxed text-gray-500">Open saved monthly reports and common-location activity.</p>
+                    </button>
                     <button
                         onClick={handleCardClick}
                         className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left flex flex-col h-full active:scale-[0.99]"

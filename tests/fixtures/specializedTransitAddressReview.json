@@ -1,0 +1,607 @@
+[
+  {
+    "id": "st-1aetzbd",
+    "label": "Staples",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-y3jfc2",
+    "label": "Great Clips Hair Salon",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1g1go5a",
+    "label": "Von Canada",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1b4opuq",
+    "label": "CMHA - Mental Health CNTR",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-3z7k19",
+    "label": "Royal Court Medical Ctr ( LOC)",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1dhvegy",
+    "label": "Cineplex Odeon",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-omwa8y",
+    "label": "Ferris Place Dental / Medical",
+    "expectedAddress": "85 Ferris Lane"
+  },
+  {
+    "id": "st-1frqq80",
+    "label": "Barrieview Retirement Communit",
+    "expectedAddress": "3 Concert Way"
+  },
+  {
+    "id": "st-1w0yvs1",
+    "label": "150",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1m0pzn9",
+    "label": "Amica Assisted Living",
+    "expectedAddress": "70 Lakeside Terrace"
+  },
+  {
+    "id": "st-1xxh3v5",
+    "label": "Budhist Temple",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1kb0vrd",
+    "label": "Eagle Ridge Medical - Front Do",
+    "expectedAddress": "480 Huronia Road"
+  },
+  {
+    "id": "st-lnvn7n",
+    "label": "KEMPENFEST STOP",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1jyrfvh",
+    "label": "Life Labs",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1ljjj39",
+    "label": "Shoppers Drug Mart ( Bayfield)",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1sbmhk8",
+    "label": "Peggy Hill Team Community Cent",
+    "expectedAddress": "171 Mapleton Avenue"
+  },
+  {
+    "id": "st-w9urb3",
+    "label": "Roberta Place",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-o9tqy8",
+    "label": "Scotiabank - Bayfield",
+    "expectedAddress": "544 Bayfield Street"
+  },
+  {
+    "id": "st-1ew6rd",
+    "label": "Swiss Chalet - Bayfield",
+    "expectedAddress": "397 Bayfield Street"
+  },
+  {
+    "id": "st-1frfwlg",
+    "label": "Bibles for Missions",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1h5a641",
+    "label": "City Hall",
+    "expectedAddress": "70 Collier Street"
+  },
+  {
+    "id": "st-2rhq71",
+    "label": "Milestones Restaurant",
+    "expectedAddress": "150 Park Place Boulevard"
+  },
+  {
+    "id": "st-1cwv1az",
+    "label": "The UPS Store",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-29te8h",
+    "label": "Barrie Vascular Imaging",
+    "expectedAddress": "60 Bell Farm Road"
+  },
+  {
+    "id": "st-dnss8y",
+    "label": "Brain Injury Services",
+    "expectedAddress": "21 Essa Road"
+  },
+  {
+    "id": "st-1od8q4k",
+    "label": "Eagle Ridge Medical - Back Doo",
+    "expectedAddress": "480 Huronia Road"
+  },
+  {
+    "id": "st-1c6zk6p",
+    "label": "Kingdom Hall",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1xhpv0k",
+    "label": "Mandarin Restaurant",
+    "expectedAddress": "28 Fairview Road"
+  },
+  {
+    "id": "st-1j2y74d",
+    "label": "One Eyed Jack Restaurant & Bar",
+    "expectedAddress": "165 Wellington Street West"
+  },
+  {
+    "id": "st-1azm893",
+    "label": "St. Vincent Park",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1wesu2d",
+    "label": "Tim Hortons - Yonge at Maplevi",
+    "expectedAddress": "837 Yonge Street"
+  },
+  {
+    "id": "st-2vrg2u",
+    "label": "Value Village ( Wellington Plaz",
+    "expectedAddress": "165 Wellington Street West"
+  },
+  {
+    "id": "st-1x53ed6",
+    "label": "Barrie Foot Clinic",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-uz4kmq",
+    "label": "Bob Rumball Center",
+    "expectedAddress": "1 Royal Parkside Drive"
+  },
+  {
+    "id": "st-14kaa7c",
+    "label": "Heritage Square ( 94)",
+    "expectedAddress": "94 Dean Avenue"
+  },
+  {
+    "id": "st-1mmo2ja",
+    "label": "Old Navy",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-60sfwj",
+    "label": "Simcoe Cnty Dist. Health Unit",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1ej3mm9",
+    "label": "Springwater Plaza",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1fejw5",
+    "label": "Unique Minds Academy",
+    "expectedAddress": "65 Cedar Pointe Drive"
+  },
+  {
+    "id": "st-17p5ohz",
+    "label": "Camphill",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-uhk00b",
+    "label": "Free Methodist Church",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1tsqt2b",
+    "label": "Peggy Hill Team CC",
+    "expectedAddress": "171 Mapleton Avenue"
+  },
+  {
+    "id": "st-1knvsy3",
+    "label": "Starbucks",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-3regtr",
+    "label": "Westowne Dental",
+    "expectedAddress": "420 Leacock Drive"
+  },
+  {
+    "id": "st-ijhtck",
+    "label": "Allandale Station Retirement R",
+    "expectedAddress": "357 Yonge Street"
+  },
+  {
+    "id": "st-czl476",
+    "label": "Ardagh Family Dentistry | Best",
+    "expectedAddress": "225 Ferndale Drive South"
+  },
+  {
+    "id": "st-1pac0v1",
+    "label": "Barrie Denture Clinic",
+    "expectedAddress": "34 Cedar Pointe Drive"
+  },
+  {
+    "id": "st-1gu49f0",
+    "label": "Bull & Barrel",
+    "expectedAddress": "75 Cedar Pointe Drive"
+  },
+  {
+    "id": "st-surxm0",
+    "label": "Canadian Blood Services",
+    "expectedAddress": "231 Bayview Drive"
+  },
+  {
+    "id": "st-lew9du",
+    "label": "Christian Horizons Group Home",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-alfvj0",
+    "label": "Dollarama ( Springwater Marketp",
+    "expectedAddress": "409 Bayfield Street"
+  },
+  {
+    "id": "st-xkvo3f",
+    "label": "Goodness Me",
+    "expectedAddress": "79 Park Place Boulevard"
+  },
+  {
+    "id": "st-j2lcq6",
+    "label": "Grove Park Home - Door on Cook",
+    "expectedAddress": "234 Cook Street"
+  },
+  {
+    "id": "st-16doppj",
+    "label": "national bank",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-639wjp",
+    "label": "Native Centre",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-b6udl0",
+    "label": "NEW LIFE CHIRO",
+    "expectedAddress": "320 Bayfield Street"
+  },
+  {
+    "id": "st-70n1i8",
+    "label": "Victoria Village - Nursing Res",
+    "expectedAddress": "78 Ross Street"
+  },
+  {
+    "id": "st-143qp32",
+    "label": "Will Dwyer Park",
+    "expectedAddress": "81 Lakeshore Drive"
+  },
+  {
+    "id": "st-9kd3qw",
+    "label": "Canadian Tire / Bayfield Mall",
+    "expectedAddress": "320 Bayfield Street"
+  },
+  {
+    "id": "st-egsiun",
+    "label": "Centra Foods",
+    "expectedAddress": "320 Bayfield Street"
+  },
+  {
+    "id": "st-nu3r8d",
+    "label": "Chuck's Roadhouse Bar & Grill",
+    "expectedAddress": "407 Bayfield Street"
+  },
+  {
+    "id": "st-1adkwbh",
+    "label": "Dunlop Billiards",
+    "expectedAddress": "445 Dunlop Street West"
+  },
+  {
+    "id": "st-bbyvnk",
+    "label": "Northwest Barrie United Church",
+    "expectedAddress": "464 Ferndale Drive North"
+  },
+  {
+    "id": "st-ayv3tr",
+    "label": "Owen Hill Care Community ( LOC",
+    "expectedAddress": "130 Owen Street"
+  },
+  {
+    "id": "st-omc707",
+    "label": "Royal Court Medical Ctr",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-nj3qst",
+    "label": "Shoppers Drug Mart ( North Barr",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-eb5amz",
+    "label": "Zehr's Market - Yonge",
+    "expectedAddress": "620 Yonge Street"
+  },
+  {
+    "id": "st-iof3dp",
+    "label": "Barrie Ocular Surgery",
+    "expectedAddress": "441 Huronia Road"
+  },
+  {
+    "id": "st-1pt0wzk",
+    "label": "Charity Bingo",
+    "expectedAddress": "52 Bayfield Street"
+  },
+  {
+    "id": "st-5ldrer",
+    "label": "Chef Chan",
+    "expectedAddress": "190 Minet's Point Road"
+  },
+  {
+    "id": "st-1c2m10i",
+    "label": "Common Roof",
+    "expectedAddress": "165 Ferris Lane"
+  },
+  {
+    "id": "st-lnj1ff",
+    "label": "Eastview Secondary",
+    "expectedAddress": "421 Grove Street East"
+  },
+  {
+    "id": "st-1gfygn2",
+    "label": "Flashback Diner",
+    "expectedAddress": "309 Bayfield Street"
+  },
+  {
+    "id": "st-152qffl",
+    "label": "Great Canadian Bagel ( Springwa",
+    "expectedAddress": "411 Bayfield Street"
+  },
+  {
+    "id": "st-zyf5g5",
+    "label": "Health Partners Professional",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-bx4jas",
+    "label": "Home Depot",
+    "expectedAddress": "10 Barrie View Drive"
+  },
+  {
+    "id": "st-u22jmv",
+    "label": "Image Dental Laboratory",
+    "expectedAddress": "33 Quarry Ridge Road"
+  },
+  {
+    "id": "st-d116p0",
+    "label": "Kenzington Burger Bar",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-l13syc",
+    "label": "Kingdom Hall South",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-z93afj",
+    "label": "Lakeshore Family Medicine",
+    "expectedAddress": "11 Victoria Street"
+  },
+  {
+    "id": "st-14q4tvf",
+    "label": "Leacock Plaza",
+    "expectedAddress": "420 Leacock Drive"
+  },
+  {
+    "id": "st-u8ouu4",
+    "label": "Lodge Roberta Place",
+    "expectedAddress": "489 Essa Road"
+  },
+  {
+    "id": "st-xz2axe",
+    "label": "Montana's Cookhouse Saloon",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1rnst9d",
+    "label": "Ovenden Bldg",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-6556ld",
+    "label": "Owen Hill Care Community",
+    "expectedAddress": "130 Owen Street"
+  },
+  {
+    "id": "st-14op0nv",
+    "label": "Pet Valu ( Wellington Plaza)",
+    "expectedAddress": "165 Wellington Street West"
+  },
+  {
+    "id": "st-19soeku",
+    "label": "Service Canada",
+    "expectedAddress": "48 Owen Street"
+  },
+  {
+    "id": "st-4a987a",
+    "label": "Sheba Shrine - John / Anne",
+    "expectedAddress": "142 John Street"
+  },
+  {
+    "id": "st-pizij8",
+    "label": "Shoppers drug mart ( Prince Wil",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1kphgxg",
+    "label": "Spirit Catcher",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-k5z6s3",
+    "label": "Swiss Chalet - Barrieview",
+    "expectedAddress": "85 Barrie View Drive"
+  },
+  {
+    "id": "st-17e36rz",
+    "label": "Tim Hortons - Cundles - North",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1whhb0v",
+    "label": "Urban Grind Coffee Co",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-m8d8z9",
+    "label": "Winners - South - Park Place",
+    "expectedAddress": "30 North Village Way"
+  },
+  {
+    "id": "st-1m8ralc",
+    "label": "Winners ( Springwater Marketpla",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-14m8zpt",
+    "label": "XPlay Amusements",
+    "expectedAddress": "30 North Village Way"
+  },
+  {
+    "id": "st-1yix3d7",
+    "label": "Best Buy",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1cy6gt",
+    "label": "Eastview Secondary School",
+    "expectedAddress": "421 Grove Street East"
+  },
+  {
+    "id": "st-1k1wak",
+    "label": "EUROPEAN FINE FOOD & DELI",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-15i6b6n",
+    "label": "Farm Boy",
+    "expectedAddress": "436 Bryne Drive"
+  },
+  {
+    "id": "st-1t6g0r0",
+    "label": "First Choice Hair",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1g2it4r",
+    "label": "Frescho Mapleview",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-12gdlps",
+    "label": "Giovanni & Perri",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1jde9q6",
+    "label": "Kelsey's Restaurant",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-ap8ie4",
+    "label": "Marks ( Park Place)",
+    "expectedAddress": "80 Concert Way"
+  },
+  {
+    "id": "st-iemnb6",
+    "label": "Mary Brown's ( Wellington Plaza",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1k08aqm",
+    "label": "MONTE CARLO INN",
+    "expectedAddress": "81 Hart Drive"
+  },
+  {
+    "id": "st-tv6kjj",
+    "label": "Nights of Columbus",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1qsidtk",
+    "label": "One Eyed Jack Restaurant &",
+    "expectedAddress": "165 Wellington Street West"
+  },
+  {
+    "id": "st-1nep8do",
+    "label": "Parkplace - Goodness Me",
+    "expectedAddress": "79 Park Place Boulevard"
+  },
+  {
+    "id": "st-1epefjr",
+    "label": "Pharmasave ( Blake St)",
+    "expectedAddress": "301 Blake Street"
+  },
+  {
+    "id": "st-1yapsaj",
+    "label": "Rexall",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1f7jp7l",
+    "label": "Rogers",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-6bie2q",
+    "label": "Sobeys",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-v05315",
+    "label": "Tim Hortons - Bayfield at Cun",
+    "expectedAddress": "354 Bayfield Street"
+  },
+  {
+    "id": "st-1rhv8hg",
+    "label": "TRUE COLOURS",
+    "expectedAddress": "181 Livingstone Street East"
+  },
+  {
+    "id": "st-1cdfsrm",
+    "label": "Value Village",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-1b4lhi",
+    "label": "Wellington Plaza",
+    "expectedAddress": "165 Wellington Street West"
+  },
+  {
+    "id": "st-13khe8c",
+    "label": "Wentworths Eatery,Cafe & Cater",
+    "expectedAddress": null
+  },
+  {
+    "id": "st-11yktkk",
+    "label": "West Bayfield Elementary Schoo",
+    "expectedAddress": "49 Ford Street"
+  },
+  {
+    "id": "st-156mz45",
+    "label": "Zehrs Market - Big Bay Pt",
+    "expectedAddress": "620 Yonge Street"
+  }
+]
