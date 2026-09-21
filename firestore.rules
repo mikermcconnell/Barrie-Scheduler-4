@@ -243,6 +243,12 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
       }
 
+      // Specialized Transit is team-readable and manager-writable.
+      match /specializedTransitData/{docId} {
+        allow read: if docId == 'metadata' && (isTeamMember(teamId) || canSupportReadTeamData(teamId));
+        allow create, update, delete: if docId == 'metadata' && (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId));
+      }
+
       // Shared, effective-dated Transit On Demand zone geometry. Team members
       // may view published assignments; only owners/admins may edit the draft.
       match /todZoneConfig/{configId} {

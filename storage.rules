@@ -252,6 +252,18 @@ service firebase.storage {
       allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
     }
 
+    // Privacy-minimized Specialized Transit aggregates; raw source PDFs and
+    // client/booking identifiers are not valid application payloads. Localhost
+    // uses IndexedDB, while the non-local development fallback stays validated.
+    match /teams/{teamId}/specializedTransitData/{fileName} {
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow create, update: if (isTeamManager(teamId) || canSupportWriteTeamData(teamId)) &&
+        fileName.matches('^revision-[1-9][0-9]{0,6}-[A-Za-z0-9-]+[.]json$') &&
+        request.resource.size < 8 * 1024 * 1024 &&
+        request.resource.contentType == 'application/json';
+      allow delete: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
+    }
+
     // Compact long-term fixed-route ridership projection. Unlike the broader
     // Operations archives, this view has its own Planning Data permission.
     match /teams/{teamId}/performanceViews/ridership-trends/{generation} {

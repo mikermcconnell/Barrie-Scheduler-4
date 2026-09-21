@@ -10,7 +10,12 @@ const reportsWorkspaceRenderSpy = vi.fn();
 vi.mock('../utils/lazyWithRetry', () => ({
   lazyWithRetry: (_loader: unknown, cacheKey: string) => {
     if (cacheKey === 'operations-performance-dashboard') {
-      return (props: { onClose: () => void; autoOpen?: boolean }) => {
+      return (props: {
+        onClose: () => void;
+        autoOpen?: boolean;
+        initialTab?: string;
+        onTabChange?: (tab: string) => void;
+      }) => {
         performanceDashboardRenderSpy();
         performanceDashboardPropsSpy(props);
         return React.createElement(
@@ -74,6 +79,45 @@ describe('OperationsWorkspace performance shell', () => {
       }),
     );
     expect(reportsWorkspaceRenderSpy).not.toHaveBeenCalled();
+  });
+
+  it('deep-links to Ridership and keeps performance tab navigation in the hash', () => {
+    window.location.hash = 'operations/performance/ridership';
+
+    flushSync(() => {
+      root.render(<OperationsWorkspace />);
+    });
+
+    expect(performanceDashboardPropsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autoOpen: true,
+        initialTab: 'ridership',
+      }),
+    );
+
+    const dashboardProps = performanceDashboardPropsSpy.mock.calls.at(-1)?.[0] as {
+      onTabChange?: (tab: string) => void;
+    };
+    flushSync(() => {
+      dashboardProps.onTabChange?.('otp');
+    });
+
+    expect(window.location.hash).toBe('#operations/performance/otp');
+  });
+
+  it('deep-links to the Specialized Transit management tab', () => {
+    window.location.hash = 'operations/performance/specialized-transit';
+
+    flushSync(() => {
+      root.render(<OperationsWorkspace />);
+    });
+
+    expect(performanceDashboardPropsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autoOpen: true,
+        initialTab: 'specialized-transit',
+      }),
+    );
   });
 
   it('opens STREETS reports from a direct reports hash and returns to the dashboard', async () => {

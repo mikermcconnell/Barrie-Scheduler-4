@@ -729,6 +729,7 @@ export type PerformanceTab =
   | 'overview'
   | 'otp'
   | 'ridership'
+  | 'specialized-transit'
   | 'load-profiles'
   | 'operator-dwell'
   | 'reports';

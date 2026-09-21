@@ -61,6 +61,7 @@ Load feature docs only when the task directly touches that feature.
 ### Planning-data workspaces
 
 - Ridership Trends: `docs/RIDERSHIP_TRENDS.md`; add `docs/OPERATIONS_DASHBOARD_METRICS.md` and `docs/SCHEMA.md` when changing its STREETS projection or access boundary
+- Specialized Transit dashboard: `docs/SPECIALIZED_TRANSIT_DASHBOARD.md`; add `docs/SCHEMA.md` for persistence/access changes and `docs/OPERATIONS_DASHBOARD_METRICS.md` when changing interpretation or reconciliation semantics
 - Camp Shuttle Planner (`Route Planner 2` internally): start with `docs/route-planner-2/README.md`, then load only the numbered docs selected by its task router
 - Route Concept Planner: `docs/route-concept-planner/README.md`, then its product and technical contracts
 - Shuttle Planner: use `docs/SHUTTLE_PLANNER_PRD.md` for product/domain work; add `docs/SHUTTLE_PLANNER_UI_SPEC.md` only for UI, interaction, or layout work

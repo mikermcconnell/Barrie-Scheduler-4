@@ -1028,6 +1028,12 @@ interface PlatformAnalysis {
 
 ---
 
+### Specialized Transit saved source files
+
+Specialized Transit cloud metadata and aggregate objects are team-readable and owner/admin-writable, with audited support-session exceptions; authentication alone grants no cross-team access. `utils/specialized-transit/locationMerges.ts` consolidates RVH campus aliases under `st-rvh-campus` and resolves unique saved aliases on import. All affected activity bucket IDs are remapped and counts summed; monthly trip totals remain unchanged. This is compatible with schema v1 and consolidates existing aggregates on display, persisting on the next normal save.
+
+IndexedDB database `scheduler4-specialized-transit-local` version 2 adds object store `reportFiles`, keyed by `[teamId, userId]`. An explicitly saved source pair contains `monthly` and `common` entries with `name`, `type`, `lastModified`, and `bytes` (ArrayBuffer). Saving replaces that account/team's current pair; removing it leaves aggregate history untouched. These optional browser-local raw PDFs are separate from the privacy-minimized aggregate schema above and are never uploaded to Firebase. The version upgrade preserves existing `datasets` records.
+
 ## Key Patterns
 
 ### 1. Large Data in Cloud Storage

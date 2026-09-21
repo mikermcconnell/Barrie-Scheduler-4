@@ -9,9 +9,10 @@ vi.mock('../hooks/usePerformanceData', () => ({
   usePerformanceDataQuery: (...args: unknown[]) => usePerformanceDataQueryMock(...args),
 }));
 
-vi.mock('../hooks/useWorkspaceAccess', () => ({
-  useWorkspaceAccess: () => ({ canAccess: () => false }),
-}));
+vi.mock('../hooks/useWorkspaceAccess', () => {
+  const canAccess = () => false;
+  return { useWorkspaceAccess: () => ({ canAccess }) };
+});
 
 vi.mock('../utils/features', () => ({
   isFeatureEnabled: () => false,
