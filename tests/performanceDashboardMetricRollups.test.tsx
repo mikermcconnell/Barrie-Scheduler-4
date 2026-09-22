@@ -11,7 +11,9 @@ const teamContext = vi.hoisted(() => ({
 const todSectionProps = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
 vi.mock('../components/Analytics/AnalyticsShared', () => ({
-  ChartCard: ({ title, children }: { title: string; children?: React.ReactNode }) => <section><h3>{title}</h3>{children}</section>,
+  ChartCard: ({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) => (
+    <section><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}{children}</section>
+  ),
 }));
 vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => teamContext.current }));
 vi.mock('../components/contexts/AuthContext', () => ({ useAuth: () => ({ user: { uid: 'user-1' } }) }));
@@ -44,6 +46,8 @@ vi.mock('recharts', () => {
 import { RidershipModule } from '../components/Performance/RidershipModule';
 import { OTPModule } from '../components/Performance/OTPModule';
 import { LoadProfileModule } from '../components/Performance/LoadProfileModule';
+import { PerformanceAggregationProvider } from '../components/Performance/performanceAggregation';
+import { getPerformanceAggregation } from '../utils/performanceAggregation';
 
 function otp(total: number, onTime: number, avgDeviationSeconds = 0): OTPBreakdown {
   return {
@@ -129,7 +133,32 @@ describe('performance dashboard metric rollups', () => {
     expect(container.textContent).toContain('Passenger Flow by Stop');
     const combinedRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('7A/7B'));
     expect(combinedRow?.querySelectorAll('td')[2].textContent).toBe('600');
-    expect(combinedRow?.querySelectorAll('td')[3].textContent).toBe('300');
+    expect(combinedRow?.querySelectorAll('td')[3].textContent).toBe('150.0');
+
+    flushSync(() => root.render(
+      <PerformanceAggregationProvider value={getPerformanceAggregation('average', data.dailySummaries, 'all', null)}>
+        <RidershipModule data={data} />
+      </PerformanceAggregationProvider>,
+    ));
+    const averageRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('7A/7B'));
+    expect(averageRow?.querySelectorAll('td')[2].textContent).toBe('300');
+    expect(averageRow?.querySelectorAll('td')[3].textContent).toBe('150.0');
+  });
+
+  it('labels route daily averages for the selected weekday scope', () => {
+    const data = summary([
+      day('2026-03-10', [route('1', 100)]),
+      day('2026-03-11', [route('1', 200)]),
+    ]);
+    flushSync(() => root.render(
+      <PerformanceAggregationProvider value={getPerformanceAggregation('average', data.dailySummaries, 'weekday', null)}>
+        <RidershipModule data={data} dayTypeFilter="weekday" />
+      </PerformanceAggregationProvider>,
+    ));
+
+    expect(container.textContent).toContain('Boardings / weekday; boards per service hour retains its period ratio');
+    expect(container.querySelector('thead')?.textContent).toContain('Boardings / weekday');
+    expect(container.querySelector('tbody tr')?.querySelectorAll('td')[2].textContent).toBe('150');
   });
 
   it('shows Passenger Flow by Stop only for admin and developer access', () => {

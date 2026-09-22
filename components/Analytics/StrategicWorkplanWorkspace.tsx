@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle,
     CalendarClock,
@@ -12,6 +12,9 @@ import {
     History,
     LayoutDashboard,
     Loader2,
+    Maximize2,
+    Minimize2,
+    MoveHorizontal,
     Plus,
     RefreshCw,
     Save,
@@ -24,6 +27,12 @@ import {
     addStrategicWorkplanDays,
     createStrategicWorkplanBaseline,
 } from '../../utils/strategic-plan/workplanBaseline';
+import {
+    calculateStrategicWorkplanTimelineRange,
+    strategicWorkplanDateDifference,
+    strategicWorkplanPointerDeltaDays,
+    type StrategicWorkplanTimelineDragMode,
+} from '../../utils/strategic-plan/workplanTimeline';
 import {
     listStrategicWorkplanVersions,
     loadStrategicWorkplan,
@@ -43,6 +52,18 @@ import {
 
 type WorkplanView = 'update-desk' | 'full-schedule' | 'timeline';
 type TimelineZoom = 'compact' | 'standard' | 'detailed';
+
+interface TimelineDragState {
+    taskId: string;
+    mode: StrategicWorkplanTimelineDragMode;
+    pointerId: number;
+    originClientX: number;
+    timelineWidth: number;
+    originalStart: string;
+    originalEnd: string;
+    previewStart: string;
+    previewEnd: string;
+}
 
 interface StrategicWorkplanWorkspaceProps {
     teamId: string;
@@ -287,6 +308,9 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
     const [notice, setNotice] = useState<string | null>(null);
     const [view, setView] = useState<WorkplanView>('full-schedule');
     const [zoom, setZoom] = useState<TimelineZoom>('standard');
+    const [scheduleFullscreen, setScheduleFullscreen] = useState(false);
+    const [timelineDrag, setTimelineDrag] = useState<TimelineDragState | null>(null);
+    const timelineDragRef = useRef<TimelineDragState | null>(null);
     const [search, setSearch] = useState('');
     const [phaseFilter, setPhaseFilter] = useState('all');
     const [ownerFilter, setOwnerFilter] = useState('all');
@@ -345,6 +369,119 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
     const updateTask = (nextTask: StrategicWorkplanTask) => {
         if (!workplan) return;
         changeWorkplan({ ...workplan, tasks: workplan.tasks.map(task => task.id === nextTask.id ? nextTask : task) });
+    };
+
+    const setActiveTimelineDrag = (next: TimelineDragState | null) => {
+        timelineDragRef.current = next;
+        setTimelineDrag(next);
+    };
+
+    const applyTaskTimelineRange = (
+        task: StrategicWorkplanTask,
+        mode: StrategicWorkplanTimelineDragMode,
+        startDate: string,
+        endDate: string,
+    ) => {
+        if (!task.startDate || !task.endDate || (task.startDate === startDate && task.endDate === endDate)) return;
+        const shiftDays = mode === 'move' ? strategicWorkplanDateDifference(task.startDate, startDate) : 0;
+        updateTask({
+            ...task,
+            startDate,
+            endDate,
+            segments: shiftDays === 0
+                ? task.segments
+                : task.segments.map(segment => ({
+                    ...segment,
+                    startDate: addStrategicWorkplanDays(segment.startDate, shiftDays),
+                    endDate: addStrategicWorkplanDays(segment.endDate, shiftDays),
+                })),
+        });
+        const action = mode === 'move' ? 'moved' : mode === 'resize-start' ? 'start resized' : 'finish resized';
+        setNotice(`${task.wbs} ${action} to ${formatDate(startDate)} - ${formatDate(endDate)}. Dependencies were not auto-shifted; review related tasks, then save.`);
+    };
+
+    const beginTimelineDrag = (
+        event: React.PointerEvent<HTMLElement>,
+        task: StrategicWorkplanTask,
+        mode: StrategicWorkplanTimelineDragMode,
+    ) => {
+        if (!task.startDate || !task.endDate || event.button !== 0) return;
+        const timeline = event.currentTarget.closest<HTMLElement>('[data-timeline-grid]');
+        if (!timeline) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        setActiveTimelineDrag({
+            taskId: task.id,
+            mode,
+            pointerId: event.pointerId,
+            originClientX: event.clientX,
+            timelineWidth: Math.max(1, timeline.getBoundingClientRect().width),
+            originalStart: task.startDate,
+            originalEnd: task.endDate,
+            previewStart: task.startDate,
+            previewEnd: task.endDate,
+        });
+    };
+
+    const updateTimelineDrag = (event: React.PointerEvent<HTMLElement>) => {
+        const active = timelineDragRef.current;
+        if (!active || active.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        const deltaDays = strategicWorkplanPointerDeltaDays(
+            event.clientX - active.originClientX,
+            active.timelineWidth,
+            workplan.scheduleStart,
+            workplan.scheduleEnd,
+        );
+        const preview = calculateStrategicWorkplanTimelineRange({
+            mode: active.mode,
+            startDate: active.originalStart,
+            endDate: active.originalEnd,
+            scheduleStart: workplan.scheduleStart,
+            scheduleEnd: workplan.scheduleEnd,
+            deltaDays,
+        });
+        setActiveTimelineDrag({ ...active, previewStart: preview.startDate, previewEnd: preview.endDate });
+    };
+
+    const finishTimelineDrag = (event: React.PointerEvent<HTMLElement>) => {
+        const active = timelineDragRef.current;
+        if (!active || active.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.releasePointerCapture?.(event.pointerId);
+        const task = workplan.tasks.find(candidate => candidate.id === active.taskId);
+        const changed = active.previewStart !== active.originalStart || active.previewEnd !== active.originalEnd;
+        setActiveTimelineDrag(null);
+        if (task && changed) {
+            applyTaskTimelineRange(task, active.mode, active.previewStart, active.previewEnd);
+        } else if (task && active.mode === 'move') {
+            setSelectedTaskId(task.id);
+        }
+    };
+
+    const cancelTimelineDrag = (event: React.PointerEvent<HTMLElement>) => {
+        if (timelineDragRef.current?.pointerId !== event.pointerId) return;
+        event.currentTarget.releasePointerCapture?.(event.pointerId);
+        setActiveTimelineDrag(null);
+    };
+
+    const nudgeTaskTimeline = (
+        task: StrategicWorkplanTask,
+        mode: StrategicWorkplanTimelineDragMode,
+        deltaDays: number,
+    ) => {
+        if (!task.startDate || !task.endDate) return;
+        const next = calculateStrategicWorkplanTimelineRange({
+            mode,
+            startDate: task.startDate,
+            endDate: task.endDate,
+            scheduleStart: workplan.scheduleStart,
+            scheduleEnd: workplan.scheduleEnd,
+            deltaDays,
+        });
+        applyTaskTimelineRange(task, mode, next.startDate, next.endDate);
     };
 
     const save = async () => {
@@ -418,10 +555,12 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
     const selectedTask = workplan?.tasks.find(task => task.id === selectedTaskId) ?? null;
 
     useEffect(() => {
-        if (!selectedTaskId) return;
+        if (!selectedTaskId && !scheduleFullscreen) return;
         const previousOverflow = document.body.style.overflow;
         const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setSelectedTaskId(null);
+            if (event.key !== 'Escape') return;
+            if (selectedTaskId) setSelectedTaskId(null);
+            else setScheduleFullscreen(false);
         };
         document.body.style.overflow = 'hidden';
         window.addEventListener('keydown', onKeyDown);
@@ -429,7 +568,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
             document.body.style.overflow = previousOverflow;
             window.removeEventListener('keydown', onKeyDown);
         };
-    }, [selectedTaskId]);
+    }, [selectedTaskId, scheduleFullscreen]);
 
     const addTask = () => {
         if (!workplan) return;
@@ -637,15 +776,18 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
                     ))}
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-                    <div className="flex flex-col gap-3 border-b border-slate-200 p-4 xl:flex-row xl:items-center xl:justify-between">
+                <section
+                    className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${scheduleFullscreen ? 'fixed inset-0 z-40 !m-0 flex min-h-0 flex-col rounded-none border-0' : ''}`}
+                    aria-label={scheduleFullscreen ? 'Full-screen project schedule' : 'Project schedule'}
+                >
+                    <div className="flex shrink-0 flex-col gap-3 border-b border-slate-200 bg-white p-4 xl:flex-row xl:items-center xl:justify-between">
                         <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 sm:w-auto" role="tablist" aria-label="Work-plan views">
                             {([
                                 ['update-desk', 'Update Desk', LayoutDashboard],
                                 ['full-schedule', 'Full Schedule', GanttChartSquare],
                                 ['timeline', 'Timeline', CalendarDays],
                             ] as const).map(([value, label, Icon]) => (
-                                <button key={value} type="button" role="tab" aria-selected={view === value} onClick={() => setView(value)} className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-black transition sm:flex-none ${view === value ? 'bg-white text-[#001C80] shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>
+                                <button key={value} type="button" role="tab" aria-selected={view === value} onClick={() => { setView(value); if (value !== 'full-schedule') setScheduleFullscreen(false); }} className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-black transition sm:flex-none ${view === value ? 'bg-white text-[#001C80] shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>
                                     <Icon size={16} /> {label}
                                 </button>
                             ))}
@@ -659,9 +801,37 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
                             <select value={phaseFilter} onChange={event => setPhaseFilter(event.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-semibold"><option value="all">All phases</option>{phaseOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
                             <select value={ownerFilter} onChange={event => setOwnerFilter(event.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-semibold"><option value="all">All owners</option>{['Staff', 'Consultant', 'Joint', 'Unassigned'].map(owner => <option key={owner}>{owner}</option>)}</select>
                             <select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-semibold"><option value="all">All statuses</option>{STRATEGIC_WORKPLAN_STATUSES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-                            {view === 'full-schedule' && <select value={zoom} onChange={event => setZoom(event.target.value as TimelineZoom)} className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-semibold"><option value="compact">Compact</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select>}
+                            {view === 'full-schedule' && <select value={zoom} onChange={event => setZoom(event.target.value as TimelineZoom)} className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-semibold" aria-label="Timeline zoom"><option value="compact">Compact</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select>}
+                            {view === 'full-schedule' && (
+                                <button
+                                    type="button"
+                                    onClick={() => setScheduleFullscreen(current => !current)}
+                                    className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-black text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-[#001C80]"
+                                    aria-pressed={scheduleFullscreen}
+                                >
+                                    {scheduleFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                                    {scheduleFullscreen ? 'Exit full screen' : 'Full screen'}
+                                </button>
+                            )}
+                            {scheduleFullscreen && (
+                                <button type="button" onClick={() => void save()} disabled={saving || (!dirty && workplan.revision > 0)} className="inline-flex items-center gap-2 rounded-lg bg-[#001C80] px-3 py-2 text-sm font-black text-white hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-50">
+                                    {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                                    {workplan.revision === 0 ? 'Publish baseline' : 'Save changes'}
+                                </button>
+                            )}
                         </div>
                     </div>
+
+                    {view === 'full-schedule' && (
+                        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-blue-100 bg-blue-50 px-4 py-2.5 text-xs font-bold text-blue-950">
+                            <span className="inline-flex items-center gap-2"><MoveHorizontal size={16} className="text-[#001C80]" />Drag a bar to move it. Drag either white endpoint to resize. Arrow keys move the focused control one week.</span>
+                            <span className="text-blue-700" aria-live="polite">
+                                {timelineDrag
+                                    ? `${formatDate(timelineDrag.previewStart)} - ${formatDate(timelineDrag.previewEnd)}`
+                                    : 'Weekly snap · milestones move with the bar · dependencies do not auto-shift'}
+                            </span>
+                        </div>
+                    )}
 
                     {view === 'update-desk' && (
                         <div>
@@ -741,7 +911,7 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
                     )}
 
                     {view === 'full-schedule' && (
-                        <div className="overflow-auto">
+                        <div className={scheduleFullscreen ? 'min-h-0 flex-1 overflow-auto bg-white' : 'max-h-[72vh] overflow-auto'}>
                             <div style={{ minWidth: 390 + timelineWidth }}>
                                 <div className="sticky top-0 z-20 grid border-b border-slate-300 bg-white" style={{ gridTemplateColumns: `390px ${timelineWidth}px` }}>
                                     <div className="sticky left-0 z-30 flex items-end border-r border-slate-300 bg-slate-100 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-600">Task / milestone</div>
@@ -751,32 +921,93 @@ export const StrategicWorkplanWorkspace: React.FC<StrategicWorkplanWorkspaceProp
                                         ))}
                                     </div>
                                 </div>
-                                {filteredTasks.map(task => (
-                                    <div key={task.id} className="grid border-b border-slate-200" style={{ gridTemplateColumns: `390px ${timelineWidth}px` }}>
-                                        <button type="button" onClick={() => setSelectedTaskId(task.id)} className="sticky left-0 z-10 flex min-h-14 items-center justify-between gap-3 border-r border-slate-300 bg-white px-4 py-2 text-left hover:bg-slate-50" aria-label={`Edit ${task.wbs} ${task.title}`}>
-                                            <span className="min-w-0"><span className="block truncate text-sm font-black text-slate-900">{task.wbs} · {task.title}</span><span className="mt-0.5 block truncate text-xs font-semibold text-slate-500">{task.ownership} · {task.chapter ?? task.phaseName}</span></span>
-                                            <StatusBadge status={task.status} />
-                                        </button>
-                                        <div className="relative min-h-14 bg-[repeating-linear-gradient(to_right,transparent_0,transparent_calc(1.666%-1px),#e2e8f0_calc(1.666%-1px),#e2e8f0_1.666%)]">
-                                            {todayPosition !== null && <div className="absolute inset-y-0 z-[2] w-px bg-red-500" style={{ left: `${todayPosition}%` }} title={`Today: ${formatDate(today)}`} />}
-                                            {task.startDate && task.endDate && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSelectedTaskId(task.id)}
-                                                    className={`absolute top-4 h-5 rounded-md shadow-sm ${task.status === 'complete' ? 'bg-emerald-500' : task.status === 'blocked' ? 'bg-red-500' : task.status === 'at-risk' ? 'bg-amber-500' : 'bg-sky-500'}`}
-                                                    style={{ left: `${positionForDate(task.startDate, workplan.scheduleStart, workplan.scheduleEnd)}%`, width: `${widthForRange(task.startDate, task.endDate, workplan.scheduleStart, workplan.scheduleEnd)}%` }}
-                                                    title={`${task.wbs}: ${formatDate(task.startDate)} to ${formatDate(task.endDate)}`}
-                                                />
-                                            )}
-                                            {task.segments.filter(segment => segment.type === 'review').map(segment => (
-                                                <div key={segment.id} className="absolute top-4 z-[3] h-5 bg-violet-300/90" style={{ left: `${positionForDate(segment.startDate, workplan.scheduleStart, workplan.scheduleEnd)}%`, width: `${widthForRange(segment.startDate, segment.endDate, workplan.scheduleStart, workplan.scheduleEnd)}%` }} title={`${segment.label}: week of ${formatDate(segment.startDate)}`} />
-                                            ))}
-                                            {task.segments.filter(segmentIsMilestone).map(segment => (
-                                                <div key={segment.id} className={`absolute top-3 z-[4] h-7 w-2 -translate-x-1 rounded-sm ring-2 ring-white ${MILESTONE_STYLES[segment.type]}`} style={{ left: `${positionForDate(segment.startDate, workplan.scheduleStart, workplan.scheduleEnd)}%` }} title={`${segment.label}: week of ${formatDate(segment.startDate)}`} />
-                                            ))}
+                                {filteredTasks.map(task => {
+                                    const activeDrag = timelineDrag?.taskId === task.id ? timelineDrag : null;
+                                    const displayStart = activeDrag?.previewStart ?? task.startDate;
+                                    const displayEnd = activeDrag?.previewEnd ?? task.endDate;
+                                    const segmentShift = activeDrag?.mode === 'move' && task.startDate
+                                        ? strategicWorkplanDateDifference(task.startDate, activeDrag.previewStart)
+                                        : 0;
+                                    const displaySegment = (segment: StrategicWorkplanSegment) => segmentShift === 0 ? segment : {
+                                        ...segment,
+                                        startDate: addStrategicWorkplanDays(segment.startDate, segmentShift),
+                                        endDate: addStrategicWorkplanDays(segment.endDate, segmentShift),
+                                    };
+                                    const onTimelineKeyDown = (
+                                        event: React.KeyboardEvent<HTMLElement>,
+                                        mode: StrategicWorkplanTimelineDragMode,
+                                    ) => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                            if (mode === 'move') {
+                                                event.preventDefault();
+                                                setSelectedTaskId(task.id);
+                                            }
+                                            return;
+                                        }
+                                        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                                        event.preventDefault();
+                                        nudgeTaskTimeline(task, mode, event.key === 'ArrowLeft' ? -7 : 7);
+                                    };
+
+                                    return (
+                                        <div key={task.id} className="grid border-b border-slate-200" style={{ gridTemplateColumns: `390px ${timelineWidth}px` }}>
+                                            <button type="button" onClick={() => setSelectedTaskId(task.id)} className="sticky left-0 z-10 flex min-h-14 items-center justify-between gap-3 border-r border-slate-300 bg-white px-4 py-2 text-left hover:bg-slate-50" aria-label={`Edit ${task.wbs} ${task.title}`}>
+                                                <span className="min-w-0"><span className="block truncate text-sm font-black text-slate-900">{task.wbs} · {task.title}</span><span className="mt-0.5 block truncate text-xs font-semibold text-slate-500">{task.ownership} · {task.chapter ?? task.phaseName}</span></span>
+                                                <StatusBadge status={task.status} />
+                                            </button>
+                                            <div data-timeline-grid className="relative min-h-14 bg-[repeating-linear-gradient(to_right,transparent_0,transparent_calc(1.666%-1px),#e2e8f0_calc(1.666%-1px),#e2e8f0_1.666%)]">
+                                                {todayPosition !== null && <div className="absolute inset-y-0 z-[2] w-px bg-red-500" style={{ left: `${todayPosition}%` }} title={`Today: ${formatDate(today)}`} />}
+                                                {displayStart && displayEnd && (
+                                                    <div
+                                                        className={`group/timelinebar absolute top-4 z-[5] h-5 rounded-md shadow-sm ring-offset-2 transition-shadow ${activeDrag ? 'shadow-lg ring-2 ring-[#001C80]' : 'hover:shadow-md'} ${task.status === 'complete' ? 'bg-emerald-500' : task.status === 'blocked' ? 'bg-red-500' : task.status === 'at-risk' ? 'bg-amber-500' : 'bg-sky-500'}`}
+                                                        style={{ left: `${positionForDate(displayStart, workplan.scheduleStart, workplan.scheduleEnd)}%`, width: `${widthForRange(displayStart, displayEnd, workplan.scheduleStart, workplan.scheduleEnd)}%` }}
+                                                        title={`${task.wbs}: ${formatDate(displayStart)} to ${formatDate(displayEnd)}`}
+                                                        data-testid={`timeline-bar-${task.wbs}`}
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            className="absolute inset-y-0 left-2 right-2 cursor-grab touch-none rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white active:cursor-grabbing"
+                                                            onPointerDown={event => beginTimelineDrag(event, task, 'move')}
+                                                            onPointerMove={updateTimelineDrag}
+                                                            onPointerUp={finishTimelineDrag}
+                                                            onPointerCancel={cancelTimelineDrag}
+                                                            onKeyDown={event => onTimelineKeyDown(event, 'move')}
+                                                            aria-label={`Move ${task.wbs} ${task.title}. Current dates ${formatDate(displayStart)} to ${formatDate(displayEnd)}. Use left and right arrow keys to move one week.`}
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            className="absolute left-0 top-1/2 z-10 h-8 w-3 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize touch-none rounded border border-blue-200 bg-white shadow-sm transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001C80]"
+                                                            onPointerDown={event => beginTimelineDrag(event, task, 'resize-start')}
+                                                            onPointerMove={updateTimelineDrag}
+                                                            onPointerUp={finishTimelineDrag}
+                                                            onPointerCancel={cancelTimelineDrag}
+                                                            onKeyDown={event => onTimelineKeyDown(event, 'resize-start')}
+                                                            aria-label={`Resize start of ${task.wbs} ${task.title}. Current start ${formatDate(displayStart)}. Use left and right arrow keys to change one week.`}
+                                                            data-testid={`timeline-start-${task.wbs}`}
+                                                        ><span className="mx-auto block h-4 w-px bg-slate-400" /></button>
+                                                        <button
+                                                            type="button"
+                                                            className="absolute right-0 top-1/2 z-10 h-8 w-3 translate-x-1/2 -translate-y-1/2 cursor-ew-resize touch-none rounded border border-blue-200 bg-white shadow-sm transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001C80]"
+                                                            onPointerDown={event => beginTimelineDrag(event, task, 'resize-end')}
+                                                            onPointerMove={updateTimelineDrag}
+                                                            onPointerUp={finishTimelineDrag}
+                                                            onPointerCancel={cancelTimelineDrag}
+                                                            onKeyDown={event => onTimelineKeyDown(event, 'resize-end')}
+                                                            aria-label={`Resize finish of ${task.wbs} ${task.title}. Current finish ${formatDate(displayEnd)}. Use left and right arrow keys to change one week.`}
+                                                            data-testid={`timeline-end-${task.wbs}`}
+                                                        ><span className="mx-auto block h-4 w-px bg-slate-400" /></button>
+                                                    </div>
+                                                )}
+                                                {task.segments.filter(segment => segment.type === 'review').map(displaySegment).map(segment => (
+                                                    <div key={segment.id} className="pointer-events-none absolute top-4 z-[3] h-5 bg-violet-300/90" style={{ left: `${positionForDate(segment.startDate, workplan.scheduleStart, workplan.scheduleEnd)}%`, width: `${widthForRange(segment.startDate, segment.endDate, workplan.scheduleStart, workplan.scheduleEnd)}%` }} title={`${segment.label}: week of ${formatDate(segment.startDate)}`} />
+                                                ))}
+                                                {task.segments.filter(segmentIsMilestone).map(displaySegment).map(segment => (
+                                                    <div key={segment.id} className={`pointer-events-none absolute top-3 z-[6] h-7 w-2 -translate-x-1 rounded-sm ring-2 ring-white ${MILESTONE_STYLES[segment.type]}`} style={{ left: `${positionForDate(segment.startDate, workplan.scheduleStart, workplan.scheduleEnd)}%` }} title={`${segment.label}: week of ${formatDate(segment.startDate)}`} />
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                                 {filteredTasks.length === 0 && <div className="px-4 py-12 text-center text-sm font-semibold text-slate-500">No tasks match these filters.</div>}
                             </div>
                         </div>

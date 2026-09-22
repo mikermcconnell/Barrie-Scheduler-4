@@ -5,11 +5,19 @@ import { flushSync } from 'react-dom';
 import type { DailySummary, DayType, OTPBreakdown, PerformanceDataSummary } from '../utils/performanceDataTypes';
 
 vi.mock('../components/Analytics/AnalyticsShared', () => ({
-  MetricCard: (props: { label: string; value: string; subValue?: string }) => (
+  MetricCard: (props: {
+    label: string;
+    value: string;
+    subValue?: string;
+    secondaryMetric?: { label: string; value: string };
+  }) => (
     <div data-testid={`metric-${props.label}`}>
       <span>{props.label}</span>
       <span>{props.value}</span>
       {props.subValue && <span>{props.subValue}</span>}
+      {props.secondaryMetric && (
+        <span>{props.secondaryMetric.label}: {props.secondaryMetric.value}</span>
+      )}
     </div>
   ),
   ChartCard: (props: { title: string; subtitle?: string; children?: React.ReactNode; headerExtra?: React.ReactNode }) => (
@@ -69,6 +77,10 @@ function buildDay(
     dataQualityTotal = 100,
     missingAVL = 0,
     missingAPC = 0,
+    totalRidership = 100,
+    totalAlightings = 95,
+    scheduledTrips = 10,
+    matchedTrips = scheduledTrips,
   }: {
     dayType?: DayType;
     systemOtp?: OTPBreakdown;
@@ -76,6 +88,10 @@ function buildDay(
     dataQualityTotal?: number;
     missingAVL?: number;
     missingAPC?: number;
+    totalRidership?: number;
+    totalAlightings?: number;
+    scheduledTrips?: number;
+    matchedTrips?: number;
   } = {},
 ): DailySummary {
   return {
@@ -83,9 +99,9 @@ function buildDay(
     dayType,
     system: {
       otp: systemOtp,
-      totalRidership: 100,
-      totalBoardings: 100,
-      totalAlightings: 95,
+      totalRidership,
+      totalBoardings: totalRidership,
+      totalAlightings,
       vehicleCount: 2,
       tripCount: 10,
       wheelchairTrips: 0,
@@ -127,10 +143,10 @@ function buildDay(
     }],
     loadProfiles: [],
     missedTrips: {
-      totalScheduled: 10,
-      totalMatched: 10,
-      totalMissed: 0,
-      missedPct: 0,
+      totalScheduled: scheduledTrips,
+      totalMatched: matchedTrips,
+      totalMissed: scheduledTrips - matchedTrips,
+      missedPct: scheduledTrips > 0 ? ((scheduledTrips - matchedTrips) / scheduledTrips) * 100 : 0,
       notPerformedCount: 0,
       lateOver15Count: 0,
       byRoute: [],
@@ -181,17 +197,17 @@ describe('SystemOverviewModule', () => {
     container.remove();
   });
 
-  function render(data: PerformanceDataSummary, allData = data, mode: 'sum' | 'average' = 'sum'): void {
+  function render(data: PerformanceDataSummary, allData = data, mode: 'sum' | 'average' = 'sum', dayTypeFilter: DayType | 'all' = 'all'): void {
     flushSync(() => {
       root.render(
-        <PerformanceAggregationProvider value={getPerformanceAggregation(mode, data.dailySummaries, 'weekday', null)}>
+        <PerformanceAggregationProvider value={getPerformanceAggregation(mode, data.dailySummaries, dayTypeFilter, null)}>
         <SystemOverviewModule
           data={data}
           allData={allData}
           onNavigate={vi.fn()}
           scope="combined"
-          scopeLabel="2-day avg"
-          dayTypeFilter="all"
+          scopeLabel="2 days selected"
+          dayTypeFilter={dayTypeFilter}
         />
         </PerformanceAggregationProvider>,
       );
@@ -219,11 +235,31 @@ describe('SystemOverviewModule', () => {
     const sumRow = container.querySelector('tbody tr');
     const sumBph = sumRow?.querySelectorAll('td')[8]?.textContent;
     expect(sumBph).toBe('20.0');
-    render(data, data, 'average');
+    render(data, data, 'average', 'weekday');
     expect(container.querySelector('[data-testid="metric-Ridership / weekday"]')?.textContent).toContain('100');
     expect(container.querySelector('[data-testid="metric-On-Time Performance"]')?.textContent).toContain('99%');
     expect(container.textContent).toContain('Boards / weekday');
     expect(container.querySelector('tbody tr')?.querySelectorAll('td')[8]?.textContent).toBe(sumBph);
+  });
+
+  it('shows additive period totals with an average per selected weekday', () => {
+    const data = summary([
+      buildDay('2026-03-10', { totalRidership: 120, totalAlightings: 110, scheduledTrips: 12, matchedTrips: 11 }),
+      buildDay('2026-03-11', { totalRidership: 280, totalAlightings: 250, scheduledTrips: 14, matchedTrips: 13 }),
+    ]);
+
+    render(data, data, 'sum', 'weekday');
+
+    const ridershipMetric = container.querySelector('[data-testid="metric-Total Ridership"]');
+    expect(ridershipMetric?.textContent).toContain('400');
+    expect(ridershipMetric?.textContent).toContain('Average per weekday: 200 boardings');
+    expect(ridershipMetric?.textContent).toContain('360 total alightings');
+
+    const tripsMetric = container.querySelector('[data-testid="metric-Trips Operated"]');
+    expect(tripsMetric?.textContent).toContain('24 / 26');
+    expect(tripsMetric?.textContent).toContain('Average per weekday (operated / scheduled): 12 / 13');
+    expect(container.textContent).toContain('2 weekdays selected');
+    expect(container.textContent).not.toContain('days averaged');
   });
 
   it('renders operational KPIs before loading the chart bundle', () => {

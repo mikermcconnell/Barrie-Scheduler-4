@@ -15,6 +15,7 @@ import { PerformanceScopeProvider } from './performanceScope';
 import { usePerformanceAggregation } from './performanceAggregation';
 import type { PerformanceDataScope } from '../../utils/performanceDataScope';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { averagePerDayLabel, formatPerDayAverage, selectedDayScopeLabel } from '../../utils/performanceMetricDisplay';
 
 const SystemOverviewOtpCharts = lazyWithRetry(
     () => import('./SystemOverviewCharts').then(module => ({ default: module.SystemOverviewOtpCharts })),
@@ -234,6 +235,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             latePct: Math.round(systemOtp.latePercent),
             ridership: totalRidership / divisor,
             alightings: totalAlightings / divisor,
+            avgRidershipPerDay: totalRidership / Math.max(1, new Set(filtered.map(day => day.date)).size),
         };
     }, [filtered, systemOtp, divisor]);
 
@@ -665,6 +667,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const apcPct = dataQuality ? roundPercent(dataQuality.missingAPC, dataQuality.totalRecords) : 0;
     const singleDate = filtered[0]?.date;
     const displayedDateRange = filteredDateRangeLabel(filtered);
+    const averageLabel = averagePerDayLabel(dayTypeFilter);
+    const selectedDaysLabel = selectedDayScopeLabel(new Set(filtered.map(day => day.date)).size, dayTypeFilter);
 
     return (
         <PerformanceScopeProvider scope={scope} label={scopeLabel}>
@@ -685,7 +689,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                             <p className="text-xs text-gray-400">
                                 {isSingleDate
                                     ? `${DAY_TYPE_LABELS[filtered[0]?.dayType ?? 'weekday']} snapshot · 1 of ${data.dailySummaries.length} days`
-                                    : `${filtered.length} day${filtered.length !== 1 ? 's' : ''} ${mode === 'average' ? 'averaged' : 'totalled'}${dayTypeFilter !== 'all' ? ` · ${DAY_TYPE_LABELS[dayTypeFilter]}s only` : ''}`}
+                                    : selectedDaysLabel}
                                 {data.metadata.importedAt ? ` · ${freshness(data.metadata.importedAt)}` : ''}
                             </p>
                         </div>
@@ -707,7 +711,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     label={mode === 'average' ? countLabel('Ridership') : 'Total Ridership'}
                     value={formatCount(systemAvg.ridership)}
                     color="cyan"
-                    subValue={`${formatCount(systemAvg.ridership)} on · ${formatCount(systemAvg.alightings)} off`}
+                    subValue={`${formatCount(systemAvg.alightings)} ${mode === 'average' ? `alightings / ${unit}` : 'total alightings'}`}
+                    secondaryMetric={mode === 'sum' ? {
+                        label: averageLabel,
+                        value: `${systemAvg.avgRidershipPerDay.toLocaleString()} boardings`,
+                    } : undefined}
                 />
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                     <div className="flex items-center justify-between mb-2">
@@ -759,6 +767,10 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         : missedTrips.totalMissed === 0
                             ? `All scheduled trips operated${averageMissedTrips ? ` (${missedDivisor} covered days)` : ''}`
                             : `${formatCount(missedTrips.totalMissed / missedDivisor)} suspected missed trips${averageMissedTrips ? ` / ${unit} (${missedDivisor} covered days)` : ' in period'} (${missedTrips.missedPct.toFixed(1)}%)`}
+                    secondaryMetric={mode === 'sum' && !isCheckingLegacyMissedTrips && missedTrips.totalScheduled > 0 && missedTrips.coveredDays > 0 ? {
+                        label: `${averageLabel} (operated / scheduled)`,
+                        value: `${formatPerDayAverage(missedTrips.totalObserved, missedTrips.coveredDays)} / ${formatPerDayAverage(missedTrips.totalScheduled, missedTrips.coveredDays)}`,
+                    } : undefined}
                     onClick={missedTrips.totalMissed > 0 ? () => onNavigate('otp') : undefined}
                 />
             </div>

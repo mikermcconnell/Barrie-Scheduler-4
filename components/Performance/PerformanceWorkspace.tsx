@@ -405,6 +405,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <RidershipModule
                             data={filteredData}
+                            dayTypeFilter={dayTypeFilter}
                             loadConfigTeamId={loadConfigTeamId}
                             loadConfigUserId={loadConfigUserId}
                             canManageLoadConfig={canManageLoadConfig}

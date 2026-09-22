@@ -19,9 +19,11 @@ import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useTodPickupDataQuery, useTodPickupMetadataQuery } from '../../hooks/useTodPickupData';
 import { aggregateTodDailyLocations } from '../../utils/todPickupAggregation';
+import { type PerformanceDayTypeFilter } from '../../utils/performanceMetricDisplay';
 
 interface RidershipModuleProps {
     data: PerformanceDataSummary;
+    dayTypeFilter?: PerformanceDayTypeFilter;
     comparisonDays?: DailySummary[];
     comparisonRange?: { start: string; end: string } | null;
     loadConfigTeamId?: string;
@@ -89,6 +91,7 @@ function SortableHeader({
 
 export const RidershipModule: React.FC<RidershipModuleProps> = ({
     data,
+    dayTypeFilter = 'all',
     comparisonDays = [],
     comparisonRange = null,
     loadConfigTeamId,
