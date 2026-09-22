@@ -1,5 +1,8 @@
 import { calculateDailyRunMetrics, calculateWeeklyRosterMetrics, expectedDayTypeForRosterDay, getRunTrips } from './metrics';
 import { findReliefPoint, getTravelMinutes } from './rules';
+import { calculatePieceTransition, resolvePieceBoardingTime } from './dutyTransitions';
+import { projectOperationsPlanningInput, projectRun } from './interiorRelief';
+import { stableStringify } from './masterAdapter';
 import type {
     DailyRun,
     OperationsPlanningInputV1,
@@ -58,7 +61,7 @@ export const parseOperationsPlanningProposal = (value: unknown): OperationsPlann
         try { return JSON.parse(value) as unknown; } catch { throw new ProposalParseError('Proposal is not valid JSON.'); }
     })() : value;
     if (!isRecord(parsed)) throw new ProposalParseError('Proposal must be a JSON object.');
-    if (parsed.schemaVersion !== 1) throw new ProposalParseError('Proposal schemaVersion must be 1.');
+    if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) throw new ProposalParseError('Proposal schemaVersion must be 1 or 2.');
     if (parsed.kind !== 'operations-planning-proposal') throw new ProposalParseError('Proposal kind must be operations-planning-proposal.');
     requireString(parsed, 'scenarioId', 'proposal');
     requireString(parsed, 'sourceManifestFingerprint', 'proposal');
@@ -111,6 +114,12 @@ export const parseOperationsPlanningProposal = (value: unknown): OperationsPlann
             requireString(piece, 'routeNumber', context);
             requireString(piece, 'startReliefPoint', context);
             requireString(piece, 'endReliefPoint', context);
+            for (const key of ['startEventId', 'endEventId']) {
+                if (piece[key] !== undefined) {
+                    if (parsed.schemaVersion !== 2) throw new ProposalParseError(`${context}.${key} requires schema version 2.`);
+                    requireString(piece, key, context);
+                }
+            }
             const tripIds = requireStringArray(piece.tripIds, `${context}.tripIds`, PROPOSAL_IMPORT_LIMITS.tripIdsPerPiece);
             totalTripIds += tripIds.length;
             if (totalTripIds > PROPOSAL_IMPORT_LIMITS.totalTripIds) throw new ProposalParseError('proposal exceeds the total trip-reference import limit.');
@@ -216,6 +225,9 @@ const validatePiece = (
     if (last?.arrivalTime === null) {
         finding(findings, 'integrity', 'relief-arrival-unresolved', `Piece ${piece.id} relief cannot be placed because final arrival is unresolved.`, { runId: run.id, tripId: last.id });
     }
+    if (first && resolvePieceBoardingTime(input, piece, tripById) === null) {
+        finding(findings, 'integrity', 'piece-boarding-arrival-unresolved', `Piece ${piece.id} incoming relief has no matching source arrival; departure time cannot substitute for boarding time.`, { runId: run.id, tripId: first.id });
+    }
     return trips;
 };
 
@@ -233,15 +245,26 @@ const validateRun = (
         const previous = pieceTrips[index - 1].at(-1);
         const next = trips[0];
         if (!previous || previous.arrivalTime === null) return;
-        const gap = next.startTime - previous.arrivalTime;
+        const transition = calculatePieceTransition(input, run.pieces[index - 1], run.pieces[index], tripById);
+        if (!transition) return;
+        const gap = transition.gapMinutes;
+        const actualBreak = transition.qualifyingBreakMinutes;
         if (gap < 0) finding(findings, 'integrity', 'run-piece-overlap', `Run ${run.runNumber} has overlapping pieces.`, { runId: run.id, dayType: run.dayType });
-        if (gap >= rules.nonSplitExceptionBreakMinutes.minimum && gap <= rules.nonSplitExceptionBreakMinutes.maximum) {
-            finding(findings, 'exception', 'non-split-long-break', `Run ${run.runNumber} has a ${gap}-minute non-split break requiring review.`, { runId: run.id, dayType: run.dayType });
+        if (!transition.travelResolved) {
+            finding(findings, 'integrity', 'piece-transfer-time-missing', `Run ${run.runNumber} has no known transfer time between piece ${index} and ${index + 1}.`, { runId: run.id, dayType: run.dayType });
+        } else if (!transition.travelFits) {
+            finding(findings, 'contractual', 'piece-transfer-infeasible', `Run ${run.runNumber} has ${gap} minutes for ${transition.travelBeforeBreak + transition.travelAfterBreak + transition.postTripMinutes + transition.circleCheckMinutes} minutes of travel and bus preparation.`, { runId: run.id, dayType: run.dayType });
+        }
+        if (!transition.paidGap && transition.availableBreakMinutes > 0 && !transition.breakLocationAllowed) {
+            finding(findings, 'contractual', 'break-location-not-allowed', `Run ${run.runNumber} cannot take a full break at ${transition.breakLocation}; relief permission does not permit a meal break.`, { runId: run.id, dayType: run.dayType });
+        }
+        if (!transition.isSplit && actualBreak >= rules.nonSplitExceptionBreakMinutes.minimum && actualBreak <= rules.nonSplitExceptionBreakMinutes.maximum) {
+            finding(findings, 'exception', 'non-split-long-break', `Run ${run.runNumber} has a ${actualBreak}-minute non-split break requiring review.`, { runId: run.id, dayType: run.dayType });
         }
         if (previous.routeNumber === next.routeNumber
-            && gap >= rules.sameRouteResetMinimumMinutes
-            && gap < rules.standardBreakMinutes.minimum) {
-            finding(findings, 'best-practice', 'break-shorter-than-standard', `Run ${run.runNumber} has a ${gap}-minute reset, shorter than the standard ${rules.standardBreakMinutes.minimum}-minute break.`, { runId: run.id, dayType: run.dayType });
+            && actualBreak >= rules.sameRouteResetMinimumMinutes
+            && actualBreak < rules.standardBreakMinutes.minimum) {
+            finding(findings, 'best-practice', 'break-shorter-than-standard', `Run ${run.runNumber} has a ${actualBreak}-minute reset, shorter than the standard ${rules.standardBreakMinutes.minimum}-minute break.`, { runId: run.id, dayType: run.dayType });
         }
         if (gap >= rules.splitThresholdMinutes) {
             const returnMinutes = getTravelMinutes(rules, run.pieces[index - 1].endReliefPoint, rules.garage.name);
@@ -263,8 +286,8 @@ const validateRun = (
             if (!matrix?.allowed || gap < matrix.minimumTransitionMinutes || !timeAllowed) {
                 finding(findings, 'contractual', 'route-transition-not-allowed', `Run ${run.runNumber} transition ${previous.routeNumber} to ${next.routeNumber} is not allowed by the operations matrix.`, { runId: run.id, dayType: run.dayType });
             }
-            if (gap < rules.routeChangeResetMinimumMinutes) {
-                finding(findings, 'contractual', 'route-change-break-too-short', `Run ${run.runNumber} route-change break is ${gap} minutes; ${rules.routeChangeResetMinimumMinutes} are required.`, { runId: run.id, dayType: run.dayType });
+            if (actualBreak < rules.routeChangeResetMinimumMinutes) {
+                finding(findings, 'contractual', 'route-change-break-too-short', `Run ${run.runNumber} qualifying route-change break is ${actualBreak} minutes after travel and boarding; ${rules.routeChangeResetMinimumMinutes} are required.`, { runId: run.id, dayType: run.dayType });
             }
         }
     });
@@ -272,8 +295,13 @@ const validateRun = (
     if (metrics.platformMinutes > rules.maximumDrivingMinutes) finding(findings, 'contractual', 'maximum-driving-exceeded', `Run ${run.runNumber} exceeds ${rules.maximumDrivingMinutes} driving minutes.`, { runId: run.id, dayType: run.dayType });
     if (metrics.paidMinutes > rules.maximumWorkMinutes) finding(findings, 'contractual', 'maximum-work-exceeded', `Run ${run.runNumber} exceeds ${rules.maximumWorkMinutes} work minutes.`, { runId: run.id, dayType: run.dayType });
     if (metrics.spreadMinutes > rules.maximumSpreadMinutes) finding(findings, 'contractual', 'maximum-spread-exceeded', `Run ${run.runNumber} exceeds ${rules.maximumSpreadMinutes} spread minutes.`, { runId: run.id, dayType: run.dayType });
-    if (!metrics.isSplit && metrics.platformMinutes > rules.straightDrivingMaximumMinutes) finding(findings, 'contractual', 'straight-driving-exceeded', `Straight run ${run.runNumber} exceeds ${rules.straightDrivingMaximumMinutes} driving minutes.`, { runId: run.id, dayType: run.dayType });
+    // The no-meal cap resets only at a qualifying physical break, not at a
+    // submitted piece boundary. A non-split meal duty may exceed it in total.
+    if (!metrics.isSplit && metrics.longestContinuousPlatformMinutes > rules.straightDrivingMaximumMinutes) finding(findings, 'contractual', 'straight-driving-exceeded', `Run ${run.runNumber} exceeds ${rules.straightDrivingMaximumMinutes} driving minutes without a qualifying meal break.`, { runId: run.id, dayType: run.dayType });
     if (metrics.isSplit) {
+        if (metrics.longestContinuousPlatformMinutes > rules.splitPieceDrivingMaximumMinutes) {
+            finding(findings, 'contractual', 'split-continuous-driving-exceeded', `Run ${run.runNumber} has ${metrics.longestContinuousPlatformMinutes} continuous driving minutes without a qualifying reset; the limit is ${rules.splitPieceDrivingMaximumMinutes}, regardless of piece boundaries.`, { runId: run.id, dayType: run.dayType });
+        }
         pieceTrips.forEach((trips, index) => {
             const pieceDriving = trips.reduce((sum, trip) => sum + trip.travelTime, 0);
             if (pieceDriving > rules.splitPieceDrivingMaximumMinutes) finding(findings, 'contractual', 'split-piece-driving-exceeded', `Run ${run.runNumber} piece ${index + 1} exceeds ${rules.splitPieceDrivingMaximumMinutes} driving minutes.`, { runId: run.id, dayType: run.dayType });
@@ -347,7 +375,10 @@ const validateRosterCoverage = (
             while (daysOff < 7 && !workedIndexes.has((start + daysOff) % 7)) daysOff += 1;
             longestDaysOff = Math.max(longestDaysOff, daysOff);
         }
-        const requiredDaysOff = metrics.daysWorked === 4 ? weekly.minimumFourDayRosterDaysOff : weekly.minimumConsecutiveDaysOff;
+        if (metrics.daysWorked === 4 && rosterDays.length - workedIndexes.size < weekly.minimumFourDayRosterDaysOff) {
+            finding(findings, 'contractual', 'four-day-total-days-off-not-met', `Crew ${roster.crewNumber} requires ${weekly.minimumFourDayRosterDaysOff} total days off.`, { crewId: roster.id });
+        }
+        const requiredDaysOff = weekly.minimumConsecutiveDaysOff;
         if (longestDaysOff < requiredDaysOff) finding(findings, 'contractual', 'consecutive-days-off-not-met', `Crew ${roster.crewNumber} has only ${longestDaysOff} consecutive day(s) off; ${requiredDaysOff} are required.`, { crewId: roster.id });
         const weekdayStarts = roster.assignments.flatMap(assignment => {
             if (!assignment.runId || !['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].includes(assignment.day)) return [];
@@ -470,6 +501,25 @@ export const assessOperationsPlanningProposal = (
             findings: [{ id: 'app:0:proposal-parse-failed', category: 'integrity', severity: 'error', code: 'proposal-parse-failed', message }],
             approvalReady: false,
         };
+    }
+    if (input.schemaVersion !== proposal.schemaVersion) return {
+        proposal, dailyRunMetrics: [], weeklyRosterMetrics: [], approvalReady: false,
+        findings: [{ id: 'app:schema-version-mismatch', category: 'integrity', severity: 'error',
+            code: 'schema-version-mismatch', message: 'Input and proposal schema versions must match.' }],
+    };
+    if (input.schemaVersion === 2) {
+        try {
+            if (stableStringify(input.blockAudits) !== stableStringify(proposal.blockAudits))
+                throw new Error('Schema-v2 proposal must preserve all immutable source block audits unchanged.');
+            const projected = projectOperationsPlanningInput(input);
+            const result = assessOperationsPlanningProposal(projected, { ...proposal, schemaVersion: 1,
+                blockAudits: projected.blockAudits, dailyRuns: proposal.dailyRuns.map(run => projectRun(input, run)) });
+            return { ...result, proposal };
+        } catch (error) {
+            return { proposal, dailyRunMetrics: [], weeklyRosterMetrics: [], approvalReady: false,
+                findings: [{ id: 'app:interior-relief-invalid', category: 'integrity', severity: 'error',
+                    code: 'interior-relief-invalid', message: error instanceof Error ? error.message : 'Invalid interior relief.' }] };
+        }
     }
     const findings = input.blockAudits.flatMap(audit => audit.findings);
     if (proposal.scenarioId !== input.scenarioId) finding(findings, 'integrity', 'scenario-id-mismatch', 'Proposal scenarioId does not match the exported input.');

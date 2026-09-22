@@ -43,6 +43,8 @@ vi.mock('recharts', () => {
   };
 });
 
+import { PerformanceAggregationProvider } from '../components/Performance/performanceAggregation';
+import { getPerformanceAggregation } from '../utils/performanceAggregation';
 import { SystemOverviewModule } from '../components/Performance/SystemOverviewModule';
 
 function otp(total: number, onTime: number, early = 0, late = total - onTime - early): OTPBreakdown {
@@ -179,9 +181,10 @@ describe('SystemOverviewModule', () => {
     container.remove();
   });
 
-  function render(data: PerformanceDataSummary, allData = data): void {
+  function render(data: PerformanceDataSummary, allData = data, mode: 'sum' | 'average' = 'sum'): void {
     flushSync(() => {
       root.render(
+        <PerformanceAggregationProvider value={getPerformanceAggregation(mode, data.dailySummaries, 'weekday', null)}>
         <SystemOverviewModule
           data={data}
           allData={allData}
@@ -189,7 +192,8 @@ describe('SystemOverviewModule', () => {
           scope="combined"
           scopeLabel="2-day avg"
           dayTypeFilter="all"
-        />,
+        />
+        </PerformanceAggregationProvider>,
       );
     });
   }
@@ -203,6 +207,23 @@ describe('SystemOverviewModule', () => {
     const otpMetric = container.querySelector('[data-testid="metric-On-Time Performance"]');
     expect(otpMetric?.textContent).toContain('99%');
     expect(otpMetric?.textContent).not.toContain('50%');
+  });
+
+  it('switches additive ridership to a covered-day average while preserving weighted OTP and BPH', () => {
+    const data = summary([
+      buildDay('2026-03-10', { systemOtp: otp(1, 0), routeOtp: otp(1, 0) }),
+      buildDay('2026-03-11', { systemOtp: otp(99, 99), routeOtp: otp(99, 99) }),
+    ]);
+    render(data);
+    expect(container.querySelector('[data-testid="metric-Total Ridership"]')?.textContent).toContain('200');
+    const sumRow = container.querySelector('tbody tr');
+    const sumBph = sumRow?.querySelectorAll('td')[8]?.textContent;
+    expect(sumBph).toBe('20.0');
+    render(data, data, 'average');
+    expect(container.querySelector('[data-testid="metric-Ridership / weekday"]')?.textContent).toContain('100');
+    expect(container.querySelector('[data-testid="metric-On-Time Performance"]')?.textContent).toContain('99%');
+    expect(container.textContent).toContain('Boards / weekday');
+    expect(container.querySelector('tbody tr')?.querySelectorAll('td')[8]?.textContent).toBe(sumBph);
   });
 
   it('renders operational KPIs before loading the chart bundle', () => {

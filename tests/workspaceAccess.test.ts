@@ -185,4 +185,5 @@ describe('workspace access', () => {
         expect(canAccessWorkspaceFeature('workspaceOndemand', productionWithOverride)).toBe(true);
         expect(canAccessWorkspaceFeature('workspaceFixedRoute', productionWithOverride)).toBe(false);
     });
+
 });

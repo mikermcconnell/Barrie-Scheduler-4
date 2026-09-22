@@ -3,6 +3,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { parseSTREETSCSV } from './parser';
 export { sendDailyReport, testDailyReport, testStaleReportAlert } from './dailyReport';
+export { sendMonthlyRidershipReport, testMonthlyRidershipReport } from './monthlyRidershipReport';
 export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
 export { developerSupportAccess } from './developerSupportAccess';
@@ -17,6 +18,7 @@ import {
 import { aggregateDailySummaries } from './aggregator';
 import { computeMissedTripsForDay } from './gtfsScheduleIndex';
 import {
+  type PerformanceDashboardViewMode,
   PerformanceDataSummary,
   PerformanceMetadata,
   PERFORMANCE_RUNTIME_LOGIC_VERSION,
@@ -24,6 +26,10 @@ import {
 } from './types';
 import { filterPerformanceSummaryByRoute, getAvailablePerformanceRoutes } from './performanceRouteFilter';
 import { buildLoadProfileMonthlyView } from './performanceLoadProfileView';
+import {
+  buildPerformanceDashboardView,
+  PERFORMANCE_DASHBOARD_VIEW_MODES,
+} from './performanceDashboardView';
 import {
   createRidershipTrendProjection,
   mergeRidershipTrendProjection,
@@ -40,6 +46,8 @@ admin.initializeApp();
 
 function getDb() { return admin.firestore(); }
 function getBucket() { return admin.storage().bucket(); }
+
+const PERFORMANCE_IMMUTABLE_CACHE_CONTROL = 'private, max-age=31536000, immutable';
 
 // API key stored as a Firebase secret — prevents unauthorized access
 const INGEST_API_KEY = defineSecret('INGEST_API_KEY');
@@ -340,6 +348,15 @@ function buildPerformanceLoadProfileMonthlyStoragePath(teamId: string, timestamp
   return `teams/${teamId}/performanceViews/load-profiles/${timestamp}-${month}.json`;
 }
 
+function buildPerformanceDashboardMonthlyStoragePath(
+  teamId: string,
+  timestamp: string,
+  mode: PerformanceDashboardViewMode,
+  month: string,
+) {
+  return `teams/${teamId}/performanceData/views/${timestamp}-${mode}-${month}.json`;
+}
+
 function buildRidershipTrendStoragePath(teamId: string, timestamp: string) {
   return `teams/${teamId}/performanceViews/ridership-trends/${timestamp}.json`;
 }
@@ -376,6 +393,17 @@ function readNestedStringRecord(value: unknown): Record<string, Record<string, s
     .map(([key, nested]) => [key, readStringRecord(nested)] as const)
     .filter((entry): entry is readonly [string, Record<string, string>] => !!entry[1] && Object.keys(entry[1]).length > 0);
   return Object.fromEntries(entries);
+}
+
+function readDashboardMonthlyStoragePaths(
+  value: unknown,
+): PerformanceMetadata['dashboardMonthlyStoragePaths'] {
+  const nested = readNestedStringRecord(value);
+  if (!nested) return undefined;
+  const entries = PERFORMANCE_DASHBOARD_VIEW_MODES
+    .map(mode => [mode, nested[mode]] as const)
+    .filter((entry): entry is readonly [PerformanceDashboardViewMode, Record<string, string>] => !!entry[1]);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 async function mapWithConcurrency<T>(
@@ -737,6 +765,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
   const routeStoragePaths = readStringRecord(meta.routeStoragePaths);
   const monthlyStoragePaths = readStringRecord(meta.monthlyStoragePaths);
   const routeMonthlyStoragePaths = readNestedStringRecord(meta.routeMonthlyStoragePaths);
+  const dashboardMonthlyStoragePaths = readDashboardMonthlyStoragePaths(meta.dashboardMonthlyStoragePaths);
   const loadProfileMonthlyStoragePaths = readStringRecord(meta.loadProfileMonthlyStoragePaths);
   const ridershipTrendStoragePath = typeof meta.ridershipTrendStoragePath === 'string'
     ? meta.ridershipTrendStoragePath
@@ -756,6 +785,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
     routeStoragePaths,
     monthlyStoragePaths,
     routeMonthlyStoragePaths,
+    dashboardMonthlyStoragePaths,
     loadProfileMonthlyStoragePaths,
     ridershipTrendStoragePath,
   };
@@ -972,12 +1002,16 @@ async function savePerformanceSummary(params: {
   const reportJsonStr = JSON.stringify(buildPerformanceReportSummary(params.summary));
   const monthlyStoragePaths: Record<string, string> = {};
   const routeMonthlyStoragePaths: Record<string, Record<string, string>> = {};
+  const dashboardMonthlyStoragePaths: Partial<Record<PerformanceDashboardViewMode, Record<string, string>>> = {};
   const loadProfileMonthlyStoragePaths: Record<string, string> = {};
 
   // Ridership Trends is a long-lived projection, so it must be read and merged
   // before any metadata pointer is replaced. An unreadable existing pointer is
   // fatal: continuing would silently discard dates already outside retention.
   const metadataSnap = await getPerformanceMetadataRef(params.teamId).get();
+  const oldDashboardMonthlyStoragePaths = metadataSnap.exists
+    ? readDashboardMonthlyStoragePaths(metadataSnap.data()?.dashboardMonthlyStoragePaths) || {}
+    : {};
   const oldRidershipTrendStoragePath = metadataSnap.exists
     && typeof metadataSnap.data()?.ridershipTrendStoragePath === 'string'
     ? metadataSnap.data()?.ridershipTrendStoragePath as string
@@ -1005,12 +1039,35 @@ async function savePerformanceSummary(params: {
     new Date().toISOString(),
   );
 
-  await mapWithConcurrency([...buildMonthlyPerformanceSummaries(params.summary).entries()], 3, async ([month, monthSummary]) => {
+  const monthlySummaries = buildMonthlyPerformanceSummaries(params.summary);
+  await mapWithConcurrency([...monthlySummaries.entries()], 3, async ([month, monthSummary]) => {
     const monthPath = buildPerformanceMonthlyStoragePath(params.teamId, timestamp, month);
     await getBucket().file(monthPath).save(JSON.stringify(monthSummary), { contentType: 'application/json' });
     monthlyStoragePaths[month] = monthPath;
   });
-  await mapWithConcurrency([...buildMonthlyPerformanceSummaries(params.summary).entries()], 3, async ([month, monthSummary]) => {
+  const dashboardViewUploads = PERFORMANCE_DASHBOARD_VIEW_MODES.flatMap(mode => {
+    const modePaths: Record<string, string> = {};
+    dashboardMonthlyStoragePaths[mode] = modePaths;
+    return [...monthlySummaries.entries()].map(([month, monthSummary]) => ({
+      mode,
+      modePaths,
+      month,
+      monthSummary,
+    }));
+  });
+  await mapWithConcurrency(dashboardViewUploads, 3, async ({ mode, modePaths, month, monthSummary }) => {
+    const viewPath = buildPerformanceDashboardMonthlyStoragePath(params.teamId, timestamp, mode, month);
+    await getBucket().file(viewPath).save(
+      JSON.stringify(buildPerformanceDashboardView(monthSummary, mode)),
+      {
+        contentType: 'application/json',
+        resumable: false,
+        metadata: { cacheControl: PERFORMANCE_IMMUTABLE_CACHE_CONTROL },
+      },
+    );
+    modePaths[month] = viewPath;
+  });
+  await mapWithConcurrency([...monthlySummaries.entries()], 3, async ([month, monthSummary]) => {
     const monthPath = buildPerformanceLoadProfileMonthlyStoragePath(params.teamId, timestamp, month);
     await getBucket().file(monthPath).save(JSON.stringify(buildLoadProfileMonthlyView(monthSummary)), {
       contentType: 'application/json',
@@ -1042,6 +1099,7 @@ async function savePerformanceSummary(params: {
     reportStoragePath,
     monthlyStoragePaths,
     routeMonthlyStoragePaths,
+    dashboardMonthlyStoragePaths,
     loadProfileMonthlyStoragePaths,
     ridershipTrendStoragePath,
     dateRange: params.summary.metadata.dateRange,
@@ -1063,6 +1121,7 @@ async function savePerformanceSummary(params: {
       Object.values(params.oldRouteStoragePaths || {}).forEach(path => path && cleanupPaths.add(path));
     }
     Object.values(params.oldRouteMonthlyStoragePaths || {}).flatMap(months => Object.values(months)).forEach(path => path && cleanupPaths.add(path));
+    Object.values(oldDashboardMonthlyStoragePaths).flatMap(months => Object.values(months || {})).forEach(path => path && cleanupPaths.add(path));
     Object.values(params.oldLoadProfileMonthlyStoragePaths || {}).forEach(path => path && cleanupPaths.add(path));
     if (oldRidershipTrendStoragePath && oldRidershipTrendStoragePath !== ridershipTrendStoragePath) {
       cleanupPaths.add(oldRidershipTrendStoragePath);
@@ -1073,6 +1132,7 @@ async function savePerformanceSummary(params: {
       reportStoragePath,
       ...Object.values(monthlyStoragePaths),
       ...Object.values(routeMonthlyStoragePaths).flatMap(months => Object.values(months)),
+      ...Object.values(dashboardMonthlyStoragePaths).flatMap(months => Object.values(months || {})),
       ...Object.values(loadProfileMonthlyStoragePaths),
       ridershipTrendStoragePath,
     ]);

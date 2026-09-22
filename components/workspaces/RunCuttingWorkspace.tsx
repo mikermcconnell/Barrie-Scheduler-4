@@ -205,6 +205,7 @@ export const RunCuttingWorkspace: React.FC<{ onClose: () => void }> = ({ onClose
             } satisfies PinnedMasterSchedule;
         }));
         const nextInput = buildOperationsPlanningInput({
+            schemaVersion: nextPayload.assessment?.proposal?.schemaVersion ?? 2,
             scenarioId: nextMetadata.id,
             scenarioName: nextPayload.name,
             exportedAt: new Date().toISOString(),
@@ -271,6 +272,7 @@ export const RunCuttingWorkspace: React.FC<{ onClose: () => void }> = ({ onClose
                 } satisfies PinnedMasterSchedule));
             if (pins.length !== selected.length) throw new Error('One or more selected Master Schedules could not be pinned.');
             const initial = buildOperationsPlanningInput({
+                schemaVersion: 2,
                 scenarioId: 'pending',
                 scenarioName: scenarioName.trim(),
                 exportedAt: new Date().toISOString(),
@@ -287,6 +289,7 @@ export const RunCuttingWorkspace: React.FC<{ onClose: () => void }> = ({ onClose
                 sourceIsStale: false,
             });
             const nextInput = buildOperationsPlanningInput({
+                schemaVersion: 2,
                 scenarioId: saved.metadata.id,
                 scenarioName: saved.payload.name,
                 exportedAt: new Date().toISOString(),
@@ -517,7 +520,7 @@ export const RunCuttingWorkspace: React.FC<{ onClose: () => void }> = ({ onClose
                                     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                                         <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-bold text-gray-900">External Codex handoff</h2><p className="mt-1 max-w-3xl text-sm text-gray-600">Export the validated input bundle, run the repository Codex skill outside the app, then import its proposal. The app treats it as a suggestion and recomputes every metric and finding.</p></div><span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">Masters remain unchanged</span></div>
                                         <div className="mt-5 flex flex-wrap gap-2">
-                                            <button type="button" disabled={!planningInput} onClick={() => planningInput && downloadJson('operations-planning-input-v1.json', planningInput)} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"><Download size={16} /> Export Codex input</button>
+                                            <button type="button" disabled={!planningInput} onClick={() => planningInput && downloadJson(`operations-planning-input-v${planningInput.schemaVersion}.json`, planningInput)} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"><Download size={16} /> Export Codex input</button>
                                             <input ref={proposalFileRef} className="hidden" type="file" accept=".json,application/json" onChange={event => { const file = event.target.files?.[0]; if (file) void importProposal(file); }} />
                                             <button type="button" disabled={!planningInput || isReadOnly} onClick={() => proposalFileRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"><Upload size={16} /> Import Codex proposal</button>
                                             <button type="button" disabled={!hasUnsavedAssessment || isReadOnly || Boolean(busy)} onClick={() => void saveAssessment()} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"><Save size={16} /> Save revision{hasUnsavedAssessment ? ' *' : ''}</button>

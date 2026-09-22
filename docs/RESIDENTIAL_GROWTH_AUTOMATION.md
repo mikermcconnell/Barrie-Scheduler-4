@@ -16,7 +16,7 @@ Endpoint query parameters:
 
 Accepted request body:
 
-- raw `.xlsx` attachment bytes, or
+- raw `.xlsx` or `.xls` attachment bytes, including City report exports packaged as HTML/MHTML workbooks, or
 - JSON with `fileBase64` or `contentBytes`, plus optional `fileName`
 
 ## Power Automate flow

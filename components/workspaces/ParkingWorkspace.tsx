@@ -1,10 +1,17 @@
-import React, { Suspense, useCallback, useEffect, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Loader2, MapPin, Search } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { ParkingLotWorkspaceShell } from '../Parking/ParkingLotWorkspaceShell';
+import { buildParkingStrategyHash } from '../../utils/parking/parkingStrategyRouting';
 
-type ParkingWorkspaceView = 'dashboard' | 'plate-monitor' | 'lot-data';
+type ParkingWorkspaceView = 'dashboard' | 'plate-monitor' | 'lot-data' | 'strategy';
+
+const ParkingStrategyWorkspace = lazyWithRetry(
+  () => import('../Parking/ParkingStrategyWorkspace').then(module => ({ default: module.ParkingStrategyWorkspace })),
+  'parking-strategy-workspace',
+);
 
 const ParkingDataWorkspace = lazyWithRetry(
   () => import('./ParkingDataWorkspace').then(module => ({ default: module.ParkingDataWorkspace })),
@@ -12,7 +19,8 @@ const ParkingDataWorkspace = lazyWithRetry(
 );
 
 function parseParkingWorkspaceView(hash = window.location.hash): ParkingWorkspaceView {
-  const normalized = hash.replace(/^#\/?/, '').toLowerCase();
+  const normalized = hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();
+  if (['parking/strategy', 'parking/strategy/map', 'parking/lot-data/history', 'parking/lot-data/history/map'].includes(normalized)) return 'strategy';
   if (normalized.includes('plate-monitor') || normalized.includes('plate')) return 'plate-monitor';
   if (normalized.includes('lot-data') || normalized.includes('lot') || normalized.includes('data')) return 'lot-data';
   return 'dashboard';
@@ -67,9 +75,16 @@ export const ParkingWorkspace: React.FC = () => {
   const { user } = useAuth();
   const { team } = useTeam();
   const [activeWorkspace, setActiveWorkspace] = useState<ParkingWorkspaceView>(parseParkingWorkspaceView);
+  const lastSourceHref = useRef({ history: buildParkingStrategyHash({ view: 'map' }), revenue: '#parking/lot-data' });
 
   useEffect(() => {
-    const handleHashChange = () => setActiveWorkspace(parseParkingWorkspaceView());
+    const handleHashChange = () => {
+      const view = parseParkingWorkspaceView();
+      if (view === 'strategy') lastSourceHref.current.history = window.location.hash;
+      if (view === 'lot-data') lastSourceHref.current.revenue = window.location.hash;
+      setActiveWorkspace(view);
+    };
+    handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
@@ -84,10 +99,15 @@ export const ParkingWorkspace: React.FC = () => {
   }
 
   if (activeWorkspace !== 'dashboard') {
+    const content = <Suspense fallback={<ParkingSubviewLoading />}>
+      {activeWorkspace === 'strategy' ? <ParkingStrategyWorkspace embedded /> : <ParkingDataWorkspace key={activeWorkspace} embedded={activeWorkspace === 'lot-data'} />}
+    </Suspense>;
+    if (activeWorkspace === 'plate-monitor') return content;
     return (
-      <Suspense fallback={<ParkingSubviewLoading />}>
-        <ParkingDataWorkspace key={activeWorkspace} />
-      </Suspense>
+      <ParkingLotWorkspaceShell source={activeWorkspace === 'strategy' ? 'history' : 'revenue'}
+        historyHref={lastSourceHref.current.history} revenueHref={lastSourceHref.current.revenue}>
+        {content}
+      </ParkingLotWorkspaceShell>
     );
   }
 
@@ -119,7 +139,7 @@ export const ParkingWorkspace: React.FC = () => {
             icon={<MapPin size={20} />}
             color="emerald"
             title="Parking Lot Data"
-            description="Import revenue files, map HotSpot locations, and compare lot usage, revenue, and peak periods."
+            description="Explore HotSpot and QR revenue, LocoMobi history, parking maps, and evidence for the Municipal Parking Strategy."
           />
         </div>
       </div>

@@ -644,6 +644,11 @@ export type PerformanceDetailMode =
   | 'load-profiles'
   | 'operator-dwell';
 
+export type PerformanceDashboardViewMode = Exclude<
+  PerformanceDetailMode,
+  'all' | 'load-profiles'
+>;
+
 export interface PerformanceDataLoadOptions {
   dateRange?: { start: string; end: string };
   detailMode?: PerformanceDetailMode;
@@ -675,6 +680,7 @@ export interface PerformanceMetadata {
     routeStoragePaths?: Record<string, string>;
     monthlyStoragePaths?: Record<string, string>;
     routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
+    dashboardMonthlyStoragePaths?: Partial<Record<PerformanceDashboardViewMode, Record<string, string>>>;
     loadProfileMonthlyStoragePaths?: Record<string, string>;
     ridershipTrendStoragePath?: string;
   }

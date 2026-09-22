@@ -75,7 +75,7 @@ Operations owns STREETS-backed imports, dashboards, summaries, and reporting.
 
 ### Parking
 
-Parking owns parking-code usage, revenue review, map/location settings, and plate-pattern analysis. Parking data contains licence plates; preserve its restricted workspace boundary and use `docs/SCHEMA.md` for the current storage and access contract.
+Parking owns parking-code usage, revenue review, map/location settings, plate-pattern analysis, and privacy-minimized historical strategy evidence. Parking data contains licence plates; preserve its restricted workspace boundary. Load `docs/PARKING_STRATEGY.md` for LocoMobi evidence semantics and `docs/SCHEMA.md` for storage/access. The Executive Evidence Board and connected map live at `#parking/strategy` and `#parking/strategy/map`; query state carries period and area into linked Parking Lot Data review. Strategy reads aggregate history, uses a separate revisioned `historyLocations` bridge to the existing reviewed location registry, and maps only confirmed links with valid coordinates. Keep unmatched evidence in totals and LocoMobi source-reported amounts separate from HotSpot/QR tax-inclusive revenue.
 
 ### Planning Data
 

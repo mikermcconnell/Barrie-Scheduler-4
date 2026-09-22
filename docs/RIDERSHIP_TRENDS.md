@@ -22,19 +22,37 @@ The checked-in generated baseline records the source workbook name, worksheet, f
 
 ## Presentation contract
 
-The workspace uses the Friendly Design Theme: a soft-gray workspace, strong title row, rounded white cards with crisp borders, a dominant annual-ridership graph, four compact tinted status blocks, a year-end outlook, an annual-change graph, and the month-by-year table.
+The workspace uses the Friendly Design Theme: a soft-gray workspace, strong title row, a dominant current-year scheduled-route overview, a compact current-month service breakdown, secondary historical charts, and the month-by-year table. The current-year overview keeps the reported total, source coverage, comparable change, monthly actuals, and any derived outlook together so planners see the active year before historical context.
 
 - Annual totals use exact monthly/daily values. Abbreviated axes must retain exact tooltips and labels.
-- Annual change is `(current - previous) / previous` and is shown only when both ended years have adequate source coverage.
-- The active calendar year stays out of the annual charts and is shown as YTD.
-- The active partial month is shown in a dedicated `Month ridership so far` section with Scheduled Routes, On Demand, and All Transit Ridership cards. Each source retains its own report-day and freshness disclosure.
-- The YTD comparison uses completed months only; the active partial month is disclosed separately through its latest service date.
+- Annual change is `(current - previous) / previous` and is shown only when both ended years have adequate source coverage. When the active-year base forecast is available, its projected change against the prior completed year is appended in violet and labelled as projected.
+- The active calendar year is the primary view and its observed partial total stays out of the completed-year historical charts. When a base forecast is available, the annual-ridership chart appends that projected total as a violet dashed segment and projected point; missing reports are not presented as zero activity.
+- The active partial month is shown in a dedicated `Month ridership so far` section with Scheduled Routes, On Demand, and All Transit Ridership cards when either source has reported activity. Before either source reports, this becomes a compact reporting-not-started status row rather than three empty metric cards. Each source retains its own report-day and freshness disclosure.
+- The active-year comparison uses the latest contiguous months for which both the active and prior year have complete coverage. The active partial month is disclosed separately through its latest service date.
+- The active-year monthly chart shows actual monthly boardings first and adds the dashed projected series only when a forecast is available. The dashed path begins at the final actual point so the transition to forecast months is continuous without relabelling that actual value as a projection. The monthly-history table uses the same forecast for active-year months with an estimated remainder, rendering those values and the projected year-end total in violet with explicit projected labels. Completed months remain actuals. Historical annual ridership, annual change, and monthly history follow as secondary context.
 - The base year-end forecast divides active-year completed-month boardings by the prior year's matching completed months, then applies that factor to the prior year's remaining monthly pattern.
 - Within the active month, received STREETS dates remain actual. Each unreported calendar date, including a known missing report, retains an equal share of the seasonally adjusted prior-year monthly estimate until actual evidence replaces it.
 - Forecast values use a dashed projected series and remain separate from actual boardings. The low/high range applies the median absolute full-year error from all eligible historical backtests using the same completed-month cutoff.
 - The forecast is a derived planning scenario, not an approved target, budget forecast, causal explanation, or service-change justification. It is withheld when matching completed-month evidence or the prior-year remaining pattern is incomplete.
 - Live-derived ended years with missing reports remain visibly incomplete and do not receive an annual-change value.
 - Every graph states its unit, supported use, limitations, and the next evidence a planner should check.
+
+## Monthly email contract
+
+The automated monthly email replaces the manually assembled monthly ridership PDF for the metrics supported by Scheduler 4. It uses a Barrie-blue, email-safe Friendly Design layout and does not generate or attach a PDF.
+
+- The primary audience is executive management. Headings use consistent title case, labels use plain language instead of internal abbreviations, and short source notes preserve the metric boundaries without requiring transit-data expertise.
+- Total monthly ridership is the single headline card, labelled with the report month (for example, `Total August Ridership`). Scheduled Bus Service and On Demand Service appear as compact supporting lines directly below it rather than competing headline cards.
+- `sendMonthlyRidershipReport` runs at 10:00 Toronto time on the first calendar day and reports the previous month to the existing `REPORT_RECIPIENTS` list.
+- The headline All Transit total is scheduled-route boardings plus completed On Demand pickups. Scheduled-route and On Demand totals retain separate report-day coverage.
+- Weekday, Saturday, and Sunday averages use only service dates present in both daily projections. Each denominator is disclosed. Their signed percentage changes compare with the same month in the prior year's retained daily STREETS evidence and are withheld when either period is incomplete; the comparison label states that the prior-year baseline is scheduled-route-only.
+- The PDF-style prior-year percentage is shown only when both current sources and the prior-year scheduled-route month are complete. Its label states that the comparison baseline is scheduled-route ridership.
+- The summary adds scheduled-route year-to-date actuals and an `End-of-Year Pace (Estimated)` card. The pace scales the prior year's remaining monthly pattern by the current-versus-prior YTD factor and is withheld until every scheduled-route month through the report month is complete. It remains a planning estimate, not a target.
+- The five-year comparison remains scheduled-route-only for comparability. It uses horizontal bars for the January-through-report-month total in each year instead of overlapping cumulative lines, preserving the same evidence in a more legible email and mobile view.
+- Missing reports remain missing evidence. The fixed-date email still sends with partial totals, missing-date disclosure, and a suppressed prior-year comparison; it is not automatically resent when late files arrive.
+- Complete reports do not show a redundant coverage-success banner. Partial reports retain an amber evidence warning above the summary cards.
+- Specialized Transit is intentionally outside this automated report until an authoritative source is connected.
+- Production queueing writes `teams/{teamId}/monthlyRidershipReports/{YYYY-MM}` and its deterministic `mail` document in one transaction so scheduler retries cannot duplicate the month. The API-key-protected test endpoint sends only to its explicit `to` address and does not write the production audit.
 
 ## Persistence and update contract
 
@@ -83,3 +101,6 @@ Before production use:
 3. Apply the bootstrap with an update-time precondition.
 4. Replay one already-present daily file and verify the date is replaced exactly once.
 5. Open the Planning Data workspace and confirm its latest service date and total match the stored projection.
+6. Render complete and partial monthly email fixtures at desktop and mobile widths, including the chart-image fallback.
+7. Send a protected test email to a controlled inbox and confirm the Firestore email extension records accepted delivery.
+8. Reconcile the first automated month against the approved manual report before enabling the scheduled send.

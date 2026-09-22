@@ -13,6 +13,9 @@ vi.mock('../components/Performance/DwellIncidentDetailDrawer', () => ({
   default: (): null => null,
 }));
 
+import { PerformanceAggregationProvider } from '../components/Performance/performanceAggregation';
+import { getPerformanceAggregation } from '../utils/performanceAggregation';
+
 import { OperatorDwellModule } from '../components/Performance/OperatorDwellModule';
 
 const data = {
@@ -66,6 +69,60 @@ describe('Dwell Incident Review module', () => {
     const rows = Array.from(container.querySelectorAll('tbody tr'));
     expect(rows[0].textContent).toContain('Route 10');
     expect(rows[0].textContent).toContain('High');
+  });
+
+  it('averages covered days including zero incidents, excludes missing dwell, and preserves incident rows', () => {
+    const first = data.dailySummaries[0];
+    const days: PerformanceDataSummary['dailySummaries'] = [
+      first,
+      { ...first, date: '2026-07-02', byOperatorDwell: { ...first.byOperatorDwell!, incidents: [], totalIncidents: 0, totalTrackedDwellMinutes: 0 } },
+      { ...first, date: '2026-07-03', byOperatorDwell: undefined },
+    ];
+    const averageData = { ...data, dailySummaries: days };
+    const render = (mode: 'sum' | 'average') => flushSync(() => root.render(
+      <PerformanceAggregationProvider value={getPerformanceAggregation(mode, days, 'weekday', null)}>
+        <OperatorDwellModule data={averageData} />
+      </PerformanceAggregationProvider>,
+    ));
+    const card = (label: string) => Array.from(container.querySelectorAll('p')).find(p => p.textContent === label)!.parentElement!;
+    render('average');
+    expect(card('Reportable incidents / weekday').querySelector('p:nth-child(2)')?.textContent).toBe('1');
+    expect(card('High severity / weekday').querySelector('p:nth-child(2)')?.textContent).toBe('0.5');
+    expect(container.textContent).toContain('2 of 3 selected days with dwell evidence');
+    expect(container.textContent).toContain('2 of 2 incidents');
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+    render('sum');
+    expect(card('Reportable incidents').querySelector('p:nth-child(2)')?.textContent).toBe('2');
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+  });
+
+  it('preserves fractional incident averages below one', () => {
+    const first = data.dailySummaries[0];
+    const days: PerformanceDataSummary['dailySummaries'] = Array.from({ length: 5 }, (_, index) => ({
+      ...first,
+      date: `2026-07-0${index + 1}`,
+      byOperatorDwell: index === 0 ? first.byOperatorDwell : {
+        ...first.byOperatorDwell!, incidents: [], totalIncidents: 0, totalTrackedDwellMinutes: 0,
+      },
+    }));
+    flushSync(() => root.render(
+      <PerformanceAggregationProvider value={getPerformanceAggregation('average', days, 'weekday', null)}>
+        <OperatorDwellModule data={{ ...data, dailySummaries: days }} />
+      </PerformanceAggregationProvider>,
+    ));
+    const title = Array.from(container.querySelectorAll('p')).find(p => p.textContent === 'High severity / weekday')!;
+    expect(title.nextElementSibling?.textContent).toBe('0.2');
+  });
+
+  it('shows unavailable daily counts when no selected day has dwell evidence', () => {
+    const days: PerformanceDataSummary['dailySummaries'] = [{ ...data.dailySummaries[0], byOperatorDwell: undefined }];
+    flushSync(() => root.render(
+      <PerformanceAggregationProvider value={getPerformanceAggregation('average', days, 'weekday', null)}>
+        <OperatorDwellModule data={{ ...data, dailySummaries: days }} />
+      </PerformanceAggregationProvider>,
+    ));
+    const title = Array.from(container.querySelectorAll('p')).find(p => p.textContent === 'Reportable incidents / weekday')!;
+    expect(title.nextElementSibling?.textContent).toBe('\u2014');
   });
 
   it('filters by severity and exposes the neutral patterns view', () => {

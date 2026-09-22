@@ -1,1 +1,2 @@
 npm run typecheck
+git lfs pre-push "$@"

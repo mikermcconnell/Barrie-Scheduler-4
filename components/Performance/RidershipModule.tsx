@@ -1,3 +1,4 @@
+import { usePerformanceAggregation } from './performanceAggregation';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -98,6 +99,9 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     const { user } = useAuth();
     const canViewPassengerFlow = accessLevel === 'admin' || accessLevel === 'internal';
     const filtered = data.dailySummaries;
+    const { mode, divisor, unit } = usePerformanceAggregation();
+    const countLabel = mode === 'average' ? `Boardings / ${unit}` : 'Total boardings';
+    const formatCount = (value: number) => (value / divisor).toLocaleString(undefined, { maximumFractionDigits: 1 });
     const [routeSortKey, setRouteSortKey] = useState<RouteSortKey>('ridership');
     const [routeSortDir, setRouteSortDir] = useState<SortDir>('desc');
     const [loadCapacityConfig, setLoadCapacityConfig] = useState<PerformanceLoadCapacityConfig>();
@@ -151,7 +155,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                 routeName: r.sourceRouteIds.size > 1
                     ? `Combined ${Array.from(r.sourceRouteIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(' + ')}`
                     : r.routeName,
-                avgPerDay: Math.round(r.ridership / Math.max(1, r.dates.size)),
+                avgPerDay: r.ridership / Math.max(1, new Set(filtered.map(day => day.date)).size),
                 boardsPerServiceHour: r.serviceHours > 0
                     ? Math.round((r.ridership / r.serviceHours) * 10) / 10
                     : 0,
@@ -213,11 +217,11 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
         return Array.from(hourMap.entries())
             .map(([hour, c]) => ({
                 hour: `${hour.toString().padStart(2, '0')}:00`,
-                avgBoardings: Math.round(c.boardings / (c.days || 1)),
-                avgAlightings: Math.round(c.alightings / (c.days || 1)),
+                avgBoardings: c.boardings / divisor,
+                avgAlightings: c.alightings / divisor,
             }))
             .sort((a, b) => a.hour.localeCompare(b.hour));
-    }, [filtered]);
+    }, [filtered, divisor]);
 
     // Aggregate stop activity across filtered days (merges routes + hourly arrays)
     const stopActivity = useMemo(() => aggregateStopActivity(filtered), [filtered]);
@@ -272,10 +276,11 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     return (
         <div className="space-y-6">
             {/* Stop Activity Map */}
-            <ChartCard title="Stop Activity Map" subtitle="Fixed-route and Transit On Demand activity for the selected Ridership period">
+            <ChartCard title="Stop Activity Map" subtitle={mode === 'average' ? `Average activity / ${unit}. Fixed route: ${divisor} covered days; TOD: ${new Set(todReports.map(report => report.date)).size} covered days. Each source uses its own coverage.` : "Fixed-route and Transit On Demand activity for the selected Ridership period"}>
                 <StopActivityMap
                     stops={stopActivity}
                     todLocations={todLocations}
+                    todDayCount={new Set(todReports.map(report => report.date)).size}
                     comparisonStops={comparisonStopActivity}
                     currentDayCount={filtered.length}
                     comparisonDayCount={comparisonDays.length}
@@ -285,6 +290,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
 
             <TodDailyKpiSection
                 reports={todReports}
+                selectedDayCount={new Set(includedDates).size}
                 locations={todLocations}
                 isLoading={todIsLoading}
                 error={todError}
@@ -347,15 +353,14 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Route Ranking */}
-                <ChartCard title="Ridership by Route" subtitle="Total, daily average, and boards per service hour">
+                <ChartCard title="Ridership by Route" subtitle={`${countLabel}; boards per service hour retains its period ratio`}>
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-gray-100">
                                     <SortableHeader label="Route" sortKey="routeId" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} />
                                     <SortableHeader label="Name" sortKey="routeName" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} />
-                                    <SortableHeader label="Total" sortKey="ridership" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
-                                    <SortableHeader label="Avg/Day" sortKey="avgPerDay" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
+                                    <SortableHeader label={countLabel} sortKey="ridership" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
                                     <SortableHeader label="Boards / Service Hr" sortKey="boardsPerServiceHour" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
                                 </tr>
                             </thead>
@@ -364,8 +369,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                                     <tr key={r.routeId} className="border-b border-gray-50 hover:bg-gray-50">
                                         <td className="py-1.5 px-2 font-bold text-gray-900">{r.routeId}</td>
                                         <td className="py-1.5 px-2 text-gray-500 truncate max-w-[120px]">{r.routeName}</td>
-                                        <td className="py-1.5 px-2 text-right font-medium text-gray-700">{r.ridership.toLocaleString()}</td>
-                                        <td className="py-1.5 px-2 text-right text-gray-500">{r.avgPerDay.toLocaleString()}</td>
+                                        <td className="py-1.5 px-2 text-right font-medium text-gray-700">{formatCount(r.ridership)}</td>
                                         <td className="py-1.5 px-2 text-right text-gray-500 tabular-nums">{r.boardsPerServiceHour.toFixed(1)}</td>
                                     </tr>
                                 ))}
@@ -375,13 +379,13 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                 </ChartCard>
 
                 {/* Hourly Distribution */}
-                <ChartCard title="Hourly Boarding Pattern" subtitle="Average boardings by hour of day">
+                <ChartCard title="Hourly Boarding Pattern" subtitle={mode === 'average' ? `Boardings and alightings / ${unit}, by hour` : 'Total boardings and alightings by hour'}>
                     <ResponsiveContainer width="100%" height={280}>
                         <BarChart data={hourlyDist} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                             <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval={1} />
                             <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <Tooltip />
+                            <Tooltip formatter={(value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 })} />
                             <Bar dataKey="avgBoardings" name="Boardings" fill="#06b6d4" radius={[4, 4, 0, 0]} />
                             <Bar dataKey="avgAlightings" name="Alightings" fill="#a78bfa" radius={[4, 4, 0, 0]} />
                         </BarChart>

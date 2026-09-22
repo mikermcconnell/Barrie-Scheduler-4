@@ -1,8 +1,9 @@
 import React from 'react';
+import type { PerformanceAggregationMode } from '../../utils/performanceAggregation';
 import type { DailySummary, DayType } from '../../utils/performanceDataTypes';
 import { addDaysToISODate, compareDateStrings, toDateSortKey } from '../../utils/performanceDateUtils';
 
-export type TimeRange = 'all' | 'yesterday' | 'past-week' | 'past-month' | 'past-three-months' | 'single-day' | 'custom';
+export type TimeRange = 'all' | 'year-to-date' | 'yesterday' | 'past-week' | 'past-month' | 'past-three-months' | 'single-day' | 'custom';
 
 export interface PerformanceDateWindow {
     start: string;
@@ -11,6 +12,7 @@ export interface PerformanceDateWindow {
 
 export const TIME_RANGE_LABELS: Record<TimeRange, string> = {
     all: 'All Data',
+    'year-to-date': 'Year to Date',
     'past-three-months': 'Past 3 Months',
     'past-month': 'Past Month',
     'past-week': 'Past Week',
@@ -35,12 +37,15 @@ interface PerformanceFilterBarProps {
     onDayTypeChange: (dt: DayType | 'all') => void;
     availableDayTypes: DayType[];
     filteredDayCount?: number;
+    aggregationMode?: PerformanceAggregationMode;
+    onAggregationModeChange?: (mode: PerformanceAggregationMode) => void;
 }
 
 export const PerformanceFilterBar: React.FC<PerformanceFilterBarProps> = ({
     timeRange, onTimeRangeChange, selectedDate, onSelectedDateChange, customDateRange, onCustomDateRangeChange, availableDates,
     minAvailableDate, maxAvailableDate,
     dayTypeFilter, onDayTypeChange, availableDayTypes, filteredDayCount,
+    aggregationMode = 'sum', onAggregationModeChange,
 }) => (
     <div className="flex flex-wrap items-start gap-x-6 gap-y-3 px-1 py-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -100,7 +105,7 @@ export const PerformanceFilterBar: React.FC<PerformanceFilterBarProps> = ({
                 </div>
             )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Day Type:</span>
             <div className="flex gap-1">
                 <FilterPill active={dayTypeFilter === 'all'} onClick={() => onDayTypeChange('all')}>All</FilterPill>
@@ -116,6 +121,13 @@ export const PerformanceFilterBar: React.FC<PerformanceFilterBarProps> = ({
                 </span>
             )}
         </div>
+        {onAggregationModeChange && (
+            <div className="flex items-center gap-2" role="group" aria-label="Metric aggregation">
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Show:</span>
+                <FilterPill active={aggregationMode === 'sum'} onClick={() => onAggregationModeChange('sum')}>Sum</FilterPill>
+                <FilterPill active={aggregationMode === 'average'} onClick={() => onAggregationModeChange('average')}>Daily average</FilterPill>
+            </div>
+        )}
     </div>
 );
 
@@ -143,6 +155,9 @@ export function getPerformanceDateWindow(
     if (!latestDate) return null;
 
     if (timeRange === 'all') return { start: dates[0], end: latestDate };
+    if (timeRange === 'year-to-date') {
+        return { start: `${latestDate.slice(0, 4)}-01-01`, end: latestDate };
+    }
     if (timeRange === 'custom') {
         if (!customDateRange?.start || !customDateRange.end) return null;
         const startKey = toDateSortKey(customDateRange.start);

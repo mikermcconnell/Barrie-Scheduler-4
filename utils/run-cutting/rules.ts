@@ -6,16 +6,24 @@ export const BARRIE_RULE_SOURCE_IDS = {
     unionPages: 'union-rule-pages-2026-08-27',
     plannerConfirmations: 'planner-confirmations-2026-08-27',
     parkPlaceOverride: 'park-place-break-override-2026-08-27',
+    dutyClarifications: 'planner-duty-clarifications-2026-09-21',
 } as const;
 
 export const createDefaultBarrieRuleProfile = (
-    confirmedAt = '2026-08-27T13:37:00.000Z',
+    confirmedAt = '2026-09-21',
 ): RuleProfile => ({
     id: 'barrie-operations-rules-v1',
     name: 'Barrie Transit operations rules',
-    revision: 1,
+    revision: 2,
     confirmedAt,
     sources: [
+        {
+            id: BARRIE_RULE_SOURCE_IDS.dutyClarifications,
+            label: 'Planner confirmation of no-meal driving cap and whole-gap split threshold',
+            authority: 'planner-confirmed',
+            confirmedBy: 'Planner',
+            note: 'September 21, 2026: the 7.5-hour cap applies without a qualifying meal break, not to total driving across a non-split meal duty. The 90-minute split threshold uses the whole arrival-to-arrival gap, including travel, not 90 minutes of usable garage break. Actual break reset minima still exclude travel and required preparation.',
+        },
         {
             id: BARRIE_RULE_SOURCE_IDS.unionPages,
             label: 'Union and operations source pages supplied by planner',

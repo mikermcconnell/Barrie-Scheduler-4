@@ -1,4 +1,5 @@
-import React from 'react';
+import { PerformanceAggregationProvider } from '../components/Performance/performanceAggregation';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -25,10 +26,10 @@ vi.mock('../components/shared', () => ({
     </div>
   ),
   HeatmapDotLayer: ({ points }: { points: unknown[] }) => <div data-testid="heatmap-points" data-points={JSON.stringify(points)} />,
-  LassoControl: (): null => null,
+  LassoControl: ({ onComplete }: { onComplete: (points: [number, number][]) => void }) => <button data-testid="lasso-complete" onClick={() => onComplete([])}>Select lasso</button>,
   RouteOverlay: (): null => null,
   toGeoJSON: ([lat, lon]: [number, number]) => [lon, lat],
-  pointInPolygon: () => false,
+  pointInPolygon: () => true,
 }));
 
 import { StopActivityMap } from '../components/Performance/StopActivityMap';
@@ -98,4 +99,27 @@ describe('StopActivityMap Transit On Demand integration', () => {
     expect(routePoints).not.toContain('"value":11');
     expect(container.textContent).toContain('TOD hidden: On Demand activity has no fixed-route attribution.');
   });
+  it('uses separate fixed-route and TOD coverage and keeps change per day stable', () => {
+    const renderMode = (mode: 'sum' | 'average') => act(() => root.render(
+      <PerformanceAggregationProvider value={{ mode, divisor: mode === 'average' ? 5 : 1, unit: 'weekday', coveredDays: 5, expectedDays: 5, label: '' }}>
+        <StopActivityMap stops={[stop()]} currentDayCount={5} comparisonDayCount={2} comparisonStops={[stop()]} todDayCount={2}
+          todLocations={[{ id: 'stop-777', name: 'Stop 777', lat: 44.38, lon: -79.69, pickups: 6, dropoffs: 4 }]} />
+      </PerformanceAggregationProvider>,
+    ));
+    renderMode('average');
+    expect(container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points')).toContain('"value":11');
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-testid="hover-stop"]')?.click());
+    expect(container.querySelector('[data-testid="stop-popup"]')?.textContent).toContain('Board: 7');
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-testid="lasso-complete"]')?.click());
+    expect(container.textContent).toContain('Lasso Selection');
+    renderMode('sum');
+    expect(container.textContent).not.toContain('Lasso Selection');
+    expect(container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points')).toContain('"value":40');
+    const change = [...container.querySelectorAll('button')].find(button => button.textContent === 'change');
+    flushSync(() => change?.click());
+    const summedChange = container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points');
+    renderMode('average');
+    expect(container.querySelector('[data-testid="heatmap-points"]')?.getAttribute('data-points')).toBe(summedChange);
+  });
+
 });

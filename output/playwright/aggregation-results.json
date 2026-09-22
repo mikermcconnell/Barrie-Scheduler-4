@@ -1,0 +1,8 @@
+[
+  "PASS Past Week + Weekday + Sum: 500 boardings across five weekdays",
+  "PASS Daily average: 100 boardings/weekday, 10/10 trips/weekday; OTP unchanged at 85%; five-day coverage visible",
+  "PASS Daily average + Weekday persist Overview → OTP Analysis → Overview",
+  "PASS mobile overflow: {\"viewport\":390,\"document\":390,\"body\":390}",
+  "PASS Mobile Sum toggle returns 500 boardings",
+  "Page errors: []"
+]

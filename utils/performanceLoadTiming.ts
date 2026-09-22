@@ -3,6 +3,7 @@ import type {
     PerformanceDetailMode,
     PerformanceMetadata,
 } from './performanceDataTypes';
+import { getPerformanceMonthlyPaths } from './performanceDashboardView';
 
 const PERFORMANCE_LOAD_TIMING_STORAGE_KEY = 'scheduler4:performance-load-timings:v1';
 const MAX_SAMPLES_PER_PROFILE = 5;
@@ -67,20 +68,13 @@ export function getExpectedPerformanceLoadUnits(
     teamId: string | undefined,
     metadata: PerformanceMetadata | null | undefined,
     routeId?: string | null,
-    requestingTeamId?: string,
+    _requestingTeamId?: string,
     options?: PerformanceDataLoadOptions,
 ): number {
     if (!teamId || !metadata) return 1;
-    const usesSharedRequest = !!requestingTeamId && (
-        requestingTeamId !== teamId
-        || options?.detailMode === 'load-profiles'
-    );
-    if (usesSharedRequest) return 1;
-
-    const routePaths = routeId && routeId !== 'all'
-        ? metadata.routeMonthlyStoragePaths?.[routeId]
-        : undefined;
-    const paths = routePaths || metadata.monthlyStoragePaths;
+    const paths = options?.detailMode === 'load-profiles'
+        ? metadata.loadProfileMonthlyStoragePaths
+        : getPerformanceMonthlyPaths(metadata, routeId, options?.detailMode, options?.dateRange);
     if (!paths) return 1;
 
     const matchingMonths = Object.keys(paths)

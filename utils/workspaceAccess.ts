@@ -204,7 +204,6 @@ export function canAccessWorkspaceFeature(
 
     // Non-workspace feature flags are still controlled by their existing global flags.
     if (!isWorkspaceAccessFeature(feature)) return true;
-
     const accessLevel = resolveWorkspaceAccessLevel(subject);
     const override = subject?.workspaceOverrides?.[feature];
     if (typeof override === 'boolean') return override;

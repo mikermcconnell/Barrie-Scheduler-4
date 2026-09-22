@@ -84,6 +84,7 @@ export function usePerformanceDataQuery(
             requestingTeamId ?? teamId ?? '',
             metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null),
             JSON.stringify(metadata?.loadProfileMonthlyStoragePaths ?? null),
+            JSON.stringify(metadata?.dashboardMonthlyStoragePaths ?? null),
             routeId ?? 'all',
             options?.dateRange?.start ?? '',
             options?.dateRange?.end ?? '',

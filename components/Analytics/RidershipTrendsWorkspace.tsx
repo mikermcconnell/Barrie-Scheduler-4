@@ -72,6 +72,16 @@ function formatTimestamp(value: string): string {
     }).format(date);
 }
 
+function formatMonthKey(value: string): string {
+    const match = /^(\d{4})-(\d{2})$/.exec(value);
+    if (!match) return value;
+    return new Intl.DateTimeFormat('en-CA', {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+    }).format(new Date(`${value}-01T00:00:00Z`));
+}
+
 function formatTrendComparison(factor: number): string {
     const change = factor - 1;
     if (Math.abs(change) < 0.0005) return 'in line with';
@@ -161,11 +171,38 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
         boardings: year.total,
         coverage: year.coverageStatus,
     }));
-    const changeData = view.annualChanges.map(change => ({
-        year: String(change.year),
-        change: change.change === null ? null : change.change * 100,
-        suppressed: change.change === null,
-    }));
+    const annualChartData = [
+        ...annualData.map((year, index) => ({
+            ...year,
+            projectionBridge: forecast && index === annualData.length - 1 ? year.boardings : null,
+            projectedBoardings: null as number | null,
+        })),
+        ...(forecast ? [{
+            year: String(forecast.year),
+            boardings: null,
+            coverage: 'partial' as RidershipTrendCoverageStatus,
+            projectionBridge: forecast.projectedAnnualTotal,
+            projectedBoardings: forecast.projectedAnnualTotal,
+        }] : []),
+    ];
+    const lastCompletedAnnualTotal = view.annualSeries.at(-1)?.total ?? null;
+    const projectedAnnualChange = forecast && lastCompletedAnnualTotal
+        ? ((forecast.projectedAnnualTotal / lastCompletedAnnualTotal) - 1) * 100
+        : null;
+    const changeData = [
+        ...view.annualChanges.map(change => ({
+            year: String(change.year),
+            change: change.change === null ? null : change.change * 100,
+            suppressed: change.change === null,
+            projected: false,
+        })),
+        ...(forecast && projectedAnnualChange !== null ? [{
+            year: String(forecast.year),
+            change: projectedAnnualChange,
+            suppressed: false,
+            projected: true,
+        }] : []),
+    ];
     const comparison = view.completedMonthComparison;
     const comparisonLabel = comparison.throughMonth > 0
         ? `Jan-${MONTHS[comparison.throughMonth - 1]} vs. ${view.activeYear - 1}`
@@ -195,11 +232,41 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
     const combinedActiveMonthDetail = combinedActiveMonthTotal === null
         ? 'Available after both scheduled-route and On Demand reports are received'
         : 'Scheduled-route boardings + completed On Demand trips; provisional where either source is incomplete';
-    const forecastChartData = forecast?.months.map(month => ({
-        month: MONTHS[month.month - 1],
-        actual: month.actual,
-        projected: month.projected,
-    })) ?? [];
+    const hasActiveMonthEvidence = activeMonth?.total != null || todActiveMonth.total !== null;
+    const currentYearChartData = MONTHS.map((month, monthIndex) => {
+        const monthEvidence = view.monthly.find(item => (
+            item.year === view.activeYear && item.month === monthIndex + 1
+        ));
+        const forecastMonth = forecast?.months.find(item => item.month === monthIndex + 1);
+        return {
+            month,
+            actual: monthEvidence?.total ?? null,
+            projected: forecastMonth?.projected ?? null,
+        };
+    });
+    const firstProjectedMonthIndex = currentYearChartData.findIndex(item => item.projected !== null);
+    const lastActualMonthIndex = currentYearChartData.reduce((lastIndex, item, monthIndex) => (
+        monthIndex < firstProjectedMonthIndex && item.actual !== null ? monthIndex : lastIndex
+    ), -1);
+    const connectedCurrentYearChartData = currentYearChartData.map((item, monthIndex) => ({
+        ...item,
+        projectionBridge: lastActualMonthIndex >= 0 && (
+            monthIndex === lastActualMonthIndex || monthIndex === firstProjectedMonthIndex
+        )
+            ? (monthIndex === lastActualMonthIndex ? item.actual : item.projected)
+            : null,
+    }));
+    const currentYearCoverageDetail = view.latestServiceDate
+        ? `Workbook through ${formatMonthKey(RIDERSHIP_TREND_BASELINE.source.finalMonth)}; STREETS through ${formatDate(view.latestServiceDate)}`
+        : `Workbook through ${formatMonthKey(RIDERSHIP_TREND_BASELINE.source.finalMonth)}; no STREETS reports received since ${formatDate(projection.cutoverDate)}`;
+    const liveCoverageValue = view.liveCoverage.expectedDays === 0
+        ? 'Not started'
+        : `${numberFormatter.format(view.liveCoverage.observedDays)} / ${numberFormatter.format(view.liveCoverage.expectedDays)}`;
+    const liveCoverageDetail = view.liveCoverage.expectedDays === 0
+        ? `No STREETS reports received since ${formatDate(projection.cutoverDate)}`
+        : view.liveCoverage.complete
+            ? 'All dates through the latest service report are present'
+            : `${numberFormatter.format(view.liveCoverage.missingDates.length)} date${view.liveCoverage.missingDates.length === 1 ? '' : 's'} missing within the reported range`;
     const nextMonthLabel = MONTHS[Number(referenceDate.slice(5, 7))];
     const remainingYearDetail = nextMonthLabel
         ? `Unreported ${activeMonthName} days plus ${nextMonthLabel}-Dec`
@@ -281,31 +348,171 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                     </div>
                 )}
 
-                <section className="rounded-3xl border-2 border-gray-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="annual-ridership-title">
-                    <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                        <div>
-                            <h2 id="annual-ridership-title" className="text-xl font-black text-gray-950">Scheduled-route annual ridership</h2>
-                            <p className="mt-1 text-sm text-gray-500">Completed calendar years &middot; exact fixed-route boardings</p>
+                <section className="overflow-hidden rounded-3xl border-2 border-blue-200 bg-white shadow-sm" aria-labelledby="current-year-ridership-title">
+                    <div className="border-b border-blue-100 bg-blue-50/60 px-4 py-5 sm:px-6">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700">Current year</p>
+                                <h2 id="current-year-ridership-title" className="mt-1 text-2xl font-black text-gray-950">{view.activeYear} scheduled-route ridership</h2>
+                                <p className="mt-1 text-sm leading-6 text-gray-600">Reported boardings, comparable performance, coverage, and planning outlook in one view.</p>
+                            </div>
+                            <span className={`inline-flex self-start items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${view.currentYtd.coverageComplete ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
+                                <span className={`h-2 w-2 rounded-full ${view.currentYtd.coverageComplete ? 'bg-emerald-600' : 'bg-amber-600'}`} aria-hidden="true" />
+                                {view.currentYtd.coverageComplete ? 'Coverage complete' : 'Coverage incomplete'}
+                            </span>
                         </div>
-                        <span className="text-xs font-semibold text-gray-500">Active {view.activeYear} is shown as YTD below</span>
                     </div>
-                    <div className="h-80 w-full" role="img" aria-label="Line chart of annual fixed-route boardings for completed calendar years">
+
+                    <div className="grid gap-0 lg:grid-cols-[18rem_minmax(0,1fr)]">
+                        <div className="border-b border-gray-200 p-5 lg:border-b-0 lg:border-r sm:p-6">
+                            <p className="text-sm font-bold text-gray-600">Reported boardings</p>
+                            <p className="mt-2 text-4xl font-black tracking-tight text-gray-950 tabular-nums">{formatBoardings(view.currentYtd.total)}</p>
+                            <p className="mt-2 text-xs leading-5 text-gray-600">{currentYearCoverageDetail}</p>
+                            <p className="mt-2 text-xs font-semibold text-amber-800">Missing reports are excluded, not counted as zero.</p>
+
+                            <dl className="mt-6 divide-y divide-gray-200 border-y border-gray-200">
+                                <div className="py-4">
+                                    <dt className="text-xs font-bold uppercase tracking-[0.1em] text-gray-500">Comparable change</dt>
+                                    <dd className="mt-1 text-2xl font-black tabular-nums text-gray-950">
+                                        {comparison.change === null ? '\u2014' : percentFormatter.format(comparison.change)}
+                                    </dd>
+                                    <dd className="mt-1 text-xs leading-5 text-gray-600">
+                                        {comparison.coverageComplete ? comparisonLabel : 'Waiting for a complete comparable month'}
+                                    </dd>
+                                </div>
+                                <div className="py-4">
+                                    <dt className="text-xs font-bold uppercase tracking-[0.1em] text-gray-500">STREETS reporting</dt>
+                                    <dd className="mt-1 text-xl font-black tabular-nums text-gray-950">{liveCoverageValue}</dd>
+                                    <dd className="mt-1 text-xs leading-5 text-gray-600">{liveCoverageDetail}</dd>
+                                </div>
+                            </dl>
+                        </div>
+
+                        <div className="min-w-0 p-4 sm:p-6">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <h3 className="text-base font-black text-gray-950">Monthly progress</h3>
+                                    <p className="mt-1 text-xs leading-5 text-gray-500">Actual monthly boardings remain visibly separate from any derived projection.</p>
+                                </div>
+                                {forecast && (
+                                    <span className="inline-flex self-start items-center gap-1.5 rounded-full bg-violet-100 px-3 py-1.5 text-xs font-bold text-violet-800">
+                                        <Info className="h-3.5 w-3.5" />
+                                        Derived forecast, not a target
+                                    </span>
+                                )}
+                            </div>
+                            <div className="mt-3 h-72 w-full" role="img" aria-label={`Monthly actual and projected fixed-route boardings for ${view.activeYear}`}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={connectedCurrentYearChartData} margin={{ top: 12, right: 16, left: 12, bottom: 4 }} accessibilityLayer>
+                                        <CartesianGrid stroke="#E5E7EB" strokeDasharray="4 4" vertical={false} />
+                                        <XAxis dataKey="month" tick={{ fill: '#4B5563', fontSize: 12 }} axisLine={false} tickLine={false} />
+                                        <YAxis width={72} tickFormatter={value => `${Math.round(Number(value) / 1_000)}K`} tick={{ fill: '#6B7280', fontSize: 12 }} axisLine={false} tickLine={false} />
+                                        <Tooltip
+                                            formatter={(value, name) => [numberFormatter.format(Number(value)), String(name)]}
+                                            contentStyle={{ borderRadius: 12, border: '1px solid #E5E7EB', boxShadow: '0 8px 24px rgba(15,23,42,0.08)' }}
+                                        />
+                                        <Line type="monotone" dataKey="actual" name="Actual boardings" stroke="#2563EB" strokeWidth={4} dot={{ r: 4 }} connectNulls={false} />
+                                        <Line type="monotone" dataKey="projectionBridge" stroke="#7C3AED" strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={false} connectNulls={false} tooltipType="none" />
+                                        <Line type="monotone" dataKey="projected" name="Projected full month" stroke="#7C3AED" strokeWidth={3} strokeDasharray="7 5" dot={{ r: 4 }} connectNulls={false} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-xs font-semibold text-gray-600" aria-hidden="true">
+                                <span className="inline-flex items-center gap-2"><span className="h-1 w-7 rounded bg-blue-600" />Actual boardings</span>
+                                {forecast && <span className="inline-flex items-center gap-2"><span className="w-7 border-t-2 border-dashed border-violet-600" />Projected full month</span>}
+                            </div>
+
+                            {forecast ? (
+                                <div className="mt-5 border-t border-gray-200 pt-5">
+                                    <div className="grid gap-4 sm:grid-cols-3">
+                                        <div>
+                                            <p className="text-xs font-bold uppercase tracking-[0.1em] text-gray-500">Low scenario</p>
+                                            <p className="mt-1 text-xl font-black tabular-nums text-gray-950">{formatBoardings(forecast.lowEstimate)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-bold uppercase tracking-[0.1em] text-violet-700">Base {forecast.year} projection</p>
+                                            <p className="mt-1 text-xl font-black tabular-nums text-violet-950">{formatBoardings(forecast.projectedAnnualTotal)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-bold uppercase tracking-[0.1em] text-gray-500">High scenario</p>
+                                            <p className="mt-1 text-xl font-black tabular-nums text-gray-950">{formatBoardings(forecast.highEstimate)}</p>
+                                        </div>
+                                    </div>
+                                    <details className="mt-4 rounded-xl bg-gray-50 px-4 py-3 text-xs leading-5 text-gray-600">
+                                        <summary className="cursor-pointer font-bold text-gray-800">How the year-end outlook works</summary>
+                                        <p className="mt-2">
+                                            January-{MONTHS[forecast.completedThroughMonth - 1]} {forecast.year} boardings are {formatTrendComparison(forecast.trendFactor)} the same completed months in {forecast.comparisonYear}. That factor is applied to the remaining {forecast.comparisonYear} monthly pattern. {activeMonthName} keeps received STREETS days as actual and estimates only unreported days.
+                                        </p>
+                                        <p className="mt-2">
+                                            The range applies the model&apos;s {percentFormatter.format(forecast.backtestMedianAbsoluteError)} median absolute full-year error across {forecast.backtestSampleSize} historical backtests. The base includes {formatBoardings(forecast.remainingEstimate)} estimated for {remainingYearDetail.toLowerCase()}.
+                                        </p>
+                                    </details>
+                                </div>
+                            ) : (
+                                <div className="mt-5 border-t border-gray-200 pt-4">
+                                    <p className="text-sm font-bold text-gray-900">Year-end outlook not yet available</p>
+                                    <p className="mt-1 text-xs leading-5 text-gray-600">The outlook will appear after the active year and prior year have matching complete months and a remaining prior-year monthly pattern.</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </section>
+
+                {hasActiveMonthEvidence ? (
+                    <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="current-month-ridership-title">
+                        <div className="mb-4">
+                            <h2 id="current-month-ridership-title" className="text-xl font-black text-gray-950">{activeMonthName} ridership so far</h2>
+                            <p className="mt-1 text-sm text-gray-500">Actual reported activity, split by service and combined below.</p>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-3">
+                            <MetricBlock tone="blue" label="Scheduled routes" value={formatBoardings(activeMonth?.total ?? null)} detail={activeMonthDetail} />
+                            <MetricBlock tone="amber" label="On Demand" value={formatBoardings(todActiveMonth.total)} detail={todActiveMonthDetail} />
+                            <MetricBlock tone="violet" label="All transit ridership" value={formatBoardings(combinedActiveMonthTotal)} detail={combinedActiveMonthDetail} />
+                        </div>
+                        <p className="mt-3 text-xs leading-5 text-gray-500">On Demand counts completed pickups once per trip. Drop-offs are not added again.</p>
+                    </section>
+                ) : (
+                    <section className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between" aria-labelledby="current-month-ridership-title">
+                        <div>
+                            <h2 id="current-month-ridership-title" className="font-black text-gray-950">{activeMonthName} reporting has not started</h2>
+                            <p className="mt-1 text-sm text-gray-600">Scheduled Routes and On Demand are both waiting for their first {activeMonthName} report.</p>
+                        </div>
+                        <span className="inline-flex self-start items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1.5 text-xs font-bold text-gray-700 sm:self-auto">
+                            <CalendarDays className="h-3.5 w-3.5" />
+                            No reported activity yet
+                        </span>
+                    </section>
+                )}
+
+                <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="annual-ridership-title">
+                    <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500">Historical context</p>
+                            <h2 id="annual-ridership-title" className="mt-1 text-xl font-black text-gray-950">Scheduled-route annual ridership, {annualData.at(0)?.year}-{forecast?.year ?? annualData.at(-1)?.year}</h2>
+                            <p className="mt-1 text-sm text-gray-500">Completed calendar years &middot; exact fixed-route boardings{forecast ? ` &middot; ${forecast.year} projected` : ''}</p>
+                        </div>
+                        <span className="text-xs font-semibold text-gray-500">The active year is analyzed above</span>
+                    </div>
+                    <div className="h-64 w-full" role="img" aria-label={`Line chart of annual fixed-route boardings${forecast ? ` with ${forecast.year} projection` : ' for completed calendar years'}`}>
                         <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={annualData} margin={{ top: 12, right: 16, left: 12, bottom: 4 }} accessibilityLayer>
+                            <LineChart data={annualChartData} margin={{ top: 12, right: 16, left: 12, bottom: 4 }} accessibilityLayer>
                                 <CartesianGrid stroke="#E5E7EB" strokeDasharray="4 4" vertical={false} />
                                 <XAxis dataKey="year" tick={{ fill: '#4B5563', fontSize: 12 }} axisLine={false} tickLine={false} />
                                 <YAxis width={72} tickFormatter={value => `${(Number(value) / 1_000_000).toFixed(1)}M`} tick={{ fill: '#6B7280', fontSize: 12 }} axisLine={false} tickLine={false} />
                                 <Tooltip
                                     formatter={(value) => [numberFormatter.format(Number(value)), 'Fixed-route boardings']}
                                     labelFormatter={label => `Calendar year ${label}`}
-                                    contentStyle={{ borderRadius: 16, border: '2px solid #E5E7EB', boxShadow: '0 8px 24px rgba(15,23,42,0.08)' }}
+                                    contentStyle={{ borderRadius: 12, border: '1px solid #E5E7EB', boxShadow: '0 8px 24px rgba(15,23,42,0.08)' }}
                                 />
-                                <Line type="monotone" dataKey="boardings" stroke="#2563EB" strokeWidth={4} dot={<AnnualTrendDot />} activeDot={{ r: 6 }} connectNulls={false} />
+                                <Line type="monotone" dataKey="boardings" name="Fixed-route boardings" stroke="#2563EB" strokeWidth={3} dot={<AnnualTrendDot />} activeDot={{ r: 6 }} connectNulls={false} />
+                                <Line type="monotone" dataKey="projectionBridge" stroke="#7C3AED" strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={false} connectNulls={false} tooltipType="none" />
+                                <Line type="monotone" dataKey="projectedBoardings" name={`${forecast?.year ?? view.activeYear} projected boardings`} stroke="#7C3AED" strokeWidth={3} dot={{ r: 5, fill: '#7C3AED', stroke: '#EDE9FE', strokeWidth: 3 }} activeDot={{ r: 7 }} connectNulls={false} />
                             </LineChart>
                         </ResponsiveContainer>
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs leading-5 text-gray-500">
                         <p>This shows long-term direction. It does not identify unique riders or explain why demand changed.</p>
+                        {forecast && <span className="inline-flex items-center gap-2 font-semibold text-violet-700"><span className="w-7 border-t-2 border-dashed border-violet-600" />{forecast.year} projected</span>}
                         {view.annualSeries.some(year => year.coverageStatus !== 'complete') && (
                             <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700">
                                 <span className="h-2.5 w-2.5 rounded-full bg-amber-600 ring-2 ring-amber-100" aria-hidden="true" />
@@ -315,144 +522,10 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                     </div>
                 </section>
 
-                <section className="rounded-3xl border-2 border-gray-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="current-month-ridership-title">
-                    <div className="mb-4">
-                        <h2 id="current-month-ridership-title" className="text-xl font-black text-gray-950">{activeMonthName} ridership so far</h2>
-                        <p className="mt-1 text-sm text-gray-500">Actual reported activity, split by service and combined below.</p>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-3">
-                        <MetricBlock
-                            tone="blue"
-                            label="Scheduled routes"
-                            value={formatBoardings(activeMonth?.total ?? null)}
-                            detail={activeMonthDetail}
-                        />
-                        <MetricBlock
-                            tone="amber"
-                            label="On Demand"
-                            value={formatBoardings(todActiveMonth.total)}
-                            detail={todActiveMonthDetail}
-                        />
-                        <MetricBlock
-                            tone="violet"
-                            label="All transit ridership"
-                            value={formatBoardings(combinedActiveMonthTotal)}
-                            detail={combinedActiveMonthDetail}
-                        />
-                    </div>
-                    <p className="mt-3 text-xs leading-5 text-gray-500">On Demand counts completed pickups once per trip. Drop-offs are not added again.</p>
-                </section>
-
-                <section className="grid gap-3 md:grid-cols-3" aria-label="Scheduled-route ridership summary">
-                    <MetricBlock
-                        tone="violet"
-                        label={`${view.activeYear} scheduled-route YTD`}
-                        value={formatBoardings(view.currentYtd.total)}
-                        detail={view.currentYtd.coverageComplete ? 'Complete through the evidence date' : 'Provisional where daily reports are incomplete'}
-                    />
-                    <MetricBlock
-                        tone="violet"
-                        label="Comparable change"
-                        value={comparison.change === null ? '\u2014' : percentFormatter.format(comparison.change)}
-                        detail={comparison.coverageComplete ? comparisonLabel : `${comparisonLabel} - suppressed until coverage is complete`}
-                    />
-                    <MetricBlock
-                        tone="amber"
-                        label="Scheduled-route reports"
-                        value={`${numberFormatter.format(view.liveCoverage.observedDays)} / ${numberFormatter.format(view.liveCoverage.expectedDays)}`}
-                        detail={view.liveCoverage.expectedDays === 0
-                            ? 'Waiting for the first live report'
-                            : view.liveCoverage.complete
-                                ? 'All expected live dates received'
-                                : `${numberFormatter.format(view.liveCoverage.missingDates.length)} expected date(s) need review`}
-                    />
-                </section>
-
-                {forecast ? (
-                    <section className="rounded-3xl border-2 border-gray-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="ridership-forecast-title">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div>
-                                <h2 id="ridership-forecast-title" className="text-xl font-black text-gray-950">{forecast.year} scheduled-route year-end outlook</h2>
-                                <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-500">
-                                    Actual scheduled-route boardings remain separate from a seasonal estimate for the unreported portion of the year. On Demand is not forecast because comparable history is not yet available.
-                                </p>
-                            </div>
-                            <span className="inline-flex self-start items-center gap-1.5 rounded-full bg-violet-100 px-3 py-1.5 text-xs font-bold text-violet-800">
-                                <Info className="h-3.5 w-3.5" />
-                                Derived forecast, not a target
-                            </span>
-                        </div>
-
-                        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                            <MetricBlock
-                                tone="gray"
-                                label="Estimated remaining year"
-                                value={formatBoardings(forecast.remainingEstimate)}
-                                detail={remainingYearDetail}
-                            />
-                            <MetricBlock
-                                tone="amber"
-                                label="Low scenario"
-                                value={formatBoardings(forecast.lowEstimate)}
-                                detail="Base estimate less the backtested median error"
-                            />
-                            <MetricBlock
-                                tone="violet"
-                                label={`Base ${forecast.year} projection`}
-                                value={formatBoardings(forecast.projectedAnnualTotal)}
-                                detail={`${formatBoardings(forecast.actualToDate)} actual to date + estimated remainder`}
-                            />
-                            <MetricBlock
-                                tone="blue"
-                                label="High scenario"
-                                value={formatBoardings(forecast.highEstimate)}
-                                detail="Base estimate plus the backtested median error"
-                            />
-                        </div>
-
-                        <div className="mt-6 h-72 w-full" role="img" aria-label={`Monthly actual and projected fixed-route boardings for ${forecast.year}`}>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={forecastChartData} margin={{ top: 12, right: 16, left: 12, bottom: 4 }} accessibilityLayer>
-                                    <CartesianGrid stroke="#E5E7EB" strokeDasharray="4 4" vertical={false} />
-                                    <XAxis dataKey="month" tick={{ fill: '#4B5563', fontSize: 12 }} axisLine={false} tickLine={false} />
-                                    <YAxis width={72} tickFormatter={value => `${Math.round(Number(value) / 1_000)}K`} tick={{ fill: '#6B7280', fontSize: 12 }} axisLine={false} tickLine={false} />
-                                    <Tooltip
-                                        formatter={(value, name) => [numberFormatter.format(Number(value)), String(name)]}
-                                        contentStyle={{ borderRadius: 16, border: '2px solid #E5E7EB', boxShadow: '0 8px 24px rgba(15,23,42,0.08)' }}
-                                    />
-                                    <Line type="monotone" dataKey="actual" name="Actual boardings" stroke="#2563EB" strokeWidth={4} dot={{ r: 4 }} connectNulls={false} />
-                                    <Line type="monotone" dataKey="projected" name="Projected full month" stroke="#7C3AED" strokeWidth={3} strokeDasharray="7 5" dot={{ r: 4 }} connectNulls={false} />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs font-semibold text-gray-600" aria-hidden="true">
-                            <span className="inline-flex items-center gap-2"><span className="h-1 w-7 rounded bg-blue-600" />Actual boardings</span>
-                            <span className="inline-flex items-center gap-2"><span className="w-7 border-t-2 border-dashed border-violet-600" />Projected full month</span>
-                        </div>
-
-                        <div className="mt-5 rounded-2xl bg-gray-50 p-4 text-xs leading-5 text-gray-600">
-                            <p className="font-bold text-gray-800">How the base estimate works</p>
-                            <p className="mt-1">
-                                January-{MONTHS[forecast.completedThroughMonth - 1]} {forecast.year} boardings are {formatTrendComparison(forecast.trendFactor)} the same completed months in {forecast.comparisonYear}. That factor is applied to the {forecast.comparisonYear} monthly pattern for the rest of the year. {activeMonthName} keeps received STREETS days as actual and estimates only unreported days.
-                            </p>
-                            <p className="mt-2">
-                                The range applies the model&apos;s {percentFormatter.format(forecast.backtestMedianAbsoluteError)} median absolute full-year error across {forecast.backtestSampleSize} historical backtests. It is a planning scenario, not an approved target, budget forecast, or explanation of why ridership changed.
-                            </p>
-                        </div>
-                    </section>
-                ) : (
-                    <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm" aria-labelledby="ridership-forecast-unavailable-title">
-                        <h2 id="ridership-forecast-unavailable-title" className="text-lg font-black text-gray-950">Year-end outlook not yet available</h2>
-                        <p className="mt-1 text-sm leading-6 text-gray-600">
-                            A forecast requires at least one complete month in the active year and the matching complete months plus remaining monthly pattern from the prior year.
-                        </p>
-                    </section>
-                )}
-
                 <section className="rounded-3xl border-2 border-gray-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="annual-change-title">
                     <div className="mb-4">
                         <h2 id="annual-change-title" className="text-xl font-black text-gray-950">Annual change</h2>
-                        <p className="mt-1 text-sm text-gray-500">Year-over-year change for completed years with complete coverage</p>
+                        <p className="mt-1 text-sm text-gray-500">Year-over-year change for completed years with complete coverage{forecast ? ` &middot; ${forecast.year} projected` : ''}</p>
                     </div>
                     <div className="h-64 w-full" role="img" aria-label="Bar chart of year-over-year percentage change in fixed-route boardings">
                         <ResponsiveContainer width="100%" height="100%">
@@ -462,15 +535,16 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                                 <YAxis width={56} tickFormatter={value => `${Number(value).toFixed(0)}%`} tick={{ fill: '#6B7280', fontSize: 12 }} axisLine={false} tickLine={false} />
                                 <Tooltip
                                     formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Annual change']}
-                                    labelFormatter={label => `${label} vs. prior year`}
+                                    labelFormatter={label => `${label}${String(label) === String(forecast?.year) ? ' projected' : ''} vs. prior year`}
                                     contentStyle={{ borderRadius: 16, border: '2px solid #E5E7EB' }}
                                 />
                                 <Bar dataKey="change" radius={[8, 8, 4, 4]}>
-                                    {changeData.map(entry => <Cell key={entry.year} fill={(entry.change ?? 0) >= 0 ? '#059669' : '#7C3AED'} />)}
+                                    {changeData.map(entry => <Cell key={entry.year} fill={entry.projected ? '#7C3AED' : (entry.change ?? 0) >= 0 ? '#059669' : '#7C3AED'} />)}
                                 </Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
+                    {forecast && <p className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-violet-700"><span className="h-2.5 w-2.5 rounded-sm bg-violet-600" />{forecast.year} uses the base scheduled-route projection shown above.</p>}
                     {view.annualChanges.some(change => change.suppressedReason) && (
                         <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
                             At least one comparison is hidden because one of the two years has incomplete report coverage.
@@ -481,11 +555,11 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                 <section className="overflow-hidden rounded-3xl border-2 border-gray-200 bg-white shadow-sm" aria-labelledby="monthly-history-title">
                     <div className="border-b-2 border-gray-100 p-4 sm:p-6">
                         <h2 id="monthly-history-title" className="text-xl font-black text-gray-950">Monthly history</h2>
-                        <p className="mt-1 text-sm text-gray-500">The familiar month-by-year view. Scroll horizontally to review the full history.</p>
+                        <p className="mt-1 text-sm text-gray-500">Actual month-by-year history with the active-year base projection shown in violet. Scroll horizontally to review the full history.</p>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="min-w-max border-collapse text-sm">
-                            <caption className="sr-only">Monthly fixed-route boardings by calendar year</caption>
+                            <caption className="sr-only">Monthly actual and projected fixed-route boardings by calendar year</caption>
                             <thead>
                                 <tr className="border-b border-gray-200 bg-gray-50">
                                     <th scope="col" className="sticky left-0 z-20 min-w-24 bg-gray-50 px-4 py-3 text-left font-black text-gray-800">Month</th>
@@ -506,14 +580,28 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                                         {view.years.map(year => {
                                             const monthEvidence = view.monthly.find(item => item.year === year.year && item.month === monthIndex + 1);
                                             const isActive = year.year === view.activeYear && monthIndex + 1 === Number(referenceDate.slice(5, 7));
+                                            const forecastMonth = year.year === forecast?.year
+                                                ? forecast.months.find(item => item.month === monthIndex + 1)
+                                                : undefined;
+                                            const isProjected = forecastMonth?.projected != null && forecastMonth.remainingEstimate > 0;
+                                            const displayedBoardings = isProjected ? forecastMonth.projected : year.months[monthIndex];
                                             return (
                                                 <td
                                                     key={year.year}
-                                                    className={`px-4 py-3 text-right font-semibold tabular-nums ${isActive ? 'bg-amber-50 text-amber-900' : 'text-gray-700'}`}
-                                                    title={monthEvidence?.missingDates.length ? `${monthEvidence.missingDates.length} expected date(s) missing` : undefined}
+                                                    className={`px-4 py-3 text-right font-semibold tabular-nums ${isProjected ? 'bg-violet-50/70 text-violet-900' : isActive ? 'bg-amber-50 text-amber-900' : 'text-gray-700'}`}
+                                                    title={isProjected
+                                                        ? `${formatBoardings(forecastMonth.actual)} reported; ${formatBoardings(forecastMonth.remainingEstimate)} estimated remaining`
+                                                        : monthEvidence?.missingDates.length
+                                                            ? `${monthEvidence.missingDates.length} expected date(s) missing`
+                                                            : undefined}
+                                                    data-projected={isProjected ? 'true' : undefined}
                                                 >
-                                                    {formatBoardings(year.months[monthIndex])}
-                                                    {monthEvidence?.coverageStatus === 'partial' && <span className="ml-1 text-amber-600" aria-label="partial coverage">*</span>}
+                                                    <span className="block">{formatBoardings(displayedBoardings)}</span>
+                                                    {isProjected ? (
+                                                        <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-wide text-violet-600">Projected</span>
+                                                    ) : monthEvidence?.coverageStatus === 'partial' ? (
+                                                        <span className="ml-1 text-amber-600" aria-label="partial coverage">*</span>
+                                                    ) : null}
                                                 </td>
                                             );
                                         })}
@@ -521,9 +609,19 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                                 ))}
                                 <tr className="bg-blue-50/70">
                                     <th scope="row" className="sticky left-0 z-10 bg-blue-50 px-4 py-3 text-left font-black text-blue-950">Total</th>
-                                    {view.years.map(year => (
-                                        <td key={year.year} className="px-4 py-3 text-right font-black tabular-nums text-blue-950">{formatBoardings(year.total)}</td>
-                                    ))}
+                                    {view.years.map(year => {
+                                        const isProjected = year.year === forecast?.year;
+                                        return (
+                                            <td
+                                                key={year.year}
+                                                className={`px-4 py-3 text-right font-black tabular-nums ${isProjected ? 'bg-violet-100/70 text-violet-950' : 'text-blue-950'}`}
+                                                data-projected-total={isProjected ? 'true' : undefined}
+                                            >
+                                                <span className="block">{formatBoardings(isProjected ? forecast.projectedAnnualTotal : year.total)}</span>
+                                                {isProjected && <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-wide text-violet-700">Projected total</span>}
+                                            </td>
+                                        );
+                                    })}
                                 </tr>
                             </tbody>
                         </table>
@@ -553,7 +651,7 @@ export const RidershipTrendsWorkspace: React.FC<RidershipTrendsWorkspaceProps> =
                                 <h2 className="font-black text-gray-950">Sources and freshness</h2>
                                 <p className="mt-3 text-sm leading-6 text-gray-600">
                                     Historical data: <span className="font-bold text-gray-800">{RIDERSHIP_TREND_BASELINE.source.fileName}</span>,
-                                    {' '}sheet <span className="font-bold text-gray-800">{RIDERSHIP_TREND_BASELINE.source.sheetName}</span>, through {RIDERSHIP_TREND_BASELINE.source.finalMonth}.
+                                    {' '}sheet <span className="font-bold text-gray-800">{RIDERSHIP_TREND_BASELINE.source.sheetName}</span>, through {formatMonthKey(RIDERSHIP_TREND_BASELINE.source.finalMonth)}.
                                 </p>
                                 <p className="mt-2 text-sm leading-6 text-gray-600">
                                     Automatic updates: daily STREETS fixed-route boardings from {projection.cutoverDate}.

@@ -1,0 +1,132 @@
+[
+  {
+    "id": "source:8B-Weekday@v10:North:8B-N-31:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8B-Weekday@v10:North:8B-N-31 stop-derived driving 29 does not equal source driving 24; no prorating is permitted.",
+    "tripId": "8B-Weekday@v10:North:8B-N-31",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:090e7ec0-cd6e-4a36-8c14-5742405a9c69",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8A-Weekday@v10:North:8A-N-37:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8A-Weekday@v10:North:8A-N-37 stop-derived driving 27 does not equal source driving 22; no prorating is permitted.",
+    "tripId": "8A-Weekday@v10:North:8A-N-37",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:090e7ec0-cd6e-4a36-8c14-5742405a9c69",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8A-Weekday@v10:North:8A-N-35:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8A-Weekday@v10:North:8A-N-35 stop-derived driving 27 does not equal source driving 22; no prorating is permitted.",
+    "tripId": "8A-Weekday@v10:North:8A-N-35",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:0927977f-22aa-494e-9da2-a7fc9d1c102d",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8B-Weekday@v10:North:8B-N-33:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8B-Weekday@v10:North:8B-N-33 stop-derived driving 29 does not equal source driving 24; no prorating is permitted.",
+    "tripId": "8B-Weekday@v10:North:8B-N-33",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:12883745-fd7d-4496-a532-9fdcf23885c8",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8A-Weekday@v10:North:8A-N-39:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8A-Weekday@v10:North:8A-N-39 stop-derived driving 27 does not equal source driving 18; no prorating is permitted.",
+    "tripId": "8A-Weekday@v10:North:8A-N-39",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:12883745-fd7d-4496-a532-9fdcf23885c8",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8A-Weekday@v10:North:8A-N-33:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8A-Weekday@v10:North:8A-N-33 stop-derived driving 29 does not equal source driving 24; no prorating is permitted.",
+    "tripId": "8A-Weekday@v10:North:8A-N-33",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:663730ca-4659-4fa7-b81f-32b1257589e4",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8B-Weekday@v10:North:8B-N-37:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8B-Weekday@v10:North:8B-N-37 stop-derived driving 29 does not equal source driving 24; no prorating is permitted.",
+    "tripId": "8B-Weekday@v10:North:8B-N-37",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:663730ca-4659-4fa7-b81f-32b1257589e4",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8B-Weekday@v10:North:8B-N-35:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8B-Weekday@v10:North:8B-N-35 stop-derived driving 29 does not equal source driving 24; no prorating is permitted.",
+    "tripId": "8B-Weekday@v10:North:8B-N-35",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:bb7a2985-c55d-4b4b-ab23-9d1447deb496",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8A-Weekday@v10:North:8A-N-40:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8A-Weekday@v10:North:8A-N-40 stop-derived driving 6 does not equal source driving 1; no prorating is permitted.",
+    "tripId": "8A-Weekday@v10:North:8A-N-40",
+    "blockId": "gtfs:PHICwXGlvDen0RGt7fCG:Weekday:bb7a2985-c55d-4b4b-ab23-9d1447deb496",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "source:8B-Saturday@v7:Barrie South GO:8B-T-77:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8B-Saturday@v7:Barrie South GO:8B-T-77 has unresolved or non-chronological stop events at 8B-Saturday@v7:Barrie South GO:8B-T-77:event:2.",
+    "tripId": "8B-Saturday@v7:Barrie South GO:8B-T-77",
+    "blockId": "master:8B-Saturday@v7:8B-1",
+    "dayType": "Saturday"
+  },
+  {
+    "id": "source:8B-Saturday@v7:Barrie South GO:8B-T-79:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8B-Saturday@v7:Barrie South GO:8B-T-79 has unresolved or non-chronological stop events at 8B-Saturday@v7:Barrie South GO:8B-T-79:event:2.",
+    "tripId": "8B-Saturday@v7:Barrie South GO:8B-T-79",
+    "blockId": "master:8B-Saturday@v7:8B-1",
+    "dayType": "Saturday"
+  },
+  {
+    "id": "source:8B-Saturday@v7:Barrie South GO:8B-T-78:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8B-Saturday@v7:Barrie South GO:8B-T-78 has unresolved or non-chronological stop events at 8B-Saturday@v7:Barrie South GO:8B-T-78:event:2.",
+    "tripId": "8B-Saturday@v7:Barrie South GO:8B-T-78",
+    "blockId": "master:8B-Saturday@v7:8B-3",
+    "dayType": "Saturday"
+  },
+  {
+    "id": "source:8B-Saturday@v7:Barrie South GO:8B-T-80:source-stop-events-unresolved",
+    "category": "integrity",
+    "severity": "error",
+    "code": "source-stop-events-unresolved",
+    "message": "Trip 8B-Saturday@v7:Barrie South GO:8B-T-80 has unresolved or non-chronological stop events at 8B-Saturday@v7:Barrie South GO:8B-T-80:event:2.",
+    "tripId": "8B-Saturday@v7:Barrie South GO:8B-T-80",
+    "blockId": "master:8B-Saturday@v7:8B-3",
+    "dayType": "Saturday"
+  }
+]

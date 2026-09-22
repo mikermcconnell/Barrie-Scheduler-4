@@ -79,9 +79,9 @@ const planningTrip = (overrides: Partial<PlanningTrip> = {}): PlanningTrip => ({
     direction: 'North',
     tripNumber: 1,
     startTime: 360,
-    arrivalTime: 810,
-    occupiedEndTime: 810,
-    travelTime: 450,
+    arrivalTime: 798,
+    occupiedEndTime: 798,
+    travelTime: 438,
     recoveryTime: 0,
     startStop: 'Park Place',
     endStop: 'Park Place',
@@ -391,7 +391,8 @@ describe('proposal assessment and metrics', () => {
         const { input, proposal } = assessmentFixture();
         const assessment = assessOperationsPlanningProposal(input, proposal);
 
-        expect(assessment.dailyRunMetrics[0]).toMatchObject({ platformMinutes: 450, paidMinutes: 512 });
+        // 438 revenue + 12 bus deadhead = 450 platform; pay also includes preparation and BP.
+        expect(assessment.dailyRunMetrics[0]).toMatchObject({ platformMinutes: 450, paidMinutes: 500 });
         expect(assessment.findings).toEqual(expect.arrayContaining([
             expect.objectContaining({ category: 'informational', code: 'codex-advisory:codex-opinion' }),
             expect.objectContaining({ code: 'batt-park-out-not-evaluated' }),
@@ -415,8 +416,14 @@ describe('proposal assessment and metrics', () => {
     it('adds paid split shuttle activity and leaves the remaining gap unpaid', () => {
         const { input } = assessmentFixture();
         const first = planningTrip({ id: 'first', startTime: 360, arrivalTime: 480, occupiedEndTime: 480, travelTime: 120 });
-        const second = planningTrip({ id: 'second', sourceTripId: 't2', startTime: 600, arrivalTime: 720, occupiedEndTime: 720, travelTime: 120 });
-        input.trips = [first, second];
+        const second = planningTrip({ id: 'second', sourceTripId: 't2', vehicleBlockKey: 'master:10-Weekday@v3:2', blockId: '2', startTime: 600, arrivalTime: 720, occupiedEndTime: 720, travelTime: 120 });
+        const following = planningTrip({ id: 'following', startTime: 480, arrivalTime: 540, occupiedEndTime: 540, travelTime: 60 });
+        const preceding = planningTrip({ id: 'preceding', vehicleBlockKey: second.vehicleBlockKey, blockId: '2', startTime: 540, arrivalTime: 600, occupiedEndTime: 600, travelTime: 60 });
+        input.trips = [first, following, preceding, second];
+        input.blockAudits = [
+            { ...auditFor(first), tripIds: [first.id, following.id], finalArrival: following.arrivalTime },
+            { ...auditFor(second), tripIds: [preceding.id, second.id], firstDeparture: preceding.startTime },
+        ];
         const metrics = calculateDailyRunMetrics(input, {
             id: 'split', runNumber: 'W-002', dayType: 'Weekday', pieces: [
                 { id: 'a', blockId: first.vehicleBlockKey, routeNumber: '10', tripIds: ['first'], startReliefPoint: 'Park Place', endReliefPoint: 'Park Place' },

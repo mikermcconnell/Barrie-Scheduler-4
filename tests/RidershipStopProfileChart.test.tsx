@@ -1,3 +1,4 @@
+import { PerformanceAggregationProvider } from '../components/Performance/performanceAggregation';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
@@ -104,7 +105,7 @@ describe('RidershipStopProfileChart', () => {
     });
 
     function render(options: RidershipStopProfileChartOption[], periodMode: 'single-day' | 'multi-day' = 'multi-day', defaultOptionKey: string | null = options[0]?.key ?? null) {
-        act(() => root.render(<RidershipStopProfileChart data={{ options, defaultOptionKey }} periodMode={periodMode} />));
+        act(() => root.render(<PerformanceAggregationProvider value={{ mode: periodMode === 'multi-day' ? 'average' : 'sum', divisor: periodMode === 'multi-day' ? 2 : 1, unit: 'weekday', coveredDays: 2, expectedDays: 2, label: '' }}><RidershipStopProfileChart data={{ options, defaultOptionKey }} periodMode={periodMode} /></PerformanceAggregationProvider>));
     }
 
     it('uses the requested default and supports route and direction controls', () => {
@@ -128,14 +129,23 @@ describe('RidershipStopProfileChart', () => {
 
     it('adapts labels and summary values for multi-day and single-day periods', () => {
         render([option()]);
-        expect(container.textContent).toContain('Average boardings and alightings per observed service day');
-        expect(container.textContent).toContain('30 · Avg / service day');
+        expect(container.textContent).toContain('Average boardings and alightings / weekday');
+        expect(container.textContent).toContain('30 · Avg / weekday');
         expect(container.textContent).toContain('Georgian College');
         expect(container.textContent).toContain('20');
 
         render([option({ serviceDays: 1 })], 'single-day');
         expect(container.textContent).toContain('Boardings and alightings by stop');
-        expect(container.textContent).toContain('30 · Daily total');
+        expect(container.textContent).toContain('30 · Period total');
+    });
+
+    it('switches passenger counts to sums without scaling onboard load', () => {
+        act(() => root.render(<PerformanceAggregationProvider value={{ mode: 'sum', divisor: 1, unit: 'weekday', coveredDays: 5, expectedDays: 5, label: '' }}><RidershipStopProfileChart data={{ options: [option()], defaultOptionKey: '10::North' }} periodMode="multi-day" /></PerformanceAggregationProvider>));
+        expect(container.textContent).toContain('60 \u00b7 Period total');
+        expect(container.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('Peak average onboard load is 20');
+        act(() => root.render(<PerformanceAggregationProvider value={{ mode: 'average', divisor: 5, unit: 'weekday', coveredDays: 5, expectedDays: 5, label: '' }}><RidershipStopProfileChart data={{ options: [option()], defaultOptionKey: '10::North' }} periodMode="multi-day" /></PerformanceAggregationProvider>));
+        expect(container.textContent).toContain('12 \u00b7 Avg / weekday');
+        expect(container.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('Peak average onboard load is 20');
     });
 
     it('discloses multiple patterns and estimated legacy weighting', () => {
@@ -247,7 +257,7 @@ describe('RidershipStopProfileChart', () => {
         render([option({ rows: option().rows.map(row => ({ ...row, boardings: 0 })) })]);
 
         expect(container.textContent).toContain('No boarding activity');
-        expect(container.textContent).toContain('32 · Avg / service day');
+        expect(container.textContent).toContain('32 · Avg / weekday');
     });
 
     it('shows an actionable empty state and handles bar-only data honestly', () => {

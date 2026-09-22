@@ -50,6 +50,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 import { MapBase } from '../shared';
+import { buildParkingStrategyHash, getParkingStrategyRevenueMonths, parseParkingLotDataContext } from '../../utils/parking/parkingStrategyRouting';
 import {
   buildParkingMonthlyUtilizationTrend,
   buildParkingPlannerAnalysis,
@@ -229,7 +230,7 @@ const PARKING_ANALYSIS_VIEWS: Array<{ id: ParkingAnalysisView; label: string; de
 ];
 
 function parseParkingWorkspaceViewFromHash(hash = window.location.hash): ParkingWorkspaceView {
-  const normalized = hash.replace(/^#\/?/, '').toLowerCase();
+  const normalized = hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();
   if (normalized.includes('plate-monitor') || normalized.includes('plate')) return 'plate-monitor';
   if (normalized.includes('lot-data') || normalized.includes('lot') || normalized.includes('data')) return 'lot-data';
   return 'dashboard';
@@ -1458,11 +1459,13 @@ export const ParkingFilterPendingIndicator: React.FC<{ pending: boolean }> = ({ 
   );
 };
 
-export const ParkingDataWorkspace: React.FC = () => {
+export const ParkingDataWorkspace: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { user, isGlobalAdmin } = useAuth();
   const { team, teamMember, canManageTeam, developerPreview } = useTeam();
   const toast = useToast();
   const [activeWorkspace, setActiveWorkspace] = useState<ParkingWorkspaceView>(() => parseParkingWorkspaceViewFromHash());
+  const [strategyContext, setStrategyContext] = useState(() => parseParkingLotDataContext(window.location.hash));
+  const [strategyPeriodActive, setStrategyPeriodActive] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<ParkingSettings>(DEFAULT_PARKING_SETTINGS);
@@ -1544,7 +1547,11 @@ export const ParkingDataWorkspace: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const handleHashChange = () => setActiveWorkspace(parseParkingWorkspaceViewFromHash());
+    const handleHashChange = () => {
+      setActiveWorkspace(parseParkingWorkspaceViewFromHash());
+      setStrategyContext(parseParkingLotDataContext(window.location.hash));
+      setStrategyPeriodActive(true);
+    };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
@@ -1671,10 +1678,13 @@ export const ParkingDataWorkspace: React.FC = () => {
       .sort((a, b) => b.localeCompare(a))
   ), [appliedRevenueFilterSelection.year, revenueMonths]);
   const revenueFilterMonths = useMemo(() => {
+    if (strategyPeriodActive && (strategyContext?.from || strategyContext?.to)) {
+      return getParkingStrategyRevenueMonths(strategyContext, revenueMonths);
+    }
     if (appliedRevenueFilterSelection.month !== 'all') return [appliedRevenueFilterSelection.month];
     if (appliedRevenueFilterSelection.year !== 'all') return revenueMonths.filter(month => month.startsWith(`${appliedRevenueFilterSelection.year}-`));
     return undefined;
-  }, [appliedRevenueFilterSelection.month, appliedRevenueFilterSelection.year, revenueMonths]);
+  }, [appliedRevenueFilterSelection.month, appliedRevenueFilterSelection.year, revenueMonths, strategyContext, strategyPeriodActive]);
   const revenueCategoryOptions = useMemo(() => [
     ...(settings.revenueLocationCategories || []).filter(category => !category.archived),
   ], [settings.revenueLocationCategories]);
@@ -1722,10 +1732,11 @@ export const ParkingDataWorkspace: React.FC = () => {
     [displayRevenueSummary, revenueAnalysisSettings, revenueFilters],
   );
   const revenueTrendFilterMonths = useMemo(() => {
+    if (strategyPeriodActive && (strategyContext?.from || strategyContext?.to)) return revenueFilterMonths;
     if (appliedRevenueFilterSelection.year === 'all') return undefined;
     if (appliedRevenueFilterSelection.month === 'all') return revenueFilterMonths;
     return revenueMonths.filter(month => month.startsWith(`${appliedRevenueFilterSelection.year}-`));
-  }, [appliedRevenueFilterSelection.month, appliedRevenueFilterSelection.year, revenueFilterMonths, revenueMonths]);
+  }, [appliedRevenueFilterSelection.month, appliedRevenueFilterSelection.year, revenueFilterMonths, revenueMonths, strategyContext, strategyPeriodActive]);
   const revenueTrendFilters = useMemo<ParkingRevenueFilters>(() => ({
     ...revenueFilters,
     months: revenueTrendFilterMonths,
@@ -1801,6 +1812,11 @@ export const ParkingDataWorkspace: React.FC = () => {
     if (!selectedRevenueLocationKey) return null;
     return revenueAnalytics.locationSummaries.find(location => revenueLocationKey(location) === selectedRevenueLocationKey) || null;
   }, [revenueAnalytics.locationSummaries, selectedRevenueLocationKey]);
+  useEffect(() => {
+    if (strategyContext?.location && settings.revenueLocations?.some(location => location.id === strategyContext.location)) {
+      setSelectedRevenueLocationKey(strategyContext.location);
+    }
+  }, [settings.revenueLocations, strategyContext]);
   const selectedTrendLocation = useMemo(() => {
     if (!selectedRevenueLocationKey) return selectedRevenueLocation;
     return selectedRevenueLocation
@@ -1808,10 +1824,12 @@ export const ParkingDataWorkspace: React.FC = () => {
       || null;
   }, [revenueTrendAnalytics.locationSummaries, selectedRevenueLocation, selectedRevenueLocationKey]);
   const utilizationTrendMonths = useMemo(() => (
-    appliedRevenueFilterSelection.year === 'all'
+    strategyPeriodActive && (strategyContext?.from || strategyContext?.to)
+      ? revenueFilterMonths || []
+      : appliedRevenueFilterSelection.year === 'all'
       ? revenueMonths
       : revenueMonths.filter(month => month.startsWith(`${appliedRevenueFilterSelection.year}-`))
-  ), [appliedRevenueFilterSelection.year, revenueMonths]);
+  ), [appliedRevenueFilterSelection.year, revenueMonths, revenueFilterMonths, strategyContext, strategyPeriodActive]);
   const parkingUtilizationTrend = useMemo(() => {
     const periods = utilizationTrendMonths.map(month => {
       const analytics = buildParkingRevenueAnalytics(displayRevenueSummary, revenueAnalysisSettings, {
@@ -1840,10 +1858,12 @@ export const ParkingDataWorkspace: React.FC = () => {
     buildParkingTrendOverview(
       revenueTrendAnalytics,
       selectedTrendLocation,
-      appliedRevenueFilterSelection.month === 'all' ? appliedRevenueMonthsForSelectedYear[0] : appliedRevenueFilterSelection.month,
+      strategyPeriodActive && (strategyContext?.from || strategyContext?.to)
+        ? strategyContext.to || [...(revenueFilterMonths || [])].sort().at(-1)
+        : appliedRevenueFilterSelection.month === 'all' ? appliedRevenueMonthsForSelectedYear[0] : appliedRevenueFilterSelection.month,
       revenueComparisonAnalytics,
     )
-  ), [appliedRevenueFilterSelection.month, appliedRevenueMonthsForSelectedYear, revenueComparisonAnalytics, revenueTrendAnalytics, selectedTrendLocation]);
+  ), [appliedRevenueFilterSelection.month, appliedRevenueMonthsForSelectedYear, revenueComparisonAnalytics, revenueTrendAnalytics, selectedTrendLocation, revenueFilterMonths, strategyContext, strategyPeriodActive]);
   const activeMapLocation = useMemo(() => (
     selectedRevenueLocation ? mapLocationSummaries.find(entry => entry.sourceLocationKeys.includes(selectedRevenueLocation.key)) || null : null
   ), [mapLocationSummaries, selectedRevenueLocation]);
@@ -2514,6 +2534,7 @@ export const ParkingDataWorkspace: React.FC = () => {
   }, []);
 
   const resetRevenueFilters = () => {
+    setStrategyPeriodActive(false);
     setSelectedRevenueYear('all');
     setSelectedRevenueMonth('all');
     setSelectedRevenueCategory('all');
@@ -3071,12 +3092,12 @@ export const ParkingDataWorkspace: React.FC = () => {
 
           <div className="pointer-events-none absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-start gap-3">
             <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-3xl border border-slate-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur">
-              <button type="button" onClick={() => navigateWorkspace('dashboard')} aria-label="Back to Parking Workspaces" className="rounded-xl border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-50">
+              {!embedded && <button type="button" onClick={() => navigateWorkspace('dashboard')} aria-label="Back to Parking Workspaces" className="rounded-xl border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-50">
                 <ArrowLeft size={18} />
-              </button>
+              </button>}
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700">
-                  <MapPin size={16} /> Parking Lot Data
+                  <MapPin size={16} /> {embedded ? 'HotSpot & QR' : 'Parking Lot Data'}
                 </div>
                 <div className="truncate text-lg font-black text-slate-950">Map-first lot activity</div>
               </div>
@@ -3207,6 +3228,21 @@ export const ParkingDataWorkspace: React.FC = () => {
           >
             {lotLeftRailOpen ? (
               <>
+            <div className="mb-3 rounded-2xl border border-blue-200 bg-blue-50 p-3">
+              <a href={buildParkingStrategyHash(strategyContext || {
+                from: selectedRevenueMonth !== 'all' ? selectedRevenueMonth : selectedRevenueYear !== 'all' ? `${selectedRevenueYear}-01` : undefined,
+                to: selectedRevenueMonth !== 'all' ? selectedRevenueMonth : selectedRevenueYear !== 'all' ? `${selectedRevenueYear}-12` : undefined,
+                area: settings.revenueLocations?.some(location => location.id === selectedRevenueLocationKey && location.locationKind !== 'non_spatial') ? `location:${selectedRevenueLocationKey}` : undefined,
+              })} className="text-xs font-black text-blue-800 hover:underline">{strategyContext ? 'Return to strategy evidence map' : 'Open strategy evidence'}</a>
+              <p className="mt-1 text-[11px] font-semibold text-blue-800">HotSpot / QR revenue includes tax. LocoMobi source-reported amounts are reviewed separately.</p>
+              {strategyPeriodActive && (strategyContext?.from || strategyContext?.to) ? (
+                <div className="mt-2 text-[11px] font-bold text-blue-900">
+                  Strategy period: {strategyContext.from || 'earliest'} to {strategyContext.to || 'latest'}
+                  <button type="button" onClick={() => setStrategyPeriodActive(false)} className="ml-2 underline">Clear period</button>
+                </div>
+              ) : null}
+              {strategyContext?.location && !selectedRevenueLocation ? <p className="mt-2 text-[11px] font-semibold text-amber-800">The requested location has no matching HotSpot / QR activity in this selection, or its mapping is unavailable.</p> : null}
+            </div>
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xs font-black uppercase tracking-wide text-slate-500">Revenue locations and groups</div>
@@ -3251,14 +3287,14 @@ export const ParkingDataWorkspace: React.FC = () => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label htmlFor="parking-revenue-year-filter" className="mb-1 block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Year</label>
-                  <select id="parking-revenue-year-filter" value={selectedRevenueYear} onChange={event => { setSelectedRevenueYear(event.target.value); setSelectedRevenueMonth('all'); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                  <select id="parking-revenue-year-filter" value={selectedRevenueYear} onChange={event => { setStrategyPeriodActive(false); setSelectedRevenueYear(event.target.value); setSelectedRevenueMonth('all'); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
                     <option value="all">All years</option>
                     {revenueYears.map(year => <option key={year} value={year}>{year}</option>)}
                   </select>
                 </div>
                 <div>
                   <label htmlFor="parking-revenue-month-filter" className="mb-1 block text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Month</label>
-                  <select id="parking-revenue-month-filter" value={selectedRevenueMonth} onChange={event => setSelectedRevenueMonth(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                  <select id="parking-revenue-month-filter" value={selectedRevenueMonth} onChange={event => { setStrategyPeriodActive(false); setSelectedRevenueMonth(event.target.value); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
                     <option value="all">{selectedRevenueYear === 'all' ? 'All months' : `All ${selectedRevenueYear}`}</option>
                     {revenueMonthsForSelectedYear.map(month => <option key={month} value={month}>{month}</option>)}
                   </select>

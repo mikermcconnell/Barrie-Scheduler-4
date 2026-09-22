@@ -1,6 +1,7 @@
+import { usePerformanceAggregation } from './performanceAggregation';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-    PerformanceDataSummary, DayType, RouteRidershipHeatmap,
+    PerformanceDataSummary, RouteRidershipHeatmap,
 } from '../../utils/performanceDataTypes';
 import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
 
@@ -41,15 +42,9 @@ interface Props {
     data: PerformanceDataSummary;
 }
 
-type DateRange = 'yesterday' | 'week' | 'month';
-
-const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
-
-// ─── Multi-day merge ─────────────────────────────────────────────────
-
-function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap | null {
+function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[], divisor: number): RouteRidershipHeatmap | null {
     if (heatmaps.length === 0) return null;
-    if (heatmaps.length === 1) return heatmaps[0];
+    if (heatmaps.length === 1) return { ...heatmaps[0], cells: heatmaps[0].cells.map(row => row.map(cell => cell ? [cell[0] / divisor, cell[1] / divisor] : null)) };
 
     const base = heatmaps[0];
     const tripMap = new Map<string, { trip: typeof base.trips[0]; idx: number }>();
@@ -134,7 +129,7 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
     }
 
     const cells: ([number, number] | null)[][] = acc.map(row =>
-        row.map(c => c ? [Math.round(c[0] / c[2] * 10) / 10, Math.round(c[1] / c[2] * 10) / 10] : null)
+        row.map(c => c ? [c[0] / divisor, c[1] / divisor] : null)
     );
 
     return {
@@ -150,8 +145,7 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
 // ─── Component ───────────────────────────────────────────────────────
 
 export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
-    const [dateRange, setDateRange] = useState<DateRange>('week');
-    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
+    const { mode, divisor, unit } = usePerformanceAggregation();
     const [selectedKey, setSelectedKey] = useState<string>('');
     const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
@@ -173,35 +167,7 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
         [data]
     );
 
-    const availableDayTypes = useMemo(() => {
-        const types = new Set(data.dailySummaries.map(d => d.dayType));
-        return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
-    }, [data]);
-
-    const filtered = useMemo(() => {
-        const sorted = [...data.dailySummaries].sort((a, b) => b.date.localeCompare(a.date));
-        if (sorted.length === 0) return [];
-        const latest = sorted[0].date;
-        const latestDate = new Date(latest + 'T12:00:00');
-
-        let cutoff: Date;
-        if (dateRange === 'yesterday') {
-            cutoff = latestDate;
-        } else if (dateRange === 'week') {
-            cutoff = new Date(latestDate);
-            cutoff.setDate(cutoff.getDate() - 6);
-        } else {
-            cutoff = new Date(latestDate);
-            cutoff.setDate(cutoff.getDate() - 29);
-        }
-
-        const cutoffStr = cutoff.toISOString().slice(0, 10);
-        return sorted.filter(d => {
-            if (d.date < cutoffStr) return false;
-            if (dayTypeFilter !== 'all' && d.dayType !== dayTypeFilter) return false;
-            return true;
-        });
-    }, [data, dateRange, dayTypeFilter]);
+    const filtered = data.dailySummaries;
 
     const profileOptions = useMemo(() => {
         const seen = new Map<string, { routeId: string; routeName: string; direction: string }>();
@@ -232,8 +198,8 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                 }
             }
         }
-        return mergeHeatmaps(heatmaps);
-    }, [filtered, activeKey]);
+        return mergeHeatmaps(heatmaps, divisor);
+    }, [filtered, activeKey, divisor]);
 
     // Color scaling + totals
     const { maxBoard, maxAlight, rowTotals, colTotals } = useMemo(() => {
@@ -330,23 +296,6 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     })}
                 </div>
 
-                <div className="flex gap-1">
-                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider self-center mr-1">Range:</span>
-                    {([['yesterday', 'Latest Day'], ['week', 'Past Week'], ['month', 'Past Month']] as [DateRange, string][]).map(([val, label]) => (
-                        <FilterPill key={val} active={dateRange === val} onClick={() => setDateRange(val)}>{label}</FilterPill>
-                    ))}
-                </div>
-
-                <div className="flex gap-1">
-                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider self-center mr-1">Day:</span>
-                    <FilterPill active={dayTypeFilter === 'all'} onClick={() => setDayTypeFilter('all')}>All</FilterPill>
-                    {availableDayTypes.map(dt => (
-                        <FilterPill key={dt} active={dayTypeFilter === dt} onClick={() => setDayTypeFilter(dt)}>
-                            {DAY_TYPE_LABELS[dt]}
-                        </FilterPill>
-                    ))}
-                </div>
-
                 <div className="flex items-center gap-2 ml-auto">
                     <span className="text-xs text-gray-400">
                         {filtered.length} day{filtered.length !== 1 ? 's' : ''} · {tripCount} trips · {merged.stops.length} stops
@@ -387,8 +336,8 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     <div className="w-3 h-3 rounded border border-gray-200" style={{ backgroundColor: '#f3f4f6', backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, #e5e7eb 2px, #e5e7eb 3px)' }} />
                     <span>Not served</span>
                 </div>
-                {filtered.length > 1 && (
-                    <span className="italic">Values are daily averages</span>
+                {mode === 'average' && (
+                    <span className="italic">Values are averages / {unit}; based on {divisor} covered days</span>
                 )}
                 {emptyStopCount > 0 && (
                     <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none">
@@ -536,24 +485,13 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     ))}
                     {/* Grand total */}
                     <div className="flex items-center justify-center bg-gray-100 border-t border-gray-300 border-[0.5px] border-gray-200 text-[10px] font-extrabold text-green-800">
-                        {Math.round(colTotals.reduce((s, c) => s + c.b, 0))}
+                        {fmtVal(colTotals.reduce((s, c) => s + c.b, 0)) || '0'}
                     </div>
                     <div className="flex items-center justify-center bg-gray-100 border-t border-gray-300 border-[0.5px] border-gray-200 text-[10px] font-extrabold text-violet-700">
-                        {Math.round(colTotals.reduce((s, c) => s + c.a, 0))}
+                        {fmtVal(colTotals.reduce((s, c) => s + c.a, 0)) || '0'}
                     </div>
                 </div>
             </div>
         </div>
     );
 };
-
-const FilterPill: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
-    <button
-        onClick={onClick}
-        className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${
-            active ? 'bg-cyan-100 text-cyan-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-        }`}
-    >
-        {children}
-    </button>
-);

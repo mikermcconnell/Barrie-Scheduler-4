@@ -23,11 +23,10 @@ import { db, storage } from './firebase';
 import { requestSharedWorkspaceData } from './sharedWorkspaceDataClient';
 import {
     PERFORMANCE_SCHEMA_VERSION,
-    type DailySummary,
+    type PerformanceDashboardViewMode,
     type PerformanceDataLoadOptions,
     type PerformanceDataLoadProgressListener,
     type PerformanceDataSummary,
-    type PerformanceDetailMode,
     type PerformanceMetadata,
 } from './performanceDataTypes';
 import {
@@ -47,17 +46,22 @@ import {
     RIDERSHIP_TREND_BASELINE_HASH,
     type RidershipTrendProjectionV1,
 } from './ridership-trends/types';
+import {
+    buildPerformanceDashboardView,
+    getPerformanceMonthlyPaths,
+    PERFORMANCE_DASHBOARD_VIEW_MODES,
+    trimDayForDetailMode,
+} from './performanceDashboardView';
+
+export { getPerformanceMonthlyPaths, trimDayForDetailMode } from './performanceDashboardView';
 
 // ============ HELPERS ============
 
 const PERFORMANCE_DOWNLOAD_CONCURRENCY = 4;
+const PERFORMANCE_IMMUTABLE_CACHE_CONTROL = 'private, max-age=31536000, immutable';
 
 function getMetadataRef(teamId: string) {
     return doc(db, 'teams', teamId, 'performanceData', 'metadata');
-}
-
-function getStoragePath(teamId: string, timestamp: string) {
-    return `teams/${teamId}/performanceData/${timestamp}.json`;
 }
 
 function getOverviewStoragePath(teamId: string, timestamp: string) {
@@ -68,16 +72,21 @@ function getReportStoragePath(teamId: string, timestamp: string) {
     return `teams/${teamId}/performanceData/${timestamp}-report.json`;
 }
 
-function getRouteStoragePath(teamId: string, timestamp: string, routeId: string) {
-    return `teams/${teamId}/performanceData/${timestamp}-route-${encodeURIComponent(routeId)}.json`;
-}
-
 function getMonthlyStoragePath(teamId: string, timestamp: string, month: string) {
     return `teams/${teamId}/performanceData/months/${timestamp}-${month}.json`;
 }
 
 function getRouteMonthlyStoragePath(teamId: string, timestamp: string, routeId: string, month: string) {
     return `teams/${teamId}/performanceData/months/${timestamp}-route-${encodeURIComponent(routeId)}-${month}.json`;
+}
+
+function getDashboardMonthlyStoragePath(
+    teamId: string,
+    timestamp: string,
+    mode: PerformanceDashboardViewMode,
+    month: string,
+) {
+    return `teams/${teamId}/performanceData/views/${timestamp}-${mode}-${month}.json`;
 }
 
 function getLoadProfileMonthlyStoragePath(teamId: string, timestamp: string, month: string) {
@@ -147,6 +156,17 @@ function readNestedStringRecord(value: unknown): Record<string, Record<string, s
     return Object.fromEntries(entries);
 }
 
+function readDashboardMonthlyStoragePaths(
+    value: unknown,
+): PerformanceMetadata['dashboardMonthlyStoragePaths'] {
+    const nested = readNestedStringRecord(value);
+    if (!nested) return undefined;
+    const entries = PERFORMANCE_DASHBOARD_VIEW_MODES
+        .map(mode => [mode, nested[mode]] as const)
+        .filter((entry): entry is readonly [PerformanceDashboardViewMode, Record<string, string>] => !!entry[1]);
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function dateInRange(date: string, range?: { start: string; end: string }): boolean {
     if (!range?.start || !range?.end) return true;
     return date >= range.start && date <= range.end;
@@ -159,75 +179,30 @@ function monthOverlapsRange(month: string, range?: { start: string; end: string 
     return month >= startMonth && month <= endMonth;
 }
 
-function trimMissedTrips(day: DailySummary, keepTripDetails: boolean): DailySummary['missedTrips'] {
-    return day.missedTrips
-        ? {
-            ...day.missedTrips,
-            trips: keepTripDetails ? (day.missedTrips.trips || []) : [],
-        }
-        : day.missedTrips;
+function getMonthEnd(month: string): string {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+    return `${month}-${String(lastDay).padStart(2, '0')}`;
 }
 
-export function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
-    if (mode === 'all') return day;
+export function getSharedPerformanceDateWindows(
+    metadata: PerformanceMetadata,
+    routeId?: string | null,
+    options?: PerformanceDataLoadOptions,
+): Array<{ start: string; end: string }> {
+    const paths = options?.detailMode === 'load-profiles'
+        ? metadata.loadProfileMonthlyStoragePaths
+        : getPerformanceMonthlyPaths(metadata, routeId, options?.detailMode, options?.dateRange);
+    const requestedRange = options?.dateRange ?? metadata.dateRange;
+    const months = Object.keys(paths || {})
+        .filter(month => /^\d{4}-\d{2}$/.test(month) && monthOverlapsRange(month, requestedRange))
+        .sort();
 
-    const base: DailySummary = {
-        ...day,
-        byStop: [],
-        byTrip: [],
-        loadProfilePeakTrips: undefined,
-        loadProfiles: [],
-        ridershipHeatmaps: undefined,
-        byOperatorDwell: undefined,
-        byCascade: undefined,
-        segmentRuntimes: undefined,
-        stopSegmentRuntimes: undefined,
-        tripStopSegmentRuntimes: undefined,
-        routeStopDeviations: undefined,
-        byRouteHour: undefined,
-    };
-
-    switch (mode) {
-        case 'overview':
-            return {
-                ...base,
-                byTrip: day.byTrip,
-                missedTrips: trimMissedTrips(day, false),
-            };
-        case 'otp':
-            return {
-                ...base,
-                byTrip: day.byTrip,
-                routeStopDeviations: day.routeStopDeviations,
-                byRouteHour: day.byRouteHour,
-                missedTrips: trimMissedTrips(day, true),
-            };
-        case 'ridership':
-            return {
-                ...base,
-                byStop: day.byStop,
-                loadProfiles: day.loadProfiles,
-                ridershipHeatmaps: day.ridershipHeatmaps,
-                byRouteHour: day.byRouteHour,
-                missedTrips: trimMissedTrips(day, false),
-            };
-        case 'load-profiles':
-            return {
-                ...base,
-                loadProfilePeakTrips: day.loadProfilePeakTrips ?? buildLoadProfilePeakTrips(day),
-                loadProfiles: day.loadProfiles,
-                missedTrips: trimMissedTrips(day, false),
-            };
-        case 'operator-dwell':
-            return {
-                ...base,
-                byOperatorDwell: day.byOperatorDwell,
-                byCascade: day.byCascade,
-                missedTrips: trimMissedTrips(day, false),
-            };
-        default:
-            return day;
-    }
+    if (months.length === 0) return [requestedRange];
+    return months.map(month => ({
+        start: requestedRange.start > `${month}-01` ? requestedRange.start : `${month}-01`,
+        end: requestedRange.end < getMonthEnd(month) ? requestedRange.end : getMonthEnd(month),
+    }));
 }
 
 function applyPerformanceLoadOptions(
@@ -279,10 +254,7 @@ async function loadMonthlyPerformanceSummary(
     options?: PerformanceDataLoadOptions,
     onProgress?: PerformanceDataLoadProgressListener,
 ): Promise<PerformanceDataSummary | null> {
-    const selectedRoutePaths = routeId && routeId !== 'all'
-        ? metadata.routeMonthlyStoragePaths?.[routeId]
-        : undefined;
-    const paths = selectedRoutePaths || metadata.monthlyStoragePaths;
+    const paths = getPerformanceMonthlyPaths(metadata, routeId, options?.detailMode, options?.dateRange);
     if (!paths || Object.keys(paths).length === 0) return null;
 
     const months = Object.keys(paths)
@@ -376,6 +348,8 @@ export function mergePerformanceSummaryMetadata(
             routeStoragePaths: metadata.routeStoragePaths || summary.metadata.routeStoragePaths,
             monthlyStoragePaths: metadata.monthlyStoragePaths || summary.metadata.monthlyStoragePaths,
             routeMonthlyStoragePaths: metadata.routeMonthlyStoragePaths || summary.metadata.routeMonthlyStoragePaths,
+            dashboardMonthlyStoragePaths: metadata.dashboardMonthlyStoragePaths
+                || summary.metadata.dashboardMonthlyStoragePaths,
             loadProfileMonthlyStoragePaths: metadata.loadProfileMonthlyStoragePaths
                 || summary.metadata.loadProfileMonthlyStoragePaths,
             ridershipTrendStoragePath: metadata.ridershipTrendStoragePath
@@ -403,6 +377,8 @@ export function mergePerformanceOverviewMetadata(
             routeStoragePaths: metadata.routeStoragePaths || summary.metadata.routeStoragePaths,
             monthlyStoragePaths: metadata.monthlyStoragePaths || summary.metadata.monthlyStoragePaths,
             routeMonthlyStoragePaths: metadata.routeMonthlyStoragePaths || summary.metadata.routeMonthlyStoragePaths,
+            dashboardMonthlyStoragePaths: metadata.dashboardMonthlyStoragePaths
+                || summary.metadata.dashboardMonthlyStoragePaths,
             loadProfileMonthlyStoragePaths: metadata.loadProfileMonthlyStoragePaths
                 || summary.metadata.loadProfileMonthlyStoragePaths,
             ridershipTrendStoragePath: metadata.ridershipTrendStoragePath
@@ -434,6 +410,7 @@ export async function savePerformanceData(
     const oldRouteStoragePaths = existingMetadata?.routeStoragePaths || {};
     const oldMonthlyStoragePaths = existingMetadata?.monthlyStoragePaths || {};
     const oldRouteMonthlyStoragePaths = existingMetadata?.routeMonthlyStoragePaths || {};
+    const oldDashboardMonthlyStoragePaths = existingMetadata?.dashboardMonthlyStoragePaths || {};
     const oldLoadProfileMonthlyStoragePaths = existingMetadata?.loadProfileMonthlyStoragePaths || {};
     const oldRidershipTrendStoragePath = existingMetadata?.ridershipTrendStoragePath || null;
 
@@ -517,6 +494,7 @@ export async function savePerformanceData(
     const reportSummary = buildPerformanceReportSummary(merged);
     const monthlyStoragePaths: Record<string, string> = {};
     const routeMonthlyStoragePaths: Record<string, Record<string, string>> = {};
+    const dashboardMonthlyStoragePaths: Partial<Record<PerformanceDashboardViewMode, Record<string, string>>> = {};
     const loadProfileMonthlyStoragePaths: Record<string, string> = {};
     const monthlySummaries = buildMonthlySummaries(merged);
     const monthlyLoadProfileViews = buildMonthlyLoadProfileViews(merged);
@@ -528,6 +506,29 @@ export async function savePerformanceData(
             contentType: 'application/json',
         });
         monthlyStoragePaths[month] = monthPath;
+    });
+
+    const dashboardViewUploads = PERFORMANCE_DASHBOARD_VIEW_MODES.flatMap(mode => {
+        const modePaths: Record<string, string> = {};
+        dashboardMonthlyStoragePaths[mode] = modePaths;
+        return [...monthlySummaries.entries()].map(([month, monthSummary]) => ({
+            mode,
+            modePaths,
+            month,
+            monthSummary,
+        }));
+    });
+    await mapWithConcurrency(dashboardViewUploads, 3, async ({ mode, modePaths, month, monthSummary }) => {
+        const viewPath = getDashboardMonthlyStoragePath(teamId, timestamp, mode, month);
+        await uploadBytes(
+            ref(storage, viewPath),
+            buildStorageJsonUploadData(buildPerformanceDashboardView(monthSummary, mode)),
+            {
+                contentType: 'application/json',
+                cacheControl: PERFORMANCE_IMMUTABLE_CACHE_CONTROL,
+            },
+        );
+        modePaths[month] = viewPath;
     });
 
     await mapWithConcurrency([...monthlyLoadProfileViews.entries()], 3, async ([month, monthView]) => {
@@ -570,6 +571,7 @@ export async function savePerformanceData(
         reportStoragePath,
         monthlyStoragePaths,
         routeMonthlyStoragePaths,
+        dashboardMonthlyStoragePaths,
         loadProfileMonthlyStoragePaths,
         ridershipTrendStoragePath,
         dateRange: merged.metadata.dateRange,
@@ -590,6 +592,7 @@ export async function savePerformanceData(
     }
     Object.values(oldMonthlyStoragePaths).forEach(path => path && cleanupPaths.add(path));
     Object.values(oldRouteMonthlyStoragePaths).flatMap(months => Object.values(months)).forEach(path => path && cleanupPaths.add(path));
+    Object.values(oldDashboardMonthlyStoragePaths).flatMap(months => Object.values(months || {})).forEach(path => path && cleanupPaths.add(path));
     Object.values(oldLoadProfileMonthlyStoragePaths).forEach(path => path && cleanupPaths.add(path));
     if (oldRidershipTrendStoragePath && oldRidershipTrendStoragePath !== ridershipTrendStoragePath) {
         cleanupPaths.add(oldRidershipTrendStoragePath);
@@ -600,6 +603,7 @@ export async function savePerformanceData(
         reportStoragePath,
         ...Object.values(monthlyStoragePaths),
         ...Object.values(routeMonthlyStoragePaths).flatMap(months => Object.values(months)),
+        ...Object.values(dashboardMonthlyStoragePaths).flatMap(months => Object.values(months || {})),
         ...Object.values(loadProfileMonthlyStoragePaths),
         ridershipTrendStoragePath,
     ]);
@@ -645,6 +649,7 @@ export async function getPerformanceMetadata(teamId: string, requestingTeamId?: 
             routeStoragePaths: readStringRecord(data.routeStoragePaths),
             monthlyStoragePaths: readStringRecord(data.monthlyStoragePaths),
             routeMonthlyStoragePaths: readNestedStringRecord(data.routeMonthlyStoragePaths),
+            dashboardMonthlyStoragePaths: readDashboardMonthlyStoragePaths(data.dashboardMonthlyStoragePaths),
             loadProfileMonthlyStoragePaths: readStringRecord(data.loadProfileMonthlyStoragePaths),
             ridershipTrendStoragePath: typeof data.ridershipTrendStoragePath === 'string'
                 ? data.ridershipTrendStoragePath
@@ -694,17 +699,54 @@ export async function getPerformanceData(
             requestingTeamId !== teamId
             || options?.detailMode === 'load-profiles'
         )) {
-            onProgress?.({ phase: 'downloading', completedUnits: 0, totalUnits: 1, unitLabel: 'file' });
-            const sharedSummary = await requestSharedWorkspaceData<PerformanceDataSummary>({
-                workspace: 'performanceData',
-                requestingTeamId,
-                sourceTeamId: teamId,
-                routeId,
-                dateRange: options?.dateRange,
-                detailMode: options?.detailMode,
+            const windows = metadataOverride
+                ? getSharedPerformanceDateWindows(metadataOverride, routeId, options)
+                : [options?.dateRange];
+            const sharedSummaries: Array<PerformanceDataSummary | null> = new Array(windows.length).fill(null);
+            onProgress?.({
+                phase: 'downloading',
+                completedUnits: 0,
+                totalUnits: windows.length,
+                unitLabel: windows.length > 1 ? 'monthly-file' : 'file',
             });
-            onProgress?.({ phase: 'processing', completedUnits: 1, totalUnits: 1, unitLabel: 'file' });
-            return sharedSummary;
+            await mapWithConcurrency(
+                windows.map((dateRange, index) => ({ dateRange, index })),
+                PERFORMANCE_DOWNLOAD_CONCURRENCY,
+                async ({ dateRange, index }) => {
+                    sharedSummaries[index] = await requestSharedWorkspaceData<PerformanceDataSummary>({
+                        workspace: 'performanceData',
+                        requestingTeamId,
+                        sourceTeamId: teamId,
+                        routeId,
+                        dateRange,
+                        detailMode: options?.detailMode,
+                    });
+                },
+                (completedUnits, totalUnits) => {
+                    onProgress?.({
+                        phase: completedUnits === totalUnits ? 'processing' : 'downloading',
+                        completedUnits,
+                        totalUnits,
+                        unitLabel: totalUnits > 1 ? 'monthly-file' : 'file',
+                    });
+                },
+            );
+            if (sharedSummaries.some(summary => !summary)) {
+                throw new Error('One or more shared performance months could not be loaded.');
+            }
+            const summaries = sharedSummaries.filter((summary): summary is PerformanceDataSummary => !!summary);
+            if (summaries.length === 0) return null;
+            const dailySummaries = summaries
+                .flatMap(summary => summary.dailySummaries)
+                .sort((left, right) => left.date.localeCompare(right.date));
+            const merged = applyPerformanceLoadOptions(
+                buildSummaryFromDays(summaries[0], dailySummaries, metadataOverride || summaries[0].metadata),
+                options,
+            );
+            const filtered = filterPerformanceSummaryByRoute(merged, routeId);
+            return options?.detailMode === 'load-profiles'
+                ? alignLoadProfilePeakTrips(filtered)
+                : filtered;
         }
 
         const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
@@ -818,6 +860,7 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
             : {};
         const monthlyStoragePaths = readStringRecord(docSnap.data().monthlyStoragePaths) || {};
         const routeMonthlyStoragePaths = readNestedStringRecord(docSnap.data().routeMonthlyStoragePaths) || {};
+        const dashboardMonthlyStoragePaths = readDashboardMonthlyStoragePaths(docSnap.data().dashboardMonthlyStoragePaths) || {};
         const loadProfileMonthlyStoragePaths = readStringRecord(docSnap.data().loadProfileMonthlyStoragePaths) || {};
         const ridershipTrendStoragePath = typeof docSnap.data().ridershipTrendStoragePath === 'string'
             ? docSnap.data().ridershipTrendStoragePath
@@ -863,6 +906,14 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
             if (!routeMonthlyStoragePath) return;
             try {
                 await deleteObject(ref(storage, routeMonthlyStoragePath));
+            } catch {
+                // File may already be gone
+            }
+        }));
+        await Promise.all(Object.values(dashboardMonthlyStoragePaths).flatMap(months => Object.values(months || {})).map(async dashboardMonthlyStoragePath => {
+            if (!dashboardMonthlyStoragePath) return;
+            try {
+                await deleteObject(ref(storage, dashboardMonthlyStoragePath));
             } catch {
                 // File may already be gone
             }

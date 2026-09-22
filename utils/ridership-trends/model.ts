@@ -313,7 +313,21 @@ export function buildRidershipTrendView(
     }
 
     const currentYear = years.find(year => year.year === activeYear);
-    const throughMonth = Math.max(0, activeMonth - 1);
+    const latestEndedMonth = Math.max(0, activeMonth - 1);
+    let throughMonth = 0;
+    for (let month = 1; month <= latestEndedMonth; month += 1) {
+        const currentMonth = monthly.find(item => item.year === activeYear && item.month === month);
+        const previousMonth = monthly.find(item => item.year === activeYear - 1 && item.month === month);
+        if (currentMonth?.total === null
+            || currentMonth?.total === undefined
+            || currentMonth.coverageStatus !== 'complete'
+            || previousMonth?.total === null
+            || previousMonth?.total === undefined
+            || previousMonth.coverageStatus !== 'complete') {
+            break;
+        }
+        throughMonth = month;
+    }
     const currentComparableMonths = currentYear?.months.slice(0, throughMonth) ?? [];
     const previousYear = years.find(year => year.year === activeYear - 1);
     const previousComparableMonths = previousYear?.months.slice(0, throughMonth) ?? [];

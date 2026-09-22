@@ -2,7 +2,17 @@ import type { DayType, RouteIdentity } from '../masterScheduleTypes';
 
 export const OPERATIONS_PLANNING_SCHEMA_VERSION = 1 as const;
 
-export type OperationsPlanningSchemaVersion = typeof OPERATIONS_PLANNING_SCHEMA_VERSION;
+export type OperationsPlanningSchemaVersion = 1 | 2;
+
+/** Source-backed stop visit; relief always occurs at arrival, never departure. */
+export interface PlanningStopEvent {
+    id: string;
+    stopName: string;
+    sourceStopNames: string[];
+    arrivalTime: number | null;
+    departureTime: number | null;
+    arrivalResolution: 'trip-start' | 'trip-end' | 'explicit-arrival' | 'departure-minus-recovery' | 'legacy-arrival-column' | 'unresolved';
+}
 export type FindingCategory =
     | 'integrity'
     | 'contractual'
@@ -156,6 +166,8 @@ export interface PlanningTrip {
     startStop: string;
     endStop: string;
     arrivalResolution: 'explicit-arrival' | 'departure-minus-recovery' | 'end-time-is-arrival' | 'unresolved';
+    /** Present only on a schema-v2 source export. */
+    stopEvents?: PlanningStopEvent[];
 }
 
 export interface ValidationFinding {
@@ -208,7 +220,13 @@ export interface RunPiece {
     tripIds: string[];
     startReliefPoint: string;
     endReliefPoint: string;
+    /** V2 arrival boundaries on the first/last referenced original trip. */
+    startEventId?: string;
+    endEventId?: string;
 }
+
+export type OperationsPlanningInputV2 = OperationsPlanningInputV1 & { schemaVersion: 2 };
+export type OperationsPlanningProposalV2 = OperationsPlanningProposalV1 & { schemaVersion: 2 };
 
 export interface DailyRun {
     id: string;

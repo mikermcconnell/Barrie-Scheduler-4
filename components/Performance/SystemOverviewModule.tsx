@@ -12,6 +12,7 @@ import {
 } from '../../utils/performanceMissedTrips';
 import { compareDateStrings, normalizeToISODate, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { PerformanceScopeProvider } from './performanceScope';
+import { usePerformanceAggregation } from './performanceAggregation';
 import type { PerformanceDataScope } from '../../utils/performanceDataScope';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
@@ -184,6 +185,9 @@ function OverviewChartsFallback({ titles, subtitles }: { titles: string[]; subti
 
 export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data, allData, onNavigate, scope, scopeLabel, dayTypeFilter }) => {
     const filtered = data.dailySummaries;
+    const { mode, divisor, unit } = usePerformanceAggregation();
+    const countLabel = (label: string) => mode === 'average' ? `${label} / ${unit}` : label;
+    const formatCount = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: mode === 'average' ? 1 : 0 });
     const allDailySummaries = allData?.dailySummaries ?? data.dailySummaries;
     const [routeScoreSortKey, setRouteScoreSortKey] = React.useState<RouteScoreSortKey>('avgOtp');
     const [routeScoreSortDir, setRouteScoreSortDir] = React.useState<SortDir>('desc');
@@ -222,18 +226,16 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     // ── System averages (expanded) ─────────────────────────────────
     const systemAvg = useMemo(() => {
         if (filtered.length === 0 || !systemOtp) return null;
-        const n = filtered.length;
         const totalRidership = filtered.reduce((s, d) => s + d.system.totalRidership, 0);
         const totalAlightings = filtered.reduce((s, d) => s + d.system.totalAlightings, 0);
         return {
             otp: Math.round(systemOtp.onTimePercent),
             earlyPct: Math.round(systemOtp.earlyPercent),
             latePct: Math.round(systemOtp.latePercent),
-            ridership: totalRidership,
-            alightings: totalAlightings,
-            avgRidershipPerDay: Math.round(totalRidership / n),
+            ridership: totalRidership / divisor,
+            alightings: totalAlightings / divisor,
         };
-    }, [filtered, systemOtp]);
+    }, [filtered, systemOtp, divisor]);
 
     // ── Busiest trips (by avg boardings) with stable load sample size ──
     const busiestTrips = useMemo(() => {
@@ -287,11 +289,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const otpDonutData = useMemo(() => {
         if (!systemOtp) return [];
         return [
-            { name: 'Early', value: systemOtp.early, color: DONUT_COLORS.early },
-            { name: 'On Time', value: systemOtp.onTime, color: DONUT_COLORS.onTime },
-            { name: 'Late', value: systemOtp.late, color: DONUT_COLORS.late },
+            { name: 'Early', value: systemOtp.early / divisor, color: DONUT_COLORS.early },
+            { name: 'On Time', value: systemOtp.onTime / divisor, color: DONUT_COLORS.onTime },
+            { name: 'Late', value: systemOtp.late / divisor, color: DONUT_COLORS.late },
         ];
-    }, [systemOtp]);
+    }, [systemOtp, divisor]);
 
     // ── Action Queue (severity x persistence x impact, min 3 days) ───
     const actionQueue = useMemo(() => {
@@ -469,6 +471,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     }, [filtered, shouldLoadMissedTripsFallback]);
 
     const missedTrips = computedMissedTrips ?? storedMissedTrips;
+    // Legacy GTFS fallback does not expose its covered dates; retain explicit totals there.
+    const averageMissedTrips = mode === 'average' && !computedMissedTrips;
+    const missedDivisor = averageMissedTrips
+        ? Math.max(1, new Set(filtered.filter(day => day.missedTrips).map(day => day.date)).size)
+        : 1;
     const isCheckingLegacyMissedTrips = shouldLoadMissedTripsFallback && isLoadingMissedTripsFallback && !computedMissedTrips;
 
     const missedCountByRoute = useMemo(() => {
@@ -512,12 +519,12 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
         return activeHours.map(h => ({
             label: `${h.hour.toString().padStart(2, '0')}:00`,
-            boardings: h.boardings,
+            boardings: h.boardings / divisor,
             bph: serviceHoursPerHour > 0 ? Math.round(h.boardings / serviceHoursPerHour * 10) / 10 : 0,
             avgOtp: h.otpObservations > 0 ? Math.round((h.otpOnTime / h.otpObservations) * 100) : null,
             otpObservations: h.otpObservations,
         }));
-    }, [filtered]);
+    }, [filtered, divisor]);
 
     const peakHourSummary = useMemo(() => {
         if (hourlyData.length === 0) return null;
@@ -566,12 +573,12 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 }
                 return {
                     routeId: r.routeId, routeName: r.routeName,
-                    avgOtp, avgEarly, avgLate, ridership: r.ridership,
-                    alightings: r.alightings, bph, trend,
+                    avgOtp, avgEarly, avgLate, ridership: r.ridership / divisor,
+                    alightings: r.alightings / divisor, bph, trend,
                 };
                 })
             .sort((a, b) => b.avgOtp - a.avgOtp);
-    }, [filtered]);
+    }, [filtered, divisor]);
 
     const sortedRouteRanking = useMemo(() => {
         const rows = [...routeRanking];
@@ -678,7 +685,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                             <p className="text-xs text-gray-400">
                                 {isSingleDate
                                     ? `${DAY_TYPE_LABELS[filtered[0]?.dayType ?? 'weekday']} snapshot · 1 of ${data.dailySummaries.length} days`
-                                    : `${filtered.length} day${filtered.length !== 1 ? 's' : ''} averaged${dayTypeFilter !== 'all' ? ` · ${DAY_TYPE_LABELS[dayTypeFilter]}s only` : ''}`}
+                                    : `${filtered.length} day${filtered.length !== 1 ? 's' : ''} ${mode === 'average' ? 'averaged' : 'totalled'}${dayTypeFilter !== 'all' ? ` · ${DAY_TYPE_LABELS[dayTypeFilter]}s only` : ''}`}
                                 {data.metadata.importedAt ? ` · ${freshness(data.metadata.importedAt)}` : ''}
                             </p>
                         </div>
@@ -697,10 +704,10 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 />
                 <MetricCard
                     icon={<Users size={18} />}
-                    label="Total Ridership"
-                    value={systemAvg.ridership.toLocaleString()}
+                    label={mode === 'average' ? countLabel('Ridership') : 'Total Ridership'}
+                    value={formatCount(systemAvg.ridership)}
                     color="cyan"
-                    subValue={`${systemAvg.ridership.toLocaleString()} on · ${systemAvg.alightings.toLocaleString()} off`}
+                    subValue={`${formatCount(systemAvg.ridership)} on · ${formatCount(systemAvg.alightings)} off`}
                 />
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                     <div className="flex items-center justify-between mb-2">
@@ -731,11 +738,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 </div>
                 <MetricCard
                     icon={<ClipboardList size={18} />}
-                    label="Trips Operated"
+                    label={averageMissedTrips ? countLabel('Trips Operated') : mode === 'average' ? 'Trips Operated (period total)' : 'Trips Operated'}
                     value={isCheckingLegacyMissedTrips && !storedMissedTrips.hasCoverage
                         ? 'Checking...'
                         : missedTrips.totalScheduled > 0
-                        ? `${missedTrips.totalObserved} / ${missedTrips.totalScheduled}`
+                        ? `${formatCount(missedTrips.totalObserved / missedDivisor)} / ${formatCount(missedTrips.totalScheduled / missedDivisor)}`
                         : 'N/A'}
                     color={isCheckingLegacyMissedTrips && !storedMissedTrips.hasCoverage
                         ? 'cyan'
@@ -750,8 +757,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                             ? `${missedTrips.skippedDays} day(s) skipped (holiday?)`
                             : 'GTFS data not available')
                         : missedTrips.totalMissed === 0
-                            ? 'All scheduled trips operated'
-                            : `${missedTrips.totalMissed} suspected missed trips (${missedTrips.missedPct.toFixed(1)}%)`}
+                            ? `All scheduled trips operated${averageMissedTrips ? ` (${missedDivisor} covered days)` : ''}`
+                            : `${formatCount(missedTrips.totalMissed / missedDivisor)} suspected missed trips${averageMissedTrips ? ` / ${unit} (${missedDivisor} covered days)` : ' in period'} (${missedTrips.missedPct.toFixed(1)}%)`}
                     onClick={missedTrips.totalMissed > 0 ? () => onNavigate('otp') : undefined}
                 />
             </div>
@@ -766,7 +773,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         <div>
                             <p className="text-xs text-gray-400">Busiest Hour</p>
                             <p className="text-sm font-bold text-gray-900">{peakHourSummary.busiest.label}</p>
-                            <p className="text-xs text-gray-500">{peakHourSummary.busiest.boardings.toLocaleString()} boardings</p>
+                            <p className="text-xs text-gray-500">{formatCount(peakHourSummary.busiest.boardings)} {countLabel('boardings')}</p>
                         </div>
                     </div>
                     {peakHourSummary.worstOtp && peakHourSummary.worstOtp.avgOtp !== null && peakHourSummary.worstOtp.avgOtp < 80 && (
@@ -870,11 +877,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                                 {filtered.length >= 2 && (
                                     <SortableHeader label="Trend" sortKey="trend" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="center" />
                                 )}
-                                <SortableHeader label="Boards" sortKey="ridership" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
-                                <SortableHeader label="Alights" sortKey="alightings" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
+                                <SortableHeader label={countLabel('Boards')} sortKey="ridership" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
+                                <SortableHeader label={countLabel('Alights')} sortKey="alightings" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
                                 <SortableHeader label="BPH" sortKey="bph" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
                                 {missedTrips.hasCoverage && (
-                                    <SortableHeader label="Missed" sortKey="missed" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
+                                    <SortableHeader label={averageMissedTrips ? countLabel('Missed') : 'Missed (total)'} sortKey="missed" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
                                 )}
                             </tr>
                         </thead>
@@ -897,14 +904,14 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                                             </span>
                                         </td>
                                     )}
-                                    <td className="py-2 px-2 text-right font-medium text-gray-700">{r.ridership.toLocaleString()}</td>
-                                    <td className="py-2 px-2 text-right font-medium text-gray-700">{r.alightings.toLocaleString()}</td>
+                                    <td className="py-2 px-2 text-right font-medium text-gray-700">{formatCount(r.ridership)}</td>
+                                    <td className="py-2 px-2 text-right font-medium text-gray-700">{formatCount(r.alightings)}</td>
                                     <td className="py-2 px-2 text-right font-bold text-cyan-600">{r.bph.toFixed(1)}</td>
                                     {missedTrips.hasCoverage && (() => {
                                         const count = missedCountByRoute.get(r.routeId) ?? 0;
                                         return (
                                             <td className={`py-2 px-2 text-right font-bold ${count > 0 ? 'text-red-600' : 'text-gray-300'}`}>
-                                                {count}
+                                                {formatCount(count / missedDivisor)}
                                             </td>
                                         );
                                     })()}

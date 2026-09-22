@@ -7,7 +7,7 @@ import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Modal } from './components/ui/Modal';
 import { TeamManagement } from './components/TeamManagement';
-import { LayoutDashboard, Bus, ArrowRight, Map, Loader2, BarChart2, Smartphone, Car } from 'lucide-react';
+import { LayoutDashboard, Bus, ArrowRight, Map, Loader2, BarChart2, Smartphone, Car, TrendingUp } from 'lucide-react';
 import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazyWithRetry } from './utils/lazyWithRetry';
@@ -133,6 +133,10 @@ const AppContent: React.FC = () => {
   const handleResumeFixedRoute = () => {
     if (!fixedRouteResume?.hash) return;
     window.location.hash = fixedRouteResume.hash;
+  };
+
+  const handleOpenOperationsRidership = () => {
+    window.location.hash = 'operations/performance/ridership';
   };
 
   const handleSetupModalClose = () => {
@@ -267,6 +271,33 @@ const AppContent: React.FC = () => {
                   </div>
                 </button>
               </div>
+            )}
+
+            {isViewAvailable('operations') && isFeatureEnabled('operationsPerformanceDashboard') && (
+              <section aria-labelledby="quick-links-heading" className="mx-auto mb-8 max-w-6xl px-2">
+                <h3
+                  id="quick-links-heading"
+                  className="mb-3 text-xs font-extrabold uppercase tracking-[0.18em] text-gray-500"
+                >
+                  Quick links
+                </h3>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <button
+                    type="button"
+                    onClick={handleOpenOperationsRidership}
+                    className="group flex min-h-20 items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm transition-all hover:border-amber-300 hover:bg-amber-50/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600 transition-colors group-hover:bg-amber-200">
+                      <TrendingUp size={20} aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-extrabold text-gray-900">Ridership</span>
+                      <span className="mt-0.5 block text-xs font-semibold text-gray-500">Operations Dashboard</span>
+                    </span>
+                    <ArrowRight size={16} aria-hidden="true" className="ml-auto shrink-0 text-gray-300 transition-colors group-hover:text-amber-600" />
+                  </button>
+                </div>
+              </section>
             )}
 
             <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3 max-w-6xl mx-auto pb-12">

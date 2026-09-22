@@ -4,6 +4,7 @@ import {
     LineChart, Line, PieChart, Pie, Cell, ReferenceLine, ComposedChart,
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
+import { usePerformanceAggregation } from './performanceAggregation';
 import { longWeekdayDateLabel } from '../../utils/performanceDateUtils';
 
 export interface OverviewOtpDatum {
@@ -62,9 +63,11 @@ export const SystemOverviewOtpCharts: React.FC<{
     otpDonutData: OverviewOtpDatum[];
     otpTrend: OverviewTrendDatum[];
     otpPercent: number;
-}> = ({ otpDonutData, otpTrend, otpPercent }) => (
+}> = ({ otpDonutData, otpTrend, otpPercent }) => {
+    const { mode, unit } = usePerformanceAggregation();
+    return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title="OTP Breakdown" subtitle="Early / On Time / Late distribution">
+        <ChartCard title="OTP Breakdown" subtitle={mode === 'average' ? `Average eligible departures / ${unit}; OTP remains observation-weighted` : 'Early / On Time / Late distribution'}>
             <div className="relative">
                 <ResponsiveContainer width="100%" height={250}>
                     <PieChart>
@@ -81,7 +84,7 @@ export const SystemOverviewOtpCharts: React.FC<{
                                 <Cell key={entry.name || index} fill={entry.color} />
                             ))}
                         </Pie>
-                        <Tooltip formatter={(value: number, name: string) => [value.toLocaleString(), name]} />
+                        <Tooltip formatter={(value: number, name: string) => [value.toLocaleString(undefined, { maximumFractionDigits: 1 }), name]} />
                     </PieChart>
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -120,13 +123,16 @@ export const SystemOverviewOtpCharts: React.FC<{
             )}
         </ChartCard>
     </div>
-);
+    );
+};
 
 export const SystemOverviewRidershipCharts: React.FC<{
     otpTrend: OverviewTrendDatum[];
     routeRanking: OverviewRouteDatum[];
     hourlyData: OverviewHourlyDatum[];
 }> = ({ otpTrend, routeRanking, hourlyData }) => {
+    const { mode, unit } = usePerformanceAggregation();
+    const boardingsLabel = mode === 'average' ? `Boardings / ${unit}` : 'Total Boardings';
     const routesByBph = [...routeRanking].sort((a, b) => b.bph - a.bph);
 
     return (
@@ -184,7 +190,7 @@ export const SystemOverviewRidershipCharts: React.FC<{
             </div>
 
             {hourlyData.length > 0 && (
-                <ChartCard title="Boardings by Hour" subtitle="Total boardings (bars) and estimated boardings per service-hour proxy (line)">
+                <ChartCard title="Boardings by Hour" subtitle={`${boardingsLabel} (bars) and estimated boardings per service-hour proxy (line)`}>
                     <ResponsiveContainer width="100%" height={280}>
                         <ComposedChart data={hourlyData} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
@@ -194,7 +200,7 @@ export const SystemOverviewRidershipCharts: React.FC<{
                             <Tooltip
                                 formatter={(value: number, name: string) => [
                                     name === 'boardings' ? value.toLocaleString() : value.toFixed(1),
-                                    name === 'boardings' ? 'Total Boardings' : 'Estimated BPH',
+                                    name === 'boardings' ? boardingsLabel : 'Estimated BPH',
                                 ]}
                             />
                             <Bar yAxisId="total" dataKey="boardings" fill="#06b6d4" radius={[4, 4, 0, 0]} opacity={0.8} />
@@ -204,7 +210,7 @@ export const SystemOverviewRidershipCharts: React.FC<{
                     <div className="flex justify-center gap-4 mt-1">
                         <div className="flex items-center gap-1.5 text-xs text-gray-500">
                             <span className="inline-block w-3 h-2.5 rounded-sm bg-cyan-500 opacity-80" />
-                            Total Boardings
+                            {boardingsLabel}
                         </div>
                         <div className="flex items-center gap-1.5 text-xs text-gray-500">
                             <span className="inline-block w-3 h-0.5 bg-purple-500 rounded" />

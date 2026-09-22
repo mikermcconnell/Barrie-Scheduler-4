@@ -148,6 +148,22 @@ describe('ridership trend calculations', () => {
         });
     });
 
+    it('uses the latest contiguous complete month for the active-year comparison', () => {
+        const projection = createRidershipTrendProjection({
+            baselineHash: RIDERSHIP_TREND_BASELINE_HASH,
+            updatedAt: CREATED_AT,
+        });
+        const view = buildRidershipTrendView(RIDERSHIP_TREND_BASELINE, projection, '2026-09-01');
+
+        expect(view.completedMonthComparison).toEqual({
+            throughMonth: 7,
+            currentTotal: 1_632_133,
+            previousTotal: 2_079_256,
+            change: (1_632_133 - 2_079_256) / 2_079_256,
+            coverageComplete: true,
+        });
+    });
+
     it('fails closed when a projection references a different baseline', () => {
         const projection = createRidershipTrendProjection({
             baselineHash: RIDERSHIP_TREND_BASELINE_HASH,

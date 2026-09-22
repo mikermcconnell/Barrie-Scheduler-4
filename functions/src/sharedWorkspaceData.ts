@@ -1,8 +1,8 @@
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import type {
-  DailySummary,
   LoadProfileMonthlyView,
+  PerformanceDashboardViewMode,
   PerformanceDataLoadOptions,
   PerformanceDataSummary,
   PerformanceDetailMode,
@@ -14,10 +14,16 @@ import type { TodPickupSummary } from '../../utils/todPickupTypes';
 import { PERFORMANCE_SCHEMA_VERSION } from './types';
 import { filterPerformanceSummaryByRoute } from './performanceRouteFilter';
 import {
-  buildLoadProfilePeakTrips,
   hydrateLoadProfileMonthlyViews,
   isLoadProfileMonthlyView,
 } from './performanceLoadProfileView';
+import {
+  getPerformanceMonthlyPaths,
+  PERFORMANCE_DASHBOARD_VIEW_MODES,
+  trimDayForDetailMode,
+} from './performanceDashboardView';
+
+export { trimDayForDetailMode } from './performanceDashboardView';
 
 type SharedWorkspace =
   | 'transitAppMetadata'
@@ -304,6 +310,17 @@ function readNestedStringRecord(value: unknown): Record<string, Record<string, s
   return Object.fromEntries(entries);
 }
 
+function readDashboardMonthlyStoragePaths(
+  value: unknown,
+): PerformanceMetadata['dashboardMonthlyStoragePaths'] {
+  const nested = readNestedStringRecord(value);
+  if (!nested) return undefined;
+  const entries = PERFORMANCE_DASHBOARD_VIEW_MODES
+    .map(mode => [mode, nested[mode]] as const)
+    .filter((entry): entry is readonly [PerformanceDashboardViewMode, Record<string, string>] => !!entry[1]);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function normalizePerformanceMetadata(data: admin.firestore.DocumentData): PerformanceMetadata {
   return {
     importedAt: timestampToIso(data.importedAt),
@@ -320,6 +337,7 @@ function normalizePerformanceMetadata(data: admin.firestore.DocumentData): Perfo
     routeStoragePaths: readStringRecord(data.routeStoragePaths),
     monthlyStoragePaths: readStringRecord(data.monthlyStoragePaths),
     routeMonthlyStoragePaths: readNestedStringRecord(data.routeMonthlyStoragePaths),
+    dashboardMonthlyStoragePaths: readDashboardMonthlyStoragePaths(data.dashboardMonthlyStoragePaths),
     loadProfileMonthlyStoragePaths: readStringRecord(data.loadProfileMonthlyStoragePaths),
     ridershipTrendStoragePath: typeof data.ridershipTrendStoragePath === 'string'
       ? data.ridershipTrendStoragePath
@@ -392,72 +410,25 @@ function monthOverlapsRange(month: string, range?: { start: string; end: string 
   return month >= startMonth && month <= endMonth;
 }
 
-function trimMissedTrips(day: DailySummary, keepTripDetails: boolean): DailySummary['missedTrips'] {
-  return day.missedTrips
-    ? {
-      ...day.missedTrips,
-      trips: keepTripDetails ? (day.missedTrips.trips || []) : [],
-    }
-    : day.missedTrips;
-}
-
-export function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
-  if (mode === 'all') return day;
-
-  const base: DailySummary = {
-    ...day,
-    byStop: [],
-    byTrip: [],
-    loadProfilePeakTrips: undefined,
-    loadProfiles: [],
-    ridershipHeatmaps: undefined,
-    byOperatorDwell: undefined,
-    byCascade: undefined,
-    segmentRuntimes: undefined,
-    stopSegmentRuntimes: undefined,
-    tripStopSegmentRuntimes: undefined,
-    routeStopDeviations: undefined,
-    byRouteHour: undefined,
-  };
-
-  switch (mode) {
-    case 'overview':
-      return { ...base, byTrip: day.byTrip, missedTrips: trimMissedTrips(day, false) };
-    case 'otp':
-      return {
-        ...base,
-        byTrip: day.byTrip,
-        routeStopDeviations: day.routeStopDeviations,
-        byRouteHour: day.byRouteHour,
-        missedTrips: trimMissedTrips(day, true),
-      };
-    case 'ridership':
-      return {
-        ...base,
-        byStop: day.byStop,
-        loadProfiles: day.loadProfiles,
-        ridershipHeatmaps: day.ridershipHeatmaps,
-        byRouteHour: day.byRouteHour,
-        missedTrips: trimMissedTrips(day, false),
-      };
-    case 'load-profiles':
-      return {
-        ...base,
-        loadProfilePeakTrips: day.loadProfilePeakTrips ?? buildLoadProfilePeakTrips(day.byTrip),
-        loadProfiles: day.loadProfiles,
-        runtimePatterns: undefined,
-        missedTrips: trimMissedTrips(day, false),
-      };
-    case 'operator-dwell':
-      return {
-        ...base,
-        byOperatorDwell: day.byOperatorDwell,
-        byCascade: day.byCascade,
-        missedTrips: trimMissedTrips(day, false),
-      };
-    default:
-      return day;
-  }
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await task(items[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 function applyPerformanceLoadOptions(
@@ -569,23 +540,42 @@ function buildSummaryFromDays(
 }
 
 async function loadMonthlyPerformanceSummary(
+  sourceTeamId: string,
   metadata: PerformanceMetadata,
   routeId?: string | null,
   options?: PerformanceDataLoadOptions,
 ): Promise<PerformanceDataSummary | null> {
-  const selectedRoutePaths = routeId && routeId !== 'all'
-    ? metadata.routeMonthlyStoragePaths?.[routeId]
-    : undefined;
-  const paths = selectedRoutePaths || metadata.monthlyStoragePaths;
+  const detailMode = options?.detailMode;
+  const paths = getPerformanceMonthlyPaths(metadata, routeId, detailMode, options?.dateRange);
   if (!paths || Object.keys(paths).length === 0) return null;
+
+  const dashboardPaths = detailMode
+    && PERFORMANCE_DASHBOARD_VIEW_MODES.includes(detailMode as PerformanceDashboardViewMode)
+    && paths === metadata.dashboardMonthlyStoragePaths?.[detailMode as PerformanceDashboardViewMode]
+    ? paths
+    : undefined;
 
   const months = Object.keys(paths)
     .filter(month => monthOverlapsRange(month, options?.dateRange))
     .sort();
   if (months.length === 0) return null;
 
-  const monthSummaries = await Promise.all(
-    months.map(month => readStorageJson<PerformanceDataSummary>(paths[month])),
+  if (dashboardPaths && detailMode) {
+    const expectedPrefix = `teams/${sourceTeamId}/performanceData/views/`;
+    for (const month of months) {
+      const path = paths[month];
+      if (!/^\d{4}-\d{2}$/.test(month)
+          || !path.startsWith(expectedPrefix)
+          || !new RegExp(`^\\d+-${detailMode}-${month}\\.json$`).test(path.slice(expectedPrefix.length))) {
+        throw new Error('Stored dashboard view path is invalid.');
+      }
+    }
+  }
+
+  const monthSummaries = await mapWithConcurrency(
+    months,
+    4,
+    month => readStorageJson<PerformanceDataSummary>(paths[month]),
   );
   const dailySummaries = monthSummaries.flatMap(summary => summary?.dailySummaries || []);
   if (dailySummaries.length === 0) return null;
@@ -640,11 +630,13 @@ async function loadLoadProfileMonthlyView(
     }
   }
 
-  const downloaded = await Promise.all(
-    months.map(async month => ({
+  const downloaded = await mapWithConcurrency(
+    months,
+    4,
+    async month => ({
       month,
       view: await readStorageJson<unknown>(paths[month]),
-    })),
+    }),
   );
   if (downloaded.some(({ month, view }) => !isLoadProfileMonthlyView(view) || view.month !== month)) {
     throw new Error('Stored Load Profiles view has an unsupported or invalid schema.');
@@ -683,7 +675,7 @@ async function getPerformanceData(
   }
 
   const monthlySummary = metadata.monthlyStoragePaths
-    ? await loadMonthlyPerformanceSummary(metadata, routeId, options)
+    ? await loadMonthlyPerformanceSummary(sourceTeamId, metadata, routeId, options)
     : null;
   if (monthlySummary) {
     return filterPerformanceSummaryByRoute(mergePerformanceMetadata(monthlySummary, metadata), routeId);

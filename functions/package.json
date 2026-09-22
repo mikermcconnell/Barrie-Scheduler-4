@@ -8,6 +8,7 @@
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "admin:scheduler": "node scripts/set-scheduler-admin.mjs",
+    "backfill:dashboard-views": "npm run build && node scripts/backfill-performance-dashboard-views.mjs",
     "bootstrap:ridership-trends": "npm run build && node scripts/bootstrap-ridership-trends.mjs"
   },
   "engines": {
@@ -18,6 +19,7 @@
     "firebase-admin": "^13.7.0",
     "firebase-functions": "^7.2.2",
     "jspdf": "^4.2.1",
+    "sharp": "^0.35.4",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

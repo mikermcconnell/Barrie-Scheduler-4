@@ -41,6 +41,13 @@ describe('performance load timing', () => {
                 '2026-07': 'july.json',
                 '2026-08': 'august.json',
             },
+            dashboardMonthlyStoragePaths: {
+                overview: {
+                    '2026-06': 'overview-june.json',
+                    '2026-07': 'overview-july.json',
+                    '2026-08': 'overview-august.json',
+                },
+            },
         };
 
         expect(getExpectedPerformanceLoadUnits(
@@ -54,9 +61,16 @@ describe('performance load timing', () => {
             'team-1',
             metadata,
             'all',
+            'team-1',
+            { detailMode: 'overview' },
+        )).toBe(4);
+        expect(getExpectedPerformanceLoadUnits(
+            'team-1',
+            metadata,
+            'all',
             'shared-team',
             { detailMode: 'overview' },
-        )).toBe(1);
+        )).toBe(4);
     });
 
     it('builds anonymous profile buckets without team, route, or date identifiers', () => {

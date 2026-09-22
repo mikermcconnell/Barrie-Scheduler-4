@@ -6,3 +6,4 @@ export * from './validation';
 export * from './edits';
 export * from './json';
 export * from './excel';
+export * from './interiorRelief';

@@ -6,7 +6,7 @@ Codex proposal generation.
 
 ## Identity and source binding
 
-- `schemaVersion` must equal numeric `1` and `kind` must equal
+- `schemaVersion` must match the input, numeric `1` or `2`, and `kind` must equal
   `operations-planning-proposal`.
 - `scenarioId` must equal the input scenario ID.
 - `sourceManifestFingerprint` must exactly equal the input fingerprint.
@@ -23,18 +23,27 @@ outside this feature.
 ## Daily runs
 
 Each run has a stable ID, public planner-facing run number, service day type,
-one or more pieces, and optional notes. Each piece contains only an ordered,
-contiguous sequence of whole-trip references from one source vehicle block.
+one or more pieces, and optional notes. Each piece contains an ordered,
+contiguous sequence of source-trip references from one source vehicle block.
+Version 1 permits whole trips only. Version 2 adds `startEventId` and
+`endEventId`, bound to the first and last referenced trip's exported stop events.
+These partition operator work while leaving the published vehicle trips intact.
 
 Despite its field name, `piece.blockId` must equal the source trip's
 `vehicleBlockKey`; it is not the shorter display `blockId`. `routeNumber` must
-match every trip in the piece. `startReliefPoint` must match the first trip's
+match every trip in the piece. For version 1, `startReliefPoint` must match the first trip's
 start location, and `endReliefPoint` must match the last trip's arrival
 location. Internal piece boundaries must occur at allowed relief arrivals. The
 first source trip of a block may use its pull-out location and the last source
 trip may use its pull-in location when the rule profile contains the matching
 Garage travel time. Every exported trip must be covered exactly once for its
-service-day instance.
+service-day instance. For version 2, relief locations must match the referenced
+boundary events. Every source interval must be covered exactly once; a shared
+source trip ID is valid only where operator event intervals do not overlap and
+leave no gap. Arrival-to-departure waiting belongs to the incoming operator.
+Unknown, reversed, ambiguous, missing or non-contiguous event boundaries block
+approval. Use the unchanged source block audits, never private projected unit
+IDs, in the external proposal.
 
 Do not include duty activities or calculated totals. Scheduler 4 derives them
 from the referenced trips, relief points, travel-time rules, and break rules.
@@ -67,6 +76,8 @@ recreates integrity and contractual blockers.
 
 ## Required JSON shape
 
+The following is a version 1 structural template. For version 2, use numeric
+schema version 2 and add source-backed event references to the pieces.
 Use this structural template, replacing every placeholder with values copied or
 derived from the input. Do not copy the example identifiers literally.
 

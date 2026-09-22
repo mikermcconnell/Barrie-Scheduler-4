@@ -13,6 +13,7 @@ import {
     type VehicleBlockAudit,
 } from './types';
 import { createDefaultBarrieOperationsMatrix, createDefaultBarrieRuleProfile } from './rules';
+import { assessInteriorReliefSources, buildPlanningStopEvents } from './interiorRelief';
 
 const normalizeOperationalMinute = (minute: number): number => minute < 240 ? minute + 1440 : minute;
 
@@ -158,7 +159,7 @@ const vehicleBlockKey = (schedule: PinnedMasterSchedule, trip: MasterTrip): stri
     ? `gtfs:${schedule.sourceTeamId}:${schedule.entry.dayType}:${trip.gtfsBlockId}`
     : `master:${schedule.entry.id}@v${schedule.entry.currentVersion}:${trip.blockId}`;
 
-const adaptTableTrips = (schedule: PinnedMasterSchedule, table: MasterRouteTable): PlanningTrip[] =>
+const adaptTableTrips = (schedule: PinnedMasterSchedule, table: MasterRouteTable, interiorRelief = false): PlanningTrip[] =>
     table.trips.map(trip => {
         const { startStop, endStop, rawEndStop, activeStopNames } = activeStops(table, trip);
         const terminalRecovery = terminalRecoveryFor(trip, rawEndStop, activeStopNames);
@@ -174,7 +175,7 @@ const adaptTableTrips = (schedule: PinnedMasterSchedule, table: MasterRouteTable
                 : arrival.arrivalTime === null || resolvedTerminalRecovery === null
                     ? null
                     : arrival.arrivalTime + resolvedTerminalRecovery;
-        return {
+        const result: PlanningTrip = {
             id: planningTripId(schedule.entry.id as RouteIdentity, schedule.entry.currentVersion, trip),
             sourceTripId: trip.id,
             lineageId: trip.lineageId,
@@ -196,6 +197,18 @@ const adaptTableTrips = (schedule: PinnedMasterSchedule, table: MasterRouteTable
             endStop,
             arrivalResolution: arrival.arrivalResolution,
         } satisfies PlanningTrip;
+        if (interiorRelief) {
+            result.stopEvents = buildPlanningStopEvents(table, trip, result);
+            const terminal = result.stopEvents.at(-1);
+            // V2 retains original IDs and raw Master content; precise source ARR/DEP
+            // visits supersede the v1 canonical-name terminal-recovery heuristic.
+            if (terminal && ['legacy-arrival-column', 'departure-minus-recovery'].includes(terminal.arrivalResolution) && terminal.arrivalTime !== null) {
+                result.arrivalTime = terminal.arrivalTime;
+                result.arrivalResolution = 'explicit-arrival';
+                result.occupiedEndTime = terminal.departureTime;
+            }
+        }
+        return result;
     });
 
 const sourceContentFingerprint = (schedule: PinnedMasterSchedule): string => fingerprintValue({
@@ -317,6 +330,7 @@ export const auditVehicleBlocks = (trips: PlanningTrip[]): VehicleBlockAudit[] =
 };
 
 export interface BuildOperationsPlanningInputOptions {
+    schemaVersion?: 1 | 2;
     scenarioId: string;
     scenarioName: string;
     exportedAt: string;
@@ -329,16 +343,16 @@ export const buildOperationsPlanningInput = (
     options: BuildOperationsPlanningInputOptions,
 ): OperationsPlanningInputV1 => {
     const trips = options.pinnedSchedules.flatMap(schedule => [
-        ...adaptTableTrips(schedule, schedule.content.northTable),
-        ...adaptTableTrips(schedule, schedule.content.southTable),
+        ...adaptTableTrips(schedule, schedule.content.northTable, options.schemaVersion === 2),
+        ...adaptTableTrips(schedule, schedule.content.southTable, options.schemaVersion === 2),
     ]).sort((left, right) =>
         left.dayType.localeCompare(right.dayType)
         || left.startTime - right.startTime
         || left.id.localeCompare(right.id),
     );
     const sourceManifest = buildPlanningSourceManifest(options.pinnedSchedules, trips);
-    return {
-        schemaVersion: OPERATIONS_PLANNING_SCHEMA_VERSION,
+    const result: OperationsPlanningInputV1 = {
+        schemaVersion: options.schemaVersion ?? OPERATIONS_PLANNING_SCHEMA_VERSION,
         kind: 'operations-planning-input',
         scenarioId: options.scenarioId,
         scenarioName: options.scenarioName,
@@ -349,6 +363,13 @@ export const buildOperationsPlanningInput = (
         trips,
         blockAudits: auditVehicleBlocks(trips),
     };
+    if (result.schemaVersion === 2) {
+        const findings = assessInteriorReliefSources(result);
+        result.blockAudits.forEach(audit => {
+            audit.findings.push(...findings.filter(item => item.blockId === audit.vehicleBlockKey));
+        });
+    }
+    return result;
 };
 
 export const assessSourceFreshness = (

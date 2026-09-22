@@ -1,3 +1,4 @@
+import { usePerformanceAggregation } from './performanceAggregation';
 import React, { useState } from 'react';
 import { CalendarDays, Database, Loader2 } from 'lucide-react';
 import { ChartCard } from '../Analytics/AnalyticsShared';
@@ -16,6 +17,7 @@ import { TodActivityMap } from './TodActivityMap';
 
 interface TodDailyKpiSectionProps {
   reports: TodDailyKpiDataset[];
+  selectedDayCount?: number;
   locations: TodDailyKpiLocation[];
   isLoading: boolean;
   error: unknown;
@@ -48,6 +50,7 @@ function metricLabel(metric: TodActivityMetric): string {
 
 export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
   reports,
+  selectedDayCount,
   isLoading,
   error,
   hasStoredReports,
@@ -56,12 +59,17 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
   const [metric, setMetric] = useState<TodActivityMetric>('activity');
   const versionsQuery = useTodZoneVersionsQuery(teamId);
   const reportDates = reports.map(report => report.date);
-  const label = metricLabel(metric);
+  const { mode, unit } = usePerformanceAggregation();
+  const coveredDays = new Set(reportDates).size;
+  const divisor = mode === 'average' ? Math.max(1, coveredDays) : 1;
+  const label = metricLabel(metric) + (mode === 'average' ? ` / ${unit}` : '');
   const versions = React.useMemo(() => versionsQuery.data ?? [], [versionsQuery.data]);
   const classified = React.useMemo(() => classifyTodReports(reports, versions), [reports, versions]);
   const mappedLocations = React.useMemo(
-    () => aggregateClassifiedTodLocations(classified.locations, 'all'),
-    [classified.locations],
+    () => aggregateClassifiedTodLocations(classified.locations, 'all').map(location => ({
+      ...location, pickups: location.pickups / divisor, dropoffs: location.dropoffs / divisor,
+    })),
+    [classified.locations, divisor],
   );
   const zoneDefinitions = React.useMemo(() => {
     const byCode = new Map<string, TodZoneDefinition>();
@@ -80,7 +88,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
   return (
     <ChartCard
       title="Transit On Demand Activity"
-      subtitle="Map from automatically imported daily pickup and drop-off activity"
+      subtitle={mode === 'average' ? `Daily average / ${unit}; based on ${coveredDays} of ${selectedDayCount ?? coveredDays} selected days with TOD reports` : 'Map from automatically imported daily pickup and drop-off activity'}
     >
       <div className="space-y-4">
         <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 lg:flex-row lg:items-center lg:justify-between">
@@ -112,7 +120,7 @@ export const TodDailyKpiSection: React.FC<TodDailyKpiSectionProps> = ({
               {reports.length.toLocaleString()} imported day{reports.length === 1 ? '' : 's'}
             </span>
             <span className="rounded-full bg-purple-100 px-2.5 py-1 font-bold text-purple-700">
-              {total.toLocaleString()} {label}
+              {total.toLocaleString(undefined, { maximumFractionDigits: 1 })} {label}
             </span>
           </div>
         </div>

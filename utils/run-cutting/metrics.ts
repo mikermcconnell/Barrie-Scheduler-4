@@ -1,4 +1,6 @@
 import { getTravelMinutes } from './rules';
+import { calculatePieceTransition, resolvePieceBoardingTime } from './dutyTransitions';
+import { projectOperationsPlanningInput, projectRun } from './interiorRelief';
 import type {
     DailyRun,
     DailyRunMetrics,
@@ -25,6 +27,7 @@ const buildTripMap = (input: OperationsPlanningInputV1): Map<string, PlanningTri
     new Map(input.trips.map(trip => [trip.id, trip]));
 
 export const getRunTrips = (input: OperationsPlanningInputV1, run: DailyRun): PlanningTrip[] => {
+    if (input.schemaVersion === 2) return getRunTrips(projectOperationsPlanningInput(input), projectRun(input, run));
     const trips = buildTripMap(input);
     return run.pieces.flatMap(piece => piece.tripIds.map(id => trips.get(id)).filter((trip): trip is PlanningTrip => Boolean(trip)));
 };
@@ -41,6 +44,7 @@ export const calculateDailyRunMetrics = (
     input: OperationsPlanningInputV1,
     run: DailyRun,
 ): DailyRunMetrics => {
+    if (input.schemaVersion === 2) return calculateDailyRunMetrics(projectOperationsPlanningInput(input), projectRun(input, run));
     const rules = input.ruleProfile;
     const tripById = buildTripMap(input);
     const pieceTrips = run.pieces.map(piece => piece.tripIds
@@ -65,26 +69,40 @@ export const calculateDailyRunMetrics = (
 
     const first = trips[0];
     const last = trips[trips.length - 1];
+    const firstPiece = run.pieces[0];
+    const lastPiece = run.pieces.at(-1)!;
+    const firstAudit = input.blockAudits.find(item => item.vehicleBlockKey === firstPiece.blockId);
+    const lastAudit = input.blockAudits.find(item => item.vehicleBlockKey === lastPiece.blockId);
+    const isBusPullOut = firstAudit?.tripIds[0] === first.id;
+    const isBusPullIn = lastAudit?.tripIds.at(-1) === last.id;
+    const boardingTime = resolvePieceBoardingTime(input, firstPiece, tripById) ?? first.startTime;
+    const circleCheckMinutes = isBusPullOut ? rules.circleCheckMinutes : 0;
+    const postTripMinutes = isBusPullIn ? rules.postTripMinutes : 0;
     const pullOut = getTravelMinutes(rules, rules.garage.name, run.pieces[0]?.startReliefPoint ?? first.startStop) ?? 0;
     const pullIn = getTravelMinutes(rules, run.pieces.at(-1)?.endReliefPoint ?? last.endStop, rules.garage.name) ?? 0;
-    const reportTime = first.startTime - pullOut - rules.circleCheckMinutes - rules.signOnMinutes;
+    const reportTime = boardingTime - pullOut - circleCheckMinutes - rules.signOnMinutes;
     const finalArrival = last.arrivalTime ?? last.startTime + last.travelTime;
-    const offTime = finalArrival + pullIn + rules.postTripMinutes;
+    const offTime = finalArrival + pullIn + postTripMinutes;
     const activities: DutyActivity[] = [];
     activities.push(activity('sign-on', reportTime, reportTime + rules.signOnMinutes, true));
-    activities.push(activity(
+    if (circleCheckMinutes > 0) activities.push(activity(
         'circle-check',
         reportTime + rules.signOnMinutes,
-        reportTime + rules.signOnMinutes + rules.circleCheckMinutes,
+        reportTime + rules.signOnMinutes + circleCheckMinutes,
         true,
     ));
-    if (pullOut > 0) activities.push(activity('deadhead', first.startTime - pullOut, first.startTime, true, { note: 'Garage pull-out' }));
+    if (pullOut > 0) activities.push(activity(isBusPullOut ? 'deadhead' : 'shuttle', boardingTime - pullOut, boardingTime, true, {
+        note: isBusPullOut ? 'Garage bus pull-out' : 'Garage shuttle to relief',
+    }));
 
-    let paidGapMinutes = 0;
+    let paidGapMinutes = Math.max(0, first.startTime - boardingTime);
+    if (paidGapMinutes > 0) activities.push(activity('paid-gap', boardingTime, first.startTime, true, { note: 'Boarding at source arrival' }));
     let shuttleMinutes = 0;
+    let internalBusDrivingMinutes = 0;
+    let internalPreparationMinutes = 0;
     let unpaidBreakMinutes = 0;
-    let continuousPlatformMinutes = 0;
-    let longestContinuousPlatformMinutes = 0;
+    let continuousPlatformMinutes = isBusPullOut ? pullOut : 0;
+    let longestContinuousPlatformMinutes = continuousPlatformMinutes;
     let largestInterPieceGap = 0;
 
     trips.forEach((trip, index) => {
@@ -93,67 +111,66 @@ export const calculateDailyRunMetrics = (
         longestContinuousPlatformMinutes = Math.max(longestContinuousPlatformMinutes, continuousPlatformMinutes);
         const next = trips[index + 1];
         if (!next) return;
-        const gap = Math.max(0, next.startTime - (trip.arrivalTime ?? trip.startTime + trip.travelTime));
         const currentPiece = pieceTrips.findIndex(piece => piece.includes(trip));
         const nextPiece = pieceTrips.findIndex(piece => piece.includes(next));
         const changesPiece = currentPiece !== nextPiece;
-        if (changesPiece) largestInterPieceGap = Math.max(largestInterPieceGap, gap);
-        if (changesPiece && gap >= rules.splitThresholdMinutes) {
-            const backToGarage = getTravelMinutes(
-                rules,
-                run.pieces[currentPiece]?.endReliefPoint ?? trip.endStop,
-                rules.garage.name,
-            ) ?? 0;
-            const outFromGarage = getTravelMinutes(
-                rules,
-                rules.garage.name,
-                run.pieces[nextPiece]?.startReliefPoint ?? next.startStop,
-            ) ?? 0;
-            const availableBreak = Math.max(0, gap - backToGarage - outFromGarage);
-            shuttleMinutes += backToGarage + outFromGarage;
-            unpaidBreakMinutes += availableBreak;
-            if (backToGarage > 0) activities.push(activity(
-                'shuttle',
-                (trip.arrivalTime ?? trip.startTime + trip.travelTime),
-                (trip.arrivalTime ?? trip.startTime + trip.travelTime) + backToGarage,
-                true,
-                { note: 'Split return to Garage' },
-            ));
-            if (availableBreak > 0) activities.push(activity(
-                'break',
-                next.startTime - outFromGarage - availableBreak,
-                next.startTime - outFromGarage,
-                false,
-                { note: 'Split break at Garage' },
-            ));
-            if (outFromGarage > 0) activities.push(activity(
-                'shuttle',
-                next.startTime - outFromGarage,
-                next.startTime,
-                true,
-                { note: 'Split return to service' },
-            ));
-        } else {
-            const paid = gap <= rules.paidThroughGapMaximumMinutes;
-            if (paid) paidGapMinutes += gap;
-            else unpaidBreakMinutes += gap;
-            activities.push(activity(paid ? 'paid-gap' : 'break', next.startTime - gap, next.startTime, paid));
+        if (!changesPiece) {
+            // Remaining with the source block is occupied work, not an inferred meal relief.
+            const gap = Math.max(0, next.startTime - (trip.arrivalTime ?? trip.startTime + trip.travelTime));
+            paidGapMinutes += gap;
+            if (gap > 0) activities.push(activity('paid-gap', next.startTime - gap, next.startTime, true, { note: 'Source block recovery; no operator relief' }));
+            return;
         }
+        const transition = calculatePieceTransition(input, run.pieces[currentPiece], run.pieces[nextPiece], tripById);
+        if (!transition) return;
+        largestInterPieceGap = Math.max(largestInterPieceGap, transition.gapMinutes);
+        const { travelBeforeBreak, travelAfterBreak, breakStartTime, breakEndTime, availableBreakMinutes } = transition;
+        shuttleMinutes += travelBeforeBreak + travelAfterBreak;
+        internalPreparationMinutes += transition.postTripMinutes + transition.circleCheckMinutes;
+        const beforeDriving = transition.isBusPullIn ? travelBeforeBreak : 0;
+        const afterDriving = transition.isBusPullOut ? travelAfterBreak : 0;
+        internalBusDrivingMinutes += beforeDriving + afterDriving;
+        continuousPlatformMinutes += beforeDriving;
+        longestContinuousPlatformMinutes = Math.max(longestContinuousPlatformMinutes, continuousPlatformMinutes);
+        if (travelBeforeBreak > 0) activities.push(activity(transition.isBusPullIn ? 'deadhead' : 'shuttle', transition.startTime, transition.startTime + travelBeforeBreak, true, {
+            note: transition.isBusPullIn ? 'Intermediate bus pull-in' : `Transfer to ${transition.breakLocation}`,
+        }));
+        if (transition.postTripMinutes > 0) activities.push(activity('post-trip', breakStartTime - transition.postTripMinutes, breakStartTime, true));
+        if (transition.paidGap) paidGapMinutes += availableBreakMinutes;
+        else unpaidBreakMinutes += availableBreakMinutes;
+        if (availableBreakMinutes > 0) activities.push(activity(transition.paidGap ? 'paid-gap' : 'break', breakStartTime, breakEndTime, transition.paidGap, {
+            note: `${transition.isSplit ? 'Split break' : 'Relief gap'} at ${transition.breakLocation}`,
+        }));
+        if (transition.circleCheckMinutes > 0) activities.push(activity('circle-check', breakEndTime, breakEndTime + transition.circleCheckMinutes, true));
+        if (travelAfterBreak > 0) activities.push(activity(transition.isBusPullOut ? 'deadhead' : 'shuttle', transition.boardingTime - travelAfterBreak, transition.boardingTime, true, {
+            note: transition.isBusPullOut ? 'Intermediate bus pull-out' : 'Transfer to next relief',
+        }));
+        const boardingWait = Math.max(0, transition.departureTime - transition.boardingTime);
+        paidGapMinutes += boardingWait;
+        if (boardingWait > 0) activities.push(activity('paid-gap', transition.boardingTime, transition.departureTime, true, { note: 'Boarding at source arrival' }));
         const resetMinimum = trip.routeNumber === next.routeNumber
             ? rules.sameRouteResetMinimumMinutes
             : rules.routeChangeResetMinimumMinutes;
-        if (gap >= resetMinimum) continuousPlatformMinutes = 0;
+        if (transition.qualifyingBreakMinutes >= resetMinimum) continuousPlatformMinutes = 0;
+        continuousPlatformMinutes += afterDriving;
     });
 
-    if (pullIn > 0) activities.push(activity('deadhead', finalArrival, finalArrival + pullIn, true, { note: 'Garage pull-in' }));
-    activities.push(activity('post-trip', offTime - rules.postTripMinutes, offTime, true));
+    if (pullIn > 0) activities.push(activity(isBusPullIn ? 'deadhead' : 'shuttle', finalArrival, finalArrival + pullIn, true, {
+        note: isBusPullIn ? 'Garage bus pull-in' : 'Shuttle to Garage after relief',
+    }));
+    if (postTripMinutes > 0) activities.push(activity('post-trip', offTime - postTripMinutes, offTime, true));
+    continuousPlatformMinutes += isBusPullIn ? pullIn : 0;
+    longestContinuousPlatformMinutes = Math.max(longestContinuousPlatformMinutes, continuousPlatformMinutes);
 
-    const platformMinutes = trips.reduce((sum, trip) => sum + Math.max(0, trip.travelTime), 0);
+    const platformMinutes = trips.reduce((sum, trip) => sum + Math.max(0, trip.travelTime), 0)
+        + (isBusPullOut ? pullOut : 0) + (isBusPullIn ? pullIn : 0) + internalBusDrivingMinutes;
     const paidBreakPenalty = longestContinuousPlatformMinutes > rules.continuousPlatformLimitMinutes
         ? rules.continuousPlatformBreakPenaltyMinutes
         : 0;
-    const paidMinutes = rules.signOnMinutes + rules.circleCheckMinutes + pullOut + pullIn
-        + rules.postTripMinutes + platformMinutes + paidGapMinutes + shuttleMinutes + paidBreakPenalty;
+    const occupiedTripMinutes = trips.reduce((sum, trip) => sum + Math.max(0,
+        (trip.arrivalTime ?? trip.startTime + trip.travelTime) - trip.startTime), 0);
+    const paidMinutes = rules.signOnMinutes + circleCheckMinutes + pullOut + pullIn
+        + postTripMinutes + occupiedTripMinutes + paidGapMinutes + shuttleMinutes + internalPreparationMinutes + paidBreakPenalty;
 
     return {
         runId: run.id,
@@ -194,9 +211,11 @@ export const calculateWeeklyRosterMetrics = (
 
     let restViolations = 0;
     worked.forEach((current, index) => {
-        const next = worked[index + 1];
+        // Anonymous weekly patterns repeat: include the last duty to the first
+        // duty of the following week, preserving any intervening days off.
+        const next = worked[index + 1] ?? worked[0];
         if (!next || current.metrics.offTime === null || next.metrics.reportTime === null) return;
-        const dayGap = (next.dayIndex - current.dayIndex) * 1440;
+        const dayGap = (next.dayIndex - current.dayIndex + (index === worked.length - 1 ? 7 : 0)) * 1440;
         const rest = dayGap + next.metrics.reportTime - current.metrics.offTime;
         if (rest < input.ruleProfile.weekly.minimumRestMinutes) restViolations += 1;
     });

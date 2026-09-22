@@ -114,6 +114,8 @@ export const createOperationsPlanningWorkbook = (
         Route: piece.routeNumber,
         'Start relief': piece.startReliefPoint,
         'End relief': piece.endReliefPoint,
+        'Start event': piece.startEventId ?? '',
+        'End event': piece.endEventId ?? '',
         'Trip count': piece.tripIds.length,
         'Trip IDs': piece.tripIds.join(', '),
     }))));

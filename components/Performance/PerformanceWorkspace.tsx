@@ -23,6 +23,8 @@ import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import type { PerformanceRouteOption } from '../../utils/performanceRouteFilter';
 import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
 import { PerformanceLoadStatus } from './PerformanceLoadStatus';
+import { PerformanceAggregationProvider } from './performanceAggregation';
+import { getPerformanceAggregation, type PerformanceAggregationMode } from '../../utils/performanceAggregation';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -60,8 +62,6 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'specialized-transit', label: 'Specialized Transit', icon: Accessibility, status: 'complete' },
     { id: 'operator-dwell', label: 'Dwell Incident Review', icon: Timer, status: 'complete', badge: 'Testing', feature: 'operationsOperatorDwell' },
 ];
-
-const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 const isLocalhost = () => typeof window !== 'undefined' && LOCALHOST_HOSTNAMES.has(window.location.hostname);
@@ -137,6 +137,17 @@ function resolveDetailDateRange(
     if (!end) return undefined;
 
     if (timeRange === 'all') return undefined;
+    if (timeRange === 'year-to-date') {
+        const start = `${end.slice(0, 4)}-01-01`;
+        if (!includeComparisonPeriod) return { start, end };
+        const startMs = Date.parse(`${start}T00:00:00Z`);
+        const endMs = Date.parse(`${end}T00:00:00Z`);
+        const calendarDays = Math.round((endMs - startMs) / (24 * 60 * 60 * 1000)) + 1;
+        return {
+            start: addDaysToISODate(start, -calendarDays) || start,
+            end,
+        };
+    }
     if (timeRange === 'custom') {
         if (!customDateRange?.start || !customDateRange.end || customDateRange.start > customDateRange.end) {
             return undefined;
@@ -206,6 +217,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [customDateRange, setCustomDateRange] = useState<PerformanceDateWindow | null>(null);
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
+    const [aggregationMode, setAggregationMode] = useState<PerformanceAggregationMode>('sum');
 
     const tabBarRef = useRef<HTMLDivElement>(null);
     const hasValidCustomRange = timeRange !== 'custom'
@@ -217,6 +229,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const shouldLoadDetailData = activeTab !== 'specialized-transit' && !!teamId && !!metadata && hasValidCustomRange && (
         activeTab !== 'overview'
         || timeRange === 'all'
+        || timeRange === 'year-to-date'
         || timeRange === 'past-month'
         || timeRange === 'past-three-months'
         || timeRange === 'yesterday'
@@ -355,22 +368,15 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         return `${rangeLabel} · ${routeScopeLabel} · ${activeTabConfig?.label ?? 'Overview'}`;
     }, [activeTabConfig?.label, customDateRange, routeScopeLabel, timeRange]);
 
-    const filteredScopeLabel = useMemo(() => {
-        const n = filteredData.dailySummaries.length;
-        if (n === 0) return 'No data';
-        if (filteredScope === 'yesterday') {
-            const d = filteredData.dailySummaries[0];
-            if (d) {
-                const dt = new Date(d.date + 'T12:00:00');
-                return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-            }
-            return 'Single day';
-        }
-        if (dayTypeFilter !== 'all') {
-            return `${n} ${DAY_TYPE_LABELS[dayTypeFilter]}${n !== 1 ? 's' : ''} avg`;
-        }
-        return `${n}-day avg`;
-    }, [filteredData, filteredScope, dayTypeFilter]);
+    const aggregation = useMemo(() => getPerformanceAggregation(
+        aggregationMode,
+        filteredData.dailySummaries,
+        isPendingDetailLoad ? 'all' : dayTypeFilter,
+        isPendingDetailLoad ? data.metadata.dateRange : getPerformanceDateWindow(workspaceData.dailySummaries, timeRange, selectedDate, customDateRange),
+    ), [aggregationMode, filteredData, isPendingDetailLoad, dayTypeFilter, data.metadata.dateRange, workspaceData.dailySummaries, timeRange, selectedDate, customDateRange]);
+    // Scope badges also appear on rates and daily trends, so keep them neutral.
+    const filteredScopeLabel = aggregation.coveredDays === 0 ? 'No data'
+        : `${aggregation.coveredDays} ${aggregation.unit}${aggregation.coveredDays === 1 ? '' : 's'} with data`;
 
     const renderPanel = () => {
         if (detailLoadFailed) return <PerformancePanelError onRetry={() => { void detailQuery.refetch(); }} />;
@@ -581,6 +587,8 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                         onDayTypeChange={setDayTypeFilter}
                         availableDayTypes={availableDayTypes}
                         filteredDayCount={filteredData.dailySummaries.length}
+                        aggregationMode={aggregationMode}
+                        onAggregationModeChange={setAggregationMode}
                     />
                     </div>
                 )}
@@ -589,7 +597,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
             <div className="min-h-[500px] rounded-b-lg border border-t-0 border-gray-200 bg-white p-5">
                 {showFilterBar && <div className="mb-4">
                     <span className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100">
-                        {filteredScopeLabel}
+                        {aggregation.label}
                     </span>
                     {detailQuery.isFetching && detailData && (
                         <div className="ml-2 inline-block align-middle">
@@ -603,9 +611,12 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                         </div>
                     )}
                 </div>}
+                {!showFilterBar && <p className="mb-4 text-xs text-gray-500">Specialized Transit uses its own monthly reports and filters. The dashboard Sum / Daily average selection does not apply to this source.</p>}
+                <PerformanceAggregationProvider value={aggregation}>
                 <Suspense fallback={<PerformancePanelLoading label="Loading panel..." />}>
                     {renderPanel()}
                 </Suspense>
+                </PerformanceAggregationProvider>
             </div>
         </div>
     );

@@ -161,4 +161,110 @@ describe('PerformanceWorkspace custom range loading', () => {
       '2026-07-06,2026-07-07,2026-07-08,2026-07-09,2026-07-10',
     );
   });
+
+  it('loads year to date from January 1 through the latest imported service day', async () => {
+    const yearToDateMetadata = {
+      ...metadata,
+      dateRange: { start: '2026-01-01', end: '2026-08-04' },
+    };
+
+    await act(async () => {
+      root.render(<PerformanceWorkspace {...workspaceProps} metadata={yearToDateMetadata} />);
+    });
+
+    const yearToDateButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === 'Year to Date',
+    );
+    expect(yearToDateButton).toBeDefined();
+
+    await act(async () => {
+      yearToDateButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    await vi.waitFor(() => {
+      expect(usePerformanceDataQueryMock.mock.calls.at(-1)?.[5]).toMatchObject({
+        dateRange: { start: '2026-01-01', end: '2026-08-04' },
+        detailMode: 'overview',
+      });
+    });
+    expect(yearToDateButton?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('opens the requested tab and reports later tab changes', async () => {
+    const onTabChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <PerformanceWorkspace
+          {...workspaceProps}
+          initialTab="ridership"
+          onTabChange={onTabChange}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[data-tab="ridership"]')?.getAttribute('aria-pressed')).toBe('true');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-tab="otp"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onTabChange).toHaveBeenCalledWith('otp');
+  });
+
+  it('defaults to sum and retains daily average across tabs and monthly-source visits', async () => {
+    usePerformanceDataQueryMock.mockReturnValue({ data: overviewData, isError: false, isFetching: false, refetch: vi.fn() });
+    await act(async () => { root.render(<PerformanceWorkspace {...workspaceProps} specializedTransitTeamId="team-1" />); });
+    const button = (text: string) => Array.from(container.querySelectorAll('button')).find(b => b.textContent === text)!;
+    expect(button('Sum').getAttribute('aria-pressed')).toBe('true');
+    await act(async () => { button('Daily average').click(); });
+    expect(container.textContent).toContain('Average per day');
+    for (const tab of ['ridership', 'otp', 'specialized-transit', 'overview']) {
+      await act(async () => { container.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)!.click(); });
+      if (tab === 'specialized-transit') {
+        expect(container.querySelector('[aria-label="Metric aggregation"]')).toBeNull();
+        expect(container.textContent).toContain('does not apply to this source');
+      } else expect(button('Daily average').getAttribute('aria-pressed')).toBe('true');
+    }
+    await act(async () => { button('Sum').click(); });
+    expect(container.textContent).toContain('Sum · Based on');
+  });
+
+  it('removes STREETS filters and detail loading when switching to Specialized Transit', async () => {
+    await act(async () => {
+      root.render(<PerformanceWorkspace {...workspaceProps} specializedTransitTeamId="team-1" />);
+    });
+
+    const yearToDateButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === 'Year to Date',
+    );
+    await act(async () => { yearToDateButton?.click(); });
+    expect(usePerformanceDataQueryMock.mock.calls.at(-1)?.[1]).toBe(true);
+
+    usePerformanceDataQueryMock.mockReturnValue({
+      data: null, isError: true, isFetching: false, refetch: vi.fn(),
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-tab="specialized-transit"]')?.click();
+    });
+
+    expect(usePerformanceDataQueryMock.mock.calls.at(-1)?.[1]).toBe(false);
+    expect(container.textContent).toContain('Mock performance module');
+    expect(container.textContent).not.toContain('Year to Date');
+    expect(container.textContent).not.toContain('Custom Range');
+    expect(container.textContent).not.toContain('All routes');
+    expect(container.textContent).not.toContain('7-day avg');
+    expect(container.textContent).not.toContain('2026-07-29');
+    expect(container.textContent).not.toContain('Performance details could not be loaded');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-tab="overview"]')?.click();
+    });
+    const restoredYearToDateButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === 'Year to Date',
+    );
+    expect(restoredYearToDateButton?.getAttribute('aria-pressed')).toBe('true');
+    expect(usePerformanceDataQueryMock.mock.calls.at(-1)?.[1]).toBe(true);
+  });
 });

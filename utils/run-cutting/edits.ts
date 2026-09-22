@@ -30,6 +30,7 @@ export const splitDailyRun = (
     splitAfterTripId: string,
     newRun: { id: string; runNumber: string },
 ): OperationsPlanningProposalV1 => {
+    if (input.schemaVersion === 2) throw new RunCuttingEditError('Interior-relief proposals require an event-aware split; whole-trip splitting is disabled.');
     const draft = cloneProposal(proposal);
     const index = draft.dailyRuns.findIndex(run => run.id === runId);
     const run = draft.dailyRuns[index];
@@ -86,6 +87,7 @@ export const mergeDailyRuns = (
     firstRunId: string,
     secondRunId: string,
 ): OperationsPlanningProposalV1 => {
+    if (input.schemaVersion === 2) throw new RunCuttingEditError('Interior-relief proposals require an event-aware merge; whole-trip merging is disabled.');
     if (firstRunId === secondRunId) throw new RunCuttingEditError('Choose two different runs to merge.');
     const draft = cloneProposal(proposal);
     const first = draft.dailyRuns.find(run => run.id === firstRunId);

@@ -7,6 +7,10 @@ const authState = vi.hoisted(() => ({
   user: { uid: 'user-1', email: 'planner@example.com' } as { uid: string; email: string } | null,
 }));
 
+const workspaceAccessState = vi.hoisted(() => ({
+  blockedFeatures: new Set<string>(),
+}));
+
 vi.mock('../components/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: () => ({
@@ -72,6 +76,13 @@ vi.mock('../components/layout/Header', () => ({
   Header: (): React.ReactElement => React.createElement('div', null, 'Mock Header'),
 }));
 
+vi.mock('../hooks/useWorkspaceAccess', () => ({
+  useWorkspaceAccess: () => ({
+    canAccess: (feature: string) => !workspaceAccessState.blockedFeatures.has(feature),
+    loading: false,
+  }),
+}));
+
 vi.mock('../utils/lazyWithRetry', () => ({
   lazyWithRetry: (_loader: () => Promise<{ default: React.ComponentType }>, label: string) => {
     if (label === 'planning-data-workspace') {
@@ -99,6 +110,7 @@ describe('App resume entry', () => {
 
   beforeEach(() => {
     authState.user = { uid: 'user-1', email: 'planner@example.com' };
+    workspaceAccessState.blockedFeatures.clear();
     localStorage.clear();
     window.location.hash = '';
     container = document.createElement('div');
@@ -139,6 +151,34 @@ describe('App resume entry', () => {
     });
 
     expect(window.location.hash).toBe('#fixed/drafts');
+  });
+
+  it('opens Operations Dashboard Ridership from the home quick link', () => {
+    flushSync(() => {
+      root.render(<App />);
+    });
+
+    expect(container.textContent).toContain('Quick links');
+    const ridershipButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('Ridership') && button.textContent?.includes('Operations Dashboard'),
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      ridershipButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(window.location.hash).toBe('#operations/performance/ridership');
+  });
+
+  it('hides the Ridership quick link without Operations workspace access', () => {
+    workspaceAccessState.blockedFeatures.add('workspaceOperations');
+
+    flushSync(() => {
+      root.render(<App />);
+    });
+
+    expect(container.textContent).not.toContain('Quick links');
+    expect(container.textContent).not.toContain('Operations Dashboard');
   });
 
   it('reopens Route Planner directly from a planning resume hash', () => {

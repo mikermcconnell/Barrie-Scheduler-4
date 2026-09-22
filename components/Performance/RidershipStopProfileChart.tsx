@@ -1,3 +1,4 @@
+import { usePerformanceAggregation } from './performanceAggregation';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     Bar,
@@ -101,7 +102,8 @@ function FlowTooltip({ active, payload }: { active?: boolean; payload?: Array<{ 
     );
 }
 
-export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps> = ({ data, periodMode }) => {
+export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps> = ({ data }) => {
+    const { mode, divisor, unit } = usePerformanceAggregation();
     const { options: profiles, defaultOptionKey } = data;
     const defaultProfile = profiles.find(profile => profile.key === defaultOptionKey)
         ?? [...profiles].sort((a, b) => b.totalBoardings - a.totalBoardings)[0];
@@ -133,8 +135,8 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
     const rows = useMemo<TooltipRow[]>(() => selected
         ? [...selected.rows]
             .sort((a, b) => a.routeStopIndex - b.routeStopIndex)
-            .map((stop, index) => ({ ...stop, stopNumber: index + 1 }))
-        : [], [selected]);
+            .map((stop, index) => ({ ...stop, boardings: stop.boardings * Math.max(1, selected.serviceDays) / divisor, alightings: stop.alightings * Math.max(1, selected.serviceDays) / divisor, stopNumber: index + 1 }))
+        : [], [selected, divisor]);
     const hasBoardings = rows.some(stop => stop.boardings !== 0);
     const hasAlightings = rows.some(stop => stop.alightings !== 0);
     const hasBars = hasBoardings || hasAlightings;
@@ -143,8 +145,8 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
     const busiestAlighting = [...rows].sort((a, b) => b.alightings - a.alightings)[0];
     const peakLoad = [...rows].filter(stop => stop.averageLoad !== null)
         .sort((a, b) => (b.averageLoad ?? 0) - (a.averageLoad ?? 0))[0];
-    const isAverage = periodMode === 'multi-day';
-    const activityUnit = isAverage ? 'Avg / service day' : 'Daily total';
+    const isAverage = mode === 'average';
+    const activityUnit = isAverage ? `Avg / ${unit}` : 'Period total';
     const chartWidth = Math.max(760, rows.length * 62);
     const confidence = selected?.loadQuality;
     const confidenceTone = confidence?.rating === 'high'
@@ -162,7 +164,7 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
         <ChartCard
             title="Passenger Flow by Stop"
             subtitle={isAverage
-                ? 'Average boardings and alightings per observed service day, with average onboard load'
+                ? `Average boardings and alightings / ${unit}, with average onboard load`
                 : 'Boardings and alightings by stop, with average onboard load'}
             headerExtra={selected?.multipleStopPatterns ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
@@ -221,7 +223,7 @@ export const RidershipStopProfileChart: React.FC<RidershipStopProfileChartProps>
                                 ? `${peakLoad.stopName}${peakLoad.loadSource === 'block-inferred' ? ' · Heatmap estimate' : peakLoad.loadSource === 'mixed' ? ' · Mixed estimate' : ''}`
                                 : 'Load unavailable'}
                         />
-                        <MetricSummary label="Observed service days" value={selected.serviceDays.toLocaleString()} detail={isAverage ? 'Average denominator' : 'Selected date'} />
+                        <MetricSummary label="Observed service days" value={selected.serviceDays.toLocaleString()} detail={isAverage ? `Average uses ${divisor} covered ${unit}s` : 'Dates with route observations'} />
                     </div>
 
                     <section className={`mb-3 rounded-xl border px-4 py-3 ${confidenceTone}`} aria-label="Load confidence" data-testid="load-confidence-panel">

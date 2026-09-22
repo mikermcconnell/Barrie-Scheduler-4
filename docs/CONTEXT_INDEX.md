@@ -45,6 +45,10 @@ For implementation facts, verify current code and tests. For persisted-state que
 
 Load feature docs only when the task directly touches that feature.
 
+### Parking
+
+- Historical payment evidence and Municipal Parking Strategy analysis: `docs/PARKING_STRATEGY.md`; add `docs/SCHEMA.md` for persistence/access changes and `docs/ARCHITECTURE.md` when changing workspace wiring or loading
+
 ### Fixed-route scheduling and operations
 
 - Operations Planning / run cutting: `docs/OPERATIONS_PLANNING.md`; add `docs/rules/LOCKED_LOGIC.md`, `docs/SCHEMA.md`, and `docs/ARCHITECTURE.md` when changing its source binding, validation, persistence, or workspace wiring
