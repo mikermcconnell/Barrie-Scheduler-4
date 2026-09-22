@@ -20,6 +20,14 @@ import {
 } from '../../utils/todPickupAggregation';
 import type { TodDailyKpiLocation } from '../../utils/todPickupTypes';
 import { HeatmapDotLayer, LassoControl, MapBase, RouteOverlay, toGeoJSON, pointInPolygon } from '../shared';
+import {
+  fetchBarrieParcelOutlines,
+  padParcelBounds,
+  parcelBoundsContain,
+  PARCEL_MIN_ZOOM,
+  type ParcelBounds,
+  type ParcelOutlines,
+} from '../../utils/barrieParcelBoundaries';
 
 interface StopActivityMapProps {
   stops: StopMetrics[];
@@ -51,6 +59,7 @@ interface EnrichedStop extends CombinedStopActivityLocation {
 }
 interface RenderedStop extends EnrichedStop { bin: number; sortKey: number; }
 interface HoverInfo { stopId: string; latitude: number; longitude: number; }
+interface ParcelView { bounds: ParcelBounds; zoom: number; }
 
 function toStopActivityViewMode(viewMode: ViewMode): StopActivityViewMode {
   return viewMode === 'activity' ? 'total' : viewMode;
@@ -209,6 +218,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
 }) => {
   const mapRef = useRef<MapRef | null>(null);
   const hasFittedRef = useRef(false);
+  const loadedParcelBoundsRef = useRef<ParcelBounds | null>(null);
   const playHourRef = useRef(5);
   const [mapReady, setMapReady] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -240,6 +250,12 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [showRouteLines, setShowRouteLines] = useState(true);
+  const [showParcelLines, setShowParcelLines] = useState(false);
+  const [parcelView, setParcelView] = useState<ParcelView | null>(null);
+  const [parcelOutlines, setParcelOutlines] = useState<ParcelOutlines | null>(null);
+  const [parcelStatus, setParcelStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [parcelError, setParcelError] = useState<string | null>(null);
+  const [parcelRetry, setParcelRetry] = useState(0);
   const [lassoMode, setLassoMode] = useState(false);
   const [lassoSelection, setLassoSelection] = useState<EnrichedStop[] | null>(null);
   const [bottomNFilter, setBottomNFilter] = useState<number | null>(null);
@@ -419,7 +435,17 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const toggleFullscreen = useCallback(() => setIsFullscreen((prev) => !prev), []);
   const toggleLassoMode = useCallback(() => setLassoMode((prev) => { const next = !prev; if (next) { setSelectedStop(null); setHoverInfo(null); setSearchPreviewStopId(null); setLassoSelection(null); } else { setLassoSelection(null); } return next; }), []);
   const flyToStop = useCallback((stop: EnrichedStop) => { mapRef.current?.flyTo({ center: [stop.lon, stop.lat], zoom: 16, duration: 500 }); setSelectedStop(stop); setHoverInfo(null); setSearchPreviewStopId(null); setSearchFocused(false); setSearchQuery(''); }, []);
-  const handleMapLoad = useCallback(() => setMapReady(true), []);
+  const updateParcelView = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    const bounds = map?.getBounds();
+    if (!map || !bounds) return;
+    setParcelView({
+      bounds: { west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth() },
+      zoom: map.getZoom(),
+    });
+  }, []);
+  const handleMapLoad = useCallback(() => { setMapReady(true); updateParcelView(); }, [updateParcelView]);
+  const toggleParcelLines = useCallback(() => { setShowParcelLines(previous => !previous); updateParcelView(); }, [updateParcelView]);
   const handleMapMouseMove = useCallback((event: MapMouseEvent) => {
     if (lassoMode) return;
     const rawId = event.features?.[0]?.properties?.id;
@@ -434,6 +460,37 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const handleLassoComplete = useCallback((polygon: [number, number][]) => { const hits = displayedStops.filter((stop) => pointInPolygon(stop.lat, stop.lon, polygon)); setLassoSelection(hits.length > 0 ? hits : null); }, [displayedStops]);
 
   useEffect(() => {
+    if (!showParcelLines || !mapReady || !parcelView) return;
+    if (parcelView.zoom < PARCEL_MIN_ZOOM) {
+      setParcelStatus('idle');
+      return;
+    }
+    if (loadedParcelBoundsRef.current && parcelBoundsContain(loadedParcelBoundsRef.current, parcelView.bounds)) {
+      setParcelStatus('ready');
+      return;
+    }
+
+    const controller = new AbortController();
+    const requestBounds = padParcelBounds(parcelView.bounds);
+    setParcelStatus('loading');
+    setParcelError(null);
+    loadedParcelBoundsRef.current = null;
+    setParcelOutlines(null);
+    void fetchBarrieParcelOutlines(requestBounds, controller.signal)
+      .then(collection => {
+        if (controller.signal.aborted) return;
+        loadedParcelBoundsRef.current = requestBounds;
+        setParcelOutlines(collection);
+        setParcelStatus('ready');
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return;
+        setParcelError(error instanceof Error ? error.message : 'City parcel lines could not be loaded.');
+        setParcelStatus('error');
+      });
+    return () => controller.abort();
+  }, [mapReady, parcelRetry, parcelView, showParcelLines]);
+  useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (lassoSelection) { clearLassoSelection(); return; }
@@ -444,12 +501,12 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
     return () => window.removeEventListener('keydown', handler);
   }, [clearLassoSelection, isFullscreen, lassoMode, lassoSelection]);
   useEffect(() => {
-    const resize = () => mapRef.current?.getMap().resize();
+    const resize = () => { mapRef.current?.getMap().resize(); updateParcelView(); };
     const raf = requestAnimationFrame(resize);
     const t1 = setTimeout(resize, 100);
     const t2 = setTimeout(resize, 300);
     return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); };
-  }, [isFullscreen]);
+  }, [isFullscreen, updateParcelView]);
   useEffect(() => {
     if (!isPlaying) return;
     const timer = setInterval(() => {
@@ -503,6 +560,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
         <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['activity', 'boardings', 'alightings'] as ViewMode[]).map((mode) => <button key={mode} onClick={() => setViewMode(mode)} className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors ${viewMode === mode ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>{mode === 'activity' ? 'Activity' : mode === 'boardings' ? 'Board' : 'Alight'}</button>)}</div>
         {availableRoutes.length > 0 && <select value={selectedRoute} onChange={(e) => setSelectedRoute(e.target.value)} className="px-2 py-1.5 text-xs bg-white border border-gray-300 rounded-md shadow-sm pointer-events-auto focus:outline-none focus:ring-1 focus:ring-cyan-400"><option value="all">All Services</option>{availableRoutes.map((route) => <option key={route} value={route}>Route {route}</option>)}</select>}
         <button onClick={() => setShowRouteLines((p) => !p)} className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${showRouteLines ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Routes</button>
+        <button type="button" onClick={toggleParcelLines} aria-pressed={showParcelLines} title="Show City of Barrie assessment parcel outlines" className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${showParcelLines ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Property lines</button>
         <button onClick={toggleLassoMode} className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${lassoMode ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Lasso</button>
         {mapMode === 'change' ? <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['all', 'increase', 'decrease'] as ChangeFocus[]).map(focus => <button key={focus} type="button" onClick={() => setChangeFocus(focus)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${changeFocus === focus ? focus === 'increase' ? 'bg-cyan-50 text-cyan-700' : focus === 'decrease' ? 'bg-orange-50 text-orange-700' : 'bg-gray-100 text-gray-700' : 'text-gray-500 hover:bg-gray-50'}`}>{focus === 'all' ? 'All' : focus === 'increase' ? 'Top 25 Up' : 'Top 25 Down'}</button>)}</div> : <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto"><button onClick={() => setBottomNFilter(null)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === null ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>All</button>{[10, 25].map((n) => <button key={n} onClick={() => setBottomNFilter(bottomNFilter === n ? null : n)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === n ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}>Low {n}</button>)}</div>}
         <div className="flex-1" />
@@ -510,9 +568,18 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
       </div>
       {hasHourlyData && <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 rounded-lg shadow-md border border-gray-200 px-3 py-2 pointer-events-auto" style={{ minWidth: 420 }}><div className="flex items-center gap-1.5 mb-1.5"><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Time of Day</span><div className="flex-1" /><button onClick={() => { setActiveHours(null); setActivePreset(null); setIsPlaying(false); }} className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${activeHours === null ? 'bg-cyan-100 text-cyan-700' : 'text-gray-400 hover:text-gray-600'}`} title="All Day" aria-label="All Day">All Day</button>{HOUR_PRESETS.map((preset) => <button key={preset.label} onClick={() => { setActiveHours([...preset.hours]); setActivePreset(preset.label); setIsPlaying(false); }} className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${activePreset === preset.label ? 'bg-cyan-100 text-cyan-700' : 'text-gray-400 hover:text-gray-600'}`} title={`${preset.label}: ${preset.detail}`} aria-label={`${preset.label}: ${preset.detail}`}>{preset.label}</button>)}</div><div className="flex items-center gap-2"><button onClick={() => { if (isPlaying) setIsPlaying(false); else { playHourRef.current = 4; setActivePreset(null); setIsPlaying(true); } }} className="w-6 h-6 flex items-center justify-center rounded-full bg-cyan-100 text-cyan-700 hover:bg-cyan-200 flex-shrink-0">{isPlaying ? '||' : '>'}</button><input type="range" min={0} max={23} value={activeHours?.length === 1 ? activeHours[0] : 12} onChange={(e) => { const hour = parseInt(e.target.value, 10); setActiveHours([hour]); setActivePreset(null); setIsPlaying(false); }} className="flex-1 h-1 accent-cyan-500" /><span className="text-xs font-bold text-gray-700 w-16 text-right tabular-nums">{activeHours === null ? 'All' : activeHours.length === 1 ? `${activeHours[0].toString().padStart(2, '0')}:00` : activePreset || `${activeHours[0]}-${activeHours[activeHours.length - 1]}h`}</span></div></div>}
       <Legend mapMode={mapMode} comparisonRange={comparisonRange} unavailableStops={unavailableScopedStopCount} unavailableReason={activeHours === null ? 'route' : 'hourly'} todStatus={todStatus} />
+      {showParcelLines && <div role="status" aria-live="polite" className="absolute bottom-24 right-2 z-[1000] max-w-52 rounded-md border border-gray-200 bg-white/95 px-2.5 py-2 text-[10px] text-gray-600 shadow-md pointer-events-auto">
+        <div className="font-bold text-gray-700">Property lines</div>
+        {parcelView && parcelView.zoom < PARCEL_MIN_ZOOM ? <div>Zoom in to see parcel outlines.</div>
+          : parcelStatus === 'loading' ? <div>Loading City parcel outlines...</div>
+            : parcelStatus === 'error' ? <div><span title={parcelError ?? undefined}>City parcel lines are unavailable.</span> <button type="button" onClick={() => setParcelRetry(value => value + 1)} className="font-bold text-cyan-700 underline">Retry</button></div>
+              : parcelStatus === 'ready' ? <div>{parcelOutlines?.features.length ? 'Assessment parcels · City of Barrie' : 'No City parcels in this view.'}</div>
+                : <div>Waiting for the map...</div>}
+      </div>}
       {lassoSelection ? <LassoSummaryPanel selected={lassoSelection} mapMode={mapMode} onClose={clearLassoSelection} /> : selectedStop ? <DetailPanel stop={selectedStop} rank={selectedRank} total={rankedDisplayedStops.length} activeHours={activeHours} mapMode={mapMode} currentDayCount={currentDayCount} comparisonDayCount={comparisonDayCount} onClose={() => setSelectedStop(null)} /> : null}
       <div className={isFullscreen ? 'flex-1 w-full min-h-0' : 'h-[750px] w-full rounded-lg overflow-hidden'}>
-        <MapBase mapRef={mapRef} latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={13} showNavigation={true} onLoad={handleMapLoad} interactiveLayerIds={[STOP_CIRCLE_LAYER_ID]} onMouseMove={handleMapMouseMove} onMouseLeave={handleMapMouseLeave} onClick={handleMapClick} style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}>
+        <MapBase mapRef={mapRef} latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={13} showNavigation={true} onLoad={handleMapLoad} onMoveEnd={showParcelLines ? updateParcelView : undefined} interactiveLayerIds={[STOP_CIRCLE_LAYER_ID]} onMouseMove={handleMapMouseMove} onMouseLeave={handleMapMouseLeave} onClick={handleMapClick} style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}>
+          {showParcelLines && parcelOutlines && <Source id="stop-activity-parcels-src" type="geojson" data={parcelOutlines}><Layer id="stop-activity-parcels" type="line" minzoom={PARCEL_MIN_ZOOM} paint={{ 'line-color': '#475569', 'line-opacity': 0.6, 'line-width': 1 }} /></Source>}
           {routeShapesForDisplay.length > 0 && <RouteOverlay shapes={routeShapesForDisplay} opacity={selectedRoute === 'all' ? 0.65 : 0.85} weight={selectedRoute === 'all' ? 2.5 : 4} dashed={false} idPrefix="stop-activity-routes" />}
           <HeatmapDotLayer
             idPrefix="stop-activity"
