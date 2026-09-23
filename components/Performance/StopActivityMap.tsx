@@ -4,7 +4,7 @@ import { Layer, Popup, Source } from 'react-map-gl/mapbox';
 import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import type { StopMetrics } from '../../utils/performanceDataTypes';
 import { findStopCoords } from '../../utils/gtfs/gtfsStopLookup';
-import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
+import { loadGtfsRouteShapeVariants } from '../../utils/gtfs/gtfsShapesLoader';
 import {
   getStopActivityChange,
   getStopRouteActivityBreakdown,
@@ -320,7 +320,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
     if (activeHours !== null) return 'TOD hidden: the daily report has no hourly detail.';
     return `${todLocations.length} TOD location${todLocations.length === 1 ? '' : 's'} included.`;
   }, [activeHours, mapMode, selectedRoute, todLocations.length]);
-  const routeShapes = useMemo(() => { try { return loadGtfsRouteShapes(); } catch { return []; } }, []);
+  const routeShapes = useMemo(() => { try { return loadGtfsRouteShapeVariants(); } catch { return []; } }, []);
   const routeFilteredStops = useMemo(() => {
     let result = enrichedStops;
     if (selectedRoute !== 'all') result = result.filter((stop) => stop.routes?.includes(selectedRoute));

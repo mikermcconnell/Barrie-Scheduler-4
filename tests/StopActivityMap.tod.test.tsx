@@ -11,7 +11,7 @@ vi.mock('react-map-gl/mapbox', () => ({
   Source: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock('../utils/gtfs/gtfsStopLookup', () => ({ findStopCoords: (): null => null }));
-vi.mock('../utils/gtfs/gtfsShapesLoader', () => ({ loadGtfsRouteShapes: (): never[] => [] }));
+vi.mock('../utils/gtfs/gtfsShapesLoader', () => ({ loadGtfsRouteShapeVariants: (): never[] => [] }));
 vi.mock('../components/shared', () => ({
   MapBase: ({ children, onMouseMove }: { children?: React.ReactNode; onMouseMove?: (event: unknown) => void }) => (
     <div>
