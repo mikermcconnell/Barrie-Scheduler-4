@@ -66,6 +66,8 @@ function toStopActivityViewMode(viewMode: ViewMode): StopActivityViewMode {
 }
 
 const BARRIE_CENTER: [number, number] = [44.38, -79.69];
+const RIDERSHIP_LIGHT_MAP_STYLE = 'mapbox://styles/mapbox/light-v11';
+const RIDERSHIP_SATELLITE_MAP_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12';
 const OUTLINE_COLOR = '#374151';
 const CHANGE_INCREASE_COLOR = '#0891b2';
 const CHANGE_DECREASE_COLOR = '#ea580c';
@@ -250,6 +252,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [showRouteLines, setShowRouteLines] = useState(true);
+  const [isSatellite, setIsSatellite] = useState(false);
   const [showParcelLines, setShowParcelLines] = useState(false);
   const [parcelView, setParcelView] = useState<ParcelView | null>(null);
   const [parcelOutlines, setParcelOutlines] = useState<ParcelOutlines | null>(null);
@@ -259,7 +262,18 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const [lassoMode, setLassoMode] = useState(false);
   const [lassoSelection, setLassoSelection] = useState<EnrichedStop[] | null>(null);
   const [bottomNFilter, setBottomNFilter] = useState<number | null>(null);
+  const [minActivityThreshold, setMinActivityThreshold] = useState<number | null>(null);
   const [changeFocus, setChangeFocus] = useState<ChangeFocus>('all');
+  const thresholdMetricLabel = viewMode === 'activity'
+    ? 'activity'
+    : viewMode === 'boardings'
+      ? 'boardings'
+      : 'alightings';
+  const thresholdDescription = mapMode === 'change'
+    ? `absolute ${thresholdMetricLabel} change per day`
+    : mode === 'average'
+      ? `${thresholdMetricLabel} per ${unit}`
+      : `${thresholdMetricLabel} in the selected period`;
 
   const fixedRouteActivityStops = useMemo(() => mergeTodIntoStopActivity(stops, []), [stops]);
   const combinedActivityStops = useMemo(() => mergeTodIntoStopActivity(stops, todLocations), [stops, todLocations]);
@@ -382,18 +396,22 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
     });
     return { filteredStops: resolvedStops, unavailableScopedStopCount: unavailableCount };
   }, [activeHours, comparisonDayCount, comparisonStopMap, currentDayCount, currentStopMap, fixedRouteStopMap, mapMode, routeFilteredStops, selectedRoute, viewMode]);
+  const thresholdFilteredStops = useMemo(() => minActivityThreshold === null
+    ? filteredStops
+    : filteredStops.filter((stop) => stop.activity >= minActivityThreshold),
+  [filteredStops, minActivityThreshold]);
   const displayedStops = useMemo(() => {
     if (mapMode === 'change') {
-      if (changeFocus === 'increase') return [...filteredStops].filter(stop => stop.changePerDay > 0).sort((a, b) => b.changePerDay - a.changePerDay).slice(0, 25);
-      if (changeFocus === 'decrease') return [...filteredStops].filter(stop => stop.changePerDay < 0).sort((a, b) => a.changePerDay - b.changePerDay).slice(0, 25);
-      return filteredStops;
+      if (changeFocus === 'increase') return [...thresholdFilteredStops].filter(stop => stop.changePerDay > 0).sort((a, b) => b.changePerDay - a.changePerDay).slice(0, 25);
+      if (changeFocus === 'decrease') return [...thresholdFilteredStops].filter(stop => stop.changePerDay < 0).sort((a, b) => a.changePerDay - b.changePerDay).slice(0, 25);
+      return thresholdFilteredStops;
     }
     return bottomNFilter === null
-      ? filteredStops
-      : [...filteredStops.filter((stop) => stop.activity > 0)].sort((a, b) => a.activity - b.activity).slice(0, bottomNFilter);
-  }, [bottomNFilter, changeFocus, filteredStops, mapMode]);
+      ? thresholdFilteredStops
+      : [...thresholdFilteredStops.filter((stop) => stop.activity > 0)].sort((a, b) => a.activity - b.activity).slice(0, bottomNFilter);
+  }, [bottomNFilter, changeFocus, mapMode, thresholdFilteredStops]);
   const rankedDisplayedStops = useMemo(() => [...displayedStops].sort((a, b) => b.activity - a.activity), [displayedStops]);
-  const searchResults = useMemo(() => !searchQuery.trim() ? [] : filteredStops.filter((stop) => matchesStopSearch(stop, searchQuery)).sort((a, b) => b.activity - a.activity).slice(0, 8), [filteredStops, searchQuery]);
+  const searchResults = useMemo(() => !searchQuery.trim() ? [] : thresholdFilteredStops.filter((stop) => matchesStopSearch(stop, searchQuery)).sort((a, b) => b.activity - a.activity).slice(0, 8), [searchQuery, thresholdFilteredStops]);
   const renderedStops = useMemo(() => {
     const bins = assignBins(displayedStops.map((stop) => stop.activity));
     return displayedStops.map((stop, index) => ({ ...stop, bin: bins[index], sortKey: index })).sort((a, b) => a.bin - b.bin) as RenderedStop[];
@@ -428,7 +446,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const labelPaint = useMemo(() => ({ 'text-color': '#374151', 'text-halo-color': '#ffffff', 'text-halo-width': 1.8, 'text-halo-blur': 0.6 }), []);
   const ringGeoJSON = useCallback((stop: EnrichedStop | null, extra: number) => !stop ? null : ({ type: 'FeatureCollection' as const, features: [{ type: 'Feature' as const, properties: { radiusBase: ((renderedStopMap.get(stop.stopId)?.bin ?? 5) === 0 ? 14 : BINS[renderedStopMap.get(stop.stopId)?.bin ?? 5].radius) + extra }, geometry: { type: 'Point' as const, coordinates: toGeoJSON([stop.lat, stop.lon]) } }] }), [renderedStopMap]);
   const selectedRing = useMemo(() => ringGeoJSON(selectedStop, 6), [ringGeoJSON, selectedStop]);
-  const previewRing = useMemo(() => ringGeoJSON(searchPreviewStopId ? filteredStops.find((stop) => stop.stopId === searchPreviewStopId) ?? null : null, 6), [filteredStops, ringGeoJSON, searchPreviewStopId]);
+  const previewRing = useMemo(() => ringGeoJSON(searchPreviewStopId ? thresholdFilteredStops.find((stop) => stop.stopId === searchPreviewStopId) ?? null : null, 6), [ringGeoJSON, searchPreviewStopId, thresholdFilteredStops]);
   const lassoRing = useMemo(() => !lassoSelection ? null : ({ type: 'FeatureCollection' as const, features: lassoSelection.map((stop) => ({ type: 'Feature' as const, properties: { radiusBase: ((renderedStopMap.get(stop.stopId)?.bin ?? 5) === 0 ? 14 : BINS[renderedStopMap.get(stop.stopId)?.bin ?? 5].radius) + 4 }, geometry: { type: 'Point' as const, coordinates: toGeoJSON([stop.lat, stop.lon]) } })) }), [lassoSelection, renderedStopMap]);
 
   const clearLassoSelection = useCallback(() => setLassoSelection(null), []);
@@ -558,9 +576,76 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
           {(['activity', 'change'] as MapMode[]).map(mode => <button key={mode} type="button" disabled={mode === 'change' && !canCompare} onClick={() => setMapMode(mode)} title={mode === 'change' && !canCompare ? 'No prior-period stop data is available' : undefined} className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${mapMode === mode ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>{mode}</button>)}
         </div>
         <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['activity', 'boardings', 'alightings'] as ViewMode[]).map((mode) => <button key={mode} onClick={() => setViewMode(mode)} className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors ${viewMode === mode ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>{mode === 'activity' ? 'Activity' : mode === 'boardings' ? 'Board' : 'Alight'}</button>)}</div>
+        <div className="flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2 py-1 shadow-sm pointer-events-auto">
+          <label htmlFor="stop-activity-minimum" title={`Minimum ${thresholdDescription}`} className="whitespace-nowrap text-[10px] font-bold text-gray-600">
+            {mapMode === 'change'
+              ? `Min absolute ${thresholdMetricLabel} change/day`
+              : mode === 'average'
+                ? `Min ${thresholdMetricLabel}/${unit}`
+                : `Min ${thresholdMetricLabel} (period)`}
+          </label>
+          <input
+            id="stop-activity-minimum"
+            type="number"
+            min={0}
+            step="any"
+            inputMode="decimal"
+            placeholder="All"
+            value={minActivityThreshold ?? ''}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              if (value === '') {
+                setMinActivityThreshold(null);
+                return;
+              }
+              const parsed = Number(value);
+              if (Number.isFinite(parsed) && parsed >= 0) setMinActivityThreshold(parsed);
+            }}
+            aria-label={`Minimum ${thresholdDescription}`}
+            className="w-14 rounded border border-gray-300 px-1.5 py-1 text-xs tabular-nums focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+          <button
+            type="button"
+            onClick={() => setMinActivityThreshold(20)}
+            aria-pressed={minActivityThreshold === 20}
+            aria-label={`Set minimum ${thresholdDescription} to 20`}
+            title="Show values of 20 or more"
+            className={minActivityThreshold === 20
+              ? 'rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[10px] font-bold text-cyan-700'
+              : 'rounded border border-gray-300 bg-white px-2 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-50'}
+          >
+            20+
+          </button>
+          {minActivityThreshold !== null && (
+            <button
+              type="button"
+              onClick={() => setMinActivityThreshold(null)}
+              aria-label="Clear minimum stop filter"
+              title="Show all stops"
+              className="whitespace-nowrap px-1 py-1 text-[10px] font-bold text-gray-500 hover:text-gray-800"
+            >
+              Clear
+            </button>
+          )}
+          <span aria-live="polite" className="whitespace-nowrap text-[10px] text-gray-500">
+            {thresholdFilteredStops.length} match{thresholdFilteredStops.length === 1 ? '' : 'es'}
+          </span>
+        </div>
         {availableRoutes.length > 0 && <select value={selectedRoute} onChange={(e) => setSelectedRoute(e.target.value)} className="px-2 py-1.5 text-xs bg-white border border-gray-300 rounded-md shadow-sm pointer-events-auto focus:outline-none focus:ring-1 focus:ring-cyan-400"><option value="all">All Services</option>{availableRoutes.map((route) => <option key={route} value={route}>Route {route}</option>)}</select>}
         <button onClick={() => setShowRouteLines((p) => !p)} className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${showRouteLines ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Routes</button>
         <button type="button" onClick={toggleParcelLines} aria-pressed={showParcelLines} title="Show City of Barrie assessment parcel outlines" className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${showParcelLines ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Property lines</button>
+        <button
+          type="button"
+          onClick={() => setIsSatellite((previous) => !previous)}
+          aria-pressed={isSatellite}
+          aria-label={isSatellite ? 'Switch to light basemap' : 'Switch to satellite basemap'}
+          title={isSatellite ? 'Switch to light street map' : 'Switch to satellite imagery'}
+          className={isSatellite
+            ? 'px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto bg-cyan-50 text-cyan-700 border-cyan-300'
+            : 'px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto bg-white text-gray-500 border-gray-300 hover:bg-gray-50'}
+        >
+          Satellite
+        </button>
         <button onClick={toggleLassoMode} className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${lassoMode ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Lasso</button>
         {mapMode === 'change' ? <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['all', 'increase', 'decrease'] as ChangeFocus[]).map(focus => <button key={focus} type="button" onClick={() => setChangeFocus(focus)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${changeFocus === focus ? focus === 'increase' ? 'bg-cyan-50 text-cyan-700' : focus === 'decrease' ? 'bg-orange-50 text-orange-700' : 'bg-gray-100 text-gray-700' : 'text-gray-500 hover:bg-gray-50'}`}>{focus === 'all' ? 'All' : focus === 'increase' ? 'Top 25 Up' : 'Top 25 Down'}</button>)}</div> : <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto"><button onClick={() => setBottomNFilter(null)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === null ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>All</button>{[10, 25].map((n) => <button key={n} onClick={() => setBottomNFilter(bottomNFilter === n ? null : n)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === n ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}>Low {n}</button>)}</div>}
         <div className="flex-1" />
@@ -578,8 +663,8 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
       </div>}
       {lassoSelection ? <LassoSummaryPanel selected={lassoSelection} mapMode={mapMode} onClose={clearLassoSelection} /> : selectedStop ? <DetailPanel stop={selectedStop} rank={selectedRank} total={rankedDisplayedStops.length} activeHours={activeHours} mapMode={mapMode} currentDayCount={currentDayCount} comparisonDayCount={comparisonDayCount} onClose={() => setSelectedStop(null)} /> : null}
       <div className={isFullscreen ? 'flex-1 w-full min-h-0' : 'h-[750px] w-full rounded-lg overflow-hidden'}>
-        <MapBase mapRef={mapRef} latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={13} showNavigation={true} onLoad={handleMapLoad} onMoveEnd={showParcelLines ? updateParcelView : undefined} interactiveLayerIds={[STOP_CIRCLE_LAYER_ID]} onMouseMove={handleMapMouseMove} onMouseLeave={handleMapMouseLeave} onClick={handleMapClick} style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}>
-          {showParcelLines && parcelOutlines && <Source id="stop-activity-parcels-src" type="geojson" data={parcelOutlines}><Layer id="stop-activity-parcels" type="line" minzoom={PARCEL_MIN_ZOOM} paint={{ 'line-color': '#475569', 'line-opacity': 0.6, 'line-width': 1 }} /></Source>}
+        <MapBase mapRef={mapRef} latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={13} mapStyle={isSatellite ? RIDERSHIP_SATELLITE_MAP_STYLE : RIDERSHIP_LIGHT_MAP_STYLE} showNavigation={true} onLoad={handleMapLoad} onMoveEnd={showParcelLines ? updateParcelView : undefined} interactiveLayerIds={[STOP_CIRCLE_LAYER_ID]} onMouseMove={handleMapMouseMove} onMouseLeave={handleMapMouseLeave} onClick={handleMapClick} style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}>
+          {showParcelLines && parcelOutlines && <Source id="stop-activity-parcels-src" type="geojson" data={parcelOutlines}><Layer id="stop-activity-parcels" type="line" minzoom={PARCEL_MIN_ZOOM} paint={{ 'line-color': isSatellite ? '#f8fafc' : '#475569', 'line-opacity': isSatellite ? 0.9 : 0.6, 'line-width': isSatellite ? 1.25 : 1 }} /></Source>}
           {routeShapesForDisplay.length > 0 && <RouteOverlay shapes={routeShapesForDisplay} opacity={selectedRoute === 'all' ? 0.65 : 0.85} weight={selectedRoute === 'all' ? 2.5 : 4} dashed={false} idPrefix="stop-activity-routes" />}
           <HeatmapDotLayer
             idPrefix="stop-activity"
