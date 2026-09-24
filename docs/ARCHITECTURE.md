@@ -304,6 +304,8 @@ revisions live in Storage.
 ### Operations reporting
 `STREETS import → parser/aggregator → Firestore + Storage → performance dashboard + reports`
 
+Dashboard detail loads report completed monthly files and a local estimate from recent successful loads. Timing history is grouped by the exact number of requested files and request type, with older grouped history used until an exact-count sample exists. The displayed estimate resets for each request; completed-file counts are not used to predict remaining seconds because files load concurrently and vary in size.
+
 Key files:
 - `utils/performanceDataParser.ts`
 - `utils/performanceDataAggregator.ts`

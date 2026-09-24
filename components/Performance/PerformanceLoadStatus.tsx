@@ -8,6 +8,7 @@ const LOAD_STATUS_DELAY_MS = 500;
 interface PerformanceLoadStatusProps {
     isLoading: boolean;
     profileKey: string;
+    requestKey?: string;
     label: string;
     description?: string;
     progress?: PerformanceDataLoadProgress | null;
@@ -15,19 +16,30 @@ interface PerformanceLoadStatusProps {
 }
 
 interface ActiveLoadRun {
-    profileKey: string;
+    requestKey: string;
     startedAt: number;
     now: number;
     visible: boolean;
 }
 
 function formatRemainingTime(seconds: number): string {
-    return `About ${seconds} second${seconds === 1 ? '' : 's'} remaining`;
+    const rounded = seconds > 60
+        ? Math.ceil(seconds / 10) * 10
+        : seconds > 15
+            ? Math.ceil(seconds / 5) * 5
+            : seconds;
+    if (rounded >= 60) {
+        const minutes = Math.floor(rounded / 60);
+        const remainder = rounded % 60;
+        return `About ${minutes} min${remainder ? ` ${remainder} sec` : ''} remaining`;
+    }
+    return `About ${rounded} second${rounded === 1 ? '' : 's'} remaining`;
 }
 
 export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
     isLoading,
     profileKey,
+    requestKey = profileKey,
     label,
     description,
     progress,
@@ -42,14 +54,14 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
         }
 
         const startedAt = Date.now();
-        setRun({ profileKey, startedAt, now: startedAt, visible: false });
+        setRun({ requestKey, startedAt, now: startedAt, visible: false });
         const showTimer = window.setTimeout(() => {
-            setRun(current => current?.profileKey === profileKey
+            setRun(current => current?.requestKey === requestKey
                 ? { ...current, visible: true, now: Date.now() }
                 : current);
         }, LOAD_STATUS_DELAY_MS);
         const clock = window.setInterval(() => {
-            setRun(current => current?.profileKey === profileKey
+            setRun(current => current?.requestKey === requestKey
                 ? { ...current, now: Date.now() }
                 : current);
         }, 1000);
@@ -58,10 +70,10 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
             window.clearTimeout(showTimer);
             window.clearInterval(clock);
         };
-    }, [isLoading, profileKey]);
+    }, [isLoading, requestKey]);
 
     const estimate = useMemo(() => {
-        if (!run || run.profileKey !== profileKey) return null;
+        if (!run || run.requestKey !== requestKey) return null;
         const elapsedMs = Math.max(0, run.now - run.startedAt);
         const completedUnits = progress?.completedUnits ?? 0;
         const totalUnits = progress?.totalUnits ?? 0;
@@ -70,15 +82,8 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
             return { remainingSeconds: null, isOverrun: false, isProcessing: true };
         }
 
-        if (completedUnits > 0 && totalUnits > completedUnits) {
-            const remainingMs = (elapsedMs / completedUnits) * (totalUnits - completedUnits);
-            return {
-                remainingSeconds: Math.max(1, Math.ceil(remainingMs / 1000)),
-                isOverrun: false,
-                isProcessing: false,
-            };
-        }
-
+        // File requests run concurrently and vary in size. A completed-file
+        // rate is not a reliable estimate of the remaining wall-clock time.
         const learnedDurationMs = getPerformanceLoadEstimateMs(profileKey);
         if (learnedDurationMs == null) return null;
         const remainingMs = learnedDurationMs - elapsedMs;
@@ -87,9 +92,9 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
             isOverrun: remainingMs <= 0,
             isProcessing: false,
         };
-    }, [profileKey, progress, run]);
+    }, [profileKey, progress, requestKey, run]);
 
-    if (!run?.visible || run.profileKey !== profileKey) return null;
+    if (!run?.visible || run.requestKey !== requestKey) return null;
 
     const totalUnits = progress?.totalUnits ?? 0;
     const completedUnits = Math.min(progress?.completedUnits ?? 0, totalUnits);
@@ -105,7 +110,7 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
     const estimateLabel = estimate?.isProcessing
         ? 'Preparing the requested view'
         : estimate?.isOverrun
-            ? 'Taking longer than usual…'
+            ? 'Taking longer than recent loads…'
             : estimate?.remainingSeconds
                 ? formatRemainingTime(estimate.remainingSeconds)
                 : 'Estimating time…';
@@ -116,30 +121,41 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
             role="status"
             aria-live="polite"
             className={compact
-                ? 'inline-flex min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600'
-                : 'rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-900'}
+                ? 'inline-flex min-w-0 items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-900'
+                : 'rounded-xl border border-cyan-300 border-l-4 border-l-cyan-600 bg-white px-4 py-4 shadow-md shadow-cyan-900/10'}
         >
             <span className="sr-only">Loading {label}. Please wait.</span>
-            <div aria-hidden="true" className={compact ? 'contents' : 'flex items-start gap-3'}>
-                <Loader2 className="shrink-0 animate-spin text-cyan-600" size={compact ? 14 : 17} />
-                <div className={compact ? 'min-w-0' : 'min-w-0 flex-1'}>
-                    <div className="font-semibold">Loading {label}</div>
-                    <div className={compact ? 'text-gray-500' : 'mt-0.5 text-cyan-800'}>
-                        {progressLabel} · {estimateLabel}
+            <div className={compact ? 'flex min-w-0 items-center gap-2' : 'flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-5'}>
+                <div className="flex min-w-0 items-start gap-3">
+                    <span aria-hidden="true" className={compact ? 'contents' : 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-cyan-100'}>
+                        <Loader2 className="shrink-0 animate-spin text-cyan-700" size={compact ? 14 : 19} />
+                    </span>
+                    <div className="min-w-0">
+                        <div className={compact ? 'font-semibold' : 'text-sm font-bold text-gray-900'}>Loading {label}</div>
+                        <div className={compact ? 'text-cyan-800' : 'mt-1 text-sm font-medium text-cyan-900'}>{progressLabel}</div>
+                        {description && !compact && (
+                            <div className="mt-1 text-xs text-gray-600">{description}</div>
+                        )}
                     </div>
-                    {description && !compact && (
-                        <div className="mt-1 text-xs text-cyan-700">{description}</div>
-                    )}
-                    {hasDeterminateProgress && !compact && (
-                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cyan-100">
-                            <div
-                                className="h-full rounded-full bg-cyan-500 transition-[width] duration-300"
-                                style={{ width: `${progressPercent}%` }}
-                            />
-                        </div>
+                </div>
+                <div aria-live="off" className={compact
+                    ? 'font-bold text-cyan-900'
+                    : 'shrink-0 rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-2.5 sm:min-w-48'}>
+                    {!compact && <div className="text-[10px] font-bold uppercase tracking-wide text-cyan-700">Estimated time left</div>}
+                    <div className={compact ? '' : 'mt-0.5 text-base font-bold tabular-nums text-cyan-950'}>{estimateLabel}</div>
+                    {!compact && estimate?.remainingSeconds && (
+                        <div className="mt-0.5 text-[11px] text-cyan-700">Based on recent loads</div>
                     )}
                 </div>
             </div>
+            {hasDeterminateProgress && !compact && (
+                <div aria-hidden="true" className="mt-3 h-2 overflow-hidden rounded-full bg-cyan-100">
+                    <div
+                        className="h-full rounded-full bg-cyan-600 transition-[width] duration-300"
+                        style={{ width: `${progressPercent}%` }}
+                    />
+                </div>
+            )}
             {hasDeterminateProgress && (
                 <div
                     className="sr-only"

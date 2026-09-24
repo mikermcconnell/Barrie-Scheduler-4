@@ -35,7 +35,12 @@ function readTimingHistory(): PerformanceLoadTimingHistory {
 }
 
 export function getPerformanceLoadEstimateMs(profileKey: string): number | null {
-    const samples = readTimingHistory()[profileKey];
+    const history = readTimingHistory();
+    const samples = history[profileKey]
+        // Older profiles grouped 2-4 and 5+ files. Keep those samples as a
+        // fallback until the exact file count has its own successful loads.
+        ?? history[profileKey.replace(/:(\d+)$/, (_, count: string) =>
+            `:${getUnitBucket(Number(count))}`)];
     if (!samples?.length) return null;
     const sorted = [...samples].sort((a, b) => a - b);
     const middle = Math.floor(sorted.length / 2);
@@ -107,7 +112,7 @@ export function buildPerformanceLoadProfileKey({
         shared ? 'shared' : 'storage',
         routeScoped ? 'route' : 'all-routes',
         detailMode,
-        getUnitBucket(unitCount),
+        String(Math.max(1, Math.floor(unitCount))),
     ].join(':');
 }
 

@@ -130,7 +130,7 @@ export function usePerformanceDataQuery(
         gcTime: PERFORMANCE_QUERY_GC_MS,
         refetchOnWindowFocus: false,
     });
-    return { ...query, loadProgress, loadProfileKey };
+    return { ...query, loadProgress, loadProfileKey, loadRequestKey: signature };
 }
 
 // Fetch lightweight overview data

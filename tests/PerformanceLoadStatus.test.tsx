@@ -57,7 +57,7 @@ describe('PerformanceLoadStatus', () => {
         expect(container.textContent).toContain('About 3 seconds remaining');
 
         await act(async () => vi.advanceTimersByTime(3000));
-        expect(container.textContent).toContain('Taking longer than usual…');
+        expect(container.textContent).toContain('Taking longer than recent loads…');
         expect(container.textContent).not.toContain('0 seconds remaining');
     });
 
@@ -80,9 +80,21 @@ describe('PerformanceLoadStatus', () => {
 
         await act(async () => vi.advanceTimersByTime(1000));
         expect(container.textContent).toContain('1 of 3 monthly files');
-        expect(container.textContent).toContain('About 2 seconds remaining');
+        expect(container.textContent).toContain('Estimating time…');
         const progressbar = container.querySelector('[role="progressbar"]');
         expect(progressbar?.getAttribute('aria-valuenow')).toBe('1');
         expect(progressbar?.getAttribute('aria-valuemax')).toBe('3');
+    });
+
+    it('starts a fresh countdown when a new request has the same timing profile', async () => {
+        const props = { isLoading: true, profileKey: 'operations:overview', label: 'dashboard overview' };
+        recordPerformanceLoadDuration(props.profileKey, 10000);
+        await act(async () => root.render(<PerformanceLoadStatus {...props} requestKey="first" />));
+        await act(async () => vi.advanceTimersByTime(6000));
+        expect(container.textContent).toContain('About 4 seconds remaining');
+
+        await act(async () => root.render(<PerformanceLoadStatus {...props} requestKey="second" />));
+        await act(async () => vi.advanceTimersByTime(500));
+        expect(container.textContent).toContain('About 10 seconds remaining');
     });
 });

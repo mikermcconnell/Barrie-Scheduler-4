@@ -502,6 +502,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <PerformanceLoadStatus
                         isLoading={detailQuery.isFetching}
                         profileKey={detailQuery.loadProfileKey ?? 'operations:detail'}
+                        requestKey={detailQuery.loadRequestKey}
                         progress={detailQuery.loadProgress}
                         label={requestedLoadLabel}
                         description={`Showing ${data.metadata.dateRange.start} to ${data.metadata.dateRange.end} on Overview until the requested data is ready.`}
@@ -605,6 +606,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                             <PerformanceLoadStatus
                                 isLoading
                                 profileKey={detailQuery.loadProfileKey ?? 'operations:detail'}
+                                requestKey={detailQuery.loadRequestKey}
                                 progress={detailQuery.loadProgress}
                                 label={requestedLoadLabel}
                                 compact

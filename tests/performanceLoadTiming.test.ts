@@ -81,6 +81,16 @@ describe('performance load timing', () => {
             detailMode: 'ridership',
         });
 
-        expect(key).toBe('operations:detail:storage:route:ridership:2-4');
+        expect(key).toBe('operations:detail:storage:route:ridership:3');
+    });
+
+    it('prefers exact file-count history and falls back to older grouped history', () => {
+        const oldKey = 'operations:detail:storage:route:ridership:2-4';
+        const exactKey = 'operations:detail:storage:route:ridership:3';
+        recordPerformanceLoadDuration(oldKey, 5000);
+        expect(getPerformanceLoadEstimateMs(exactKey)).toBe(5000);
+
+        recordPerformanceLoadDuration(exactKey, 3000);
+        expect(getPerformanceLoadEstimateMs(exactKey)).toBe(3000);
     });
 });
