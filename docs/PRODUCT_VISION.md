@@ -22,9 +22,19 @@ Primary app shells today:
 
 Scheduled Transit also includes **Detour Publisher**, a team-shared, map-first tool for creating fixed-route detour and stop-closure notices from current GTFS patterns. It exports public communication packages but does not modify schedules, GTFS, or MyRide directly.
 
-Adjacent planning-data workspaces include Camp Shuttle Planner (`Route Planner 2` internally), the internal-beta Route Concept Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, Fare Programs, Council Intelligence, and related exploratory tools. Fare Programs summarizes fare-program usage while keeping mapped starting locations visibly separate from confirmed rider or school identity. A planner-selected workbook may be retained in that browser's device-local storage so it does not need to be selected on every visit; it is never bundled into the application or uploaded to shared Firebase storage, and the planner can remove it explicitly. Workbook restore or selection automatically builds the map after disclosing that non-GTFS locations are sent for temporary Mapbox geocoding while generated coordinates remain session-only. The usage map defaults to a heat-map view, retains clustered transaction bubbles for location inspection, combines workbook locations mapped to the same coordinate, and progressively separates nearby points as the planner zooms in. Barrie high-school icons remain planning context only. Planners can compare total transaction uses by weekday, weekend, and time-of-day filters. PDF exports are labelled as internal planning maps. The UI must make clear that transactions do not identify unique riders, confirmed homes, or school attendance. Council Intelligence is a transit-first, evidence-led internal pilot: official named votes and sourced statements may inform profiles, while missing evidence stays unknown and AI or procedural signals must never be presented as official councillor votes.
+Adjacent planning-data workspaces include the 2027–2032 Strategic Plan, Camp Shuttle Planner (`Route Planner 2` internally), the internal-beta Route Concept Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, student-pass planning, Fare Programs, and related exploratory tools. The Strategic Plan uses a card-led evidence library rather than top-level source tabs. Its cards open a read-only bundled-static-GTFS service baseline, the same complete Transit App aggregate used by the standalone Transit App workspace, the current canonical Fleet Plan workbook, and the same canonical published Master Schedule used by Scheduled Transit. It must disclose source dates and limitations, creates no copied datasets, fleet workbooks, or schedule snapshots, and cannot import Transit App data, modify Fleet Plan records, or modify Master Schedules. Fare Programs summarizes fare-program usage while keeping mapped starting locations visibly separate from confirmed rider or school identity. A planner-selected workbook may be retained in that browser's device-local storage so it does not need to be selected on every visit; it is never bundled into the application or uploaded to shared Firebase storage, and the planner can remove it explicitly. Workbook restore or selection automatically builds the map after disclosing that non-GTFS locations are sent for temporary Mapbox geocoding while generated coordinates remain session-only. The usage map defaults to a heat-map view, retains clustered transaction bubbles for location inspection, combines workbook locations mapped to the same coordinate, and progressively separates nearby points as the planner zooms in. Barrie high-school icons remain planning context only. Planners can compare total transaction uses by weekday, weekend, and time-of-day filters. PDF exports are labelled as internal planning maps. The UI must make clear that transactions do not identify unique riders, confirmed homes, or school attendance.
+
+Ridership Trends is the Planning Data replacement for the annual ridership workbook. It combines the reported monthly history through July 2026 with fixed-route STREETS boardings from August 2026 onward, keeps current-year and coverage limitations visible, and does not turn boarding activity into a unique-rider or causal claim. Current-month All Transit reporting adds completed On Demand trips where daily evidence exists; historical comparisons and forecasts remain scheduled-route-only until comparable On Demand history exists.
+
+Specialized Transit remains a distinct management source inside Dashboard & Reporting. Its manager-imported monthly reports support exact trip trend, reconciliation, scheduled day/time demand, recurring-booking indicators, and a Mapbox common-location view. Raw PDFs and rider/booking identifiers remain browser-only; the shared record contains privacy-minimized aggregates and reviewed public-location geography. Specialized Transit must not be blended into fixed-route OTP, productivity, or ridership measures without an explicit comparable source and definition. Its durable contract lives in `docs/SPECIALIZED_TRANSIT_DASHBOARD.md`.
+
+Specialized Transit remains a distinct management source inside Dashboard & Reporting. Its manager-imported monthly reports support exact trip trend, reconciliation, scheduled day/time demand, recurring-booking indicators, and a Mapbox common-location view. Raw PDFs and rider/booking identifiers remain browser-only; the shared record contains privacy-minimized aggregates and reviewed public-location geography. Specialized Transit must not be blended into fixed-route OTP, productivity, or ridership measures without an explicit comparable source and definition. Its durable contract lives in `docs/SPECIALIZED_TRANSIT_DASHBOARD.md`.
 
 Use this document for the overall product frame and the fixed-route core workflow. Use feature-specific product briefs and UI specs for narrower planning-data modules when those tasks are directly relevant.
+
+Corridor Performance is a planning-only evidence workspace for observed-versus-scheduled runtime pressure and reliability. It must show the STREETS evidence range, GTFS baseline, and confidence basis, and it must not silently modify schedules or planner-accepted runtime decisions. Its feature contract lives in `docs/CORRIDOR_PERFORMANCE.md`.
+
+Parking Strategy evidence is a separate, privacy-minimized historical-payment layer within the restricted Parking domain. It must disclose coverage and financial semantics, treat payment activity as distinct from occupancy, and avoid persisting source identifiers. Its parser, aggregate read model, and versioned Storage contract are implemented. The Executive Evidence Board is the selected production direction and pairs location concentration with an explicitly provisional top-location map; production route wiring remains outstanding. The durable contract lives in `docs/PARKING_STRATEGY.md`.
 
 ---
 
@@ -41,6 +51,7 @@ The fixed-route workflow replaces manual Excel-based scheduling with a structure
 Load these only when the task is directly related:
 
 - `docs/DETOUR_PUBLISHER.md` for detour and stop-closure notice authoring
+- `docs/OPERATIONS_PLANNING.md` for Codex-assisted block audit, run cutting, and anonymous weekly rostering
 - `docs/route-concept-planner/README.md` and its contract docs for neutral complete-route concept testing
 - `docs/route-planner-2/README.md` and numbered docs for current Camp Shuttle Planner work
 - `docs/route-planner-legacy/README.md` only for historical old Route Planner background
@@ -109,6 +120,16 @@ Define targets (GO Train, college bells) → Run optimizer → Review adjustment
 ```
 AI-assisted but planner-controlled.
 
+### 5. Operations Planning
+```
+Pin published master versions -> Export validated planning bundle -> Generate external Codex proposal -> Import and independently validate -> Planner edit/review -> Submit -> Approve -> Excel
+```
+Operations Planning audits existing vehicle blocks, cuts operator runs, and
+builds anonymous weekly rosters without changing master trips, times, or block
+membership. Integrity and confirmed contractual failures block approval. Codex
+is a proposal author only; Scheduler 4 recalculates metrics and the planner owns
+every scenario transition.
+
 ## Transit On-Demand Workflow
 
 ```
@@ -140,6 +161,7 @@ RideCo/MVT imports are planner-reviewed before they replace the active shifts. T
 ### 4. AI as Assistant, Not Authority
 - Gemini provides suggestions for schedule optimization
 - Transit On Demand uses fast full regenerate and a richer multi-phase refine path before human review
+- Codex may generate a schema-bound operations-planning proposal outside the app; imported work is source-bound, independently validated, and cannot alter a master schedule
 - Planner always has final say
 
 ---

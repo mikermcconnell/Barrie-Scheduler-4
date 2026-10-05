@@ -20,6 +20,9 @@ const context = vi.hoisted(() => ({
     team: { id: 'team-1', name: 'Barrie Transit' },
     toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
+const mapHarness = vi.hoisted(() => ({
+    captureImage: vi.fn(async () => 'data:image/png;base64,map'),
+}));
 
 vi.mock('../components/contexts/AuthContext', () => ({ useAuth: () => ({ user: context.user }) }));
 vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => ({ team: context.team }) }));
@@ -77,7 +80,7 @@ vi.mock('../components/detours/DetourMapCanvas', () => ({
         _ref,
     ) {
         React.useImperativeHandle(_ref, () => ({
-            captureImage: async () => 'data:image/png;base64,map',
+            captureImage: mapHarness.captureImage,
             fitToNotice: vi.fn(),
         }));
         const temporary = overlay.stopImpacts.find(impact => impact.id.startsWith('temporary-'));
@@ -93,8 +96,8 @@ vi.mock('../components/detours/DetourMapCanvas', () => ({
     }),
 }));
 vi.mock('../components/detours/DetourNoticePreview', () => ({
-    DetourNoticePreview: React.forwardRef(function MockPreview(_props: unknown, _ref) {
-        return <div>Notice preview</div>;
+    DetourNoticePreview: React.forwardRef(function MockPreview({ stopSheet }: { stopSheet?: { stopCode?: string; stopName: string } }, _ref) {
+        return <div>{stopSheet ? `Stop sheet ${stopSheet.stopCode || stopSheet.stopName}` : 'Notice preview'}</div>;
     }),
 }));
 
@@ -115,6 +118,7 @@ describe('DetourPublisherWorkspace', () => {
     beforeEach(() => {
         persistence.list.mockClear();
         persistence.save.mockClear();
+        mapHarness.captureImage.mockClear();
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -199,6 +203,33 @@ describe('DetourPublisherWorkspace', () => {
         act(() => (container.querySelector('[aria-label="Close preview and return to editing"]') as HTMLButtonElement | null)?.click());
         expect(container.textContent).not.toContain('Notice preview');
         expect(container.querySelector('[data-testid="detour-map"]')?.getAttribute('data-publication-mode')).toBe('false');
+    });
+
+    it('previews a derived temporary-stop sheet with a stop-specific map capture', async () => {
+        await act(async () => root.render(<DetourPublisherWorkspace onClose={vi.fn()} />));
+        await flush();
+        act(() => findButton(container, 'New detour')?.click());
+        act(() => findButton(container, 'Choose route')?.click());
+        await flush();
+        act(() => Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Route 8B'))?.click());
+        act(() => findButton(container, 'Mock add temporary stop')?.click());
+        act(() => findButton(container, 'Mock select temporary stop')?.click());
+        const code = container.querySelector('input[placeholder="e.g. 959"]') as HTMLInputElement;
+        act(() => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(code, '1420');
+            code.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        await act(async () => findButton(container, 'Preview & export')?.click());
+        await flush();
+        expect(container.textContent).toContain('2 pages: 1 master, 0 closed stop, 1 temporary stop.');
+        await act(async () => findButton(container, 'Temporary 1420')?.click());
+        await flush();
+        expect(container.textContent).toContain('Stop sheet 1420');
+        expect(mapHarness.captureImage).toHaveBeenCalledWith('image/png', undefined, {
+            kind: 'temporary',
+            position: { latitude: 44.39, longitude: -79.68 },
+        });
     });
 
     it('authors public street labels and exposes invalidated closure labels for reconfirmation', async () => {

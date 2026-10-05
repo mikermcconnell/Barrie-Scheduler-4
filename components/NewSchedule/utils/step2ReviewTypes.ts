@@ -22,6 +22,8 @@ export interface Step2DateRange {
 
 export interface Step2PlannerOverrides {
     excludedBuckets: string[];
+    /** Paired performance cycles are reviewed independently by start orientation. */
+    excludedCycleBucketsByStartDirection?: Partial<Record<'North' | 'South', string[]>>;
 }
 
 export interface Step2PerformanceConfig {
@@ -179,6 +181,9 @@ export interface ApprovedRuntimeContract {
     approvedBy?: Step2ApprovedBy;
 
     acknowledgedWarnings?: string[];
+
+    /** Planner exclusions needed to reconstruct the same independently reviewed inputs after resume. */
+    plannerOverrides?: Step2PlannerOverrides;
 
     sourceSnapshot: Step2SourceSnapshot;
 

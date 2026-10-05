@@ -79,10 +79,13 @@ service firebase.storage {
     function workspaceAllowedByProfile(accessLevel, feature) {
       return accessLevel == 'internal' ||
              (accessLevel == 'admin' &&
-              (feature in ['workspaceFixedRoute', 'workspaceParking', 'analyticsFarePrograms'])) ||
+              (feature in ['workspaceFixedRoute', 'workspaceOperations', 'workspaceParking', 'analyticsTransitApp', 'analyticsFarePrograms', 'analyticsStrategicPlan', 'analyticsRidershipTrend'])) ||
              (accessLevel == 'planner' &&
-              (feature in ['workspaceFixedRoute', 'analyticsFarePrograms'])) ||
-             (accessLevel == 'production' && feature == 'workspaceFixedRoute') ||
+              (feature in ['workspaceFixedRoute', 'workspaceOperations', 'analyticsTransitApp', 'analyticsFarePrograms', 'analyticsStrategicPlan', 'analyticsRidershipTrend'])) ||
+             (accessLevel == 'production' &&
+              (feature in ['workspaceFixedRoute', 'workspaceOperations'])) ||
+             (accessLevel == 'external-planner' && feature == 'analyticsTransitApp') ||
+             (accessLevel == 'transit-app-only' && feature == 'analyticsTransitApp') ||
              (accessLevel == 'parking' && feature == 'workspaceParking');
     }
 
@@ -109,7 +112,8 @@ service firebase.storage {
       return hasUserTeam() &&
         userTeamId() != sourceTeamId &&
         isTeamMember(userTeamId()) &&
-        canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') &&
+        (canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') ||
+         canAccessWorkspace(userTeamId(), 'analyticsStrategicPlan')) &&
         configuredMasterScheduleSource(userTeamId()) == sourceTeamId;
     }
 
@@ -144,6 +148,7 @@ service firebase.storage {
     // Team master schedules - restricted to members of the team
     match /teams/{teamId}/masterSchedules/{allPaths=**} {
       allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+        canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
         canReadSharedMasterSchedules(teamId) ||
         canSupportReadTeamData(teamId);
       allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
@@ -167,6 +172,32 @@ service firebase.storage {
          !firestore.exists(/databases/(default)/documents/teams/$(teamId)/scheduleReviews/$(reviewId)));
     }
 
+    // Immutable operations-planning revisions. The Firestore root stores the
+    // active pointer; only an audited support-edit session may clean up orphans.
+    match /teams/{teamId}/operationsPlanningScenarios/{scenarioId}/versions/{fileName} {
+      allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+        canSupportReadTeamData(teamId);
+      allow create: if fileName.matches('^[1-9][0-9]{0,6}[.]json$') &&
+        request.resource.metadata.revision.matches('^[1-9][0-9]{0,6}$') &&
+        fileName == request.resource.metadata.revision + '.json' &&
+        (canAccessWorkspace(teamId, 'workspaceFixedRoute') || canSupportWriteTeamData(teamId)) &&
+        request.resource.contentType == 'application/json' &&
+        request.resource.size > 0 &&
+        request.resource.size <= 25 * 1024 * 1024 &&
+        request.resource.metadata.teamId == teamId &&
+        request.resource.metadata.scenarioId == scenarioId &&
+        request.resource.metadata.savedBy == request.auth.uid &&
+        ((request.resource.metadata.revision == '1' &&
+          request.resource.metadata.previousStoragePath == '' &&
+          !firestore.exists(/databases/(default)/documents/teams/$(teamId)/operationsPlanningScenarios/$(scenarioId))) ||
+         (firestore.exists(/databases/(default)/documents/teams/$(teamId)/operationsPlanningScenarios/$(scenarioId)) &&
+          firestore.get(/databases/(default)/documents/teams/$(teamId)/operationsPlanningScenarios/$(scenarioId)).data.status in ['draft', 'submitted'] &&
+          request.resource.metadata.previousStoragePath ==
+            firestore.get(/databases/(default)/documents/teams/$(teamId)/operationsPlanningScenarios/$(scenarioId)).data.storagePath));
+      allow update: if false;
+      allow delete: if canSupportWriteTeamData(teamId);
+    }
+
     // Team route map images
     match /teams/{teamId}/routeMaps/{allPaths=**} {
       allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
@@ -175,8 +206,10 @@ service firebase.storage {
 
     // Team transit app data (aggregated JSON)
     match /teams/{teamId}/transitAppData/{allPaths=**} {
-      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
-      allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+      allow read: if canAccessWorkspace(teamId, 'analyticsTransitApp') ||
+        canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+        canSupportReadTeamData(teamId);
+      allow write: if canAccessWorkspace(teamId, 'analyticsTransitApp') || canSupportWriteTeamData(teamId);
     }
 
     // Team performance data (STREETS summaries)
@@ -214,14 +247,43 @@ service firebase.storage {
 
     // Team Fleet Plan data
     match /teams/{teamId}/fleetPlan/{allPaths=**} {
-      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan') ||
+                     canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                     canSupportReadTeamData(teamId);
       allow write: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
+    }
+
+    // Privacy-minimized Specialized Transit aggregates; raw source PDFs and
+    // client/booking identifiers are not valid application payloads. Localhost
+    // uses IndexedDB, while the non-local development fallback stays validated.
+    match /teams/{teamId}/specializedTransitData/{fileName} {
+      allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+      allow create, update: if (isTeamManager(teamId) || canSupportWriteTeamData(teamId)) &&
+        fileName.matches('^revision-[1-9][0-9]{0,6}-[A-Za-z0-9-]+[.]json$') &&
+        request.resource.size < 8 * 1024 * 1024 &&
+        request.resource.contentType == 'application/json';
+      allow delete: if isTeamManager(teamId) || canSupportWriteTeamData(teamId);
+    }
+
+    // Compact long-term fixed-route ridership projection. Unlike the broader
+    // Operations archives, this view has its own Planning Data permission.
+    match /teams/{teamId}/performanceViews/ridership-trends/{generation} {
+      allow read: if generation.matches('^[0-9]+[.]json$') &&
+        (canAccessWorkspace(teamId, 'analyticsRidershipTrend') ||
+         canSupportReadTeamData(teamId));
+      allow write: if generation.matches('^[0-9]+[.]json$') &&
+        (isTeamManager(teamId) || canSupportWriteTeamData(teamId));
     }
 
     // Team Residential Growth planning data
     match /teams/{teamId}/residentialGrowth/{allPaths=**} {
       allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
       allow write: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+    }
+
+    match /gtfs-archive/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
     }
 
     // Apply support-session access consistently to current and future team

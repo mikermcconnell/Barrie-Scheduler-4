@@ -38,4 +38,20 @@ describe('step2NavigationGate', () => {
             hasReviewResult: true,
         })).toBe(false);
     });
+
+    it('returns to build when generated output does not match the current inputs', () => {
+        expect(resolveWizardStepWithStep2Gate({
+            requestedStep: 5,
+            approvalState: 'approved',
+            hasReviewResult: true,
+            hasCurrentGeneratedOutput: false,
+        })).toBe(3);
+
+        expect(resolveWizardStepWithStep2Gate({
+            requestedStep: 5,
+            approvalState: 'approved',
+            hasReviewResult: true,
+            hasCurrentGeneratedOutput: true,
+        })).toBe(5);
+    });
 });

@@ -1,29 +1,43 @@
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import type {
-  DailySummary,
   LoadProfileMonthlyView,
+  PerformanceDashboardViewMode,
   PerformanceDataLoadOptions,
   PerformanceDataSummary,
   PerformanceDetailMode,
   PerformanceMetadata,
 } from './types';
+import { parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
+import { createTodRidershipProjection } from '../../utils/ridership-trends/tod';
+import type { TodPickupSummary } from '../../utils/todPickupTypes';
 import { PERFORMANCE_SCHEMA_VERSION } from './types';
 import { filterPerformanceSummaryByRoute } from './performanceRouteFilter';
 import {
-  buildLoadProfilePeakTrips,
   hydrateLoadProfileMonthlyViews,
   isLoadProfileMonthlyView,
 } from './performanceLoadProfileView';
+import {
+  getPerformanceMonthlyPaths,
+  PERFORMANCE_DASHBOARD_VIEW_MODES,
+  trimDayForDetailMode,
+} from './performanceDashboardView';
+
+export { trimDayForDetailMode } from './performanceDashboardView';
 
 type SharedWorkspace =
   | 'transitAppMetadata'
   | 'transitAppData'
   | 'performanceMetadata'
   | 'performanceOverview'
-  | 'performanceData';
+  | 'performanceData'
+  | 'ridershipTrend'
+  | 'strategicPlanRidershipTrend'
+  | 'ridershipTrendTod'
+  | 'strategicPlanRidershipTod'
+  | 'fleetPlan';
 
-type DataSourceKind = 'transitApp' | 'performance';
+type DataSourceKind = 'transitApp' | 'performance' | 'fleetPlan';
 
 interface SharedWorkspacePayload {
   workspace?: SharedWorkspace;
@@ -66,11 +80,18 @@ function isWorkspace(value: unknown): value is SharedWorkspace {
     'performanceMetadata',
     'performanceOverview',
     'performanceData',
+    'ridershipTrend',
+    'strategicPlanRidershipTrend',
+    'ridershipTrendTod',
+    'strategicPlanRidershipTod',
+    'fleetPlan',
   ].includes(String(value));
 }
 
 function dataSourceKindForWorkspace(workspace: SharedWorkspace): DataSourceKind {
-  return workspace.startsWith('transitApp') ? 'transitApp' : 'performance';
+  if (workspace.startsWith('transitApp')) return 'transitApp';
+  if (workspace === 'fleetPlan') return 'fleetPlan';
+  return 'performance';
 }
 
 async function verifyBearerToken(authHeader: unknown): Promise<admin.auth.DecodedIdToken | null> {
@@ -121,6 +142,92 @@ export function canReadOperatorDwell(
     ? member.accessLevel
     : (member.role === 'owner' || member.role === 'admin' ? 'internal' : 'planner');
   return accessLevel === 'admin' || accessLevel === 'internal';
+}
+
+function memberAccessLevel(member: admin.firestore.DocumentData): string {
+  if (typeof member.accessLevel === 'string') return member.accessLevel;
+  return member.role === 'owner' || member.role === 'admin' ? 'internal' : 'planner';
+}
+
+function memberCanAccessFeature(
+  member: admin.firestore.DocumentData,
+  feature: 'analyticsTransitApp' | 'analyticsFleetPlan' | 'analyticsStrategicPlan' | 'analyticsRidershipTrend',
+): boolean {
+  const override = member.workspaceOverrides?.[feature];
+  if (typeof override === 'boolean') return override;
+
+  const accessLevel = memberAccessLevel(member);
+  if (feature === 'analyticsTransitApp') {
+    return ['planner', 'external-planner', 'transit-app-only', 'admin', 'internal'].includes(accessLevel);
+  }
+  if (feature === 'analyticsRidershipTrend') {
+    return ['planner', 'admin', 'internal'].includes(accessLevel);
+  }
+  if (feature === 'analyticsFleetPlan') {
+    return ['planner', 'admin', 'internal'].includes(accessLevel);
+  }
+  return ['planner', 'admin', 'internal'].includes(accessLevel);
+}
+
+export function canReadRidershipTrend(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  return !!member && memberCanAccessFeature(member, 'analyticsRidershipTrend');
+}
+
+async function assertCanReadRidershipTrend(
+  uid: string,
+  requestingTeamId: string,
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): Promise<void> {
+  if (decoded.schedulerAdmin !== true) {
+    if (!canReadRidershipTrend(member, decoded)) {
+      throw Object.assign(new Error('Ridership Trends access is required.'), { status: 403 });
+    }
+    return;
+  }
+  if (member) return;
+  const supportSnap = await getDb().doc(`developerSupportSessions/${uid}`).get();
+  const support = supportSnap.data();
+  const expiresAtMs = support?.expiresAt?.toMillis?.();
+  if (!supportSnap.exists
+      || support?.teamId !== requestingTeamId
+      || (support?.mode !== 'inspect' && support?.mode !== 'edit')
+      || typeof expiresAtMs !== 'number'
+      || expiresAtMs <= Date.now()) {
+    throw Object.assign(new Error('An active support session for this team is required.'), { status: 403 });
+  }
+}
+
+export function canReadTransitAppEvidence(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  if (!member) return false;
+  return memberCanAccessFeature(member, 'analyticsTransitApp')
+    || memberCanAccessFeature(member, 'analyticsStrategicPlan');
+}
+
+export function canReadFleetPlanEvidence(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  if (!member) return false;
+  return memberCanAccessFeature(member, 'analyticsFleetPlan')
+    || memberCanAccessFeature(member, 'analyticsStrategicPlan');
+}
+
+export function canReadStrategicPlanRidership(
+  member: admin.firestore.DocumentData | null,
+  decoded: admin.auth.DecodedIdToken,
+): boolean {
+  if (decoded.schedulerAdmin === true) return true;
+  return !!member && memberCanAccessFeature(member, 'analyticsStrategicPlan');
 }
 
 export function canReadLoadProfiles(
@@ -203,6 +310,17 @@ function readNestedStringRecord(value: unknown): Record<string, Record<string, s
   return Object.fromEntries(entries);
 }
 
+function readDashboardMonthlyStoragePaths(
+  value: unknown,
+): PerformanceMetadata['dashboardMonthlyStoragePaths'] {
+  const nested = readNestedStringRecord(value);
+  if (!nested) return undefined;
+  const entries = PERFORMANCE_DASHBOARD_VIEW_MODES
+    .map(mode => [mode, nested[mode]] as const)
+    .filter((entry): entry is readonly [PerformanceDashboardViewMode, Record<string, string>] => !!entry[1]);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function normalizePerformanceMetadata(data: admin.firestore.DocumentData): PerformanceMetadata {
   return {
     importedAt: timestampToIso(data.importedAt),
@@ -219,7 +337,11 @@ function normalizePerformanceMetadata(data: admin.firestore.DocumentData): Perfo
     routeStoragePaths: readStringRecord(data.routeStoragePaths),
     monthlyStoragePaths: readStringRecord(data.monthlyStoragePaths),
     routeMonthlyStoragePaths: readNestedStringRecord(data.routeMonthlyStoragePaths),
+    dashboardMonthlyStoragePaths: readDashboardMonthlyStoragePaths(data.dashboardMonthlyStoragePaths),
     loadProfileMonthlyStoragePaths: readStringRecord(data.loadProfileMonthlyStoragePaths),
+    ridershipTrendStoragePath: typeof data.ridershipTrendStoragePath === 'string'
+      ? data.ridershipTrendStoragePath
+      : undefined,
   };
 }
 
@@ -288,72 +410,25 @@ function monthOverlapsRange(month: string, range?: { start: string; end: string 
   return month >= startMonth && month <= endMonth;
 }
 
-function trimMissedTrips(day: DailySummary, keepTripDetails: boolean): DailySummary['missedTrips'] {
-  return day.missedTrips
-    ? {
-      ...day.missedTrips,
-      trips: keepTripDetails ? (day.missedTrips.trips || []) : [],
-    }
-    : day.missedTrips;
-}
-
-export function trimDayForDetailMode(day: DailySummary, mode: PerformanceDetailMode = 'all'): DailySummary {
-  if (mode === 'all') return day;
-
-  const base: DailySummary = {
-    ...day,
-    byStop: [],
-    byTrip: [],
-    loadProfilePeakTrips: undefined,
-    loadProfiles: [],
-    ridershipHeatmaps: undefined,
-    byOperatorDwell: undefined,
-    byCascade: undefined,
-    segmentRuntimes: undefined,
-    stopSegmentRuntimes: undefined,
-    tripStopSegmentRuntimes: undefined,
-    routeStopDeviations: undefined,
-    byRouteHour: undefined,
-  };
-
-  switch (mode) {
-    case 'overview':
-      return { ...base, byTrip: day.byTrip, missedTrips: trimMissedTrips(day, false) };
-    case 'otp':
-      return {
-        ...base,
-        byTrip: day.byTrip,
-        routeStopDeviations: day.routeStopDeviations,
-        byRouteHour: day.byRouteHour,
-        missedTrips: trimMissedTrips(day, true),
-      };
-    case 'ridership':
-      return {
-        ...base,
-        byStop: day.byStop,
-        loadProfiles: day.loadProfiles,
-        ridershipHeatmaps: day.ridershipHeatmaps,
-        byRouteHour: day.byRouteHour,
-        missedTrips: trimMissedTrips(day, false),
-      };
-    case 'load-profiles':
-      return {
-        ...base,
-        loadProfilePeakTrips: day.loadProfilePeakTrips ?? buildLoadProfilePeakTrips(day.byTrip),
-        loadProfiles: day.loadProfiles,
-        runtimePatterns: undefined,
-        missedTrips: trimMissedTrips(day, false),
-      };
-    case 'operator-dwell':
-      return {
-        ...base,
-        byOperatorDwell: day.byOperatorDwell,
-        byCascade: day.byCascade,
-        missedTrips: trimMissedTrips(day, false),
-      };
-    default:
-      return day;
-  }
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await task(items[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 function applyPerformanceLoadOptions(
@@ -401,6 +476,47 @@ async function getPerformanceMetadata(sourceTeamId: string): Promise<Performance
   return snap.exists ? normalizePerformanceMetadata(snap.data() || {}) : null;
 }
 
+async function getFleetPlan(sourceTeamId: string) {
+  const snap = await getDb().doc(`teams/${sourceTeamId}/fleetPlan/default`).get();
+  if (!snap.exists) return null;
+  const metadata = snap.data() || {};
+  const storagePath = typeof metadata.storagePath === 'string' ? metadata.storagePath : '';
+  const expectedPrefix = `teams/${sourceTeamId}/fleetPlan/`;
+  const filename = storagePath.slice(expectedPrefix.length);
+  if (!storagePath.startsWith(expectedPrefix) || !/^[A-Za-z0-9._-]+[.]json$/.test(filename)) {
+    throw new Error('Stored Fleet Plan path is invalid.');
+  }
+  const workbook = await readStorageJson<Record<string, unknown>>(storagePath);
+  if (!workbook) return null;
+  const workbookMetadata = workbook.metadata && typeof workbook.metadata === 'object'
+    ? workbook.metadata as Record<string, unknown>
+    : {};
+  return {
+    ...workbook,
+    metadata: {
+      ...workbookMetadata,
+      ...metadata,
+      updatedAt: typeof metadata.updatedAt === 'string'
+        ? metadata.updatedAt
+        : timestampToIso(metadata.updatedAtServer),
+    },
+  };
+}
+
+async function getTodRidershipProjection(sourceTeamId: string) {
+  const snap = await getDb().doc(`teams/${sourceTeamId}/todPickupData/metadata`).get();
+  if (!snap.exists) return null;
+  const metadata = snap.data() || {};
+  const storagePath = typeof metadata.storagePath === 'string' ? metadata.storagePath : '';
+  const expectedPrefix = `teams/${sourceTeamId}/todPickupData/`;
+  const filename = storagePath.slice(expectedPrefix.length);
+  if (!storagePath.startsWith(expectedPrefix) || !/^[A-Za-z0-9._-]+[.]json$/.test(filename)) {
+    throw new Error('Stored On Demand ridership path is invalid.');
+  }
+  const summary = await readStorageJson<TodPickupSummary>(storagePath);
+  return summary ? createTodRidershipProjection(summary) : null;
+}
+
 function buildSummaryFromDays(
   base: PerformanceDataSummary,
   dailySummaries: PerformanceDataSummary['dailySummaries'],
@@ -424,23 +540,42 @@ function buildSummaryFromDays(
 }
 
 async function loadMonthlyPerformanceSummary(
+  sourceTeamId: string,
   metadata: PerformanceMetadata,
   routeId?: string | null,
   options?: PerformanceDataLoadOptions,
 ): Promise<PerformanceDataSummary | null> {
-  const selectedRoutePaths = routeId && routeId !== 'all'
-    ? metadata.routeMonthlyStoragePaths?.[routeId]
-    : undefined;
-  const paths = selectedRoutePaths || metadata.monthlyStoragePaths;
+  const detailMode = options?.detailMode;
+  const paths = getPerformanceMonthlyPaths(metadata, routeId, detailMode, options?.dateRange);
   if (!paths || Object.keys(paths).length === 0) return null;
+
+  const dashboardPaths = detailMode
+    && PERFORMANCE_DASHBOARD_VIEW_MODES.includes(detailMode as PerformanceDashboardViewMode)
+    && paths === metadata.dashboardMonthlyStoragePaths?.[detailMode as PerformanceDashboardViewMode]
+    ? paths
+    : undefined;
 
   const months = Object.keys(paths)
     .filter(month => monthOverlapsRange(month, options?.dateRange))
     .sort();
   if (months.length === 0) return null;
 
-  const monthSummaries = await Promise.all(
-    months.map(month => readStorageJson<PerformanceDataSummary>(paths[month])),
+  if (dashboardPaths && detailMode) {
+    const expectedPrefix = `teams/${sourceTeamId}/performanceData/views/`;
+    for (const month of months) {
+      const path = paths[month];
+      if (!/^\d{4}-\d{2}$/.test(month)
+          || !path.startsWith(expectedPrefix)
+          || !new RegExp(`^\\d+-${detailMode}-${month}\\.json$`).test(path.slice(expectedPrefix.length))) {
+        throw new Error('Stored dashboard view path is invalid.');
+      }
+    }
+  }
+
+  const monthSummaries = await mapWithConcurrency(
+    months,
+    4,
+    month => readStorageJson<PerformanceDataSummary>(paths[month]),
   );
   const dailySummaries = monthSummaries.flatMap(summary => summary?.dailySummaries || []);
   if (dailySummaries.length === 0) return null;
@@ -495,11 +630,13 @@ async function loadLoadProfileMonthlyView(
     }
   }
 
-  const downloaded = await Promise.all(
-    months.map(async month => ({
+  const downloaded = await mapWithConcurrency(
+    months,
+    4,
+    async month => ({
       month,
       view: await readStorageJson<unknown>(paths[month]),
-    })),
+    }),
   );
   if (downloaded.some(({ month, view }) => !isLoadProfileMonthlyView(view) || view.month !== month)) {
     throw new Error('Stored Load Profiles view has an unsupported or invalid schema.');
@@ -538,7 +675,7 @@ async function getPerformanceData(
   }
 
   const monthlySummary = metadata.monthlyStoragePaths
-    ? await loadMonthlyPerformanceSummary(metadata, routeId, options)
+    ? await loadMonthlyPerformanceSummary(sourceTeamId, metadata, routeId, options)
     : null;
   if (monthlySummary) {
     return filterPerformanceSummaryByRoute(mergePerformanceMetadata(monthlySummary, metadata), routeId);
@@ -560,7 +697,13 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
       return getTransitAppMetadata(payload.sourceTeamId);
     case 'transitAppData': {
       const metadata = await getTransitAppMetadata(payload.sourceTeamId);
-      return metadata?.storagePath ? readStorageJson(metadata.storagePath) : null;
+      if (!metadata?.storagePath) return null;
+      const expectedPrefix = `teams/${payload.sourceTeamId}/transitAppData/`;
+      const filename = metadata.storagePath.slice(expectedPrefix.length);
+      if (!metadata.storagePath.startsWith(expectedPrefix) || !/^\d+[.]json$/.test(filename)) {
+        throw new Error('Stored Transit App data path is invalid.');
+      }
+      return readStorageJson(metadata.storagePath);
     }
     case 'performanceMetadata':
       return getPerformanceMetadata(payload.sourceTeamId);
@@ -578,6 +721,35 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
         dateRange: isDateRange(payload.dateRange) ? payload.dateRange : undefined,
         detailMode: isPerformanceDetailMode(payload.detailMode) ? payload.detailMode : 'all',
       });
+    case 'ridershipTrend': {
+      const metadata = await getPerformanceMetadata(payload.sourceTeamId);
+      if (!metadata?.ridershipTrendStoragePath) return null;
+      const expectedPrefix = `teams/${payload.sourceTeamId}/performanceViews/ridership-trends/`;
+      const filename = metadata.ridershipTrendStoragePath.slice(expectedPrefix.length);
+      if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
+          || !/^\d+[.]json$/.test(filename)) {
+        throw new Error('Stored Ridership Trends projection path is invalid.');
+      }
+      const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);
+      return projection ? parseRidershipTrendProjection(projection) : null;
+    }
+    case 'strategicPlanRidershipTrend': {
+      const metadata = await getPerformanceMetadata(payload.sourceTeamId);
+      if (!metadata?.ridershipTrendStoragePath) return null;
+      const expectedPrefix = `teams/${payload.sourceTeamId}/performanceViews/ridership-trends/`;
+      const filename = metadata.ridershipTrendStoragePath.slice(expectedPrefix.length);
+      if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
+          || !/^\d+[.]json$/.test(filename)) {
+        throw new Error('Stored Ridership Trends projection path is invalid.');
+      }
+      const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);
+      return projection ? parseRidershipTrendProjection(projection) : null;
+    }
+    case 'ridershipTrendTod':
+    case 'strategicPlanRidershipTod':
+      return getTodRidershipProjection(payload.sourceTeamId);
+    case 'fleetPlan':
+      return getFleetPlan(payload.sourceTeamId);
     default:
       return null;
   }
@@ -616,6 +788,24 @@ export const sharedWorkspaceData = onRequest(
         dataSourceKindForWorkspace(payload.workspace),
         decoded,
       );
+      if (payload.workspace.startsWith('transitApp') && !canReadTransitAppEvidence(requestingMember, decoded)) {
+        throw Object.assign(new Error('Transit App or Strategic Plan access is required.'), { status: 403 });
+      }
+      if (payload.workspace === 'ridershipTrend' || payload.workspace === 'ridershipTrendTod') {
+        await assertCanReadRidershipTrend(
+          decoded.uid,
+          payload.requestingTeamId,
+          requestingMember,
+          decoded,
+        );
+      }
+      if ((payload.workspace === 'strategicPlanRidershipTrend' || payload.workspace === 'strategicPlanRidershipTod')
+          && !canReadStrategicPlanRidership(requestingMember, decoded)) {
+        throw Object.assign(new Error('Strategic Plan access is required.'), { status: 403 });
+      }
+      if (payload.workspace === 'fleetPlan' && !canReadFleetPlanEvidence(requestingMember, decoded)) {
+        throw Object.assign(new Error('Fleet Plan or Strategic Plan access is required.'), { status: 403 });
+      }
       const operatorDwellAllowed = canReadOperatorDwell(requestingMember, decoded);
       const operatorDwellRequested = payload.workspace === 'performanceData'
         && payload.detailMode === 'operator-dwell';

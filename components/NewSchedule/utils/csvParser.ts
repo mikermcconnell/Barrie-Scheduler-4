@@ -36,9 +36,64 @@ export interface RuntimeData {
     runtimePatternSummary?: string;
 }
 
+/**
+ * Parse RFC 4180-style CSV rows without losing commas, escaped quotes, or
+ * line breaks inside quoted fields. The runtime export is small enough that a
+ * single pass over the text is preferable to pulling in a browser-only parser.
+ */
+function parseCsvRows(text: string): string[][] {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let field = '';
+    let inQuotes = false;
+
+    const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+
+    for (let index = 0; index < source.length; index += 1) {
+        const char = source[index];
+
+        if (inQuotes) {
+            if (char === '"') {
+                if (source[index + 1] === '"') {
+                    field += '"';
+                    index += 1;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                field += char;
+            }
+            continue;
+        }
+
+        if (char === '"' && field.length === 0) {
+            inQuotes = true;
+        } else if (char === ',') {
+            row.push(field);
+            field = '';
+        } else if (char === '\n' || char === '\r') {
+            if (char === '\r' && source[index + 1] === '\n') index += 1;
+            row.push(field);
+            if (row.some(value => value.trim().length > 0)) rows.push(row);
+            row = [];
+            field = '';
+        } else {
+            field += char;
+        }
+    }
+
+    if (inQuotes) {
+        throw new Error('Invalid CSV format: Unclosed quoted field');
+    }
+
+    row.push(field);
+    if (row.some(value => value.trim().length > 0)) rows.push(row);
+    return rows;
+}
+
 export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
     const text = await file.text();
-    const rows = text.split('\n').map(r => r.trim()).filter(r => r.length > 0);
+    const rows = parseCsvRows(text);
 
     // Check if we have any data
     if (rows.length < 3) throw new Error("Invalid CSV format: Too few rows");
@@ -64,9 +119,8 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
 
     // Iterate all rows
     for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const cols = row.split(','); // Simple split
-        const rowLabel = cols[0];
+        const cols = rows[i];
+        const rowLabel = cols[0]?.trim() ?? '';
 
         if (rowLabel.startsWith('Title')) {
             // New Block Start. Extract Segment Name.
@@ -162,7 +216,7 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
     let detectedDirection: RouteDirection | undefined;
 
     for (const row of rows) {
-        const firstCol = row.split(',')[0].trim();
+        const firstCol = row[0]?.trim() ?? '';
 
         // Pattern 0: Route number with letter suffix, then separate N/S direction
         // e.g., "12A N Observed..." or "12B S Observed..."

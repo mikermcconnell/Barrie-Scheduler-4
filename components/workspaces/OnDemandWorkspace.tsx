@@ -1241,6 +1241,7 @@ export const OnDemandWorkspace: React.FC<OnDemandWorkspaceProps> = ({
             if (masterContent) {
                 const newSchedules = parseMasterContent(masterContent);
                 setSchedules(newSchedules);
+                setZoneFilter('All');
 
                 const resolvedDay = resolveOnDemandDay(newSchedules, selectedDayType);
                 if (resolvedDay) {
@@ -1318,6 +1319,7 @@ export const OnDemandWorkspace: React.FC<OnDemandWorkspaceProps> = ({
             if (cachedFiles.master) {
                 const newSchedules = parseMasterContent(cachedFiles.master);
                 setSchedules(newSchedules);
+                setZoneFilter('All');
                 const resolvedDay = resolveOnDemandDay(newSchedules, selectedDayType);
                 if (resolvedDay) {
                     dayForShiftFiltering = resolvedDay.selectedDayType;
@@ -1487,6 +1489,7 @@ export const OnDemandWorkspace: React.FC<OnDemandWorkspaceProps> = ({
                 const newSchedules = parseMasterContent(content);
                 console.log('Parsed schedules:', Object.keys(newSchedules));
                 setSchedules(newSchedules);
+                setZoneFilter('All');
                 setLoadedCloudFiles(prev => ({ ...prev, master: file }));
 
                 const resolvedDay = resolveOnDemandDay(newSchedules, selectedDayType);

@@ -1,3 +1,4 @@
+import { usePerformanceAggregation } from './performanceAggregation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layer, Popup, Source } from 'react-map-gl/mapbox';
 import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
@@ -11,8 +12,22 @@ import {
   getRouteScopedStopActivityBreakdown,
   hasHourlyDataForStops,
   matchesStopSearch,
+  type StopActivityViewMode,
 } from '../../utils/performanceStopActivity';
+import {
+  mergeTodIntoStopActivity,
+  type CombinedStopActivityLocation,
+} from '../../utils/todPickupAggregation';
+import type { TodDailyKpiLocation } from '../../utils/todPickupTypes';
 import { HeatmapDotLayer, LassoControl, MapBase, RouteOverlay, toGeoJSON, pointInPolygon } from '../shared';
+import {
+  fetchBarrieParcelOutlines,
+  padParcelBounds,
+  parcelBoundsContain,
+  PARCEL_MIN_ZOOM,
+  type ParcelBounds,
+  type ParcelOutlines,
+} from '../../utils/barrieParcelBoundaries';
 
 interface StopActivityMapProps {
   stops: StopMetrics[];
@@ -20,15 +35,19 @@ interface StopActivityMapProps {
   currentDayCount?: number;
   comparisonDayCount?: number;
   comparisonRange?: { start: string; end: string } | null;
+  todLocations?: TodDailyKpiLocation[];
+  todDayCount?: number;
 }
-type ViewMode = 'total' | 'boardings' | 'alightings';
+type ViewMode = 'activity' | 'boardings' | 'alightings';
 type MapMode = 'activity' | 'change';
 type ChangeFocus = 'all' | 'increase' | 'decrease';
 type CoordinateSource = 'gtfs' | 'streets' | 'none';
-interface EnrichedStop extends StopMetrics {
+interface EnrichedStop extends CombinedStopActivityLocation {
   activity: number;
   filteredBoardings: number;
   filteredAlightings: number;
+  filteredTodPickups: number;
+  filteredTodDropoffs: number;
   comparisonBoardings: number;
   comparisonAlightings: number;
   currentPerDay: number;
@@ -40,8 +59,15 @@ interface EnrichedStop extends StopMetrics {
 }
 interface RenderedStop extends EnrichedStop { bin: number; sortKey: number; }
 interface HoverInfo { stopId: string; latitude: number; longitude: number; }
+interface ParcelView { bounds: ParcelBounds; zoom: number; }
+
+function toStopActivityViewMode(viewMode: ViewMode): StopActivityViewMode {
+  return viewMode === 'activity' ? 'total' : viewMode;
+}
 
 const BARRIE_CENTER: [number, number] = [44.38, -79.69];
+const RIDERSHIP_LIGHT_MAP_STYLE = 'mapbox://styles/mapbox/light-v11';
+const RIDERSHIP_SATELLITE_MAP_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12';
 const OUTLINE_COLOR = '#374151';
 const CHANGE_INCREASE_COLOR = '#0891b2';
 const CHANGE_DECREASE_COLOR = '#ea580c';
@@ -104,7 +130,7 @@ function formatShortRange(range: { start: string; end: string } | null | undefin
   return range.start === range.end ? start : `${start}–${end}`;
 }
 
-const Legend = ({ mapMode, comparisonRange, unavailableStops, unavailableReason }: { mapMode: MapMode; comparisonRange?: { start: string; end: string } | null; unavailableStops: number; unavailableReason: 'hourly' | 'route' }) => (
+const Legend = ({ mapMode, comparisonRange, unavailableStops, unavailableReason, todStatus }: { mapMode: MapMode; comparisonRange?: { start: string; end: string } | null; unavailableStops: number; unavailableReason: 'hourly' | 'route'; todStatus?: string | null }) => (
   <div className="absolute bottom-6 left-2 z-[1000] bg-white/95 rounded-lg shadow-md border border-gray-200 px-2.5 py-2 text-[10px] pointer-events-auto">
     <div className="font-bold text-gray-600 mb-1 text-[11px]">{mapMode === 'change' ? 'Activity change' : 'Activity'}</div>
     {mapMode === 'change' ? (
@@ -123,6 +149,7 @@ const Legend = ({ mapMode, comparisonRange, unavailableStops, unavailableReason 
         </div>
       ))}
     {unavailableStops > 0 && <div className="mt-1.5 max-w-36 border-t border-gray-100 pt-1 text-[9px] leading-tight text-amber-700">{unavailableStops} stop{unavailableStops === 1 ? '' : 's'} hidden because reliable {unavailableReason === 'hourly' ? 'hourly' : 'route-specific'} data is unavailable.</div>}
+    {todStatus && <div className="mt-1.5 max-w-36 border-t border-gray-100 pt-1 text-[9px] leading-tight text-purple-700">{todStatus}</div>}
   </div>
 );
 
@@ -142,30 +169,79 @@ const LassoSummaryPanel = ({ selected, mapMode, onClose }: { selected: EnrichedS
   const currentPerDay = selected.reduce((sum, stop) => sum + stop.currentPerDay, 0);
   const comparisonPerDay = selected.reduce((sum, stop) => sum + stop.comparisonPerDay, 0);
   const changePerDay = currentPerDay - comparisonPerDay;
-  return <div className="absolute top-2 left-2 z-[1000] bg-white/95 rounded-lg shadow-lg border border-gray-200 w-80 p-3 pointer-events-auto"><div className="flex items-start justify-between"><div><div className="font-bold text-sm">Lasso Selection</div><div className="text-[10px] text-gray-400">{selected.length} stops selected</div></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close lasso summary">x</button></div>{mapMode === 'change' ? <div className="grid grid-cols-3 gap-2 mt-3 text-center"><div><div className="text-xs font-bold text-gray-800">{currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Current/day</div></div><div><div className="text-xs font-bold text-gray-600">{comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Prior/day</div></div><div><div className={`text-xs font-bold ${changePerDay > 0 ? 'text-cyan-700' : changePerDay < 0 ? 'text-orange-700' : 'text-gray-500'}`}>{formatSigned(changePerDay)}</div><div className="text-[9px] text-gray-400 uppercase">Change/day</div></div></div> : <div className="grid grid-cols-3 gap-2 mt-3 text-center"><div><div className="text-xs font-bold text-cyan-600">{totalB.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Boardings</div></div><div><div className="text-xs font-bold text-purple-600">{totalA.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Alightings</div></div><div><div className="text-xs font-bold text-gray-800">{(totalB + totalA).toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Total</div></div></div>}</div>;
+  return (
+    <div className="absolute top-2 left-2 z-[1000] bg-white/95 rounded-lg shadow-lg border border-gray-200 w-80 p-3 pointer-events-auto">
+      <div className="flex items-start justify-between">
+        <div><div className="font-bold text-sm">Lasso Selection</div><div className="text-[10px] text-gray-400">{selected.length} locations selected</div></div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close lasso summary">x</button>
+      </div>
+      {mapMode === 'change' ? (
+        <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+          <div><div className="text-xs font-bold text-gray-800">{currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Current/day</div></div>
+          <div><div className="text-xs font-bold text-gray-600">{comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Prior/day</div></div>
+          <div><div className={`text-xs font-bold ${changePerDay > 0 ? 'text-cyan-700' : changePerDay < 0 ? 'text-orange-700' : 'text-gray-500'}`}>{formatSigned(changePerDay)}</div><div className="text-[9px] text-gray-400 uppercase">Change/day</div></div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+          <div><div className="text-xs font-bold text-cyan-600">{totalB.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Board + Pickup</div></div>
+          <div><div className="text-xs font-bold text-purple-600">{totalA.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Alight + Drop-off</div></div>
+          <div><div className="text-xs font-bold text-gray-800">{(totalB + totalA).toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Activity</div></div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 const DetailPanel = ({ stop, rank, total, activeHours, mapMode, currentDayCount, comparisonDayCount, onClose }: { stop: EnrichedStop; rank: number; total: number; activeHours: number[] | null; mapMode: MapMode; currentDayCount: number; comparisonDayCount: number; onClose: () => void }) => {
   const routeRows = getStopRouteActivityBreakdown(stop, activeHours);
   const hourlyData = Array.from({ length: 24 }, (_, h) => ({ b: stop.hourlyBoardings?.[h] || 0, a: stop.hourlyAlightings?.[h] || 0 }));
   const maxHourly = Math.max(...hourlyData.map((d) => d.b + d.a), 1);
-  return <div className="absolute top-2 left-2 z-[1000] bg-white/95 rounded-lg shadow-lg border border-gray-200 w-72 pointer-events-auto"><div className="flex items-start justify-between px-3 pt-2.5 pb-1"><div><div className="font-bold text-sm leading-tight">{stop.stopName}</div><div className="text-[10px] text-gray-400">Stop {stop.stopId} · #{rank} of {total}</div></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close stop details">x</button></div>{mapMode === 'change' ? <><div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100 text-center"><div><div className="text-xs font-bold text-gray-800">{stop.currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Current/day</div></div><div><div className="text-xs font-bold text-gray-600">{stop.comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Prior/day</div></div><div><div className={`text-xs font-bold ${stop.changePerDay > 0 ? 'text-cyan-700' : stop.changePerDay < 0 ? 'text-orange-700' : 'text-gray-500'}`}>{formatSigned(stop.changePerDay)}</div><div className="text-[9px] text-gray-400 uppercase">Change/day</div></div></div><div className="px-3 py-2 border-t border-gray-100 text-[10px] text-gray-500"><div className="flex justify-between"><span>Percentage change</span><strong className="text-gray-700">{formatChangePercentLabel(stop)}</strong></div><div className="mt-1 flex justify-between"><span>Service days compared</span><strong className="text-gray-700">{currentDayCount} vs {comparisonDayCount}</strong></div></div></> : <><div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100 text-center"><div><div className="text-xs font-bold text-cyan-600">{stop.filteredBoardings.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Boardings</div></div><div><div className="text-xs font-bold text-purple-600">{stop.filteredAlightings.toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Alightings</div></div><div><div className="text-xs font-bold text-gray-800">{(stop.filteredBoardings + stop.filteredAlightings).toLocaleString()}</div><div className="text-[9px] text-gray-400 uppercase">Total</div></div></div><div className="px-3 py-2 border-t border-gray-100"><div className="text-[9px] text-gray-400 uppercase mb-1">Ridership by Route</div><table className="w-full text-[10px]"><tbody>{routeRows.slice(0, 6).map((row) => <tr key={row.routeId}><td className="py-0.5 text-gray-700 font-semibold">Route {row.routeId}</td><td className="py-0.5 text-right text-gray-700 tabular-nums">{row.total.toLocaleString()}</td></tr>)}</tbody></table></div><div className="px-3 py-2 border-t border-gray-100"><div className="text-[9px] text-gray-400 uppercase mb-1">Hourly Pattern</div><svg width="100%" height="40" viewBox="0 0 240 40" preserveAspectRatio="none">{hourlyData.map((d, h) => { const barH = ((d.b + d.a) / maxHourly) * 36; return <rect key={h} x={h * 10} y={40 - barH} width="8" height={barH} rx="1" fill={d.b + d.a > 0 ? '#06b6d4' : '#e5e7eb'} opacity="0.8" />; })}</svg></div></>}</div>;
+  const sourceLabel = stop.activitySource === 'transit-on-demand'
+    ? 'Transit On Demand location'
+    : stop.activitySource === 'combined'
+      ? `Stop ${stop.stopId} · Fixed route + TOD`
+      : `Stop ${stop.stopId}`;
+  return (
+    <div className="absolute top-2 left-2 z-[1000] bg-white/95 rounded-lg shadow-lg border border-gray-200 w-72 pointer-events-auto">
+      <div className="flex items-start justify-between px-3 pt-2.5 pb-1"><div><div className="font-bold text-sm leading-tight">{stop.stopName}</div><div className="text-[10px] text-gray-400">{sourceLabel} · #{rank} of {total}</div></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close stop details">x</button></div>
+      {mapMode === 'change' ? <><div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100 text-center"><div><div className="text-xs font-bold text-gray-800">{stop.currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Current/day</div></div><div><div className="text-xs font-bold text-gray-600">{stop.comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Prior/day</div></div><div><div className={`text-xs font-bold ${stop.changePerDay > 0 ? 'text-cyan-700' : stop.changePerDay < 0 ? 'text-orange-700' : 'text-gray-500'}`}>{formatSigned(stop.changePerDay)}</div><div className="text-[9px] text-gray-400 uppercase">Change/day</div></div></div><div className="px-3 py-2 border-t border-gray-100 text-[10px] text-gray-500"><div className="flex justify-between"><span>Percentage change</span><strong className="text-gray-700">{formatChangePercentLabel(stop)}</strong></div><div className="mt-1 flex justify-between"><span>Service days compared</span><strong className="text-gray-700">{currentDayCount} vs {comparisonDayCount}</strong></div></div></> : <><div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100 text-center"><div><div className="text-xs font-bold text-cyan-600">{stop.filteredBoardings.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Board</div></div><div><div className="text-xs font-bold text-purple-600">{stop.filteredAlightings.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Alight</div></div><div><div className="text-xs font-bold text-gray-800">{(stop.filteredBoardings + stop.filteredAlightings).toLocaleString(undefined, { maximumFractionDigits: 1 })}</div><div className="text-[9px] text-gray-400 uppercase">Activity</div></div></div><div className="px-3 py-2 border-t border-gray-100"><div className="text-[9px] text-gray-400 uppercase mb-1">Fixed-route ridership by route</div>{routeRows.length > 0 ? <table className="w-full text-[10px]"><tbody>{routeRows.slice(0, 6).map((row) => <tr key={row.routeId}><td className="py-0.5 text-gray-700 font-semibold">Route {row.routeId}</td><td className="py-0.5 text-right text-gray-700 tabular-nums">{row.total.toLocaleString(undefined, { maximumFractionDigits: 1 })}</td></tr>)}</tbody></table> : <div className="text-[10px] text-gray-400">No fixed-route activity at this location.</div>}</div><div className="px-3 py-2 border-t border-gray-100"><div className="text-[9px] text-gray-400 uppercase mb-1">Fixed-route hourly pattern</div><svg width="100%" height="40" viewBox="0 0 240 40" preserveAspectRatio="none">{hourlyData.map((d, h) => { const barH = ((d.b + d.a) / maxHourly) * 36; return <rect key={h} x={h * 10} y={40 - barH} width="8" height={barH} rx="1" fill={d.b + d.a > 0 ? '#06b6d4' : '#e5e7eb'} opacity="0.8" />; })}</svg></div></>}
+    </div>
+  );
 };
 
 export const StopActivityMap: React.FC<StopActivityMapProps> = ({
-  stops,
+  stops: sourceStops,
   comparisonStops = [],
   currentDayCount = 1,
   comparisonDayCount = 0,
   comparisonRange = null,
+  todLocations: sourceTodLocations = [],
+  todDayCount = 0,
 }) => {
   const mapRef = useRef<MapRef | null>(null);
   const hasFittedRef = useRef(false);
+  const loadedParcelBoundsRef = useRef<ParcelBounds | null>(null);
   const playHourRef = useRef(5);
   const [mapReady, setMapReady] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mapMode, setMapMode] = useState<MapMode>('activity');
-  const [viewMode, setViewMode] = useState<ViewMode>('total');
+  const { mode, divisor, unit } = usePerformanceAggregation();
+  const stops = useMemo(() => mapMode === 'change' || mode === 'sum' ? sourceStops : sourceStops.map(stop => ({
+    ...stop,
+    boardings: stop.boardings / divisor,
+    alightings: stop.alightings / divisor,
+    hourlyBoardings: stop.hourlyBoardings?.map(value => value / divisor),
+    hourlyAlightings: stop.hourlyAlightings?.map(value => value / divisor),
+    routeBreakdown: stop.routeBreakdown?.map(route => ({
+      ...route, boardings: route.boardings / divisor, alightings: route.alightings / divisor,
+      hourlyBoardings: route.hourlyBoardings?.map(value => value / divisor),
+      hourlyAlightings: route.hourlyAlightings?.map(value => value / divisor),
+    })),
+  })), [sourceStops, mapMode, mode, divisor]);
+  const todLocations = useMemo(() => mode === 'sum' ? sourceTodLocations : sourceTodLocations.map(location => ({
+    ...location, pickups: location.pickups / Math.max(1, todDayCount), dropoffs: location.dropoffs / Math.max(1, todDayCount),
+  })), [sourceTodLocations, mode, todDayCount]);
+  const [viewMode, setViewMode] = useState<ViewMode>('activity');
   const [selectedRoute, setSelectedRoute] = useState('all');
   const [selectedStop, setSelectedStop] = useState<EnrichedStop | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
@@ -176,15 +252,38 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [showRouteLines, setShowRouteLines] = useState(true);
+  const [isSatellite, setIsSatellite] = useState(false);
+  const [showParcelLines, setShowParcelLines] = useState(false);
+  const [parcelView, setParcelView] = useState<ParcelView | null>(null);
+  const [parcelOutlines, setParcelOutlines] = useState<ParcelOutlines | null>(null);
+  const [parcelStatus, setParcelStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [parcelError, setParcelError] = useState<string | null>(null);
+  const [parcelRetry, setParcelRetry] = useState(0);
   const [lassoMode, setLassoMode] = useState(false);
   const [lassoSelection, setLassoSelection] = useState<EnrichedStop[] | null>(null);
   const [bottomNFilter, setBottomNFilter] = useState<number | null>(null);
+  const [minActivityThreshold, setMinActivityThreshold] = useState<number | null>(null);
   const [changeFocus, setChangeFocus] = useState<ChangeFocus>('all');
+  const thresholdMetricLabel = viewMode === 'activity'
+    ? 'activity'
+    : viewMode === 'boardings'
+      ? 'boardings'
+      : 'alightings';
+  const thresholdDescription = mapMode === 'change'
+    ? `absolute ${thresholdMetricLabel} change per day`
+    : mode === 'average'
+      ? `${thresholdMetricLabel} per ${unit}`
+      : `${thresholdMetricLabel} in the selected period`;
 
-  const currentStopMap = useMemo(() => new Map(stops.map(stop => [stop.stopId, stop])), [stops]);
-  const comparisonStopMap = useMemo(() => new Map(comparisonStops.map(stop => [stop.stopId, stop])), [comparisonStops]);
+  const fixedRouteActivityStops = useMemo(() => mergeTodIntoStopActivity(stops, []), [stops]);
+  const combinedActivityStops = useMemo(() => mergeTodIntoStopActivity(stops, todLocations), [stops, todLocations]);
+  const comparisonActivityStops = useMemo(() => mergeTodIntoStopActivity(comparisonStops, []), [comparisonStops]);
+  const currentStopsForMode = mapMode === 'activity' ? combinedActivityStops : fixedRouteActivityStops;
+  const fixedRouteStopMap = useMemo(() => new Map(fixedRouteActivityStops.map(stop => [stop.stopId, stop])), [fixedRouteActivityStops]);
+  const currentStopMap = useMemo(() => new Map(currentStopsForMode.map(stop => [stop.stopId, stop])), [currentStopsForMode]);
+  const comparisonStopMap = useMemo(() => new Map(comparisonActivityStops.map(stop => [stop.stopId, stop])), [comparisonActivityStops]);
   const combinedStops = useMemo(() => {
-    if (mapMode === 'activity') return stops;
+    if (mapMode === 'activity') return combinedActivityStops;
     const stopIds = new Set([...currentStopMap.keys(), ...comparisonStopMap.keys()]);
     return Array.from(stopIds).map(stopId => {
       const current = currentStopMap.get(stopId);
@@ -201,9 +300,14 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
         routeBreakdown: current?.routeBreakdown,
         routes,
         routeCount: routes.length,
+        activitySource: 'fixed-route' as const,
+        fixedRouteBoardings: current?.fixedRouteBoardings ?? 0,
+        fixedRouteAlightings: current?.fixedRouteAlightings ?? 0,
+        todPickups: 0,
+        todDropoffs: 0,
       };
     });
-  }, [comparisonStopMap, currentStopMap, mapMode, stops]);
+  }, [combinedActivityStops, comparisonStopMap, currentStopMap, mapMode]);
   const enrichedStops = useMemo(() => combinedStops.map((stop) => {
     const gtfs = findStopCoords(stop.stopId, stop.stopName);
     if (gtfs) {
@@ -223,6 +327,13 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
     : currentHasHourlyData;
   const canCompare = comparisonDayCount > 0 && comparisonStops.length > 0;
   const availableRoutes = useMemo(() => Array.from(new Set(enrichedStops.flatMap((stop) => stop.routes || []))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [enrichedStops]);
+  const todStatus = useMemo(() => {
+    if (todLocations.length === 0) return null;
+    if (mapMode === 'change') return 'TOD hidden: no prior-period comparison is available.';
+    if (selectedRoute !== 'all') return 'TOD hidden: On Demand activity has no fixed-route attribution.';
+    if (activeHours !== null) return 'TOD hidden: the daily report has no hourly detail.';
+    return `${todLocations.length} TOD location${todLocations.length === 1 ? '' : 's'} included.`;
+  }, [activeHours, mapMode, selectedRoute, todLocations.length]);
   const routeShapes = useMemo(() => { try { return loadGtfsRouteShapeVariants(); } catch { return []; } }, []);
   const routeFilteredStops = useMemo(() => {
     let result = enrichedStops;
@@ -233,9 +344,11 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
     const result = routeFilteredStops.filter((stop) => hasUsableBarrieCoords(stop.lat, stop.lon));
     let unavailableCount = 0;
     const resolvedStops = result.flatMap((stop): EnrichedStop[] => {
-      const currentStop = currentStopMap.get(stop.stopId);
+      const useFixedRouteOnly = mapMode === 'change' || selectedRoute !== 'all' || activeHours !== null;
+      const currentStop = useFixedRouteOnly ? fixedRouteStopMap.get(stop.stopId) : currentStopMap.get(stop.stopId);
       const comparisonStop = comparisonStopMap.get(stop.stopId);
-      const resolvePeriod = (periodStop: StopMetrics | undefined) => {
+      if (mapMode === 'activity' && useFixedRouteOnly && !currentStop) return [];
+      const resolvePeriod = (periodStop: CombinedStopActivityLocation | undefined) => {
         if (!periodStop) return { boardings: 0, alightings: 0 };
         if (selectedRoute !== 'all' && !periodStop.routes?.includes(selectedRoute)) {
           return { boardings: 0, alightings: 0 };
@@ -249,11 +362,12 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
         return [];
       }
       const effectiveComparison = comparison ?? { boardings: 0, alightings: 0 };
-      const currentValue = getStopActivityValue(filtered, viewMode, null);
+      const activityViewMode = toStopActivityViewMode(viewMode);
+      const currentValue = getStopActivityValue(filtered, activityViewMode, null);
       const { currentPerDay, comparisonPerDay, changePerDay, changePercent } = getStopActivityChange(
         filtered,
         effectiveComparison,
-        viewMode,
+        activityViewMode,
         null,
         currentDayCount,
         comparisonDayCount,
@@ -263,10 +377,13 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
         : changePerDay > 0
           ? CHANGE_INCREASE_COLOR
           : CHANGE_DECREASE_COLOR;
+      const includeTodBreakdown = mapMode === 'activity' && selectedRoute === 'all' && activeHours === null;
       return [{
         ...stop,
         filteredBoardings: filtered.boardings,
         filteredAlightings: filtered.alightings,
+        filteredTodPickups: includeTodBreakdown ? stop.todPickups : 0,
+        filteredTodDropoffs: includeTodBreakdown ? stop.todDropoffs : 0,
         comparisonBoardings: effectiveComparison.boardings,
         comparisonAlightings: effectiveComparison.alightings,
         currentPerDay,
@@ -278,19 +395,23 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
       } as EnrichedStop];
     });
     return { filteredStops: resolvedStops, unavailableScopedStopCount: unavailableCount };
-  }, [activeHours, comparisonDayCount, comparisonStopMap, currentDayCount, currentStopMap, mapMode, routeFilteredStops, selectedRoute, viewMode]);
+  }, [activeHours, comparisonDayCount, comparisonStopMap, currentDayCount, currentStopMap, fixedRouteStopMap, mapMode, routeFilteredStops, selectedRoute, viewMode]);
+  const thresholdFilteredStops = useMemo(() => minActivityThreshold === null
+    ? filteredStops
+    : filteredStops.filter((stop) => stop.activity >= minActivityThreshold),
+  [filteredStops, minActivityThreshold]);
   const displayedStops = useMemo(() => {
     if (mapMode === 'change') {
-      if (changeFocus === 'increase') return [...filteredStops].filter(stop => stop.changePerDay > 0).sort((a, b) => b.changePerDay - a.changePerDay).slice(0, 25);
-      if (changeFocus === 'decrease') return [...filteredStops].filter(stop => stop.changePerDay < 0).sort((a, b) => a.changePerDay - b.changePerDay).slice(0, 25);
-      return filteredStops;
+      if (changeFocus === 'increase') return [...thresholdFilteredStops].filter(stop => stop.changePerDay > 0).sort((a, b) => b.changePerDay - a.changePerDay).slice(0, 25);
+      if (changeFocus === 'decrease') return [...thresholdFilteredStops].filter(stop => stop.changePerDay < 0).sort((a, b) => a.changePerDay - b.changePerDay).slice(0, 25);
+      return thresholdFilteredStops;
     }
     return bottomNFilter === null
-      ? filteredStops
-      : [...filteredStops.filter((stop) => stop.activity > 0)].sort((a, b) => a.activity - b.activity).slice(0, bottomNFilter);
-  }, [bottomNFilter, changeFocus, filteredStops, mapMode]);
+      ? thresholdFilteredStops
+      : [...thresholdFilteredStops.filter((stop) => stop.activity > 0)].sort((a, b) => a.activity - b.activity).slice(0, bottomNFilter);
+  }, [bottomNFilter, changeFocus, mapMode, thresholdFilteredStops]);
   const rankedDisplayedStops = useMemo(() => [...displayedStops].sort((a, b) => b.activity - a.activity), [displayedStops]);
-  const searchResults = useMemo(() => !searchQuery.trim() ? [] : filteredStops.filter((stop) => matchesStopSearch(stop, searchQuery)).sort((a, b) => b.activity - a.activity).slice(0, 8), [filteredStops, searchQuery]);
+  const searchResults = useMemo(() => !searchQuery.trim() ? [] : thresholdFilteredStops.filter((stop) => matchesStopSearch(stop, searchQuery)).sort((a, b) => b.activity - a.activity).slice(0, 8), [searchQuery, thresholdFilteredStops]);
   const renderedStops = useMemo(() => {
     const bins = assignBins(displayedStops.map((stop) => stop.activity));
     return displayedStops.map((stop, index) => ({ ...stop, bin: bins[index], sortKey: index })).sort((a, b) => a.bin - b.bin) as RenderedStop[];
@@ -325,14 +446,24 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const labelPaint = useMemo(() => ({ 'text-color': '#374151', 'text-halo-color': '#ffffff', 'text-halo-width': 1.8, 'text-halo-blur': 0.6 }), []);
   const ringGeoJSON = useCallback((stop: EnrichedStop | null, extra: number) => !stop ? null : ({ type: 'FeatureCollection' as const, features: [{ type: 'Feature' as const, properties: { radiusBase: ((renderedStopMap.get(stop.stopId)?.bin ?? 5) === 0 ? 14 : BINS[renderedStopMap.get(stop.stopId)?.bin ?? 5].radius) + extra }, geometry: { type: 'Point' as const, coordinates: toGeoJSON([stop.lat, stop.lon]) } }] }), [renderedStopMap]);
   const selectedRing = useMemo(() => ringGeoJSON(selectedStop, 6), [ringGeoJSON, selectedStop]);
-  const previewRing = useMemo(() => ringGeoJSON(searchPreviewStopId ? filteredStops.find((stop) => stop.stopId === searchPreviewStopId) ?? null : null, 6), [filteredStops, ringGeoJSON, searchPreviewStopId]);
+  const previewRing = useMemo(() => ringGeoJSON(searchPreviewStopId ? thresholdFilteredStops.find((stop) => stop.stopId === searchPreviewStopId) ?? null : null, 6), [ringGeoJSON, searchPreviewStopId, thresholdFilteredStops]);
   const lassoRing = useMemo(() => !lassoSelection ? null : ({ type: 'FeatureCollection' as const, features: lassoSelection.map((stop) => ({ type: 'Feature' as const, properties: { radiusBase: ((renderedStopMap.get(stop.stopId)?.bin ?? 5) === 0 ? 14 : BINS[renderedStopMap.get(stop.stopId)?.bin ?? 5].radius) + 4 }, geometry: { type: 'Point' as const, coordinates: toGeoJSON([stop.lat, stop.lon]) } })) }), [lassoSelection, renderedStopMap]);
 
   const clearLassoSelection = useCallback(() => setLassoSelection(null), []);
   const toggleFullscreen = useCallback(() => setIsFullscreen((prev) => !prev), []);
   const toggleLassoMode = useCallback(() => setLassoMode((prev) => { const next = !prev; if (next) { setSelectedStop(null); setHoverInfo(null); setSearchPreviewStopId(null); setLassoSelection(null); } else { setLassoSelection(null); } return next; }), []);
   const flyToStop = useCallback((stop: EnrichedStop) => { mapRef.current?.flyTo({ center: [stop.lon, stop.lat], zoom: 16, duration: 500 }); setSelectedStop(stop); setHoverInfo(null); setSearchPreviewStopId(null); setSearchFocused(false); setSearchQuery(''); }, []);
-  const handleMapLoad = useCallback(() => setMapReady(true), []);
+  const updateParcelView = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    const bounds = map?.getBounds();
+    if (!map || !bounds) return;
+    setParcelView({
+      bounds: { west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth() },
+      zoom: map.getZoom(),
+    });
+  }, []);
+  const handleMapLoad = useCallback(() => { setMapReady(true); updateParcelView(); }, [updateParcelView]);
+  const toggleParcelLines = useCallback(() => { setShowParcelLines(previous => !previous); updateParcelView(); }, [updateParcelView]);
   const handleMapMouseMove = useCallback((event: MapMouseEvent) => {
     if (lassoMode) return;
     const rawId = event.features?.[0]?.properties?.id;
@@ -347,6 +478,37 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   const handleLassoComplete = useCallback((polygon: [number, number][]) => { const hits = displayedStops.filter((stop) => pointInPolygon(stop.lat, stop.lon, polygon)); setLassoSelection(hits.length > 0 ? hits : null); }, [displayedStops]);
 
   useEffect(() => {
+    if (!showParcelLines || !mapReady || !parcelView) return;
+    if (parcelView.zoom < PARCEL_MIN_ZOOM) {
+      setParcelStatus('idle');
+      return;
+    }
+    if (loadedParcelBoundsRef.current && parcelBoundsContain(loadedParcelBoundsRef.current, parcelView.bounds)) {
+      setParcelStatus('ready');
+      return;
+    }
+
+    const controller = new AbortController();
+    const requestBounds = padParcelBounds(parcelView.bounds);
+    setParcelStatus('loading');
+    setParcelError(null);
+    loadedParcelBoundsRef.current = null;
+    setParcelOutlines(null);
+    void fetchBarrieParcelOutlines(requestBounds, controller.signal)
+      .then(collection => {
+        if (controller.signal.aborted) return;
+        loadedParcelBoundsRef.current = requestBounds;
+        setParcelOutlines(collection);
+        setParcelStatus('ready');
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return;
+        setParcelError(error instanceof Error ? error.message : 'City parcel lines could not be loaded.');
+        setParcelStatus('error');
+      });
+    return () => controller.abort();
+  }, [mapReady, parcelRetry, parcelView, showParcelLines]);
+  useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (lassoSelection) { clearLassoSelection(); return; }
@@ -357,12 +519,12 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
     return () => window.removeEventListener('keydown', handler);
   }, [clearLassoSelection, isFullscreen, lassoMode, lassoSelection]);
   useEffect(() => {
-    const resize = () => mapRef.current?.getMap().resize();
+    const resize = () => { mapRef.current?.getMap().resize(); updateParcelView(); };
     const raf = requestAnimationFrame(resize);
     const t1 = setTimeout(resize, 100);
     const t2 = setTimeout(resize, 300);
     return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); };
-  }, [isFullscreen]);
+  }, [isFullscreen, updateParcelView]);
   useEffect(() => {
     if (!isPlaying) return;
     const timer = setInterval(() => {
@@ -405,26 +567,104 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
   return (
     <div className={isFullscreen ? 'fixed inset-0 z-50 bg-white flex flex-col' : 'relative'}>
       <div className="absolute top-2 left-12 right-2 z-[1000] flex flex-wrap items-center gap-2 pointer-events-none">
+        <span className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-gray-600">{mapMode === 'change' ? 'Change / day' : mode === 'average' ? `Average / ${unit}` : 'Period sum'}</span>
         <div className="relative pointer-events-auto">
           <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onFocus={() => setSearchFocused(true)} onBlur={() => setTimeout(() => setSearchFocused(false), 200)} placeholder="Search stops..." className="w-48 px-2.5 py-1.5 text-xs bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-cyan-400 focus:border-cyan-400" />
-          {searchFocused && searchResults.length > 0 && <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">{searchResults.map((stop) => <button key={stop.stopId} onMouseDown={() => flyToStop(stop)} onMouseEnter={() => setSearchPreviewStopId(stop.stopId)} onMouseLeave={() => setSearchPreviewStopId(null)} className="w-full text-left px-3 py-1.5 hover:bg-cyan-50 border-b border-gray-50 last:border-b-0"><span className="text-xs font-medium text-gray-800">{stop.stopName}</span><span className="text-[10px] text-gray-400 ml-1.5">#{stop.stopId}</span><span className="text-[10px] text-gray-400 float-right">{stop.activity.toLocaleString()}</span></button>)}</div>}
+          {searchFocused && searchResults.length > 0 && <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">{searchResults.map((stop) => <button key={stop.stopId} onMouseDown={() => flyToStop(stop)} onMouseEnter={() => setSearchPreviewStopId(stop.stopId)} onMouseLeave={() => setSearchPreviewStopId(null)} className="w-full text-left px-3 py-1.5 hover:bg-cyan-50 border-b border-gray-50 last:border-b-0"><span className="text-xs font-medium text-gray-800">{stop.stopName}</span><span className="text-[10px] text-gray-400 ml-1.5">#{stop.stopId}</span><span className="text-[10px] text-gray-400 float-right">{stop.activity.toLocaleString(undefined, { maximumFractionDigits: 1 })}</span></button>)}</div>}
         </div>
         <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">
           {(['activity', 'change'] as MapMode[]).map(mode => <button key={mode} type="button" disabled={mode === 'change' && !canCompare} onClick={() => setMapMode(mode)} title={mode === 'change' && !canCompare ? 'No prior-period stop data is available' : undefined} className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${mapMode === mode ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>{mode}</button>)}
         </div>
-        <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['total', 'boardings', 'alightings'] as ViewMode[]).map((mode) => <button key={mode} onClick={() => setViewMode(mode)} className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors ${viewMode === mode ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>{mode === 'total' ? 'Total' : mode === 'boardings' ? 'Board' : 'Alight'}</button>)}</div>
-        {availableRoutes.length > 0 && <select value={selectedRoute} onChange={(e) => setSelectedRoute(e.target.value)} className="px-2 py-1.5 text-xs bg-white border border-gray-300 rounded-md shadow-sm pointer-events-auto focus:outline-none focus:ring-1 focus:ring-cyan-400"><option value="all">All Routes</option>{availableRoutes.map((route) => <option key={route} value={route}>Route {route}</option>)}</select>}
+        <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['activity', 'boardings', 'alightings'] as ViewMode[]).map((mode) => <button key={mode} onClick={() => setViewMode(mode)} className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors ${viewMode === mode ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>{mode === 'activity' ? 'Activity' : mode === 'boardings' ? 'Board' : 'Alight'}</button>)}</div>
+        <div className="flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2 py-1 shadow-sm pointer-events-auto">
+          <label htmlFor="stop-activity-minimum" title={`Minimum ${thresholdDescription}`} className="whitespace-nowrap text-[10px] font-bold text-gray-600">
+            {mapMode === 'change'
+              ? `Min absolute ${thresholdMetricLabel} change/day`
+              : mode === 'average'
+                ? `Min ${thresholdMetricLabel}/${unit}`
+                : `Min ${thresholdMetricLabel} (period)`}
+          </label>
+          <input
+            id="stop-activity-minimum"
+            type="number"
+            min={0}
+            step="any"
+            inputMode="decimal"
+            placeholder="All"
+            value={minActivityThreshold ?? ''}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              if (value === '') {
+                setMinActivityThreshold(null);
+                return;
+              }
+              const parsed = Number(value);
+              if (Number.isFinite(parsed) && parsed >= 0) setMinActivityThreshold(parsed);
+            }}
+            aria-label={`Minimum ${thresholdDescription}`}
+            className="w-14 rounded border border-gray-300 px-1.5 py-1 text-xs tabular-nums focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+          <button
+            type="button"
+            onClick={() => setMinActivityThreshold(20)}
+            aria-pressed={minActivityThreshold === 20}
+            aria-label={`Set minimum ${thresholdDescription} to 20`}
+            title="Show values of 20 or more"
+            className={minActivityThreshold === 20
+              ? 'rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[10px] font-bold text-cyan-700'
+              : 'rounded border border-gray-300 bg-white px-2 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-50'}
+          >
+            20+
+          </button>
+          {minActivityThreshold !== null && (
+            <button
+              type="button"
+              onClick={() => setMinActivityThreshold(null)}
+              aria-label="Clear minimum stop filter"
+              title="Show all stops"
+              className="whitespace-nowrap px-1 py-1 text-[10px] font-bold text-gray-500 hover:text-gray-800"
+            >
+              Clear
+            </button>
+          )}
+          <span aria-live="polite" className="whitespace-nowrap text-[10px] text-gray-500">
+            {thresholdFilteredStops.length} match{thresholdFilteredStops.length === 1 ? '' : 'es'}
+          </span>
+        </div>
+        {availableRoutes.length > 0 && <select value={selectedRoute} onChange={(e) => setSelectedRoute(e.target.value)} className="px-2 py-1.5 text-xs bg-white border border-gray-300 rounded-md shadow-sm pointer-events-auto focus:outline-none focus:ring-1 focus:ring-cyan-400"><option value="all">All Services</option>{availableRoutes.map((route) => <option key={route} value={route}>Route {route}</option>)}</select>}
         <button onClick={() => setShowRouteLines((p) => !p)} className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${showRouteLines ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Routes</button>
+        <button type="button" onClick={toggleParcelLines} aria-pressed={showParcelLines} title="Show City of Barrie assessment parcel outlines" className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${showParcelLines ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Property lines</button>
+        <button
+          type="button"
+          onClick={() => setIsSatellite((previous) => !previous)}
+          aria-pressed={isSatellite}
+          aria-label={isSatellite ? 'Switch to light basemap' : 'Switch to satellite basemap'}
+          title={isSatellite ? 'Switch to light street map' : 'Switch to satellite imagery'}
+          className={isSatellite
+            ? 'px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto bg-cyan-50 text-cyan-700 border-cyan-300'
+            : 'px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto bg-white text-gray-500 border-gray-300 hover:bg-gray-50'}
+        >
+          Satellite
+        </button>
         <button onClick={toggleLassoMode} className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto ${lassoMode ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>Lasso</button>
         {mapMode === 'change' ? <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">{(['all', 'increase', 'decrease'] as ChangeFocus[]).map(focus => <button key={focus} type="button" onClick={() => setChangeFocus(focus)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${changeFocus === focus ? focus === 'increase' ? 'bg-cyan-50 text-cyan-700' : focus === 'decrease' ? 'bg-orange-50 text-orange-700' : 'bg-gray-100 text-gray-700' : 'text-gray-500 hover:bg-gray-50'}`}>{focus === 'all' ? 'All' : focus === 'increase' ? 'Top 25 Up' : 'Top 25 Down'}</button>)}</div> : <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto"><button onClick={() => setBottomNFilter(null)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === null ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50'}`}>All</button>{[10, 25].map((n) => <button key={n} onClick={() => setBottomNFilter(bottomNFilter === n ? null : n)} className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${bottomNFilter === n ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}>Low {n}</button>)}</div>}
         <div className="flex-1" />
         <button onClick={toggleFullscreen} className="bg-white border border-gray-300 rounded-md px-2 py-1.5 shadow-sm hover:bg-gray-50 transition-colors text-xs font-medium text-gray-600 pointer-events-auto">{isFullscreen ? 'Exit' : 'Fullscreen'}</button>
       </div>
       {hasHourlyData && <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 rounded-lg shadow-md border border-gray-200 px-3 py-2 pointer-events-auto" style={{ minWidth: 420 }}><div className="flex items-center gap-1.5 mb-1.5"><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Time of Day</span><div className="flex-1" /><button onClick={() => { setActiveHours(null); setActivePreset(null); setIsPlaying(false); }} className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${activeHours === null ? 'bg-cyan-100 text-cyan-700' : 'text-gray-400 hover:text-gray-600'}`} title="All Day" aria-label="All Day">All Day</button>{HOUR_PRESETS.map((preset) => <button key={preset.label} onClick={() => { setActiveHours([...preset.hours]); setActivePreset(preset.label); setIsPlaying(false); }} className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${activePreset === preset.label ? 'bg-cyan-100 text-cyan-700' : 'text-gray-400 hover:text-gray-600'}`} title={`${preset.label}: ${preset.detail}`} aria-label={`${preset.label}: ${preset.detail}`}>{preset.label}</button>)}</div><div className="flex items-center gap-2"><button onClick={() => { if (isPlaying) setIsPlaying(false); else { playHourRef.current = 4; setActivePreset(null); setIsPlaying(true); } }} className="w-6 h-6 flex items-center justify-center rounded-full bg-cyan-100 text-cyan-700 hover:bg-cyan-200 flex-shrink-0">{isPlaying ? '||' : '>'}</button><input type="range" min={0} max={23} value={activeHours?.length === 1 ? activeHours[0] : 12} onChange={(e) => { const hour = parseInt(e.target.value, 10); setActiveHours([hour]); setActivePreset(null); setIsPlaying(false); }} className="flex-1 h-1 accent-cyan-500" /><span className="text-xs font-bold text-gray-700 w-16 text-right tabular-nums">{activeHours === null ? 'All' : activeHours.length === 1 ? `${activeHours[0].toString().padStart(2, '0')}:00` : activePreset || `${activeHours[0]}-${activeHours[activeHours.length - 1]}h`}</span></div></div>}
-      <Legend mapMode={mapMode} comparisonRange={comparisonRange} unavailableStops={unavailableScopedStopCount} unavailableReason={activeHours === null ? 'route' : 'hourly'} />
+      <Legend mapMode={mapMode} comparisonRange={comparisonRange} unavailableStops={unavailableScopedStopCount} unavailableReason={activeHours === null ? 'route' : 'hourly'} todStatus={todStatus} />
+      {showParcelLines && <div role="status" aria-live="polite" className="absolute bottom-24 right-2 z-[1000] max-w-52 rounded-md border border-gray-200 bg-white/95 px-2.5 py-2 text-[10px] text-gray-600 shadow-md pointer-events-auto">
+        <div className="font-bold text-gray-700">Property lines</div>
+        {parcelView && parcelView.zoom < PARCEL_MIN_ZOOM ? <div>Zoom in to see parcel outlines.</div>
+          : parcelStatus === 'loading' ? <div>Loading City parcel outlines...</div>
+            : parcelStatus === 'error' ? <div><span title={parcelError ?? undefined}>City parcel lines are unavailable.</span> <button type="button" onClick={() => setParcelRetry(value => value + 1)} className="font-bold text-cyan-700 underline">Retry</button></div>
+              : parcelStatus === 'ready' ? <div>{parcelOutlines?.features.length ? 'Assessment parcels · City of Barrie' : 'No City parcels in this view.'}</div>
+                : <div>Waiting for the map...</div>}
+      </div>}
       {lassoSelection ? <LassoSummaryPanel selected={lassoSelection} mapMode={mapMode} onClose={clearLassoSelection} /> : selectedStop ? <DetailPanel stop={selectedStop} rank={selectedRank} total={rankedDisplayedStops.length} activeHours={activeHours} mapMode={mapMode} currentDayCount={currentDayCount} comparisonDayCount={comparisonDayCount} onClose={() => setSelectedStop(null)} /> : null}
       <div className={isFullscreen ? 'flex-1 w-full min-h-0' : 'h-[750px] w-full rounded-lg overflow-hidden'}>
-        <MapBase mapRef={mapRef} latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={13} showNavigation={true} onLoad={handleMapLoad} interactiveLayerIds={[STOP_CIRCLE_LAYER_ID]} onMouseMove={handleMapMouseMove} onMouseLeave={handleMapMouseLeave} onClick={handleMapClick} style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}>
+        <MapBase mapRef={mapRef} latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={13} mapStyle={isSatellite ? RIDERSHIP_SATELLITE_MAP_STYLE : RIDERSHIP_LIGHT_MAP_STYLE} showNavigation={true} onLoad={handleMapLoad} onMoveEnd={showParcelLines ? updateParcelView : undefined} interactiveLayerIds={[STOP_CIRCLE_LAYER_ID]} onMouseMove={handleMapMouseMove} onMouseLeave={handleMapMouseLeave} onClick={handleMapClick} style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}>
+          {showParcelLines && parcelOutlines && <Source id="stop-activity-parcels-src" type="geojson" data={parcelOutlines}><Layer id="stop-activity-parcels" type="line" minzoom={PARCEL_MIN_ZOOM} paint={{ 'line-color': isSatellite ? '#f8fafc' : '#475569', 'line-opacity': isSatellite ? 0.9 : 0.6, 'line-width': isSatellite ? 1.25 : 1 }} /></Source>}
           {routeShapesForDisplay.length > 0 && <RouteOverlay shapes={routeShapesForDisplay} opacity={selectedRoute === 'all' ? 0.65 : 0.85} weight={selectedRoute === 'all' ? 2.5 : 4} dashed={false} idPrefix="stop-activity-routes" />}
           <HeatmapDotLayer
             idPrefix="stop-activity"
@@ -443,7 +683,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
           {previewRing && <Source id="stop-activity-preview-src" type="geojson" data={previewRing}><Layer id="stop-activity-preview-layer" type="circle" paint={{ 'circle-radius': ['*', ['get', 'radiusBase'], zoomScaleExpr] as mapboxgl.Expression, 'circle-color': '#3b82f6', 'circle-opacity': 0.12, 'circle-stroke-color': '#3b82f6', 'circle-stroke-width': 2.5 }} /></Source>}
           {lassoRing && <Source id="stop-activity-lasso-src" type="geojson" data={lassoRing}><Layer id="stop-activity-lasso-layer" type="circle" paint={{ 'circle-radius': ['*', ['get', 'radiusBase'], zoomScaleExpr] as mapboxgl.Expression, 'circle-color': '#f59e0b', 'circle-opacity': 0.2, 'circle-stroke-color': '#f59e0b', 'circle-stroke-width': 2.5 }} /></Source>}
           <LassoControl active={lassoMode} onComplete={handleLassoComplete} onClear={clearLassoSelection} />
-          {hoveredStop && !lassoMode && <Popup longitude={hoverInfo?.longitude ?? hoveredStop.lon} latitude={hoverInfo?.latitude ?? hoveredStop.lat} closeButton={false} closeOnClick={false} anchor="bottom" offset={8}><div style={{ fontSize: 12, lineHeight: 1.4 }}><strong>{hoveredStop.stopName}</strong> <span style={{ color: '#9ca3af' }}>({hoveredStop.stopId})</span>{mapMode === 'change' ? <><br />Current/day: {hoveredStop.currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}<br />Prior/day: {hoveredStop.comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}<br />Change/day: {formatSigned(hoveredStop.changePerDay)}{hoveredStop.changePercent === null ? '' : ` (${formatSigned(hoveredStop.changePercent)}%)`}</> : <><br />Boardings: {hoveredStop.filteredBoardings.toLocaleString()}<br />Alightings: {hoveredStop.filteredAlightings.toLocaleString()}<br />Activity: {(hoveredStop.filteredBoardings + hoveredStop.filteredAlightings).toLocaleString()}</>}</div></Popup>}
+          {hoveredStop && !lassoMode && <Popup longitude={hoverInfo?.longitude ?? hoveredStop.lon} latitude={hoverInfo?.latitude ?? hoveredStop.lat} closeButton={false} closeOnClick={false} anchor="bottom" offset={8}><div style={{ fontSize: 12, lineHeight: 1.4 }}><strong>{hoveredStop.stopName}</strong> <span style={{ color: '#9ca3af' }}>({hoveredStop.stopId})</span>{mapMode === 'change' ? <><br />Current/day: {hoveredStop.currentPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}<br />Prior/day: {hoveredStop.comparisonPerDay.toLocaleString(undefined, { maximumFractionDigits: 1 })}<br />Change/day: {formatSigned(hoveredStop.changePerDay)}{hoveredStop.changePercent === null ? '' : ` (${formatSigned(hoveredStop.changePercent)}%)`}</> : <><br />Board: {hoveredStop.filteredBoardings.toLocaleString(undefined, { maximumFractionDigits: 1 })}<br />Alight: {hoveredStop.filteredAlightings.toLocaleString(undefined, { maximumFractionDigits: 1 })}<br />Activity: {(hoveredStop.filteredBoardings + hoveredStop.filteredAlightings).toLocaleString(undefined, { maximumFractionDigits: 1 })}</>}</div></Popup>}
         </MapBase>
         {activeHours !== null && unavailableScopedStopCount > 0 && filteredStops.length === 0 && (
           <div className="absolute inset-x-6 bottom-6 z-[1000] rounded-xl border border-amber-200 bg-white/95 p-4 shadow-lg">

@@ -7,8 +7,12 @@ export const MetricCard: React.FC<{
     value: string;
     color: 'cyan' | 'indigo' | 'emerald' | 'amber' | 'red';
     subValue?: string;
+    secondaryMetric?: {
+        label: string;
+        value: string;
+    };
     onClick?: () => void;
-}> = ({ icon, label, value, color, subValue, onClick }) => {
+}> = ({ icon, label, value, color, subValue, secondaryMetric, onClick }) => {
     const scope = usePerformanceScope();
     const colors = {
         cyan: 'bg-cyan-50 text-cyan-600',
@@ -37,6 +41,16 @@ export const MetricCard: React.FC<{
             <p className="text-2xl font-bold text-gray-900">{value}</p>
             <p className="text-sm text-gray-500">{label}</p>
             {subValue && <p className="text-xs text-gray-400 mt-0.5">{subValue}</p>}
+            {secondaryMetric && (
+                <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                        {secondaryMetric.label}
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-800">
+                        {secondaryMetric.value}
+                    </p>
+                </div>
+            )}
         </div>
     );
 };

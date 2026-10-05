@@ -16,6 +16,7 @@ export interface HeatmapPoint {
     value: number;
     id: string;
     color?: string;
+    outlineColor?: string;
     [key: string]: unknown;
 }
 
@@ -24,6 +25,7 @@ export interface HeatmapDotLayerProps {
     bins: readonly HeatmapBin[];
     assignBin?: (value: number, allValues: number[]) => number;
     outlineColor?: string;
+    outlineWidth?: number;
     idPrefix?: string;
 }
 
@@ -43,6 +45,7 @@ export const HeatmapDotLayer: React.FC<HeatmapDotLayerProps> = ({
     bins,
     assignBin,
     outlineColor = '#374151',
+    outlineWidth = 1,
     idPrefix = 'heatmap-dots',
 }) => {
     const geoJSONData = useMemo((): GeoJSON.FeatureCollection => {
@@ -60,6 +63,7 @@ export const HeatmapDotLayer: React.FC<HeatmapDotLayerProps> = ({
                         value: pt.value,
                         bin,
                         ...(pt.color ? { color: pt.color } : {}),
+                        ...(pt.outlineColor ? { outlineColor: pt.outlineColor } : {}),
                     },
                     geometry: {
                         type: 'Point',
@@ -101,11 +105,11 @@ export const HeatmapDotLayer: React.FC<HeatmapDotLayerProps> = ({
             'circle-radius': radiusExpr,
             'circle-color': pointColorExpr,
             'circle-opacity': opacityExpr,
-            'circle-stroke-color': outlineColor,
-            'circle-stroke-width': ['case', ['==', ['get', 'bin'], 0], 1.5, 1] as mapboxgl.Expression,
+            'circle-stroke-color': ['case', ['has', 'outlineColor'], ['get', 'outlineColor'], outlineColor] as mapboxgl.Expression,
+            'circle-stroke-width': ['case', ['==', ['get', 'bin'], 0], outlineWidth + 0.5, outlineWidth] as mapboxgl.Expression,
             'circle-stroke-opacity': ['case', ['==', ['get', 'bin'], 0], 0.4, 0.8] as mapboxgl.Expression,
         },
-    }), [idPrefix, radiusExpr, pointColorExpr, opacityExpr, outlineColor]);
+    }), [idPrefix, radiusExpr, pointColorExpr, opacityExpr, outlineColor, outlineWidth]);
 
     if (points.length === 0) return null;
 

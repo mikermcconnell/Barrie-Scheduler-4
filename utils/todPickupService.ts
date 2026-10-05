@@ -1,63 +1,16 @@
-import {
-  deleteDoc,
-  doc,
-  getDoc,
-  runTransaction,
-  serverTimestamp,
-} from 'firebase/firestore';
-import {
-  deleteObject,
-  getDownloadURL,
-  ref,
-  uploadBytes,
-} from 'firebase/storage';
+import { doc, getDoc } from 'firebase/firestore';
+import { getDownloadURL, ref } from 'firebase/storage';
 import { db, storage } from './firebase';
-import type { TodPickupMetadata, TodPickupMonthlyDataset, TodPickupSummary } from './todPickupTypes';
-import { TOD_PICKUP_SCHEMA_VERSION } from './todPickupTypes';
+import type { TodPickupMetadata, TodPickupSummary } from './todPickupTypes';
+import { requestSharedWorkspaceData } from './sharedWorkspaceDataClient';
+import {
+  createTodRidershipProjection,
+  parseTodRidershipProjection,
+  type TodRidershipProjectionV1,
+} from './ridership-trends/tod';
 
 function getMetadataRef(teamId: string) {
   return doc(db, 'teams', teamId, 'todPickupData', 'metadata');
-}
-
-function getStoragePath(teamId: string, timestamp: string): string {
-  return `teams/${teamId}/todPickupData/${timestamp}.json`;
-}
-
-function buildUploadPayload(value: unknown): Blob | Uint8Array {
-  const json = JSON.stringify(value);
-  if (typeof Blob !== 'undefined') {
-    return new Blob([json], { type: 'application/json' });
-  }
-  return new TextEncoder().encode(json);
-}
-
-function buildMetadata(months: TodPickupMonthlyDataset[], importedBy: string): TodPickupMetadata {
-  return {
-    importedAt: new Date().toISOString(),
-    importedBy,
-    monthCount: months.length,
-    totalRows: months.reduce((sum, month) => sum + month.rowCount, 0),
-    totalPickups: months.reduce((sum, month) => sum + month.totalPickups, 0),
-  };
-}
-
-export function buildTodPickupReplacementSummary(
-  existingSummary: TodPickupSummary | null,
-  dataset: TodPickupMonthlyDataset,
-  importedBy: string,
-  storagePath: string,
-): TodPickupSummary {
-  const keptMonths = (existingSummary?.months || []).filter(month => month.month !== dataset.month);
-  const months = [...keptMonths, dataset].sort((a, b) => a.month.localeCompare(b.month));
-  const metadata = buildMetadata(months, importedBy);
-  return {
-    months,
-    metadata: {
-      ...metadata,
-      storagePath,
-    },
-    schemaVersion: TOD_PICKUP_SCHEMA_VERSION,
-  };
 }
 
 function mergeSummaryMetadata(summary: TodPickupSummary, metadata: TodPickupMetadata): TodPickupSummary {
@@ -70,22 +23,12 @@ function mergeSummaryMetadata(summary: TodPickupSummary, metadata: TodPickupMeta
       monthCount: metadata.monthCount || summary.metadata.monthCount,
       totalRows: metadata.totalRows || summary.metadata.totalRows,
       totalPickups: metadata.totalPickups || summary.metadata.totalPickups,
+      dailyReportCount: metadata.dailyReportCount ?? summary.metadata.dailyReportCount,
+      dailyDateRange: metadata.dailyDateRange ?? summary.metadata.dailyDateRange,
+      totalCompletedTrips: metadata.totalCompletedTrips ?? summary.metadata.totalCompletedTrips,
       storagePath: metadata.storagePath || summary.metadata.storagePath,
     },
   };
-}
-
-export function normalizeTodPickupStoragePath(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-export function assertTodPickupStoragePathUnchanged(
-  expectedPath: string | null,
-  actualPath: string | null,
-): void {
-  if (expectedPath !== actualPath) {
-    throw new Error('TOD pickup data changed while importing. Refresh and try again.');
-  }
 }
 
 export async function getTodPickupMetadata(teamId: string): Promise<TodPickupMetadata | null> {
@@ -99,6 +42,11 @@ export async function getTodPickupMetadata(teamId: string): Promise<TodPickupMet
       monthCount: Number(data.monthCount || 0),
       totalRows: Number(data.totalRows || 0),
       totalPickups: Number(data.totalPickups || 0),
+      dailyReportCount: Number(data.dailyReportCount || 0),
+      dailyDateRange: data.dailyDateRange?.start && data.dailyDateRange?.end
+        ? { start: String(data.dailyDateRange.start), end: String(data.dailyDateRange.end) }
+        : undefined,
+      totalCompletedTrips: Number(data.totalCompletedTrips || 0),
       storagePath: data.storagePath || '',
     };
   } catch (error) {
@@ -127,87 +75,19 @@ export async function getTodPickupData(
   }
 }
 
-export async function saveTodPickupMonthData(
+export async function getTodRidershipProjection(
   teamId: string,
-  userId: string,
-  dataset: TodPickupMonthlyDataset,
-): Promise<void> {
-  const timestamp = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const storagePath = getStoragePath(teamId, timestamp);
-  const metadataRef = getMetadataRef(teamId);
-  const existing = await getDoc(metadataRef);
-  const oldPath = existing.exists() ? normalizeTodPickupStoragePath(existing.data().storagePath) : null;
-
-  let oldSummary: TodPickupSummary | null = null;
-  if (oldPath) {
-    try {
-      const oldUrl = await getDownloadURL(ref(storage, oldPath));
-      const response = await fetch(oldUrl);
-      if (!response.ok) {
-        throw new Error('Existing TOD pickup data could not be downloaded.');
-      }
-      oldSummary = await response.json() as TodPickupSummary;
-    } catch (error) {
-      console.error('Could not load existing TOD pickup data before replacement:', error);
-      throw new Error('Could not load existing TOD pickup data before import. Refresh and try again.');
-    }
-  }
-
-  const summary = buildTodPickupReplacementSummary(oldSummary, dataset, userId, storagePath);
-  const metadata = summary.metadata;
-
-  let uploadedNewFile = false;
-  try {
-    await uploadBytes(ref(storage, storagePath), buildUploadPayload(summary), {
-      contentType: 'application/json',
+  requestingTeamId?: string,
+  accessContext: 'ridershipTrend' | 'strategicPlan' = 'ridershipTrend',
+): Promise<TodRidershipProjectionV1 | null> {
+  if (accessContext === 'strategicPlan' || (requestingTeamId && requestingTeamId !== teamId)) {
+    const projection = await requestSharedWorkspaceData<unknown>({
+      workspace: accessContext === 'strategicPlan' ? 'strategicPlanRidershipTod' : 'ridershipTrendTod',
+      requestingTeamId: requestingTeamId || teamId,
+      sourceTeamId: teamId,
     });
-    uploadedNewFile = true;
-
-    await runTransaction(db, async transaction => {
-      const fresh = await transaction.get(metadataRef);
-      const freshPath = fresh.exists() ? normalizeTodPickupStoragePath(fresh.data().storagePath) : null;
-      assertTodPickupStoragePathUnchanged(oldPath, freshPath);
-      transaction.set(metadataRef, {
-        importedAt: serverTimestamp(),
-        importedBy: userId,
-        monthCount: metadata.monthCount,
-        totalRows: metadata.totalRows,
-        totalPickups: metadata.totalPickups,
-        storagePath,
-      });
-    });
-  } catch (error) {
-    if (uploadedNewFile) {
-      try {
-        await deleteObject(ref(storage, storagePath));
-      } catch {
-        // Ignore cleanup failures for an unreferenced upload.
-      }
-    }
-    throw error;
+    return projection ? parseTodRidershipProjection(projection) : null;
   }
-
-  if (oldPath && oldPath !== storagePath) {
-    try {
-      await deleteObject(ref(storage, oldPath));
-    } catch {
-      // Ignore stale storage cleanup failures.
-    }
-  }
-}
-
-export async function deleteTodPickupData(teamId: string): Promise<void> {
-  const metadataRef = getMetadataRef(teamId);
-  const snap = await getDoc(metadataRef);
-  if (!snap.exists()) return;
-
-  const storagePath = snap.data().storagePath;
-  if (storagePath) {
-    try {
-      await deleteObject(ref(storage, storagePath));
-    } catch {
-      // File may already be gone.
-    }
-  }
-  await deleteDoc(metadataRef);
+  const summary = await getTodPickupData(teamId);
+  return summary ? createTodRidershipProjection(summary) : null;
 }

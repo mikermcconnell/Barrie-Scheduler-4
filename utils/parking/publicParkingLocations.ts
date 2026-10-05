@@ -145,6 +145,7 @@ export function findPublicParkingLocationFallback(
   location: ParkingRevenueLocationSummary,
   publicLocations: PublicParkingLocation[],
 ): PublicParkingLocationMatch | null {
+  if (location.locationKind === 'non_spatial') return null;
   const sourceIds = new Set(location.sourceIds.map(ref => normalizeId(ref.sourceId)).filter(Boolean));
   const hotspotMatch = publicLocations.find(publicLocation => publicLocation.hotspotId && sourceIds.has(publicLocation.hotspotId));
   if (hotspotMatch) {

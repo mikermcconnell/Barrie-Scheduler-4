@@ -1980,6 +1980,27 @@ export const DEFAULT_PARKING_REVENUE_LOCATIONS = [
         "label": "Worsley Street On Street Parking"
       }
     ]
+  },
+  {
+    "id": "hotspot-9000",
+    "displayName": "Special Events",
+    "locationKind": "non_spatial",
+    "latitude": null as number | null,
+    "longitude": null as number | null,
+    "capacitySpaces": null as number | null,
+    "categoryId": "special-events",
+    "sourceRefs": [
+      {
+        "source": "hotspot",
+        "sourceId": "9000",
+        "label": "Special Events"
+      },
+      {
+        "source": "qr",
+        "sourceId": "9000",
+        "label": "Event Parking"
+      }
+    ]
   }
 ] satisfies ParkingRevenueLocationMapping[];
 

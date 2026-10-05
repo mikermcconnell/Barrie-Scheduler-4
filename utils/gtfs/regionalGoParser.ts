@@ -1,5 +1,5 @@
 import { unzipSync } from 'fflate';
-import type { RegionalGoFeed } from '../regional-transit/types';
+import type { RegionalGoFeed } from '../regional-transit/goFeedTypes';
 
 export const GO_SOURCE_URL = 'https://assets.metrolinx.com/raw/upload/Documents/Metrolinx/Open%20Data/GO-GTFS.zip';
 export const GO_ZIP_MAX_BYTES = 50 * 1024 * 1024;

@@ -73,3 +73,5 @@
  .regional-go-chart,.regional-go-chart *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
  .regional-go-matrix{overflow:visible!important;break-inside:avoid}.regional-go-scroll{overflow:visible!important;max-height:none!important;max-width:none}.regional-go-scroll table{min-width:0!important}.regional-go-cell{min-height:36px;padding:4px 2px}.regional-go-cell time{font-size:11px}.regional-go-cell small{font-size:9px}.regional-go-scroll thead th{padding:6px 3px}.regional-go-sticky{width:140px}
 }
+.regional-go-changes-pickers{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}.regional-go-changes-pickers label{display:grid;gap:4px;font-weight:700}.regional-go-changes-pickers select{min-height:36px;border:1px solid #cfd8dd;border-radius:8px;padding:0 8px;font:inherit;max-width:100%}
+.regional-go-changes-table{width:100%;border-collapse:collapse;margin:8px 0}.regional-go-changes-table th,.regional-go-changes-table td{text-align:left;padding:6px 8px;border-bottom:1px solid #e0e6e9;vertical-align:top}.regional-go-changes-table th{font-weight:800;color:#33485a}

@@ -5,6 +5,7 @@ import {
     ComposedChart, Line, Area,
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
+import { usePerformanceAggregation } from './performanceAggregation';
 import type { PerformanceDataSummary, RouteStopDeviationProfile } from '../../utils/performanceDataTypes';
 import {
     getLatestStoredMissedTrips,
@@ -106,6 +107,7 @@ function SortableHeader({
 
 export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
     const filtered = data.dailySummaries;
+    const { mode } = usePerformanceAggregation();
     const [missedSortKey, setMissedSortKey] = useState<MissedSortKey>('routeId');
     const [missedSortDir, setMissedSortDir] = useState<SortDir>('asc');
     const [lateTripSortKey, setLateTripSortKey] = useState<LateTripSortKey>('avgDelay');
@@ -521,6 +523,11 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
 
     return (
         <div className="space-y-6">
+            {mode === 'average' && (
+                <p className="text-xs text-gray-500">
+                    OTP percentages remain weighted by eligible observations. Delay statistics and dated trip lists retain their original meaning.
+                </p>
+            )}
             {/* Missed Trips Table */}
             {missedTrips.length > 0 && (
                 <ChartCard title="Missed Trips" subtitle={`${missedTripsDay ?? 'Latest day'} — ${missedTrips.length} trips either not performed or over 15 min late`}>

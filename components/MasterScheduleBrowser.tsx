@@ -170,6 +170,7 @@ interface MasterScheduleBrowserProps {
         source: { version: number; teamId: string }
     ) => void;
     onClose?: () => void;
+    readOnly?: boolean;
 }
 
 // Helper: Format time from minutes
@@ -188,7 +189,8 @@ function formatHours(hours: number): string {
 
 export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     onCopyToDraft,
-    onClose
+    onClose,
+    readOnly = false,
 }) => {
     const { team, hasTeam } = useTeam();
     const toast = useToast();
@@ -1521,6 +1523,11 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                             Shared source
                         </span>
                     )}
+                    {readOnly && (
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                            Read-only evidence
+                        </span>
+                    )}
                 </div>
 
             </div>
@@ -1613,7 +1620,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                         {/* Action buttons - only for routes */}
                         {selectedRoute !== 'platforms' && selectedRoute !== 'overview' && (
                             <div className="flex items-center gap-2">
-                                {!isSharedMasterScheduleView && (
+                                {!readOnly && !isSharedMasterScheduleView && (
                                     <>
                                         <button
                                             onClick={() => openTimetablePublisher({

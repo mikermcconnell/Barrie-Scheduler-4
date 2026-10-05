@@ -3,6 +3,7 @@ import {
     ChevronDown,
     ChevronRight,
     ArrowLeft,
+    History,
 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import {
@@ -1863,6 +1864,20 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     >
                         {isFullScreen ? 'Exit fullscreen' : 'Fullscreen'}
                     </button>
+                    <button
+                        type="button"
+                        onClick={() => setShowAuditLog(!showAuditLog)}
+                        aria-expanded={showAuditLog}
+                        className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                        <History size={14} className="text-blue-500" />
+                        Activity log
+                        {auditEntries.length > 0 && (
+                            <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
+                                {auditEntries.length}
+                            </span>
+                        )}
+                    </button>
                 </div>
             </div>
         </div>
@@ -2141,7 +2156,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     )}
 
                     {/* Editor Content */}
-                    <div className={`flex-grow min-w-0 overflow-auto flex flex-col bg-[#F7F7F7] px-2 pb-2 md:px-4 md:pb-4 ${subView === 'editor' ? 'pt-0' : 'pt-2 md:pt-4'}`}>
+                    <div
+                        data-testid="schedule-editor-content"
+                        className={`flex min-w-0 flex-grow flex-col bg-[#F7F7F7] ${
+                            compactStep4 ? 'p-0' : 'px-2 pb-2 md:px-4 md:pb-4'
+                        } ${
+                            subView === 'editor' ? 'overflow-hidden pt-0' : 'overflow-auto pt-2 md:pt-4'
+                        }`}
+                    >
                         {subView === 'matrix' ? (
                             <TravelTimeGrid
                                 schedules={[activeRoute.north, activeRoute.south].filter((t): t is MasterRouteTable => !!t)}
@@ -2248,6 +2270,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 entries={auditEntries}
                 isOpen={showAuditLog}
                 onToggle={() => setShowAuditLog(!showAuditLog)}
+                hideClosedTrigger={compactStep4}
+                placement={compactStep4 ? 'top-right' : 'bottom-right'}
             />
 
         </>

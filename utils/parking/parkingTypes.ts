@@ -1,11 +1,13 @@
 export const PARKING_SCHEMA_VERSION = 1;
-export const PARKING_REVENUE_SCHEMA_VERSION = 1;
+export const PARKING_REVENUE_SCHEMA_VERSION = 2;
 
 export type ParkingYearCodeFormat = 'yyyy' | 'yy';
 export type ParkingDepartmentLegendSortKey = 'color' | 'code' | 'department' | 'ignoreData' | 'ignoreFlags';
 export type ParkingSortDirection = 'asc' | 'desc';
 export type ParkingRevenueSource = 'hotspot' | 'qr';
 export type ParkingRevenueCategoryFilter = 'all' | 'uncategorized' | string;
+export type ParkingRevenueLocationKind = 'physical' | 'non_spatial';
+export type ParkingRevenueMapStatus = 'mapped' | 'unmapped' | 'not_applicable';
 
 export interface ParkingRevenueLocationCategory {
   id: string;
@@ -23,6 +25,7 @@ export interface ParkingRevenueLocationRef {
 export interface ParkingRevenueLocationMapping {
   id: string;
   displayName: string;
+  locationKind?: ParkingRevenueLocationKind;
   latitude: number | null;
   longitude: number | null;
   capacitySpaces?: number | null;
@@ -205,6 +208,8 @@ export interface ParkingRevenueRawRow {
   durationMinutes: number;
   amount: number;
   tax: number;
+  /** Canonical revenue value used by analytics. Derived as Amount + Tax. */
+  taxInclusiveAmount?: number;
   total: number;
   paymentType: string;
 }
@@ -257,6 +262,8 @@ export interface ParkingRevenueFilters {
 export interface ParkingRevenueLocationSummary {
   key: string;
   displayName: string;
+  locationKind: ParkingRevenueLocationKind;
+  mapStatus: ParkingRevenueMapStatus;
   sourceIds: ParkingRevenueLocationRef[];
   latitude: number | null;
   longitude: number | null;
@@ -289,6 +296,7 @@ export interface ParkingRevenueAnalytics {
   locationSummaries: ParkingRevenueLocationSummary[];
   mappedLocationSummaries: ParkingRevenueLocationSummary[];
   unmappedLocationSummaries: ParkingRevenueLocationSummary[];
+  nonSpatialLocationSummaries: ParkingRevenueLocationSummary[];
   totalRevenue: number;
   totalPaid: number;
   rowCount: number;
@@ -325,6 +333,7 @@ export const DEFAULT_PARKING_REVENUE_LOCATION_CATEGORIES: ParkingRevenueLocation
   { id: 'marina', label: 'Marina', colorHex: '#0EA5E9' },
   { id: 'hospital', label: 'Hospital', colorHex: '#EA580C' },
   { id: 'allandale-go', label: 'Allandale GO', colorHex: '#475569' },
+  { id: 'special-events', label: 'Special Events', colorHex: '#B45309' },
 ];
 
 export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {
@@ -343,6 +352,7 @@ export const DEFAULT_PARKING_SETTINGS: ParkingSettings = {
     { familyKey: 'IT', codes: ['IT2025', 'IT2026'], department: 'Information Technology' },
     { familyKey: 'LC', codes: ['LC25'], department: 'Legislative and Court Services' },
     { familyKey: 'OP', codes: ['OP2025'], department: 'Operations' },
+    { familyKey: 'P1', codes: ['P12026'], department: 'City Staff Underground Parking', colorHex: '#6B7280', ignoreData: true },
     { familyKey: 'RS', codes: ['RS2025', 'RS2026'], department: 'Recreation Services' },
     { familyKey: 'TP', codes: ['TP2025'], department: 'Transit' },
     { familyKey: 'WM', codes: ['WM2025'], department: 'Waste Management and Environmental Sustainability' },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildParkingDepartmentDrilldownRows } from '../components/workspaces/ParkingWorkspace';
+import { buildParkingDepartmentDrilldownRows } from '../components/workspaces/ParkingDataWorkspace';
 import { DEFAULT_PARKING_SETTINGS, type ParkingRawRow, type ParkingSettings } from '../utils/parking/parkingTypes';
 
 const rawRow = (overrides: Partial<ParkingRawRow>): ParkingRawRow => ({

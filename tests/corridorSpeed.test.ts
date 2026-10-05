@@ -135,6 +135,7 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                 directionId: 'South',
                 departureMinutes: 420,
                 runtimeMinutes: 9,
+                patternKind: 'normal',
             },
             {
                 segmentId: corridorSegment.id,
@@ -143,6 +144,7 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                 directionId: 'South',
                 departureMinutes: 450,
                 runtimeMinutes: 11,
+                patternKind: 'normal',
             },
         ];
 
@@ -152,9 +154,41 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
         expect(stats?.scheduledRuntimeMin).toBe(11);
         expect(stats?.observedRuntimeMin).toBe(10);
         expect(stats?.sampleCount).toBe(2);
+        expect(stats?.distinctDayCount).toBeUndefined();
+        expect(stats?.confidenceReasons).toContain('Service-day provenance is unavailable');
         expect(stats?.runtimeDeltaMin).toBe(-1);
         expect(stats?.scheduledSpeedKmh).toBe(5.5);
         expect(stats?.observedSpeedKmh).toBe(6);
+    });
+
+    it('reports distinct service days and upper-percentile observed runtimes', () => {
+        const scheduledSamples: CorridorTraversalSample[] = [{
+            segmentId: corridorSegment.id,
+            route: '8A',
+            dayType: 'weekday',
+            directionId: 'South',
+            departureMinutes: 420,
+            runtimeMinutes: 10,
+        }];
+        const observedSamples: CorridorTraversalSample[] = [8, 10, 12, 14, 16].map((runtimeMinutes, index) => ({
+            segmentId: corridorSegment.id,
+            route: '8A',
+            dayType: 'weekday' as const,
+            directionId: 'South',
+            departureMinutes: 420,
+            runtimeMinutes,
+            serviceDate: `2026-03-${String(index + 2).padStart(2, '0')}`,
+            patternKind: 'normal' as const,
+        }));
+
+        const index = buildCorridorSpeedIndexFromTraversalData([corridorSegment], scheduledSamples, observedSamples);
+        const stats = getStatsForPeriod(index, 'weekday', 'am-peak').get(corridorSegment.id);
+
+        expect(stats?.distinctDayCount).toBe(5);
+        expect(stats?.p80ObservedRuntimeMin).toBeCloseTo(14.4);
+        expect(stats?.p90ObservedRuntimeMin).toBeCloseTo(15.2);
+        expect(stats?.confidenceLevel).toBe('low');
+        expect(stats?.confidenceReasons).toContain('Fewer than 8 matched traversals');
     });
 
     it('keeps shared-route corridor traversals route-specific in the breakdown while combining the corridor headline', () => {
@@ -185,6 +219,7 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                 directionId: 'South',
                 departureMinutes: 420,
                 runtimeMinutes: 8,
+                patternKind: 'normal',
             },
             {
                 segmentId: corridorSegment.id,
@@ -193,6 +228,7 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                 directionId: 'South',
                 departureMinutes: 420,
                 runtimeMinutes: 16,
+                patternKind: 'normal',
             },
         ];
 
@@ -253,6 +289,7 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                     directionId: 'South',
                     departureMinutes: 420,
                     runtimeMinutes: 10,
+                    patternKind: 'normal',
                 },
             ],
         );
@@ -295,6 +332,7 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                     directionId: 'South',
                     departureMinutes: 420,
                     runtimeMinutes: 8,
+                    patternKind: 'normal',
                 },
             ],
         );
@@ -334,6 +372,7 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                 directionId: 'South',
                 departureMinutes: 420,
                 runtimeMinutes: 8,
+                patternKind: 'normal',
             },
             {
                 segmentId: corridorSegment.id,
@@ -342,6 +381,7 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                 directionId: 'South',
                 departureMinutes: 420,
                 runtimeMinutes: 16,
+                patternKind: 'normal',
             },
         ];
 
@@ -357,6 +397,51 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
         expect(routeScoped?.observedSpeedKmh).toBe(7.5);
         expect(routeScoped?.routeBreakdown).toHaveLength(1);
         expect(routeScoped?.routeBreakdown[0]?.route).toBe('8A');
+    });
+
+    it('excludes detour and unclassified traversals at the public aggregation boundary', () => {
+        const scheduledSamples: CorridorTraversalSample[] = [{
+            segmentId: corridorSegment.id,
+            route: '8A',
+            dayType: 'weekday',
+            directionId: 'South',
+            departureMinutes: 420,
+            runtimeMinutes: 10,
+        }];
+        const observedSamples: CorridorTraversalSample[] = [
+            {
+                segmentId: corridorSegment.id,
+                route: '8A',
+                dayType: 'weekday',
+                directionId: 'South',
+                departureMinutes: 420,
+                runtimeMinutes: 12,
+                patternKind: 'normal',
+            },
+            {
+                segmentId: corridorSegment.id,
+                route: '8A',
+                dayType: 'weekday',
+                directionId: 'South',
+                departureMinutes: 420,
+                runtimeMinutes: 40,
+                patternKind: 'detour',
+            },
+            {
+                segmentId: corridorSegment.id,
+                route: '8A',
+                dayType: 'weekday',
+                directionId: 'South',
+                departureMinutes: 420,
+                runtimeMinutes: 50,
+            },
+        ];
+
+        const index = buildCorridorSpeedIndexFromTraversalData([corridorSegment], scheduledSamples, observedSamples);
+        const stats = getStatsForPeriod(index, 'weekday', 'am-peak').get(corridorSegment.id);
+
+        expect(stats?.sampleCount).toBe(1);
+        expect(stats?.observedRuntimeMin).toBe(12);
     });
 });
 

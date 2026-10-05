@@ -13,6 +13,7 @@ import {
 import { db, storage } from '../firebase';
 import { cloneFleetPlanWorkbook, summarizeFleetPlan } from './fleetPlanModel';
 import type { FleetPlanDocumentMetadata, FleetPlanWorkbook } from './types';
+import { requestSharedWorkspaceData } from '../sharedWorkspaceDataClient';
 
 type FleetPlanErrorCode = 'permission' | 'network' | 'conflict' | 'unknown';
 
@@ -117,7 +118,17 @@ export async function getFleetPlanMetadata(teamId: string): Promise<FleetPlanDoc
     }
 }
 
-export async function getFleetPlanWorkbook(teamId: string): Promise<FleetPlanWorkbook | null> {
+export async function getFleetPlanWorkbook(
+    teamId: string,
+    requestingTeamId?: string,
+): Promise<FleetPlanWorkbook | null> {
+    if (requestingTeamId && requestingTeamId !== teamId) {
+        return requestSharedWorkspaceData<FleetPlanWorkbook>({
+            workspace: 'fleetPlan',
+            requestingTeamId,
+            sourceTeamId: teamId,
+        });
+    }
     try {
         const snapshot = await getDoc(getFleetPlanRef(teamId));
         if (!snapshot.exists()) return null;

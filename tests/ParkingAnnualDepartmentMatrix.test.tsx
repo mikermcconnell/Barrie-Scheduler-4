@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AnnualDepartmentMatrixTable,
   type AnnualSummaryRow,
-} from '../components/workspaces/ParkingWorkspace';
+} from '../components/workspaces/ParkingDataWorkspace';
 
 describe('AnnualDepartmentMatrixTable observation links', () => {
   let container: HTMLDivElement;

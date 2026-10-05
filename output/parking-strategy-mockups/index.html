@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parking Strategy — Friendly Design Concepts</title>
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    .intro { max-width: 830px; margin: 18px 0 24px; }
+    .intro h1 { font-size: clamp(34px, 5vw, 54px); }
+    .intro .subtitle { max-width: 720px; font-size: 17px; }
+    .truth-strip { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin: 22px 0 28px; }
+    .truth-item { padding: 13px 15px; border: 1px solid #dfe5ec; border-radius: 14px; background: #fff; }
+    .truth-item strong { display: block; font-size: 18px; }
+    .truth-item span { color: var(--muted); font-size: 11px; }
+    .concepts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; }
+    .concept { min-height: 430px; padding: 22px; display: flex; flex-direction: column; text-decoration: none; transition: .18s ease; }
+    .concept:hover { transform: translateY(-4px); border-color: #b9c5d2; box-shadow: var(--shadow-up); }
+    .concept-visual { height: 160px; margin-bottom: 20px; padding: 15px; overflow: hidden; border-radius: 16px; }
+    .concept:nth-child(1) .concept-visual { background: var(--blue-soft); }
+    .concept:nth-child(2) .concept-visual { background: var(--violet-soft); }
+    .concept:nth-child(3) .concept-visual { background: var(--green-soft); }
+    .mini-head { width: 54%; height: 9px; margin-bottom: 11px; border-radius: 9px; background: #20364d; }
+    .mini-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+    .mini-grid span { height:40px; border: 2px solid rgba(255,255,255,.9); border-radius:9px; background:rgba(255,255,255,.72); }
+    .mini-chart { height:65px; margin-top:8px; border:2px solid rgba(255,255,255,.95); border-radius:10px; background:#fff; position:relative; }
+    .mini-chart::after { content:""; position:absolute; inset:20px 12px 15px; background:linear-gradient(135deg,transparent 0 15%,#1aa4ef 16% 18%,transparent 19% 30%,#1aa4ef 31% 33%,transparent 34% 45%,#1aa4ef 46% 48%,transparent 49%); }
+    .mini-panes { display:grid; grid-template-columns:26% 48% 26%; gap:6px; height:112px; }
+    .mini-panes span { border:2px solid rgba(255,255,255,.95); border-radius:10px; background:rgba(255,255,255,.78); }
+    .mini-panes .centre { background:#fff; }
+    .mini-map { position:relative; display:grid; place-items:center; }
+    .mini-map::before, .mini-map::after { content:""; position:absolute; border-radius:50%; background:#159be8; }
+    .mini-map::before { width:12px;height:12px;left:30%;top:40%; box-shadow:65px 25px 0 #35c508, 105px -5px 0 #7047eb; }
+    .concept-number { color:var(--blue-dark); font-size:11px; font-weight:850; letter-spacing:.1em; text-transform:uppercase; }
+    .concept h2 { margin:7px 0 9px; font-size:24px; }
+    .concept p { color:var(--muted); }
+    .concept ul { margin:0 0 18px; padding-left:18px; color:#536378; font-size:13px; }
+    .concept li + li { margin-top:6px; }
+    .concept-cta { margin-top:auto; display:flex; align-items:center; justify-content:space-between; color:var(--blue-dark); font-weight:800; }
+    .rubric { margin-top:22px; padding:22px; }
+    .rubric-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:15px; }
+    .rubric-item { padding:14px; border-radius:13px; background:#f7f8fa; }
+    .rubric-item strong { display:block; margin-bottom:4px; }
+    .rubric-item span { color:var(--muted); font-size:12px; }
+    @media(max-width:950px){.concepts{grid-template-columns:1fr}.concept{min-height:0}.truth-strip{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:560px){.truth-strip,.rubric-grid{grid-template-columns:1fr}.intro h1{font-size:35px}}
+  </style>
+</head>
+<body>
+  <header class="appbar">
+    <a class="brand" href="index.html" aria-label="Parking Strategy concepts home">
+      <span class="brand-mark" id="brandIcon"></span>
+      <span><span class="brand-name">Parking<span>Strategy</span></span><span class="brand-kicker">Friendly design concepts</span></span>
+    </a>
+    <span class="status-pill green"><span class="dot"></span> Archive audited</span>
+  </header>
+
+  <main class="page">
+    <div class="intro">
+      <p class="eyebrow">Strategic planning workspace</p>
+      <h1>Five-year parking evidence, with honest gaps.</h1>
+      <p class="subtitle">Three friendly, operational ways to turn the LocoMobi payment archive into a useful management view. Each concept uses the same real, de-identified evidence but organizes decisions differently.</p>
+    </div>
+
+    <section class="truth-strip" aria-label="Archive facts">
+      <div class="truth-item"><strong>44,236</strong><span>deduplicated payment records</span></div>
+      <div class="truth-item"><strong>$592,495.02</strong><span>source-reported amount</span></div>
+      <div class="truth-item"><strong>18</strong><span>named meter locations</span></div>
+      <div class="truth-item"><strong>Mar 2024–Nov 2025</strong><span>actual coverage within 2021–2025</span></div>
+    </section>
+
+    <section class="concepts" aria-label="Three interface concepts">
+      <a class="concept shell" href="01-executive-evidence-board.html">
+        <div class="concept-visual" aria-hidden="true"><div class="mini-head"></div><div class="mini-grid"><span></span><span></span><span></span><span></span></div><div class="mini-chart"></div></div>
+        <span class="concept-number">Concept 01 · Selected direction</span>
+        <h2>Executive Evidence Board</h2>
+        <p>A clear management briefing that leads with coverage, the strongest signals, an interactive top-location map, and the questions the strategic plan still needs to answer.</p>
+        <ul><li>Selected strategic-plan direction</li><li>Interactive concentration-to-map selection</li><li>Strong data-quality guardrails</li></ul>
+        <span class="concept-cta">Open evidence board <span id="arrow1"></span></span>
+      </a>
+
+      <a class="concept shell" href="02-strategy-analyst-workbench.html">
+        <div class="concept-visual" aria-hidden="true"><div class="mini-head"></div><div class="mini-panes"><span></span><span class="centre"></span><span></span></div></div>
+        <span class="concept-number">Concept 02 · Deepest analysis</span>
+        <h2>Strategy Analyst Workbench</h2>
+        <p>A coordinated three-panel workspace for slicing the archive, inspecting locations, and tracking limitations alongside the evidence.</p>
+        <ul><li>Most flexible filters</li><li>Detailed location comparison</li><li>Built-in reconciliation and methodology</li></ul>
+        <span class="concept-cta">Open analyst workbench <span id="arrow2"></span></span>
+      </a>
+
+      <a class="concept shell" href="03-spatial-portfolio.html">
+        <div class="concept-visual" aria-hidden="true"><div class="mini-head"></div><div class="mini-panes"><span></span><span class="centre mini-map"></span><span></span></div></div>
+        <span class="concept-number">Concept 03 · Strongest spatial story</span>
+        <h2>Spatial Portfolio</h2>
+        <p>A map-first view for discussing how paid activity, supply questions, waterfront destinations, and future investment relate geographically.</p>
+        <ul><li>Best for asset conversations</li><li>Synced map and location selection</li><li>Policy references kept separate from evidence</li></ul>
+        <span class="concept-cta">Open spatial portfolio <span id="arrow3"></span></span>
+      </a>
+    </section>
+
+    <section class="rubric shell">
+      <div class="section-head"><div><p class="eyebrow">How to choose</p><h2>Match the interface to the next conversation</h2></div><span class="badge">Same evidence foundation</span></div>
+      <div class="rubric-grid">
+        <div class="rubric-item"><strong>Leadership briefing</strong><span>Choose 01 when the strategic-plan story and evidence limitations matter most.</span></div>
+        <div class="rubric-item"><strong>Staff investigation</strong><span>Choose 02 when analysts need to compare periods, locations, and payment types.</span></div>
+        <div class="rubric-item"><strong>Supply and place</strong><span>Choose 03 when the question is where to invest, monitor, or study next.</span></div>
+      </div>
+    </section>
+  </main>
+  <script src="shared-data.js"></script>
+  <script>
+    brandIcon.innerHTML = ParkingData.icon('grid', 20);
+    arrow1.innerHTML = arrow2.innerHTML = arrow3.innerHTML = ParkingData.icon('arrow', 18);
+  </script>
+</body>
+</html>

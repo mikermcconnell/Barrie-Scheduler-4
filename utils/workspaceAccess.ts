@@ -30,7 +30,8 @@ export type WorkspaceAccessFeatureKey =
     | 'analyticsStreetDesignStudio'
     | 'analyticsShuttlePlanner'
     | 'analyticsFarePrograms'
-    | 'analyticsCouncilIntelligence'
+    | 'analyticsStrategicPlan'
+    | 'analyticsRidershipTrend'
     | 'operationsLoadProfiles'
     | 'operationsOperatorDwell';
 
@@ -85,7 +86,8 @@ export const ANALYTICS_WORKSPACE_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsStreetDesignStudio',
     'analyticsShuttlePlanner',
     'analyticsFarePrograms',
-    'analyticsCouncilIntelligence',
+    'analyticsStrategicPlan',
+    'analyticsRidershipTrend',
 ];
 
 export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
@@ -119,7 +121,8 @@ const PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     'analyticsResidentialGrowth',
     'analyticsRoutePlanner2',
     'analyticsFarePrograms',
-    'analyticsCouncilIntelligence',
+    'analyticsStrategicPlan',
+    'analyticsRidershipTrend',
 ];
 
 const EXTERNAL_PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
@@ -203,7 +206,6 @@ export function canAccessWorkspaceFeature(
 
     // Non-workspace feature flags are still controlled by their existing global flags.
     if (!isWorkspaceAccessFeature(feature)) return true;
-
     const accessLevel = resolveWorkspaceAccessLevel(subject);
     const override = subject?.workspaceOverrides?.[feature];
     if (typeof override === 'boolean') return override;

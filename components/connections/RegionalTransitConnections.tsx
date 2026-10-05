@@ -7,6 +7,7 @@ import { getMasterSchedule } from '../../utils/services/masterScheduleService';
 import { fetchRegionalGoFeed } from '../../utils/gtfs/regionalGoService';
 import { buildLocalConnectionRows, findConnection, formatServiceTime, getGoTrainEvents } from '../../utils/regional-transit/connectionAnalysis';
 import type { ConnectionCell, ConnectionDirection, GoStationKey, GoTrainEvent, LocalConnectionRow, PublishedRouteSource, RegionalConnectionsProps, RegionalGoFeed } from '../../utils/regional-transit/types';
+import { GoScheduleChanges } from './GoScheduleChanges';
 import './RegionalTransitConnections.css';
 
 const STATIONS: Record<GoStationKey, string> = { allandale: 'Allandale Waterfront GO', south: 'Barrie South GO' };
@@ -331,6 +332,7 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
             <p>Published bus schedules and date-valid GO train GTFS only; GO buses, on-demand, fares, accessibility and live reliability are not assessed. Source trip IDs and master versions are in cell details.</p>
             {feed && <p><a href={feed.sourceUrl} target="_blank" rel="noopener noreferrer">GO static timetable source</a></p>}
         </div></details>
+        <GoScheduleChanges />
         {detail && <ConnectionDetail detail={detail} stationName={STATIONS[station]} date={date} onClose={closeDetail} />}
     </section>;
     return fullScreen ? createPortal(chart, document.body) : chart;

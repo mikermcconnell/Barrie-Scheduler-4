@@ -35,6 +35,14 @@ export interface ParkingRevenueMapDisplayLocation {
   primaryLocation: ParkingRevenueLocationSummary;
 }
 
+export interface ParkingMapRevenueCoverage {
+  coveredRevenue: number;
+  spatialRevenue: number;
+  uncoveredSpatialRevenue: number;
+  nonSpatialRevenue: number;
+  coveragePercent: number | null;
+}
+
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -117,6 +125,7 @@ export function buildParkingRevenueMapDisplayLocations(
   }>();
 
   for (const location of locationSummaries) {
+    if (location.locationKind === 'non_spatial') continue;
     if (location.isMapped && typeof location.latitude === 'number' && typeof location.longitude === 'number') {
       displayLocations.push(combineLocations(
         location.key,
@@ -161,6 +170,29 @@ export function buildParkingRevenueMapDisplayLocations(
   return displayLocations.sort((a, b) => b.totalRevenue - a.totalRevenue || b.rowCount - a.rowCount || a.displayName.localeCompare(b.displayName));
 }
 
+export function buildParkingMapRevenueCoverage(
+  locationSummaries: ParkingRevenueLocationSummary[],
+  displayLocations: ParkingRevenueMapDisplayLocation[],
+): ParkingMapRevenueCoverage {
+  const coveredRevenue = roundMoney(displayLocations.reduce((sum, location) => sum + location.totalRevenue, 0));
+  const nonSpatialRevenue = roundMoney(locationSummaries
+    .filter(location => location.locationKind === 'non_spatial')
+    .reduce((sum, location) => sum + location.totalRevenue, 0));
+  const spatialRevenue = roundMoney(locationSummaries
+    .filter(location => location.locationKind !== 'non_spatial')
+    .reduce((sum, location) => sum + location.totalRevenue, 0));
+  const uncoveredSpatialRevenue = Math.max(0, roundMoney(spatialRevenue - coveredRevenue));
+  return {
+    coveredRevenue,
+    spatialRevenue,
+    uncoveredSpatialRevenue,
+    nonSpatialRevenue,
+    coveragePercent: spatialRevenue > 0
+      ? Math.min(100, Math.round((coveredRevenue / spatialRevenue) * 1000) / 10)
+      : null,
+  };
+}
+
 export function getParkingMapMetricValue(location: ParkingRevenueMapDisplayLocation, metric: ParkingMapMetric): number {
   if (metric === 'sessions') return location.rowCount;
   if (metric === 'averageStay') return location.averageStayMinutes;
@@ -173,6 +205,6 @@ export function getParkingMapMetricValue(location: ParkingRevenueMapDisplayLocat
 export function getParkingMapMetricLabel(metric: ParkingMapMetric): string {
   if (metric === 'sessions') return 'Sessions';
   if (metric === 'averageStay') return 'Average stay';
-  if (metric === 'revenuePerSpace') return 'Revenue/space';
-  return 'Revenue';
+  if (metric === 'revenuePerSpace') return 'Revenue incl. tax/space';
+  return 'Revenue incl. tax';
 }

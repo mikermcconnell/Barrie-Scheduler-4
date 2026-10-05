@@ -20,6 +20,7 @@ export const FEATURE_DEFINITIONS = {
     fixedSystemEditor: { defaultEnabled: true, hideInDemoMode: false },
     fixedLocalAiReview: { defaultEnabled: false, hideInDemoMode: false },
     fixedDetours: { defaultEnabled: true, hideInDemoMode: false },
+    fixedRunCutting: { defaultEnabled: true, hideInDemoMode: false },
 
     analyticsTransitApp: { defaultEnabled: true, hideInDemoMode: false },
     analyticsOdMatrix: { defaultEnabled: true, hideInDemoMode: true },
@@ -34,7 +35,8 @@ export const FEATURE_DEFINITIONS = {
     analyticsStreetDesignStudio: { defaultEnabled: false, hideInDemoMode: true },
     analyticsShuttlePlanner: { defaultEnabled: true, hideInDemoMode: true },
     analyticsFarePrograms: { defaultEnabled: true, hideInDemoMode: false },
-    analyticsCouncilIntelligence: { defaultEnabled: true, hideInDemoMode: true },
+    analyticsStrategicPlan: { defaultEnabled: true, hideInDemoMode: true },
+    analyticsRidershipTrend: { defaultEnabled: true, hideInDemoMode: false },
 
     operationsPerformanceDashboard: { defaultEnabled: true, hideInDemoMode: false },
     operationsPerfReports: { defaultEnabled: true, hideInDemoMode: false },

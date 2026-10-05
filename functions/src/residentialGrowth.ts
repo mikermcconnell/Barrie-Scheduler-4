@@ -87,7 +87,71 @@ function makeId(layer: ResidentialGrowthLayer, fileNumber: string, address: stri
   return base || `${layer}-${index}`;
 }
 
+function decodeQuotedPrintableUtf8(value: string): string {
+  const unfolded = value.replace(/=\r?\n/g, '');
+  const bytes: number[] = [];
+  for (let index = 0; index < unfolded.length; index += 1) {
+    const hex = unfolded.slice(index + 1, index + 3);
+    if (unfolded[index] === '=' && /^[0-9a-f]{2}$/i.test(hex)) {
+      bytes.push(Number.parseInt(hex, 16));
+      index += 2;
+    } else {
+      bytes.push(unfolded.charCodeAt(index) & 0xff);
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+function htmlCellToString(value: string): string {
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_match, decimal: string) => String.fromCodePoint(Number.parseInt(decimal, 10)))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function htmlCellToValue(value: string): string | number {
+  const text = htmlCellToString(value);
+  if (/xls-date-/i.test(value) && /^\d+(?:\.\d+)?$/.test(text)) return Number(text);
+  return text;
+}
+
+function htmlReportRows(buffer: Buffer): unknown[][] | null {
+  const ascii = buffer.toString('latin1');
+  if (!/(?:<html\b|MIME-Version:)/i.test(ascii)) return null;
+
+  const text = /Content-Transfer-Encoding:\s*quoted-printable/i.test(ascii)
+    ? decodeQuotedPrintableUtf8(ascii)
+    : buffer.toString('utf8');
+  const headerMatch = /File\s+Number/i.exec(text);
+  if (!headerMatch) return null;
+
+  const beforeHeader = text.slice(0, headerMatch.index);
+  const tableStarts = Array.from(beforeHeader.matchAll(/<table\b/gi));
+  const tableStart = tableStarts.at(-1)?.index;
+  const tableEndMatch = /<\/table>/i.exec(text.slice(headerMatch.index));
+  if (tableStart == null || !tableEndMatch) return null;
+
+  const tableEnd = headerMatch.index + tableEndMatch.index + tableEndMatch[0].length;
+  const table = text.slice(tableStart, tableEnd);
+  return Array.from(table.matchAll(/<tr\b[\s\S]*?<\/tr>/gi), (rowMatch) =>
+    Array.from(
+      rowMatch[0].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)(?=<t[dh]\b|<\/tr>)/gi),
+      (cellMatch) => htmlCellToValue(cellMatch[1]),
+    ),
+  ).filter((row) => row.length > 0);
+}
+
 function sheetRows(buffer: Buffer): unknown[][] {
+  const reportRows = htmlReportRows(buffer);
+  if (reportRows) return reportRows;
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, blankrows: false });

@@ -34,17 +34,20 @@ firebase/
 │   ├── masterSchedules/{routeIdentity}/  # Published schedules
 │   │   ├── versions/{versionId}          # Version history
 │   ├── scheduleReviews/{reviewId}         # Team-visible bounded review metadata/status
+│   ├── operationsPlanningScenarios/{scenarioId} # Team run-cutting workflow metadata + active revision pointer
 │   ├── connectionLibrary/default         # Shared connection targets used by app services
 │   ├── publicTimetable/default           # Team-managed brochure content defaults
 │   ├── routeConnectionConfigs/{routeIdentity} # Per-route connection settings
 │   ├── transitAppData/{docId}            # Transit App analytics datasets
 │   ├── performanceData/{docId}           # STREETS / ops performance datasets
 │   ├── performanceConfig/load            # Team passenger-capacity policy
-│   ├── todPickupData/{docId}             # Monthly Transit On Demand pickup map datasets
+│   ├── todPickupData/{docId}             # Monthly pickup maps + daily On Demand KPI reports
 │   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
 │   ├── performanceImports/{importId}     # STREETS raw-import audit and server queue metadata
 │   ├── parking/default                   # Shared parking-code settings + active storage pointer
 │   │   └── months/{month}                # Monthly parking usage/revenue import metadata
+│   ├── parking/history                   # LocoMobi strategy-history manifest + active aggregate pointer
+│   ├── parking/historyLocations          # Revisioned LocoMobi meter links to reviewed physical locations
 │   ├── odMatrixData/{docId}              # Origin-destination datasets
 │   │   └── imports/{importId}            # OD import history
 │   ├── residentialGrowth/{docId}         # Monthly issued/occupied residential growth datasets
@@ -52,10 +55,6 @@ firebase/
 │   ├── routePlanner2Projects/{projectId} # Camp Shuttle Planner saved projects (internal Route Planner 2 key)
 │   │   └── scenarios/{scenarioId}        # Saved editable route concepts
 │   │       └── runtimeSnapshots/{snapshotId} # Accepted/rejected Mapbox runtime decisions
-│   ├── councilIntelligence/default       # Council Intelligence pilot metadata/source health
-│   │   ├── meetings/{meetingId}          # Bounded official meeting text, topics, hashes, status
-│   │   ├── councillors/{profileId}       # Evidence-counted mover/seconder/recorded-vote profile
-│   │   └── registers/{registerId}         # Transit-relevant decisions/actions/funding/deadlines
 │   ├── detourNotices/{noticeId}           # Team-authored route detour or stop-closure notice
 │   │   ├── overlays/{overlayId}           # Snapshotted GTFS route/direction and editable detour geometry
 │   │   └── publications/{publicationId}   # Immutable manual MyRide posting record
@@ -77,10 +76,9 @@ firebase/
 `teams/{teamId}/members/{userId}` is the durable source of team membership. The `userId` field must match the document ID so a collection-group query filtered to the signed-in user can safely enumerate only that user's teams. The required collection-group `userId` index is declared in `firestore.indexes.json`. `users/{userId}.teamId` selects the active team; joining an additional team does not replace an existing active-team pointer unless activation is explicitly requested.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
 `teams/{teamId}/routePlanner2Projects/{projectId}` stores Camp Shuttle Planner project metadata, with editable route concepts saved under its `scenarios/{scenarioId}` subcollection. The existing `routePlanner2Projects` path remains stable to avoid a data migration.
-`teams/{teamId}/councilIntelligence/default` stores the Council Intelligence 90-day pilot window, last sync timestamp, and bounded source-health counts. Its `meetings` subcollection stores normalized eSCRIBE meeting metadata, official source links, extraction status, content hash, transit topics, and bounded plain text; external HTML is never rendered. `councillors` stores evidence counts and only treats explicitly named recorded votes as votes—movers and seconders remain separate signals. `registers` stores transit-relevant official-record summaries with confidence and source links. Reads require `analyticsCouncilIntelligence`; refresh is performed by a scheduled Function or an authenticated owner/admin callable.
 `teams/{teamId}/detourNotices/{noticeId}` stores editable notice copy, effective schedule, map frame, workflow status, and optimistic revision. Route overlays snapshot GTFS geometry/stops so later feed changes do not rewrite saved notices. Each overlay stores immutable operational `closureStart`/`closureEnd` anchors, sparse interior `closureWaypoints` used only to reshape the published closed-section line, sparse `detourWaypoints`, dense closure/detour geometry, and an optional `routeLabelPosition` that is re-snapped to the detour line. Temporary stop impacts may store an optional `temporaryStopCode` alongside their public name and position. Older overlays without `closureWaypoints` load with an empty list. Publication records store the posted revision, generated filenames, MyRide URL, and posting audit fields; version 1 keeps PDF/PNG files as browser downloads rather than Cloud Storage objects.
 `teams/{teamId}/routeConceptPlannerProjects/{projectId}` is separate neutral Route Concept Planner storage. Its integer `revision` supports optimistic conflict detection; alternatives and their patterns are saved atomically with the root document.
-`teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
+`teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows. The Strategic Plan reads this same active pointer and payload for its read-only 2027–2032 evidence view; it creates no Strategic Plan Fleet Plan document or Storage object.
 `mail/{mailId}` is an outbound queue written by trusted report Functions and consumed by the configured `firestore-send-email` extension. It is not a client-readable or client-writable application collection.
 
 ### Device-local browser storage
@@ -105,14 +103,17 @@ storage/
 └── teams/{teamId}/
     ├── masterSchedules/{routeIdentity}_v{version}_{nonce}.json
     ├── scheduleReviews/{reviewId}/{creatorId}/schedule.json
+    ├── operationsPlanningScenarios/{scenarioId}/versions/{revision}.json
     ├── routeMaps/{safeName}
     ├── transitAppData/{allPaths}
     ├── performanceData/{allPaths}
     ├── todPickupData/{timestamp}.json
+    ├── todPickupData/raw/{serviceDate}/{runId}.xlsx
     ├── performanceData/{timestamp}-overview.json
     ├── performanceData/{timestamp}-report.json
     ├── performanceData/months/{timestamp}-{YYYY-MM}.json
     ├── performanceData/months/{timestamp}-route-{routeId}-{YYYY-MM}.json
+    ├── performanceData/views/{timestamp}-{detailMode}-{YYYY-MM}.json
     ├── performanceViews/load-profiles/{generation}-{YYYY-MM}.json
     ├── performanceImports/raw/{timestamp}.csv
     ├── parking/{month}_{timestamp}.json
@@ -126,7 +127,9 @@ storage/
 - `storageMode`: `monthly` for current chunked performance history, or older `monolithic` data
 - `monthlyStoragePaths`: month → full monthly performance summary JSON
 - `routeMonthlyStoragePaths`: route → month → route-scoped monthly summary JSON
+- `dashboardMonthlyStoragePaths`: dashboard detail mode (`overview`, `otp`, `ridership`, or `operator-dwell`) → month → compact monthly view JSON
 - `loadProfileMonthlyStoragePaths`: month → compact versioned Load Profiles view JSON
+- `ridershipTrendStoragePath`: compact versioned fixed-route daily boarding projection at `teams/{teamId}/performanceViews/ridership-trends/{generation}.json`
 - `overviewStoragePath`: lightweight recent overview payload for dashboard first-load
 - `reportStoragePath`: report-focused snapshot used by the daily email
 - `storagePath`: legacy full performance summary pointer used by older imports only
@@ -140,9 +143,35 @@ Load Profiles view schema v1 stores only date/day type, route-direction load pro
 
 The full monthly performance archives still include load-profile fields for legacy consumers and are readable through the broader Operations access rule. The compact-view permission is therefore the supported UI/API boundary, not complete field-level secrecy, until the remaining performance readers move behind backend-filtered views.
 
-Partner teams, such as WATT, can use read-only shared data sources instead of copied JSON. `teams/{teamId}.dataSourceTeamIds.transitApp` and `.performance` may point at a source team such as Barrie Transit. The app reads shared Transit App and STREETS data through the `sharedWorkspaceData` Cloud Function, which verifies the signed-in user belongs to the requesting team and that the requesting team is explicitly configured to read from the source team. Imports and writes still target the current team only.
+Dashboard monthly views retain the same daily metric objects required by their named tab while omitting unrelated tab data and schedule-runtime evidence. The Operator Dwell view also retains aggregated load profiles because its incident map and timeline use them for passenger-context estimates. Same-team and shared-source readers prefer these pointers only when they cover every requested source month, then fall back to route-scoped or full monthly archives when an older generation is absent or incomplete. Shared-source detail reads request and merge one month per backend response to keep bounded HTTP payloads. Every generation is uploaded before the Firestore pointer changes, uses an immutable versioned path with private browser caching, and is removed only after a later metadata commit. Existing active history can be prepared with `functions/scripts/backfill-performance-dashboard-views.mjs`; the script is dry-run by default and transactionally refuses to publish if the source generation changes.
 
-Partner teams that are granted Scheduled Transit access can also read published master schedules from a configured source team. `teams/{teamId}.dataSourceTeamIds.masterSchedules` may point at the source team; when omitted, the Master Schedule Browser falls back to `dataSourceTeamIds.performance` for partner teams with no local schedules. Shared master-schedule access is read-only and still requires the requesting team member to have Fixed Route workspace access.
+Ridership Trends projection schema v1 stores the cutover date, generated baseline hash, latest service date, update time, and one fixed-route boarding total per post-cutover service date. It deliberately omits route, stop, trip, operator, alighting, load, and Transit On Demand detail. Performance publishers must preserve dates that have aged out of detailed retention, replace same-date corrections idempotently, upload the next projection before changing `ridershipTrendStoragePath`, and remove the prior object only after the metadata commit. Standalone same-team reads require `analyticsRidershipTrend`; Strategic Plan contextual reads require `analyticsStrategicPlan`. Shared and contextual reads use `sharedWorkspaceData` and the requesting team's configured performance source. See `docs/RIDERSHIP_TRENDS.md`.
+
+Specialized Transit schema v1 contains exact month totals/comparisons, reconciliation coverage and note, service-date/hour/location activity buckets, aggregate recurring-demand thresholds, public common-location labels and reviewed coordinates, and source hashes/page counts. Location status is `unmapped`, `automatic`, or `reviewed`; coordinate provenance is null or `gtfs-stop`, `known-place`, legacy `mapbox`, `mapbox-permanent`, or `manual`. Only `mapbox-permanent` is reusable stored Mapbox evidence; legacy `mapbox` values must be resolved again or manually reviewed. It deliberately omits raw PDF bytes, BookingId values, and ClientId values. On the Vite localhost development server, one team-keyed record containing the dataset and derived metadata is stored in IndexedDB database `scheduler4-specialized-transit-local`, object store `datasets`; the metadata pointer uses `local-specialized-transit://{teamId}/revision-{revision}` and never leaves that browser. A separate local-storage ledger counts attempted Permanent Geocoding requests for the current UTC month and blocks the localhost client at 999. The non-local development fallback retains `teams/{teamId}/specializedTransitData/metadata` in Firestore and `teams/{teamId}/specializedTransitData/revision-{revision}-{nonce}.json` in Storage. Canonical types and validation live under `utils/specialized-transit/`. See `docs/SPECIALIZED_TRANSIT_DASHBOARD.md`.
+
+`teams/{teamId}/monthlyRidershipReports/{YYYY-MM}` is a server-only audit written transactionally with the deterministic `mail/monthly-ridership-{teamId}-{YYYY-MM}` queue document. Schema v1 records the report and template versions, month, queued timestamp, mail document ID, recipient count, fixed-route and On Demand coverage, retained prior-year daily-comparison coverage, and the exact derived monthly, day-type, scheduled-route YTD, and projected annual metrics used in the email. It does not duplicate recipient addresses or detailed operational records. The audit prevents scheduler retries from queueing the same month twice; the email extension's `mail` document remains the delivery-status source of truth. Client rules intentionally grant no access to the audit collection.
+
+Partner teams, such as WATT or Dillon, can use shared source mappings instead of copied JSON. `teams/{teamId}.dataSourceTeamIds.transitApp`, `.performance`, and `.fleetPlan` may point at a source team such as Barrie Transit. Transit App metadata at `teams/{sourceTeamId}/transitAppData/default` points to one canonical aggregate under `teams/{sourceTeamId}/transitAppData/{timestamp}.json`; both the standalone Transit App workspace and the Strategic Plan workspace read that same object. The app reads shared Transit App, STREETS, Ridership Trends, and Fleet Plan evidence through the `sharedWorkspaceData` Cloud Function, which verifies the signed-in user belongs to the requesting team, the requesting team is explicitly configured to read from the source team, and the member has the relevant standalone or Strategic Plan permission. Imports and writes remain scoped to their existing permissions and target team.
+
+Partner teams can read published master schedules from a configured source team when their member has Fixed Route or Strategic Plan access. `teams/{teamId}.dataSourceTeamIds.masterSchedules` may point at the source team; when omitted, the Master Schedule Browser retains its compatibility fallback to `dataSourceTeamIds.performance` for partner teams with no local schedules. Shared master-schedule access is read-only.
+
+`teams/{teamId}/operationsPlanningScenarios/{scenarioId}` stores bounded
+workflow metadata for a source-pinned block-audit, daily run-cut, and anonymous
+weekly roster scenario. The active pointer includes `activeRevision`, immutable
+Storage `storagePath`, payload byte count, source-manifest fingerprint,
+source-freshness state, validation counts, status, and create/update/submit/
+approve audit fields. Large normalized rules, source manifests, imported Codex
+proposal, recomputed assessment, and anonymous roster content are stored at
+`teams/{teamId}/operationsPlanningScenarios/{scenarioId}/versions/{revision}.json`.
+Fixed Route members may create, revise, and submit; approval is owner/admin or
+audited support-edit only. Integrity and stale-source state block submission;
+integrity, stale-source, and contractual state block approval. Approved
+scenarios and all historical revision objects are immutable. Source photographs
+and employee identity are not stored.
+
+The Strategic Plan reuses this same Master Schedule metadata and Storage content without copying it. A requesting member with `analyticsStrategicPlan` may read same-team schedules or a source explicitly configured by `dataSourceTeamIds.masterSchedules`; `workspaceFixedRoute` remains the alternate read permission for Scheduled Transit. Strategic Plan access does not satisfy any Master Schedule write rule.
+
+`teams/{sourceTeamId}/strategicPlanWorkplans/default` stores the current editable project-control schedule. Schema v1 contains a bounded source record, schedule range, monotonic `revision`, and at most 250 tasks with WBS, phase/chapter, ownership, weekly dates, status, progress, dependencies, notes, and typed task/deliverable/review/meeting/engagement segments. Each save checks the loaded revision in a transaction and writes an immutable full snapshot to `strategicPlanWorkplans/default/versions/{revision}`. New versions include `audit: { editedByUid, editedByName, editedAt, summary, changes[] }`; each change identifies an added, updated, or deleted task and its bounded before/after field values. Rules bind `updatedBy` and `audit.editedByUid` to the authenticated caller and require the matching version in the same atomic write. Same-team members with `analyticsStrategicPlan` may maintain the plan. A partner team with the same permission may collaborate only when `dataSourceTeamIds.strategicPlanWorkplan` explicitly names the source team. Older immutable versions without `audit` remain readable and receive a client-side legacy-history label. Developer support retains scoped read/edit behavior. This mapping does not grant write access to source evidence, Master Schedule, Fleet Plan, GTFS, or performance records.
 
 Performance schema v12 extends daily dwell summaries with `exposureByRouteOperator`, `eligibleTimepointVisits`, and `incidentsPer1kEligibleVisits`. Each exposure row counts deduplicated normal timepoint observations with valid observed arrival and departure for one route/operator pair, allowing route and operator filters to keep matching numerators and denominators. Dwell incidents may include a deterministic `incidentId`, scheduled/observed timing context, vehicle/direction, passenger activity, reliable load status, and coordinates; cascades repeat `incidentId` for stable joining. These fields are optional so older stored days remain readable. `byOperatorDwell.totalReportableDwellMinutes` remains the moderate/high-only dwell total used by compact report snapshots.
 
@@ -156,9 +185,17 @@ Local historical passenger correction is prepared by `scripts/prepareRidershipCo
 
 `teams/{teamId}/performanceConfig/load` stores the team-managed passenger-capacity policy: `schemaVersion: 1`, `defaultCapacity`, normalized `vehicleCapacities`, monotonic `version`, `updatedAt`, and `updatedBy`. Capacities are whole numbers from 20 through 150, with at most 500 vehicle overrides. Members may read the policy; owners/admins may write it. Writes use an expected-version transaction. Server CSV ingest and history rebuild load one policy snapshot before aggregation; workbook import loads it immediately before browser aggregation. The 65-passenger value is only the fallback when no valid team policy exists.
 
-`teams/{teamId}/todPickupData/metadata` stores the active Transit On Demand pickup-map import pointer. Full monthly TOD pickup datasets live in Storage as aggregated JSON at `teams/{teamId}/todPickupData/{timestamp}.json`. Uploading a CSV for a month replaces that month only; other months remain in the same stored summary. The stored payload is aggregated by stop ID when present, otherwise by pickup name plus rounded coordinates, or by coordinates alone. Raw request rows, rider-identifying fields, and address columns are not persisted. Imports are bounded to CSV files under 5 MB and 25,000 rows. TOD pickup map data and import metadata are readable by team members; writes are restricted to team owners/admins or workspace permission managers.
+`teams/{teamId}/todPickupData/metadata` stores the active Transit On Demand data pointer plus the most recent automatic report date/raw-archive pointer. The Storage JSON at `teams/{teamId}/todPickupData/{timestamp}.json` contains automatic daily Licensee KPI summaries and may retain legacy monthly pickup-map datasets for backward compatibility. The active Ridership UI reads only `dailyReports`; legacy `months` data is preserved as read-only stored data and is not rendered or replaced by the client. Automatic imports archive the source workbook at `teams/{teamId}/todPickupData/raw/{serviceDate}/{runId}.xlsx`, authenticate with the server-side `INGEST_API_KEY`, and assign the previous Toronto calendar day supplied by Power Automate. Daily summaries persist completed-trip totals and aggregated pickup/drop-off activity by stop/location, not raw rider or trip records. The workbook itself contains no trustworthy service date, so the email automation supplies yesterday from the received timestamp. Raw request rows, rider-identifying fields, and address columns are not persisted in summary JSON. Daily Excel KPI imports are bounded to 5 MB and 1,000 worksheet rows. Team members may read the data; the client exposes no manual TOD write path, while the Cloud Function writes through Admin SDK only after secret-key authentication.
 
-`teams/{teamId}/parking/default` stores the active Parking workspace settings and Storage pointers for Parking usage and Parking Revenue payloads. Code-family mappings connect annual HotSpot discount codes such as `RS2025`, `RS26`, and manual yearly overrides to a department, including the department color, short code, active years, preferred year format (`2026` or `26`), optional `ignoreData` setting that excludes the department's rows from Parking usage summaries and plate analysis, and optional `ignoreFlags` setting that suppresses plate-level indicators for that department. Parking settings also store the department color legend sort choice, spot-location labels, editable Parking Revenue lot categories, and reviewed Parking Revenue map locations with physical display name, latitude/longitude, optional space count, optional `categoryId`, and linked HotSpot/QR source IDs. Seeded lot categories are Downtown, Waterfront, Hybrid, Marina, and Hospital; default reviewed mappings classify Spirit Catcher, Simcoe Street, and Marina North as Hybrid, Marina Lot as Marina, and H-Block as Downtown. The app bundles City ParkingLatLong locations as default reviewed map locations; the Parking Lot Data workspace can refresh those settings from a newer City parking lat/lng workbook. Department-code usage imports store normalized summaries under `storagePath`; Parking Revenue imports store source-aware monthly datasets under `revenueStoragePath` in Storage at `teams/{teamId}/parking/revenue/`. Revenue imports replace only the matching source/month combination and preserve other revenue months/sources. Parking Revenue analytics can filter by year, month, source, uploader (`importedBy`), day type, hour range, and lot category. Estimated utilization is derived from paid parking minutes divided by known spaces × imported active days × selected hour window. Parking data contains license plates and is intended for Parking, admin, or internal workspace access; reads and writes are allowed for users with Parking workspace access so Parking staff can import workbooks and maintain thresholds/mappings.
+`teams/{teamId}/todZoneConfig/default` stores the shared mutable TOD zone draft. Schema v4 contains revision metadata, managed zone definitions and source colors, polygon rings stored as `{ lon, lat }` coordinate maps (converted to standard `[longitude, latitude]` arrays in the client and GeoJSON), explicit connection stops with one or more zone codes, explicit stop include/exclude/replace overrides, an effective date, source and review note, and the last published version ID. Mutable schema-v1 through v3 drafts are upgraded in memory with the source zones introduced after that version; shared connection records are merged by stop ID and zone code. The next save or publication persists v4. Historical publications are read without retroactive migration. The map wrapper is required because Firestore does not support arrays directly nested inside arrays. Saves use optimistic sequential revisions. `teams/{teamId}/todZoneConfig/default/versions/{versionId}` stores immutable publications with the same zone definition plus the current City stop assignment snapshot and publication attribution; each v4 snapshot row retains `isConnectionStop` and `connectionZoneCodes` so connection status is historically reproducible per zone. Effective resolution chooses the latest publication whose `effectiveFrom` is on or before each service date; publication time and revision resolve same-date ties. Team members can read publications; only owners/admins can read or change the mutable draft and can publish, while published version documents cannot be updated or deleted. Client validation limits drafts to 80 polygons, 250 vertices per polygon, 5,000 vertices total, 1,500 connection stops, and 1,000 overrides; the rules also bound top-level list sizes. See `docs/TOD_ZONES.md` for assignment and source semantics.
+
+`teams/{teamId}/parking/default` stores the active Parking workspace settings and Storage pointers for Parking usage and Parking Revenue payloads. Code-family mappings connect annual HotSpot discount codes such as `RS2025`, `RS26`, and manual yearly overrides to a department, including the department color, short code, active years, preferred year format (`2026` or `26`), optional `ignoreData` setting that excludes the department's rows from Parking usage summaries and plate analysis, and optional `ignoreFlags` setting that suppresses plate-level indicators for that department. Parking settings also store the department color legend sort choice, spot-location labels, editable Parking Revenue categories, and reviewed Parking Revenue mappings with display name, optional `locationKind` (`physical` or `non_spatial`), nullable latitude/longitude, optional space count, optional `categoryId`, and linked HotSpot/QR source IDs. Missing `locationKind` values are treated as `physical` for backward compatibility. Seeded categories are Downtown, Waterfront, Hybrid, Marina, Hospital, Allandale GO, and Special Events. HotSpot and QR ID `9000` are seeded into one Special Events mapping with `locationKind: non_spatial`, null coordinates, and no capacity; these rows remain in revenue/session/category/source/time analysis while map pins, map-coverage denominators, and capacity-derived metrics treat location and capacity as not applicable. The app bundles City ParkingLatLong locations as default reviewed physical locations. `parkingLocationWorkbook.ts` parses newer City lat/lng workbooks for future reviewed refresh support, but the current production UI does not call it. Department-code usage imports store normalized summaries under `storagePath`; Parking Revenue imports store source-aware monthly datasets under `revenueStoragePath` in Storage at `teams/{teamId}/parking/revenue/`. Revenue schema v2 retains the source `amount`, `tax`, and `total` fields and adds the canonical `taxInclusiveAmount`, calculated as Amount plus Tax. All Parking Revenue totals, trends, comparisons, maps, and per-space metrics use that tax-inclusive value; the source Total remains available for reconciliation. Schema-v1 payloads are normalized from their stored Amount and Tax values when loaded, so they do not require workbook re-import. Revenue imports replace only the matching source/month combination and preserve other revenue months/sources. Parking Revenue analytics can filter by year, month, source, uploader (`importedBy`), day type, hour range, and revenue category. Estimated utilization is derived from paid parking minutes divided by known spaces × imported active days × selected hour window. Parking data contains license plates and is intended for Parking, admin, or internal workspace access; reads and writes are allowed for users with Parking workspace access so Parking staff can import workbooks and maintain thresholds/mappings.
+
+`teams/{teamId}/parking/history` stores the revisioned manifest for privacy-minimized LocoMobi strategic evidence. The manifest records vendor and financial basis, coverage, reconciliation, aggregate pointer, and month-partition descriptors. Storage objects live under `teams/{teamId}/parking/history/revision-{revision}-{importId}/`: `aggregate.json` is the initial read model and `months/{YYYY-MM}.json` contains only normalized non-identifying activity rows for optional drill-down. The source workbook is not uploaded. LocoMobi amounts remain `source_reported_amount`, not tax-inclusive revenue, and are not silently combined with HotSpot/QR totals. Saves use upload-verify-commit-cleanup with an optimistic manifest revision; identical normalized content does not create a new revision. Existing Parking Firestore and Storage rules keep this path restricted to `workspaceParking` access or an audited support session.
+
+The history aggregate may include `locationMonths`: compact per-month, domain, and meter totals with hourly counts for linked period/location analysis without downloading activity-row partitions. This field is optional for backward compatibility; older aggregates remain available for whole-archive review and need workbook re-import to enable cross-filtering. It contains no direct payment or plate identifiers.
+
+`teams/{teamId}/parking/historyLocations` stores the separate reviewed strategy-to-location bridge: `schemaVersion: 1`, optimistic `revision`, `links`, `updatedAt`, `updatedBy`, and `updatedAtServer`. Each link contains `vendor: locomobi`, `domain`, `meterId`, the validated `sourceKey` (`JSON.stringify(['locomobi', domain, meterId])`), and `locationId` referencing an existing physical `revenueLocations` entry in `parking/default`. Duplicate source keys are rejected; removing a link leaves that meter unlinked. A missing bridge document reads as revision 0 with no links. Saves replace the reviewed link set transactionally against the expected revision; the UI retains links for meters outside the current archive. Non-spatial or missing registry entries do not become strategy map pins. This bridge uses the existing restricted Parking document access rules and does not alter the default settings, HotSpot/QR source references, coordinates, or capacity fields.
 
 ---
 
@@ -198,10 +235,12 @@ interface TeamDocument {
   inviteCode: string;       // For joining
   defaultMemberAccessLevel?: WorkspaceAccessLevel; // Access assigned to new invite joins.
   defaultMemberWorkspaceOverrides?: Partial<Record<string, boolean>>; // Optional default per-workspace allow/block overrides.
-  dataSourceTeamIds?: {     // Optional read-only source teams for partner workspace data.
+  dataSourceTeamIds?: {     // Optional source teams for partner workspace data.
     transitApp?: string;    // Source team for Transit App Data.
     performance?: string;   // Source team for STREETS dashboard/reporting data.
+    fleetPlan?: string;     // Source team for read-only Fleet Plan evidence.
     masterSchedules?: string; // Source team for read-only published master schedules.
+    strategicPlanWorkplan?: string; // Source team for the explicitly shared editable Strategic Plan work plan.
   };
   partnerTeam?: boolean;    // True for externally onboarded agency teams.
 }
@@ -248,6 +287,8 @@ application `TeamMember` declared in `utils/masterScheduleTypes.ts`.
 `role` controls team permissions and writes. Team owners and admins can manage team settings and members. `accessLevel` controls which app workspaces are visible. Use `none` for brand-new users or newly created teams that should see only Team Management until access is explicitly granted. Use `parking` for staff who should see only the Parking workspace by default. Use `external-planner` or `transit-app-only` for external agencies that should see only Transit App Data through the top-level Planning Data view. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
 
 `defaultMemberAccessLevel` and `defaultMemberWorkspaceOverrides` control the access assigned to future members who join with the team's invite code or invite link. The Developer Access Wizard in Team Management can set both the team default and individual member `workspaceOverrides`.
+
+Persisted `analyticsCouncilIntelligence` overrides from the retired Council Intelligence workspace are ignored when access data is read or rewritten. Other unknown override keys remain invalid.
 
 Partner agency onboarding uses invite links in the form `?invite=CODE` or `#/join/CODE`. A signed-out user is prompted to sign in; after authentication, the app joins them to the matching team automatically. Invite lookup documents denormalize `defaultMemberAccessLevel` and optional `defaultMemberWorkspaceOverrides` so new members can receive the correct external profile before they are allowed to read the team document.
 
@@ -432,7 +473,7 @@ interface FleetPlanDocumentMetadata {
 }
 ```
 
-The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The active pointer lives at `teams/{teamId}/fleetPlan/default`; each save increments `currentVersion`, writes `fleetPlan/default/versions/{versionNumber}`, and preserves that version's JSON object in Storage. Team members can read the shared Fleet Plan; writes are restricted to team owners/admins. Saves use the loaded `currentVersion` for conflict detection so users do not silently overwrite newer edits. Stored JSON still preserves source sheet keys for compatibility with the imported template, while the user-facing grid and Excel export are combined into one Fleet Plan sheet with a Bus Type column.
+The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The active pointer lives at `teams/{teamId}/fleetPlan/default`; each save increments `currentVersion`, writes `fleetPlan/default/versions/{versionNumber}`, and preserves that version's JSON object in Storage. Same-team active-plan reads require either `analyticsFleetPlan` or `analyticsStrategicPlan`; version-history reads require `analyticsFleetPlan`. Writes are restricted to team owners/admins. Saves use the loaded `currentVersion` for conflict detection so users do not silently overwrite newer edits. Stored JSON still preserves source sheet keys for compatibility with the imported template, while the user-facing grid and Excel export are combined into one Fleet Plan sheet with a Bus Type column. The Strategic Plan derives its read-only 2027–2032 presentation in memory from this same payload and persists nothing.
 
 ### ResidentialGrowthMetadata (`teams/{teamId}/residentialGrowth/default`)
 
@@ -571,6 +612,31 @@ interface MasterScheduleContent {
   };
 }
 ```
+
+## Operations Planning
+
+Canonical domain types live in `utils/run-cutting/types.ts`; persistence wire
+types live in `utils/services/operationsPlanningService.ts`.
+
+The external exchange supports numeric schema version `1` (whole-trip work)
+and `2` (source-backed interior relief) plus a discriminating
+`kind`: `operations-planning-input` for app exports and
+`operations-planning-proposal` for Codex imports. `PlanningSourceManifest`
+binds every route/day type to a source team, master version, Storage path,
+content fingerprint, block-membership fingerprint, and pin time. Version 2
+retains source trips and vehicle-block membership, adds `PlanningTrip.stopEvents`
+with stable event IDs, source-column names, arrival/departure minutes and arrival
+provenance, and adds optional `RunPiece.startEventId` / `endEventId` references.
+Those references bound the first/last source trip covered by a piece. Internal
+projection units are calculation details, not replacement Master trips or
+external source identities. Input and proposal schema versions must match;
+version 1 remains readable without inventing interior events.
+
+`OperationsPlanningRevisionPayload` uses kind
+`operations-planning-scenario-revision` and contains the full source manifest,
+normalized `RuleProfile`, `OperationsMatrix`, current app-recomputed
+`ProposalAssessment`, validation summary, and save audit fields. Weekly rosters
+use anonymous crew numbers and day/run references only.
 
 ---
 
@@ -886,6 +952,7 @@ interface NewScheduleProject {
     dateRange: { start: string; end: string } | null;
   };
   routeNumber?: string;
+  wizardStep?: 1 | 2 | 3 | 4 | 5;
 
   // Runtime review and trust contract (Step 2)
   analysis?: TripBucketAnalysis[];
@@ -899,6 +966,7 @@ interface NewScheduleProject {
   // Generated output (Step 4)
   generatedSchedules?: MasterRouteTable[];
   originalGeneratedSchedules?: MasterRouteTable[];
+  generatedScheduleInputFingerprint?: string;
   parsedData?: RuntimeData[];      // Raw data for regeneration
 
   isGenerated: boolean;
@@ -912,7 +980,7 @@ interface NewScheduleProject {
 }
 ```
 
-The schema v2 contract separates visible `reviewBuckets` from trusted `approvedBuckets`. Normal v2 saves write `runtimeTrustSchemaVersion: 2` and `runtimeTrustMigrationVersion: 2`, but readers still validate the contract itself; a marker alone never makes old Storage content trusted. Save payloads retain any completed Step 3 configuration and Step 4 schedules already loaded in memory even when the current screen is temporarily gated at Step 2. Old analysis, bands, approvals, parsed runtime results, and generated schedule artifacts can be cleared by `functions/scripts/migrate-new-schedule-runtime-v2.mjs`. The script is dry-run by default, requires matching `--project` and `--confirm-project` values for `--apply`, uses update-time checks, and keeps a 30-day backup under `migration-backups/new-schedule-runtime-v2/` before replacing an active Storage object. `cleanupNewScheduleRuntimeMigrationBackups` runs daily and deletes only expired objects under that exact migration prefix. Project identity, performance selection, and planner configuration are preserved. The app uses the same upload-verify-commit-cleanup order when it durably resets a legacy project on load.
+The schema v2 contract separates visible `reviewBuckets` from trusted `approvedBuckets`. Its optional `plannerOverrides` snapshot reconstructs independent North-start and South-start bucket exclusions after resume. Normal v2 saves write `runtimeTrustSchemaVersion: 2` and `runtimeTrustMigrationVersion: 2`, but readers still validate the contract itself; a marker alone never makes old Storage content trusted. Save payloads retain any completed Step 3 configuration and Step 4 schedules already loaded in memory even when the current screen is temporarily gated at Step 2. `generatedScheduleInputFingerprint` is required for restored output to reopen Steps 4 or 5; older or drifted output remains saved but is routed to Step 3 for regeneration. Old analysis, bands, approvals, parsed runtime results, and generated schedule artifacts can be cleared by `functions/scripts/migrate-new-schedule-runtime-v2.mjs`. The script is dry-run by default, requires matching `--project` and `--confirm-project` values for `--apply`, uses update-time checks, and keeps a 30-day backup under `migration-backups/new-schedule-runtime-v2/` before replacing an active Storage object. `cleanupNewScheduleRuntimeMigrationBackups` runs daily and deletes only expired objects under that exact migration prefix. Project identity, performance selection, and planner configuration are preserved. The app uses the same upload-verify-commit-cleanup order when it durably resets a legacy project on load.
 
 ### TimeBand
 
@@ -1015,6 +1083,12 @@ interface PlatformAnalysis {
 
 ---
 
+### Specialized Transit saved source files
+
+Specialized Transit cloud metadata and aggregate objects are team-readable and owner/admin-writable, with audited support-session exceptions; authentication alone grants no cross-team access. `utils/specialized-transit/locationMerges.ts` consolidates RVH campus aliases under `st-rvh-campus` and resolves unique saved aliases on import. All affected activity bucket IDs are remapped and counts summed; monthly trip totals remain unchanged. This is compatible with schema v1 and consolidates existing aggregates on display, persisting on the next normal save.
+
+IndexedDB database `scheduler4-specialized-transit-local` version 2 adds object store `reportFiles`, keyed by `[teamId, userId]`. An explicitly saved source pair contains `monthly` and `common` entries with `name`, `type`, `lastModified`, and `bytes` (ArrayBuffer). Saving replaces that account/team's current pair; removing it leaves aggregate history untouched. These optional browser-local raw PDFs are separate from the privacy-minimized aggregate schema above and are never uploaded to Firebase. The version upgrade preserves existing `datasets` records.
+
 ## Key Patterns
 
 ### 1. Large Data in Cloud Storage
@@ -1091,4 +1165,5 @@ Routes like 2A+2B share a downtown terminus:
 | Shift, Requirement, TOD day/zone types | `utils/demandTypes.ts` |
 | RideCo/MVT parser result and import report types | `utils/parsers/csvParsers.ts` |
 | Parking import, revenue import, settings, summaries, and flags | `utils/parking/parkingTypes.ts` |
-| Council meetings, items, motions, votes, evidence, actions, and funding | `utils/council/types.ts` |
+| Parking LocoMobi history, aggregates, and manifest | `utils/parking/parkingLocoMobiTypes.ts`, `utils/parking/parkingStrategyHistoryService.ts` |
+| Parking strategy area model and reviewed location links | `utils/parking/parkingStrategyModel.ts`, `utils/parking/parkingStrategyLocationService.ts` |

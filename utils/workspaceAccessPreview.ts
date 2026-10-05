@@ -72,8 +72,8 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
     },
     {
         feature: 'analyticsCorridorSpeed',
-        label: 'Corridor Speed',
-        description: 'Observed versus scheduled travel time by corridor.',
+        label: 'Corridor Performance',
+        description: 'Evidence-backed observed versus scheduled runtime by corridor.',
         previewKind: 'analytics-card',
     },
     {
@@ -131,9 +131,15 @@ const ANALYTICS_CARDS: WorkspacePreviewItem[] = [
         previewKind: 'analytics-card',
     },
     {
-        feature: 'analyticsCouncilIntelligence',
-        label: 'Council Intelligence',
-        description: 'Council and committee meeting records, decisions, votes, and transit-related actions.',
+        feature: 'analyticsStrategicPlan',
+        label: '2027–2032 Strategic Plan',
+        description: 'Static-GTFS, Transit App, and canonical Master Schedule evidence for strategic planning.',
+        previewKind: 'analytics-card',
+    },
+    {
+        feature: 'analyticsRidershipTrend',
+        label: 'Ridership Trends',
+        description: 'Long-term fixed-route boardings, annual change, and current-year progress.',
         previewKind: 'analytics-card',
     },
 ];

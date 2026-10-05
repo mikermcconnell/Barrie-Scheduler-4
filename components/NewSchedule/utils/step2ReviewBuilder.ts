@@ -120,6 +120,14 @@ export const buildStep2ReviewResult = (
 
     const normalizedPlannerOverrides: Step2PlannerOverrides = {
         excludedBuckets: normalizeExcludedBuckets(input.plannerOverrides.excludedBuckets),
+        ...(input.plannerOverrides.excludedCycleBucketsByStartDirection
+            ? {
+                excludedCycleBucketsByStartDirection: {
+                    North: normalizeExcludedBuckets(input.plannerOverrides.excludedCycleBucketsByStartDirection.North ?? []),
+                    South: normalizeExcludedBuckets(input.plannerOverrides.excludedCycleBucketsByStartDirection.South ?? []),
+                },
+            }
+            : {}),
     };
 
     const normalizedPerformanceConfig: Step2PerformanceConfig | null | undefined = input.performanceConfig
@@ -182,7 +190,7 @@ export const buildStep2ReviewResult = (
 
     const normalizedDirectionStops = normalizeDirectionStops(input.canonicalDirectionStops ?? null);
     if (!hasUsableCanonicalDirectionStops(normalizedDirectionStops)) {
-        warnings.push('No planning stop chain is available; schedule generation will infer timepoints from the runtime data.');
+        blockers.push('No trusted planning stop chain is available. Resolve or select the canonical route stops before approval.');
     }
 
     const approvedRuntimeModel = buildApprovedRuntimeModel({
@@ -242,6 +250,25 @@ export const buildStep2ReviewResult = (
         ) as Partial<Record<'North' | 'South', TripBucketAnalysis[]>>)
         : undefined;
 
+    if (input.importMode === 'performance' && input.cycleAnalysisByStartDirection) {
+        (['North', 'South'] as const).forEach(direction => {
+            const reviewed = input.cycleAnalysisByStartDirection?.[direction] ?? [];
+            const approved = approvedCycleBucketsByStartDirection?.[direction] ?? [];
+            if (reviewed.length === 0) {
+                blockers.push(`No ${direction}-start paired-cycle evidence is available for independent review.`);
+            } else if (approved.length === 0) {
+                blockers.push(`No ${direction}-start paired-cycle bucket is eligible for schedule generation.`);
+            }
+        });
+    }
+
+    const finalizedHealth = {
+        ...health,
+        blockers: Array.from(new Set(blockers)),
+        warnings: Array.from(new Set(warnings)),
+        status: deriveHealthStatus(blockers, warnings),
+    } as typeof health;
+
     return {
         lifecycle: 'reviewable',
         inputFingerprint: buildStep2ReviewFingerprint(reviewInput),
@@ -249,7 +276,7 @@ export const buildStep2ReviewResult = (
         routeNumber: input.routeNumber.trim(),
         dayType: input.dayType,
         importMode: input.importMode,
-        health,
+        health: finalizedHealth,
         planning: {
             chartBasis: approvedRuntimeModel.chartBasis,
             generationBasis: approvedRuntimeModel.generationBasis,
@@ -270,7 +297,7 @@ export const buildStep2ReviewResult = (
         },
         troubleshooting: buildTroubleshootingPayload(input),
         plannerOverrides: normalizedPlannerOverrides,
-        approvalEligible: health.status !== 'blocked'
+        approvalEligible: finalizedHealth.status !== 'blocked'
             && approvedBuckets.length > 0
             && approvedRuntimeModel.usableBandCount > 0,
     };

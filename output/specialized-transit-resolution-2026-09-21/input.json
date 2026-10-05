@@ -1,0 +1,732 @@
+{
+  "reportMonth": "2026-08",
+  "source": "User-provided unmapped export",
+  "locations": [
+    {
+      "number": 1,
+      "label": "Staples",
+      "endpointTouches": 29,
+      "id": "st-1aetzbd"
+    },
+    {
+      "number": 2,
+      "label": "Great Clips Hair Salon",
+      "endpointTouches": 22,
+      "id": "st-y3jfc2"
+    },
+    {
+      "number": 3,
+      "label": "Von Canada",
+      "endpointTouches": 22,
+      "id": "st-1g1go5a"
+    },
+    {
+      "number": 4,
+      "label": "CMHA - Mental Health CNTR",
+      "endpointTouches": 20,
+      "id": "st-1b4opuq"
+    },
+    {
+      "number": 5,
+      "label": "Royal Court Medical Ctr ( LOC)",
+      "endpointTouches": 20,
+      "id": "st-3z7k19"
+    },
+    {
+      "number": 6,
+      "label": "Cineplex Odeon",
+      "endpointTouches": 17,
+      "id": "st-1dhvegy"
+    },
+    {
+      "number": 7,
+      "label": "Ferris Place Dental / Medical",
+      "endpointTouches": 16,
+      "id": "st-omwa8y"
+    },
+    {
+      "number": 8,
+      "label": "Barrieview Retirement Communit",
+      "endpointTouches": 13,
+      "id": "st-1frqq80"
+    },
+    {
+      "number": 9,
+      "label": "150",
+      "endpointTouches": 12,
+      "id": "st-1w0yvs1"
+    },
+    {
+      "number": 10,
+      "label": "Amica Assisted Living",
+      "endpointTouches": 12,
+      "id": "st-1m0pzn9"
+    },
+    {
+      "number": 11,
+      "label": "Budhist Temple",
+      "endpointTouches": 12,
+      "id": "st-1xxh3v5"
+    },
+    {
+      "number": 12,
+      "label": "Eagle Ridge Medical - Front Do",
+      "endpointTouches": 12,
+      "id": "st-1kb0vrd"
+    },
+    {
+      "number": 13,
+      "label": "KEMPENFEST STOP",
+      "endpointTouches": 12,
+      "id": "st-lnvn7n"
+    },
+    {
+      "number": 14,
+      "label": "Life Labs",
+      "endpointTouches": 11,
+      "id": "st-1jyrfvh"
+    },
+    {
+      "number": 15,
+      "label": "Shoppers Drug Mart ( Bayfield)",
+      "endpointTouches": 11,
+      "id": "st-1ljjj39"
+    },
+    {
+      "number": 16,
+      "label": "Peggy Hill Team Community Cent",
+      "endpointTouches": 10,
+      "id": "st-1sbmhk8"
+    },
+    {
+      "number": 17,
+      "label": "Roberta Place",
+      "endpointTouches": 9,
+      "id": "st-w9urb3"
+    },
+    {
+      "number": 18,
+      "label": "Scotiabank - Bayfield",
+      "endpointTouches": 9,
+      "id": "st-o9tqy8"
+    },
+    {
+      "number": 19,
+      "label": "Swiss Chalet - Bayfield",
+      "endpointTouches": 9,
+      "id": "st-1ew6rd"
+    },
+    {
+      "number": 20,
+      "label": "Bibles for Missions",
+      "endpointTouches": 8,
+      "id": "st-1frfwlg"
+    },
+    {
+      "number": 21,
+      "label": "City Hall",
+      "endpointTouches": 8,
+      "id": "st-1h5a641"
+    },
+    {
+      "number": 22,
+      "label": "Milestones Restaurant",
+      "endpointTouches": 8,
+      "id": "st-2rhq71"
+    },
+    {
+      "number": 23,
+      "label": "The UPS Store",
+      "endpointTouches": 8,
+      "id": "st-1cwv1az"
+    },
+    {
+      "number": 24,
+      "label": "Barrie Vascular Imaging",
+      "endpointTouches": 7,
+      "id": "st-29te8h"
+    },
+    {
+      "number": 25,
+      "label": "Brain Injury Services",
+      "endpointTouches": 7,
+      "id": "st-dnss8y"
+    },
+    {
+      "number": 26,
+      "label": "Eagle Ridge Medical - Back Doo",
+      "endpointTouches": 7,
+      "id": "st-1od8q4k"
+    },
+    {
+      "number": 27,
+      "label": "Kingdom Hall",
+      "endpointTouches": 7,
+      "id": "st-1c6zk6p"
+    },
+    {
+      "number": 28,
+      "label": "Mandarin Restaurant",
+      "endpointTouches": 7,
+      "id": "st-1xhpv0k"
+    },
+    {
+      "number": 29,
+      "label": "One Eyed Jack Restaurant & Bar",
+      "endpointTouches": 7,
+      "id": "st-1j2y74d"
+    },
+    {
+      "number": 30,
+      "label": "St. Vincent Park",
+      "endpointTouches": 7,
+      "id": "st-1azm893"
+    },
+    {
+      "number": 31,
+      "label": "Tim Hortons - Yonge at Maplevi",
+      "endpointTouches": 7,
+      "id": "st-1wesu2d"
+    },
+    {
+      "number": 32,
+      "label": "Value Village ( Wellington Plaz",
+      "endpointTouches": 7,
+      "id": "st-2vrg2u"
+    },
+    {
+      "number": 33,
+      "label": "Barrie Foot Clinic",
+      "endpointTouches": 6,
+      "id": "st-1x53ed6"
+    },
+    {
+      "number": 34,
+      "label": "Bob Rumball Center",
+      "endpointTouches": 6,
+      "id": "st-uz4kmq"
+    },
+    {
+      "number": 35,
+      "label": "Heritage Square ( 94)",
+      "endpointTouches": 6,
+      "id": "st-14kaa7c"
+    },
+    {
+      "number": 36,
+      "label": "Old Navy",
+      "endpointTouches": 6,
+      "id": "st-1mmo2ja"
+    },
+    {
+      "number": 37,
+      "label": "Simcoe Cnty Dist. Health Unit",
+      "endpointTouches": 6,
+      "id": "st-60sfwj"
+    },
+    {
+      "number": 38,
+      "label": "Springwater Plaza",
+      "endpointTouches": 6,
+      "id": "st-1ej3mm9"
+    },
+    {
+      "number": 39,
+      "label": "Unique Minds Academy",
+      "endpointTouches": 6,
+      "id": "st-1fejw5"
+    },
+    {
+      "number": 40,
+      "label": "Camphill",
+      "endpointTouches": 5,
+      "id": "st-17p5ohz"
+    },
+    {
+      "number": 41,
+      "label": "Free Methodist Church",
+      "endpointTouches": 5,
+      "id": "st-uhk00b"
+    },
+    {
+      "number": 42,
+      "label": "Peggy Hill Team CC",
+      "endpointTouches": 5,
+      "id": "st-1tsqt2b"
+    },
+    {
+      "number": 43,
+      "label": "Starbucks",
+      "endpointTouches": 5,
+      "id": "st-1knvsy3"
+    },
+    {
+      "number": 44,
+      "label": "Westowne Dental",
+      "endpointTouches": 5,
+      "id": "st-3regtr"
+    },
+    {
+      "number": 45,
+      "label": "Allandale Station Retirement R",
+      "endpointTouches": 4,
+      "id": "st-ijhtck"
+    },
+    {
+      "number": 46,
+      "label": "Ardagh Family Dentistry | Best",
+      "endpointTouches": 4,
+      "id": "st-czl476"
+    },
+    {
+      "number": 47,
+      "label": "Barrie Denture Clinic",
+      "endpointTouches": 4,
+      "id": "st-1pac0v1"
+    },
+    {
+      "number": 48,
+      "label": "Bull & Barrel",
+      "endpointTouches": 4,
+      "id": "st-1gu49f0"
+    },
+    {
+      "number": 49,
+      "label": "Canadian Blood Services",
+      "endpointTouches": 4,
+      "id": "st-surxm0"
+    },
+    {
+      "number": 50,
+      "label": "Christian Horizons Group Home",
+      "endpointTouches": 4,
+      "id": "st-lew9du"
+    },
+    {
+      "number": 51,
+      "label": "Dollarama ( Springwater Marketp",
+      "endpointTouches": 4,
+      "id": "st-alfvj0"
+    },
+    {
+      "number": 52,
+      "label": "Goodness Me",
+      "endpointTouches": 4,
+      "id": "st-xkvo3f"
+    },
+    {
+      "number": 53,
+      "label": "Grove Park Home - Door on Cook",
+      "endpointTouches": 4,
+      "id": "st-j2lcq6"
+    },
+    {
+      "number": 54,
+      "label": "national bank",
+      "endpointTouches": 4,
+      "id": "st-16doppj"
+    },
+    {
+      "number": 55,
+      "label": "Native Centre",
+      "endpointTouches": 4,
+      "id": "st-639wjp"
+    },
+    {
+      "number": 56,
+      "label": "NEW LIFE CHIRO",
+      "endpointTouches": 4,
+      "id": "st-b6udl0"
+    },
+    {
+      "number": 57,
+      "label": "Victoria Village - Nursing Res",
+      "endpointTouches": 4,
+      "id": "st-70n1i8"
+    },
+    {
+      "number": 58,
+      "label": "Will Dwyer Park",
+      "endpointTouches": 4,
+      "id": "st-143qp32"
+    },
+    {
+      "number": 59,
+      "label": "Canadian Tire / Bayfield Mall",
+      "endpointTouches": 3,
+      "id": "st-9kd3qw"
+    },
+    {
+      "number": 60,
+      "label": "Centra Foods",
+      "endpointTouches": 3,
+      "id": "st-egsiun"
+    },
+    {
+      "number": 61,
+      "label": "Chuck's Roadhouse Bar & Grill",
+      "endpointTouches": 3,
+      "id": "st-nu3r8d"
+    },
+    {
+      "number": 62,
+      "label": "Dunlop Billiards",
+      "endpointTouches": 3,
+      "id": "st-1adkwbh"
+    },
+    {
+      "number": 63,
+      "label": "Northwest Barrie United Church",
+      "endpointTouches": 3,
+      "id": "st-bbyvnk"
+    },
+    {
+      "number": 64,
+      "label": "Owen Hill Care Community ( LOC",
+      "endpointTouches": 3,
+      "id": "st-ayv3tr"
+    },
+    {
+      "number": 65,
+      "label": "Royal Court Medical Ctr",
+      "endpointTouches": 3,
+      "id": "st-omc707"
+    },
+    {
+      "number": 66,
+      "label": "Shoppers Drug Mart ( North Barr",
+      "endpointTouches": 3,
+      "id": "st-nj3qst"
+    },
+    {
+      "number": 67,
+      "label": "Zehr's Market - Yonge",
+      "endpointTouches": 3,
+      "id": "st-eb5amz"
+    },
+    {
+      "number": 68,
+      "label": "Barrie Ocular Surgery",
+      "endpointTouches": 2,
+      "id": "st-iof3dp"
+    },
+    {
+      "number": 69,
+      "label": "Charity Bingo",
+      "endpointTouches": 2,
+      "id": "st-1pt0wzk"
+    },
+    {
+      "number": 70,
+      "label": "Chef Chan",
+      "endpointTouches": 2,
+      "id": "st-5ldrer"
+    },
+    {
+      "number": 71,
+      "label": "Common Roof",
+      "endpointTouches": 2,
+      "id": "st-1c2m10i"
+    },
+    {
+      "number": 72,
+      "label": "Eastview Secondary",
+      "endpointTouches": 2,
+      "id": "st-lnj1ff"
+    },
+    {
+      "number": 73,
+      "label": "Flashback Diner",
+      "endpointTouches": 2,
+      "id": "st-1gfygn2"
+    },
+    {
+      "number": 74,
+      "label": "Great Canadian Bagel ( Springwa",
+      "endpointTouches": 2,
+      "id": "st-152qffl"
+    },
+    {
+      "number": 75,
+      "label": "Health Partners Professional",
+      "endpointTouches": 2,
+      "id": "st-zyf5g5"
+    },
+    {
+      "number": 76,
+      "label": "Home Depot",
+      "endpointTouches": 2,
+      "id": "st-bx4jas"
+    },
+    {
+      "number": 77,
+      "label": "Image Dental Laboratory",
+      "endpointTouches": 2,
+      "id": "st-u22jmv"
+    },
+    {
+      "number": 78,
+      "label": "Kenzington Burger Bar",
+      "endpointTouches": 2,
+      "id": "st-d116p0"
+    },
+    {
+      "number": 79,
+      "label": "Kingdom Hall South",
+      "endpointTouches": 2,
+      "id": "st-l13syc"
+    },
+    {
+      "number": 80,
+      "label": "Lakeshore Family Medicine",
+      "endpointTouches": 2,
+      "id": "st-z93afj"
+    },
+    {
+      "number": 81,
+      "label": "Leacock Plaza",
+      "endpointTouches": 2,
+      "id": "st-14q4tvf"
+    },
+    {
+      "number": 82,
+      "label": "Lodge Roberta Place",
+      "endpointTouches": 2,
+      "id": "st-u8ouu4"
+    },
+    {
+      "number": 83,
+      "label": "Montana's Cookhouse Saloon",
+      "endpointTouches": 2,
+      "id": "st-xz2axe"
+    },
+    {
+      "number": 84,
+      "label": "Ovenden Bldg",
+      "endpointTouches": 2,
+      "id": "st-1rnst9d"
+    },
+    {
+      "number": 85,
+      "label": "Owen Hill Care Community",
+      "endpointTouches": 2,
+      "id": "st-6556ld"
+    },
+    {
+      "number": 86,
+      "label": "Pet Valu ( Wellington Plaza)",
+      "endpointTouches": 2,
+      "id": "st-14op0nv"
+    },
+    {
+      "number": 87,
+      "label": "Service Canada",
+      "endpointTouches": 2,
+      "id": "st-19soeku"
+    },
+    {
+      "number": 88,
+      "label": "Sheba Shrine - John / Anne",
+      "endpointTouches": 2,
+      "id": "st-4a987a"
+    },
+    {
+      "number": 89,
+      "label": "Shoppers drug mart ( Prince Wil",
+      "endpointTouches": 2,
+      "id": "st-pizij8"
+    },
+    {
+      "number": 90,
+      "label": "Spirit Catcher",
+      "endpointTouches": 2,
+      "id": "st-1kphgxg"
+    },
+    {
+      "number": 91,
+      "label": "Swiss Chalet - Barrieview",
+      "endpointTouches": 2,
+      "id": "st-k5z6s3"
+    },
+    {
+      "number": 92,
+      "label": "Tim Hortons - Cundles - North",
+      "endpointTouches": 2,
+      "id": "st-17e36rz"
+    },
+    {
+      "number": 93,
+      "label": "Urban Grind Coffee Co",
+      "endpointTouches": 2,
+      "id": "st-1whhb0v"
+    },
+    {
+      "number": 94,
+      "label": "Winners - South - Park Place",
+      "endpointTouches": 2,
+      "id": "st-m8d8z9"
+    },
+    {
+      "number": 95,
+      "label": "Winners ( Springwater Marketpla",
+      "endpointTouches": 2,
+      "id": "st-1m8ralc"
+    },
+    {
+      "number": 96,
+      "label": "XPlay Amusements",
+      "endpointTouches": 2,
+      "id": "st-14m8zpt"
+    },
+    {
+      "number": 97,
+      "label": "Best Buy",
+      "endpointTouches": 1,
+      "id": "st-1yix3d7"
+    },
+    {
+      "number": 98,
+      "label": "Eastview Secondary School",
+      "endpointTouches": 1,
+      "id": "st-1cy6gt"
+    },
+    {
+      "number": 99,
+      "label": "EUROPEAN FINE FOOD & DELI",
+      "endpointTouches": 1,
+      "id": "st-1k1wak"
+    },
+    {
+      "number": 100,
+      "label": "Farm Boy",
+      "endpointTouches": 1,
+      "id": "st-15i6b6n"
+    },
+    {
+      "number": 101,
+      "label": "First Choice Hair",
+      "endpointTouches": 1,
+      "id": "st-1t6g0r0"
+    },
+    {
+      "number": 102,
+      "label": "Frescho Mapleview",
+      "endpointTouches": 1,
+      "id": "st-1g2it4r"
+    },
+    {
+      "number": 103,
+      "label": "Giovanni & Perri",
+      "endpointTouches": 1,
+      "id": "st-12gdlps"
+    },
+    {
+      "number": 104,
+      "label": "Kelsey's Restaurant",
+      "endpointTouches": 1,
+      "id": "st-1jde9q6"
+    },
+    {
+      "number": 105,
+      "label": "Marks ( Park Place)",
+      "endpointTouches": 1,
+      "id": "st-ap8ie4"
+    },
+    {
+      "number": 106,
+      "label": "Mary Brown's ( Wellington Plaza",
+      "endpointTouches": 1,
+      "id": "st-iemnb6"
+    },
+    {
+      "number": 107,
+      "label": "MONTE CARLO INN",
+      "endpointTouches": 1,
+      "id": "st-1k08aqm"
+    },
+    {
+      "number": 108,
+      "label": "Nights of Columbus",
+      "endpointTouches": 1,
+      "id": "st-tv6kjj"
+    },
+    {
+      "number": 109,
+      "label": "One Eyed Jack Restaurant &",
+      "endpointTouches": 1,
+      "id": "st-1qsidtk"
+    },
+    {
+      "number": 110,
+      "label": "Parkplace - Goodness Me",
+      "endpointTouches": 1,
+      "id": "st-1nep8do"
+    },
+    {
+      "number": 111,
+      "label": "Pharmasave ( Blake St)",
+      "endpointTouches": 1,
+      "id": "st-1epefjr"
+    },
+    {
+      "number": 112,
+      "label": "Rexall",
+      "endpointTouches": 1,
+      "id": "st-1yapsaj"
+    },
+    {
+      "number": 113,
+      "label": "Rogers",
+      "endpointTouches": 1,
+      "id": "st-1f7jp7l"
+    },
+    {
+      "number": 114,
+      "label": "Sobeys",
+      "endpointTouches": 1,
+      "id": "st-6bie2q"
+    },
+    {
+      "number": 115,
+      "label": "Tim Hortons - Bayfield at Cun",
+      "endpointTouches": 1,
+      "id": "st-v05315"
+    },
+    {
+      "number": 116,
+      "label": "TRUE COLOURS",
+      "endpointTouches": 1,
+      "id": "st-1rhv8hg"
+    },
+    {
+      "number": 117,
+      "label": "Value Village",
+      "endpointTouches": 1,
+      "id": "st-1cdfsrm"
+    },
+    {
+      "number": 118,
+      "label": "Wellington Plaza",
+      "endpointTouches": 1,
+      "id": "st-1b4lhi"
+    },
+    {
+      "number": 119,
+      "label": "Wentworths Eatery,Cafe & Cater",
+      "endpointTouches": 1,
+      "id": "st-13khe8c"
+    },
+    {
+      "number": 120,
+      "label": "West Bayfield Elementary Schoo",
+      "endpointTouches": 1,
+      "id": "st-11yktkk"
+    },
+    {
+      "number": 121,
+      "label": "Zehrs Market - Big Bay Pt",
+      "endpointTouches": 1,
+      "id": "st-156mz45"
+    }
+  ]
+}

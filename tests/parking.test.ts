@@ -8,12 +8,17 @@ import { getParkingCodeFamilyKey, parseParkingDurationMinutes, parseParkingFile,
 import {
   buildParkingRevenueAnalytics,
   buildParkingRevenueReplacementSummary,
+  normalizeParkingRevenueSummary,
+} from '../utils/parking/parkingRevenue';
+import {
   parseParkingRevenueFile,
   parseParkingRevenueDurationMinutes,
   parseParkingRevenueWorkbook,
-} from '../utils/parking/parkingRevenue';
+} from '../utils/parking/parkingRevenueParser';
 import {
+  buildParkingMapRevenueCoverage,
   buildParkingRevenueMapDisplayLocations,
+  getParkingMapMetricLabel,
   getParkingMapMetricValue,
 } from '../utils/parking/parkingMapDisplay';
 import {
@@ -195,6 +200,27 @@ describe('parking parser and aggregation', () => {
     expect(summary.platePatterns.map(pattern => pattern.department)).not.toContain('Infrastructure');
   });
 
+  it('retains ignored rows in stored months while summaries still exclude them', () => {
+    const ignoredSettings: ParkingSettings = {
+      ...settings,
+      codeFamilies: settings.codeFamilies.map(mapping => (
+        mapping.familyKey === 'IF' ? { ...mapping, ignoreData: true } : mapping
+      )),
+    };
+    const parsed = parseParkingWorkbook(workbookBuffer(hotSpotRows()), {
+      fileName: 'HotSpot.xlsx',
+      importedBy: 'user-1',
+      settings: ignoredSettings,
+    }).dataset;
+
+    const summary = buildParkingSummary([parsed], 'user-1', undefined, ignoredSettings, { retainIgnoredRows: true });
+
+    expect(summary.months[0].rows.some(row => row.codeFamilyKey === 'IF')).toBe(true);
+    expect(summary.months[0].rowCount).toBe(3);
+    expect(summary.months[0].totalValue).toBe(110);
+    expect(summary.departmentSummaries.map(row => row.department)).not.toContain('Infrastructure');
+  });
+
   it('supports two-digit yearly codes and manual yearly overrides', () => {
     const result = parseParkingWorkbook(workbookBuffer(hotSpotRows([
       ['SHORT1', '2026-06-10 09:00:00 EDT', '7100', '1h0m', 'Spot', 'BFES26', 'Fire', '5.00 $'],
@@ -344,6 +370,16 @@ describe('parking replacement and export', () => {
     expect(workbook.SheetNames).toEqual(['Overview', 'Department Summary', 'Flagged Plates', 'Raw Rows']);
   });
 
+  it('marks unsaved preview months in the export only when provided', () => {
+    const summary = buildParkingReplacementSummary(null, dataset('2026-06', 112), 'user-1', 'parking.json', settings.flagRules);
+    const plain = createParkingExportWorkbook(summary);
+    expect(Object.keys(XLSX.utils.sheet_to_json<Record<string, unknown>>(plain.Sheets['Overview'])[0])).not.toContain('Unsaved Preview Months');
+
+    const marked = createParkingExportWorkbook(summary, { unsavedMonths: ['2026-06'] });
+    expect(XLSX.utils.sheet_to_json<Record<string, unknown>>(marked.Sheets['Overview'])[0]['Unsaved Preview Months']).toBe('2026-06');
+    expect(XLSX.utils.sheet_to_json<Record<string, unknown>>(marked.Sheets['Raw Rows']).every(row => row.Status === '(unsaved preview)')).toBe(true);
+  });
+
   it('normalizes and protects storage path replacement', () => {
     expect(normalizeParkingStoragePath('parking.json')).toBe('parking.json');
     expect(normalizeParkingStoragePath('')).toBeNull();
@@ -366,7 +402,7 @@ describe('parking replacement and export', () => {
     const loaded = readParkingSettingsFromDocument(undefined);
     const collier = loaded.revenueLocations?.find(location => location.id === 'hotspot-1322');
 
-    expect(DEFAULT_PARKING_REVENUE_LOCATIONS.length).toBe(104);
+    expect(DEFAULT_PARKING_REVENUE_LOCATIONS.length).toBe(105);
     expect(countMissingDefaultParkingRevenueLocations(loaded.revenueLocations)).toBe(0);
     expect(collier).toMatchObject({
       displayName: 'Collier Street Parkade',
@@ -375,7 +411,7 @@ describe('parking replacement and export', () => {
       capacitySpaces: 303,
     });
     expect(collier?.sourceRefs.map(ref => `${ref.source}:${ref.sourceId}`)).toEqual(['hotspot:1322', 'qr:1322']);
-    expect(loaded.revenueLocationCategories?.map(category => category.id)).toEqual(expect.arrayContaining(['downtown', 'waterfront', 'hybrid', 'marina', 'hospital', 'allandale-go']));
+    expect(loaded.revenueLocationCategories?.map(category => category.id)).toEqual(expect.arrayContaining(['downtown', 'waterfront', 'hybrid', 'marina', 'hospital', 'allandale-go', 'special-events']));
     expect(loaded.revenueLocations?.every(location => Boolean(location.categoryId))).toBe(true);
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1322')?.categoryId).toBe('downtown');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-1430')?.categoryId).toBe('downtown');
@@ -386,6 +422,30 @@ describe('parking replacement and export', () => {
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5000')?.categoryId).toBe('marina');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-8105')?.categoryId).toBe('hospital');
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-9105')?.categoryId).toBe('allandale-go');
+    expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-9000')).toMatchObject({
+      displayName: 'Special Events',
+      locationKind: 'non_spatial',
+      latitude: null,
+      longitude: null,
+      capacitySpaces: null,
+      categoryId: 'special-events',
+      sourceRefs: [
+        { source: 'hotspot', sourceId: '9000', label: 'Special Events' },
+        { source: 'qr', sourceId: '9000', label: 'Event Parking' },
+      ],
+    });
+  });
+
+  it('does not materialize undefined location kinds when persisted settings are loaded again', () => {
+    const firstLoad = readParkingSettingsFromDocument(undefined);
+    const reloaded = readParkingSettingsFromDocument({
+      settings: JSON.parse(JSON.stringify(firstLoad)),
+    });
+
+    expect(reloaded.revenueLocations?.filter(location => (
+      Object.prototype.hasOwnProperty.call(location, 'locationKind')
+      && location.locationKind === undefined
+    ))).toEqual([]);
   });
 
   it('migrates the legacy H-Block default category from Hospital to Downtown', () => {
@@ -428,6 +488,27 @@ describe('parking replacement and export', () => {
     });
 
     expect(loaded.revenueLocations?.find(location => location.id === 'hotspot-5100')?.categoryId).toBeNull();
+  });
+
+  it('upgrades an existing HotSpot 9000 mapping to the seeded non-spatial kind', () => {
+    const loaded = readParkingSettingsFromDocument({
+      settings: {
+        ...DEFAULT_PARKING_SETTINGS,
+        revenueLocations: [{
+          id: 'custom-events',
+          displayName: 'Annual Events',
+          latitude: null,
+          longitude: null,
+          sourceRefs: [{ source: 'hotspot', sourceId: '9000', label: 'Annual Events' }],
+        }],
+      },
+    });
+
+    expect(loaded.revenueLocations?.find(location => location.id === 'custom-events')).toMatchObject({
+      displayName: 'Annual Events',
+      locationKind: 'non_spatial',
+      categoryId: 'special-events',
+    });
   });
 
   it('adds missing default lot IDs without overwriting custom reviewed coordinates', () => {
@@ -521,6 +602,11 @@ describe('parking replacement and export', () => {
 });
 
 describe('parking revenue parser and analytics', () => {
+  it('labels map revenue metrics as tax-inclusive', () => {
+    expect(getParkingMapMetricLabel('revenue')).toBe('Revenue incl. tax');
+    expect(getParkingMapMetricLabel('revenuePerSpace')).toBe('Revenue incl. tax/space');
+  });
+
   it('rejects oversized revenue workbooks before reading them', async () => {
     const arrayBuffer = vi.fn();
     const file = {
@@ -551,7 +637,7 @@ describe('parking revenue parser and analytics', () => {
     };
   }
 
-  it('parses HotSpot app revenue workbooks and uses Amount as revenue', () => {
+  it('parses HotSpot app revenue workbooks and includes Tax in revenue', () => {
     const result = parseParkingRevenueWorkbook(workbookBuffer([
       ['HotSpot'],
       ['', 'HotSpot #', 'City #', 'Start Time', 'User', 'Plate', 'Make', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
@@ -566,7 +652,7 @@ describe('parking revenue parser and analytics', () => {
     expect(result.dataset.source).toBe('hotspot');
     expect(result.dataset.month).toBe('2026-01');
     expect(result.dataset.rowCount).toBe(2);
-    expect(result.dataset.totalRevenue).toBe(11.06);
+    expect(result.dataset.totalRevenue).toBe(12.5);
     expect(result.dataset.totalPaid).toBe(12.5);
     expect(result.dataset.rows[0]).toMatchObject({
       source: 'hotspot',
@@ -575,9 +661,53 @@ describe('parking revenue parser and analytics', () => {
       physicalLocationId: 'collier-parkade',
       durationMinutes: 15,
       amount: 2.21,
+      tax: 0.29,
+      taxInclusiveAmount: 2.5,
       total: 2.5,
     });
     expect(result.dataset.rows.every(row => row.source === 'hotspot')).toBe(true);
+  });
+
+  it('normalizes schema-v1 revenue rows without requiring re-import', () => {
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '1.30', '11.30', '1', 'Wallet Transaction'],
+    ]), { fileName: 'legacy.xlsx', importedBy: 'user-1', settings: revenueSettings() }).dataset;
+    const legacyRow = { ...dataset.rows[0] };
+    delete legacyRow.taxInclusiveAmount;
+    const normalized = normalizeParkingRevenueSummary({
+      schemaVersion: 1,
+      datasets: [{ ...dataset, totalRevenue: 10, rows: [legacyRow] }],
+      metadata: {
+        importedAt: dataset.importedAt,
+        importedBy: dataset.importedBy,
+        datasetCount: 1,
+        monthCount: 1,
+        totalRows: 1,
+        totalRevenue: 10,
+      },
+    });
+
+    expect(normalized).toMatchObject({ schemaVersion: 2, metadata: { totalRevenue: 11.3 } });
+    expect(normalized.datasets[0]).toMatchObject({ totalRevenue: 11.3 });
+    expect(normalized.datasets[0].rows[0]).toMatchObject({ taxInclusiveAmount: 11.3 });
+  });
+
+  it('requires tax columns and warns when Amount plus Tax differs from Total', () => {
+    const mismatched = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '1.30', '12.00', '1', 'Wallet Transaction'],
+    ]), { fileName: 'mismatch.xlsx', importedBy: 'user-1', settings: revenueSettings() });
+
+    expect(mismatched.dataset.totalRevenue).toBe(11.3);
+    expect(mismatched.warnings).toContain('1 revenue rows have Amount plus Tax that does not match the source Total.');
+    expect(() => parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'ABC123', '10.00', '11.30', '1', 'Wallet Transaction'],
+    ]), { fileName: 'missing-tax.xlsx', importedBy: 'user-1', settings: revenueSettings() })).toThrow('Amount, Tax, Total');
   });
 
   it('parses QR revenue workbooks and keeps zero-amount activity', () => {
@@ -594,16 +724,46 @@ describe('parking revenue parser and analytics', () => {
 
     expect(result.dataset.source).toBe('qr');
     expect(result.dataset.rowCount).toBe(2);
-    expect(result.dataset.totalRevenue).toBe(1.28);
+    expect(result.dataset.totalRevenue).toBe(1.45);
     expect(result.dataset.rows[0]).toMatchObject({
       sourceId: '8105',
       physicalLocationId: null,
       durationMinutes: 60,
       amount: 0,
     });
-    expect(result.warnings).toContain('1 revenue rows have $0 Amount and are included in activity counts.');
+    expect(result.warnings).toContain('1 revenue rows have $0 tax-inclusive revenue and are included in activity counts.');
     expect(parseParkingRevenueDurationMinutes('0.972')).toBe(58);
     expect(parseParkingRevenueDurationMinutes('0')).toBe(0);
+  });
+
+  it('corrects shifted QR export columns and maps QR 9000 to Special Events', () => {
+    const settings = readParkingSettingsFromDocument(undefined);
+    const result = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'Meter #', 'Tap Sign', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type', 'Moneris ID'],
+      ['', '9000', 'Event Parking', '2026-07-31 18:00:00', 'EVENT1', '13.27 $', '1.73 $', '0.35 $', '15.00 $', '1', 'mastercard'],
+    ]), { fileName: 'shifted-qr.xlsx', importedBy: 'user-1', settings });
+    const summary = buildParkingRevenueReplacementSummary(null, [result.dataset], 'user-1', 'revenue.json');
+    const analytics = buildParkingRevenueAnalytics(summary, settings, { categoryId: 'special-events' });
+
+    expect(result.dataset).toMatchObject({
+      rowCount: 1,
+      totalRevenue: 15,
+      totalTax: 1.73,
+      totalPaid: 15,
+    });
+    expect(result.dataset.rows[0]).toMatchObject({
+      physicalLocationId: 'hotspot-9000',
+      durationMinutes: 60,
+      total: 15,
+      paymentType: 'mastercard',
+    });
+    expect(result.warnings).toContain('The QR export used shifted Total, Length, and Card Type columns; their positions were corrected during import.');
+    expect(analytics).toMatchObject({ rowCount: 1, totalRevenue: 15 });
+    expect(analytics.locationSummaries[0]).toMatchObject({
+      locationKind: 'non_spatial',
+      categoryId: 'special-events',
+    });
   });
 
   it('replaces revenue by source/month and aggregates reviewed physical locations', () => {
@@ -624,14 +784,14 @@ describe('parking revenue parser and analytics', () => {
     const collier = analytics.locationSummaries.find(location => location.key === 'collier-parkade');
 
     expect(summary.datasets.map(dataset => `${dataset.month}:${dataset.source}`)).toEqual(['2026-01:hotspot', '2026-01:qr']);
-    expect(analytics.totalRevenue).toBe(15);
+    expect(analytics.totalRevenue).toBe(16.95);
     expect(collier).toMatchObject({
       displayName: 'Collier Parkade',
       isMapped: true,
-      totalRevenue: 15,
+      totalRevenue: 16.95,
       rowCount: 2,
-      hotspotRevenue: 10,
-      qrRevenue: 5,
+      hotspotRevenue: 11.3,
+      qrRevenue: 5.65,
     });
   });
 
@@ -650,9 +810,37 @@ describe('parking revenue parser and analytics', () => {
 
     const summary = buildParkingRevenueReplacementSummary(null, [madisonDataset, otherDataset], 'user-1', 'revenue.json');
 
-    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'madison.shortt' }).totalRevenue).toBe(10);
-    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'user-2' }).totalRevenue).toBe(5);
-    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'all' }).totalRevenue).toBe(15);
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'madison.shortt' }).totalRevenue).toBe(11.3);
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'user-2' }).totalRevenue).toBe(5.65);
+    expect(buildParkingRevenueAnalytics(summary, settings, { importedBy: 'all' }).totalRevenue).toBe(16.95);
+  });
+
+  it('does not scan rows from monthly datasets outside the requested period', () => {
+    const settings = revenueSettings();
+    const januaryDataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-01-31 09:00:00', 'JAN', '10.00', '1.30', '11.30', '1', 'visa'],
+    ]), { fileName: 'january.xlsx', importedBy: 'user-1', settings }).dataset;
+    const februaryDataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '1322', 'COLLIER PARKADE', '2026-02-01 09:00:00', 'FEB', '20.00', '2.60', '22.60', '1', 'visa'],
+    ]), { fileName: 'february.xlsx', importedBy: 'user-1', settings }).dataset;
+    Object.defineProperty(februaryDataset, 'rows', {
+      configurable: true,
+      get: () => {
+        throw new Error('Unrelated month rows were scanned');
+      },
+    });
+    const summary = buildParkingRevenueReplacementSummary(
+      null,
+      [januaryDataset, februaryDataset],
+      'user-1',
+      'revenue.json',
+    );
+
+    expect(buildParkingRevenueAnalytics(summary, settings, { months: ['2026-01'] }).totalRevenue).toBe(11.3);
   });
 
   it('filters revenue analytics by weekdays, Saturdays, and Sundays separately', () => {
@@ -667,10 +855,10 @@ describe('parking revenue parser and analytics', () => {
 
     const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
 
-    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekday' }).totalRevenue).toBe(10);
-    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'saturday' }).totalRevenue).toBe(20);
-    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'sunday' }).totalRevenue).toBe(30);
-    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekend' }).totalRevenue).toBe(50);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekday' }).totalRevenue).toBe(11.3);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'saturday' }).totalRevenue).toBe(22.6);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'sunday' }).totalRevenue).toBe(33.9);
+    expect(buildParkingRevenueAnalytics(summary, settings, { dayType: 'weekend' }).totalRevenue).toBe(56.5);
   });
 
   it('filters revenue by lot category and estimates time-based utilization', () => {
@@ -712,7 +900,7 @@ describe('parking revenue parser and analytics', () => {
       'collier-parkade': { spaces: 10 },
     });
 
-    expect(downtown.totalRevenue).toBe(25);
+    expect(downtown.totalRevenue).toBe(28.25);
     expect(downtown.locationSummaries.map(location => location.categoryLabel)).toEqual(['Downtown']);
     expect(downtown.paidMinutes).toBe(150);
     expect(downtown.activeDayCount).toBe(3);
@@ -727,6 +915,48 @@ describe('parking revenue parser and analytics', () => {
       label: 'Downtown',
       spaces: 10,
       utilizationPercent: 4.2,
+    });
+  });
+
+  it('classifies HotSpot 9000 as non-spatial Special Events revenue', () => {
+    const settings = readParkingSettingsFromDocument(undefined);
+    const dataset = parseParkingRevenueWorkbook(workbookBuffer([
+      ['HotSpot'],
+      ['', 'HotSpot #', 'City #', 'Start Time', 'Plate', 'Amount', 'Tax', 'Total', 'Length', 'Card Type'],
+      ['', '9000', 'Special Events', '2026-07-01 18:00:00', 'EVENT1', '25.00', '3.25', '28.25', '3', 'visa'],
+    ]), { fileName: 'special-events.xlsx', importedBy: 'user-1', settings }).dataset;
+    const summary = buildParkingRevenueReplacementSummary(null, [dataset], 'user-1', 'revenue.json');
+
+    const analytics = buildParkingRevenueAnalytics(summary, settings, { categoryId: 'special-events' });
+    const planner = buildParkingPlannerAnalysis(analytics, analytics.locationSummaries[0]);
+    const displayLocations = buildParkingRevenueMapDisplayLocations(analytics.locationSummaries, new Map());
+    const coverage = buildParkingMapRevenueCoverage(analytics.locationSummaries, displayLocations);
+
+    expect(analytics).toMatchObject({
+      totalRevenue: 28.25,
+      rowCount: 1,
+      mappedLocationSummaries: [],
+      unmappedLocationSummaries: [],
+    });
+    expect(analytics.nonSpatialLocationSummaries).toHaveLength(1);
+    expect(analytics.locationSummaries[0]).toMatchObject({
+      key: 'hotspot-9000',
+      displayName: 'Special Events',
+      locationKind: 'non_spatial',
+      mapStatus: 'not_applicable',
+      categoryId: 'special-events',
+      categoryLabel: 'Special Events',
+      isMapped: false,
+    });
+    expect(displayLocations).toEqual([]);
+    expect(planner.selectedLot?.rows).toHaveLength(1);
+    expect(planner.selectedLot?.rows[0]).toMatchObject({ source: 'hotspot', sourceId: '9000', amount: 25 });
+    expect(coverage).toEqual({
+      coveredRevenue: 0,
+      spatialRevenue: 0,
+      uncoveredSpatialRevenue: 0,
+      nonSpatialRevenue: 28.25,
+      coveragePercent: null,
     });
   });
 
@@ -821,7 +1051,7 @@ describe('parking revenue parser and analytics', () => {
 
     const result = buildParkingRevenueAnalytics(summary, settings, { categoryId: 'downtown' });
 
-    expect(result.totalRevenue).toBe(10);
+    expect(result.totalRevenue).toBe(11.3);
     expect(result.rows.map(entry => entry.sourceId)).toEqual(['100']);
     expect(result.locationSummaries.map(entry => entry.key)).toEqual(['downtown-bayfield']);
   });
@@ -842,7 +1072,7 @@ describe('parking revenue parser and analytics', () => {
       isMapped: true,
       latitude: 44.389,
       longitude: -79.69,
-      totalRevenue: 10,
+      totalRevenue: 11.3,
     });
   });
 });
@@ -913,6 +1143,8 @@ describe('public parking location fallback', () => {
   const summaryFor = (sourceId: string, displayName = 'Collier Parkade'): ParkingRevenueLocationSummary => ({
     key: `hotspot:${sourceId}`,
     displayName,
+    locationKind: 'physical',
+    mapStatus: 'unmapped',
     sourceIds: [{ source: 'hotspot', sourceId, label: displayName }],
     latitude: null,
     longitude: null,
@@ -1001,6 +1233,31 @@ describe('public parking location fallback', () => {
     expect(match).toMatchObject({ matchType: 'hotspot-id', confidence: 'high' });
   });
 
+  it('never assigns a public map fallback to a non-spatial revenue group', () => {
+    const specialEvents = {
+      ...summaryFor('9000', 'Special Events'),
+      locationKind: 'non_spatial' as const,
+      mapStatus: 'not_applicable' as const,
+    };
+    const match = findPublicParkingLocationFallback(specialEvents, [{
+      id: 'hotspot-9000',
+      objectIds: [1],
+      hotspotId: '9000',
+      parkingId: 'EVENT',
+      name: 'Special Events',
+      commonName: 'Special Events',
+      address: '',
+      latitude: 44.39,
+      longitude: -79.69,
+      numSpaces: null,
+      type: 'Event',
+      classification: 'Event',
+      sourceUrl: 'source',
+    }]);
+
+    expect(match).toBeNull();
+  });
+
   it('falls back to matching by lot name', () => {
     const match = findPublicParkingLocationFallback(summaryFor('9999', 'Heritage Park Lot'), [
       {
@@ -1085,6 +1342,7 @@ describe('public parking location fallback', () => {
       key: 'collier-parkade',
       latitude: 44.389,
       longitude: -79.69,
+      mapStatus: 'mapped',
       isMapped: true,
       totalRevenue: 42,
       rowCount: 5,
@@ -1111,6 +1369,7 @@ describe('public parking location fallback', () => {
       key: 'collier',
       latitude: 44.389,
       longitude: -79.69,
+      mapStatus: 'mapped',
       isMapped: true,
       totalRevenue: 100,
       rowCount: 10,
@@ -1120,6 +1379,7 @@ describe('public parking location fallback', () => {
       key: 'dunlop',
       latitude: 44.3892,
       longitude: -79.6902,
+      mapStatus: 'mapped',
       isMapped: true,
       totalRevenue: 50,
       rowCount: 5,
@@ -1129,6 +1389,7 @@ describe('public parking location fallback', () => {
       key: 'waterfront',
       latitude: 44.405,
       longitude: -79.66,
+      mapStatus: 'mapped',
       isMapped: true,
       totalRevenue: 25,
       rowCount: 3,

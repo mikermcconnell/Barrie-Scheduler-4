@@ -14,6 +14,7 @@ const mapHarness = vi.hoisted(() => ({
     triggerRepaint: vi.fn(),
     loaded: vi.fn(() => true),
     areTilesLoaded: vi.fn(() => true),
+    project: vi.fn(() => ({ x: 200, y: 150 })),
     getCanvas: vi.fn(() => ({ toDataURL: vi.fn(() => 'data:image/png;base64,map') })),
 }));
 
@@ -114,6 +115,10 @@ describe('DetourMapCanvas', () => {
         mapHarness.setPaintProperty.mockReset();
         mapHarness.getStyle.mockReset();
         mapHarness.getStyle.mockReturnValue({ layers: [] });
+        mapHarness.project.mockReset();
+        mapHarness.project.mockReturnValue({ x: 200, y: 150 });
+        mapHarness.getCanvas.mockReset();
+        mapHarness.getCanvas.mockReturnValue({ toDataURL: vi.fn(() => 'data:image/png;base64,map') });
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -237,19 +242,19 @@ describe('DetourMapCanvas', () => {
         const routeNumber = JSON.parse(container.querySelector('[data-layer-id="detour-route-number"]')?.getAttribute('data-layer-layout') ?? '{}') as Record<string, unknown>;
         const routeNumberCasing = JSON.parse(container.querySelector('[data-layer-id="detour-route-number-casing"]')?.getAttribute('data-layer-paint') ?? '{}') as Record<string, unknown>;
         const routeNumberPaint = JSON.parse(container.querySelector('[data-layer-id="detour-route-number"]')?.getAttribute('data-layer-paint') ?? '{}') as Record<string, unknown>;
-        expect(arrows['text-field']).toBe('▶');
-        expect(arrows['symbol-spacing']).toBe(130);
-        expect(arrows['text-size']).toBe(15);
+        expect(arrows['text-field']).toEqual(['concat', '▶ ', ['get', 'directionLabel']]);
+        expect(arrows['symbol-spacing']).toBe(190);
+        expect(arrows['text-size']).toBe(12);
         expect(badge['text-font']).toEqual(['DIN Pro Bold', 'Arial Unicode MS Bold']);
         expect(badge['symbol-placement']).toBe('point');
         expect(badge['text-rotation-alignment']).toBe('map');
         expect(badge['text-rotate']).toEqual(['get', 'angle']);
         expect(badge['text-field']).toBe('DETOUR');
         expect(routeNumber['text-field']).toEqual(['get', 'routeLabel']);
-        expect(routeNumber['text-anchor']).toBe('bottom');
-        expect(routeNumber['text-offset']).toEqual([0, -0.75]);
-        expect(routeNumberCasing).toMatchObject({ 'text-color': '#ffffff', 'text-halo-color': '#111827', 'text-halo-width': 6 });
-        expect(routeNumberPaint).toMatchObject({ 'text-color': '#111827', 'text-halo-color': '#ffffff', 'text-halo-width': 4 });
+        expect(routeNumber['text-anchor']).toBe('center');
+        expect(routeNumber['text-offset']).toEqual([0, 0]);
+        expect(routeNumberCasing).toMatchObject({ 'text-color': '#ffffff', 'text-halo-color': '#111827', 'text-halo-width': 9 });
+        expect(routeNumberPaint).toMatchObject({ 'text-color': '#ffffff', 'text-halo-color': ['coalesce', ['get', 'color'], '#07557F'], 'text-halo-width': 7 });
         const badgeSource = container.querySelector('[data-source-id="detour-route-badge-source"]');
         const badgeData = JSON.parse(badgeSource?.getAttribute('data-source-data') ?? '{}') as { features?: Array<{ properties?: { angle?: number } }> };
         expect(badgeData.features?.[0]?.properties?.angle).toBeLessThan(0);
@@ -319,6 +324,45 @@ describe('DetourMapCanvas', () => {
         expect(mapHarness.fitBounds).not.toHaveBeenCalled();
         expect(mapHarness.once).toHaveBeenCalledWith('idle', expect.any(Function));
         expect(captured).toBe('data:image/png;base64,map');
+    });
+
+    it('draws stop annotations into a separate capture without replacing the master image', async () => {
+        const ref = React.createRef<import('../components/detours/DetourMapCanvas').DetourMapCanvasHandle>();
+        const onCaptureImage = vi.fn();
+        await act(async () => root.render(<DetourMapCanvas ref={ref} overlay={createOverlay()} onCaptureImage={onCaptureImage} {...callbacks} />));
+        const sourceCanvas = {
+            width: 400, height: 300, clientWidth: 400, clientHeight: 300,
+            toDataURL: vi.fn(() => 'data:image/png;base64,master'),
+        };
+        mapHarness.getCanvas.mockReturnValue(sourceCanvas);
+        const context = {
+            drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(),
+            lineTo: vi.fn(), quadraticCurveTo: vi.fn(), closePath: vi.fn(), stroke: vi.fn(), fill: vi.fn(), fillText: vi.fn(),
+        };
+        const outputCanvas = {
+            width: 0, height: 0, getContext: vi.fn(() => context),
+            toDataURL: vi.fn(() => 'data:image/png;base64,annotated'),
+        };
+        const originalCreateElement = document.createElement.bind(document);
+        const createElement = vi.spyOn(document, 'createElement').mockImplementation(((tagName: string, options?: ElementCreationOptions) => (
+            tagName.toLowerCase() === 'canvas'
+                ? outputCanvas as unknown as HTMLCanvasElement
+                : originalCreateElement(tagName, options)
+        )) as typeof document.createElement);
+
+        let captured: string | null = null;
+        await act(async () => {
+            captured = await ref.current?.captureImage('image/png', undefined, {
+                kind: 'closed', position: { longitude: -79.68, latitude: 44.39 },
+            }) ?? null;
+        });
+        createElement.mockRestore();
+
+        expect(captured).toBe('data:image/png;base64,annotated');
+        expect(context.fillText).toHaveBeenCalledWith('You Are', expect.any(Number), expect.any(Number));
+        expect(context.fillText).toHaveBeenCalledWith('Here', expect.any(Number), expect.any(Number));
+        expect(onCaptureImage).not.toHaveBeenCalled();
+        expect(sourceCanvas.toDataURL).not.toHaveBeenCalled();
     });
 
     it('labels closed routing and adds an orange outline around the detour path', () => {
@@ -430,8 +474,8 @@ describe('DetourMapCanvas', () => {
             features?: Array<{ properties?: { status?: string; label?: string } }>;
         };
         expect(data.features?.map(feature => feature.properties)).toEqual(expect.arrayContaining([
-            expect.objectContaining({ status: 'temporary', label: '959 · TEMPORARY STOP' }),
-            expect.objectContaining({ status: 'closed', label: 'STOP 959 CLOSED' }),
+            expect.objectContaining({ status: 'temporary', label: 'Temp Stop 959\nTemporary stop' }),
+            expect.objectContaining({ status: 'closed', label: 'Stop 959' }),
         ]));
         const regularLabels = JSON.parse(container.querySelector('[data-layer-id="detour-stop-labels"]')?.getAttribute('data-layer-layout') ?? '{}') as Record<string, unknown>;
         const temporaryLabels = JSON.parse(container.querySelector('[data-layer-id="detour-temporary-stop-labels"]')?.getAttribute('data-layer-layout') ?? '{}') as Record<string, unknown>;
@@ -446,6 +490,13 @@ describe('DetourMapCanvas', () => {
         expect(temporaryLabels['text-allow-overlap']).toBe(true);
         expect(closedLabels['text-variable-anchor']).toEqual(['top-right', 'bottom-right', 'top-left', 'bottom-left']);
         expect(closedLabels['text-radial-offset']).toBe(0.75);
+        const stopSymbols = JSON.parse(container.querySelector('[data-layer-id="detour-stops"]')?.getAttribute('data-layer-layout') ?? '{}') as Record<string, unknown>;
+        expect(stopSymbols['icon-image']).toEqual([
+            'match', ['get', 'status'],
+            'closed', 'detour-stop-closed-icon',
+            'temporary', 'detour-stop-temporary-icon',
+            'detour-stop-active-icon',
+        ]);
     });
 
     it('hides authoring chrome and drag handles in publication mode', () => {
@@ -474,6 +525,7 @@ describe('DetourMapCanvas', () => {
         expect(container.querySelector('[aria-label="Closed-section anchor 1"]')).toBeNull();
         expect(container.querySelector('[aria-label="Move Temporary stop"]')).toBeNull();
         expect(container.querySelector('[aria-label="Fit notice to map"]')).toBeNull();
+        expect(container.querySelector('[data-layer-id="detour-warning-outline"]')).toBeNull();
     });
 
     it('renders each additional affected route as a full detour overlay', () => {

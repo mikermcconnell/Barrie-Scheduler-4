@@ -115,6 +115,9 @@ function mapDirection(dir: string, routeId?: string, tripName?: string): StopOrd
   const parsedRoute = parseRouteHint(routeId);
   const parsedHint = parsedTrip?.direction ? parsedTrip : parsedRoute;
 
+  // Route configuration wins over noisy AVL direction labels. A configured
+  // one-way loop remains one Loop stop order even when rows say N or S.
+  if (parsedTrip?.isLoop || parsedRoute?.isLoop) return 'Loop';
   if (upper === 'N' || upper === 'NB' || upper === 'NORTH') return 'North';
   if (upper === 'S' || upper === 'SB' || upper === 'SOUTH') return 'South';
   if (upper === 'CW' || upper === 'CCW' || upper === 'LOOP') return 'Loop';
@@ -457,7 +460,8 @@ function resolveConfidence(
   const hasMiddayEvidence = winner.middayTripCount > 0;
   const isClean = winner.skippedIndexCount <= MAX_CLEAN_AVERAGE_SKIPPED_INDEX_COUNT;
   const hasStrongLead = !runnerUp || (winner.score - runnerUp.score) >= 500;
-  const anchorsSatisfied = winner.anchorCount === 0 || winner.anchorMatchCount === winner.anchorCount;
+  const hasTrustedTerminalAnchors = winner.anchorCount >= 2;
+  const anchorsSatisfied = hasTrustedTerminalAnchors && winner.anchorMatchCount === winner.anchorCount;
 
   if (hasStrongCoverage && hasMiddayEvidence && isClean && hasStrongLead && anchorsSatisfied) return 'high';
   if (stopCount >= 3 && tripCount >= 1 && isClean) return 'medium';
@@ -569,6 +573,9 @@ export function resolveStopOrderFromPerformance(
     }
     if (winner.anchorCount > 0 && winner.anchorMatchCount < winner.anchorCount) {
       warnings.push(`${direction} pattern did not match all expected anchor stops.`);
+    }
+    if (winner.anchorCount < 2) {
+      warnings.push(`${direction} stop order has no trusted start/end terminal anchors and requires planner review.`);
     }
     if (runnerUp && (winner.score - runnerUp.score) < 500) {
       warnings.push(`${direction} has competing stop patterns with similar scores.`);

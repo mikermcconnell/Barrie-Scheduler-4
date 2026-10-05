@@ -1,48 +1,157 @@
-import type { TodPickupMonthlyDataset, TodPickupStop, TodPickupSummary } from './todPickupTypes';
+import type { TodDailyKpiDataset, TodDailyKpiLocation } from './todPickupTypes';
+import type { StopMetrics } from './performanceDataTypes';
 
-export function getTodPickupMonthOptions(summary: TodPickupSummary | null | undefined): string[] {
-  return [...(summary?.months || [])].map(month => month.month).sort();
+export type TodActivityMetric = 'activity' | 'pickups' | 'dropoffs';
+
+export type StopActivitySource = 'fixed-route' | 'transit-on-demand' | 'combined';
+
+export interface CombinedStopActivityLocation extends Pick<
+  StopMetrics,
+  | 'stopName'
+  | 'stopId'
+  | 'lat'
+  | 'lon'
+  | 'boardings'
+  | 'alightings'
+  | 'routeCount'
+  | 'routes'
+  | 'hourlyBoardings'
+  | 'hourlyAlightings'
+  | 'routeBreakdown'
+> {
+  activitySource: StopActivitySource;
+  fixedRouteBoardings: number;
+  fixedRouteAlightings: number;
+  todPickups: number;
+  todDropoffs: number;
 }
 
-export function getLatestTodPickupMonth(summary: TodPickupSummary | null | undefined): string | null {
-  const months = getTodPickupMonthOptions(summary);
-  return months.at(-1) ?? null;
+type MutableLocation = TodDailyKpiLocation & {
+  coordinateWeight: number;
+  latWeightedSum: number;
+  lonWeightedSum: number;
+};
+
+export function getTodActivityValue(
+  location: TodDailyKpiLocation,
+  metric: TodActivityMetric,
+): number {
+  if (metric === 'pickups') return location.pickups;
+  if (metric === 'dropoffs') return location.dropoffs;
+  return location.pickups + location.dropoffs;
 }
 
-export function aggregateTodPickupStops(
-  months: TodPickupMonthlyDataset[],
-  selectedMonths: string[],
-): TodPickupStop[] {
-  const selected = new Set(selectedMonths);
-  const stopMap = new Map<string, TodPickupStop & { latSum: number; lonSum: number }>();
+function normalizedStopCode(value: string): string | null {
+  const match = value.trim().match(/^(?:stop[-\s:]*)?(\d+)$/i);
+  if (!match) return null;
+  return String(Number(match[1]));
+}
 
-  for (const month of months) {
-    if (!selected.has(month.month)) continue;
-    for (const stop of month.stops) {
-      const existing = stopMap.get(stop.id);
-      if (existing) {
-        existing.pickups += stop.pickups;
-        existing.latSum += stop.lat * stop.pickups;
-        existing.lonSum += stop.lon * stop.pickups;
+function todStopCode(location: TodDailyKpiLocation): string | null {
+  return normalizedStopCode(location.id) ?? normalizedStopCode(location.name);
+}
+
+export function mergeTodIntoStopActivity(
+  fixedRouteStops: StopMetrics[],
+  todLocations: TodDailyKpiLocation[],
+): CombinedStopActivityLocation[] {
+  const merged = fixedRouteStops.map((stop): CombinedStopActivityLocation => ({
+    stopName: stop.stopName,
+    stopId: stop.stopId,
+    lat: stop.lat,
+    lon: stop.lon,
+    boardings: stop.boardings,
+    alightings: stop.alightings,
+    routeCount: stop.routeCount,
+    routes: stop.routes,
+    hourlyBoardings: stop.hourlyBoardings,
+    hourlyAlightings: stop.hourlyAlightings,
+    routeBreakdown: stop.routeBreakdown,
+    activitySource: 'fixed-route',
+    fixedRouteBoardings: stop.boardings,
+    fixedRouteAlightings: stop.alightings,
+    todPickups: 0,
+    todDropoffs: 0,
+  }));
+  const fixedIndexByStopCode = new Map<string, number>();
+
+  merged.forEach((stop, index) => {
+    const code = normalizedStopCode(stop.stopId);
+    if (code && !fixedIndexByStopCode.has(code)) fixedIndexByStopCode.set(code, index);
+  });
+
+  for (const location of todLocations) {
+    const code = todStopCode(location);
+    const fixedIndex = code ? fixedIndexByStopCode.get(code) : undefined;
+    if (fixedIndex !== undefined) {
+      const stop = merged[fixedIndex];
+      stop.boardings += location.pickups;
+      stop.alightings += location.dropoffs;
+      stop.todPickups += location.pickups;
+      stop.todDropoffs += location.dropoffs;
+      stop.activitySource = 'combined';
+      continue;
+    }
+
+    merged.push({
+      stopName: location.name,
+      stopId: `tod:${location.id}`,
+      lat: location.lat,
+      lon: location.lon,
+      boardings: location.pickups,
+      alightings: location.dropoffs,
+      routeCount: 0,
+      routes: [],
+      activitySource: 'transit-on-demand',
+      fixedRouteBoardings: 0,
+      fixedRouteAlightings: 0,
+      todPickups: location.pickups,
+      todDropoffs: location.dropoffs,
+    });
+  }
+
+  return merged;
+}
+
+export function aggregateTodDailyLocations(
+  reports: TodDailyKpiDataset[],
+  includedDates: string[],
+): TodDailyKpiLocation[] {
+  const selectedDates = new Set(includedDates);
+  const locations = new Map<string, MutableLocation>();
+
+  for (const report of reports) {
+    if (!selectedDates.has(report.date)) continue;
+
+    for (const location of report.locations) {
+      const coordinateWeight = Math.max(location.pickups + location.dropoffs, 1);
+      const current = locations.get(location.id);
+      if (current) {
+        current.name = location.name;
+        current.pickups += location.pickups;
+        current.dropoffs += location.dropoffs;
+        current.coordinateWeight += coordinateWeight;
+        current.latWeightedSum += location.lat * coordinateWeight;
+        current.lonWeightedSum += location.lon * coordinateWeight;
       } else {
-        stopMap.set(stop.id, {
-          ...stop,
-          latSum: stop.lat * stop.pickups,
-          lonSum: stop.lon * stop.pickups,
+        locations.set(location.id, {
+          ...location,
+          coordinateWeight,
+          latWeightedSum: location.lat * coordinateWeight,
+          lonWeightedSum: location.lon * coordinateWeight,
         });
       }
     }
   }
 
-  return Array.from(stopMap.values())
-    .map(({ latSum, lonSum, ...stop }) => ({
-      ...stop,
-      lat: latSum / stop.pickups,
-      lon: lonSum / stop.pickups,
+  return [...locations.values()]
+    .map(({ coordinateWeight, latWeightedSum, lonWeightedSum, ...location }) => ({
+      ...location,
+      lat: latWeightedSum / coordinateWeight,
+      lon: lonWeightedSum / coordinateWeight,
     }))
-    .sort((a, b) => {
-      const pickupCmp = b.pickups - a.pickups;
-      if (pickupCmp !== 0) return pickupCmp;
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-    });
+    .sort((a, b) => (
+      (b.pickups + b.dropoffs) - (a.pickups + a.dropoffs)
+      || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+    ));
 }

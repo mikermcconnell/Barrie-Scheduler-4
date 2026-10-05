@@ -2,8 +2,18 @@ import React, { Suspense, useState, useCallback, useEffect } from 'react';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { isFeatureEnabled } from '../../utils/features';
+import type { PerformanceTab } from '../../utils/performanceDataTypes';
 
 type OperationsViewMode = 'dashboard' | 'performance' | 'perf-reports';
+type OperationsPerformanceTab = Extract<PerformanceTab, 'overview' | 'otp' | 'ridership' | 'specialized-transit' | 'operator-dwell'>;
+
+const OPERATIONS_PERFORMANCE_TABS = new Set<OperationsPerformanceTab>([
+    'overview',
+    'otp',
+    'ridership',
+    'specialized-transit',
+    'operator-dwell',
+]);
 
 const OPERATIONS_VIEW_FEATURES: Partial<Record<OperationsViewMode, Parameters<typeof isFeatureEnabled>[0]>> = {
     performance: 'operationsPerformanceDashboard',
@@ -39,6 +49,19 @@ function parseHashViewMode(): OperationsViewMode {
     return isOperationsViewEnabled('performance') ? 'performance' : 'dashboard';
 }
 
+function parseHashPerformanceTab(): OperationsPerformanceTab {
+    const hash = window.location.hash.slice(1);
+    const parts = hash.split('/');
+    const candidate = parts[0] === 'operations' && parts[1] === 'performance'
+        ? parts[2] as OperationsPerformanceTab | undefined
+        : undefined;
+    return candidate && OPERATIONS_PERFORMANCE_TABS.has(candidate) ? candidate : 'overview';
+}
+
+function buildPerformanceHash(tab: OperationsPerformanceTab): string {
+    return tab === 'overview' ? 'operations/performance' : `operations/performance/${tab}`;
+}
+
 const OperationsSubviewLoading: React.FC<{ label: string }> = ({ label }) => (
     <div className="flex h-full items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-gray-500">
@@ -50,6 +73,7 @@ const OperationsSubviewLoading: React.FC<{ label: string }> = ({ label }) => (
 
 export const OperationsWorkspace: React.FC = () => {
     const [viewMode, setViewModeState] = useState<OperationsViewMode>(parseHashViewMode);
+    const [performanceTab, setPerformanceTab] = useState<OperationsPerformanceTab>(parseHashPerformanceTab);
 
     const setViewMode = useCallback((mode: OperationsViewMode) => {
         if (mode === 'dashboard') {
@@ -58,13 +82,22 @@ export const OperationsWorkspace: React.FC = () => {
         }
         const safeMode = isOperationsViewEnabled(mode) ? mode : 'dashboard';
         setViewModeState(safeMode);
+        if (safeMode === 'performance') setPerformanceTab('overview');
         window.location.hash = safeMode === 'dashboard' ? 'operations' : `operations/${safeMode}`;
+    }, []);
+
+    const handlePerformanceTabChange = useCallback((tab: PerformanceTab) => {
+        if (!OPERATIONS_PERFORMANCE_TABS.has(tab as OperationsPerformanceTab)) return;
+        const nextTab = tab as OperationsPerformanceTab;
+        setPerformanceTab(nextTab);
+        window.location.hash = buildPerformanceHash(nextTab);
     }, []);
 
     useEffect(() => {
         const handler = () => {
             const nextMode = parseHashViewMode();
             setViewModeState(nextMode);
+            setPerformanceTab(parseHashPerformanceTab());
         };
         handler();
         window.addEventListener('hashchange', handler);
@@ -81,7 +114,12 @@ export const OperationsWorkspace: React.FC = () => {
         return (
             <div className="h-full">
                 <Suspense fallback={<OperationsSubviewLoading label="Loading operations dashboard..." />}>
-                    <PerformanceDashboard onClose={() => setViewMode('dashboard')} autoOpen />
+                    <PerformanceDashboard
+                        onClose={() => setViewMode('dashboard')}
+                        autoOpen
+                        initialTab={performanceTab}
+                        onTabChange={handlePerformanceTabChange}
+                    />
                 </Suspense>
             </div>
         );

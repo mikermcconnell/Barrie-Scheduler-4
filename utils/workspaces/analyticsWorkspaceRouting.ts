@@ -17,7 +17,8 @@ export type AnalyticsWorkspaceView =
     | 'network-connections'
     | 'shuttle-planner'
     | 'fare-programs'
-    | 'council-intelligence';
+    | 'strategic-plan'
+    | 'ridership-trends';
 
 const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'dashboard',
@@ -38,7 +39,8 @@ const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'network-connections',
     'shuttle-planner',
     'fare-programs',
-    'council-intelligence',
+    'strategic-plan',
+    'ridership-trends',
 ]);
 
 const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = {
@@ -49,7 +51,7 @@ const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = 
     'od-fix-coords': 'OD Coordinate Review',
     'od-workspace': 'Agency OD Analysis',
     'headway-map': 'Corridor Headway',
-    'corridor-speed': 'Corridor Speed',
+    'corridor-speed': 'Corridor Performance',
     'student-pass': 'Student Transit Pass',
     'fleet-plan-import': 'Fleet Plan Import',
     'fleet-plan-workspace': 'Fleet Plan',
@@ -60,7 +62,8 @@ const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = 
     'network-connections': 'Network Connections',
     'shuttle-planner': 'Shuttle Planner',
     'fare-programs': 'Fare Programs',
-    'council-intelligence': 'Council Intelligence',
+    'strategic-plan': '2027–2032 Strategic Plan',
+    'ridership-trends': 'Ridership Trends',
 };
 
 const normalizeHashParts = (value: string): string[] =>

@@ -3,14 +3,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import type { DailySummary, OTPBreakdown, PerformanceDataSummary, RouteMetrics } from '../utils/performanceDataTypes';
+import type { TodDailyKpiDataset } from '../utils/todPickupTypes';
+
+const teamContext = vi.hoisted(() => ({
+  current: { team: { id: 'team-1' }, accessLevel: 'internal', canManageTeam: true },
+}));
+const todSectionProps = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
 vi.mock('../components/Analytics/AnalyticsShared', () => ({
-  ChartCard: ({ title, children }: { title: string; children?: React.ReactNode }) => <section><h3>{title}</h3>{children}</section>,
+  ChartCard: ({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) => (
+    <section><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}{children}</section>
+  ),
+}));
+vi.mock('../components/contexts/TeamContext', () => ({ useTeam: () => teamContext.current }));
+vi.mock('../components/contexts/AuthContext', () => ({ useAuth: () => ({ user: { uid: 'user-1' } }) }));
+vi.mock('../hooks/useTodPickupData', () => ({
+  useTodPickupMetadataQuery: () => ({ data: { storagePath: 'tod.json' }, isLoading: false, error: null as Error | null }),
+  useTodPickupDataQuery: () => ({ data: { dailyReports: [] as TodDailyKpiDataset[] }, isLoading: false, error: null as Error | null }),
 }));
 
 vi.mock('../components/Performance/RidershipHeatmapSection', () => ({ RidershipHeatmapSection: (): null => null }));
-vi.mock('../components/Performance/StopActivityMap', () => ({ StopActivityMap: (): null => null }));
-vi.mock('../components/Performance/TodPickupSection', () => ({ TodPickupSection: (): null => null }));
+vi.mock('../components/Performance/StopActivityMap', () => ({ StopActivityMap: () => <div data-testid="stop-activity-map" /> }));
+vi.mock('../components/Performance/TodDailyKpiSection', () => ({ TodDailyKpiSection: (props: Record<string, unknown>) => {
+  todSectionProps.current = props;
+  return <div data-testid="tod-activity-module" />;
+} }));
 
 vi.mock('recharts', () => {
   const Chart = ({ data, children }: { data?: unknown; children?: React.ReactNode }) => (
@@ -29,6 +46,8 @@ vi.mock('recharts', () => {
 import { RidershipModule } from '../components/Performance/RidershipModule';
 import { OTPModule } from '../components/Performance/OTPModule';
 import { LoadProfileModule } from '../components/Performance/LoadProfileModule';
+import { PerformanceAggregationProvider } from '../components/Performance/performanceAggregation';
+import { getPerformanceAggregation } from '../utils/performanceAggregation';
 
 function otp(total: number, onTime: number, avgDeviationSeconds = 0): OTPBreakdown {
   return {
@@ -93,6 +112,7 @@ describe('performance dashboard metric rollups', () => {
   let root: Root;
 
   beforeEach(() => {
+    teamContext.current.accessLevel = 'internal';
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -113,7 +133,66 @@ describe('performance dashboard metric rollups', () => {
     expect(container.textContent).toContain('Passenger Flow by Stop');
     const combinedRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('7A/7B'));
     expect(combinedRow?.querySelectorAll('td')[2].textContent).toBe('600');
-    expect(combinedRow?.querySelectorAll('td')[3].textContent).toBe('300');
+    expect(combinedRow?.querySelectorAll('td')[3].textContent).toBe('150.0');
+
+    flushSync(() => root.render(
+      <PerformanceAggregationProvider value={getPerformanceAggregation('average', data.dailySummaries, 'all', null)}>
+        <RidershipModule data={data} />
+      </PerformanceAggregationProvider>,
+    ));
+    const averageRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('7A/7B'));
+    expect(averageRow?.querySelectorAll('td')[2].textContent).toBe('300');
+    expect(averageRow?.querySelectorAll('td')[3].textContent).toBe('150.0');
+  });
+
+  it('labels route daily averages for the selected weekday scope', () => {
+    const data = summary([
+      day('2026-03-10', [route('1', 100)]),
+      day('2026-03-11', [route('1', 200)]),
+    ]);
+    flushSync(() => root.render(
+      <PerformanceAggregationProvider value={getPerformanceAggregation('average', data.dailySummaries, 'weekday', null)}>
+        <RidershipModule data={data} dayTypeFilter="weekday" />
+      </PerformanceAggregationProvider>,
+    ));
+
+    expect(container.textContent).toContain('Boardings / weekday; boards per service hour retains its period ratio');
+    expect(container.querySelector('thead')?.textContent).toContain('Boardings / weekday');
+    expect(container.querySelector('tbody tr')?.querySelectorAll('td')[2].textContent).toBe('150');
+  });
+
+  it('shows Passenger Flow by Stop only for admin and developer access', () => {
+    const data = summary([day('2026-03-10', [route('1', 100)])]);
+
+    teamContext.current.accessLevel = 'planner';
+    flushSync(() => root.render(<RidershipModule data={data} />));
+    expect(container.textContent).not.toContain('Passenger Flow by Stop');
+
+    teamContext.current.accessLevel = 'admin';
+    flushSync(() => root.render(<RidershipModule data={data} />));
+    expect(container.textContent).toContain('Passenger Flow by Stop');
+
+    teamContext.current.accessLevel = 'internal';
+    flushSync(() => root.render(<RidershipModule data={data} />));
+    expect(container.textContent).toContain('Passenger Flow by Stop');
+  });
+
+  it('places the Transit On Demand module immediately after the combined stop activity map', () => {
+    const data = summary([day('2026-03-10', [route('1', 100)])]);
+    flushSync(() => root.render(<RidershipModule data={data} />));
+
+    const stopCard = container.querySelector('[data-testid="stop-activity-map"]')?.closest('section');
+    const todModule = container.querySelector('[data-testid="tod-activity-module"]');
+    expect(stopCard?.nextElementSibling).toBe(todModule);
+  });
+
+  it('scopes TOD zones to the active team rather than a shared performance source', () => {
+    const data = summary([day('2026-03-10', [route('1', 100)])]);
+    flushSync(() => root.render(<RidershipModule data={data} loadConfigTeamId="shared-performance-team" loadConfigUserId="legacy-user" canManageLoadConfig={false} />));
+
+    expect(todSectionProps.current.teamId).toBe('team-1');
+    expect(todSectionProps.current.userId).toBe('user-1');
+    expect(todSectionProps.current.canManageZones).toBe(true);
   });
 
   it('weights route average deviation by OTP observations', () => {

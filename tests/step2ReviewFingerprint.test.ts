@@ -71,5 +71,29 @@ describe('step2ReviewFingerprint', () => {
             parsedDataFingerprint: 'runtime-data-v2',
         })).toBe(false);
     });
-});
 
+    it('tracks North-start and South-start exclusions independently', () => {
+        const northExcluded = buildStep2ReviewFingerprint({
+            ...baseInput,
+            plannerOverrides: {
+                excludedBuckets: [],
+                excludedCycleBucketsByStartDirection: {
+                    North: ['06:00 - 06:29'],
+                    South: [],
+                },
+            },
+        });
+        const southExcluded = buildStep2ReviewFingerprint({
+            ...baseInput,
+            plannerOverrides: {
+                excludedBuckets: [],
+                excludedCycleBucketsByStartDirection: {
+                    North: [],
+                    South: ['06:00 - 06:29'],
+                },
+            },
+        });
+
+        expect(northExcluded).not.toBe(southExcluded);
+    });
+});

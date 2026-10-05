@@ -24,6 +24,7 @@ import {
 } from '../../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../../utils/timeUtils';
 import { getRouteConfig, extractDirectionFromName, parseRouteInfo, isBidirectional } from '../../utils/config/routeDirectionConfig';
+import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
 import { normalizeStopName, matchesStop } from '../NewSchedule/utils/blockStartDirection';
 import {
     calculateHeadways,
@@ -1271,7 +1272,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
     return (
         <div
-            className="space-y-8 h-full flex flex-col outline-none"
+            className="flex h-full flex-col outline-none"
             ref={gridNav.containerRef}
             tabIndex={0}
             onKeyDown={gridNav.handleKeyDown}
@@ -1290,6 +1291,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             {roundTripData.map(({ combined, north, south, northTripOrder, southTripOrder, blockBoundaries }) => {
                 const allNorthTrips = north?.trips || [];
                 const allSouthTrips = south?.trips || [];
+                const allTrips = [...allNorthTrips, ...allSouthTrips];
+                const routeBadgeLabel = combined.routeName.split(' ')[0];
+                const routeColor = getRouteColor(combined.routeName);
+                const routeTextColor = getRouteTextColor(combined.routeName);
                 const routeTableNames = [north.routeName, south.routeName].filter(Boolean);
                 const routeComparisonSummary = buildMasterComparisonChangeSummary(
                     schedules,
@@ -1337,7 +1342,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                         ? { cell: 'text-[10px]', header: 'text-[10px]', pad: 'p-1', rowH: 'h-8' }
                         : density === 'comfortable'
                             ? { cell: 'text-sm', header: 'text-sm', pad: 'p-2', rowH: 'h-12' }
-                            : { cell: 'text-xs', header: 'text-xs', pad: 'p-1.5', rowH: 'h-10' };
+                            : { cell: 'text-xs', header: 'text-xs', pad: 'p-1.5', rowH: 'h-11' };
 
                 // Build column mapping for spreadsheet-style references (A, B, C...)
                 const columnMapping: ColumnInfo[] = [];
@@ -1385,22 +1390,51 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                 // Metrics columns
                 if (showMetaCols) {
-                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Travel' });
-                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Band' });
-                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Rec' });
-                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Ratio' });
-                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Hdwy' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Run / Band' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Recovery / Ratio' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Headway' });
                     columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Cycle' });
-                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Trip #' });
                 }
 
                 // Calculate Route Totals for the Header
-                const totalTrips = combined.rows.length;
-                const allTrips = [...allNorthTrips, ...allSouthTrips];
+                const totalTrips = allTrips.length;
                 const totalTravelSum = combined.rows.reduce((sum, r) => sum + r.totalTravelTime, 0);
                 const totalRecoverySum = combined.rows.reduce((sum, r) => sum + r.totalRecoveryTime, 0);
                 const totalCycleSum = combined.rows.reduce((sum, r) => sum + getRoundTripDisplayedCycleTime(r), 0);
                 const overallRatio = totalTravelSum > 0 ? (totalRecoverySum / totalTravelSum) * 100 : 0;
+                const displayedCycleTimes = combined.rows
+                    .map(row => getRoundTripDisplayedCycleTime(row))
+                    .filter(value => value > 0)
+                    .sort((a, b) => a - b);
+                const middleCycleIndex = Math.floor(displayedCycleTimes.length / 2);
+                const typicalCycleTime = displayedCycleTimes.length === 0
+                    ? 0
+                    : displayedCycleTimes.length % 2 === 0
+                        ? (displayedCycleTimes[middleCycleIndex - 1] + displayedCycleTimes[middleCycleIndex]) / 2
+                        : displayedCycleTimes[middleCycleIndex];
+                const isActiveGridColumn = (
+                    direction: 'North' | 'South',
+                    stopName: string,
+                    cellType?: 'arr' | 'dep' | 'recovery',
+                ) => {
+                    const activeCell = gridNav.activeCell;
+                    return !!activeCell
+                        && activeCell.direction === direction
+                        && matchesStop(activeCell.stopName, stopName)
+                        && (!cellType || activeCell.cellType === cellType);
+                };
+                const getActiveColumnHeaderStyle = (
+                    direction: 'North' | 'South',
+                    stopName: string,
+                    cellType?: 'arr' | 'dep' | 'recovery',
+                ): React.CSSProperties | undefined => (
+                    isActiveGridColumn(direction, stopName, cellType)
+                        ? {
+                            backgroundColor: direction === 'North' ? '#DBEAFE' : '#FFEDD5',
+                            boxShadow: `inset 0 -3px 0 ${routeColor}`,
+                        }
+                        : undefined
+                );
 
                 const peakVehicles = calculatePeakVehicles(allTrips);
                 const serviceSpan = calculateServiceSpan(allTrips);
@@ -1565,7 +1599,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 );
 
                 return (
-                    <div key={combined.routeName} className="flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 h-full min-h-0">
+                    <div
+                        key={combined.routeName}
+                        className={`flex h-full min-h-0 flex-col border border-gray-200 bg-white ${
+                            useSidebarTools
+                                ? 'rounded-none border-x-0 border-b-0 shadow-none'
+                                : 'rounded-xl shadow-sm'
+                        }`}
+                        style={{ borderTopColor: routeColor, borderTopWidth: '4px' }}
+                    >
 
                         {/* Focus Toolbar + Optional Stats */}
                         <div className={`${useSidebarTools ? 'px-2 py-1' : 'px-3 py-2'} border-b border-gray-200 flex-shrink-0 bg-gray-50`}>
@@ -1582,14 +1624,21 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                 )}
 
                                 {/* Always-visible summary */}
-                                <div className="flex items-center gap-2 text-xs md:text-sm">
-                                    <span className={`${useSidebarTools ? 'text-sm' : 'text-base'} font-bold text-gray-900`}>{(totalCycleSum / 60).toFixed(1)}h cycle</span>
+                                <div className="flex flex-wrap items-center gap-2 text-xs md:text-sm">
+                                    <span
+                                        className="rounded-full px-2.5 py-1 font-extrabold"
+                                        style={{ backgroundColor: routeColor, color: routeTextColor }}
+                                    >
+                                        Route {routeBadgeLabel}
+                                    </span>
                                     <span className="text-gray-500">•</span>
                                     <span className="font-semibold text-gray-800">{serviceSpan.start} – {serviceSpan.end}</span>
                                     <span className="text-gray-500">•</span>
                                     <span className="text-gray-700"><span className="font-semibold">{peakVehicles}</span> vehicles</span>
                                     <span className="text-gray-500">•</span>
-                                    <span className="text-gray-700"><span className="font-semibold">{totalTrips}</span> trips</span>
+                                    <span className="text-gray-700"><span className="font-semibold">{totalTrips}</span> one-way trips</span>
+                                    <span className="text-gray-500">•</span>
+                                    <span className="text-gray-700"><span className="font-semibold">{Math.round(typicalCycleTime)}</span> min typical cycle</span>
                                     {!useSidebarTools && (
                                         <>
                                             <span className="text-gray-500">•</span>
@@ -1634,7 +1683,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 {overallRatio.toFixed(0)}% recovery
                                             </span>
                                             <span>{headwayAnalysis.avg} min avg headway</span>
-                                            <span>{(totalCycleSum / 60).toFixed(1)}h service ({(totalTravelSum / 60).toFixed(1)}h travel + {(totalRecoverySum / 60).toFixed(1)}h recovery)</span>
+                                            <span>{(totalCycleSum / 60).toFixed(1)}h scheduled cycle allocation ({(totalTravelSum / 60).toFixed(1)}h travel + {(totalRecoverySum / 60).toFixed(1)}h recovery)</span>
                                             {!readOnly && (() => {
                                                 const hourCounts = Object.values(tripsPerHour).filter(c => c > 0);
                                                 const avgTrips = hourCounts.length > 0
@@ -1775,6 +1824,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                         {/* Main Table Area */}
                         <div className={useSidebarTools ? 'flex flex-1 min-h-0 overflow-hidden' : 'flex flex-1 min-h-0'}>
                             <div
+                                data-testid="round-trip-scroll-region"
                                 className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0"
                             >
 
@@ -1808,13 +1858,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         cols.push(<col key={`s-dep-${i}`} style={{ width: '80px' }} />);
                                     });
 
-                                    if (showMetaCols) cols.push(<col key="meta-travel" style={{ width: '50px' }} />);
-                                    if (showMetaCols) cols.push(<col key="meta-band" style={{ width: '42px' }} />);
-                                    if (showMetaCols) cols.push(<col key="meta-rec" style={{ width: '38px' }} />);
-                                    if (showMetaCols) cols.push(<col key="meta-ratio" style={{ width: '46px' }} />);
-                                    if (showMetaCols) cols.push(<col key="meta-headway" style={{ width: '50px' }} />);
-                                    if (showMetaCols) cols.push(<col key="meta-cycle" style={{ width: '54px' }} />);
-                                    if (showMetaCols) cols.push(<col key="meta-trip-number" style={{ width: '46px' }} />);
+                                    if (showMetaCols) cols.push(<col key="meta-run-band" style={{ width: '72px' }} />);
+                                    if (showMetaCols) cols.push(<col key="meta-recovery" style={{ width: '64px' }} />);
+                                    if (showMetaCols) cols.push(<col key="meta-headway" style={{ width: '56px' }} />);
+                                    if (showMetaCols) cols.push(<col key="meta-cycle" style={{ width: '56px' }} />);
                                     return cols;
                                 })()}</colgroup>
                                 <thead className="sticky top-0 z-40 bg-white shadow-sm">
@@ -1851,9 +1898,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 <th
                                                     key={`n-name-${stop}`}
                                                     colSpan={colSpan}
-                                                    className={`px-1 py-1 border-b border-l border-gray-200 bg-blue-50/50 ${densityClass.header} font-semibold text-blue-800 uppercase tracking-tight text-center align-middle`}
+                                                    className={`bg-blue-50/50 px-1 py-1 border-b border-l border-t-2 border-blue-400 ${densityClass.header} font-semibold text-blue-800 uppercase tracking-tight text-center align-middle`}
+                                                    style={isActiveGridColumn('North', stop)
+                                                        ? { backgroundColor: '#DBEAFE', boxShadow: `inset 0 -3px 0 ${routeColor}` }
+                                                        : undefined}
                                                     title={stopCode ? `${stop} (Stop #${stopCode})` : stop}
                                                 >
+                                                    {i === 0 && (
+                                                        <div className="mb-0.5 text-[9px] font-black tracking-widest text-blue-700">Northbound</div>
+                                                    )}
                                                     <div className="leading-tight line-clamp-2 overflow-hidden">
                                                         {abbreviateStopName(displayName)}
                                                     </div>
@@ -1874,9 +1927,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 <th
                                                     key={`s-name-${stop}`}
                                                     colSpan={colSpan}
-                                                    className={`px-1 py-1 border-b border-l border-gray-200 bg-orange-50/50 ${densityClass.header} font-semibold text-orange-800 uppercase tracking-tight text-center align-middle`}
+                                                    className={`bg-orange-50/50 px-1 py-1 border-b border-l border-t-2 border-orange-400 ${densityClass.header} font-semibold text-orange-800 uppercase tracking-tight text-center align-middle`}
+                                                    style={isActiveGridColumn('South', stop)
+                                                        ? { backgroundColor: '#FFEDD5', boxShadow: `inset 0 -3px 0 ${routeColor}` }
+                                                        : undefined}
                                                     title={stopCode ? `${stop} (Stop #${stopCode})` : stop}
                                                 >
+                                                    {i === 0 && (
+                                                        <div className="mb-0.5 text-[9px] font-black tracking-widest text-orange-700">Southbound</div>
+                                                    )}
                                                     <div className="leading-tight line-clamp-2 overflow-hidden">
                                                         {abbreviateStopName(displayName)}
                                                     </div>
@@ -1886,13 +1945,20 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 </th>
                                             );
                                         })}
-                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-l border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Travel Time">Travel</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Time Band">Band</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`sticky right-[104px] z-50 py-1 px-1 border-b border-l border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap shadow-[-2px_0_4px_rgba(15,23,42,0.06)]`} title="Recovery Time">Rec</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Recovery Ratio">Ratio</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`sticky right-[54px] z-50 py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Headway">Hdwy</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`sticky right-0 z-50 py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Cycle Time">Cycle</th>}
-                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Trip Number">Trip #</th>}
+                                        {showMetaCols && (
+                                            <th rowSpan={2} className={`sticky right-[176px] z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase shadow-[-2px_0_4px_rgba(15,23,42,0.08)]`} title="Run time and assigned time band">
+                                                <div className="leading-tight text-gray-800">Run</div>
+                                                <div className="mt-0.5 text-[9px] font-bold text-gray-500">Band</div>
+                                            </th>
+                                        )}
+                                        {showMetaCols && (
+                                            <th rowSpan={2} className={`sticky right-[112px] z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase`} title="Recovery minutes and recovery ratio">
+                                                <div className="leading-tight text-gray-800">Recovery</div>
+                                                <div className="mt-0.5 text-[9px] font-bold text-gray-500">Minutes · %</div>
+                                            </th>
+                                        )}
+                                        {showMetaCols && <th rowSpan={2} className={`sticky right-[56px] z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase text-gray-700`} title="Headway">Hdwy</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`sticky right-0 z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase text-gray-700`} title="Cycle Time">Cycle</th>}
                                     </tr>
                                     {/* Sub-headers Row */}
                                     <tr className="bg-gray-50 text-gray-500">
@@ -1903,18 +1969,18 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             const showArrRCols = hasRecovery || isMergedTerminusStop;
                                             return (
                                                 <React.Fragment key={`n-sub-${stop}`}>
-                                                    {showArrRCols && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700 uppercase">Arr</th>}
-                                                    {showArrRCols && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700">R</th>}
+                                                    {showArrRCols && <th style={getActiveColumnHeaderStyle('North', stop, 'arr')} className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700 uppercase">Arr</th>}
+                                                    {showArrRCols && <th style={getActiveColumnHeaderStyle('North', stop, 'recovery')} className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700">R</th>}
                                                     {/* Skip DEP column for merged terminus - only show Arr | R */}
-                                                    {!isMergedTerminusStop && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700 uppercase">Dep</th>}
+                                                    {!isMergedTerminusStop && <th style={getActiveColumnHeaderStyle('North', stop, 'dep')} className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700 uppercase">Dep</th>}
                                                 </React.Fragment>
                                             );
                                         })}
                                         {southDisplayStops.map((stop, i) => (
                                             <React.Fragment key={`s-sub-${stop}`}>
-                                                {i > 0 && southStopsWithRecovery.has(stop) && <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700 uppercase">Arr</th>}
-                                                {i > 0 && southStopsWithRecovery.has(stop) && <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700">R</th>}
-                                                <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700 uppercase">Dep</th>
+                                                {i > 0 && southStopsWithRecovery.has(stop) && <th style={getActiveColumnHeaderStyle('South', stop, 'arr')} className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700 uppercase">Arr</th>}
+                                                {i > 0 && southStopsWithRecovery.has(stop) && <th style={getActiveColumnHeaderStyle('South', stop, 'recovery')} className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700">R</th>}
+                                                <th style={getActiveColumnHeaderStyle('South', stop, 'dep')} className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700 uppercase">Dep</th>
                                             </React.Fragment>
                                         ))}
                                     </tr>
@@ -2065,6 +2131,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const southIndex = southTrip ? southTripOrder.get(southTrip.id) : undefined;
                                         const routeTripNumber = northIndex ?? southIndex ?? rowIdx + 1;
                                         const rowBg = rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
+                                        const rowSurfaceColor = rowIdx % 2 === 0 ? '#FFFFFF' : '#F8FAFC';
                                         const northComparison = northTrip ? getTripComparison('North', northTrip.id, north.routeName) : undefined;
                                         const southComparison = southTrip ? getTripComparison('South', southTrip.id, south.routeName) : undefined;
                                         const originalNorthTrip = northTrip
@@ -2102,6 +2169,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const rowBlockBoundary = blockBoundaries.get(row.blockId);
                                         const isBlockStartRow = !!rowBlockBoundary?.firstTripId && row.trips.some(trip => trip.id === rowBlockBoundary.firstTripId);
                                         const isBlockEndRow = !!rowBlockBoundary?.lastTripId && row.trips.some(trip => trip.id === rowBlockBoundary.lastTripId);
+                                        const hasPartialStart = row.trips.some(trip => (trip.startStopIndex ?? 0) > 0);
 
                                         // Calculate the display row number (1-indexed)
                                         const displayRowNum = displayRowIdx + 1;
@@ -2147,7 +2215,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         return (
                                             <tr
                                                 key={uniqueRowKey}
-                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${primaryChangeMeta?.rowClass || ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
+                                                className={`group ${densityClass.rowH} hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${primaryChangeMeta?.rowClass || ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
                                                 data-highlighted-row={isRecentlyAddedRow ? 'true' : 'false'}
                                                 data-row-trip-ids={`|${rowTripIds.join('|')}|`}
                                                 title={compareReason}
@@ -2223,23 +2291,49 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 )}
 
                                                 {/* Block ID */}
-                                                <td className={`sticky left-0 z-30 p-2 border-r border-gray-200 ${primaryChangeMeta?.blockClass || rowBg} group-hover:bg-blue-50 font-semibold text-xs text-gray-800 text-center shadow-[2px_0_4px_rgba(15,23,42,0.08)]`}>
-                                                    <div className="flex flex-col items-center gap-0.5">
-                                                        <span>{row.blockId}</span>
-                                                        {rowMarkerChangeKinds.map(kind => (
+                                                <td
+                                                    className={`sticky left-0 z-30 border-r border-gray-200 p-1 text-center text-xs font-semibold text-gray-800 shadow-[2px_0_4px_rgba(15,23,42,0.08)] group-hover:bg-blue-50 ${primaryChangeMeta?.blockClass || rowBg} ${gridNav.isRowActive(rowIdx) ? 'ring-2 ring-inset' : ''}`}
+                                                    style={gridNav.isRowActive(rowIdx) ? { boxShadow: `inset 0 0 0 2px ${routeColor}, 2px 0 4px rgba(15,23,42,0.08)` } : undefined}
+                                                >
+                                                    <div className="flex flex-col items-center justify-center gap-1 leading-none">
+                                                        <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                                                            <span className="font-bold">{row.blockId}</span>
+                                                            <span className="text-gray-300">·</span>
                                                             <span
-                                                                key={`${row.blockId}-${kind}`}
-                                                                className={CHANGE_KIND_META[kind].badgeClass}
-                                                                title={compareReason}
+                                                                className="text-[9px] font-semibold text-gray-500"
+                                                                aria-label={`Trip #${routeTripNumber}`}
+                                                                title={`Trip #${routeTripNumber}`}
                                                             >
-                                                                {CHANGE_KIND_META[kind].label}
+                                                                #{routeTripNumber}
                                                             </span>
-                                                        ))}
-                                                        {isBlockStartRow && (
-                                                            <span className="text-[9px] text-emerald-600 font-bold">BEGIN</span>
-                                                        )}
-                                                        {isBlockEndRow && (
-                                                            <span className="text-[9px] text-orange-600 font-bold">END</span>
+                                                        </div>
+                                                        {(rowMarkerChangeKinds.length > 0 || isBlockStartRow || isBlockEndRow || hasPartialStart) && (
+                                                            <div className="flex flex-wrap items-center justify-center gap-0.5">
+                                                                {rowMarkerChangeKinds.map(kind => (
+                                                                    <span
+                                                                        key={`${row.blockId}-${kind}`}
+                                                                        className={CHANGE_KIND_META[kind].badgeClass}
+                                                                        title={compareReason}
+                                                                    >
+                                                                        {CHANGE_KIND_META[kind].label}
+                                                                    </span>
+                                                                ))}
+                                                                {isBlockStartRow && (
+                                                                    <span className="rounded bg-emerald-50 px-0.5 text-[8px] font-extrabold text-emerald-700">BEGIN</span>
+                                                                )}
+                                                                {isBlockEndRow && (
+                                                                    <span className="rounded bg-orange-50 px-0.5 text-[8px] font-extrabold text-orange-700">END</span>
+                                                                )}
+                                                                {hasPartialStart && (
+                                                                    <span
+                                                                        className="rounded bg-violet-100 px-0.5 text-[8px] font-extrabold text-violet-700"
+                                                                        aria-label="Partial start"
+                                                                        title="Partial start"
+                                                                    >
+                                                                        PARTIAL
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </td>
@@ -2869,20 +2963,19 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 {/* Metrics Columns */}
                                                 {showMetaCols && (
                                                     <>
-                                                        <td className="p-2 text-center text-sm font-semibold text-gray-700 border-l border-gray-200" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalTravel}</td>
                                                         {(() => {
                                                             const displayBand = northTrip?.assignedBand || southTrip?.assignedBand || '-';
-                                                            const bandTone = useSidebarTools
-                                                                ? getStep4BandToneClasses(displayBand)
-                                                                : getStep4BandToneClasses('-');
+                                                            const bandTone = getStep4BandToneClasses(displayBand);
 
                                                             return (
                                                                 <td
-                                                                    className={`p-1 text-center transition-colors ${useSidebarTools ? bandTone.cell : ''}`}
+                                                                    className="sticky right-[176px] z-30 border-l border-gray-200 p-1 text-center tabular-nums shadow-[-2px_0_4px_rgba(15,23,42,0.08)]"
+                                                                    style={{ backgroundColor: rowSurfaceColor }}
                                                                     title={columnMapping[dataColIdx++]?.letter + displayRowNum}
                                                                 >
+                                                                    <div className="text-sm font-bold leading-tight text-gray-800">{totalTravel}</div>
                                                                     <span
-                                                                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${bandTone.badge}`}
+                                                                        className={`mt-0.5 inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none ring-1 ring-inset ${bandTone.badge}`}
                                                                         aria-label={`Time band ${displayBand}`}
                                                                     >
                                                                         {displayBand}
@@ -2890,16 +2983,25 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                 </td>
                                                             );
                                                         })()}
-                                                        <td className={`sticky right-[104px] z-20 p-2 text-center text-sm text-gray-700 border-l border-gray-200 ${rowBg} group-hover:bg-blue-50 shadow-[-2px_0_4px_rgba(15,23,42,0.06)]`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalRec}</td>
-
-                                                        <td className={`p-2 text-center text-sm font-semibold ${ratio > 25 ? 'text-amber-700' : ratio < 10 ? 'text-red-700' : 'text-gray-700'}`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
-                                                            {ratio.toFixed(0)}%
+                                                        <td
+                                                            className="sticky right-[112px] z-30 border-l border-gray-200 p-1 text-center tabular-nums"
+                                                            style={{ backgroundColor: rowSurfaceColor }}
+                                                            title={columnMapping[dataColIdx++]?.letter + displayRowNum}
+                                                        >
+                                                            <div className="text-sm font-bold leading-tight text-gray-800">{totalRec}</div>
+                                                            <div className={`mt-0.5 text-[10px] font-semibold ${ratio > 25 ? 'text-amber-700' : ratio < 10 ? 'text-red-700' : 'text-gray-500'}`}>
+                                                                {ratio.toFixed(0)}%
+                                                            </div>
                                                         </td>
 
-                                                        <td className={`sticky right-[54px] z-20 p-1 text-center text-sm ${targetHeadway && typeof headway === 'number' && headway !== targetHeadway
+                                                        <td
+                                                            className={`sticky right-[56px] z-30 border-l border-gray-200 p-1 text-center text-sm tabular-nums ${targetHeadway && typeof headway === 'number' && headway !== targetHeadway
                                                             ? 'text-amber-700 bg-amber-50 font-bold ring-1 ring-inset ring-amber-300'
-                                                            : `text-gray-700 ${rowBg} group-hover:bg-blue-50`
-                                                            }`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
+                                                            : 'text-gray-700'
+                                                            }`}
+                                                            style={{ backgroundColor: targetHeadway && typeof headway === 'number' && headway !== targetHeadway ? '#FFFBEB' : rowSurfaceColor }}
+                                                            title={columnMapping[dataColIdx++]?.letter + displayRowNum}
+                                                        >
                                                             <div className="leading-tight">
                                                                 <div>{headway}</div>
                                                                 {targetHeadway && typeof headway === 'number' && headway !== targetHeadway && (
@@ -2908,10 +3010,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             </div>
                                                         </td>
 
-                                                        <td className={`sticky right-0 z-20 p-1 text-center text-sm font-semibold ${targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime
+                                                        <td
+                                                            className={`sticky right-0 z-30 border-l border-gray-200 p-1 text-center text-sm font-semibold tabular-nums ${targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime
                                                             ? 'text-amber-700 bg-amber-50 font-bold ring-1 ring-inset ring-amber-300'
-                                                            : `text-gray-800 ${rowBg} group-hover:bg-blue-50`
-                                                            }`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
+                                                            : 'text-gray-800'
+                                                            }`}
+                                                            style={{ backgroundColor: targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime ? '#FFFBEB' : rowSurfaceColor }}
+                                                            title={columnMapping[dataColIdx++]?.letter + displayRowNum}
+                                                        >
                                                             <div className="leading-tight">
                                                                 <div>{Math.round(displayCycleTime)}</div>
                                                                 {targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime && (
@@ -2920,7 +3026,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             </div>
                                                         </td>
 
-                                                        <td className="p-2 text-center text-sm font-mono text-gray-700" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{routeTripNumber}</td>
                                                     </>
                                                 )}
 
@@ -2963,6 +3068,3 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         </div>
     );
 };
-
-
-

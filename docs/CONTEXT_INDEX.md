@@ -45,8 +45,13 @@ For implementation facts, verify current code and tests. For persisted-state que
 
 Load feature docs only when the task directly touches that feature.
 
+### Parking
+
+- Historical payment evidence and Municipal Parking Strategy analysis: `docs/PARKING_STRATEGY.md`; add `docs/SCHEMA.md` for persistence/access changes and `docs/ARCHITECTURE.md` when changing workspace wiring or loading
+
 ### Fixed-route scheduling and operations
 
+- Operations Planning / run cutting: `docs/OPERATIONS_PLANNING.md`; add `docs/rules/LOCKED_LOGIC.md`, `docs/SCHEMA.md`, and `docs/ARCHITECTURE.md` when changing its source binding, validation, persistence, or workspace wiring
 - New Schedule Step 2: start with `docs/new-schedule-step2/README.md`, then load only the routed contract for the task
 - Connections: `docs/CONNECTIONS_FEATURE.md`
 - Read-only GO connection grid in Master Schedule: `docs/REGIONAL_TRANSIT_CONNECTIONS.md`
@@ -54,11 +59,14 @@ Load feature docs only when the task directly touches that feature.
 - GTFS/STREETS auto-ingest: `docs/AUTO_INGEST_SETUP.md`
 - Dwell Incident Review: `docs/DWELL_CASCADE_FEATURE.md`
 - Operations metrics and schemas: `docs/OPERATIONS_DASHBOARD_METRICS.md`
+- Transit On Demand zone editor and assignment: `docs/TOD_ZONES.md`
 - Detour Publisher: `docs/DETOUR_PUBLISHER.md`
 - Route colors: `docs/route-colors.md`
 
 ### Planning-data workspaces
 
+- Ridership Trends: `docs/RIDERSHIP_TRENDS.md`; add `docs/OPERATIONS_DASHBOARD_METRICS.md` and `docs/SCHEMA.md` when changing its STREETS projection or access boundary
+- Specialized Transit dashboard: `docs/SPECIALIZED_TRANSIT_DASHBOARD.md`; add `docs/SCHEMA.md` for persistence/access changes and `docs/OPERATIONS_DASHBOARD_METRICS.md` when changing interpretation or reconciliation semantics
 - Camp Shuttle Planner (`Route Planner 2` internally): start with `docs/route-planner-2/README.md`, then load only the numbered docs selected by its task router
 - Route Concept Planner: `docs/route-concept-planner/README.md`, then its product and technical contracts
 - Shuttle Planner: use `docs/SHUTTLE_PLANNER_PRD.md` for product/domain work; add `docs/SHUTTLE_PLANNER_UI_SPEC.md` only for UI, interaction, or layout work
@@ -70,6 +78,8 @@ Load feature docs only when the task directly touches that feature.
 - Council Intelligence: `docs/ARCHITECTURE.md` and `docs/SCHEMA.md`; verify current parsing, Functions, rules, and tests because no separate current feature contract exists
 - Fleet Plan: `docs/ARCHITECTURE.md` and `docs/SCHEMA.md`; verify current code and tests because no separate current feature contract exists
 - Student Pass: `docs/ARCHITECTURE.md`, then current `components/Analytics/StudentPass*` code and tests; documents under `docs/plans/` are historical rationale only
+- Corridor Performance: `docs/CORRIDOR_PERFORMANCE.md`; add `docs/rules/LOCKED_LOGIC.md` when changing runtime semantics
+- 2027–2032 Strategic Plan: `docs/STRATEGIC_PLAN.md`; add `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md` when changing its shared Transit App evidence, and add `docs/SCHEMA.md` plus `docs/rules/LOCKED_LOGIC.md` when changing its read-only Master Schedule access or interpreting schedule semantics
 
 ### Important route-planning boundaries
 

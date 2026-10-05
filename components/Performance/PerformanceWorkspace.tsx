@@ -1,7 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
-    ExternalLink, Timer, Loader2,
+    ExternalLink, Timer, Loader2, Accessibility,
 } from 'lucide-react';
 import type {
     PerformanceDataLoadOptions,
@@ -11,7 +11,7 @@ import type {
     PerformanceTab,
     DayType,
 } from '../../utils/performanceDataTypes';
-import { PerformanceFilterBar, filterDailySummaries, getPerformanceDateWindow, type PerformanceDateWindow, type TimeRange } from './PerformanceFilterBar';
+import { PerformanceFilterBar, TIME_RANGE_LABELS, filterDailySummaries, getPerformanceDateWindow, type PerformanceDateWindow, type TimeRange } from './PerformanceFilterBar';
 import { PerformanceScopeProvider } from './performanceScope';
 import { resolveFilteredScope } from '../../utils/performanceDataScope';
 import { addDaysToISODate } from '../../utils/performanceDateUtils';
@@ -22,11 +22,9 @@ import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/featur
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import type { PerformanceRouteOption } from '../../utils/performanceRouteFilter';
 import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
-import {
-    buildPerformanceWorkspaceHash,
-    parsePerformanceWorkspaceTabFromHash,
-    type PerformanceWorkspaceTab,
-} from '../../utils/workspaces/performanceWorkspaceRouting';
+import { PerformanceLoadStatus } from './PerformanceLoadStatus';
+import { PerformanceAggregationProvider } from './performanceAggregation';
+import { getPerformanceAggregation, type PerformanceAggregationMode } from '../../utils/performanceAggregation';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -42,6 +40,10 @@ interface PerformanceWorkspaceProps {
     loadConfigTeamId?: string;
     loadConfigUserId?: string;
     canManageLoadConfig?: boolean;
+    specializedTransitTeamId?: string;
+    canManageSpecializedTransit?: boolean;
+    initialTab?: PerformanceTab;
+    onTabChange?: (tab: PerformanceTab) => void;
 }
 
 interface TabConfig {
@@ -57,10 +59,9 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'complete' },
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
+    { id: 'specialized-transit', label: 'Specialized Transit', icon: Accessibility, status: 'complete' },
     { id: 'operator-dwell', label: 'Dwell Incident Review', icon: Timer, status: 'complete', badge: 'Testing', feature: 'operationsOperatorDwell' },
 ];
-
-const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 const isLocalhost = () => typeof window !== 'undefined' && LOCALHOST_HOSTNAMES.has(window.location.hostname);
@@ -101,6 +102,10 @@ const OperatorDwellModule = lazyWithRetry(
     () => import('./OperatorDwellModule').then(module => ({ default: module.OperatorDwellModule })),
     'performance-operator-dwell-module',
 );
+const SpecializedTransitModule = lazyWithRetry(
+    () => import('./SpecializedTransitModule').then(module => ({ default: module.SpecializedTransitModule })),
+    'performance-specialized-transit-module',
+);
 
 const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
     <div className="flex min-h-[320px] items-center justify-center">
@@ -121,7 +126,6 @@ const PerformancePanelError: React.FC<{ onRetry: () => void }> = ({ onRetry }) =
     </div>
 );
 
-const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
 function resolveDetailDateRange(
     metadata: PerformanceMetadata | null | undefined,
     timeRange: TimeRange,
@@ -133,6 +137,17 @@ function resolveDetailDateRange(
     if (!end) return undefined;
 
     if (timeRange === 'all') return undefined;
+    if (timeRange === 'year-to-date') {
+        const start = `${end.slice(0, 4)}-01-01`;
+        if (!includeComparisonPeriod) return { start, end };
+        const startMs = Date.parse(`${start}T00:00:00Z`);
+        const endMs = Date.parse(`${end}T00:00:00Z`);
+        const calendarDays = Math.round((endMs - startMs) / (24 * 60 * 60 * 1000)) + 1;
+        return {
+            start: addDaysToISODate(start, -calendarDays) || start,
+            end,
+        };
+    }
     if (timeRange === 'custom') {
         if (!customDateRange?.start || !customDateRange.end || customDateRange.start > customDateRange.end) {
             return undefined;
@@ -171,7 +186,9 @@ function resolveDetailDateRange(
 }
 
 function detailModeForTab(tab: PerformanceTab): PerformanceDetailMode {
-    return tab === 'reports' ? 'all' : tab;
+    if (tab === 'reports') return 'all';
+    if (tab === 'specialized-transit') return 'overview';
+    return tab;
 }
 
 export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
@@ -188,16 +205,19 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     loadConfigTeamId,
     loadConfigUserId,
     canManageLoadConfig = false,
+    specializedTransitTeamId,
+    canManageSpecializedTransit = false,
+    initialTab = 'overview',
+    onTabChange,
 }) => {
     const { canAccess } = useWorkspaceAccess();
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
-    const [activeTab, setActiveTab] = useState<PerformanceWorkspaceTab>(() =>
-        parsePerformanceWorkspaceTabFromHash(window.location.hash)
-    );
+    const [activeTab, setActiveTab] = useState<PerformanceTab>(initialTab);
     const [timeRange, setTimeRangeState] = useState<TimeRange>('past-week');
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [customDateRange, setCustomDateRange] = useState<PerformanceDateWindow | null>(null);
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
+    const [aggregationMode, setAggregationMode] = useState<PerformanceAggregationMode>('sum');
 
     const tabBarRef = useRef<HTMLDivElement>(null);
     const hasValidCustomRange = timeRange !== 'custom'
@@ -206,9 +226,10 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         dateRange: resolveDetailDateRange(metadata, timeRange, selectedDate, customDateRange, activeTab === 'ridership'),
         detailMode: detailModeForTab(activeTab),
     }), [activeTab, customDateRange, metadata, selectedDate, timeRange]);
-    const shouldLoadDetailData = !!teamId && !!metadata && hasValidCustomRange && (
+    const shouldLoadDetailData = activeTab !== 'specialized-transit' && !!teamId && !!metadata && hasValidCustomRange && (
         activeTab !== 'overview'
         || timeRange === 'all'
+        || timeRange === 'year-to-date'
         || timeRange === 'past-month'
         || timeRange === 'past-three-months'
         || timeRange === 'yesterday'
@@ -226,9 +247,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     const detailData = detailQuery.data ?? null;
     const detailLoadFailed = shouldLoadDetailData && detailQuery.isError;
     const isCurrentDetailLoading = shouldLoadDetailData && detailQuery.isFetching && !detailData;
+    const isPendingDetailLoad = shouldLoadDetailData && !detailData && !detailLoadFailed;
     const detailsReady = !shouldLoadDetailData || !!detailData;
     const workspaceData = detailData ?? data;
-    const allowedTimeRanges = detailsReady ? undefined : OVERVIEW_ONLY_TIME_RANGES;
     const showImportHealthPanel = !import.meta.env.PROD
         && detailsReady
         && isFeatureEnabled('operationsImportHealth');
@@ -278,6 +299,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
     }, [latestAvailableDate, maxAvailableDate, minAvailableDate]);
 
     const filteredData = useMemo((): PerformanceDataSummary => {
+        if (isPendingDetailLoad) {
+            return data;
+        }
         const dailySummaries = filterDailySummaries(
             workspaceData.dailySummaries,
             timeRange,
@@ -286,7 +310,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
             customDateRange,
         );
         return withFilteredMetadata(workspaceData, dailySummaries);
-    }, [workspaceData, timeRange, dayTypeFilter, selectedDate, customDateRange]);
+    }, [customDateRange, data, dayTypeFilter, isPendingDetailLoad, selectedDate, timeRange, workspaceData]);
 
     const ridershipComparisonPeriod = useMemo(() => {
         if (activeTab !== 'ridership' || timeRange === 'all') return null;
@@ -307,65 +331,52 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
         setSelectedDate(latestAvailableDate);
     }, [timeRange, selectedDate, availableDates, latestAvailableDate]);
 
-    const navigateToTab = useCallback((tab: PerformanceWorkspaceTab) => {
-        setActiveTab(tab);
-        const nextHash = buildPerformanceWorkspaceHash(tab);
-        if (window.location.hash !== nextHash) window.location.hash = nextHash;
-    }, []);
-
     useEffect(() => {
-        const syncTabFromHash = () => {
-            const requestedTab = parsePerformanceWorkspaceTabFromHash(window.location.hash);
-            const nextTab = tabs.find(tab => tab.id === requestedTab && tab.enabled)?.id
-                ?? tabs.find(tab => tab.enabled)?.id
-                ?? 'overview';
-            const safeTab = nextTab as PerformanceWorkspaceTab;
-            setActiveTab(safeTab);
+        const nextTab = tabs.find(tab => tab.id === initialTab && tab.enabled)?.id
+            ?? tabs[0]?.id
+            ?? 'overview';
+        setActiveTab(nextTab);
+        if (nextTab !== initialTab) onTabChange?.(nextTab);
+    }, [initialTab, onTabChange, tabs]);
 
-            const canonicalHash = buildPerformanceWorkspaceHash(safeTab);
-            if (window.location.hash.startsWith('#operations/performance')
-                && window.location.hash !== canonicalHash) {
-                window.history.replaceState(null, '', canonicalHash);
-            }
-        };
-
-        syncTabFromHash();
-        window.addEventListener('hashchange', syncTabFromHash);
-        return () => window.removeEventListener('hashchange', syncTabFromHash);
-    }, [tabs]);
+    const selectTab = (tabId: PerformanceTab) => {
+        const tab = tabs.find(candidate => candidate.id === tabId);
+        if (!tab?.enabled) return;
+        setActiveTab(tab.id);
+        onTabChange?.(tab.id);
+    };
 
     const handleNavigate = (tabId: string) => {
         const tab = tabs.find(t => t.id === tabId);
         if (tab?.enabled) {
-            navigateToTab(tab.id as PerformanceWorkspaceTab);
+            selectTab(tab.id);
             const tabEl = tabBarRef.current?.querySelector(`[data-tab="${tabId}"]`);
             tabEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
     };
 
-    const showFilterBar = true;
+    const showFilterBar = activeTab !== 'specialized-transit';
     const selectedRoute = routeOptions.find(route => route.routeId === selectedRouteId);
     const routeScopeLabel = selectedRouteId === 'all'
         ? 'All routes'
         : `Route ${selectedRoute?.routeId ?? selectedRouteId}`;
     const filteredScope = useMemo(() => resolveFilteredScope(timeRange), [timeRange]);
+    const requestedLoadLabel = useMemo(() => {
+        const rangeLabel = timeRange === 'custom' && customDateRange
+            ? `${customDateRange.start} to ${customDateRange.end}`
+            : TIME_RANGE_LABELS[timeRange];
+        return `${rangeLabel} · ${routeScopeLabel} · ${activeTabConfig?.label ?? 'Overview'}`;
+    }, [activeTabConfig?.label, customDateRange, routeScopeLabel, timeRange]);
 
-    const filteredScopeLabel = useMemo(() => {
-        const n = filteredData.dailySummaries.length;
-        if (n === 0) return 'No data';
-        if (filteredScope === 'yesterday') {
-            const d = filteredData.dailySummaries[0];
-            if (d) {
-                const dt = new Date(d.date + 'T12:00:00');
-                return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-            }
-            return 'Single day';
-        }
-        if (dayTypeFilter !== 'all') {
-            return `${n} ${DAY_TYPE_LABELS[dayTypeFilter]}${n !== 1 ? 's' : ''} avg`;
-        }
-        return `${n}-day avg`;
-    }, [filteredData, filteredScope, dayTypeFilter]);
+    const aggregation = useMemo(() => getPerformanceAggregation(
+        aggregationMode,
+        filteredData.dailySummaries,
+        isPendingDetailLoad ? 'all' : dayTypeFilter,
+        isPendingDetailLoad ? data.metadata.dateRange : getPerformanceDateWindow(workspaceData.dailySummaries, timeRange, selectedDate, customDateRange),
+    ), [aggregationMode, filteredData, isPendingDetailLoad, dayTypeFilter, data.metadata.dateRange, workspaceData.dailySummaries, timeRange, selectedDate, customDateRange]);
+    // Scope badges also appear on rates and daily trends, so keep them neutral.
+    const filteredScopeLabel = aggregation.coveredDays === 0 ? 'No data'
+        : `${aggregation.coveredDays} ${aggregation.unit}${aggregation.coveredDays === 1 ? '' : 's'} with data`;
 
     const renderPanel = () => {
         if (detailLoadFailed) return <PerformancePanelError onRetry={() => { void detailQuery.refetch(); }} />;
@@ -394,6 +405,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <RidershipModule
                             data={filteredData}
+                            dayTypeFilter={dayTypeFilter}
                             loadConfigTeamId={loadConfigTeamId}
                             loadConfigUserId={loadConfigUserId}
                             canManageLoadConfig={canManageLoadConfig}
@@ -410,6 +422,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <OperatorDwellModule data={filteredData} />
                     </PerformanceScopeProvider>
+                );
+            case 'specialized-transit':
+                if (!specializedTransitTeamId) return <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">A team context is required for Specialized Transit data.</div>;
+                return (
+                    <SpecializedTransitModule
+                        teamId={specializedTransitTeamId}
+                        canManage={canManageSpecializedTransit}
+                    />
                 );
             default:
                 return null;
@@ -429,14 +449,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                     </button>
                     <div className="h-4 w-px bg-gray-300" />
                     <h2 className="text-lg font-bold text-gray-900">Operations Dashboard</h2>
-                    <span className="text-xs text-gray-500">
-                        {data.metadata.dateRange.start} — {data.metadata.dateRange.end}
-                        {' · '}{data.metadata.dayCount} day{data.metadata.dayCount !== 1 ? 's' : ''}
+                    {showFilterBar && <span className="text-xs text-gray-500">
+                        {filteredData.metadata.dateRange.start} — {filteredData.metadata.dateRange.end}
+                        {' · '}{filteredData.metadata.dayCount} day{filteredData.metadata.dayCount !== 1 ? 's' : ''}
                         {' · '}{routeScopeLabel}
-                    </span>
+                    </span>}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                    {onRouteChange && (
+                    {onRouteChange && activeTab !== 'specialized-transit' && (
                         <select
                             aria-label="Filter dashboard by route"
                             value={selectedRouteId}
@@ -477,9 +497,16 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                 </>
             )}
 
-            {!detailsReady && !detailLoadFailed && (
-                <div className="mb-3 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-800">
-                    Showing the most recent 7 days on Overview first. {routeScopeLabel} details are still loading in the background.
+            {isPendingDetailLoad && (
+                <div className="mb-3">
+                    <PerformanceLoadStatus
+                        isLoading={detailQuery.isFetching}
+                        profileKey={detailQuery.loadProfileKey ?? 'operations:detail'}
+                        requestKey={detailQuery.loadRequestKey}
+                        progress={detailQuery.loadProgress}
+                        label={requestedLoadLabel}
+                        description={`Showing ${data.metadata.dateRange.start} to ${data.metadata.dateRange.end} on Overview until the requested data is ready.`}
+                    />
                 </div>
             )}
 
@@ -504,7 +531,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                                 data-tab={tab.id}
                                 aria-pressed={isActive}
                                 disabled={!tab.enabled}
-                                onClick={() => tab.enabled && navigateToTab(tab.id as PerformanceWorkspaceTab)}
+                                onClick={() => selectTab(tab.id)}
                                 className={`relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
                                     isActive
                                         ? 'text-gray-900'
@@ -562,26 +589,37 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                         onDayTypeChange={setDayTypeFilter}
                         availableDayTypes={availableDayTypes}
                         filteredDayCount={filteredData.dailySummaries.length}
+                        aggregationMode={aggregationMode}
+                        onAggregationModeChange={setAggregationMode}
                     />
                     </div>
                 )}
 
             {/* Panel */}
             <div className="min-h-[500px] rounded-b-lg border border-t-0 border-gray-200 bg-white p-5">
-                <div className="mb-4">
+                {showFilterBar && <div className="mb-4">
                     <span className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100">
-                        {filteredScopeLabel}
+                        {aggregation.label}
                     </span>
                     {detailQuery.isFetching && detailData && (
-                        <span className="ml-2 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-gray-50 text-gray-500 border border-gray-100">
-                            <Loader2 size={11} className="animate-spin" />
-                            Refreshing detail slice
-                        </span>
+                        <div className="ml-2 inline-block align-middle">
+                            <PerformanceLoadStatus
+                                isLoading
+                                profileKey={detailQuery.loadProfileKey ?? 'operations:detail'}
+                                requestKey={detailQuery.loadRequestKey}
+                                progress={detailQuery.loadProgress}
+                                label={requestedLoadLabel}
+                                compact
+                            />
+                        </div>
                     )}
-                </div>
+                </div>}
+                {!showFilterBar && <p className="mb-4 text-xs text-gray-500">Specialized Transit uses its own monthly reports and filters. The dashboard Sum / Daily average selection does not apply to this source.</p>}
+                <PerformanceAggregationProvider value={aggregation}>
                 <Suspense fallback={<PerformancePanelLoading label="Loading panel..." />}>
                     {renderPanel()}
                 </Suspense>
+                </PerformanceAggregationProvider>
             </div>
         </div>
     );

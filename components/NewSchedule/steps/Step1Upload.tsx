@@ -29,6 +29,10 @@ interface Step1Props {
     onPerformanceConfigChange?: (config: PerformanceConfig) => void;
     performanceDataLoading?: boolean;
     performanceMetadataLoading?: boolean;
+    performanceDataError?: string | null;
+    performanceMetadataError?: string | null;
+    onRetryPerformanceData?: () => void;
+    onRetryPerformanceMetadata?: () => void;
     performanceLoadRouteId?: string;
     performanceLoadRouteIds?: string[];
     onPerformanceLoadRouteChange?: (routeId: string) => void;
@@ -96,6 +100,10 @@ export const Step1Upload: React.FC<Step1Props> = ({
     onPerformanceConfigChange,
     performanceDataLoading,
     performanceMetadataLoading,
+    performanceDataError,
+    performanceMetadataError,
+    onRetryPerformanceData,
+    onRetryPerformanceMetadata,
     performanceLoadRouteId = 'all',
     performanceLoadRouteIds = [],
     onPerformanceLoadRouteChange,
@@ -270,7 +278,26 @@ export const Step1Upload: React.FC<Step1Props> = ({
             {/* Performance Data Mode */}
             {importMode === 'performance' && (
                 <div className="mx-auto max-w-4xl space-y-4">
-                    {performanceMetadataLoading ? (
+                    {performanceMetadataError ? (
+                        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
+                            <div className="flex items-start gap-3">
+                                <AlertTriangle className="mt-0.5 shrink-0 text-red-500" size={18} />
+                                <div className="flex-1">
+                                    <p className="font-bold">Route list could not be loaded</p>
+                                    <p className="mt-1 text-xs text-red-700">{performanceMetadataError}</p>
+                                </div>
+                                {onRetryPerformanceMetadata && (
+                                    <button
+                                        type="button"
+                                        onClick={onRetryPerformanceMetadata}
+                                        className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100"
+                                    >
+                                        Retry
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    ) : performanceMetadataLoading ? (
                         <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm font-medium text-gray-500">
                             Loading route list...
                         </div>
@@ -320,7 +347,22 @@ export const Step1Upload: React.FC<Step1Props> = ({
                         ))}
                     </div>
 
-                    {performanceDataLoading ? (
+                    {performanceDataError ? (
+                        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center" role="alert">
+                            <AlertTriangle className="mx-auto mb-3 text-red-500" size={40} />
+                            <p className="font-bold text-red-800">Performance data could not be loaded</p>
+                            <p className="mt-1 text-sm text-red-700">{performanceDataError}</p>
+                            {onRetryPerformanceData && (
+                                <button
+                                    type="button"
+                                    onClick={onRetryPerformanceData}
+                                    className="mt-4 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100"
+                                >
+                                    Retry loading data
+                                </button>
+                            )}
+                        </div>
+                    ) : performanceDataLoading ? (
                         <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-center">
                             <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
                             <p className="text-gray-600 font-medium">Loading performance data...</p>

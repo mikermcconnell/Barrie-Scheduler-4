@@ -68,9 +68,29 @@ function filterIgnoredDataRows(rows: ParkingRawRow[], settings: ParkingAnalysisS
   return rows.filter(row => !isIgnoredDepartment(row, ignoredKeys));
 }
 
+function mergeCodeFamilies(base: ParkingSettings, override: ParkingSettings): ParkingSettings['codeFamilies'] {
+  const suppliedFamilies = override.codeFamilies ?? base.codeFamilies;
+  const suppliedByKey = new Map(suppliedFamilies.map(mapping => [normalizeKey(getParkingCodeFamilyKey(mapping.familyKey)), mapping]));
+  const requiredDefaults = base.codeFamilies.filter(mapping => normalizeKey(getParkingCodeFamilyKey(mapping.familyKey)) === 'P1');
+  const normalizedFamilies = suppliedFamilies.map(mapping => {
+    const defaultMapping = requiredDefaults.find(candidate => (
+      normalizeKey(getParkingCodeFamilyKey(candidate.familyKey)) === normalizeKey(getParkingCodeFamilyKey(mapping.familyKey))
+    ));
+    return defaultMapping?.ignoreData === true && mapping.ignoreData === undefined
+      ? { ...mapping, ignoreData: true }
+      : mapping;
+  });
+
+  for (const defaultMapping of requiredDefaults) {
+    const key = normalizeKey(getParkingCodeFamilyKey(defaultMapping.familyKey));
+    if (!suppliedByKey.has(key)) normalizedFamilies.push({ ...defaultMapping });
+  }
+  return normalizedFamilies;
+}
+
 export function mergeParkingSettings(base: ParkingSettings, override: ParkingSettings): ParkingSettings {
   return {
-    codeFamilies: override.codeFamilies ?? base.codeFamilies,
+    codeFamilies: mergeCodeFamilies(base, override),
     spotLocations: override.spotLocations ?? base.spotLocations,
     revenueLocations: mergeDefaultParkingRevenueLocations(override.revenueLocations ?? base.revenueLocations),
     revenueLocationCategories: mergeParkingRevenueCategories(override.revenueLocationCategories ?? base.revenueLocationCategories),
@@ -296,20 +316,26 @@ function buildMetadata(months: ParkingMonthlyDataset[], importedBy: string): Par
   };
 }
 
+export interface BuildParkingSummaryOptions {
+  retainIgnoredRows?: boolean;
+}
+
 export function buildParkingSummary(
   months: ParkingMonthlyDataset[],
   importedBy: string,
   storagePath?: string,
   settings: ParkingAnalysisSettings = DEFAULT_PARKING_FLAG_RULES,
+  options: BuildParkingSummaryOptions = {},
 ): ParkingSummary {
   const rules = getFlagRules(settings);
   const monthsForSummary = isParkingSettings(settings)
     ? months.map(month => {
       const rows = filterIgnoredDataRows(month.rows, settings);
       const analysis = buildParkingMonthAnalysis(rows, settings);
+      // rowCount/totalValue describe active (non-ignored) rows even when raw rows are retained.
       return {
         ...month,
-        rows,
+        rows: options.retainIgnoredRows ? month.rows : rows,
         rowCount: rows.length,
         totalValue: money(rows.reduce((sum, row) => sum + row.discountAmount, 0)),
         departmentSummaries: analysis.departmentSummaries,
@@ -337,8 +363,9 @@ export function buildParkingReplacementSummary(
   importedBy: string,
   storagePath: string,
   settings: ParkingAnalysisSettings = DEFAULT_PARKING_FLAG_RULES,
+  options: BuildParkingSummaryOptions = {},
 ): ParkingSummary {
-  return buildParkingReplacementSummaryForMonths(existingSummary, [dataset], importedBy, storagePath, settings);
+  return buildParkingReplacementSummaryForMonths(existingSummary, [dataset], importedBy, storagePath, settings, options);
 }
 
 export function buildParkingReplacementSummaryForMonths(
@@ -347,6 +374,7 @@ export function buildParkingReplacementSummaryForMonths(
   importedBy: string,
   storagePath: string,
   settings: ParkingAnalysisSettings = DEFAULT_PARKING_FLAG_RULES,
+  options: BuildParkingSummaryOptions = {},
 ): ParkingSummary {
   const replacementMonths = new Set<string>();
   for (const dataset of datasets) {
@@ -356,7 +384,7 @@ export function buildParkingReplacementSummaryForMonths(
     replacementMonths.add(dataset.month);
   }
   const keptMonths = (existingSummary?.months || []).filter(month => !replacementMonths.has(month.month));
-  return buildParkingSummary([...keptMonths, ...datasets], importedBy, storagePath, settings);
+  return buildParkingSummary([...keptMonths, ...datasets], importedBy, storagePath, settings, options);
 }
 
 export function getLatestParkingMonth(summary: ParkingSummary | null | undefined): string | null {

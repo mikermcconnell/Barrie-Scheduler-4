@@ -3,6 +3,13 @@ import type { MasterRouteTable, MasterTrip } from '../parsers/masterSchedulePars
 import type { DraftBasedOn, DraftSchedule } from './scheduleTypes';
 import { validateMergedRouteBlockContinuity } from './mergedRouteContinuity';
 import { getOperationalSortTime } from '../blocks/blockAssignmentCore';
+import { getRouteConfig } from '../config/routeDirectionConfig';
+import {
+    getOperationalEndTime,
+    getOperationalOccupiedEndTime,
+    getOperationalStartTime,
+    normalizeTripTime,
+} from './tripTiming';
 import {
     buildDetailedMasterComparison,
     buildMasterComparisonChangeSummary,
@@ -23,7 +30,7 @@ export type ScheduleIssueKind =
     | 'merged-continuity';
 
 export interface ScheduleReviewLocation {
-    direction: 'North' | 'South';
+    direction: string;
     routeName: string;
     tripId?: string;
     blockId?: string;
@@ -65,58 +72,26 @@ const tablesFromContent = (content: MasterScheduleContent): MasterRouteTable[] =
     content.southTable,
 ].filter((table): table is MasterRouteTable => !!table);
 
-const directionOf = (table: MasterRouteTable): 'North' | 'South' =>
-    table === undefined || !table.routeName.toLowerCase().includes('south') ? 'North' : 'South';
+const directionOf = (table: MasterRouteTable): 'North' | 'South' => (
+    table.routeName.toLowerCase().includes('south') ? 'South' : 'North'
+);
+
+const reviewDirectionOf = (table: MasterRouteTable): string => {
+    const routeNumber = table.routeName.match(/^\s*([A-Za-z0-9]+)/)?.[1] || '';
+    const config = getRouteConfig(routeNumber);
+    if (config?.segments.length === 1) return config.segments[0].name;
+    return directionOf(table);
+};
 
 const locationFor = (table: MasterRouteTable, trip: MasterTrip): ScheduleReviewLocation => ({
-    direction: trip.direction || directionOf(table),
+    direction: getRouteConfig(table.routeName.match(/^\s*([A-Za-z0-9]+)/)?.[1] || '')?.segments.length === 1
+        ? reviewDirectionOf(table)
+        : trip.direction || directionOf(table),
     routeName: table.routeName,
     tripId: trip.id,
     blockId: trip.blockId,
     startTime: trip.startTime,
 });
-
-const getActiveEndStopName = (table: MasterRouteTable, trip: MasterTrip): string | null => {
-    const endIndex = Math.min(table.stops.length - 1, trip.endStopIndex ?? table.stops.length - 1);
-    for (let index = endIndex; index >= 0; index -= 1) {
-        const stopName = table.stops[index];
-        if (trip.stops?.[stopName] || trip.stopMinutes?.[stopName] !== undefined) return stopName;
-    }
-    return table.stops[endIndex] ?? null;
-};
-
-const getOccupiedEndTime = (table: MasterRouteTable, trip: MasterTrip): number => {
-    const terminalStop = getActiveEndStopName(table, trip);
-    if (!terminalStop) return trip.endTime;
-
-    const terminalRecovery = trip.recoveryTimes?.[terminalStop]
-        ?? (trip.recoveryTimes && Object.keys(trip.recoveryTimes).length > 0 ? 0 : trip.recoveryTime)
-        ?? 0;
-    const legacyDepartureIncludesRecovery = trip.endTimeIncludesRecovery === undefined
-        && trip.recoveryTimes !== undefined
-        && Object.prototype.hasOwnProperty.call(trip.recoveryTimes, terminalStop)
-        && trip.stopMinutes?.[terminalStop] === trip.endTime
-        && trip.arrivalTimes?.[terminalStop] === undefined;
-    const includesRecovery = trip.endTimeIncludesRecovery ?? legacyDepartureIncludesRecovery;
-
-    return trip.endTime + (includesRecovery ? 0 : Math.max(0, terminalRecovery));
-};
-
-const normalizeTripTime = (trip: MasterTrip, minutes: number): number => {
-    const operationalStart = getOperationalSortTime(trip.startTime);
-    let adjusted = getOperationalSortTime(minutes);
-    // Legacy schedules can store a trip crossing the 4:00 AM service boundary
-    // with clock minutes on both sides. Only treat a large backwards jump as
-    // a rollover so genuinely invalid small reversals remain review errors.
-    if (adjusted < operationalStart - 720) adjusted += 1440;
-    return adjusted;
-};
-
-const getOperationalStartTime = (trip: MasterTrip): number => getOperationalSortTime(trip.startTime);
-const getOperationalEndTime = (trip: MasterTrip): number => normalizeTripTime(trip, trip.endTime);
-const getOperationalOccupiedEndTime = (table: MasterRouteTable, trip: MasterTrip): number => (
-    normalizeTripTime(trip, getOccupiedEndTime(table, trip))
-);
 
 const changeLabel = (kind: ScheduleReviewChange['kind']): string => ({
     new: 'Trip added',
@@ -209,9 +184,23 @@ const buildChanges = (
 const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
     const issues: ScheduleReviewIssue[] = [];
     const overlapIds = new Set<string>();
+    const tables = tablesFromContent(content);
+    const allByBlock = new Map<string, Array<{ table: MasterRouteTable; trip: MasterTrip }>>();
+    tables.forEach(table => table.trips.forEach(trip => {
+        allByBlock.set(trip.blockId, [...(allByBlock.get(trip.blockId) || []), { table, trip }]);
+    }));
+    const blockEndTrips = new Set<MasterTrip>();
+    allByBlock.forEach(blockEntries => {
+        const sorted = [...blockEntries].sort((a, b) => (
+            getOperationalStartTime(a.trip) - getOperationalStartTime(b.trip)
+            || a.trip.id.localeCompare(b.trip.id)
+        ));
+        const finalEntry = sorted[sorted.length - 1];
+        if (finalEntry) blockEndTrips.add(finalEntry.trip);
+    });
 
-    tablesFromContent(content).forEach(table => {
-        const direction = directionOf(table);
+    tables.forEach(table => {
+        const direction = reviewDirectionOf(table);
         const byBlock = new Map<string, MasterTrip[]>();
         table.trips.forEach(trip => {
             const key = trip.blockId || 'Unassigned';
@@ -242,7 +231,7 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
             }
 
             const ratio = trip.travelTime > 0 ? trip.recoveryTime / trip.travelTime : null;
-            if ((ratio !== null && ratio < 0.1 && trip.recoveryTime < 5) || trip.isTightRecovery) {
+            if (!blockEndTrips.has(trip) && ratio !== null && ratio < 0.1 && trip.recoveryTime < 5) {
                 issues.push({
                     id: `issue:tight-recovery:${direction}:${trip.id}`,
                     kind: 'tight-recovery', severity: 'warning',
@@ -268,7 +257,7 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
                 const current = sorted[index];
                 const previousOccupiedEnd = getOperationalOccupiedEndTime(table, previous);
                 const currentStart = getOperationalStartTime(current);
-                if (currentStart < previousOccupiedEnd || current.isOverlap) {
+                if (currentStart < previousOccupiedEnd) {
                     const id = `issue:block-overlap:${direction}:${current.id}`;
                     if (!overlapIds.has(id)) {
                         overlapIds.add(id);
@@ -335,10 +324,6 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
     });
 
     // A vehicle block can alternate directions, so check its complete chain as well.
-    const allByBlock = new Map<string, Array<{ table: MasterRouteTable; trip: MasterTrip }>>();
-    tablesFromContent(content).forEach(table => table.trips.forEach(trip => {
-        allByBlock.set(trip.blockId, [...(allByBlock.get(trip.blockId) || []), { table, trip }]);
-    }));
     allByBlock.forEach(blockEntries => {
         const sorted = [...blockEntries].sort((a, b) => (
             getOperationalStartTime(a.trip) - getOperationalStartTime(b.trip)
@@ -347,7 +332,7 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
         for (let index = 1; index < sorted.length; index += 1) {
             const previous = sorted[index - 1].trip;
             const { table, trip: current } = sorted[index];
-            const direction = current.direction || directionOf(table);
+            const direction = reviewDirectionOf(table);
             const id = `issue:block-overlap:${direction}:${current.id}`;
             const previousOccupiedEnd = getOperationalOccupiedEndTime(sorted[index - 1].table, previous);
             const currentStart = getOperationalStartTime(current);
@@ -363,8 +348,8 @@ const buildIssues = (content: MasterScheduleContent): ScheduleReviewIssue[] => {
     });
 
     const tripLookup = new Map<string, { table: MasterRouteTable; trip: MasterTrip }>();
-    tablesFromContent(content).forEach(table => table.trips.forEach(trip => tripLookup.set(trip.id, { table, trip })));
-    validateMergedRouteBlockContinuity(tablesFromContent(content)).forEach((issue, index) => {
+    tables.forEach(table => table.trips.forEach(trip => tripLookup.set(trip.id, { table, trip })));
+    validateMergedRouteBlockContinuity(tables).forEach((issue, index) => {
         const found = issue.tripIds.map(id => tripLookup.get(id)).find(Boolean);
         if (!found) return;
         issues.push({

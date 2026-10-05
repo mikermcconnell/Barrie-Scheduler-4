@@ -200,7 +200,13 @@ vi.mock('../components/RouteSummary', () => ({
 
 vi.mock('../components/AuditLogPanel', () => ({
   useAuditLog: () => ({ entries: [] as any[], logAction: vi.fn((): void => undefined) }),
-  AuditLogPanel: (): null => null,
+  AuditLogPanel: (props: { hideClosedTrigger?: boolean; placement?: string }) => (
+    <div
+      data-testid="audit-log-panel"
+      data-hide-closed-trigger={String(props.hideClosedTrigger ?? false)}
+      data-placement={props.placement}
+    />
+  ),
 }));
 
 vi.mock('../components/modals/AddTripModal', () => ({
@@ -346,6 +352,7 @@ describe('ScheduleEditor shell behavior', () => {
     draftName?: string;
     schedules?: typeof schedules;
     exportScopeSchedules?: typeof schedules;
+    compactStep4?: boolean;
   }) => {
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -359,6 +366,7 @@ describe('ScheduleEditor shell behavior', () => {
           teamId="team-1"
           userId="user-1"
           draftName={options?.draftName}
+          compactStep4={options?.compactStep4}
           onSchedulesChange={vi.fn()}
           canUndo
           canRedo
@@ -457,6 +465,21 @@ describe('ScheduleEditor shell behavior', () => {
 
     const header = container?.querySelector('[data-testid="workspace-header"]');
     expect(header?.getAttribute('data-unsaved')).toBe('false');
+  });
+
+  it('keeps the compact Step 4 editor shell from becoming a second scroll owner', async () => {
+    renderEditor({ compactStep4: true });
+    await flushPromises();
+
+    const content = container?.querySelector('[data-testid="schedule-editor-content"]');
+    const auditLog = container?.querySelector('[data-testid="audit-log-panel"]');
+
+    expect(content?.className).toContain('overflow-hidden');
+    expect(content?.className).not.toContain('overflow-auto');
+    expect(content?.className).toContain('p-0');
+    expect(content?.className).not.toContain('md:px-4');
+    expect(auditLog?.getAttribute('data-hide-closed-trigger')).toBe('true');
+    expect(auditLog?.getAttribute('data-placement')).toBe('top-right');
   });
 
   it('exports the current route only when selected from the export dialog', async () => {

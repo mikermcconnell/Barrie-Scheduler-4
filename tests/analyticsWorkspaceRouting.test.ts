@@ -13,19 +13,22 @@ describe('analytics workspace routing', () => {
         expect(getAnalyticsWorkspaceViewLabel('fare-programs')).toBe('Fare Programs');
     });
 
-    it('deep-links to Council Intelligence from Planning Data', () => {
-        expect(buildAnalyticsWorkspaceHash('planning', 'council-intelligence'))
-            .toBe('#planning/council-intelligence');
-        expect(parseAnalyticsWorkspaceViewFromHash('#planning/council-intelligence', 'planning'))
-            .toBe('council-intelligence');
-        expect(getAnalyticsWorkspaceViewLabel('council-intelligence'))
-            .toBe('Council Intelligence');
+    it('deep-links to the 2027–2032 Strategic Plan workspace', () => {
+        expect(buildAnalyticsWorkspaceHash('planning', 'strategic-plan')).toBe('#planning/strategic-plan');
+        expect(parseAnalyticsWorkspaceViewFromHash('#planning/strategic-plan', 'planning')).toBe('strategic-plan');
+        expect(getAnalyticsWorkspaceViewLabel('strategic-plan')).toBe('2027–2032 Strategic Plan');
     });
 
-    it('deep-links to Council Intelligence from the fixed-route analytics shell', () => {
-        expect(buildAnalyticsWorkspaceHash('fixed/analytics', 'council-intelligence'))
-            .toBe('#fixed/analytics/council-intelligence');
+    it('deep-links to Ridership Trends', () => {
+        expect(buildAnalyticsWorkspaceHash('planning', 'ridership-trends')).toBe('#planning/ridership-trends');
+        expect(parseAnalyticsWorkspaceViewFromHash('#planning/ridership-trends', 'planning')).toBe('ridership-trends');
+        expect(getAnalyticsWorkspaceViewLabel('ridership-trends')).toBe('Ridership Trends');
+    });
+
+    it('falls back to Planning Data for a retired Council Intelligence deep link', () => {
+        expect(parseAnalyticsWorkspaceViewFromHash('#planning/council-intelligence', 'planning'))
+            .toBe('dashboard');
         expect(parseAnalyticsWorkspaceViewFromHash('#fixed/analytics/council-intelligence', 'fixed/analytics'))
-            .toBe('council-intelligence');
+            .toBe('dashboard');
     });
 });

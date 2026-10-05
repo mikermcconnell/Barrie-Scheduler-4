@@ -1,13 +1,12 @@
-import * as XLSX from 'xlsx';
 import {
   PARKING_REVENUE_SCHEMA_VERSION,
   type ParkingRevenueAnalytics,
   type ParkingRevenueDataset,
   type ParkingRevenueFilters,
   type ParkingRevenueLocationMapping,
+  type ParkingRevenueMapStatus,
   type ParkingRevenueLocationRef,
   type ParkingRevenueLocationSummary,
-  type ParkingRevenueParseResult,
   type ParkingRevenueRawRow,
   type ParkingRevenueSource,
   type ParkingRevenueSummary,
@@ -16,71 +15,60 @@ import {
 } from './parkingTypes';
 import { getParkingCategoryDisplay, UNCATEGORIZED_PARKING_CATEGORY_ID } from './parkingCategories';
 
-const MAX_PARKING_REVENUE_FILE_BYTES = 25 * 1024 * 1024;
-
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function normalizeHeader(value: unknown): string {
-  return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+function finiteMoney(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+export function getParkingTaxInclusiveRevenue(row: ParkingRevenueRawRow): number {
+  if (Number.isFinite(row.taxInclusiveAmount)) return roundMoney(Number(row.taxInclusiveAmount));
+  return roundMoney(finiteMoney(row.amount) + finiteMoney(row.tax));
+}
+
+function normalizeRevenueDataset(dataset: ParkingRevenueDataset): ParkingRevenueDataset {
+  const rows = (dataset.rows || []).map(row => ({
+    ...row,
+    taxInclusiveAmount: getParkingTaxInclusiveRevenue(row),
+  }));
+  const hasStoredRows = rows.length > 0 || dataset.rowCount === 0;
+  return {
+    ...dataset,
+    rowCount: hasStoredRows ? rows.length : dataset.rowCount,
+    totalRevenue: hasStoredRows
+      ? roundMoney(rows.reduce((sum, row) => sum + getParkingTaxInclusiveRevenue(row), 0))
+      : finiteMoney(dataset.totalRevenue),
+    totalTax: hasStoredRows
+      ? roundMoney(rows.reduce((sum, row) => sum + finiteMoney(row.tax), 0))
+      : finiteMoney(dataset.totalTax),
+    totalPaid: hasStoredRows
+      ? roundMoney(rows.reduce((sum, row) => sum + finiteMoney(row.total), 0))
+      : finiteMoney(dataset.totalPaid),
+    rows,
+  };
+}
+
+export function normalizeParkingRevenueSummary(summary: ParkingRevenueSummary): ParkingRevenueSummary {
+  const datasets = (summary.datasets || []).map(normalizeRevenueDataset);
+  return {
+    ...summary,
+    schemaVersion: PARKING_REVENUE_SCHEMA_VERSION,
+    datasets,
+    metadata: {
+      ...summary.metadata,
+      datasetCount: datasets.length,
+      monthCount: new Set(datasets.map(dataset => dataset.month)).size,
+      totalRows: datasets.reduce((sum, dataset) => sum + dataset.rowCount, 0),
+      totalRevenue: roundMoney(datasets.reduce((sum, dataset) => sum + dataset.totalRevenue, 0)),
+    },
+  };
 }
 
 function normalizeText(value: unknown): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
-}
-
-function parseMoney(value: unknown): number {
-  const parsed = Number(String(value ?? '').replace(/[^0-9.-]/g, ''));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function parseDate(value: unknown): { date: string; month: string; minutes: number; weekday: number; raw: string } | null {
-  const raw = normalizeText(value);
-  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-  if (!match) return null;
-  const [, year, month, day, hour, minute] = match;
-  const date = `${year}-${month}-${day}`;
-  const minutes = Number(hour) * 60 + Number(minute);
-  const weekday = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay();
-  if (!Number.isFinite(minutes) || !Number.isFinite(weekday)) return null;
-  return { date, month: `${year}-${month}`, minutes, weekday, raw };
-}
-
-export function parseParkingRevenueDurationMinutes(value: unknown): number | null {
-  const text = normalizeText(value).toLowerCase();
-  if (!text) return null;
-  if (/[hm]/.test(text)) {
-    const hours = Number(text.match(/(\d+(?:\.\d+)?)\s*h/)?.[1] ?? 0);
-    const minutes = Number(text.match(/(\d+(?:\.\d+)?)\s*m/)?.[1] ?? 0);
-    const total = Math.round(hours * 60 + minutes);
-    return total > 0 ? total : null;
-  }
-  const decimalHours = Number(text.replace(/[^0-9.-]/g, ''));
-  if (!Number.isFinite(decimalHours) || decimalHours < 0) return null;
-  if (decimalHours === 0) return 0;
-  return Math.max(1, Math.round(decimalHours * 60));
-}
-
-function detectRevenueSource(headers: string[]): ParkingRevenueSource | null {
-  if (headers.includes('hotspot') && headers.includes('city')) return 'hotspot';
-  if (headers.includes('meter') && headers.includes('tapsign')) return 'qr';
-  return null;
-}
-
-function findHeaderRow(rows: unknown[][]): { index: number; source: ParkingRevenueSource; headers: unknown[] } | null {
-  for (let index = 0; index < rows.length; index += 1) {
-    const headers = rows[index].map(normalizeHeader);
-    const source = detectRevenueSource(headers);
-    if (source && headers.includes('starttime') && headers.includes('plate') && headers.includes('amount') && headers.includes('length')) {
-      return { index, source, headers: rows[index] };
-    }
-  }
-  return null;
-}
-
-function headerIndex(headers: unknown[], header: string): number {
-  return headers.findIndex(value => normalizeHeader(value) === header);
 }
 
 function locationKeyForRef(source: ParkingRevenueSource, sourceId: string): string {
@@ -96,125 +84,6 @@ export function buildParkingRevenueLocationLookup(settings: ParkingSettings): Ma
     }
   }
   return lookup;
-}
-
-export function parseParkingRevenueWorkbook(
-  buffer: ArrayBuffer | Uint8Array,
-  options: {
-    fileName: string;
-    importedBy: string;
-    settings?: ParkingSettings;
-  },
-): ParkingRevenueParseResult {
-  const workbook = XLSX.read(buffer, { cellDates: false, raw: false });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) throw new Error('The Parking revenue workbook does not contain any sheets.');
-
-  const sheet = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false, blankrows: false });
-  const header = findHeaderRow(rows);
-  if (!header) {
-    throw new Error('Could not find a Parking revenue header row. Expected HotSpot #/City # or Meter #/Tap Sign with Start Time, Plate, Amount, Total, and Length.');
-  }
-
-  const source = header.source;
-  const indices = {
-    sourceId: headerIndex(header.headers, source === 'hotspot' ? 'hotspot' : 'meter'),
-    sourceLabel: headerIndex(header.headers, source === 'hotspot' ? 'city' : 'tapsign'),
-    start: headerIndex(header.headers, 'starttime'),
-    plate: headerIndex(header.headers, 'plate'),
-    amount: headerIndex(header.headers, 'amount'),
-    tax: headerIndex(header.headers, 'tax'),
-    total: headerIndex(header.headers, 'total'),
-    length: headerIndex(header.headers, 'length'),
-    paymentType: headerIndex(header.headers, 'cardtype'),
-  };
-
-  const locationLookup = options.settings ? buildParkingRevenueLocationLookup(options.settings) : new Map<string, ParkingRevenueLocationMapping>();
-  const parsedRows: ParkingRevenueRawRow[] = [];
-  const months = new Set<string>();
-  let skippedRows = 0;
-
-  rows.slice(header.index + 1).forEach((row, rowOffset) => {
-    const start = parseDate(row[indices.start]);
-    const durationMinutes = parseParkingRevenueDurationMinutes(row[indices.length]);
-    const sourceId = normalizeText(row[indices.sourceId]);
-    if (!start || durationMinutes == null || !sourceId) {
-      skippedRows += 1;
-      return;
-    }
-
-    const sourceLabel = normalizeText(row[indices.sourceLabel]) || sourceId;
-    const location = locationLookup.get(locationKeyForRef(source, sourceId));
-    const plate = normalizeText(row[indices.plate]).toUpperCase();
-    const amount = parseMoney(row[indices.amount]);
-    const tax = parseMoney(row[indices.tax]);
-    const total = parseMoney(row[indices.total]);
-    months.add(start.month);
-    parsedRows.push({
-      id: `${source}-${start.date}-${rowOffset + 1}-${sourceId}-${plate || 'missing'}`,
-      source,
-      sourceId,
-      sourceLabel,
-      physicalLocationId: location?.id || null,
-      physicalLocationName: location?.displayName || sourceLabel || sourceId,
-      plate,
-      hasMissingPlate: !plate,
-      startRaw: start.raw,
-      startDate: start.date,
-      startMonth: start.month,
-      startMinutes: start.minutes,
-      endMinutes: start.minutes + durationMinutes,
-      weekday: start.weekday,
-      isWeekend: start.weekday === 0 || start.weekday === 6,
-      durationMinutes,
-      amount,
-      tax,
-      total,
-      paymentType: normalizeText(row[indices.paymentType]),
-    });
-  });
-
-  if (parsedRows.length === 0) {
-    throw new Error('The Parking revenue workbook did not contain any importable rows.');
-  }
-  if (months.size > 1) {
-    throw new Error(`Parking revenue imports must contain one month at a time. This file contains ${[...months].sort().join(', ')}.`);
-  }
-
-  const dataset: ParkingRevenueDataset = {
-    month: [...months][0],
-    source,
-    importedAt: new Date().toISOString(),
-    importedBy: options.importedBy,
-    sourceFileName: options.fileName,
-    rowCount: parsedRows.length,
-    skippedRows,
-    totalRevenue: roundMoney(parsedRows.reduce((sum, row) => sum + row.amount, 0)),
-    totalTax: roundMoney(parsedRows.reduce((sum, row) => sum + row.tax, 0)),
-    totalPaid: roundMoney(parsedRows.reduce((sum, row) => sum + row.total, 0)),
-    rows: parsedRows,
-  };
-
-  const warnings: string[] = [];
-  if (skippedRows > 0) warnings.push(`${skippedRows.toLocaleString()} rows were skipped because required revenue fields were missing or invalid.`);
-  const missingPlateCount = parsedRows.filter(row => row.hasMissingPlate).length;
-  if (missingPlateCount > 0) warnings.push(`${missingPlateCount.toLocaleString()} revenue rows have missing plates.`);
-  const zeroAmountCount = parsedRows.filter(row => row.amount === 0).length;
-  if (zeroAmountCount > 0) warnings.push(`${zeroAmountCount.toLocaleString()} revenue rows have $0 Amount and are included in activity counts.`);
-
-  return { dataset, warnings };
-}
-
-export async function parseParkingRevenueFile(file: File, importedBy: string, settings?: ParkingSettings): Promise<ParkingRevenueParseResult> {
-  if (!file.name.match(/\.xlsx?$/i)) {
-    throw new Error('Upload a Parking revenue Excel file (.xlsx or .xls).');
-  }
-  if (file.size > MAX_PARKING_REVENUE_FILE_BYTES) {
-    throw new Error('Parking revenue files must be 25 MB or smaller. Split larger exports by month and source.');
-  }
-  const buffer = await file.arrayBuffer();
-  return parseParkingRevenueWorkbook(buffer, { fileName: file.name, importedBy, settings });
 }
 
 function buildRevenueMetadata(datasets: ParkingRevenueDataset[], importedBy: string): ParkingRevenueSummary['metadata'] {
@@ -233,7 +102,8 @@ export function buildParkingRevenueSummary(
   importedBy: string,
   storagePath?: string,
 ): ParkingRevenueSummary {
-  const sortedDatasets = [...datasets].sort((a, b) => a.month.localeCompare(b.month) || a.source.localeCompare(b.source));
+  const sortedDatasets = [...datasets]
+    .sort((a, b) => a.month.localeCompare(b.month) || a.source.localeCompare(b.source));
   return {
     schemaVersion: PARKING_REVENUE_SCHEMA_VERSION,
     datasets: sortedDatasets,
@@ -259,7 +129,8 @@ export function buildParkingRevenueReplacementSummary(
     }
     replacementKeys.add(key);
   }
-  const keptDatasets = (existingSummary?.datasets || []).filter(dataset => !replacementKeys.has(`${dataset.month}|${dataset.source}`));
+  const normalizedExisting = existingSummary ? normalizeParkingRevenueSummary(existingSummary) : null;
+  const keptDatasets = (normalizedExisting?.datasets || []).filter(dataset => !replacementKeys.has(`${dataset.month}|${dataset.source}`));
   return buildParkingRevenueSummary([...keptDatasets, ...datasets], importedBy, storagePath);
 }
 
@@ -405,15 +276,15 @@ function addRowToLocationAccumulator(
   row: ParkingRevenueRawRow,
 ): void {
   accumulator.rowCount += 1;
-  accumulator.totalRevenue += row.amount;
+  accumulator.totalRevenue += getParkingTaxInclusiveRevenue(row);
   accumulator.totalPaid += row.total;
   if (row.durationMinutes > 0) {
     accumulator.durationTotal += row.durationMinutes;
     accumulator.durationCount += 1;
   }
   if (row.plate) accumulator.uniquePlates.add(row.plate);
-  if (row.source === 'hotspot') accumulator.hotspotRevenue += row.amount;
-  if (row.source === 'qr') accumulator.qrRevenue += row.amount;
+  if (row.source === 'hotspot') accumulator.hotspotRevenue += getParkingTaxInclusiveRevenue(row);
+  if (row.source === 'qr') accumulator.qrRevenue += getParkingTaxInclusiveRevenue(row);
   addCount(accumulator.hourCounts, Math.floor(row.startMinutes / 60));
   addCount(accumulator.dayCounts, row.startDate);
   accumulator.sourceIds.set(locationKeyForRef(row.source, row.sourceId), {
@@ -468,6 +339,13 @@ function buildLocationSummaryIndex(
   const categoryMemberships = new Map<string, { keys: Set<string>; names: Set<string> }>();
   const summaries = [...groups.values()].map(accumulator => {
     const { key, first, mappedLocation } = accumulator;
+    const locationKind = mappedLocation?.locationKind || 'physical';
+    const hasReviewedCoordinates = locationKind === 'physical'
+      && typeof mappedLocation?.latitude === 'number'
+      && typeof mappedLocation?.longitude === 'number';
+    const mapStatus: ParkingRevenueMapStatus = locationKind === 'non_spatial'
+      ? 'not_applicable'
+      : hasReviewedCoordinates ? 'mapped' : 'unmapped';
     const category = getParkingCategoryDisplay(settings, mappedLocation?.categoryId);
     const categoryKey = category.id || UNCATEGORIZED_PARKING_CATEGORY_ID;
     const membership = categoryMemberships.get(categoryKey) || {
@@ -482,13 +360,15 @@ function buildLocationSummaryIndex(
     return {
       key,
       displayName,
+      locationKind,
+      mapStatus,
       sourceIds: mappedLocation?.sourceRefs?.length ? mappedLocation.sourceRefs : [...accumulator.sourceIds.values()],
       latitude: mappedLocation?.latitude ?? null,
       longitude: mappedLocation?.longitude ?? null,
       categoryId: category.id,
       categoryLabel: category.label,
       categoryColorHex: category.colorHex,
-      isMapped: Boolean(mappedLocation && typeof mappedLocation.latitude === 'number' && typeof mappedLocation.longitude === 'number'),
+      isMapped: hasReviewedCoordinates,
       rowCount: accumulator.rowCount,
       totalRevenue: roundMoney(accumulator.totalRevenue),
       totalPaid: roundMoney(accumulator.totalPaid),
@@ -553,7 +433,7 @@ function buildTrend(rows: ParkingRevenueRawRow[], keyForRow: (row: ParkingRevenu
       durationCount: 0,
     };
     group.rowCount += 1;
-    group.totalRevenue += row.amount;
+    group.totalRevenue += getParkingTaxInclusiveRevenue(row);
     if (row.durationMinutes > 0) {
       group.durationTotal += row.durationMinutes;
       group.durationCount += 1;
@@ -575,9 +455,12 @@ export function buildParkingRevenueAnalytics(
   filters: ParkingRevenueFilters = {},
 ): ParkingRevenueAnalytics {
   const locationLookup = buildParkingRevenueLocationLookup(settings);
+  const requestedMonths = filters.months?.length ? new Set(filters.months) : null;
   const periodRows: ParkingRevenueRawRow[] = [];
   const baseRows: ParkingRevenueRawRow[] = [];
   for (const dataset of summary?.datasets || []) {
+    if (requestedMonths && !requestedMonths.has(dataset.month)) continue;
+    if (filters.source && filters.source !== 'all' && dataset.source !== filters.source) continue;
     if (filters.importedBy && filters.importedBy !== 'all' && (dataset.importedBy || 'unknown') !== filters.importedBy) continue;
     for (const row of dataset.rows) {
       if (!rowMatchesDateSourceDayFilters(row, filters)) continue;
@@ -610,8 +493,9 @@ export function buildParkingRevenueAnalytics(
     rows,
     locationSummaries,
     mappedLocationSummaries: locationSummaries.filter(location => location.isMapped),
-    unmappedLocationSummaries: locationSummaries.filter(location => !location.isMapped),
-    totalRevenue: roundMoney(rows.reduce((sum, row) => sum + row.amount, 0)),
+    unmappedLocationSummaries: locationSummaries.filter(location => location.mapStatus === 'unmapped'),
+    nonSpatialLocationSummaries: locationSummaries.filter(location => location.mapStatus === 'not_applicable'),
+    totalRevenue: roundMoney(rows.reduce((sum, row) => sum + getParkingTaxInclusiveRevenue(row), 0)),
     totalPaid: roundMoney(rows.reduce((sum, row) => sum + row.total, 0)),
     rowCount: rows.length,
     paidMinutes: paidMinuteRows.reduce((sum, row) => sum + paidMinutesForRow(row, filters), 0),

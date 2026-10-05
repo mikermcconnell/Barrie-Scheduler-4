@@ -9,6 +9,7 @@ describe('performanceDataScope', () => {
   it('maps filtered time range to yesterday vs combined scope', () => {
     expect(resolveFilteredScope('yesterday')).toBe('yesterday');
     expect(resolveFilteredScope('all')).toBe('combined');
+    expect(resolveFilteredScope('year-to-date')).toBe('combined');
     expect(resolveFilteredScope('past-week')).toBe('combined');
     expect(resolveFilteredScope('past-month')).toBe('combined');
     expect(resolveFilteredScope('past-three-months')).toBe('combined');

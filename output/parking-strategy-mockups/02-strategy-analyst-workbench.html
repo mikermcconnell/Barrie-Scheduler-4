@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Strategy Analyst Workbench — Parking Strategy</title>
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    .workbench { display:grid; grid-template-columns:240px minmax(510px,1fr) 300px; gap:14px; align-items:start; }
+    .panel { min-width:0; padding:17px; }
+    .panel-head { margin-bottom:15px; }
+    .filter-stack { display:grid;gap:14px; }
+    .quick-range { display:grid;grid-template-columns:1fr 1fr;gap:6px; }
+    .quick-range .seg { border:1px solid #dce3ea;background:#fff; }
+    .quick-range .seg.active { color:#fff;border-color:var(--blue);background:var(--blue); }
+    .filter-result { padding:13px;border-radius:12px;background:var(--blue-soft);border:1px solid #b9dff4; }
+    .filter-result strong { display:block;font-size:20px; }
+    .centre-stack { display:grid;gap:14px; }
+    .matrix { display:grid;grid-template-columns:76px repeat(5,1fr);gap:5px;align-items:stretch; }
+    .matrix > span { min-height:34px;display:flex;align-items:center;justify-content:center;padding:5px;border-radius:8px;font-size:10px;font-weight:750; }
+    .matrix .label { justify-content:flex-start;color:#6a798d;background:transparent; }
+    .matrix .none { color:#8995a5;background:repeating-linear-gradient(135deg,#f5f6f8,#f5f6f8 5px,#e9edf0 5px,#e9edf0 10px); }
+    .matrix .partial { color:#086dA8;background:var(--blue-soft);border:1px solid #bcdff2; }
+    .matrix .head { color:#5c6b7e;background:#f3f5f7; }
+    .tabline { display:flex;align-items:center;gap:20px;border-bottom:2px solid #e7ebf0; }
+    .tab { padding:9px 2px;border:0;border-bottom:3px solid transparent;color:#7d8999;background:none;font-weight:800;cursor:pointer; }
+    .tab.active { color:var(--blue);border-color:var(--blue); }
+    .tab-panel[hidden] { display:none; }
+    .hours { height:142px;display:flex;align-items:flex-end;gap:4px;padding-top:10px; }
+    .hour { flex:1;min-width:3px;border-radius:4px 4px 0 0;background:#81cff8;position:relative; }
+    .hour.peak { background:var(--blue); }
+    .hour:hover::after { content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 5px);transform:translateX(-50%);padding:5px 7px;border-radius:7px;color:#fff;background:var(--ink);font-size:9px;white-space:nowrap; }
+    .payment-row { display:grid;grid-template-columns:minmax(100px,1fr) 55px;gap:8px;align-items:center;margin:11px 0; }
+    .payment-row .bar-track { grid-column:1/-1; }
+    .detail-name { padding:14px;border-radius:13px;background:var(--violet-soft);border:1px solid #d9cef7; }
+    .detail-name h2 { margin-bottom:3px;font-size:20px; }
+    .detail-stats { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0; }
+    .mini-stat { padding:10px;border-radius:11px;background:#f6f8fa; }
+    .mini-stat strong { display:block;font-size:17px; }
+    .mini-stat span { color:var(--muted);font-size:10px; }
+    details { border-top:1px solid #e6eaf0;padding:12px 0; }
+    details summary { cursor:pointer;font-weight:800;font-size:12px; }
+    details p { margin:8px 0 0;color:var(--muted);font-size:11px; }
+    .quality-list { display:grid;gap:8px; }
+    .quality-item { display:flex;align-items:flex-start;gap:8px;padding:10px;border-radius:11px;background:#f8f9fa;font-size:11px; }
+    .quality-item svg { flex:0 0 auto; }
+    @media(max-width:1150px){.workbench{grid-template-columns:220px minmax(450px,1fr)}.right-panel{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:18px}}
+    @media(max-width:780px){.workbench{grid-template-columns:1fr}.panel{display:none}.panel.active-mobile{display:block}.right-panel{grid-column:auto}.mobile-tabs{display:flex;position:sticky;top:6px;z-index:10;margin-bottom:12px;padding:4px;border-radius:12px;background:#e8edf2;box-shadow:var(--shadow)}.mobile-tabs button{flex:1}.page-head{margin-bottom:14px}.matrix{grid-template-columns:63px repeat(5,65px);overflow-x:auto}.right-panel.active-mobile{display:block}}
+  </style>
+</head>
+<body>
+  <header class="appbar">
+    <a class="brand" href="index.html"><span class="brand-mark" id="brandIcon"></span><span><span class="brand-name">Parking<span>Strategy</span></span><span class="brand-kicker">Analyst workbench</span></span></a>
+    <div class="appbar-actions"><span class="status-pill violet"><span class="dot"></span> Analyst view</span></div>
+  </header>
+  <main class="page">
+    <a class="crumb" href="index.html">← Back to concepts</a>
+    <div class="page-head">
+      <div><p class="eyebrow">Evidence exploration</p><h1>Strategy Analyst Workbench</h1><p class="subtitle">Filter the archive, compare locations, and keep the evidence limits beside the analysis.</p></div>
+      <div class="action-row"><button class="button" id="resetBtn">Reset filters</button><button class="button primary" id="exportBtn"></button></div>
+    </div>
+    <div class="mobile-tabs" role="tablist" aria-label="Workbench panels"><button class="seg active" data-panel="filters">Filters</button><button class="seg" data-panel="analysis">Analysis</button><button class="seg" data-panel="review">Review</button></div>
+    <div class="workbench">
+      <aside class="shell panel filter-panel active-mobile" data-panel-content="filters">
+        <div class="panel-head"><div class="section-title"><span id="filterIcon"></span><div><h2>Filters</h2><p class="helper">Marginal archive views</p></div></div></div>
+        <div class="filter-stack">
+          <div class="field"><label>Observed period</label><div class="quick-range"><button class="seg active" data-range="all">All observed</button><button class="seg" data-range="2024">2024</button><button class="seg" data-range="2025">2025</button><button class="seg" data-range="missing">Missing years</button></div></div>
+          <div class="field"><label for="locationSearch">Location search</label><input id="locationSearch" type="search" placeholder="Find a location…"></div>
+          <div class="field"><label for="paymentSelect">Payment type summary</label><select id="paymentSelect"><option value="all">All types</option></select></div>
+          <div class="field"><label>Quality view</label><label class="check"><input type="checkbox" id="zeroOnly"> Locations with zero-dollar records</label><label class="check"><input type="checkbox" id="launchOnly"> Launch / marina locations</label></div>
+          <div class="filter-result"><span class="helper">Current period</span><strong id="scopeRecords">44,236</strong><span class="helper" id="scopeText">archive records · 21 observed months</span></div>
+          <div class="insight amber"><h3>Coverage guardrail</h3><p>2021–2023 have no supplied records. Selecting “Missing years” shows an unavailable state, not zero activity.</p></div>
+        </div>
+      </aside>
+
+      <section class="centre-stack panel active-mobile" data-panel-content="analysis">
+        <article class="shell card">
+          <div class="section-head"><div><p class="eyebrow">Coverage matrix</p><h2>What can be compared</h2></div><span class="status-pill amber"><span class="dot"></span> No complete year</span></div>
+          <div class="matrix" aria-label="Five-year evidence coverage">
+            <span></span><span class="head">2021</span><span class="head">2022</span><span class="head">2023</span><span class="head">2024</span><span class="head">2025</span>
+            <span class="label">Payments</span><span class="none">None</span><span class="none">None</span><span class="none">None</span><span class="partial">9+ months</span><span class="partial">10+ months</span>
+            <span class="label">Occupancy</span><span class="none">None</span><span class="none">None</span><span class="none">None</span><span class="none">None</span><span class="none">None</span>
+          </div>
+        </article>
+
+        <article class="shell card">
+          <div class="tabline" role="tablist"><button class="tab active" data-tab="locations">Locations</button><button class="tab" data-tab="time">Time of day</button><button class="tab" data-tab="payments">Payment mix</button></div>
+          <div class="tab-panel" id="tab-locations">
+            <div class="section-head" style="margin-top:15px"><div><h2>Named location totals</h2><p class="helper">Full archive totals; period and payment cross-tabs are not supplied in this mockup.</p></div><span class="badge" id="resultCount">18 locations</span></div>
+            <div class="table-wrap"><table><thead><tr><th>Location</th><th class="num">Records</th><th class="num">Reported amount</th><th class="num">Zero $</th></tr></thead><tbody id="locationRows"></tbody></table></div>
+          </div>
+          <div class="tab-panel" id="tab-time" hidden><div class="section-head" style="margin-top:15px"><div><h2>Hourly payment activity</h2><p class="helper">Transaction timestamps across all dated records</p></div><span class="badge">Peak: 5 p.m.</span></div><div class="hours" id="hourBars"></div><div class="legend" style="justify-content:space-between"><span>12 a.m.</span><span>6 a.m.</span><span>12 p.m.</span><span>6 p.m.</span><span>11 p.m.</span></div></div>
+          <div class="tab-panel" id="tab-payments" hidden><div class="section-head" style="margin-top:15px"><div><h2>Payment type summary</h2><p class="helper">Aliases normalized; records with no type are excluded</p></div></div><div id="paymentRows"></div></div>
+        </article>
+      </section>
+
+      <aside class="shell panel right-panel" data-panel-content="review">
+        <div><p class="eyebrow">Selected location</p><div class="detail-name"><span class="status-pill violet"><span class="dot"></span> Full archive</span><h2 id="detailName" style="margin-top:9px">SPIRIT CATCHER</h2><p class="helper">Payment activity summary</p></div><div class="detail-stats"><div class="mini-stat"><strong id="detailRecords">6,193</strong><span>records</span></div><div class="mini-stat"><strong id="detailAmount">$90,745</strong><span>reported amount</span></div><div class="mini-stat"><strong id="detailAvg">$14.65</strong><span>average recorded</span></div><div class="mini-stat"><strong id="detailZero">0</strong><span>zero-dollar</span></div></div></div>
+        <div><div class="divider"></div><p class="eyebrow" style="color:#9a6506">Review items</p><div class="quality-list"><div class="quality-item" id="quality1"></div><div class="quality-item" id="quality2"></div><div class="quality-item" id="quality3"></div></div>
+          <div class="divider"></div><details open><summary>Methodology</summary><p>Exact duplicate rows and workbook summary rows were excluded. Amounts are source reported and are not labelled tax-inclusive revenue.</p></details><details><summary>Privacy boundary</summary><p>This concept uses only aggregates. Plates, cards, receipts, usernames, permits, and transaction identifiers are not present.</p></details><details><summary>Strategy interpretation</summary><p>Payment counts can identify where and when study may be valuable. Occupancy, duration, capacity, enforcement, rates, and cost data are required for policy conclusions.</p></details>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <script src="shared-data.js"></script>
+  <script>
+    const D=ParkingData; let range='all', selected=D.locations[0];
+    brandIcon.innerHTML=D.icon('grid'); filterIcon.innerHTML=D.icon('filter'); exportBtn.innerHTML=D.icon('download',18)+'Export current view';
+    quality1.innerHTML=D.icon('alert',16)+'<span><strong>2,193 zero-dollar records</strong><br>Classify free, failed, refunded, or other cases before policy use.</span>';
+    quality2.innerHTML=D.icon('database',16)+'<span><strong>Two undated/unlocated records</strong><br>Retained in the archive count but excluded from time and location charts.</span>';
+    quality3.innerHTML=D.icon('info',16)+'<span><strong>Reported amount only</strong><br>Do not combine with other revenue sources until definitions reconcile.</span>';
+    paymentSelect.innerHTML+=[...D.paymentTypes].map(p=>'<option value="'+p.name+'">'+p.name+'</option>').join('');
+    document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',()=>{range=b.dataset.range;document.querySelectorAll('[data-range]').forEach(x=>x.classList.toggle('active',x===b));updateScope();}));
+    function updateScope(){const rows=range==='all'?D.monthly:D.monthly.filter(d=>d.month.startsWith(range));const count=rows.reduce((s,d)=>s+d.transactions,0);scopeRecords.textContent=rows.length?D.integer(range==='all'?D.totals.records:count):'Unavailable';scopeText.textContent=rows.length?(range==='all'?'archive records · 21 observed months':rows.length+' observed months · partial year'):'no supplied records · missing is not zero';}
+    function renderLocations(){const q=locationSearch.value.trim().toLowerCase();let rows=D.locations.filter(l=>l.name.toLowerCase().includes(q));if(zeroOnly.checked)rows=rows.filter(l=>l.zero>0);if(launchOnly.checked)rows=rows.filter(l=>/MARINA|LAUNCH/.test(l.name));resultCount.textContent=rows.length+' location'+(rows.length===1?'':'s');locationRows.innerHTML=rows.length?rows.map(l=>'<tr data-id="'+l.id+'" class="'+(selected.id===l.id?'selected':'')+'"><td><strong>'+l.name+'</strong></td><td class="num">'+D.integer(l.transactions)+'</td><td class="num">'+D.money(l.amount,2)+'</td><td class="num">'+D.integer(l.zero)+'</td></tr>').join(''):'<tr><td colspan="4" class="no-data-note">No locations match these filters.</td></tr>';locationRows.querySelectorAll('tr[data-id]').forEach(tr=>tr.addEventListener('click',()=>selectLocation(+tr.dataset.id)));}
+    function selectLocation(id){selected=D.locations.find(l=>l.id===id);detailName.textContent=selected.name;detailRecords.textContent=D.integer(selected.transactions);detailAmount.textContent=D.money(selected.amount);detailAvg.textContent=D.money(selected.amount/selected.transactions,2);detailZero.textContent=D.integer(selected.zero);renderLocations();}
+    [locationSearch,zeroOnly,launchOnly].forEach(el=>el.addEventListener('input',renderLocations));
+    paymentSelect.addEventListener('change',()=>{const p=D.paymentTypes.find(x=>x.name===paymentSelect.value);if(p)D.toast(p.name+': '+D.integer(p.transactions)+' records · '+D.money(p.amount,2));});
+    document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.tab-panel').forEach(p=>p.hidden=p.id!=='tab-'+b.dataset.tab);}));
+    const maxHour=Math.max(...D.hours);hourBars.innerHTML=D.hours.map((v,h)=>'<div class="hour '+(v>5000?'peak':'')+'" style="height:'+(Math.max(3,v/maxHour*100))+'%" data-tip="'+h+':00 · '+D.integer(v)+'"></div>').join('');
+    const maxPay=D.paymentTypes[0].transactions;paymentRows.innerHTML=D.paymentTypes.map(p=>'<div class="payment-row"><strong>'+p.name+'</strong><span class="num">'+D.integer(p.transactions)+'</span><div class="bar-track"><div class="bar-fill" style="width:'+(p.transactions/maxPay*100)+'%"></div></div></div>').join('');
+    resetBtn.addEventListener('click',()=>{range='all';locationSearch.value='';zeroOnly.checked=launchOnly.checked=false;paymentSelect.value='all';document.querySelectorAll('[data-range]').forEach(x=>x.classList.toggle('active',x.dataset.range==='all'));updateScope();renderLocations();D.toast('Filters reset.');});
+    exportBtn.addEventListener('click',()=>D.downloadCsv('parking-strategy-location-summary.csv',[['Location','Payment records','Reported amount CAD','Zero-dollar records'],...D.locations.map(l=>[l.name,l.transactions,l.amount.toFixed(2),l.zero])]));
+    document.querySelectorAll('.mobile-tabs [data-panel]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.mobile-tabs .seg').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('[data-panel-content]').forEach(p=>p.classList.toggle('active-mobile',p.dataset.panelContent===b.dataset.panel));}));
+    updateScope();renderLocations();
+  </script>
+</body>
+</html>

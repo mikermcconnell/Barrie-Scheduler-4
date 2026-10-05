@@ -65,6 +65,15 @@ service cloud.firestore {
 
     // A scheduler admin may activate one short-lived, team-scoped support
     // session for themselves. The document ID is always the admin's auth UID.
+    match /gtfsArchive/{feedId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+      match /snapshots/{snapshotId} {
+        allow read: if request.auth != null;
+        allow write: if false;
+      }
+    }
+
     match /developerSupportSessions/{adminUid} {
       allow get: if isSchedulerAdmin() && request.auth.uid == adminUid;
       allow create, update, delete: if false;
@@ -116,6 +125,7 @@ service cloud.firestore {
       // Master Schedules
       match /masterSchedules/{scheduleId} {
         allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                       canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
                        canReadSharedMasterSchedules(teamId) ||
                        canSupportReadTeamData(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
@@ -123,6 +133,7 @@ service cloud.firestore {
         // Version History
         match /versions/{versionId} {
           allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                         canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
                          canReadSharedMasterSchedules(teamId) ||
                          canSupportReadTeamData(teamId);
           allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
@@ -140,6 +151,24 @@ service cloud.firestore {
         allow update: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
                          isValidScheduleReviewStatusUpdate();
         allow delete: if canSupportWriteTeamData(teamId);
+      }
+
+      // Team-scoped Codex-assisted block-audit, run-cutting, and rostering
+      // scenarios. Large immutable revisions live in Storage; this root is the
+      // bounded active pointer and approval workflow record.
+      match /operationsPlanningScenarios/{scenarioId} {
+        allow read: if canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                       canSupportReadTeamData(teamId);
+        allow create: if (canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                          canSupportWriteTeamData(teamId)) &&
+                         isValidOperationsPlanningCreate(teamId, scenarioId);
+        allow update: if ((canAccessWorkspace(teamId, 'workspaceFixedRoute') ||
+                           canSupportWriteTeamData(teamId)) &&
+                          (isValidOperationsPlanningDraftRevision(teamId, scenarioId) ||
+                           isValidOperationsPlanningSubmit())) ||
+                         ((isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                          isValidOperationsPlanningApproval());
+        allow delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
       }
 
       // Team-authored detour notices and their map/publication records.
@@ -205,7 +234,9 @@ service cloud.firestore {
 
       // Transit App Data
       match /transitAppData/{docId} {
-        allow read: if canAccessWorkspace(teamId, 'analyticsTransitApp') || canSupportReadTeamData(teamId);
+        allow read: if canAccessWorkspace(teamId, 'analyticsTransitApp') ||
+                       canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                       canSupportReadTeamData(teamId);
         allow write: if canAccessWorkspace(teamId, 'analyticsTransitApp') || canSupportWriteTeamData(teamId);
       }
 
@@ -219,6 +250,34 @@ service cloud.firestore {
       match /todPickupData/{docId} {
         allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
+      }
+
+      // Specialized Transit is team-readable and manager-writable.
+      match /specializedTransitData/{docId} {
+        allow read: if docId == 'metadata' && (isTeamMember(teamId) || canSupportReadTeamData(teamId));
+        allow create, update, delete: if docId == 'metadata' && (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId));
+      }
+
+      // Shared, effective-dated Transit On Demand zone geometry. Team members
+      // may view published assignments; only owners/admins may edit the draft.
+      match /todZoneConfig/{configId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) || canSupportReadTeamData(teamId);
+        allow create: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                        configId == 'default' &&
+                        isValidTodZoneConfig(request.resource.data) &&
+                        request.resource.data.revision == 1;
+        allow update: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                        configId == 'default' &&
+                        isValidTodZoneConfig(request.resource.data) &&
+                        request.resource.data.revision == resource.data.revision + 1;
+        allow delete: if false;
+
+        match /versions/{versionId} {
+          allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+          allow create: if (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId)) &&
+                          isValidTodZoneVersion(teamId, versionId);
+          allow update, delete: if false;
+        }
       }
 
       // Shared department parking code usage
@@ -252,13 +311,53 @@ service cloud.firestore {
 
       // Fleet Plan data
       match /fleetPlan/{docId} {
-        allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan') || canSupportReadTeamData(teamId);
+        allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan') ||
+                       canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                       canSupportReadTeamData(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
 
         // Fleet Plan version history
         match /versions/{versionId} {
           allow read: if canAccessWorkspace(teamId, 'analyticsFleetPlan') || canSupportReadTeamData(teamId);
           allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
+        }
+      }
+
+      // Team-shared Strategic Plan project-control work plan. A partner team may
+      // explicitly collaborate in one source team's plan; both teams still need
+      // Strategic Plan workspace access and every write remains user-attributed.
+      match /strategicPlanWorkplans/{workplanId} {
+        allow read: if canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                       canAccessSharedStrategicWorkplan(teamId) ||
+                       canSupportReadTeamData(teamId);
+        allow create: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                          canAccessSharedStrategicWorkplan(teamId) ||
+                          canSupportWriteTeamData(teamId)) &&
+                         workplanId == 'default' &&
+                         request.resource.data.revision == 1 &&
+                         isValidStrategicWorkplan(request.resource.data, teamId) &&
+                         existsAfter(/databases/$(database)/documents/teams/$(teamId)/strategicPlanWorkplans/default/versions/$(request.resource.data.revision));
+        allow update: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                          canAccessSharedStrategicWorkplan(teamId) ||
+                          canSupportWriteTeamData(teamId)) &&
+                         workplanId == 'default' &&
+                         request.resource.data.revision == resource.data.revision + 1 &&
+                         request.resource.data.createdAt == resource.data.createdAt &&
+                         request.resource.data.createdBy == resource.data.createdBy &&
+                         isValidStrategicWorkplan(request.resource.data, teamId) &&
+                         existsAfter(/databases/$(database)/documents/teams/$(teamId)/strategicPlanWorkplans/default/versions/$(request.resource.data.revision));
+        allow delete: if false;
+
+        match /versions/{versionId} {
+          allow read: if canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                         canAccessSharedStrategicWorkplan(teamId) ||
+                         canSupportReadTeamData(teamId);
+          allow create: if (canAccessWorkspace(teamId, 'analyticsStrategicPlan') ||
+                            canAccessSharedStrategicWorkplan(teamId) ||
+                            canSupportWriteTeamData(teamId)) &&
+                           workplanId == 'default' &&
+                           isValidStrategicWorkplanVersion(request.resource.data, teamId);
+          allow update, delete: if false;
         }
       }
 
@@ -289,18 +388,6 @@ service cloud.firestore {
             allow read: if canAccessWorkspace(teamId, 'analyticsRoutePlanner2') || canSupportReadTeamData(teamId);
             allow write: if canAccessWorkspace(teamId, 'analyticsRoutePlanner2') || canSupportWriteTeamData(teamId);
           }
-        }
-      }
-
-      // Council and committee meeting intelligence root document.
-      match /councilIntelligence/{docId} {
-        allow read: if canAccessWorkspace(teamId, 'analyticsCouncilIntelligence') || canSupportReadTeamData(teamId);
-        allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
-
-        // Meetings, councillors, registers, and their nested evidence.
-        match /{nestedDoc=**} {
-          allow read: if canAccessWorkspace(teamId, 'analyticsCouncilIntelligence') || canSupportReadTeamData(teamId);
-          allow write: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
         }
       }
 
@@ -396,8 +483,20 @@ service cloud.firestore {
       return hasUserTeam() &&
              userTeamId() != sourceTeamId &&
              isTeamMember(userTeamId()) &&
-             canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') &&
+             (canAccessWorkspace(userTeamId(), 'workspaceFixedRoute') ||
+              canAccessWorkspace(userTeamId(), 'analyticsStrategicPlan')) &&
              configuredMasterScheduleSource(userTeamId()) == sourceTeamId;
+    }
+
+    function configuredStrategicWorkplanSource(teamId) {
+      return teamDataSources(teamId).get('strategicPlanWorkplan', '');
+    }
+
+    function canAccessSharedStrategicWorkplan(sourceTeamId) {
+      return hasUserTeam() &&
+             userTeamId() != sourceTeamId &&
+             canAccessWorkspace(userTeamId(), 'analyticsStrategicPlan') &&
+             configuredStrategicWorkplanSource(userTeamId()) == sourceTeamId;
     }
 
     function canReadTeamForInviteJoin(teamId) {
@@ -453,6 +552,112 @@ service cloud.firestore {
              data.version is int && data.version > 0 &&
              data.updatedAt == request.time &&
              data.updatedBy == request.auth.uid;
+    }
+
+    function isValidStrategicWorkplanCore(data, teamId) {
+      return data is map &&
+             data.schemaVersion == 1 &&
+             data.teamId == teamId &&
+             data.revision is int && data.revision > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 160 &&
+             data.scheduleStart is string && data.scheduleStart.matches('20[0-9][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') &&
+             data.scheduleEnd is string && data.scheduleEnd.matches('20[0-9][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') &&
+             data.scheduleEnd >= data.scheduleStart &&
+             data.source is map && data.source.size() <= 9 &&
+             data.tasks is list && data.tasks.size() <= 250 &&
+             data.createdAt is string && data.createdAt.size() <= 40 &&
+             data.createdBy is string && data.createdBy.size() > 0 && data.createdBy.size() <= 128 &&
+             data.updatedAt is string && data.updatedAt.size() <= 40 &&
+             data.updatedBy == request.auth.uid;
+    }
+
+    function isValidStrategicWorkplan(data, teamId) {
+      return isValidStrategicWorkplanCore(data, teamId) &&
+             data.keys().hasAll([
+               'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'updatedAtServer'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'updatedAtServer'
+             ]) &&
+             data.updatedAtServer == request.time;
+    }
+
+    function isValidStrategicWorkplanVersion(data, teamId) {
+      let root = getAfter(/databases/$(database)/documents/teams/$(teamId)/strategicPlanWorkplans/default);
+      return isValidStrategicWorkplanCore(data, teamId) &&
+             data.audit is map &&
+             data.audit.keys().hasAll(['editedByUid', 'editedByName', 'editedAt', 'summary', 'changes']) &&
+             data.audit.keys().hasOnly(['editedByUid', 'editedByName', 'editedAt', 'summary', 'changes']) &&
+             data.audit.editedByUid == request.auth.uid &&
+             data.audit.editedByName is string && data.audit.editedByName.size() > 0 && data.audit.editedByName.size() <= 160 &&
+             data.audit.editedAt == data.updatedAt &&
+             data.audit.summary is string && data.audit.summary.size() > 0 && data.audit.summary.size() <= 240 &&
+             data.audit.changes is list && data.audit.changes.size() <= 250 &&
+             root.data.schemaVersion == data.schemaVersion &&
+             root.data.teamId == data.teamId &&
+             root.data.revision == data.revision &&
+             root.data.name == data.name &&
+             root.data.scheduleStart == data.scheduleStart &&
+             root.data.scheduleEnd == data.scheduleEnd &&
+             root.data.source == data.source &&
+             root.data.tasks == data.tasks &&
+             root.data.createdAt == data.createdAt &&
+             root.data.createdBy == data.createdBy &&
+             root.data.updatedAt == data.updatedAt &&
+             root.data.updatedBy == data.updatedBy &&
+             data.keys().hasAll([
+               'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'audit', 'savedAtServer'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'teamId', 'revision', 'name', 'scheduleStart', 'scheduleEnd',
+               'source', 'tasks', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'audit', 'savedAtServer'
+             ]) &&
+             data.savedAtServer == request.time;
+    }
+
+    function isValidTodZoneConfig(data) {
+      return isValidTodZoneCore(data) &&
+             data.keys().hasAll([
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'connectionStops', 'overrides',
+               'effectiveFrom', 'source', 'reviewNote', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'connectionStops', 'overrides',
+               'effectiveFrom', 'source', 'reviewNote', 'lastPublishedVersionId',
+               'updatedAt', 'updatedBy'
+             ]);
+    }
+
+    function isValidTodZoneCore(data) {
+      return data is map &&
+             data.schemaVersion == 4 && data.revision is int && data.revision > 0 &&
+             data.definitions is list && data.definitions.size() > 0 && data.definitions.size() <= 26 &&
+             data.polygons is list && data.polygons.size() <= 80 &&
+             data.connectionStops is list && data.connectionStops.size() <= 1500 &&
+             data.overrides is list && data.overrides.size() <= 1000 &&
+             data.effectiveFrom is string && data.effectiveFrom.matches('20[0-9][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') &&
+             data.source is string && data.source.size() > 0 && data.source.size() <= 1000 &&
+             data.reviewNote is string && data.reviewNote.size() > 0 && data.reviewNote.size() <= 2000 &&
+             data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function isValidTodZoneVersion(teamId, versionId) {
+      let data = request.resource.data;
+      let root = getAfter(/databases/$(database)/documents/teams/$(teamId)/todZoneConfig/default);
+      return isValidTodZoneCore(data) &&
+             data.polygons.size() > 0 &&
+             data.keys().hasAll(['stopSnapshot', 'publishedAt', 'publishedBy']) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'revision', 'definitions', 'polygons', 'connectionStops', 'overrides',
+               'effectiveFrom', 'source', 'reviewNote', 'lastPublishedVersionId',
+               'updatedAt', 'updatedBy', 'stopSnapshot', 'publishedAt', 'publishedBy'
+             ]) &&
+             data.stopSnapshot is list && data.stopSnapshot.size() <= 1500 &&
+             data.publishedAt == request.time && data.publishedBy == request.auth.uid &&
+             root.data.revision == data.revision && root.data.lastPublishedVersionId == versionId;
     }
 
     function isValidScheduleReviewSummary(summary) {
@@ -530,6 +735,86 @@ service cloud.firestore {
              request.resource.data.updatedAt is timestamp && request.resource.data.updatedAt == request.time;
     }
 
+    function isValidOperationsPlanningCore(data, teamId, scenarioId) {
+      return data is map &&
+             data.keys().hasAll([
+               'schemaVersion', 'teamId', 'name', 'status', 'activeRevision',
+               'storagePath', 'payloadBytes', 'sourceManifestFingerprint',
+               'sourceIsStale', 'sourceCheckedAt', 'integrityBlockerCount',
+               'contractualBlockerCount', 'warningCount', 'createdAt',
+               'createdBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'teamId', 'name', 'status', 'activeRevision',
+               'storagePath', 'payloadBytes', 'sourceManifestFingerprint',
+               'sourceIsStale', 'sourceCheckedAt', 'integrityBlockerCount',
+               'contractualBlockerCount', 'warningCount', 'createdAt',
+               'createdBy', 'updatedAt', 'updatedBy', 'submittedAt',
+               'submittedBy', 'approvedAt', 'approvedBy'
+             ]) &&
+             data.schemaVersion == 1 && data.teamId == teamId &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 160 &&
+             data.status in ['draft', 'submitted', 'approved'] &&
+             data.activeRevision is int && data.activeRevision > 0 && data.activeRevision <= 1000000 &&
+             data.storagePath is string &&
+             data.storagePath.matches('teams/' + teamId + '/operationsPlanningScenarios/' + scenarioId + '/versions/[1-9][0-9]{0,6}[.]json') &&
+             data.payloadBytes is int && data.payloadBytes > 0 && data.payloadBytes <= 25 * 1024 * 1024 &&
+             data.sourceManifestFingerprint is string &&
+             data.sourceManifestFingerprint.size() > 0 && data.sourceManifestFingerprint.size() <= 256 &&
+             data.sourceIsStale is bool && data.sourceCheckedAt is timestamp &&
+             data.integrityBlockerCount is int && data.integrityBlockerCount >= 0 && data.integrityBlockerCount <= 100000 &&
+             data.contractualBlockerCount is int && data.contractualBlockerCount >= 0 && data.contractualBlockerCount <= 100000 &&
+             data.warningCount is int && data.warningCount >= 0 && data.warningCount <= 100000 &&
+             data.createdAt is timestamp &&
+             data.createdBy is string && data.createdBy.size() > 0 && data.createdBy.size() <= 128 &&
+             data.updatedAt is timestamp && data.updatedAt == request.time &&
+             data.updatedBy == request.auth.uid;
+    }
+
+    function isValidOperationsPlanningCreate(teamId, scenarioId) {
+      let data = request.resource.data;
+      return isValidOperationsPlanningCore(data, teamId, scenarioId) &&
+             data.status == 'draft' && data.activeRevision == 1 &&
+             data.createdAt == request.time && data.createdBy == request.auth.uid &&
+             data.sourceCheckedAt == request.time &&
+             !data.keys().hasAny(['submittedAt', 'submittedBy', 'approvedAt', 'approvedBy']);
+    }
+
+    function isValidOperationsPlanningDraftRevision(teamId, scenarioId) {
+      let data = request.resource.data;
+      return isValidOperationsPlanningCore(data, teamId, scenarioId) &&
+             resource.data.status in ['draft', 'submitted'] && data.status == 'draft' &&
+             data.activeRevision == resource.data.activeRevision + 1 &&
+             data.createdAt == resource.data.createdAt && data.createdBy == resource.data.createdBy &&
+             data.sourceCheckedAt == request.time &&
+             !data.keys().hasAny(['submittedAt', 'submittedBy', 'approvedAt', 'approvedBy']);
+    }
+
+    function isValidOperationsPlanningSubmit() {
+      let data = request.resource.data;
+      return resource.data.status == 'draft' && data.status == 'submitted' &&
+             data.activeRevision == resource.data.activeRevision &&
+             data.sourceIsStale == false && data.integrityBlockerCount == 0 &&
+             data.diff(resource.data).affectedKeys().hasOnly([
+               'status', 'submittedAt', 'submittedBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.submittedAt == request.time && data.submittedBy == request.auth.uid &&
+             data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function isValidOperationsPlanningApproval() {
+      let data = request.resource.data;
+      return resource.data.status == 'submitted' && data.status == 'approved' &&
+             data.activeRevision == resource.data.activeRevision &&
+             data.sourceIsStale == false && data.integrityBlockerCount == 0 &&
+             data.contractualBlockerCount == 0 &&
+             data.diff(resource.data).affectedKeys().hasOnly([
+               'status', 'approvedAt', 'approvedBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.approvedAt == request.time && data.approvedBy == request.auth.uid &&
+             data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
     function memberAccessLevel(teamId) {
       let member = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
       let accessLevel = member.data.get('accessLevel', null);
@@ -570,7 +855,8 @@ service cloud.firestore {
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
                 'analyticsFarePrograms',
-                'analyticsCouncilIntelligence',
+                'analyticsStrategicPlan',
+                'analyticsRidershipTrend',
                 'operationsLoadProfiles',
                 'operationsOperatorDwell'
               ])) ||
@@ -585,7 +871,8 @@ service cloud.firestore {
                 'analyticsResidentialGrowth',
                 'analyticsRoutePlanner2',
                 'analyticsFarePrograms',
-                'analyticsCouncilIntelligence'
+                'analyticsStrategicPlan',
+                'analyticsRidershipTrend'
               ])) ||
              (accessLevel == 'production' &&
               (feature in ['workspaceFixedRoute', 'workspaceOperations'])) ||

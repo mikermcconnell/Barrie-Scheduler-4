@@ -128,6 +128,25 @@ describe('filterDailySummaries', () => {
         expect(result.at(-1)).toBe('2025-04-10');
     });
 
+    it('uses January 1 through the latest imported day for year to date', () => {
+        const yearBoundary = [
+            makeDay('2024-12-31', 'weekday'),
+            makeDay('2025-01-01', 'weekday'),
+            makeDay('2025-01-02', 'weekday'),
+            makeDay('2025-08-31', 'sunday'),
+        ];
+
+        expect(getPerformanceDateWindow(yearBoundary, 'year-to-date')).toEqual({
+            start: '2025-01-01',
+            end: '2025-08-31',
+        });
+        expect(runRange(yearBoundary, 'year-to-date')).toEqual([
+            '2025-01-01',
+            '2025-01-02',
+            '2025-08-31',
+        ]);
+    });
+
     it('uses latest imported day when single-day has no explicit selectedDate', () => {
         expect(runRange(days, 'single-day')).toEqual(['2025-01-10']);
     });
