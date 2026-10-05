@@ -142,10 +142,10 @@ describe('RidershipStopProfileChart', () => {
     it('switches passenger counts to sums without scaling onboard load', () => {
         act(() => root.render(<PerformanceAggregationProvider value={{ mode: 'sum', divisor: 1, unit: 'weekday', coveredDays: 5, expectedDays: 5, label: '' }}><RidershipStopProfileChart data={{ options: [option()], defaultOptionKey: '10::North' }} periodMode="multi-day" /></PerformanceAggregationProvider>));
         expect(container.textContent).toContain('60 \u00b7 Period total');
-        expect(container.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('Peak average onboard load is 20');
+        expect(container.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('Peak estimated onboard load is 20');
         act(() => root.render(<PerformanceAggregationProvider value={{ mode: 'average', divisor: 5, unit: 'weekday', coveredDays: 5, expectedDays: 5, label: '' }}><RidershipStopProfileChart data={{ options: [option()], defaultOptionKey: '10::North' }} periodMode="multi-day" /></PerformanceAggregationProvider>));
         expect(container.textContent).toContain('12 \u00b7 Avg / weekday');
-        expect(container.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('Peak average onboard load is 20');
+        expect(container.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('Peak estimated onboard load is 20');
     });
 
     it('shows estimated load, boardings, and alightings together in one view', () => {
