@@ -5,23 +5,17 @@ import {
     Upload, FileSpreadsheet, AlertTriangle,
     Loader2, ArrowRight, X,
 } from 'lucide-react';
-import { parseSTREETSFile, generatePreview } from '../../utils/performanceDataParser';
-import { aggregateDailySummaries } from '../../utils/performanceDataAggregator';
-import { savePerformanceData } from '../../utils/performanceDataService';
-import { computeMissedTripsForDay } from '../../utils/gtfs/gtfsScheduleIndex';
+import {
+    parseSTREETSFile,
+    generatePreview,
+    serializeSTREETSRecordsToCSV,
+} from '../../utils/performanceDataParser';
 import type {
     ImportPreview,
     PerformanceImportPhase,
-    PerformanceDataSummary,
     STREETSRecord,
 } from '../../utils/performanceDataTypes';
-import {
-    PERFORMANCE_RUNTIME_LOGIC_VERSION,
-    PERFORMANCE_SCHEMA_VERSION,
-} from '../../utils/performanceDataTypes';
-import { compareDateStrings } from '../../utils/performanceDateUtils';
 import { auth } from '../../utils/firebase';
-import { getEffectivePerformanceLoadCapacityConfig } from '../../utils/performanceLoadConfigService';
 
 interface PerformanceImportProps {
     teamId: string;
@@ -38,7 +32,7 @@ function getIngestUrl(teamId: string): string {
     return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}`;
 }
 
-async function uploadCsvViaServer(teamId: string, file: File): Promise<void> {
+async function uploadCsvViaServer(teamId: string, csvText: string): Promise<void> {
     const currentUser = auth.currentUser;
     if (!currentUser) {
         throw new Error('You need to sign in again before importing STREETS data.');
@@ -51,7 +45,7 @@ async function uploadCsvViaServer(teamId: string, file: File): Promise<void> {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'text/csv',
         },
-        body: await file.text(),
+        body: csvText,
     });
 
     if (!response.ok) {
@@ -68,7 +62,6 @@ async function uploadCsvViaServer(teamId: string, file: File): Promise<void> {
 
 export const PerformanceImport: React.FC<PerformanceImportProps> = ({
     teamId,
-    userId,
     onImportComplete,
     onCancel,
 }) => {
@@ -155,69 +148,27 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
 
         try {
             const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-            if (ext === 'csv') {
-                setProgress(45);
-                setProgressText('Uploading CSV to server import...');
-                await uploadCsvViaServer(teamId, selectedFile);
-                setProgress(90);
-                setProgressText('Refreshing dashboard data...');
-                await Promise.all([
-                    queryClient.invalidateQueries({ queryKey: ['performanceMetadata', teamId] }),
-                    queryClient.invalidateQueries({ queryKey: ['performanceOverview', teamId] }),
-                    queryClient.invalidateQueries({ queryKey: ['performanceData', teamId] }),
-                ]);
-                setProgress(100);
-                onImportComplete();
-                return;
-            }
-
-            setProgressText('Preparing full dataset...');
-            let records: STREETSRecord[];
-            if (!previewRecords) {
+            setProgressText(`Preparing ${ext === 'csv' ? 'CSV' : 'Excel'} data for secure import...`);
+            let records = previewRecords;
+            if (!records) {
                 const parsed = await parseSTREETSFile(selectedFile, (p) => {
                     setProgress(30 + Math.round((p.current / p.total) * 30));
                     setProgressText(`Parsing: ${p.current.toLocaleString()} / ${p.total.toLocaleString()} rows`);
                 });
                 records = parsed.records;
-            } else {
-                records = previewRecords;
-                setProgress(60);
-                setProgressText(`Using preview parse: ${records.length.toLocaleString()} rows`);
             }
-
-            setProgress(65);
-            setProgressText('Aggregating daily summaries...');
-            const loadCapacityConfig = await getEffectivePerformanceLoadCapacityConfig(teamId);
-            const dailySummaries = aggregateDailySummaries(records, (p) => {
-                setProgress(65 + Math.round((p.current / p.total) * 15));
-                setProgressText(`Aggregating: ${p.phase}`);
-            }, loadCapacityConfig);
-
-            // Enrich with GTFS missed trips
-            for (const day of dailySummaries) {
-                const result = computeMissedTripsForDay(day.date, day.dayType, day.byTrip);
-                if (result) day.missedTrips = result;
+            if (records.length === 0) {
+                throw new Error('No valid records found. Check that this is a STREETS Datawarehouse export.');
             }
+            setProgress(45);
+            setProgressText(`Preparing ${records.length.toLocaleString()} normalized rows for upload...`);
+            const csvText = serializeSTREETSRecordsToCSV(records);
 
-            setProgress(85);
-            setProgressText('Saving to Firebase...');
-
-            const dates = dailySummaries.map(s => s.date).sort(compareDateStrings);
-            const summary: PerformanceDataSummary = {
-                dailySummaries,
-                metadata: {
-                    importedAt: new Date().toISOString(),
-                    importedBy: userId,
-                    dateRange: { start: dates[0], end: dates[dates.length - 1] },
-                    dayCount: dailySummaries.length,
-                    totalRecords: records.length,
-                    runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
-                    cleanHistoryStartDate: dates[0],
-                },
-                schemaVersion: PERFORMANCE_SCHEMA_VERSION,
-            };
-
-            await savePerformanceData(teamId, userId, summary);
+            setProgress(60);
+            setProgressText('Uploading to protected server import...');
+            await uploadCsvViaServer(teamId, csvText);
+            setProgress(90);
+            setProgressText('Refreshing dashboard data...');
             await Promise.all([
                 queryClient.invalidateQueries({ queryKey: ['performanceMetadata', teamId] }),
                 queryClient.invalidateQueries({ queryKey: ['performanceOverview', teamId] }),

@@ -5,7 +5,7 @@
  * Includes Overview tab with service hours and route-specific schedule views.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Loader2,
     CalendarOff,
@@ -40,6 +40,7 @@ import { buildRoundTripView } from '../utils/parsers/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 import { calculateSequentialHeadways, sortTripsByBlockFlow } from '../utils/schedule/scheduleEditorUtils';
 import { PlatformTimeline } from './PlatformTimeline';
+import { RegionalTransitConnections } from './connections/RegionalTransitConnections';
 import { ScheduleEditor } from './ScheduleEditor';
 import { consumeNetworkConnectionMasterHandoff } from '../utils/network-connections/networkConnectionHandoff';
 import {
@@ -195,9 +196,12 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     // State
     const [selectedRoute, setSelectedRoute] = useState<string | 'overview' | 'platforms'>('overview');
     const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
+    const isRouteView = !['overview', 'platforms', 'regional-connections'].includes(selectedRoute);
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [schedules, setSchedules] = useState<MasterScheduleEntry[]>([]);
     const [scheduleReadTeamId, setScheduleReadTeamId] = useState<string | null>(null);
+    const [scheduleOwnerTeamId, setScheduleOwnerTeamId] = useState<string | null>(null);
+    const scheduleListRequest = useRef(0);
     const [contentCache, setContentCache] = useState<Map<RouteIdentity, MasterScheduleContent>>(new Map());
     const [loading, setLoading] = useState(true);
     const [loadingContent, setLoadingContent] = useState(false);
@@ -207,6 +211,13 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     // Calendar year and holiday-adjusted annual calculations
     const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
     const [holidays, setHolidays] = useState<Holiday[]>(() => getDefaultHolidays(new Date().getFullYear()));
+
+    const regionalDayTypeForDate = useCallback((dateText: string): DayType | 'No Service' => {
+        const date = new Date(`${dateText}T12:00:00`);
+        const dateHolidays = date.getFullYear() === calendarYear ? holidays : getDefaultHolidays(date.getFullYear());
+        const holiday = dateHolidays.find(h => h.date.getMonth() === date.getMonth() && h.date.getDate() === date.getDate());
+        return holiday?.serviceLevel ?? getDayTypeForDate(date);
+    }, [calendarYear, holidays]);
 
     const BASE_DAYS = useMemo(() => calculateAnnualDays(calendarYear), [calendarYear]);
     const ANNUAL_MULTIPLIERS = useMemo(() => calculateEffectiveMultipliers(BASE_DAYS, holidays), [BASE_DAYS, holidays]);
@@ -240,13 +251,16 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     const [selectedCurrentVersion, setSelectedCurrentVersion] = useState<number>(1);
     const [hasAppliedExternalHandoff, setHasAppliedExternalHandoff] = useState(false);
 
-    const loadSchedules = useCallback(async () => {
+    const loadSchedules = useCallback(async (background = false) => {
         if (!team) return;
+        const requestId = ++scheduleListRequest.current;
 
-        setLoading(true);
+        if (!background) setLoading(true);
         try {
             const localSchedules = await getAllMasterSchedules(team.id);
+            if (requestId !== scheduleListRequest.current) return;
             if (localSchedules.length > 0 || !sharedMasterScheduleSourceId || sharedMasterScheduleSourceId === team.id) {
+                setScheduleOwnerTeamId(team.id);
                 setScheduleReadTeamId(team.id);
                 setSchedules(localSchedules);
                 setContentCache(new Map());
@@ -254,22 +268,29 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             }
 
             const sharedSchedules = await getAllMasterSchedules(sharedMasterScheduleSourceId);
+            if (requestId !== scheduleListRequest.current) return;
+            setScheduleOwnerTeamId(team.id);
             setScheduleReadTeamId(sharedMasterScheduleSourceId);
             setSchedules(sharedSchedules);
             setContentCache(new Map());
         } catch (error) {
+            if (requestId !== scheduleListRequest.current) return;
             console.error('Error loading master schedules:', error);
             toast?.error('Failed to load master schedules');
+            if (background) throw new Error('Published master list could not be refreshed. Retry sources.');
         } finally {
-            setLoading(false);
+            if (requestId === scheduleListRequest.current) setLoading(false);
         }
     }, [sharedMasterScheduleSourceId, team, toast]);
+
+    const refreshRegionalSchedules = useCallback(() => loadSchedules(true), [loadSchedules]);
 
     // Load all schedules on mount
     useEffect(() => {
         if (hasTeam && team) {
             loadSchedules();
         } else {
+            scheduleListRequest.current += 1;
             setLoading(false);
         }
     }, [hasTeam, team, loadSchedules]);
@@ -292,11 +313,11 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
     // Lazy load content when route+dayType changes
     useEffect(() => {
-        if (selectedRoute !== 'overview' && selectedRoute !== 'platforms' && scheduleReadTeamId) {
+        if (isRouteView && scheduleReadTeamId) {
             const routeIdentity = buildRouteIdentity(selectedRoute, selectedDayType);
             loadContentIfNeeded(routeIdentity);
         }
-    }, [selectedRoute, selectedDayType, scheduleReadTeamId, loadContentIfNeeded]);
+    }, [isRouteView, selectedRoute, selectedDayType, scheduleReadTeamId, loadContentIfNeeded]);
 
     useEffect(() => {
         if (hasAppliedExternalHandoff || schedules.length === 0) return;
@@ -1486,10 +1507,10 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
     // ========== MAIN RENDER ==========
     // Use compact padding when viewing a specific route (always table view now)
-    const isTableView = selectedRoute !== 'overview' && selectedRoute !== 'platforms';
+    const isTableView = isRouteView;
 
     return (
-        <div className={`${isTableView ? 'p-4' : 'p-8'} max-w-7xl mx-auto h-full flex flex-col overflow-hidden`}>
+        <div className={`${selectedRoute === 'regional-connections' ? 'regional-master-browser ' : ''}${isTableView ? 'p-4' : 'p-8'} max-w-7xl mx-auto h-full flex flex-col overflow-hidden`}>
             {/* Header - Compact when viewing schedule table */}
             <div className={`${isTableView ? 'mb-2' : 'mb-6'} flex items-center justify-between flex-shrink-0`}>
                 <div className="flex items-center gap-4">
@@ -1526,6 +1547,17 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 >
                     Platforms
                 </button>
+                <button
+                    onClick={() => setSelectedRoute('regional-connections')}
+                    className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${
+                        selectedRoute === 'regional-connections'
+                            ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/5'
+                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
+                    }`}
+                    aria-pressed={selectedRoute === 'regional-connections'}
+                >
+                    Regional Transit Connections
+                </button>
                 {ROUTE_ORDER.map(route => (
                     <button
                         key={route}
@@ -1554,7 +1586,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             </div>
 
             {/* Day Type Sub-Tabs (shown for routes and platforms, not overview) - Compact in table view */}
-            {selectedRoute !== 'overview' && (
+            {selectedRoute !== 'overview' && selectedRoute !== 'regional-connections' && (
                 <div className={`${isTableView ? 'mb-2' : 'mb-4'} flex-shrink-0`}>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -1756,7 +1788,18 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                             />
                         </div>
                     )}
-                    {selectedRoute !== 'overview' && selectedRoute !== 'platforms' && renderScheduleTable()}
+                    {selectedRoute === 'regional-connections' && scheduleReadTeamId && scheduleOwnerTeamId === team?.id && (
+                        <div className="h-full overflow-y-auto">
+                            <RegionalTransitConnections
+                                key={scheduleReadTeamId}
+                                schedules={schedules}
+                                readTeamId={scheduleReadTeamId}
+                                dayTypeForDate={regionalDayTypeForDate}
+                                onRefreshSchedules={refreshRegionalSchedules}
+                            />
+                        </div>
+                    )}
+                    {isRouteView && renderScheduleTable()}
                 </div>
             )}
         </div>

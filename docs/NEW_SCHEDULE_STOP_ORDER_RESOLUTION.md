@@ -1,7 +1,8 @@
 # New Schedule Dynamic Stop-Order Resolution
 
-Status: Proposed  
-Date: March 30, 2026  
+Status: Implemented for performance-data Step 2, with master fallback
+Original date: March 30, 2026
+Implementation snapshot reviewed: September 4, 2026
 Audience: Engineers working on New Schedule Step 2 runtime analysis, route-chain resolution, and schedule generation
 Context entrypoint: `docs/new-schedule-step2/README.md`
 
@@ -26,17 +27,26 @@ The solution must therefore be:
 - **safe for schedule-building**
 - **planner-reviewable when confidence is low**
 
+### Current implementation snapshot
+
+- `utils/newSchedule/stopOrderResolver.ts` builds route-and-direction candidates from trip stop-segment observations, groups identical stop-ID patterns, scores them, and returns `accept`, `review`, or `blocked` with confidence and diagnostics.
+- Base-route selections can include direction variants; an explicit direction variant remains exact-match.
+- Normal service patterns are preferred. Detour patterns are used only when the caller explicitly requests detour fallback and no normal candidate exists.
+- `components/NewSchedule/NewScheduleWizard.tsx` uses an accepted runtime-derived chain for planning. A review/blocked result keeps a valid master chain when one is available.
+- `components/NewSchedule/utils/step2StopOrder.ts` records whether runtime-derived or master-fallback order was used in Step 2 health and the schema-v2 approval snapshot.
+- Current limits: planner-authored overrides and comparison with a previously approved chain are not implemented in the resolver. The proposal sections below preserve those future directions.
+
 ---
 
-## 2. Decision Summary
+## 2. Original Decision Summary
 
 ### Recommended decision
 
 Use a **dynamic stop-order resolver** that builds the planning stop chain from recent observed full trips, using **stop numbers / stop IDs as the primary key** and **stop names only as fallback evidence**.
 
-### Source ranking
+### Original source-ranking intent
 
-The resolver should rank evidence in this order:
+The proposal ranked evidence in this order. The implemented resolver uses a weighted score across anchor matches, stop count, distinct days, midday observations, trip count, and skipped-index penalties; see `utils/newSchedule/stopOrderResolver.ts` for the exact current formula.
 
 1. **Recent complete observed trip pattern**
 2. **Recent midday complete observed trip pattern**
@@ -345,21 +355,21 @@ They should never:
 
 ---
 
-## 13. Suggested module boundary
+## 13. Implemented module boundary
 
-Create a dedicated resolver module, separate from the wizard shell:
+The dedicated resolver module is separate from the wizard shell:
 
 ```ts
 utils/newSchedule/stopOrderResolver.ts
 ```
 
-Suggested responsibilities:
+Current responsibilities:
 
 - trip candidate extraction
 - pattern signature building
 - pattern clustering and scoring
 - resolved stop-order selection
-- change detection against previous resolved chain
+- confidence and decision diagnostics
 
 Keep these concerns out of:
 
@@ -371,7 +381,7 @@ The wizard should orchestrate. The resolver should decide.
 
 ---
 
-## 14. Proposed resolution strategy
+## 14. Original Resolution Strategy
 
 ### Option A — Recommended
 
@@ -454,7 +464,7 @@ These are light-touch guardrails, not a full maintained stop list.
 
 ---
 
-## 16. Implementation phases
+## 16. Original Implementation Phases
 
 ### Phase 1
 

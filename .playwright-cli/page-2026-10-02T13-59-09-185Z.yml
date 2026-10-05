@@ -1,0 +1,191 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - strong [ref=e5]: DESIGN REVIEW
+      - text: 01 / 03 · Executive summary
+    - navigation "Compare designs" [ref=e6]:
+      - link "1. Summary" [ref=e7] [cursor=pointer]:
+        - /url: 01-executive.html
+      - link "2. Locations" [ref=e8] [cursor=pointer]:
+        - /url: 02-locations.html
+      - link "3. Journeys" [ref=e9] [cursor=pointer]:
+        - /url: 03-journeys.html
+  - main [ref=e10]:
+    - generic [ref=e11]:
+      - heading "Master Schedule" [level=1] [ref=e12]
+      - paragraph [ref=e13]: Source of truth for all route schedules
+    - navigation "Master Schedule preview" [ref=e14]:
+      - button "Overview" [disabled] [ref=e15]
+      - button "Platforms" [disabled] [ref=e16]
+      - generic [ref=e17]: Regional Transit Connections
+      - button "400" [disabled] [ref=e18]
+      - button "100" [disabled] [ref=e19]
+      - button "101" [disabled] [ref=e20]
+      - button "2" [disabled] [ref=e21]
+      - button "7" [disabled] [ref=e22]
+      - button "8A" [disabled] [ref=e23]
+      - button "8B" [disabled] [ref=e24]
+      - button "10" [disabled] [ref=e25]
+      - button "11" [disabled] [ref=e26]
+      - button "12" [disabled] [ref=e27]
+    - generic [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: Management overview
+        - heading "Regional transit connections" [level=2] [ref=e31]
+        - paragraph [ref=e32]: Where the master schedule connects well — and where it needs attention.
+      - button "Print summary" [ref=e33] [cursor=pointer]
+    - generic [ref=e34]:
+      - strong [ref=e35]: Illustrative data only
+      - generic [ref=e36]: Not an analysis of your current master schedule or provider feeds. Times, routes, stop pairings and results are fictional.
+    - generic [ref=e37]:
+      - generic [ref=e38]:
+        - group "Travel direction" [ref=e39]:
+          - button "Both directions" [pressed] [ref=e40] [cursor=pointer]
+          - button "To regional" [ref=e41] [cursor=pointer]
+          - button "From regional" [ref=e42] [cursor=pointer]
+        - generic [ref=e43]:
+          - text: Location
+          - combobox "Location" [ref=e44]:
+            - option "All locations" [selected]
+            - option "Allandale Waterfront"
+            - option "Barrie South"
+            - option "Downtown Terminal"
+      - generic [ref=e45]:
+        - strong [ref=e46]: Monday, October 5, 2026 · Weekday
+        - text: Example master snapshot × example static GTFS
+    - generic [ref=e47]:
+      - generic [ref=e48]:
+        - generic [ref=e49]:
+          - generic [ref=e50]: Comfortable
+          - generic [ref=e51]: 7 / 12 trips
+          - generic [ref=e52]: 5–20 min remaining after walking
+        - generic [ref=e53]:
+          - generic [ref=e54]: Tight transfers
+          - generic [ref=e55]: "2"
+          - generic [ref=e56]: 0–4 min margin after walking
+        - generic [ref=e57]:
+          - generic [ref=e58]: Needs review
+          - generic [ref=e59]: "2"
+          - generic [ref=e60]: Cannot connect or wait is too long
+        - generic [ref=e61]:
+          - generic [ref=e62]: Not assessed
+          - generic [ref=e63]: "1"
+          - generic [ref=e64]: Missing timing or stop-match data
+      - generic [ref=e65]:
+        - generic [aria-hidden] [ref=e66]: ↗
+        - generic [ref=e67]:
+          - heading "4 connections merit a planner’s review." [level=3] [ref=e68]
+          - paragraph [ref=e69]: "7 of 11 assessed trips have a comfortable transfer; 1 more cannot yet be assessed. Prioritize the first morning departure at Barrie South: the sample rider reaches the platform 3 minutes too late."
+      - generic [ref=e70]:
+        - heading "Connection summary by location" [level=3] [ref=e71]
+        - generic [ref=e72]: 12 sample regional trips in view
+      - table [ref=e74]:
+        - rowgroup [ref=e75]:
+          - row [ref=e76]:
+            - columnheader "Transfer location" [ref=e77]
+            - columnheader "Travel direction" [ref=e78]
+            - columnheader "Comfortable" [ref=e79]
+            - columnheader "Tight" [ref=e80]
+            - columnheader "Review" [ref=e81]
+            - columnheader "Unknown" [ref=e82]
+        - rowgroup [ref=e83]:
+          - row [ref=e84]:
+            - cell "Allandale Waterfront GO Transit · Barrie line" [ref=e85]:
+              - strong [ref=e86]: Allandale Waterfront
+              - generic [ref=e87]: GO Transit · Barrie line
+            - cell "Local → regional" [ref=e88]
+            - cell "1" [ref=e89]
+            - cell "1" [ref=e90]
+            - cell "—" [ref=e91]
+            - cell "—" [ref=e92]
+          - row [ref=e93]:
+            - cell "Allandale Waterfront GO Transit · Barrie line" [ref=e94]:
+              - strong [ref=e95]: Allandale Waterfront
+              - generic [ref=e96]: GO Transit · Barrie line
+            - cell "Regional → local" [ref=e97]
+            - cell "2" [ref=e98]
+            - cell "—" [ref=e99]
+            - cell "—" [ref=e100]
+            - cell "—" [ref=e101]
+          - row [ref=e102]:
+            - cell "Barrie South GO Transit · Barrie line" [ref=e103]:
+              - strong [ref=e104]: Barrie South
+              - generic [ref=e105]: GO Transit · Barrie line
+            - cell "Local → regional" [ref=e106]
+            - cell "1" [ref=e107]
+            - cell "—" [ref=e108]
+            - cell "1" [ref=e109]
+            - cell "—" [ref=e110]
+          - row [ref=e111]:
+            - cell "Barrie South GO Transit · Barrie line" [ref=e112]:
+              - strong [ref=e113]: Barrie South
+              - generic [ref=e114]: GO Transit · Barrie line
+            - cell "Regional → local" [ref=e115]
+            - cell "1" [ref=e116]
+            - cell "—" [ref=e117]
+            - cell "1" [ref=e118]
+            - cell "—" [ref=e119]
+          - row [ref=e120]:
+            - cell "Downtown Terminal Simcoe County LINX · example service" [ref=e121]:
+              - strong [ref=e122]: Downtown Terminal
+              - generic [ref=e123]: Simcoe County LINX · example service
+            - cell "Local → regional" [ref=e124]
+            - cell "1" [ref=e125]
+            - cell "1" [ref=e126]
+            - cell "—" [ref=e127]
+            - cell "—" [ref=e128]
+          - row [ref=e129]:
+            - cell "Downtown Terminal Simcoe County LINX · example service" [ref=e130]:
+              - strong [ref=e131]: Downtown Terminal
+              - generic [ref=e132]: Simcoe County LINX · example service
+            - cell "Regional → local" [ref=e133]
+            - cell "1" [ref=e134]
+            - cell "—" [ref=e135]
+            - cell "—" [ref=e136]
+            - cell "1" [ref=e137]
+      - generic [ref=e138]:
+        - generic [ref=e139]:
+          - generic [ref=e140]:
+            - heading "Priority connections to review" [level=3] [ref=e141]
+            - generic [ref=e142]: Timing gaps first
+          - generic [ref=e143]:
+            - generic [ref=e144]: "1"
+            - generic [ref=e145]:
+              - strong [ref=e146]: Barrie South · Train to Union
+              - paragraph [ref=e147]: Route 100 · 6:30 AM · 3 min short of making it
+              - button "View connection →" [ref=e148] [cursor=pointer]
+          - generic [ref=e149]:
+            - generic [ref=e150]: "2"
+            - generic [ref=e151]:
+              - strong [ref=e152]: Barrie South · Train from Union
+              - paragraph [ref=e153]: Route 100 · 5:24 PM · 32 min after walking
+              - button "View connection →" [ref=e154] [cursor=pointer]
+          - generic [ref=e155]:
+            - generic [ref=e156]: "3"
+            - generic [ref=e157]:
+              - strong [ref=e158]: Allandale Waterfront · Train to Union
+              - paragraph [ref=e159]: Route 8A · 7:30 AM · 2 min after walking
+              - button "View connection →" [ref=e160] [cursor=pointer]
+          - generic [ref=e161]:
+            - generic [ref=e162]: "4"
+            - generic [ref=e163]:
+              - strong [ref=e164]: Downtown Terminal · LINX toward regional destination
+              - paragraph [ref=e165]: Route 7 · 9:20 AM · 2 min after walking
+              - button "View connection →" [ref=e166] [cursor=pointer]
+        - generic [ref=e167]:
+          - heading "What the numbers mean" [level=3] [ref=e168]
+          - paragraph [ref=e169]: "One regional trip is one connection opportunity. Both directions matter: getting to a train or regional bus, and getting home from it."
+          - paragraph [ref=e170]: Walking time is deducted before judging the transfer. Long waits and impossible transfers are flagged separately in the details.
+          - generic [ref=e171]:
+            - generic [ref=e172]: Comfortable
+            - generic [ref=e173]: Tight
+            - generic [ref=e174]: Needs review
+            - generic [ref=e175]: Not assessed
+          - paragraph [ref=e176]:
+            - strong [ref=e177]: "Data gap:"
+            - text: one Downtown return trip remains unknown, not a failed connection.
+    - group [ref=e178]:
+      - generic "Sources & assessment rules · sample assumptions" [ref=e179] [cursor=pointer]
+    - generic [ref=e180]:
+      - generic [ref=e181]: Read-only planning concept · No schedule changes · No live feed connection
+      - generic [ref=e182]: Executive summary · Choose the layout before implementation

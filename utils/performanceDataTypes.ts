@@ -623,7 +623,8 @@ export interface DailySummary {
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 14;
+// v15 includes InBetween passenger movements; operational/load eligibility is unchanged.
+export const PERFORMANCE_SCHEMA_VERSION = 15;
 export const RIDERSHIP_STABLE_TRIP_SCHEMA_VERSION = 14;
 export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 4;
 export const LOAD_PROFILE_VIEW_SCHEMA_VERSION = 1;
@@ -666,8 +667,9 @@ export interface PerformanceMetadata {
     routeStoragePaths?: Record<string, string>;
     monthlyStoragePaths?: Record<string, string>;
     routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
-    loadProfileMonthlyStoragePaths?: Record<string, string>;
-  }
+  loadProfileMonthlyStoragePaths?: Record<string, string>;
+  serviceDateImportVersions?: Record<string, string>;
+}
 
 /** One compact day in the monthly Load Profiles read model. */
 export interface LoadProfileDailyView {

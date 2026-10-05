@@ -70,6 +70,7 @@ Operations owns STREETS-backed imports, dashboards, summaries, and reporting.
 - Passenger load is reviewed in Ridership -> Passenger Flow by Stop. The former standalone Load Profiles UI and assignable access surface are removed; its compact monthly read model remains only for backward-compatible backend and repair use. Keep `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts` contract-identical.
 - Same-team and partner detail reads use bounded, access-checked backend views; do not restore broad direct browser reads or convert load/schema failures into empty data.
 - Canonical metric and schema-version behavior lives in `docs/OPERATIONS_DASHBOARD_METRICS.md`. Older stored summaries may require rebuild or re-import after schema changes.
+- Schema v15 separates passenger activity from operational evidence: include InBetween boarding/alighting movements, but never feed those intermediate rows into timing, dwell, observed-load, or runtime calculations. Phase-one imports do not automatically correct existing history.
 - Performance schema v14 gives heatmap trips stable identity and stores vehicle/applied capacity so same-time trips do not collide and inferred loads can enforce fleet-specific capacity.
 
 ### Parking
@@ -150,7 +151,7 @@ Use the relevant `.agents/skills/` danger-zone skill and focused tests before ca
 
 - New Schedule runtime approvals use schema version 2. Visible `reviewBuckets` are evidence; only independently revalidated `approvedBuckets` may generate schedules.
 - Performance runtime buckets require five complete paired-cycle days; CSV buckets require ten explicit observations on every segment. Detours, estimates, outliers, partial trips, and stop-only evidence remain review-only.
-- Strict generation uses the exact approved half-hour bucket. The North cycle-start bucket supplies both paired legs; South-start pairs and missing buckets fail closed without closest-bucket, band, raw-segment, or default-runtime fallback.
+- Strict generation uses the exact eligible approved half-hour bucket when available; otherwise it uses the nearest eligible approved bucket from the same cycle-start orientation, with circular 24-hour distance and the earlier bucket as the tie-breaker. A North-start or South-start bucket supplies both paired legs only for that orientation. Generation fails closed when that orientation has no eligible approved bucket or the selected bucket lacks a canonical segment; it never crosses orientations or falls back to a band, raw segment, or default runtime.
 - Missing or stale approval blocks later wizard steps, generation, export, and Master upload. Pre-v2 projects are durably reset while preserving planner settings; schema-v2 saves are serialized and revision-checked.
 - Dwell Incident Review is incident-first, read-only, and map-first. Current UX and metric rules live in `docs/DWELL_CASCADE_FEATURE.md` and `docs/OPERATIONS_DASHBOARD_METRICS.md`.
 - Passenger Flow inferred loads must remain visibly distinct from verified APC values. The canonical fallback and rejection rules live in `docs/OPERATIONS_DASHBOARD_METRICS.md`.

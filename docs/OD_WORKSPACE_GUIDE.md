@@ -2,6 +2,8 @@
 
 End-user guide for the Origin-Destination analysis workspace.
 
+> Current workspace reviewed: September 4, 2026. Tabs are **Overview**, **Heatmap Grid**, **Routes & Transfers**, **Top Pairs**, and **Station Rankings**.
+
 ---
 
 ## 1. Getting Started
@@ -108,7 +110,24 @@ Matrix view of all station-to-station flows:
 
 ---
 
-## 8. Coordinate Management
+## 8. Routes & Transfers Tab
+
+This tab estimates direct and transfer journeys against the bundled Ontario Northland GTFS feed. It loads automatically; **Update GTFS** lets a planner test a newer GTFS ZIP without replacing the bundled source.
+
+It includes:
+
+- matched and unmatched pair totals, direct journeys, and transfer journeys
+- searchable and confidence-filtered pair route assignments
+- route distribution by estimated journeys
+- a transfer-point map with stop-flow and inbound/outbound route views
+- station match details and explanations for ambiguous or unmatched rows
+- selected-stop Excel and PDF exports from the transfer map
+
+Route assignments are estimates based on OD station matching and GTFS paths. Confidence and matching explanations should remain visible when interpreting them.
+
+---
+
+## 9. Coordinate Management
 
 Stations need geographic coordinates for the flow map. If stations are missing coordinates:
 
@@ -119,7 +138,7 @@ Stations need geographic coordinates for the flow map. If stations are missing c
 
 ---
 
-## 9. Exporting
+## 10. Exporting
 
 Two export options in the workspace header:
 
@@ -147,7 +166,7 @@ Downloads a `.pdf` report containing:
 
 ---
 
-## 10. Tips & Tricks
+## 11. Tips & Tricks
 
 - **Compare inbound vs outbound**: Select a station, toggle between Inbound/Outbound to see asymmetric demand patterns
 - **Find low-volume pairs**: Set Pairs to "All" and increase the Threshold slider to filter noise

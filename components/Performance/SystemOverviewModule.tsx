@@ -1046,7 +1046,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     <span>Missing AVL: {dataQuality.missingAVL.toLocaleString()} ({avlPct}%)</span>
                     <span>Missing APC: {dataQuality.missingAPC.toLocaleString()} ({apcPct}%)</span>
                     {dataQuality.loadCapped > 0 && <span>Load capped: {dataQuality.loadCapped.toLocaleString()}</span>}
-                    {dataQuality.inBetweenFiltered > 0 && <span>In-between filtered: {dataQuality.inBetweenFiltered.toLocaleString()}</span>}
+                    {dataQuality.inBetweenFiltered > 0 && <span>In-between excluded from timing/load: {dataQuality.inBetweenFiltered.toLocaleString()}</span>}
                 </div>
             )}
             </div>

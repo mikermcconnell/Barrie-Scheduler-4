@@ -1,13 +1,14 @@
 # Shuttle Planner PRD
 
-> Date: March 11, 2026
-> Status: Draft for implementation planning
+> Original date: March 11, 2026
+> Status: Initial workspace implemented; original roadmap retained
+> Implementation snapshot reviewed: September 4, 2026
 > Product fit: Map-first shuttle service planning within Barrie Transit Schedule Builder
 > UI companion: `docs/SHUTTLE_PLANNER_UI_SPEC.md`
 
 ## 1. Purpose
 
-The Shuttle Planner will let Transit Staff design shuttle services directly on a map, test operating assumptions in real time, and save review-ready scenarios that can move into downstream schedule planning.
+The Shuttle Planner lets Transit Staff design shuttle services directly on a map, test operating assumptions in real time, and save review-ready scenarios. Promotion into downstream schedule planning remains future work.
 
 This feature is intended for temporary and special-purpose shuttle planning, including:
 
@@ -18,6 +19,20 @@ This feature is intended for temporary and special-purpose shuttle planning, inc
 - temporary service overlays during service disruptions
 
 The feature is not intended to replace dispatch, AVL, or public trip planning tools.
+
+### Current implementation snapshot
+
+- Entry: the `shuttle-planner` route inside **Fixed Route -> Planning Data**, controlled by the `analyticsShuttlePlanner` access/feature flag.
+- UI and map authoring: `components/Analytics/ShuttlePlannerWorkspace.tsx`
+- State orchestration: `components/Analytics/useShuttlePlannerController.ts`
+- Domain types: `utils/shuttle/shuttleTypes.ts`
+- Derived distance, runtime, cycle, bus, service-hour, warning, and departure values: `utils/shuttle/shuttlePlanning.ts`
+- Road snapping with fallback: `utils/shuttle/shuttleRoadSnapService.ts`
+- User-scoped Firestore persistence: `utils/services/shuttleProjectService.ts`
+
+The current build supports project save/load/delete/duplicate, multiple scenarios, preferred-scenario selection, two-scenario compare mode, loop and out-and-back patterns, road-snapped waypoints, Barrie and custom stops, live derived metrics/warnings/departures, and Markdown summary export. A signed-out user receives an in-memory starter project and must sign in before saving.
+
+The remaining future-tense requirements and phased plan below preserve the original roadmap. They are not claims that every proposed module, workflow, or downstream handoff exists.
 
 ## 2. Problem Statement
 
@@ -145,11 +160,12 @@ The Shuttle Planner will not include the following in v1:
 
 ### 10.1 Workspace Structure
 
-The Shuttle Planner should be a dedicated top-level workspace, similar to Fixed Route, On Demand, and Performance.
+The Shuttle Planner is an access-controlled workspace inside Fixed Route's Planning Data hub, not a top-level app.
 
-**Proposed workspace file**
+**Current workspace files**
 
-- `components/workspaces/ShuttlePlannerWorkspace.tsx`
+- `components/Analytics/ShuttlePlannerWorkspace.tsx`
+- `components/Analytics/useShuttlePlannerController.ts`
 
 ### 10.2 Primary Screen Layout
 
@@ -161,19 +177,15 @@ The workspace should use a three-pane layout:
 | Center panel | Full map canvas for route and stop editing |
 | Right panel | Service assumptions, live metrics, warnings, timetable preview |
 
-### 10.3 Proposed UI Modules
+### 10.3 Current UI Modules
 
-| Module | Responsibility | Proposed Path |
+The initial implementation keeps the UI together rather than splitting every panel into a separate file.
+
+| Module | Responsibility | Current Path |
 |------|----------------|--------------|
-| Shuttle planner workspace | Route-level shell, routing, tab state | `components/workspaces/ShuttlePlannerWorkspace.tsx` |
-| Project sidebar | Project/scenario list, duplicate, rename, delete | `components/ShuttlePlanner/ShuttleProjectSidebar.tsx` |
-| Map canvas | Draw, edit, snap, hover, select, compare overlays | `components/ShuttlePlanner/ShuttleMapCanvas.tsx` |
-| Stop panel | Stop list, stop properties, sequence editing | `components/ShuttlePlanner/ShuttleStopPanel.tsx` |
-| Service rules panel | Span, frequency, recovery, runtime assumptions | `components/ShuttlePlanner/ShuttleServicePanel.tsx` |
-| Metrics panel | Runtime, distance, buses, hours, validation | `components/ShuttlePlanner/ShuttleMetricsPanel.tsx` |
-| Timetable preview | Generated departures and cycle view | `components/ShuttlePlanner/ShuttleTimetablePanel.tsx` |
-| Comparison panel | Scenario compare table and overlay toggles | `components/ShuttlePlanner/ShuttleComparisonPanel.tsx` |
-| Export modal | Summary export and downstream handoff | `components/ShuttlePlanner/ShuttleExportModal.tsx` |
+| Workspace view | Header, project/scenario controls, map, stop editor, service assumptions, metrics, warnings, departure preview, compare display, export | `components/Analytics/ShuttlePlannerWorkspace.tsx` |
+| Controller | Project lifecycle, selection, map edits, road-snap updates, Firestore actions, compare state | `components/Analytics/useShuttlePlannerController.ts` |
+| Planning logic | Derived metrics, warnings, and departures | `utils/shuttle/shuttlePlanning.ts` |
 
 ### 10.4 Reuse Opportunities
 
@@ -283,7 +295,18 @@ The following existing modules and utilities should be reused where possible:
 
 ## 13. Data Model
 
-### 13.1 Domain Objects
+### 13.1 Current Domain Objects
+
+The current source of truth is `utils/shuttle/shuttleTypes.ts`:
+
+- `ShuttleProject` stores the project ID, name, optional description/team, preferred scenario ID, embedded scenarios, and `Date` creation/update timestamps.
+- `ShuttleScenario` stores `loop` or `out-and-back`, accent, notes, derived metrics, service assumptions, warnings, departure labels, waypoints, line geometry, embedded stops, and `draft` or `ready_for_review` status.
+- `ShuttleStop` stores `barrie` or `custom`, optional Barrie stop ID, terminal/timed/regular role, coordinates, display time, and optional planned offset.
+- Scenario IDs, project IDs, and derived metrics are stored with the embedded scenario; there are no separate alignment, service-plan, metric, timetable, or trip documents in the current model.
+
+### 13.1A Original Proposed Domain Objects
+
+The following normalized model is retained as design history. It was not adopted as the current persisted shape.
 
 #### ShuttleProject
 
@@ -403,25 +426,15 @@ interface ShuttleTrip {
 }
 ```
 
-### 13.2 Proposed Firestore Pattern
+### 13.2 Current Firestore Pattern
 
-This feature should follow existing app patterns by separating working state from shared outputs.
-
-**User-scoped working state**
+The current service stores each complete project, including its scenarios, in one user-owned document:
 
 ```text
 users/{userId}/shuttleProjects/{projectId}
-users/{userId}/shuttleProjects/{projectId}/scenarios/{scenarioId}
 ```
 
-**Team-scoped shared outputs**
-
-```text
-teams/{teamId}/shuttlePlans/{planId}
-teams/{teamId}/shuttlePlans/{planId}/versions/{versionId}
-```
-
-This keeps early exploration lightweight while preserving a path to shared reviewed concepts.
+`utils/services/shuttleProjectService.ts` reads, writes, duplicates, and deletes this user-scoped document. Repository `firestore.rules` permits only the matching authenticated user. The optional `teamId` is project metadata; it does not make the document team-shared. Team-scoped published plans and version subcollections remain a future proposal and are not implemented.
 
 ## 14. Validation Rules
 
@@ -432,21 +445,17 @@ This keeps early exploration lightweight while preserving a path to shared revie
 - Frequency and cycle time must produce a valid bus requirement greater than zero.
 - Runtime assumptions must be present before timetable generation.
 
-## 15. Proposed Service Layer and Utility Breakdown
+## 15. Current Service Layer and Utility Breakdown
 
-| Area | Proposed Path |
+| Area | Current Path |
 |------|---------------|
 | Shuttle types | `utils/shuttle/shuttleTypes.ts` |
-| Geometry editing and ordering | `utils/shuttle/shuttleGeometry.ts` |
 | Road snap adapter | `utils/shuttle/shuttleRoadSnapService.ts` |
-| Stop utilities | `utils/shuttle/shuttleStopUtils.ts` |
-| Metrics calculator | `utils/shuttle/shuttleMetrics.ts` |
-| Timetable generator | `utils/shuttle/shuttleTimetable.ts` |
-| Validation rules | `utils/shuttle/shuttleValidation.ts` |
+| Derived metrics, departures, and warnings | `utils/shuttle/shuttlePlanning.ts` |
+| Starter data | `utils/shuttle/shuttleSeedData.ts` |
 | Project persistence | `utils/services/shuttleProjectService.ts` |
-| Shared/published plans | `utils/services/shuttlePlanService.ts` |
 
-## 16. Phased Implementation Plan
+## 16. Original Phased Implementation Plan
 
 ### Phase 1: Domain model and persistence
 
@@ -514,7 +523,7 @@ Deliverables:
 - version history
 - optional handoff into schedule editing or report generation
 
-## 17. Acceptance Criteria for v1
+## 17. Original Acceptance Criteria for v1
 
 The v1 feature will be considered complete when:
 

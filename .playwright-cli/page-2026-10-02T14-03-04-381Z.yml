@@ -1,0 +1,30 @@
+- main [ref=f9e2]:
+  - generic [ref=f9e3]: Scheduler 4 · Design approval
+  - heading "Regional transit connections" [level=1] [ref=f9e4]
+  - paragraph [ref=f9e5]: Three ways to give management a clear picture of how riders connect.Same sample data. Different ways to tell the story.
+  - generic [ref=f9e6]:
+    - link "01 · Recommended Executive summary Lead with the overall picture, then show which locations and connections need attention. Open summary →" [ref=f9e7] [cursor=pointer]:
+      - /url: 01-executive.html
+      - generic [ref=f9e8]: 01 · Recommended
+      - heading "Executive summary" [level=2] [ref=f9e9]
+      - paragraph [ref=f9e10]: Lead with the overall picture, then show which locations and connections need attention.
+      - generic [ref=f9e11]: Open summary →
+    - link "02 · Location-led Location scorecards One card per transfer hub, with simple to / from results and expandable connection details. Open locations →" [ref=f9e12] [cursor=pointer]:
+      - /url: 02-locations.html
+      - generic [ref=f9e13]: 02 · Location-led
+      - heading "Location scorecards" [level=2] [ref=f9e14]
+      - paragraph [ref=f9e15]: One card per transfer hub, with simple to / from results and expandable connection details.
+      - generic [ref=f9e16]: Open locations →
+    - 'link "03 · Rider-led Rider journeys Make the transfer tangible: arrive, walk, board. Explain exactly why a connection works or falls short. Open journeys →" [ref=f9e17] [cursor=pointer]':
+      - /url: 03-journeys.html
+      - generic [ref=f9e18]: 03 · Rider-led
+      - heading "Rider journeys" [level=2] [ref=f9e19]
+      - paragraph [ref=f9e20]: "Make the transfer tangible: arrive, walk, board. Explain exactly why a connection works or falls short."
+      - generic [ref=f9e21]: Open journeys →
+  - generic [ref=f9e22]:
+    - strong [ref=f9e23]: "Recommendation:"
+    - text: use the executive summary as the main tab, with the journey view for connection details.
+    - strong [ref=f9e24]: "Review scope:"
+    - text: interactive HTML mockups only. All times and results are fictional. No master schedule, feeds, application code or Firebase data have been changed. Direction and location filters, expandable details and printing work; existing schedule tabs are context only.
+    - strong [ref=f9e25]: "For approval:"
+    - text: choose a layout. Provider selection, exact stop pairings, walking allowances, acceptable waits and feed validity still need confirmation before implementing the comparison.

@@ -1,7 +1,8 @@
 # New Schedule Step 2 Contract Design
 
-Status: Implemented (schema v2)
-Date: July 29, 2026
+Status: Implemented (schema v2; original design examples retained)
+Prior implementation status update: July 29, 2026
+Implementation snapshot reviewed: September 4, 2026
 Depends on: `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
 Related: `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
 Context entrypoint: `docs/new-schedule-step2/README.md`
@@ -10,7 +11,7 @@ Context entrypoint: `docs/new-schedule-step2/README.md`
 
 ## 1. Purpose
 
-This document locks the concrete Step 2 contract design before implementation starts.
+This document records the concrete Step 2 contract design and the rationale that preceded implementation.
 
 The design assumes the core analytic outcome of Step 2 is to let the planner review the **median travel time for each route segment by 30-minute time bucket**, then save the resulting planning contract for later steps.
 
@@ -22,7 +23,19 @@ It answers three practical questions:
 2. When is an approved runtime contract valid or stale?
 3. How should the rebuilt Step 2 screen be split into components?
 
-This is the next design layer under the Step 2 rebuild spec. It is still pre-code planning.
+The schema-v2 contract is now implemented. Code snippets and sections explicitly labelled as original or proposed preserve design history and must not override the exported TypeScript types.
+
+### Current implementation snapshot
+
+- Current types: `components/NewSchedule/utils/step2ReviewTypes.ts`
+- Review building and health: `components/NewSchedule/utils/step2ReviewBuilder.ts` and `components/NewSchedule/utils/step2HealthEvaluator.ts`
+- Approval and invalidation: `components/NewSchedule/utils/step2Approval.ts` and `components/NewSchedule/utils/step2Invalidation.ts`
+- Navigation gate: `components/NewSchedule/utils/step2NavigationGate.ts`
+- Save/resume normalization: `components/NewSchedule/utils/wizardProjectState.ts`
+- Wizard integration: `components/NewSchedule/NewScheduleWizard.tsx`
+- Schema version: `ApprovedRuntimeContract.schemaVersion = 2`
+
+The current `Step2ReviewInput` uses a deterministic `parsedDataFingerprint` rather than embedding parsed rows. The planning payload separates all visible `reviewBuckets` from generation-safe `approvedBuckets`, may include start-direction cycle buckets, and carries `North`, `South`, or `Loop` canonical direction stops.
 
 ---
 
@@ -81,9 +94,9 @@ If the approved contract is missing or stale, later steps must not proceed as if
 
 ---
 
-## 4. Proposed Types
+## 4. Original Proposed Types
 
-The exact implementation can evolve, but the rebuild should target shapes close to the following.
+The following snippets are the original design examples. They are useful rationale, but the current exported interfaces in `components/NewSchedule/utils/step2ReviewTypes.ts` are authoritative for implementation.
 
 ## 4.1 Step2ReviewInput
 
@@ -483,7 +496,7 @@ But generation must not refetch canonical master data to reconstruct the approve
 
 ---
 
-## 10. Proposed UI/Component Breakdown
+## 10. Original Proposed UI/Component Breakdown
 
 The rebuilt Step 2 should be split into the following components.
 
@@ -611,9 +624,9 @@ Suggested name:
 
 ---
 
-## 12. Proposed File Shape
+## 12. Current File Shape
 
-This is the recommended implementation target, not a locked mandate.
+The implemented schema-v2 flow uses these files.
 
 ### Domain
 
@@ -629,13 +642,13 @@ This is the recommended implementation target, not a locked mandate.
 
 ### UI
 
-- `components/NewSchedule/steps/Step2RuntimeReview.tsx`
-- `components/NewSchedule/step2/RuntimeReviewHeader.tsx`
-- `components/NewSchedule/step2/RuntimeReadinessPanel.tsx`
-- `components/NewSchedule/step2/PlanningBucketsPanel.tsx`
-- `components/NewSchedule/step2/PlanningBandSummaryPanel.tsx`
-- `components/NewSchedule/step2/TroubleshootingPanel.tsx`
-- `components/NewSchedule/step2/RuntimeContractSummaryPanel.tsx`
+- `components/NewSchedule/steps/Step2Analysis.tsx`
+- `components/NewSchedule/step2/Step2RuntimeReviewHeader.tsx`
+- `components/NewSchedule/step2/Step2ReadinessPanel.tsx`
+- `components/NewSchedule/step2/Step2PlanningReviewPanel.tsx`
+- `components/NewSchedule/step2/Step2TravelViewsPanel.tsx`
+- `components/NewSchedule/step2/Step2ApprovedRuntimeModelPanel.tsx`
+- `components/NewSchedule/step2/Step2ApprovalPanel.tsx`
 - `components/NewSchedule/step2/Step2ApprovalFooter.tsx`
 
 ### Wizard integration
@@ -646,9 +659,9 @@ This is the recommended implementation target, not a locked mandate.
 
 ---
 
-## 13. Migration Notes From the Current Shape
+## 13. Completed Migration Notes
 
-Current `ApprovedRuntimeModel` can inform the new design, but it should not be reused unchanged.
+The former `ApprovedRuntimeModel` informed the schema-v2 design but is no longer trusted as the persisted approval contract.
 
 Main reasons:
 
@@ -658,13 +671,13 @@ Main reasons:
 - it does not carry canonical planning-chain data strongly enough
 - Step 3 and Step 4 do not rely on it consistently
 
-The rebuild should migrate to `ApprovedRuntimeContract` as the real source of truth.
+The rebuild migrated downstream trust to `ApprovedRuntimeContract`. Restore normalization rejects legacy derived runtime artifacts unless a structurally valid schema-v2 contract exists.
 
 ---
 
-## 14. Contract Design Exit Criteria
+## 14. Original Contract Design Exit Criteria
 
-This contract design is ready for implementation only when all are accepted:
+These boxes preserve the pre-implementation review checklist. They are not the current delivery-status source; verify the implementation and focused tests instead:
 
 - [ ] the three-object model (`Input`, `ReviewResult`, `ApprovedRuntimeContract`) is accepted
 - [ ] fingerprint-based invalidation is accepted
@@ -678,5 +691,4 @@ This contract design is ready for implementation only when all are accepted:
 
 - `docs/new-schedule-step2/README.md`
 - `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
-- `docs/plans/2026-03-27-step2-rebuild-plan.md`
 - `docs/rules/LOCKED_LOGIC.md`

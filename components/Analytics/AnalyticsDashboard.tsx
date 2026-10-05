@@ -85,6 +85,10 @@ const RouteConceptPlannerWorkspace = lazyWithRetry(
     () => import('./RouteConceptPlannerWorkspace').then(module => ({ default: module.RouteConceptPlannerWorkspace })),
     'analytics-route-concept-planner-workspace'
 );
+const StreetDesignStudioWorkspace = lazyWithRetry(
+    () => import('./StreetDesignStudioWorkspace').then(module => ({ default: module.StreetDesignStudioWorkspace })),
+    'analytics-street-design-studio-workspace'
+);
 const NetworkConnectionsWorkspace = lazyWithRetry(
     () => import('./NetworkConnectionsWorkspace').then(module => ({ default: module.NetworkConnectionsWorkspace })),
     'analytics-network-connections-workspace'
@@ -184,6 +188,7 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'residential-growth': 'analyticsResidentialGrowth',
     'route-planner-2': 'analyticsRoutePlanner2',
     'route-concept-planner': 'analyticsRouteConceptPlanner',
+    'street-design-studio': 'analyticsStreetDesignStudio',
     'network-connections': 'analyticsNetworkConnections',
     'shuttle-planner': 'analyticsShuttlePlanner',
     'fare-programs': 'analyticsFarePrograms',
@@ -699,6 +704,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 <div className="min-h-0 flex-1 overflow-hidden">
                     <Suspense fallback={<AnalyticsPanelLoading label="Loading Camp Shuttle Planner..." />}>
                         <RoutePlanner2Workspace
+                            key={`${team.id}:${user?.uid ?? 'signed-out'}`}
                             onBack={() => setView('dashboard')}
                             userId={user?.uid ?? null}
                             teamId={team.id}
@@ -726,6 +732,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                 </div>
             </div>
         );
+    }
+
+    if (view === 'street-design-studio') {
+        return <div className="h-full min-h-0 overflow-hidden"><Suspense fallback={<AnalyticsPanelLoading label="Loading Street Design Studio..." />}><StreetDesignStudioWorkspace onBack={() => setView('dashboard')} /></Suspense></div>;
     }
 
     if (view === 'network-connections') {
@@ -943,6 +953,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                             underConstruction={isFeatureUnderConstruction('analyticsRouteConceptPlanner')}
                             onClick={() => setView('route-concept-planner')}
                         />
+                    )}
+                    {canAccess('analyticsStreetDesignStudio') && (
+                        <AnalyticsCard color="teal" icon={<Map size={20} />} title="Street Design Studio" description="Develop and compare dimensioned street concepts in a device-local draft." hasData={false} underConstruction onClick={() => setView('street-design-studio')} />
                     )}
                 </div>
             </div>

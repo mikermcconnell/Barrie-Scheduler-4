@@ -831,7 +831,7 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                     {filtered.map(d => (
                         <p key={d.date}>
                             {d.date}: {d.dataQuality.totalRecords.toLocaleString()} records,
-                            {' '}{d.dataQuality.inBetweenFiltered.toLocaleString()} in-between filtered,
+                            {' '}{d.dataQuality.inBetweenFiltered.toLocaleString()} in-between excluded from timing/load,
                             {' '}{d.dataQuality.missingAVL.toLocaleString()} missing AVL,
                             {' '}OTP eligible: {d.system.otp.total.toLocaleString()} ({d.system.otp.onTime} on-time, {d.system.otp.early} early, {d.system.otp.late} late = {d.system.otp.onTimePercent.toFixed(1)}%)
                         </p>

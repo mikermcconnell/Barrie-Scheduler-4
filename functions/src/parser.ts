@@ -3,6 +3,48 @@
 
 import { STREETSRecord, STREETS_REQUIRED_COLUMNS } from './types';
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const EXCEL_EPOCH_UTC_MS = Date.UTC(1899, 11, 30);
+
+function buildISODate(year: number, month: number, day: number): string | null {
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    year < 1900
+    || year > 2200
+    || candidate.getUTCFullYear() !== year
+    || candidate.getUTCMonth() !== month - 1
+    || candidate.getUTCDate() !== day
+  ) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function normalizeToISODate(input: unknown): string | null {
+  const raw = String(input ?? '').trim();
+  if (!raw) return null;
+
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const wholeDays = Math.floor(Number(raw));
+    if (wholeDays > 0 && wholeDays <= 200000) {
+      const date = new Date(EXCEL_EPOCH_UTC_MS + wholeDays * MS_PER_DAY);
+      return buildISODate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+    }
+  }
+
+  let match = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (match) return buildISODate(Number(match[1]), Number(match[2]), Number(match[3]));
+
+  match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (match) {
+    let year = Number(match[3]);
+    if (year < 100) year += 2000;
+    return buildISODate(year, Number(match[1]), Number(match[2]));
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return buildISODate(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, parsed.getUTCDate());
+}
+
 // Column mapping kept for reference — parsing uses direct column name lookup
 // const COLUMN_MAP is defined in the client-side parser for Excel support
 
@@ -53,7 +95,7 @@ function validateSchema(headers: string[]): {
 
 function parseRow(row: Record<string, unknown>): STREETSRecord | null {
   try {
-    const date = toStringRequired(row['Date']);
+    const date = normalizeToISODate(row['Date']) ?? toStringRequired(row['Date']);
     const day = toStringRequired(row['Day']) || 'WEEKDAY';
     if (!date) return null;
 

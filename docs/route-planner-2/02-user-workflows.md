@@ -83,6 +83,8 @@ When a preserved segment is appended after a one-way route's current end termina
 
 Segment-transfer edits live in the local project until the planner saves. Saving persists the resulting route concepts through the team-scoped Route Planner 2 project service.
 
+While a signed-in planner works, the latest unsaved project is also kept as a team-and-user-scoped recovery copy in that browser's device storage. Opening Camp Shuttle Planner restores that copy before new autosaves begin. Changing the active team or signed-in user resets the workspace before the new scope is shown or autosaved, then restores only that scope's recovery copy. A successful team save removes the recovery copy so an older device snapshot cannot override newer Firestore work, and abandoned recovery copies expire after 30 days. This recovery copy protects unsaved work across refreshes and stale production deployments; it does not replace the explicit team save or make the project available on another device.
+
 Preferred route should be project-level state. Do not create competing “preferred” flags on multiple routes.
 
 ## Stop-Aware Authoring Workflow
@@ -176,6 +178,7 @@ markers, and route road-name labels derived from Mapbox direction steps when
 available. The full-route overview page should keep the numbered stops but hide
 stop text labels so the route remains readable; close-up detail pages should
 keep the stop/address labels and imported camper counts.
+PDF code must be loaded with the Camp Shuttle Planner workspace rather than deferred until the export click. This prevents an already-open planner from requesting a removed hashed asset after a production deployment. Export failures use a dedicated error message and must not change or obscure team-save status.
 For very large routes, export labels are capped and chosen by visible bounds/importance so map capture stays readable and does not render hundreds of HTML overlays.
 
 Implementation gotcha: keep this export screenshot-first for the map itself.

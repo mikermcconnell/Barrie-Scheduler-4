@@ -1,3 +1,4 @@
+import { jsPDF } from 'jspdf';
 import { buildRoutePlanner2StopSegmentPaths, buildRoutePlanner2StopVisitSequence } from './routePlanner2Segments';
 import { drawRoutePlanner2MapPdfPage } from './routePlanner2MapExport';
 import type { RoutePlanner2MapBookPage, RoutePlanner2MapExportImage, RoutePlanner2MapExportSummaryItem } from './routePlanner2MapExport';
@@ -731,7 +732,6 @@ export async function exportRoutePlanner2OperatorDirectionsPdf(
     scenario: RoutePlanner2Scenario,
     options: ExportOptions,
 ): Promise<void> {
-    const { jsPDF } = await import('jspdf');
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }) as unknown as JsPdfInstance;
     const plan = await buildRoutePlanner2OperatorDirectionPlan(scenario, options);
     const pageWidth = doc.internal.pageSize.getWidth();

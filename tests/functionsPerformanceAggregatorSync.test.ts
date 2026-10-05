@@ -63,7 +63,7 @@ describe('functions performance aggregation stays aligned with app runtime logic
 
   it('keeps the performance schema version constant in sync', () => {
     expect(BACKEND_SCHEMA_VERSION).toBe(FRONTEND_SCHEMA_VERSION);
-    expect(BACKEND_SCHEMA_VERSION).toBe(14);
+    expect(BACKEND_SCHEMA_VERSION).toBe(15);
   });
 
   it('keeps missing APC source handling aligned and excludes it from load', () => {
@@ -154,6 +154,36 @@ describe('functions performance aggregation stays aligned with app runtime logic
       expect.objectContaining({ tripId: 'same-a', capacity: 70 }),
       expect.objectContaining({ tripId: 'same-b', capacity: 40 }),
     ]));
+  });
+
+  it('keeps Excel decimal times aligned and assigns the correct hour', () => {
+    const records = [
+      makeRecord({
+        routeStopIndex: 0,
+        arrivalTime: '0.3333333333333333',
+        stopTime: '0.3333333333333333',
+        observedArrivalTime: '0.33402777777777776',
+        observedDepartureTime: '0.33402777777777776',
+        terminalDepartureTime: '0.3333333333333333',
+      }),
+      makeRecord({
+        routeStopIndex: 1,
+        stopId: 'stop-b',
+        stopName: 'Stop B',
+        arrivalTime: '0.3402777777777778',
+        stopTime: '0.3402777777777778',
+        observedArrivalTime: '0.34097222222222223',
+        observedDepartureTime: '0.34097222222222223',
+        terminalDepartureTime: '0.3333333333333333',
+      }),
+    ];
+
+    const frontend = aggregateFrontend(structuredClone(records))[0];
+    const backend = aggregateBackend(structuredClone(records) as any)[0];
+
+    expect(backend).toEqual(frontend);
+    expect(backend.byHour).toEqual([expect.objectContaining({ hour: 8 })]);
+    expect(backend.system.otp.total).toBe(1);
   });
 
   it('uses downstream departure for non-terminal timepoint segments and downstream arrival at the terminal', () => {
@@ -606,7 +636,7 @@ describe('functions performance aggregation stays aligned with app runtime logic
     expect(backend[0].byRouteHour?.find(row => row.routeId === '7' && row.hour === 7)?.otp?.late).toBe(1);
   });
 
-  it('keeps midnight OTP and in-between filtering aligned', () => {
+  it('keeps midnight OTP and in-between passenger inclusion aligned', () => {
     const records = [
       makeRecord({
         tripId: 'overnight-trip', routeStopIndex: 0, stopId: 'night-start',
@@ -630,7 +660,7 @@ describe('functions performance aggregation stays aligned with app runtime logic
     expect(backend[0].system).toEqual(frontend[0].system);
     expect(backend[0].system.otp).toMatchObject({ total: 1, onTime: 1, early: 0, late: 0 });
     expect(backend[0].system.otp.avgDeviationSeconds).toBe(240);
-    expect(backend[0].system.totalRidership).toBe(3);
+    expect(backend[0].system.totalRidership).toBe(102);
     expect(backend[0].dataQuality).toEqual(frontend[0].dataQuality);
     expect(backend[0].dataQuality.inBetweenFiltered).toBe(1);
   });

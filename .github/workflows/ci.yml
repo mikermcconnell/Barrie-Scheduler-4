@@ -28,7 +28,7 @@ jobs:
 
       - name: Ensure Env Files Are Not Tracked
         run: |
-          tracked_env="$(git ls-files | grep -E '(^|/)\.env($|\\.)' || true)"
+          tracked_env="$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -Ev '(^|/)\.env\.example$' || true)"
           if [ -n "$tracked_env" ]; then
             echo "Tracked environment files detected:"
             echo "$tracked_env"
@@ -44,9 +44,60 @@ jobs:
       - name: Install Functions Dependencies for Shared Tests
         run: npm ci --prefix functions
 
-      - name: Lint (Non-Blocking)
-        continue-on-error: true
-        run: npm run lint
+      - name: Lint Error Ratchet
+        shell: bash
+        env:
+          LINT_ERROR_BASELINE: '41'
+          LINT_WARNING_BASELINE: '247'
+        run: |
+          report="$RUNNER_TEMP/eslint-report.json"
+          npx --no-install eslint . --format json > "$report" || true
+          REPORT_PATH="$report" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const results = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, 'utf8'));
+          const errors = results.reduce((total, result) => total + result.errorCount, 0);
+          const warnings = results.reduce((total, result) => total + result.warningCount, 0);
+          const errorBaseline = Number(process.env.LINT_ERROR_BASELINE);
+          const warningBaseline = Number(process.env.LINT_WARNING_BASELINE);
+
+          console.log(`ESLint found ${errors} errors and ${warnings} warnings; baselines are ${errorBaseline} errors and ${warningBaseline} warnings.`);
+          if (!Number.isInteger(errorBaseline) || !Number.isInteger(warningBaseline)
+              || errors > errorBaseline || warnings > warningBaseline) {
+            console.error(`ESLint increased above the accepted baseline (${errorBaseline} errors, ${warningBaseline} warnings).`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Production Dependency Audit Ratchet
+        shell: bash
+        env:
+          AUDIT_BASELINE_LOW: '0'
+          AUDIT_BASELINE_MODERATE: '2'
+          AUDIT_BASELINE_HIGH: '0'
+          AUDIT_BASELINE_CRITICAL: '0'
+        run: |
+          report="$RUNNER_TEMP/npm-audit-root.json"
+          npm audit --omit=dev --json > "$report" || true
+          REPORT_PATH="$report" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, 'utf8'));
+          const counts = report.metadata?.vulnerabilities;
+          if (!counts) throw new Error('npm audit did not return vulnerability totals.');
+
+          const severities = ['low', 'moderate', 'high', 'critical'];
+          const increases = severities.filter((severity) => {
+            const key = `AUDIT_BASELINE_${severity.toUpperCase()}`;
+            return Number(counts[severity] ?? 0) > Number(process.env[key]);
+          });
+
+          console.log(`Production audit: ${severities.map((severity) => `${severity}=${counts[severity] ?? 0}`).join(', ')}.`);
+          if (increases.length > 0) {
+            console.error(`Production vulnerabilities increased above the accepted baseline for: ${increases.join(', ')}.`);
+            process.exit(1);
+          }
+          NODE
 
       - name: Type Check
         run: npm run typecheck
@@ -58,6 +109,33 @@ jobs:
         run: npm run build
         env:
           VITE_DEMO_MODE: '1'
+          VITE_DEV_AUTH_AUTO_LOGIN: '0'
+
+      - name: Install Chromium for Browser Smoke
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser Smoke (Public Access)
+        run: node scripts/browserSmoke.mjs --public
+
+      - name: Browser Smoke (Authenticated Dev Access When Configured)
+        shell: bash
+        env:
+          VITE_DEMO_MODE: '1'
+          VITE_DEV_AUTH_AUTO_LOGIN: '0'
+          VITE_DEV_AUTH_EMAIL: ${{ secrets.VITE_DEV_AUTH_EMAIL }}
+          VITE_DEV_AUTH_PASSWORD: ${{ secrets.VITE_DEV_AUTH_PASSWORD }}
+          VITE_DEV_AUTH_TEAM_INVITE_CODE: ${{ secrets.VITE_DEV_AUTH_TEAM_INVITE_CODE }}
+        run: |
+          if [[ -z "$VITE_DEV_AUTH_EMAIL" && -z "$VITE_DEV_AUTH_PASSWORD" ]]; then
+            echo "Authenticated browser smoke skipped: VITE_DEV_AUTH_EMAIL and VITE_DEV_AUTH_PASSWORD are not configured."
+            exit 0
+          fi
+          if [[ -z "$VITE_DEV_AUTH_EMAIL" || -z "$VITE_DEV_AUTH_PASSWORD" ]]; then
+            echo "Authenticated browser smoke requires both VITE_DEV_AUTH_EMAIL and VITE_DEV_AUTH_PASSWORD."
+            exit 1
+          fi
+          npm run build
+          node scripts/browserSmoke.mjs --authenticated
 
   functions:
     runs-on: ubuntu-latest
@@ -77,6 +155,36 @@ jobs:
 
       - name: Install Dependencies
         run: npm ci
+
+      - name: Production Dependency Audit Ratchet
+        shell: bash
+        env:
+          AUDIT_BASELINE_LOW: '0'
+          AUDIT_BASELINE_MODERATE: '9'
+          AUDIT_BASELINE_HIGH: '0'
+          AUDIT_BASELINE_CRITICAL: '0'
+        run: |
+          report="$RUNNER_TEMP/npm-audit-functions.json"
+          npm audit --omit=dev --json > "$report" || true
+          REPORT_PATH="$report" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, 'utf8'));
+          const counts = report.metadata?.vulnerabilities;
+          if (!counts) throw new Error('npm audit did not return vulnerability totals.');
+
+          const severities = ['low', 'moderate', 'high', 'critical'];
+          const increases = severities.filter((severity) => {
+            const key = `AUDIT_BASELINE_${severity.toUpperCase()}`;
+            return Number(counts[severity] ?? 0) > Number(process.env[key]);
+          });
+
+          console.log(`Production audit: ${severities.map((severity) => `${severity}=${counts[severity] ?? 0}`).join(', ')}.`);
+          if (increases.length > 0) {
+            console.error(`Production vulnerabilities increased above the accepted baseline for: ${increases.join(', ')}.`);
+            process.exit(1);
+          }
+          NODE
 
       - name: Build
         run: npm run build

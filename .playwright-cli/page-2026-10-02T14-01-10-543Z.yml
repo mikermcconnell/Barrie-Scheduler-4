@@ -1,0 +1,199 @@
+- generic [ref=f3e2]:
+  - banner [ref=f3e3]:
+    - generic [ref=f3e4]:
+      - strong [ref=f3e5]: DESIGN REVIEW
+      - text: 03 / 03 · Rider journeys
+    - navigation "Compare designs" [ref=f3e6]:
+      - link "1. Summary" [ref=f3e7] [cursor=pointer]:
+        - /url: 01-executive.html
+      - link "2. Locations" [ref=f3e8] [cursor=pointer]:
+        - /url: 02-locations.html
+      - link "3. Journeys" [ref=f3e9] [cursor=pointer]:
+        - /url: 03-journeys.html
+  - main [ref=f3e10]:
+    - generic [ref=f3e11]:
+      - heading "Master Schedule" [level=1] [ref=f3e12]
+      - paragraph [ref=f3e13]: Source of truth for all route schedules
+    - navigation "Master Schedule preview" [ref=f3e14]:
+      - button "Overview" [disabled] [ref=f3e15]
+      - button "Platforms" [disabled] [ref=f3e16]
+      - generic [ref=f3e17]: Regional Transit Connections
+      - button "400" [disabled] [ref=f3e18]
+      - button "100" [disabled] [ref=f3e19]
+      - button "101" [disabled] [ref=f3e20]
+      - button "2" [disabled] [ref=f3e21]
+      - button "7" [disabled] [ref=f3e22]
+      - button "8A" [disabled] [ref=f3e23]
+      - button "8B" [disabled] [ref=f3e24]
+      - button "10" [disabled] [ref=f3e25]
+      - button "11" [disabled] [ref=f3e26]
+      - button "12" [disabled] [ref=f3e27]
+    - generic [ref=f3e28]:
+      - generic [ref=f3e29]:
+        - generic [ref=f3e30]: The rider experience
+        - heading "Regional transit connections" [level=2] [ref=f3e31]
+        - paragraph [ref=f3e32]: See exactly how a rider transfers between local and regional service.
+      - button "Print summary" [ref=f3e33] [cursor=pointer]
+    - generic [ref=f3e34]:
+      - strong [ref=f3e35]: Illustrative data only
+      - generic [ref=f3e36]: Not an analysis of your current master schedule or provider feeds. Times, routes, stop pairings and results are fictional.
+    - generic [ref=f3e37]:
+      - generic [ref=f3e38]:
+        - group "Travel direction" [ref=f3e39]:
+          - button "Both directions" [pressed] [ref=f3e40] [cursor=pointer]
+          - button "To regional" [ref=f3e41] [cursor=pointer]
+          - button "From regional" [ref=f3e42] [cursor=pointer]
+        - generic [ref=f3e43]:
+          - text: Location
+          - combobox "Location" [ref=f3e44]:
+            - option "All locations" [selected]
+            - option "Allandale Waterfront"
+            - option "Barrie South"
+            - option "Downtown Terminal"
+      - generic [ref=f3e45]:
+        - strong [ref=f3e46]: Monday, October 5, 2026 · Weekday
+        - text: Example master snapshot × example static GTFS
+    - generic [ref=f3e47]:
+      - generic [ref=f3e48]:
+        - generic [ref=f3e49]:
+          - strong [ref=f3e50]: How does the transfer work for a rider?
+          - paragraph [ref=f3e51]: Select a connection to see arrival, walking time and the next departure.
+        - generic [ref=f3e52]: 12 sample connections · both services shown
+      - generic [ref=f3e53]:
+        - region "Sample connections" [ref=f3e54]:
+          - generic [ref=f3e55]: Regional trip opportunities
+          - button "Allandale Waterfront 6:30 AM To GO · Route 8A Comfortable 14 min" [pressed] [ref=f3e56] [cursor=pointer]:
+            - generic [ref=f3e57]:
+              - strong [ref=f3e58]: Allandale Waterfront
+              - generic [ref=f3e59]: 6:30 AM
+            - paragraph [ref=f3e60]: To GO · Route 8A
+            - generic [ref=f3e61]:
+              - generic [ref=f3e62]: Comfortable
+              - generic [ref=f3e63]: 14 min
+          - button "Allandale Waterfront 7:30 AM To GO · Route 8A Tight 2 min" [ref=f3e64] [cursor=pointer]:
+            - generic [ref=f3e65]:
+              - strong [ref=f3e66]: Allandale Waterfront
+              - generic [ref=f3e67]: 7:30 AM
+            - paragraph [ref=f3e68]: To GO · Route 8A
+            - generic [ref=f3e69]:
+              - generic [ref=f3e70]: Tight
+              - generic [ref=f3e71]: 2 min
+          - button "Allandale Waterfront 5:42 PM From GO · Route 8B Comfortable 9 min" [ref=f3e72] [cursor=pointer]:
+            - generic [ref=f3e73]:
+              - strong [ref=f3e74]: Allandale Waterfront
+              - generic [ref=f3e75]: 5:42 PM
+            - paragraph [ref=f3e76]: From GO · Route 8B
+            - generic [ref=f3e77]:
+              - generic [ref=f3e78]: Comfortable
+              - generic [ref=f3e79]: 9 min
+          - button "Allandale Waterfront 6:42 PM From GO · Route 8B Comfortable 9 min" [ref=f3e80] [cursor=pointer]:
+            - generic [ref=f3e81]:
+              - strong [ref=f3e82]: Allandale Waterfront
+              - generic [ref=f3e83]: 6:42 PM
+            - paragraph [ref=f3e84]: From GO · Route 8B
+            - generic [ref=f3e85]:
+              - generic [ref=f3e86]: Comfortable
+              - generic [ref=f3e87]: 9 min
+          - button "Barrie South 6:30 AM To GO · Route 100 Needs review Too late" [ref=f3e88] [cursor=pointer]:
+            - generic [ref=f3e89]:
+              - strong [ref=f3e90]: Barrie South
+              - generic [ref=f3e91]: 6:30 AM
+            - paragraph [ref=f3e92]: To GO · Route 100
+            - generic [ref=f3e93]:
+              - generic [ref=f3e94]: Needs review
+              - generic [ref=f3e95]: Too late
+          - button "Barrie South 7:30 AM To GO · Route 100 Comfortable 14 min" [ref=f3e96] [cursor=pointer]:
+            - generic [ref=f3e97]:
+              - strong [ref=f3e98]: Barrie South
+              - generic [ref=f3e99]: 7:30 AM
+            - paragraph [ref=f3e100]: To GO · Route 100
+            - generic [ref=f3e101]:
+              - generic [ref=f3e102]: Comfortable
+              - generic [ref=f3e103]: 14 min
+          - button "Barrie South 5:24 PM From GO · Route 100 Needs review 32 min" [ref=f3e104] [cursor=pointer]:
+            - generic [ref=f3e105]:
+              - strong [ref=f3e106]: Barrie South
+              - generic [ref=f3e107]: 5:24 PM
+            - paragraph [ref=f3e108]: From GO · Route 100
+            - generic [ref=f3e109]:
+              - generic [ref=f3e110]: Needs review
+              - generic [ref=f3e111]: 32 min
+          - button "Barrie South 6:24 PM From GO · Route 100 Comfortable 12 min" [ref=f3e112] [cursor=pointer]:
+            - generic [ref=f3e113]:
+              - strong [ref=f3e114]: Barrie South
+              - generic [ref=f3e115]: 6:24 PM
+            - paragraph [ref=f3e116]: From GO · Route 100
+            - generic [ref=f3e117]:
+              - generic [ref=f3e118]: Comfortable
+              - generic [ref=f3e119]: 12 min
+          - button "Downtown Terminal 8:20 AM To LINX · Route 2 Comfortable 12 min" [ref=f3e120] [cursor=pointer]:
+            - generic [ref=f3e121]:
+              - strong [ref=f3e122]: Downtown Terminal
+              - generic [ref=f3e123]: 8:20 AM
+            - paragraph [ref=f3e124]: To LINX · Route 2
+            - generic [ref=f3e125]:
+              - generic [ref=f3e126]: Comfortable
+              - generic [ref=f3e127]: 12 min
+          - button "Downtown Terminal 9:20 AM To LINX · Route 7 Tight 2 min" [ref=f3e128] [cursor=pointer]:
+            - generic [ref=f3e129]:
+              - strong [ref=f3e130]: Downtown Terminal
+              - generic [ref=f3e131]: 9:20 AM
+            - paragraph [ref=f3e132]: To LINX · Route 7
+            - generic [ref=f3e133]:
+              - generic [ref=f3e134]: Tight
+              - generic [ref=f3e135]: 2 min
+          - button "Downtown Terminal 4:45 PM From LINX · Route 2 Comfortable 12 min" [ref=f3e136] [cursor=pointer]:
+            - generic [ref=f3e137]:
+              - strong [ref=f3e138]: Downtown Terminal
+              - generic [ref=f3e139]: 4:45 PM
+            - paragraph [ref=f3e140]: From LINX · Route 2
+            - generic [ref=f3e141]:
+              - generic [ref=f3e142]: Comfortable
+              - generic [ref=f3e143]: 12 min
+          - button "Downtown Terminal 6:45 PM From LINX · Route 7 Not assessed Unknown" [ref=f3e144] [cursor=pointer]:
+            - generic [ref=f3e145]:
+              - strong [ref=f3e146]: Downtown Terminal
+              - generic [ref=f3e147]: 6:45 PM
+            - paragraph [ref=f3e148]: From LINX · Route 7
+            - generic [ref=f3e149]:
+              - generic [ref=f3e150]: Not assessed
+              - generic [ref=f3e151]: Unknown
+        - generic [ref=f3e152]:
+          - generic [ref=f3e153]:
+            - generic [ref=f3e154]: To regional service · Allandale Waterfront
+            - heading "Route 8A → GO train" [level=3] [ref=f3e155]
+            - paragraph [ref=f3e156]: Train to Union · Monday, October 5 · GO Transit · Barrie line
+          - generic [ref=f3e157]:
+            - generic [ref=f3e158]:
+              - text: A rider arrives on Route 8A at
+              - strong [ref=f3e159]: 6:12 AM
+              - text: ", walks 4 minutes, then aims to catch the"
+              - strong [ref=f3e160]: 6:30 AM
+              - text: regional departure.
+            - generic [ref=f3e161]:
+              - generic [ref=f3e162]:
+                - time [ref=f3e163]: 6:12 AM
+                - generic [ref=f3e165]:
+                  - strong [ref=f3e166]: Arrive on local Route 8A
+                  - paragraph [ref=f3e167]: Allandale Waterfront GO · sample arrival time
+              - generic [ref=f3e168]:
+                - time [ref=f3e169]: +4 min
+                - generic [ref=f3e171]:
+                  - strong [ref=f3e172]: Walk to the departure point
+                  - paragraph [ref=f3e173]: Ready to board at 6:16 AM · assumed walk, not a verified path
+              - generic [ref=f3e174]:
+                - time [ref=f3e175]: 6:30 AM
+                - generic [ref=f3e177]:
+                  - strong [ref=f3e178]: Regional service departs
+                  - paragraph [ref=f3e179]: Train to Union
+            - generic [ref=f3e180]:
+              - generic [ref=f3e181]:
+                - strong [ref=f3e182]: 14 minutes remaining after walking
+                - generic [ref=f3e183]: Comfortable
+              - paragraph [ref=f3e184]: A reasonable scheduled transfer margin. Keep this connection when reviewing future schedule changes.
+            - paragraph [ref=f3e185]: "Connection math: regional departure − local arrival − 4-minute walk = 14 minutes.Sample stop pairing only. Static timetables do not guarantee an on-time or accessible transfer."
+    - group [ref=f3e186]:
+      - generic "Sources & assessment rules · sample assumptions" [ref=f3e187] [cursor=pointer]
+    - generic [ref=f3e188]:
+      - generic [ref=f3e189]: Read-only planning concept · No schedule changes · No live feed connection
+      - generic [ref=f3e190]: Rider journeys · Choose the layout before implementation

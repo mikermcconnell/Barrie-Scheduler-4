@@ -1,0 +1,154 @@
+- generic [ref=f2e2]:
+  - banner [ref=f2e3]:
+    - generic [ref=f2e4]:
+      - strong [ref=f2e5]: DESIGN REVIEW
+      - text: 02 / 03 · Location scorecards
+    - navigation "Compare designs" [ref=f2e6]:
+      - link "1. Summary" [ref=f2e7] [cursor=pointer]:
+        - /url: 01-executive.html
+      - link "2. Locations" [ref=f2e8] [cursor=pointer]:
+        - /url: 02-locations.html
+      - link "3. Journeys" [ref=f2e9] [cursor=pointer]:
+        - /url: 03-journeys.html
+  - main [ref=f2e10]:
+    - generic [ref=f2e11]:
+      - heading "Master Schedule" [level=1] [ref=f2e12]
+      - paragraph [ref=f2e13]: Source of truth for all route schedules
+    - navigation "Master Schedule preview" [ref=f2e14]:
+      - button "Overview" [disabled] [ref=f2e15]
+      - button "Platforms" [disabled] [ref=f2e16]
+      - generic [ref=f2e17]: Regional Transit Connections
+      - button "400" [disabled] [ref=f2e18]
+      - button "100" [disabled] [ref=f2e19]
+      - button "101" [disabled] [ref=f2e20]
+      - button "2" [disabled] [ref=f2e21]
+      - button "7" [disabled] [ref=f2e22]
+      - button "8A" [disabled] [ref=f2e23]
+      - button "8B" [disabled] [ref=f2e24]
+      - button "10" [disabled] [ref=f2e25]
+      - button "11" [disabled] [ref=f2e26]
+      - button "12" [disabled] [ref=f2e27]
+    - generic [ref=f2e28]:
+      - generic [ref=f2e29]:
+        - generic [ref=f2e30]: Key transfer locations
+        - heading "Regional transit connections" [level=2] [ref=f2e31]
+        - paragraph [ref=f2e32]: See the connection picture at each key location.
+      - button "Print summary" [ref=f2e33] [cursor=pointer]
+    - generic [ref=f2e34]:
+      - strong [ref=f2e35]: Illustrative data only
+      - generic [ref=f2e36]: Not an analysis of your current master schedule or provider feeds. Times, routes, stop pairings and results are fictional.
+    - generic [ref=f2e37]:
+      - generic [ref=f2e38]:
+        - group "Travel direction" [ref=f2e39]:
+          - button "Both directions" [pressed] [ref=f2e40] [cursor=pointer]
+          - button "To regional" [ref=f2e41] [cursor=pointer]
+          - button "From regional" [ref=f2e42] [cursor=pointer]
+        - generic [ref=f2e43]:
+          - text: Location
+          - combobox "Location" [ref=f2e44]:
+            - option "All locations" [selected]
+            - option "Allandale Waterfront"
+            - option "Barrie South"
+            - option "Downtown Terminal"
+      - generic [ref=f2e45]:
+        - strong [ref=f2e46]: Monday, October 5, 2026 · Weekday
+        - text: Example master snapshot × example static GTFS
+    - generic [ref=f2e47]:
+      - generic [ref=f2e48]:
+        - generic [ref=f2e49]:
+          - strong [ref=f2e50]: A clear picture, hub by hub.
+          - paragraph [ref=f2e51]: 12 sampled regional trips · 3 locations in view
+        - generic [ref=f2e52]:
+          - generic [ref=f2e53]:
+            - generic [ref=f2e54]: "7"
+            - text: Comfortable
+          - generic [ref=f2e55]:
+            - generic [ref=f2e56]: "2"
+            - text: Tight
+          - generic [ref=f2e57]:
+            - generic [ref=f2e58]: "2"
+            - text: Review
+          - generic [ref=f2e59]:
+            - generic [ref=f2e60]: "1"
+            - text: Unknown
+      - generic [ref=f2e61]:
+        - generic [ref=f2e62]:
+          - generic [ref=f2e63]:
+            - generic [aria-hidden] [ref=f2e64]: ▤
+            - heading "Allandale Waterfront GO" [level=3] [ref=f2e65]
+            - paragraph [ref=f2e66]: GO Transit · Barrie line
+            - strong [ref=f2e67]: 3 of 4 sample trips comfortable
+            - generic [ref=f2e71]:
+              - generic [ref=f2e72]: 1 tight
+              - generic [ref=f2e73]: 0 review
+              - generic [ref=f2e74]: 0 not assessed
+          - generic [ref=f2e75]:
+            - generic [ref=f2e76]:
+              - generic [ref=f2e77]: To regional service
+              - strong [ref=f2e78]: 1 / 2 comfortable
+            - generic [ref=f2e79]:
+              - generic [ref=f2e80]: From regional service
+              - strong [ref=f2e81]: 2 / 2 comfortable
+            - generic [ref=f2e82]:
+              - generic [ref=f2e83]: Walking allowance
+              - strong [ref=f2e84]: 4 minutes
+            - generic [ref=f2e85]: Morning departures mostly connect well. One train leaves only 2 minutes after the platform walk.
+            - group [ref=f2e86]:
+              - generic "See 4 sample connections" [ref=f2e87] [cursor=pointer]
+        - generic [ref=f2e88]:
+          - generic [ref=f2e89]:
+            - generic [aria-hidden] [ref=f2e90]: ▤
+            - heading "Barrie South GO" [level=3] [ref=f2e91]
+            - paragraph [ref=f2e92]: GO Transit · Barrie line
+            - strong [ref=f2e93]: 2 of 4 sample trips comfortable
+            - generic [ref=f2e97]:
+              - generic [ref=f2e98]: 0 tight
+              - generic [ref=f2e99]: 2 review
+              - generic [ref=f2e100]: 0 not assessed
+          - generic [ref=f2e101]:
+            - generic [ref=f2e102]:
+              - generic [ref=f2e103]: To regional service
+              - strong [ref=f2e104]: 1 / 2 comfortable
+            - generic [ref=f2e105]:
+              - generic [ref=f2e106]: From regional service
+              - strong [ref=f2e107]: 1 / 2 comfortable
+            - generic [ref=f2e108]:
+              - generic [ref=f2e109]: Walking allowance
+              - strong [ref=f2e110]: 4 minutes
+            - generic [ref=f2e111]: Review the first morning connection and one 32-minute evening wait.
+            - group [ref=f2e112]:
+              - generic "See 4 sample connections" [ref=f2e113] [cursor=pointer]
+        - generic [ref=f2e114]:
+          - generic [ref=f2e115]:
+            - generic [aria-hidden] [ref=f2e116]: ⇄
+            - heading "Downtown Transit Terminal" [level=3] [ref=f2e117]
+            - paragraph [ref=f2e118]: Simcoe County LINX · example service
+            - strong [ref=f2e119]: 2 of 4 sample trips comfortable
+            - generic [ref=f2e124]:
+              - generic [ref=f2e125]: 1 tight
+              - generic [ref=f2e126]: 0 review
+              - generic [ref=f2e127]: 1 not assessed
+          - generic [ref=f2e128]:
+            - generic [ref=f2e129]:
+              - generic [ref=f2e130]: To regional service
+              - strong [ref=f2e131]: 1 / 2 comfortable
+            - generic [ref=f2e132]:
+              - generic [ref=f2e133]: From regional service
+              - strong [ref=f2e134]: 1 / 2 comfortable
+            - generic [ref=f2e135]:
+              - generic [ref=f2e136]: Walking allowance
+              - strong [ref=f2e137]: 3 minutes
+            - generic [ref=f2e138]: One tight transfer. One return trip cannot be assessed because its local departure is missing.
+            - group [ref=f2e139]:
+              - generic "See 4 sample connections" [ref=f2e140] [cursor=pointer]
+      - heading "Management takeaway" [level=3] [ref=f2e142]
+      - generic [ref=f2e143]:
+        - generic [aria-hidden] [ref=f2e144]: ↗
+        - generic [ref=f2e145]:
+          - heading "4 connections merit a planner’s review." [level=3] [ref=f2e146]
+          - paragraph [ref=f2e147]: "7 of 11 assessed trips have a comfortable transfer; 1 more cannot yet be assessed. Prioritize the first morning departure at Barrie South: the sample rider reaches the platform 3 minutes too late."
+    - group [ref=f2e148]:
+      - generic "Sources & assessment rules · sample assumptions" [ref=f2e149] [cursor=pointer]
+    - generic [ref=f2e150]:
+      - generic [ref=f2e151]: Read-only planning concept · No schedule changes · No live feed connection
+      - generic [ref=f2e152]: Location scorecards · Choose the layout before implementation

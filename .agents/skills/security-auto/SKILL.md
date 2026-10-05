@@ -9,9 +9,10 @@ This skill auto-activates when you modify security-sensitive code.
 
 ## Trigger Files/Patterns
 
-- `api/*.ts` - API endpoints
-- `firebase*.ts` - Authentication/database
-- `dataService.ts` - Data persistence
+- `api/*.ts` and `functions/src/*.ts` - API and Cloud Functions boundaries
+- `utils/firebase.ts`, `components/contexts/AuthContext.tsx` - Firebase initialization and authentication
+- `utils/services/*.ts` - Data persistence and access control
+- `firestore.rules`, `firestore.indexes.json`, `storage.rules` - deployed access and query contracts
 - Any file handling user input
 - Any file with `fetch`, `axios`, or HTTP calls
 
@@ -36,7 +37,8 @@ This skill auto-activates when you modify security-sensitive code.
 - [ ] Auth tokens not logged or exposed
 - [ ] Sensitive routes protected
 - [ ] Session handling secure
-- [ ] Firebase security rules reviewed if modified
+- [ ] Firebase rules, indexes, and Storage access reviewed for every affected read/write path
+- [ ] Team membership, role, workspace permission, and support-session boundaries enforced server-side or in rules
 
 ### Data Exposure
 
@@ -77,12 +79,26 @@ Optional, feature-specific client configuration includes `VITE_MAPBOX_TOKEN`. Us
 - API keys in source code
 - Credentials in comments
 
-## Firebase Security Rules
+## Firebase Security and Release Boundary
 
-If modifying Firestore access:
-1. Review `firestore.rules`
-2. Ensure rules match intended access patterns
-3. Test with Firebase emulator
+If work changes Firestore document shapes, collections, queries,
+authentication, roles, or write behavior:
+
+1. Review the owning service and `docs/SCHEMA.md`.
+2. Check `firestore.rules`, `firestore.indexes.json`, and `storage.rules` for
+   matching changes.
+3. Run focused application tests and the applicable emulator/rules tests.
+4. Before calling a Firebase-backed release complete, compare repository rules
+   with the rules deployed to the intended Firebase project. Emulator and local
+   success do not prove production access.
+5. Deploy rules only with explicit approval.
+6. After an approved deployment, verify the deployed rules and perform an
+   authenticated live write/read/read-back/cleanup check with the intended role
+   and scope when practical.
+
+If required rule changes remain undeployed, clearly report the release as
+incomplete and likely to produce permission errors. Keep credentials, tokens,
+user IDs, and team IDs out of logs and reports.
 
 ## Red Flags
 

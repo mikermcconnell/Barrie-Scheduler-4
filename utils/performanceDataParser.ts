@@ -47,6 +47,31 @@ const COLUMN_MAP: Record<string, keyof STREETSRecord> = {
   TerminalDepartureTime: 'terminalDepartureTime',
 };
 
+function escapeCSVValue(value: unknown): string {
+  if (value == null) return '';
+
+  // The server parser treats physical newlines as record boundaries. STREETS
+  // fields are single-line values, so normalize accidental workbook line
+  // breaks before quoting the canonical CSV value.
+  const text = String(value).replace(/\r\n|\r|\n/g, ' ');
+  if (!/[",]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Builds the canonical CSV payload used by the authenticated server importer.
+ * Excel rows are parsed first so dates and booleans retain the same normalized
+ * values shown in the browser preview.
+ */
+export function serializeSTREETSRecordsToCSV(records: STREETSRecord[]): string {
+  const columns = Object.entries(COLUMN_MAP) as Array<[string, keyof STREETSRecord]>;
+  const header = columns.map(([column]) => escapeCSVValue(column)).join(',');
+  const rows = records.map(record => (
+    columns.map(([, key]) => escapeCSVValue(record[key])).join(',')
+  ));
+  return [header, ...rows].join('\n');
+}
+
 function toBoolean(val: unknown): boolean {
   if (typeof val === 'boolean') return val;
   if (typeof val === 'number') return val !== 0;
@@ -226,7 +251,7 @@ export function generatePreview(
 
   const inBetween = records.filter(r => r.inBetween).length;
   if (inBetween > 0) {
-    warnings.push(`${inBetween} in-between records will be filtered during analysis`);
+    warnings.push(`${inBetween} in-between records: passenger counts included; excluded from timing and observed-load analysis`);
   }
 
   const detours = records.filter(r => r.isDetour).length;

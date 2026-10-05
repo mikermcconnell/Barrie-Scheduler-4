@@ -1,0 +1,39 @@
+- generic [ref=f18e2]:
+  - generic [ref=f18e3]: Browser verification · fixture bus masters / real public GO GTFS
+  - region "Regional Transit Connections" [ref=f18e5]:
+    - generic [ref=f18e6]:
+      - generic [ref=f18e7]:
+        - img "GO Transit" [ref=f18e16]
+        - heading "GO train connections" [level=2] [ref=f18e17]
+      - generic [ref=f18e18]:
+        - button "Full screen" [ref=f18e19] [cursor=pointer]
+        - button "Refresh" [disabled] [ref=f18e25]
+        - button "Print" [disabled] [ref=f18e31]
+    - generic [ref=f18e36]:
+      - group "GO station" [ref=f18e37]:
+        - button "Allandale Waterfront" [pressed] [ref=f18e38] [cursor=pointer]
+        - button "Barrie South" [ref=f18e39] [cursor=pointer]
+      - group "Service day filter" [ref=f18e40]:
+        - button "Weekday" [pressed] [ref=f18e41] [cursor=pointer]
+        - button "Saturday" [ref=f18e42] [cursor=pointer]
+        - button "Sunday" [ref=f18e43] [cursor=pointer]
+      - generic [ref=f18e44]:
+        - text: Date
+        - textbox "Service date" [ref=f18e45]: 2026-10-02
+      - group "Connection direction" [ref=f18e46]:
+        - button "Both directions" [pressed] [ref=f18e47] [cursor=pointer]
+        - button "To GO" [ref=f18e48] [cursor=pointer]
+        - button "From GO" [ref=f18e49] [cursor=pointer]
+    - generic "Scheduled gap legend" [ref=f18e50]:
+      - generic [ref=f18e51]: 6–15 min
+      - generic [ref=f18e53]: 1–5 min · tight
+      - generic [ref=f18e55]: 16–30 min
+      - generic [ref=f18e57]: No Connection
+      - generic [ref=f18e59]: Scheduled gaps · no walking/boarding allowance
+    - generic [ref=f18e60]:
+      - status [ref=f18e61]: Loading GO times…
+      - alert [ref=f18e62]:
+        - generic [ref=f18e65]: Route 7 not assessed. Check Sources & notes.
+        - button "Retry sources" [ref=f18e66] [cursor=pointer]
+    - group [ref=f18e67]:
+      - generic "▸ Sources & notes" [ref=f18e68] [cursor=pointer]

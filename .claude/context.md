@@ -7,24 +7,9 @@
 
 ---
 
-## Locked Logic (6 Rules)
+## Locked Logic (7 Rules)
 
-### 1. Dual AI Optimization Paths (`api/optimize.ts`, `functions/src/optimizePipelinePolicy.ts`)
-
-```
-Generate (`full`): fast single-generator path
-Refine with OPTIMIZE_MULTI_PHASE enabled and runtime support:
-  generator → critic → polisher
-Refine without that policy/runtime support: fast single-generator path
-```
-
-**Why:** Fresh generation stays fast. Explicit refinement can use the extended
-review pipeline where the deployment supports it. Do not assume every request
-runs a critic phase; AI output remains planner-controlled in either path.
-
----
-
-### 2. Segment Rounding (`scheduleGenerator.ts`)
+### 1. Segment Rounding (`utils/schedule/scheduleGenerator.ts`)
 
 ```typescript
 // CORRECT:
@@ -40,7 +25,7 @@ const total = Math.round(runtime1 + runtime2)
 
 ---
 
-### 3. Trip Pairing (`ScheduleEditor.tsx`)
+### 2. Trip Pairing (`components/ScheduleEditor.tsx`)
 
 ```
 Row 1: Trip N1 | Trip S1
@@ -53,7 +38,7 @@ Row 2: Trip N2 | Trip S2
 
 ---
 
-### 4. Cycle Time Calculation
+### 3. Cycle Time Calculation
 
 ```typescript
 const lastTrip = schedule[schedule.length - 1];
@@ -71,6 +56,57 @@ blindly add terminal recovery, and do not sum trip durations.
 
 **Why:** Cycle time is the occupied span from first departure through the final
 applicable recovery, counted exactly once.
+
+---
+
+### 4. Block Assignment for Merged Routes
+
+Routes 2A/2B, 7A/7B, and 12A/12B must chain by the actual non-negative gap
+between a trip end and the next trip start. Do not derive an expected start
+from recovery metadata that GTFS may not provide.
+
+---
+
+### 5. Time Parsing
+
+Fixed-route Excel values greater than `1.0` retain their whole-day offset so
+post-midnight trips sort after prior-evening service. For example, `1.02083`
+is approximately 1470 service-day minutes, not 30. Pure integer/date values
+without a time fraction are rejected. A time-of-day-only consumer may
+intentionally normalize only when its domain contract and focused tests require
+that representation.
+
+---
+
+### 6. Dual AI Optimization Paths (`api/optimize.ts`, `functions/src/optimizePipelinePolicy.ts`)
+
+```
+Generate (`full`): fast single-generator path
+Refine with OPTIMIZE_MULTI_PHASE enabled and runtime support:
+  generator → critic → polisher
+Refine without that policy/runtime support: fast single-generator path
+```
+
+Fresh generation stays fast. Explicit refinement can use the extended review
+pipeline where the deployment supports it. Do not assume every request runs a
+critic phase; AI output remains planner-controlled in either path.
+
+---
+
+### 7. Trusted Runtime Buckets
+
+New Schedule generation consumes only the current approved Step 2 runtime
+contract. Use the exact eligible approved half-hour bucket when available;
+otherwise use the nearest eligible bucket from the same direction/start
+orientation, measuring around the 24-hour clock and preferring the earlier
+bucket on a tie.
+
+Performance evidence is approved by paired-cycle start orientation and the
+selected bucket is reused for both legs. Uploaded CSV evidence remains keyed to
+each trip start. If the required orientation has no eligible bucket or the
+selected bucket lacks a canonical segment, throw `MissingApprovedRuntimeError`.
+Never cross orientations or substitute review-only evidence, raw segment data,
+another band, or a default runtime.
 
 ---
 
@@ -96,124 +132,56 @@ applicable recovery, counted exactly once.
 | Reorder trip pairing | Preserve N+S pairs in display |
 | Assume CSV headers exist | Validate format before parsing |
 | Hardcode column indices | Use dynamic stop-name detection |
-| Use first GTFS trip for stop list | Use canonical (most stops) trip |
-| Index-based stop time lookup | Name-based stop matching |
+| Use the first GTFS trip as the stop list | Merge adjacency from all patterns; let longer patterns establish edges first |
+| Index-based stop time lookup | Use occurrence-aware stop-name mapping |
 | Use `expectedStart` for merged routes | Use gap-based matching (`maxGap`) |
 | Check `timeTolerance` before `maxGap` | Check `maxGap` first when specified |
-| Reference old interline code | Interline was removed Feb 2026; reimplementation pending |
+| Reference old manual interline fields/functions | They remain removed; system-wide GTFS import separately preserves limited shared-`block_id` continuity |
 
 ---
 
-## 5. GTFS Import for Merged A/B Routes (`gtfsImportService.ts`)
+## GTFS Import for Merged A/B Routes (`utils/gtfs/gtfsImportService.ts`)
 
 Routes like 2A+2B, 7A+7B, 12A+12B share a terminus where the bus arrives on A and departs on B.
 
-### Stop Name Generation
+### Current Conversion Behavior
 
-```typescript
-// CORRECT: Use trip with MOST stops as canonical
-const canonicalTrip = trips.reduce((best, trip) =>
-    trip.stopTimes.length > best.stopTimes.length ? trip : best
-);
-
-// WRONG: Use first trip (may be partial, missing stops like Park Place)
-const stopNames = generateUniqueStopNames(trips[0].stopTimes);
-```
-
-**Why:** First trip may start mid-route; canonical trip ensures all stops captured.
-
-### Stop Time Assignment
-
-```typescript
-// CORRECT: Name-based matching
-const stopName = stopNameMap.get(st.stopName);
-if (stopName) stops[stopName] = formatTime(st.arrivalMinutes);
-
-// WRONG: Index-based lookup
-const stopName = uniqueStopNames[stIdx];  // Assumes all trips have same stops
-```
-
-**Why:** Trips may have different stop counts; index lookup assigns times to wrong columns.
-
-### Merged Route Detection
-
-```typescript
-// Detect shared terminus (e.g., Downtown Hub)
-const lastNorthStop = northStops[northStops.length - 1]?.toLowerCase();
-const firstSouthStop = southStops[0]?.toLowerCase();
-const isMergedRoute = lastNorthStop === firstSouthStop;
-```
+- `processTripsForRoute` parses GTFS times without collapsing values above 24
+  hours, maps direction from GTFS/config/headsign with terminus inference as a
+  fallback, and optionally keeps only explicit timepoints when at least two
+  remain.
+- `convertToMasterSchedule` merges adjacency from all trip patterns in a
+  direction so partial trips contribute to the complete stop chain. Longer
+  patterns establish adjacency first; it does not use the first trip as a
+  canonical stop list.
+- Repeated stop names receive occurrence suffixes such as `(2)`. Trip times are
+  assigned through occurrence-aware name maps so loop visits and partial trips
+  do not shift into the wrong columns.
+- Arrival values populate schedule stop cells; positive
+  departure-minus-arrival values populate recovery. The terminal retains a
+  recovery entry, including zero, so the editor can display and edit it.
 
 ### Block Assignment - Gap-Based Chaining (LOCKED)
 
 **File:** `utils/blocks/blockAssignmentCore.ts` (`findNextTrip`)
 
-Blocks must chain trips by **time continuity**, not by index. Each block represents a single bus operating throughout the day.
+`applyBlockAssignment` prefers GTFS `block_id` continuity when at least 70% of
+trips have usable block IDs. It renumbers those physical blocks into stable
+route-prefixed display IDs and calculates only reasonable positive recovery
+gaps. When GTFS block coverage is insufficient, it delegates to
+`utils/blocks/blockAssignmentCore.ts`: merged A/B routes use the gap-based
+`merged` preset; other routes use the standard GTFS matching preset.
 
-```typescript
-// CORRECT: Gap-based matching for merged routes
-// Uses direct time gap instead of unreliable recoveryAtEnd
-if (config.maxGap !== undefined) {
-    const gap = candidate.startTime - current.endTime;
-    if (gap >= 0 && gap <= config.maxGap) {
-        // Valid chain: bus waits `gap` minutes, then starts next trip
-    }
-}
+Never restore index-based chains or derive merged-route continuity from absent
+recovery values.
 
-// WRONG: ExpectedStart-based matching with missing recovery
-const recoveryAtEnd = current.recoveryTimes?.[lastStopName] ?? 0;  // Often 0!
-const expectedStart = current.endTime + recoveryAtEnd;  // Wrong if recovery missing
-const timeDiff = Math.abs(candidate.startTime - expectedStart);
-if (timeDiff > timeTolerance) continue;  // Fails when recovery=0 but gap=8min
-```
+### System-Wide Interline Import
 
-**Why this matters:**
-- GTFS doesn't have terminal layover data → `recoveryAtEnd = 0`
-- Actual layover (8 min) is calculated from `nextTrip.startTime - currentTrip.endTime`
-- ExpectedStart-based matching fails: `|6:40 - 6:32| = 8 > timeTolerance(5)` → no chain
-- Gap-based matching succeeds: `8 <= maxGap(30)` → trips chain correctly
-
-**Config presets (`MatchConfigPresets`):**
-| Preset | Use Case | Key Setting |
-|--------|----------|-------------|
-| `merged` | 2A+2B, 7A+7B routes | `maxGap: 30` (gap-based) |
-| `gtfs` | Standard GTFS import | `timeTolerance: 5, checkLocation: true` |
-| `exact` | Generated schedules | `timeTolerance: 1, checkLocation: true` |
-
-**Expected result:**
-- ~8 blocks with multiple trips chained (not 53 single-trip blocks)
-- "END" marker only on final trip of each block
-- Matches Excel master schedule format (one row = one round trip)
-
-### Layover/Recovery Calculation (BOTH Terminuses)
-
-Merged routes have TWO recovery points:
-1. **Shared terminus** (Downtown): North→South handoff
-2. **Outer terminus** (Park Place): South→North handoff (next cycle)
-
-```typescript
-// 1. Recovery at SHARED terminus (Downtown) - North trip waits before South departs
-const sharedLayover = southTrip.startTime - northTrip.endTime;
-northTrip.recoveryTimes[lastNorthStopName] = sharedLayover;
-
-// 2. Recovery at OUTER terminus (Park Place) - South trip waits before next North departs
-// Find CLOSEST North trip by time (not sequential index)
-// e.g., South ends 3:57 PM → find North starting 4:05 PM (closest), not just next in array
-let closestNorthTrip = null;
-let minGap = Infinity;
-for (const candidate of sortedNorth) {
-    const gap = candidate.startTime - southTrip.endTime;
-    if (gap >= 0 && gap < minGap) {
-        minGap = gap;
-        closestNorthTrip = candidate;
-    }
-}
-if (closestNorthTrip && minGap < 60) {
-    southTrip.recoveryTimes[lastSouthStopName] = minGap;
-}
-```
-
-**Why:** Without outer terminus recovery, Park Place shows R=0, block chaining fails, and operator breaks are missing.
+Per-route conversion cannot see a bus change route. After all routes are loaded,
+system-wide import groups trips by shared GTFS `block_id`, applies reasonable
+cross-route terminal recovery where none is already recorded, and coordinates
+the user-facing block suffix across those routes. This limited GTFS-derived
+behavior is current; the old manual interline fields and rules remain removed.
 
 ### Display Format (`RoundTripTableView.tsx`)
 
@@ -227,12 +195,9 @@ For merged terminus:
 | 6:05 AM | ... | 6:32 AM        | 8    | 6:40 AM        | ... | 7:15 AM |
 ```
 
-**Key condition:**
-```typescript
-const isMergedTerminusStop = i === lastNorthStopIdx && hasMergedTerminus;
-const showArrRCols = hasRecovery || isMergedTerminusStop;
-// Show ARR | R, skip DEP for merged terminus
-```
+The exact rendering implementation may change; verify
+`components/schedule/RoundTripTableView.tsx` and its focused tests instead of
+copying an old condition from this historical supplement.
 
 ---
 

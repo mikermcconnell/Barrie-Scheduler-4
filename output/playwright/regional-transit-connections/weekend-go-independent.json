@@ -1,0 +1,90 @@
+{
+  "2026-10-17|allandale": [
+    {
+      "tripId": "20261017-BR-6922",
+      "direction": "to-go",
+      "minutes": 845.0
+    },
+    {
+      "tripId": "20261017-BR-6926",
+      "direction": "to-go",
+      "minutes": 965.0
+    },
+    {
+      "tripId": "20261017-BR-6933",
+      "direction": "from-go",
+      "minutes": 1361.0
+    },
+    {
+      "tripId": "20261017-BR-6937",
+      "direction": "from-go",
+      "minutes": 1477.0
+    }
+  ],
+  "2026-10-17|south": [
+    {
+      "tripId": "20261017-BR-6922",
+      "direction": "to-go",
+      "minutes": 853.0
+    },
+    {
+      "tripId": "20261017-BR-6926",
+      "direction": "to-go",
+      "minutes": 973.0
+    },
+    {
+      "tripId": "20261017-BR-6933",
+      "direction": "from-go",
+      "minutes": 1352.0
+    },
+    {
+      "tripId": "20261017-BR-6937",
+      "direction": "from-go",
+      "minutes": 1468.0
+    }
+  ],
+  "2026-10-18|allandale": [
+    {
+      "tripId": "20261018-BR-6922",
+      "direction": "to-go",
+      "minutes": 845.0
+    },
+    {
+      "tripId": "20261018-BR-6926",
+      "direction": "to-go",
+      "minutes": 965.0
+    },
+    {
+      "tripId": "20261018-BR-6933",
+      "direction": "from-go",
+      "minutes": 1361.0
+    },
+    {
+      "tripId": "20261018-BR-6937",
+      "direction": "from-go",
+      "minutes": 1477.0
+    }
+  ],
+  "2026-10-18|south": [
+    {
+      "tripId": "20261018-BR-6922",
+      "direction": "to-go",
+      "minutes": 853.0
+    },
+    {
+      "tripId": "20261018-BR-6926",
+      "direction": "to-go",
+      "minutes": 973.0
+    },
+    {
+      "tripId": "20261018-BR-6933",
+      "direction": "from-go",
+      "minutes": 1352.0
+    },
+    {
+      "tripId": "20261018-BR-6937",
+      "direction": "from-go",
+      "minutes": 1468.0
+    }
+  ]
+}

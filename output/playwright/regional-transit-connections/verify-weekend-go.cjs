@@ -1,0 +1,14 @@
+async page => {
+ await page.route('https://assets.metrolinx.com/raw/upload/Documents/Metrolinx/Open%20Data/GO-GTFS.zip',route=>route.fulfill({path:'C:/Users/Mike McConnell/Documents/mike_apps/Scheduler 4/output/playwright/regional-transit-connections/reference/go-current.zip',contentType:'application/zip'}));
+ await page.goto('http://127.0.0.1:8767');
+ const expected = {"2026-10-17|allandale": [{"tripId": "20261017-BR-6922", "direction": "to-go", "minutes": 845.0}, {"tripId": "20261017-BR-6926", "direction": "to-go", "minutes": 965.0}, {"tripId": "20261017-BR-6933", "direction": "from-go", "minutes": 1361.0}, {"tripId": "20261017-BR-6937", "direction": "from-go", "minutes": 1477.0}], "2026-10-17|south": [{"tripId": "20261017-BR-6922", "direction": "to-go", "minutes": 853.0}, {"tripId": "20261017-BR-6926", "direction": "to-go", "minutes": 973.0}, {"tripId": "20261017-BR-6933", "direction": "from-go", "minutes": 1352.0}, {"tripId": "20261017-BR-6937", "direction": "from-go", "minutes": 1468.0}], "2026-10-18|allandale": [{"tripId": "20261018-BR-6922", "direction": "to-go", "minutes": 845.0}, {"tripId": "20261018-BR-6926", "direction": "to-go", "minutes": 965.0}, {"tripId": "20261018-BR-6933", "direction": "from-go", "minutes": 1361.0}, {"tripId": "20261018-BR-6937", "direction": "from-go", "minutes": 1477.0}], "2026-10-18|south": [{"tripId": "20261018-BR-6922", "direction": "to-go", "minutes": 853.0}, {"tripId": "20261018-BR-6926", "direction": "to-go", "minutes": 973.0}, {"tripId": "20261018-BR-6933", "direction": "from-go", "minutes": 1352.0}, {"tripId": "20261018-BR-6937", "direction": "from-go", "minutes": 1468.0}]};
+ const result = await page.evaluate(async expected=>{
+   const root='/@fs/C:/Users/Mike%20McConnell/Documents/mike_apps/Scheduler%204/';
+   const service=await import(root+'utils/gtfs/regionalGoService.ts');
+   const analysis=await import(root+'utils/regional-transit/connectionAnalysis.ts');
+   const feed=await service.fetchRegionalGoFeed();
+   return Object.keys(expected).map(key=>{const [date,station]=key.split('|');const result=analysis.getGoTrainEvents(feed,station,date);return {key,status:result.status,events:result.events.map(({tripId,direction,minutes})=>({tripId,direction,minutes}))};});
+ },expected);
+ for(const row of result)if(row.status!=='ready'||JSON.stringify(row.events)!==JSON.stringify(expected[row.key]))throw new Error('GO weekend mismatch: '+row.key);
+ return {checked:result.map(row=>({dateAndStation:row.key,trainEvents:row.events.length})),source:'Downloaded October 2 public GO ZIP independently checked. Not live bus-master proof.'};
+}

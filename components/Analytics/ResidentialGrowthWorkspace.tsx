@@ -39,6 +39,8 @@ import {
 
     buildResidentialGrowthRange,
 
+    formatResidentialGrowthPeriodSelection,
+
     getResidentialGrowthMonthOptions,
 
     periodFromText,
@@ -123,34 +125,6 @@ function formatRangeLabel(fromDate?: string, toDate?: string): string {
     if (!fromDate) return `Through ${formatDate(toDate)}`;
 
     return `${formatDate(fromDate)} - ${formatDate(toDate)}`;
-
-}
-
-
-
-function formatMonthLabel(period: string): string {
-
-    const date = new Date(`${period}-01T12:00:00`);
-
-    return Number.isNaN(date.getTime())
-
-        ? period
-
-        : date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
-
-}
-
-
-
-function formatPeriodRangeLabel(periods: string[]): string {
-
-    if (periods.length === 0) return 'No uploaded months';
-
-    const sorted = [...periods].sort();
-
-    if (sorted.length === 1) return formatMonthLabel(sorted[0]);
-
-    return `${formatMonthLabel(sorted[0])} - ${formatMonthLabel(sorted.at(-1)!)}`;
 
 }
 
@@ -1092,7 +1066,7 @@ export const ResidentialGrowthWorkspace: React.FC<ResidentialGrowthWorkspaceProp
 
     const rangeResult = useMemo(() => buildResidentialGrowthRange(rangeSourceDatasets, dateRangePreset, selectedMonth), [dateRangePreset, rangeSourceDatasets, selectedMonth]);
 
-    const rangeLabel = rangeResult.periods.length > 0 ? formatPeriodRangeLabel(rangeResult.periods) : formatRangeLabel(rangeResult.fromDate, rangeResult.toDate);
+    const rangeLabel = rangeResult.periods.length > 0 ? formatResidentialGrowthPeriodSelection(rangeResult.periods) : formatRangeLabel(rangeResult.fromDate, rangeResult.toDate);
 
     const activeRecords = activeTab === 'issued' ? rangeResult.issued : rangeResult.occupied;
 
@@ -2287,7 +2261,7 @@ export const ResidentialGrowthWorkspace: React.FC<ResidentialGrowthWorkspaceProp
 
                                 <h2 className="truncate text-lg font-black tracking-tight text-gray-950">{mapTitle}</h2>
 
-                                <p className="truncate text-xs font-bold text-gray-500">{rangeLabel} | {rangeResult.periodCount || 0} month{rangeResult.periodCount === 1 ? '' : 's'} loaded{loadingHistory ? ' | loading' : ''}</p>
+                                <p className="truncate text-xs font-bold text-gray-500">{rangeLabel} | Aggregating {rangeResult.periodCount || 0} uploaded month{rangeResult.periodCount === 1 ? '' : 's'}{loadingHistory ? ' | loading' : ''}</p>
 
                             </div>
 
@@ -2317,7 +2291,7 @@ export const ResidentialGrowthWorkspace: React.FC<ResidentialGrowthWorkspaceProp
 
                         </div>
 
-                        <select value={dateRangePreset} onChange={(event) => setDateRangePreset(event.target.value as ResidentialGrowthDateRangePreset)} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 outline-none">
+                        <select aria-label="Time period" value={dateRangePreset} onChange={(event) => setDateRangePreset(event.target.value as ResidentialGrowthDateRangePreset)} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 outline-none">
 
                             {RESIDENTIAL_GROWTH_DATE_RANGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
 

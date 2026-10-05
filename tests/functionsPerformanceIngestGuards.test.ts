@@ -14,8 +14,8 @@ describe('functions performance ingest guards', () => {
     expect(guard).toContain("role === 'owner' || role === 'admin'");
     expect(guard).toContain("support?.mode === 'edit'");
     expect(guard).toContain('expiresAtMs > Date.now()');
-    expect(source).toContain('const importedBy = await resolvePerformanceIngestActor(req, teamId)');
-    expect(source).toContain('importedBy,');
+    expect(source).toContain('const actor = await resolvePerformanceIngestActor(req, teamId)');
+    expect(source).toContain('importedBy: actor.id');
   });
 
   it('leaves plain CSV request bodies untouched', () => {

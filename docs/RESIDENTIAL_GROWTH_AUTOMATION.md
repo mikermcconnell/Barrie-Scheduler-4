@@ -38,4 +38,4 @@ Headers:
 - First file received for a month is stored as pending.
 - When the matching monthly file arrives, the function parses both, geocodes addresses, saves the combined dataset, generates a PDF, and returns `pdfDownloadUrl`.
 - Power Automate should send the management email and attach/link the returned PDF.
-- The workspace can load saved monthly imports together and filter/sum records by uploaded month: latest uploaded month, one selected month, latest 3 months, or latest 12 months. Repeated uploads of the same stable record are deduplicated before totals are shown.
+- The workspace can load saved monthly imports together and filter/sum records by uploaded month: latest uploaded month, one selected month, latest 3 months, or latest 12 months. The map header names the uploaded months included in the aggregation. Repeated uploads of the same stable record are deduplicated before totals are shown.

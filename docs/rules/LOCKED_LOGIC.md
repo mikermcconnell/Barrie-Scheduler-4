@@ -54,7 +54,13 @@ For merged A/B routes, chain trips by actual time gap, not expected start derive
 
 ### 5. Time parsing
 
-Excel time values `>= 1.0` represent next-day service and must preserve post-midnight ordering.
+In fixed-route and Master Schedule parsing, Excel time values `>= 1.0`
+represent next-day service and must preserve post-midnight ordering.
+
+Do not apply that rule indiscriminately to every workbook parser. Other domains
+may deliberately normalize a time-of-day value within 24 hours or infer an
+overnight sequence from domain-specific context. Preserve each parser's
+documented contract and focused tests.
 
 ### 6. AI optimization
 

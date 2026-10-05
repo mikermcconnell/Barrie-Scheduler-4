@@ -4,6 +4,8 @@
 
 The Connections feature enables transit planners to define external services (GO Trains, Georgian College class bells) that buses should coordinate with. This document focuses on the Connection Library (targets and their times); route-level assignment, status/optimization, and scheduling behavior should be documented separately.
 
+> Current implementation reviewed: September 4, 2026. The shared library, per-route configuration, scoped GO selection, and route-first creation flow are implemented.
+
 ## Scope and Assumptions
 
 - Times are stored as minutes from midnight in local service-day time (e.g., 7:45 AM = 465).
@@ -66,7 +68,7 @@ teams/{teamId}/connectionLibrary/default → ConnectionLibrary (shared targets)
 ```
 
 This is the application document path used by `utils/connections/connectionLibraryService.ts`.
-The checked-in `firestore.rules` file does not currently declare a dedicated `connectionLibrary` match, so treat rules coverage for this path as something to verify explicitly.
+The checked-in `firestore.rules` has dedicated matches for both `connectionLibrary` and `routeConnectionConfigs`. Team members and authorized support users can read and write those documents. This describes repository rules only; compare them with the intended Firebase project's deployed rules before calling a Firebase-backed release complete.
 
 ### ConnectionTarget Structure
 
@@ -117,7 +119,7 @@ Notes:
 
 ### Build Connection Library
 
-1. Open Connections panel from Schedule Editor toolbar
+1. Open Connections from New Schedule Step 5 or the Schedule Editor
 2. Click "Add Target"
 3. Enter target details:
    - Name (e.g., "GO Train 7:45 AM Toronto")
@@ -143,18 +145,20 @@ Notes:
 | Firebase service | `utils/connections/connectionLibraryService.ts` |
 | Main panel (Editor) | `components/connections/ConnectionsPanel.tsx` |
 | Library UI | `components/NewSchedule/connections/ConnectionLibraryPanel.tsx` |
+| Add chooser and GO selection | `components/NewSchedule/connections/ConnectionAddChooser.tsx` |
 | Add target modal | `components/NewSchedule/connections/AddTargetModal.tsx` |
+| Route-level setup | `components/NewSchedule/connections/RouteConnectionPanel.tsx` |
 
 ## February 2026 Review Items
 
-C4, C7, and C8 from the February review are resolved in the current implementation. C9 remains a review item; verify its status against current code before planning work from this document.
+C4, C7, C8, and C9 from the February review are resolved in the current implementation.
 
 | ID | Issue | Severity | Status | Details |
 |----|-------|----------|--------|---------|
 | **C4** | Stop code validation | Medium | Resolved | `AddTargetModal` validates manual and selected stop codes against the loaded schedule stop IDs when that reference set is available. |
 | **C7** | Panel-to-editor state synchronization | High | Resolved | `ConnectionsPanel` reports library and route-config changes through callbacks; `ScheduleEditor` consumes both for in-session indicator refresh. |
 | **C8** | Route-based target resync | Medium | Resolved | Route targets are refreshed from source master-schedule timestamps, persisted to the library, and synchronized to editor state. |
-| **C9** | GO GTFS import is all-or-nothing | Medium | Open | The chooser bulk-imports all four GO station/direction templates at once. Add scope controls so planners can import only the station/direction they actually need. |
+| **C9** | GO GTFS import is all-or-nothing | Medium | Resolved | The chooser supports a single station plus `To train`/`From train`, selected-template bulk import, and an explicit all-options shortcut. |
 
 ### Test Coverage Pointers
 
@@ -163,6 +167,7 @@ Relevant coverage includes:
 - `tests/connectionUtils.test.ts` for connection utilities
 - `tests/AddTargetModal.test.tsx` for add-target validation and behavior
 - `tests/ConnectionLibraryPanel.test.tsx` for the library panel
+- `tests/ConnectionAddChooser.test.tsx` for scoped GO selection, selected imports, and the all-options shortcut
 - `tests/routeConnectionDefaults.test.ts` and `tests/RouteConnectionPanel.test.tsx` for route-connection defaults and display
 
 When changing panel-to-editor synchronization, add or update a focused regression test for the callback flow.

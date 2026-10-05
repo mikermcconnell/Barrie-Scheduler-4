@@ -1,6 +1,6 @@
 # Transit App Data Review Checklist
 
-Last updated: 2026-05-25
+Last updated: 2026-09-04
 
 This file tracks the systematic code review of Transit App tables, metrics, charts, and map-derived values.
 
@@ -8,7 +8,8 @@ This file tracks the systematic code review of Transit App tables, metrics, char
 
 - Current workspace entrypoint: `components/Analytics/TransitAppWorkspace.tsx`
 - Active analysis tabs: Overview, OD Pair, Stop Analysis, Transfer, Heatmap, Route Performance, App Usage
-- Disabled but inventoried tab: Service Gaps
+- `ServiceGapsModule.tsx` remains implemented and audited but is not registered in the current tab bar.
+- GO Integration and Validation are no longer registered tabs or rendered placeholders.
 - Legacy component inventoried separately: `components/Analytics/TransitAppDashboard.tsx`
 - Import wizard counters are listed at the end.
 
@@ -114,10 +115,10 @@ Check an item only after confirming:
   - Tests: `tests/transitAppAggregator.routePerformance.test.ts`, `tests/transitAppPipeline.e2e.test.ts`, TypeScript, and build.
   - Rollout note: existing saved Transit App imports must be re-imported to regenerate Route Performance schema v3 summaries with corrected observed-leg monthly/daypart counts and median comparisons.
 
-### Service Gaps tab - checked
+### Service Gaps module - checked, not currently registered as a tab
 
 - [x] **Service span, frequency-gap, and demand-vs-supply review**
-  - UI: `components/Analytics/ServiceGapsModule.tsx`; tab is now enabled in `components/Analytics/TransitAppWorkspace.tsx`.
+  - UI: `components/Analytics/ServiceGapsModule.tsx`; the workspace still has a render branch for `service-gaps`, but no current `TAB_CONFIG` entry exposes it.
   - Source: Barrie Transit trip-leg rows from `go_trip_legs_*.csv`, `planned_go_trip_legs_*.csv`, and `tapped_trip_view_legs_*.csv`, plus bundled Barrie GTFS supply profiles from `utils/transit-app/transitAppGtfsNormalization.ts`.
   - Aggregator: `aggregateServiceGapAnalysis(allLegs, routeMetrics.daily, routeMetrics.summary, routePerformance.scorecard)` in `utils/transit-app/transitAppAggregator.ts`.
   - Reviewed: route-demand scoping, GTFS route matching, merged A/B route supply, average demand-per-hour rates, first/last trip span logic, headway display, gap register grouping, route priority summary, and route engagement cross-reference.
@@ -222,7 +223,7 @@ Check an item only after confirming:
 | [x] | Chart | Day-of-Week Profile | `buildDayOfWeekProfile(appUsage)` | Verified UTC date-only weekday buckets and average daily users by weekday. |
 | [x] | Chart | Monthly Comparison | `buildMonthlyAverages(appUsage)` | Verified month grouping, average daily users denominator, labels, and chronological sort. |
 
-### Service Gaps tab - `ServiceGapsModule.tsx`
+### Service Gaps module - `ServiceGapsModule.tsx` (not in current tab bar)
 
 | Reviewed | Surface | UI label / columns | Source fields | Review notes |
 |---|---|---|---|---|
@@ -239,14 +240,14 @@ Check an item only after confirming:
 | [x] | Table | Route Gap Priority: route, gap rows, peak gap, primary type | derived from `gapRegister` | Verified priority uses full saved gap rows and strongest average demand-minus-supply signal. |
 | [x] | Metric | Route Engagement Summary: avg daily views, avg daily taps, performance trend | `routeMetrics.summary`, `routePerformance.scorecard` | Verified selected route matching against normalized route keys. |
 
-## Disabled / placeholder workspace inventory
+## Historical removed-tab inventory
 
-### GO Integration and Validation tabs
+### GO Integration and Validation
 
 | Reviewed | Surface | UI label / columns | Source fields | Review notes |
 |---|---|---|---|---|
-| [ ] | Placeholder | GO Integration | none | Current tab renders `ComingSoonPlaceholder`. |
-| [ ] | Placeholder | Validation | none | Current tab renders `ComingSoonPlaceholder`. |
+| [x] | Removed tab | GO Integration | none | No current `TAB_CONFIG` entry or render branch. Historical placeholder only. |
+| [x] | Removed tab | Validation | none | No current `TAB_CONFIG` entry or render branch. Historical placeholder only. |
 
 ## Legacy component inventory
 
@@ -277,6 +278,6 @@ Check an item only after confirming:
 
 ## Next review order recommendation
 
-1. GO Integration and Validation placeholders, because they are still unreviewed but should be quick to confirm.
-2. Import wizard counters, because file detection and row-count messaging are the next remaining user-facing numbers.
+1. Import wizard counters, because file detection and row-count messaging are the next remaining user-facing numbers.
+2. Decide whether Service Gaps should be restored to `TAB_CONFIG` or treated as a retained internal module.
 3. Legacy `TransitAppDashboard.tsx`, only if it is still reachable or worth keeping in sync.

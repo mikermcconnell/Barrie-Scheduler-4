@@ -34,7 +34,7 @@ For implementation facts, verify current code and tests. For persisted-state que
 | Schedule generation, parsing, timing, block assignment, routing, or Schedule Editor behavior | `docs/rules/LOCKED_LOGIC.md`, then the relevant architecture/feature docs and danger-zone skill |
 | Product design, feature scope, or prioritization | `docs/PRODUCT_VISION.md`, then the matching product brief or feature contract |
 | Code ownership, entry points, module boundaries, or major data flow | `docs/ARCHITECTURE.md` |
-| Firestore, Storage, authentication, security rules, or TypeScript type locations | `docs/SCHEMA.md`; also load `docs/ARCHITECTURE.md` when flow ownership matters |
+| Firestore, Storage, authentication, security rules, indexes, or TypeScript type locations | `docs/SCHEMA.md`, then the affected source-of-truth file: `firestore.rules`, `firestore.indexes.json`, or `storage.rules`; use `FIREBASE_RULES.md` for the operational checklist and `docs/ARCHITECTURE.md` when flow ownership matters |
 | Current delivery status | Verify current code, tests, and the active issue/task source; use `docs/IMPLEMENTATION_PLAN.md` only for its explicitly dated historical snapshot |
 | Orchestration, delegation, multi-workspace changes, or compacted-context recovery | `ORCHESTRATOR.md` after loading the authoritative docs relevant to the task |
 | Claude-specific workflow or extra danger-zone verification guidance | `.claude/CLAUDE.md` |
@@ -49,6 +49,7 @@ Load feature docs only when the task directly touches that feature.
 
 - New Schedule Step 2: start with `docs/new-schedule-step2/README.md`, then load only the routed contract for the task
 - Connections: `docs/CONNECTIONS_FEATURE.md`
+- Read-only GO connection grid in Master Schedule: `docs/REGIONAL_TRANSIT_CONNECTIONS.md`
 - Schedule Editor verification history: `docs/SCHEDULE_EDITOR_TEST_SUMMARY.md` only when point-in-time test history is relevant
 - GTFS/STREETS auto-ingest: `docs/AUTO_INGEST_SETUP.md`
 - Dwell Incident Review: `docs/DWELL_CASCADE_FEATURE.md`
@@ -65,6 +66,10 @@ Load feature docs only when the task directly touches that feature.
 - OD workspace: `docs/OD_WORKSPACE_GUIDE.md`
 - Residential Growth: `docs/RESIDENTIAL_GROWTH_AUTOMATION.md`
 - Transit App data validation: `docs/TRANSIT_APP_DATA_REVIEW_CHECKLIST.md`
+- Fare Programs: `docs/ARCHITECTURE.md`; add `docs/SCHEMA.md` for its device-local workbook persistence contract
+- Council Intelligence: `docs/ARCHITECTURE.md` and `docs/SCHEMA.md`; verify current parsing, Functions, rules, and tests because no separate current feature contract exists
+- Fleet Plan: `docs/ARCHITECTURE.md` and `docs/SCHEMA.md`; verify current code and tests because no separate current feature contract exists
+- Student Pass: `docs/ARCHITECTURE.md`, then current `components/Analytics/StudentPass*` code and tests; documents under `docs/plans/` are historical rationale only
 
 ### Important route-planning boundaries
 
@@ -113,12 +118,21 @@ These may contain useful rationale, manual test notes, install commands, superse
 
 - If behavior or constraints change, update the appropriate Tier 1 or feature contract in the same change.
 - If storage, collections, security boundaries, or type locations change, update `docs/SCHEMA.md`.
+- If Firestore or Storage document shapes, queries, authentication, access roles,
+  or write behavior change, inspect `firestore.rules`, `firestore.indexes.json`,
+  and `storage.rules` as applicable. Run
+  `tests/securityRules.regression.test.ts` plus the relevant emulator suite.
+- Before calling a Firebase-backed release complete, compare the checked-in rules
+  with the active rules in the intended project. Deploy rule changes only with
+  explicit approval, then confirm the deployed rules and perform an
+  authenticated live read/write/read-back check when practical. Local and
+  emulator tests do not prove deployed access.
 - If component ownership, entry points, or major data flow changes, update `docs/ARCHITECTURE.md`.
 - If product boundaries or decision principles change, update `docs/PRODUCT_VISION.md`.
 - If locked schedule behavior changes with explicit approval, update `docs/rules/LOCKED_LOGIC.md` and its focused tests.
 - If a feature ships or becomes durable, move the lasting outcome into a Tier 1 or Tier 2 source instead of leaving it only in a plan or handoff.
 - Keep `ORCHESTRATOR.md` compact: record cross-cutting conventions and fragile-area pointers, not full feature specifications or transient CI state.
-- Run `npm run docs:check` after changing context documentation. Also run any feature-specific verification required by the touched area.
+- Run `npm run docs:check` after changing context documentation. It validates current inline repository paths across active context and portable/Claude skill parity. If a design document intentionally names a proposed path that does not exist yet, wrap only that proposal with the checker's `docs:allow-missing-paths` markers. Also run any feature-specific verification required by the touched area.
 
 ## Compatibility note
 

@@ -1,0 +1,502 @@
+{
+  "schemaVersion": 1,
+  "id": "synthetic-street",
+  "name": "Fictional 160 m corridor",
+  "revision": 5,
+  "frame": {
+    "crs": "+proj=utm +zone=17 +datum=WGS84 +units=m +no_defs",
+    "origin": [
+      604000,
+      4910000
+    ],
+    "referenceLonLat": [
+      -79.69,
+      44.39
+    ]
+  },
+  "sources": [
+    {
+      "id": "synthetic",
+      "label": "Synthetic example",
+      "attribution": "Synthetic example — not actual site conditions",
+      "display": "allowed",
+      "trace": "allowed",
+      "exportDerived": "allowed",
+      "evidence": "Application-created demonstration fixture"
+    }
+  ],
+  "existing": {
+    "id": "existing",
+    "name": "Existing draft",
+    "alignment": [
+      {
+        "id": "a",
+        "point": [
+          0,
+          0
+        ]
+      },
+      {
+        "id": "b",
+        "point": [
+          160,
+          0
+        ]
+      }
+    ],
+    "bands": [
+      {
+        "id": "left-travel",
+        "side": "left",
+        "kind": "travel",
+        "width": {
+          "kind": "constant",
+          "metres": 3.2
+        },
+        "innerBoundaryId": "left-b0",
+        "outerBoundaryId": "left-b1",
+        "source": "synthetic"
+      },
+      {
+        "id": "left-parking",
+        "side": "left",
+        "kind": "parking",
+        "width": {
+          "kind": "constant",
+          "metres": 1.9
+        },
+        "innerBoundaryId": "left-b1",
+        "outerBoundaryId": "left-b2",
+        "source": "synthetic"
+      },
+      {
+        "id": "left-planting",
+        "side": "left",
+        "kind": "planting",
+        "width": {
+          "kind": "constant",
+          "metres": 1
+        },
+        "innerBoundaryId": "left-b2",
+        "outerBoundaryId": "left-b3",
+        "source": "synthetic"
+      },
+      {
+        "id": "left-sidewalk",
+        "side": "left",
+        "kind": "sidewalk",
+        "width": {
+          "kind": "constant",
+          "metres": 2.5
+        },
+        "innerBoundaryId": "left-b3",
+        "outerBoundaryId": "left-b4",
+        "source": "synthetic"
+      },
+      {
+        "id": "right-travel",
+        "side": "right",
+        "kind": "travel",
+        "width": {
+          "kind": "constant",
+          "metres": 3.2
+        },
+        "innerBoundaryId": "right-b0",
+        "outerBoundaryId": "right-b1",
+        "source": "synthetic"
+      },
+      {
+        "id": "right-parking",
+        "side": "right",
+        "kind": "parking",
+        "width": {
+          "kind": "constant",
+          "metres": 2.4
+        },
+        "innerBoundaryId": "right-b1",
+        "outerBoundaryId": "right-b2",
+        "source": "synthetic"
+      },
+      {
+        "id": "right-planting",
+        "side": "right",
+        "kind": "planting",
+        "width": {
+          "kind": "constant",
+          "metres": 1
+        },
+        "innerBoundaryId": "right-b2",
+        "outerBoundaryId": "right-b3",
+        "source": "synthetic"
+      },
+      {
+        "id": "right-sidewalk",
+        "side": "right",
+        "kind": "sidewalk",
+        "width": {
+          "kind": "constant",
+          "metres": 2
+        },
+        "innerBoundaryId": "right-b3",
+        "outerBoundaryId": "right-b4",
+        "source": "synthetic"
+      }
+    ],
+    "budgets": {
+      "left": 8.6,
+      "right": 8.6
+    },
+    "attachments": [
+      {
+        "id": "crossing-1",
+        "type": "crossing",
+        "station": 80,
+        "width": 3,
+        "source": "synthetic"
+      },
+      {
+        "id": "stop-1",
+        "type": "stop",
+        "station": 110,
+        "boundaryId": "left-b2",
+        "source": "synthetic"
+      },
+      {
+        "id": "tree-1",
+        "type": "tree",
+        "station": 40,
+        "boundaryId": "left-b3",
+        "source": "synthetic"
+      }
+    ],
+    "dimensions": [
+      {
+        "id": "dimension-1",
+        "station": 25,
+        "innerBoundaryId": "left-b1",
+        "outerBoundaryId": "left-b2",
+        "offset": 2
+      }
+    ],
+    "references": []
+  },
+  "baselines": [
+    {
+      "id": "baseline-1",
+      "capturedAt": "2026-09-25T13:54:28.095Z",
+      "scenario": {
+        "id": "existing",
+        "name": "Existing draft",
+        "alignment": [
+          {
+            "id": "a",
+            "point": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "b",
+            "point": [
+              160,
+              0
+            ]
+          }
+        ],
+        "bands": [
+          {
+            "id": "left-travel",
+            "side": "left",
+            "kind": "travel",
+            "width": {
+              "kind": "constant",
+              "metres": 3.2
+            },
+            "innerBoundaryId": "left-b0",
+            "outerBoundaryId": "left-b1",
+            "source": "synthetic"
+          },
+          {
+            "id": "left-parking",
+            "side": "left",
+            "kind": "parking",
+            "width": {
+              "kind": "constant",
+              "metres": 2.4
+            },
+            "innerBoundaryId": "left-b1",
+            "outerBoundaryId": "left-b2",
+            "source": "synthetic"
+          },
+          {
+            "id": "left-planting",
+            "side": "left",
+            "kind": "planting",
+            "width": {
+              "kind": "constant",
+              "metres": 1
+            },
+            "innerBoundaryId": "left-b2",
+            "outerBoundaryId": "left-b3",
+            "source": "synthetic"
+          },
+          {
+            "id": "left-sidewalk",
+            "side": "left",
+            "kind": "sidewalk",
+            "width": {
+              "kind": "constant",
+              "metres": 2
+            },
+            "innerBoundaryId": "left-b3",
+            "outerBoundaryId": "left-b4",
+            "source": "synthetic"
+          },
+          {
+            "id": "right-travel",
+            "side": "right",
+            "kind": "travel",
+            "width": {
+              "kind": "constant",
+              "metres": 3.2
+            },
+            "innerBoundaryId": "right-b0",
+            "outerBoundaryId": "right-b1",
+            "source": "synthetic"
+          },
+          {
+            "id": "right-parking",
+            "side": "right",
+            "kind": "parking",
+            "width": {
+              "kind": "constant",
+              "metres": 2.4
+            },
+            "innerBoundaryId": "right-b1",
+            "outerBoundaryId": "right-b2",
+            "source": "synthetic"
+          },
+          {
+            "id": "right-planting",
+            "side": "right",
+            "kind": "planting",
+            "width": {
+              "kind": "constant",
+              "metres": 1
+            },
+            "innerBoundaryId": "right-b2",
+            "outerBoundaryId": "right-b3",
+            "source": "synthetic"
+          },
+          {
+            "id": "right-sidewalk",
+            "side": "right",
+            "kind": "sidewalk",
+            "width": {
+              "kind": "constant",
+              "metres": 2
+            },
+            "innerBoundaryId": "right-b3",
+            "outerBoundaryId": "right-b4",
+            "source": "synthetic"
+          }
+        ],
+        "budgets": {
+          "left": 8.6,
+          "right": 8.6
+        },
+        "attachments": [
+          {
+            "id": "crossing-1",
+            "type": "crossing",
+            "station": 80,
+            "width": 3,
+            "source": "synthetic"
+          },
+          {
+            "id": "stop-1",
+            "type": "stop",
+            "station": 110,
+            "boundaryId": "left-b2",
+            "source": "synthetic"
+          },
+          {
+            "id": "tree-1",
+            "type": "tree",
+            "station": 40,
+            "boundaryId": "left-b3",
+            "source": "synthetic"
+          }
+        ],
+        "dimensions": [
+          {
+            "id": "dimension-1",
+            "station": 25,
+            "innerBoundaryId": "left-b1",
+            "outerBoundaryId": "left-b2",
+            "offset": 2
+          }
+        ],
+        "references": []
+      }
+    }
+  ],
+  "alternatives": [
+    {
+      "id": "alternative-1",
+      "name": "Alternative 1",
+      "alignment": [
+        {
+          "id": "a",
+          "point": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "b",
+          "point": [
+            160,
+            0
+          ]
+        }
+      ],
+      "bands": [
+        {
+          "id": "left-travel",
+          "side": "left",
+          "kind": "travel",
+          "width": {
+            "kind": "constant",
+            "metres": 3.2
+          },
+          "innerBoundaryId": "left-b0",
+          "outerBoundaryId": "left-b1",
+          "source": "synthetic"
+        },
+        {
+          "id": "left-parking",
+          "side": "left",
+          "kind": "parking",
+          "width": {
+            "kind": "constant",
+            "metres": 2.4
+          },
+          "innerBoundaryId": "left-b1",
+          "outerBoundaryId": "left-b2",
+          "source": "synthetic"
+        },
+        {
+          "id": "left-planting",
+          "side": "left",
+          "kind": "planting",
+          "width": {
+            "kind": "constant",
+            "metres": 1
+          },
+          "innerBoundaryId": "left-b2",
+          "outerBoundaryId": "left-b3",
+          "source": "synthetic"
+        },
+        {
+          "id": "left-sidewalk",
+          "side": "left",
+          "kind": "sidewalk",
+          "width": {
+            "kind": "constant",
+            "metres": 2
+          },
+          "innerBoundaryId": "left-b3",
+          "outerBoundaryId": "left-b4",
+          "source": "synthetic"
+        },
+        {
+          "id": "right-travel",
+          "side": "right",
+          "kind": "travel",
+          "width": {
+            "kind": "constant",
+            "metres": 3.2
+          },
+          "innerBoundaryId": "right-b0",
+          "outerBoundaryId": "right-b1",
+          "source": "synthetic"
+        },
+        {
+          "id": "right-parking",
+          "side": "right",
+          "kind": "parking",
+          "width": {
+            "kind": "constant",
+            "metres": 2.4
+          },
+          "innerBoundaryId": "right-b1",
+          "outerBoundaryId": "right-b2",
+          "source": "synthetic"
+        },
+        {
+          "id": "right-planting",
+          "side": "right",
+          "kind": "planting",
+          "width": {
+            "kind": "constant",
+            "metres": 1
+          },
+          "innerBoundaryId": "right-b2",
+          "outerBoundaryId": "right-b3",
+          "source": "synthetic"
+        },
+        {
+          "id": "right-sidewalk",
+          "side": "right",
+          "kind": "sidewalk",
+          "width": {
+            "kind": "constant",
+            "metres": 2
+          },
+          "innerBoundaryId": "right-b3",
+          "outerBoundaryId": "right-b4",
+          "source": "synthetic"
+        }
+      ],
+      "budgets": {
+        "left": 8.6,
+        "right": 8.6
+      },
+      "attachments": [
+        {
+          "id": "crossing-1",
+          "type": "crossing",
+          "station": 80,
+          "width": 3,
+          "source": "synthetic"
+        },
+        {
+          "id": "stop-1",
+          "type": "stop",
+          "station": 110,
+          "boundaryId": "left-b2",
+          "source": "synthetic"
+        },
+        {
+          "id": "tree-1",
+          "type": "tree",
+          "station": 40,
+          "boundaryId": "left-b3",
+          "source": "synthetic"
+        }
+      ],
+      "dimensions": [
+        {
+          "id": "dimension-1",
+          "station": 25,
+          "innerBoundaryId": "left-b1",
+          "outerBoundaryId": "left-b2",
+          "offset": 2
+        }
+      ],
+      "references": [],
+      "pinnedBaselineId": "baseline-1"
+    }
+  ]
+}

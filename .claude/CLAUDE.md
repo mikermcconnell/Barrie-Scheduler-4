@@ -57,23 +57,30 @@ Do not duplicate feature status or dated roadmap claims in this tool-specific fi
 - Be concise
 - Show `file:line` references (e.g., `scheduleGenerator.ts:142`)
 - Use TodoWrite for multi-step tasks
-- Ask 1-3 clarifying questions before implementing features
+- Ask only the fewest questions needed; use low-risk assumptions when the request is clear
 - Check locked logic in `docs/rules/LOCKED_LOGIC.md` before modifying core files
+- Inspect `git status` first and preserve unrelated user changes
 
 ### Don't
 - Over-engineer or add unrequested features
 - Create new files when editing existing ones works
 - Add comments/docstrings to unchanged code
-- Guess at requirements - ask instead
+- Reset, clean, stash, overwrite, commit, deploy, or release without explicit approval
 
 ---
 
 ## 3. Build & Verification
 
-- **After adding packages** to `package.json`, always run `npm install` before considering the task complete.
-- **Before marking any task complete**, run `npm run build` and confirm it passes. Do not present work as done with an unverified build.
-- **For multi-phase work**, commit after each completed phase before moving to the next. Use descriptive commit messages so progress is recoverable.
-- **Post-edit hook** (`.claude/settings.json`) auto-runs `tsc --noEmit` after every Edit/Write. If it reports errors, fix them before continuing.
+- **After an approved package change**, run `npm install` and include the lockfile update.
+- Verify proportionally: run focused tests for the behavior changed, then
+  `npm run typecheck` and/or `npm run build` when the change can affect
+  compilation or bundling. Documentation-only changes require
+  `npm run docs:check`, not an automatic full build.
+- Do not commit, deploy, or release unless the user explicitly asks. For
+  multi-phase work, keep recoverable notes and verification evidence instead
+  of creating unsolicited commits.
+- **Post-edit hooks** in `.claude/settings.json` provide early typecheck and
+  related-test feedback. They do not replace deliberate final verification.
 
 ---
 
@@ -85,7 +92,10 @@ Before touching time parsing or schedule parsing:
 npx vitest run tests/timeUtils.test.ts
 ```
 
-**Post-midnight bug** has occurred 3+ times. Excel times >= 1.0 represent next day (e.g., `1.02` = 12:30 AM).
+**Post-midnight bug** has occurred 3+ times. Fixed-route Excel times >= 1.0
+represent next-day service and preserve the day offset (for example, `1.02`
+is about 1470 service-day minutes). Time-of-day-only domains may intentionally
+normalize; read `.claude/skills/time-parsing/SKILL.md` before changing them.
 
 ---
 
@@ -95,24 +105,24 @@ npx vitest run tests/timeUtils.test.ts
 1. Reproduce/understand the issue
 2. Identify root cause `file:line`
 3. Propose fix with impact assessment
-4. Implement after confirmation
+4. Implement when requested; ask only if a material ambiguity, locked rule, or irreversible action requires clarification
 5. Run relevant tests
-6. **Verify build** (`npm run build`) before marking done
+6. Run focused verification plus typecheck/build when relevant
 
 ### New Feature
-1. Clarify requirements (1-3 questions)
+1. Clarify only requirements that materially affect the result; otherwise use low-risk assumptions
 2. Impact assessment (which files affected)
 3. **PM Quick Check** (auto-triggered, or `/pm-review` for complex features)
-4. Wait for "go" confirmation
+4. Implement once the requested scope is clear
 5. Implement with TodoWrite tracking
-6. **Verify build** (`npm run build`) before marking done
+6. Run focused verification plus typecheck/build when relevant
 
 ### Refactor
 1. Explain current state and proposed change
 2. Flag any behavioral changes
 3. **PM Quick Check** if touching core workflows or locked logic
-4. Get approval before proceeding
-5. **Verify build** (`npm run build`) before marking done
+4. Ask before proceeding only when the refactor changes behavior, locked logic, or an external system
+5. Run focused verification plus typecheck/build when relevant
 
 ---
 
@@ -146,16 +156,19 @@ These files are high-risk for bugs. Apply extra caution and always run the liste
 
 | File | Risk | Verify With |
 |------|------|-------------|
-| `utils/schedule/scheduleGenerator.ts` | Locked logic, complex trip generation | `npx vitest run tests/scheduleGenerator.goldenPath.test.ts tests/scheduleGenerator.directionStart.test.ts tests/scheduleGenerator.floating.test.ts` |
-| `utils/blocks/blockAssignmentCore.ts` | Subtle gap-based matching | `npx vitest run tests/blockAssignmentCore` |
-| `utils/parsers/masterScheduleParser*.ts` | Two parsers + adapter routing | `npx vitest run tests/parser.test.ts` |
-| `vite.config.ts` | ~400 lines, API middleware for GTFS proxy | `npm run build` |
+| `utils/schedule/scheduleGenerator.ts` | Locked generation, approved-runtime trust boundary | `npx vitest run tests/scheduleGenerator.goldenPath.test.ts tests/scheduleGenerator.directionStart.test.ts tests/scheduleGenerator.floating.test.ts tests/scheduleGenerator.canonicalTravelTimes.test.ts tests/scheduleGenerator.lockedLogic.test.ts` |
+| `utils/blocks/blockAssignmentCore.ts` | Subtle gap-based matching | `npx vitest run tests/blockAssignmentCore.test.ts` |
+| `utils/parsers/masterScheduleParser*.ts`, `utils/parsers/parserAdapter.ts` | Parser routing, partial trips, next-day values | `npx vitest run tests/timeUtils.test.ts tests/parser.test.ts tests/parserEdgeCases.test.ts tests/masterScheduleParser.roundTrip.test.ts` |
+| `utils/ai/runtimeAnalysis.ts`, `utils/ai/runtimeEvidenceEligibility.ts` | Approved runtime eligibility and banding | `npx vitest run tests/runtimeAnalysis.totalTripTimes.test.ts tests/runtimeEvidenceEligibility.test.ts tests/scheduleGenerator.canonicalTravelTimes.test.ts` |
+| `utils/gtfs/gtfsImportService.ts` | Direction, stop-pattern, block, recovery, interline import | `npx vitest run tests/gtfsImportService.test.ts tests/blockAssignmentCore.test.ts` |
+| `vite.config.ts` | API middleware and bundle configuration | `npm run typecheck && npm run build` |
 | Any time parsing (`timeUtils.ts`, `excelTimeToString`, etc.) | Post-midnight >= 1.0 boundary | `npx vitest run tests/timeUtils.test.ts` |
-| `ScheduleEditor.tsx` | Largest component, intricate rendering | `npm run build` + manual verify |
-| `RoundTripTableView.tsx` | 8A/8B sort logic, stop-name matching | `npm run build` + check sort order |
+| `components/ScheduleEditor.tsx` | Largest component, intricate editing | `npx vitest run tests/ScheduleEditor.integration.test.tsx tests/ScheduleEditor.interactions.test.tsx` plus `npm run typecheck` and targeted manual verification |
+| `components/schedule/RoundTripTableView.tsx`, `utils/schedule/roundTripSortUtils.ts` | 8A/8B, Route 400, partial-trip sorting | `npx vitest run tests/RoundTripTableView.order.test.tsx tests/roundTripSortUtils.test.ts tests/useScheduleEditing.route400.test.tsx` |
 | `utils/routing/raptorEngine.ts` | RAPTOR algorithm, loop-route logic, service calendar | `npx vitest run tests/routing/` |
 | `utils/routing/routingDataService.ts` | Pre-computed indexes, calendar span derivation | `npx vitest run tests/routing/` |
 | `utils/transit-app/studentPassRaptorAdapter.ts` | RAPTOR→StudentPass mapping, morning/afternoon queries | `npx vitest run tests/routing/ tests/studentPassUtils.test.ts` |
+| `firestore.rules`, `firestore.indexes.json`, `storage.rules` | Production authorization and query contract | Relevant app tests + `npm run test:firestore-rules`; before release compare deployed rules, and after an approved deployment perform authenticated live read/write/read-back verification |
 
 **Rule**: When editing a Danger Zone file, run its verification command BEFORE and AFTER changes.
 
@@ -166,7 +179,7 @@ These files are high-risk for bugs. Apply extra caution and always run the liste
 - **Post-midnight time parsing** - Always run tests after touching time parsing
 - **Dynamic stop-name detection** - Never hardcode stop indices; use name-based matching
 - **ARR → R → DEP pattern** - At merged terminuses, recognized as single stop, not duplicates
-- **Interline code removed** - Don't reference `interlineNext`, `interlinePrev`, or interline functions; they no longer exist
+- **Interline status** - Old manual fields/functions are removed; system-wide GTFS import still uses shared `block_id` values for limited cross-route recovery and block continuity
 
 ## 10. Context Hygiene
 

@@ -47,7 +47,7 @@ Activate when discussion involves:
 
 | Term | Definition | Barrie Context |
 |------|------------|----------------|
-| **Running Time** | Actual travel time between stops | From runtime CSV data |
+| **Running Time** | Actual travel time between stops | From approved CSV or Performance runtime evidence |
 | **Dwell Time** | Time stopped for passenger boarding | Typically 15-30 sec/stop |
 | **Recovery Time** | Scheduled layover at terminus | 10-20% of cycle time standard |
 | **Deadhead** | Non-revenue movement (garage ↔ route) | Not tracked in this app |
@@ -69,7 +69,7 @@ Activate when discussion involves:
 | **Pull-out** | Vehicle leaves garage for service | First trip of block |
 | **Pull-in** | Vehicle returns to garage | Last trip of block |
 | **Interline** | Vehicle transitions between routes | 8A → 8B at terminal |
-| **Short-turn** | Trip that doesn't complete full route | Not currently supported |
+| **Short-turn** | Trip that doesn't complete the full route | Supported in Schedule Editor; excluded from trusted Step 2 banding evidence |
 | **Express** | Limited-stop service | Route 100 pattern |
 
 ---
@@ -82,7 +82,7 @@ Activate when discussion involves:
 |------|--------|-----------------|
 | **Linear (Merged A/B)** | 2, 7, 12 | North (A) + South (B) share downtown terminus; treated as single route |
 | **Linear (Variants)** | 8A, 8B | Separate route variants with distinct stops |
-| **Linear (Single)** | 400 | Single direction without variants |
+| **Linear (Bidirectional)** | 400 | Explicit North/South directions without A/B route variants |
 | **Loop** | 10, 11, 100, 101 | Circular routes (CW/CCW) |
 
 ### Merged Route Behavior (CRITICAL)
@@ -111,13 +111,11 @@ Central hub where most routes converge:
 
 ### Time Bands
 
-| Band | Period | Characteristics |
-|------|--------|-----------------|
-| **A** | AM Peak (7:00-9:00) | Slowest - congestion |
-| **B** | PM Peak (15:00-18:00) | Second slowest |
-| **C** | Midday (9:00-15:00) | Moderate |
-| **D** | Evening (18:00-22:00) | Faster |
-| **E** | Early/Late | Fastest - minimal traffic |
+Bands are dynamic quintiles of eligible runtime buckets, ordered by total
+runtime: A is slowest and E is fastest. They are not hard-coded clock periods.
+Generation still uses the exact or nearest eligible approved 30-minute bucket
+from the required direction/start orientation; a band label does not make
+review-only evidence eligible.
 
 ---
 
@@ -273,6 +271,7 @@ Always verify: recovery ≥ 10% of round-trip cycle time.
 Depends on route type:
 - **Merged (2, 7, 12)**: Single schedule with N+S paired; one block operates both
 - **Variants (8A, 8B)**: Separate schedules with distinct stops
+- **Route 400**: One bidirectional route with explicit North and South trips
 
 ### "What if GTFS has no block_id?"
 
@@ -329,11 +328,21 @@ MasterSchedule   // Published immutable schedule
 
 ---
 
-## Part 8: Interlining (REMOVED - Pending Reimplementation)
+## Part 8: Interlining Status
 
-> **Status:** All interline code was removed in February 2026. The functions `applyInterlineRules`, `calculateInterlineTerminalDepartures`, `findInterlineTarget`, and `tripMatchesRule` no longer exist. `MasterTrip` no longer has `interlineNext`, `interlinePrev`, or `interlineTerminalDep` fields.
+The former manual/rule-based interline model remains removed:
+`applyInterlineRules`, `calculateInterlineTerminalDepartures`,
+`findInterlineTarget`, and `tripMatchesRule` do not exist, and `MasterTrip` no
+longer carries `interlineNext`, `interlinePrev`, or `interlineTerminalDep`.
 
-### Domain Context (for future reimplementation)
+Current system-wide GTFS import does preserve limited interline continuity from
+authoritative shared `block_id` values. In `utils/gtfs/gtfsImportService.ts`, it
+applies reasonable cross-route recovery gaps and coordinates user-facing block
+suffixes across routes that share the same GTFS vehicle block. Do not describe
+all interlining as removed, and do not treat this import behavior as a general
+manual interline editor or permission to reintroduce the old fields.
+
+### Domain Context
 
 **Interlining** is when a bus transitions between different routes without returning to the garage. At Barrie Transit, Routes 8A and 8B interline at the Allandale Transit Terminal during reduced-service periods:
 
@@ -342,7 +351,7 @@ MasterSchedule   // Published immutable schedule
 
 One bus alternates: 8A → 8B → 8A → 8B, with ~5 min recovery at the terminal between route transitions.
 
-### Key Design Considerations (When Reimplementing)
+### Key Design Considerations for Any Broader Reimplementation
 
 1. Both 8A and 8B schedules must be loaded simultaneously
 2. Terminal DEP column shows next **same-route** departure, not ARR + R

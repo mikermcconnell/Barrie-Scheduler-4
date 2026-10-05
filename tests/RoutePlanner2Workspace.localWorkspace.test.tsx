@@ -14,6 +14,12 @@ const projectPersistenceMocks = vi.hoisted(() => ({
   deleteRoutePlanner2SavedProject: vi.fn(async () => undefined),
 }));
 
+const localDraftMocks = vi.hoisted(() => ({
+  loadRoutePlanner2LocalDraft: vi.fn(async () => null),
+  removeRoutePlanner2LocalDraft: vi.fn(async () => true),
+  saveRoutePlanner2LocalDraft: vi.fn(async () => true),
+}));
+
 vi.mock('../utils/route-planner-2/routePlanner2GtfsClient', () => ({
   loadRoutePlanner2GtfsImportPatterns: vi.fn(async () => [
     {
@@ -82,6 +88,7 @@ vi.mock('../utils/gtfs/corridorSpeed', async (importOriginal) => {
 });
 
 vi.mock('../utils/route-planner-2/routePlanner2ProjectPersistence', () => projectPersistenceMocks);
+vi.mock('../utils/route-planner-2/routePlanner2LocalDraft', () => localDraftMocks);
 vi.mock('../utils/route-planner-2/routePlanner2MapExport', () => ({
   buildRoutePlanner2MapBookSections: vi.fn(() => []),
   exportRoutePlanner2MapPdf: vi.fn(async () => undefined),
@@ -382,6 +389,14 @@ describe('RoutePlanner2Workspace local workspace', () => {
     projectPersistenceMocks.loadRoutePlanner2Project.mockClear();
     projectPersistenceMocks.saveRoutePlanner2Project.mockClear();
     projectPersistenceMocks.deleteRoutePlanner2SavedProject.mockClear();
+    localDraftMocks.loadRoutePlanner2LocalDraft.mockReset();
+    localDraftMocks.loadRoutePlanner2LocalDraft.mockResolvedValue(null);
+    localDraftMocks.saveRoutePlanner2LocalDraft.mockClear();
+    localDraftMocks.removeRoutePlanner2LocalDraft.mockClear();
+    vi.mocked(exportRoutePlanner2MapPdf).mockReset();
+    vi.mocked(exportRoutePlanner2MapPdf).mockResolvedValue(undefined);
+    vi.mocked(exportRoutePlanner2OperatorDirectionsPdf).mockReset();
+    vi.mocked(exportRoutePlanner2OperatorDirectionsPdf).mockResolvedValue(undefined);
 
     if (root) {
       flushSync(() => {
@@ -412,6 +427,27 @@ describe('RoutePlanner2Workspace local workspace', () => {
     return container;
   }
 
+  function renderWorkspaceScope(teamId: string, userId: string) {
+    if (!container) {
+      container = document.createElement('div');
+      document.body.appendChild(container);
+      root = createRoot(container);
+    }
+
+    flushSync(() => {
+      root?.render(
+        <RoutePlanner2Workspace
+          key={`${teamId}:${userId}`}
+          onBack={() => {}}
+          userId={userId}
+          teamId={teamId}
+        />,
+      );
+    });
+
+    return container;
+  }
+
   it('renders the clean local blank-concept foundation', () => {
     const view = renderWorkspace();
     const notes = view.querySelector('#rp2-notes') as HTMLTextAreaElement | null;
@@ -429,6 +465,75 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).not.toContain('Shuttle Template');
     expect(view.textContent).not.toContain('Project foundation');
     expect(view.textContent).not.toContain('Firebase persistence');
+  });
+
+  it('restores the latest team-and-user-scoped device recovery copy', async () => {
+    const recoveredProject = {
+      ...createRoutePlanner2Project({ id: 'recovered-project' }),
+      name: 'Recovered camp routes',
+    };
+    localDraftMocks.loadRoutePlanner2LocalDraft.mockResolvedValueOnce({
+      project: recoveredProject,
+      savedAt: Date.now(),
+    });
+
+    const view = renderWorkspace();
+    const start = Date.now();
+    while ((view.querySelector('[aria-label="Project name"]') as HTMLInputElement | null)?.value !== recoveredProject.name && Date.now() - start < 2000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect((view.querySelector('[aria-label="Project name"]') as HTMLInputElement | null)?.value).toBe(recoveredProject.name);
+    expect(view.textContent).toContain('Restored the latest route plan recovery copy from this device.');
+    expect(localDraftMocks.loadRoutePlanner2LocalDraft).toHaveBeenCalledWith({ teamId: 'team-1', userId: 'user-1' });
+  });
+
+  it('remounts before a team switch can expose or autosave the previous scope project', async () => {
+    const firstScopeProject = {
+      ...createRoutePlanner2Project({ id: 'team-1-project' }),
+      name: 'Team 1 private camp routes',
+    };
+    const secondScopeProject = {
+      ...createRoutePlanner2Project({ id: 'team-2-project' }),
+      name: 'Team 2 recovered camp routes',
+    };
+    let resolveSecondScopeDraft: ((draft: { project: RoutePlanner2Project; savedAt: number }) => void) | undefined;
+    const secondScopeDraft = new Promise<{ project: RoutePlanner2Project; savedAt: number }>((resolve) => {
+      resolveSecondScopeDraft = resolve;
+    });
+    localDraftMocks.loadRoutePlanner2LocalDraft
+      .mockResolvedValueOnce({ project: firstScopeProject, savedAt: Date.now() })
+      .mockImplementationOnce(async () => secondScopeDraft);
+
+    const view = renderWorkspaceScope('team-1', 'user-1');
+    const firstLoadStartedAt = Date.now();
+    while ((view.querySelector('[aria-label="Project name"]') as HTMLInputElement | null)?.value !== firstScopeProject.name
+      && Date.now() - firstLoadStartedAt < 2000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect((view.querySelector('[aria-label="Project name"]') as HTMLInputElement | null)?.value).toBe(firstScopeProject.name);
+
+    localDraftMocks.saveRoutePlanner2LocalDraft.mockClear();
+    renderWorkspaceScope('team-2', 'user-1');
+
+    expect((view.querySelector('[aria-label="Project name"]') as HTMLInputElement | null)?.value).toBe('Untitled Route Study');
+    expect(view.textContent).not.toContain(firstScopeProject.name);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(localDraftMocks.saveRoutePlanner2LocalDraft).not.toHaveBeenCalled();
+
+    resolveSecondScopeDraft?.({ project: secondScopeProject, savedAt: Date.now() });
+    const secondLoadStartedAt = Date.now();
+    while ((view.querySelector('[aria-label="Project name"]') as HTMLInputElement | null)?.value !== secondScopeProject.name
+      && Date.now() - secondLoadStartedAt < 2000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect((view.querySelector('[aria-label="Project name"]') as HTMLInputElement | null)?.value).toBe(secondScopeProject.name);
+    expect(localDraftMocks.loadRoutePlanner2LocalDraft).toHaveBeenNthCalledWith(2, { teamId: 'team-2', userId: 'user-1' });
+    expect(localDraftMocks.saveRoutePlanner2LocalDraft).not.toHaveBeenCalledWith(
+      { teamId: 'team-2', userId: 'user-1' },
+      expect.objectContaining({ name: firstScopeProject.name }),
+    );
   });
 
   it('keeps Map PDF disabled until the selected route has at least two stops', () => {
@@ -513,6 +618,29 @@ describe('RoutePlanner2Workspace local workspace', () => {
         }),
       }),
     );
+  });
+
+  it('reports PDF export failures separately without changing save status', async () => {
+    vi.mocked(exportRoutePlanner2MapPdf).mockRejectedValueOnce(new Error('stale PDF module'));
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+      addMapStop(view);
+      click(findButton(view, 'Export'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Map PDF'));
+    });
+
+    const start = Date.now();
+    while (!view.querySelector('[role="alert"]') && Date.now() - start < 5000) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(view.querySelector('[role="alert"]')?.textContent).toContain('PDF export failed: stale PDF module');
+    expect(view.textContent).toContain('Local draft');
+    expect(view.textContent).not.toContain('Save failed');
   });
 
   it('opens map selection tools with box, lasso, and bulk delete controls', () => {
@@ -656,6 +784,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
         scenarios: expect.any(Array),
       }),
     );
+    expect(localDraftMocks.removeRoutePlanner2LocalDraft).toHaveBeenCalledWith({ teamId: 'team-1', userId: 'user-1' });
     expect(view.textContent).toContain('Saved to the team workspace.');
   });
 
@@ -680,6 +809,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     );
     const savedProject = projectPersistenceMocks.saveRoutePlanner2Project.mock.calls[0]?.[2] as RoutePlanner2Project;
     expect(savedProject.id).toMatch(/^project-/);
+    expect(localDraftMocks.removeRoutePlanner2LocalDraft).toHaveBeenCalledWith({ teamId: 'team-1', userId: 'user-1' });
     expect(view.textContent).toContain('Saved as a new route plan.');
   });
 

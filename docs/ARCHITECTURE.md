@@ -1,6 +1,5 @@
 # Architecture
 
-> Last reviewed: July 22, 2026
 > Load order: start with `AGENTS.md`, then `docs/CONTEXT_INDEX.md`, before using this file as agent context.
 
 ## Overview
@@ -38,6 +37,8 @@ Saved projects use revision-checked, serialized cloud writes. Save snapshots pre
 ---
 
 ## Top-level app shape
+
+The read-only Regional Transit Connections tab in `components/MasterScheduleBrowser.tsx` mounts `components/connections/RegionalTransitConnections.tsx`. `utils/regional-transit/` owns date-valid GO events and local connection calculations; `utils/gtfs/regionalGoService.ts` owns the public static GO feed loader. It reuses existing published master read access, not the editable connection library or optimizer. See `docs/REGIONAL_TRANSIT_CONNECTIONS.md` for the data-quality and scheduled-only boundary.
 
 `App.tsx` is the main shell. It uses hash-based navigation and lazy-loads five top-level app views:
 
@@ -118,6 +119,8 @@ STREETS-style operational reporting and dashboards live in:
 - `utils/performance*.ts`
 - scheduled/server aggregation in `functions/src/aggregator.ts` and related functions files
 
+Power Automate uploads are acknowledged after the raw CSV is validated and archived. `ingestPerformanceData` creates a versioned-content-hash-deduplicated queued `performanceImports` record and returns before the expensive history merge begins; `processQueuedPerformanceImport` claims that record, performs the existing aggregation and monthly snapshot publication in the background, and records completion or a bounded retry failure. Authenticated in-app imports remain synchronous and archive a `publishing` record before metadata publication, then mark it `completed` or `failed`; the queue trigger ignores this manual lifecycle. Both CSV and Excel previews are converted into canonical normalized CSV and sent through the same authenticated server boundary. The queued processor is single-concurrency to prevent timeout retries from processing the same history in parallel. All interactive and automated publications use a unique Storage generation plus an optimistic Firestore metadata revision check; a stale attempt deletes only its unpublished generation, reloads the latest history, and retries the merge up to three times. Metadata tracks a totally ordered string receipt revision for each service date, with a conservative metadata-update fallback for legacy unversioned dates. History rebuilds refuse to run across active or retryable imports so a rebuild cannot suppress a previously accepted correction.
+
 Passenger load is consolidated in Ridership -> Passenger Flow by Stop; the standalone Load Profiles navigation surface has been removed. Schema-v14 heatmaps retain stable trip identity, vehicle ID, and applied capacity so same-time trips remain distinct and block inference can enforce fleet-specific limits. Team capacity settings live at `teams/{teamId}/performanceConfig/load`, are owner/admin-managed through the Ridership surface, and feed client imports, server ingest, history rebuilds, and current heatmap estimates. `utils/performanceRidershipStopProfile.ts` owns the opportunity-weighted confidence score and inference diagnostics; the chart must keep the rating, evidence mix, and actionable findings visible. The former tab's dedicated monthly read model remains temporarily as a backward-compatible API and repair path. Its compact projection is implemented in `utils/performanceLoadProfileView.ts` and mirrored in `functions/src/performanceLoadProfileView.ts`; keep their JSON contracts synchronized. Manual import and server auto-ingest still publish versioned files under `teams/{teamId}/performanceViews/load-profiles/` and atomically update `loadProfileMonthlyStoragePaths`. Legacy reads go through `sharedWorkspaceData`, which enforces Operations plus Load Profiles access and bounded route/date scope. Do not add new UI dependencies on this projection without an explicit migration decision.
 
 Operations Dashboard sections are deep-linked beneath `#operations/performance` so refresh and browser history restore the selected section. Hash parsing and building live in `utils/workspaces/performanceWorkspaceRouting.ts`; `components/Performance/PerformanceWorkspace.tsx` applies section availability and access checks before restoring the route.
@@ -146,6 +149,7 @@ Notable areas:
 - Legacy Route Planner workspace has been removed; old docs live in `docs/route-planner-legacy/` as background only, and remaining `utils/route-planner/` helpers are legacy support code used by Shuttle Planner.
 - Camp Shuttle Planner (`Route Planner 2` internally) → `components/Analytics/RoutePlanner2Workspace.tsx`; the working Camp and address-based shuttle tool is frozen from Route Concept Planner work; current docs live in `docs/route-planner-2/`
 - Route Concept Planner → a separate internal-beta, map-first workspace under `components/Analytics/` with a neutral domain/persistence layer under `utils/route-concept-planner/`; it models complete alternatives and may reuse GTFS, Mapbox, and map capabilities only through neutral adapters. Its contract lives in `docs/route-concept-planner/`.
+- Street Design Studio → a gated, device-local Planning Data first draft at `#planning/street-design-studio`. `components/Analytics/StreetDesignStudioWorkspace.tsx` owns MapLibre/editor interaction; `utils/street-design-studio/` owns the versioned project, metre-based geometry, revision-checked IndexedDB storage, and vector exports. It does not write Firebase. The current contract and limitations are in `docs/street-design-studio/`.
 - Shuttle Planner → `components/Analytics/ShuttlePlannerWorkspace.tsx`, `utils/shuttle/`
 - Network Connections → `components/Analytics/NetworkConnectionsWorkspace.tsx`, `utils/network-connections/`
 - student-pass planning → `components/Analytics/StudentPass*`

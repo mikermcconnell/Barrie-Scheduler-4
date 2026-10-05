@@ -56,6 +56,7 @@ Load these only when the task is directly related:
 
 - **Camp Shuttle Planner** (`Route Planner 2` internally) is the working Camp and address-based shuttle route-planning tool. Preserve its workflows, storage, exports, navigation, and behaviour.
 - **Route Concept Planner** is a separate internal-beta workspace for testing complete fixed-route alternatives with scheduled GTFS evidence, Mapbox road-time estimates, and confirmed planner overrides.
+- **Street Design Studio** is a separate, gated first-draft Planning Data workspace for dimensioned 2D street concepts. It uses fictional starter geometry and device-local saving only; its outputs are concept plans, not surveyed conditions or engineering/compliance approvals. It does not alter schedules, GTFS, or the Route Concept Planner.
 - Route Concept Planner supports feasibility and comparison only. It does not create schedules, modify/publish GTFS, estimate operating cost, or include Camp/address-manifest workflows.
 
 The planner remains responsible for assumptions, overrides, preferred-alternative selection, and any decision to advance a concept.

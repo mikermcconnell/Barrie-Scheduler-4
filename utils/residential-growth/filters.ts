@@ -95,11 +95,20 @@ function monthEnd(period: string): string {
     return formatIsoDate(new Date(Date.UTC(year, month, 0, 12)));
 }
 
-function formatMonthLabel(period: string): string {
+export function formatResidentialGrowthMonthLabel(period: string): string {
     const date = new Date(`${period}-01T12:00:00`);
     return Number.isNaN(date.getTime())
         ? period
         : date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
+export function formatResidentialGrowthPeriodSelection(periods: string[]): string {
+    const labels = [...periods].sort().map(formatResidentialGrowthMonthLabel);
+    if (labels.length === 0) return 'No uploaded months';
+    if (labels.length === 1) return labels[0];
+    if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+    if (labels.length === 3) return `${labels[0]}, ${labels[1]}, and ${labels[2]}`;
+    return `${labels[0]} - ${labels.at(-1)} (${labels.length} months)`;
 }
 
 function recordKey(record: ResidentialGrowthRecord): string {
@@ -207,7 +216,7 @@ function selectedPeriodsForPreset(
 export function getResidentialGrowthMonthOptions(datasets: ResidentialGrowthMonthlyDataset[]): ResidentialGrowthMonthOption[] {
     return periodsFromDatasets(datasets.filter(datasetHasRecords)).map((period) => ({
         value: period,
-        label: formatMonthLabel(period),
+        label: formatResidentialGrowthMonthLabel(period),
     }));
 }
 
@@ -217,7 +226,8 @@ export function buildResidentialGrowthRange(
     selectedMonth?: string,
 ): ResidentialGrowthRangeResult {
     const datasetsWithRecords = datasets.filter(datasetHasRecords);
-    const periodSet = new Set(selectedPeriodsForPreset(datasetsWithRecords, preset, selectedMonth));
+    const selectedPeriods = selectedPeriodsForPreset(datasetsWithRecords, preset, selectedMonth);
+    const periodSet = new Set(selectedPeriods);
     const sourceDatasets = preset === 'latest-month'
         ? [latestUploadedDataset(datasetsWithRecords)].filter((dataset): dataset is ResidentialGrowthMonthlyDataset => !!dataset)
         : datasetsWithRecords;
@@ -228,20 +238,23 @@ export function buildResidentialGrowthRange(
     };
     const issued = dedupeRecords(sourceDatasets.flatMap((dataset) => dataset.issued.filter((record) => recordIsSelected(dataset, record))));
     const occupied = dedupeRecords(sourceDatasets.flatMap((dataset) => dataset.occupied.filter((record) => recordIsSelected(dataset, record))));
-    const periods = Array.from(new Set([...issued, ...occupied].map(recordPeriod).filter(isPeriod))).sort().reverse();
     const datasetCount = sourceDatasets.filter((dataset) => (
         dataset.issued.some((record) => recordIsSelected(dataset, record))
         || dataset.occupied.some((record) => recordIsSelected(dataset, record))
     )).length;
-    const sortedPeriods = [...periods].sort();
+    const hasSelectedRecords = sourceDatasets.some((dataset) => (
+        dataset.issued.some((record) => recordIsSelected(dataset, record))
+        || dataset.occupied.some((record) => recordIsSelected(dataset, record))
+    ));
+    const periods = hasSelectedRecords ? [...selectedPeriods].sort() : [];
 
     return {
         issued,
         occupied,
-        fromDate: sortedPeriods[0] ? monthStart(sortedPeriods[0]) : undefined,
-        toDate: sortedPeriods.at(-1) ? monthEnd(sortedPeriods.at(-1)!) : undefined,
+        fromDate: periods[0] ? monthStart(periods[0]) : undefined,
+        toDate: periods.at(-1) ? monthEnd(periods.at(-1)!) : undefined,
         datasetCount,
         periodCount: periods.length,
-        periods: sortedPeriods,
+        periods,
     };
 }

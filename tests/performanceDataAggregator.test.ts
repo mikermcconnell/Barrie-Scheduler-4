@@ -236,7 +236,7 @@ describe('aggregateDailySummaries', () => {
         expect(summaries[0].system.totalAlightings).toBe(6);
     });
 
-    it('excludes in-between records from operational metrics but retains raw quality counts', () => {
+    it('includes in-between passenger counts without adding operational observations', () => {
         const records = [
             makeRecord({
                 tripId: 'normal-trip', stopId: 'normal-stop', routeStopIndex: 0,
@@ -249,11 +249,11 @@ describe('aggregateDailySummaries', () => {
         ];
 
         const summary = aggregateDailySummaries(records)[0];
-        expect(summary.system.totalRidership).toBe(5);
-        expect(summary.system.totalAlightings).toBe(2);
+        expect(summary.system.totalRidership).toBe(55);
+        expect(summary.system.totalAlightings).toBe(22);
         expect(summary.system.avgSystemLoad).toBe(8);
         expect(summary.system.tripCount).toBe(1);
-        expect(summary.byStop.map(stop => stop.stopId)).toEqual(['normal-stop']);
+        expect(summary.byStop.map(stop => stop.stopId)).toEqual(['in-between-stop', 'normal-stop']);
         expect(summary.dataQuality.totalRecords).toBe(2);
         expect(summary.dataQuality.inBetweenFiltered).toBe(1);
     });

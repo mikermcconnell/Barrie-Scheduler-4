@@ -1,12 +1,17 @@
 # Shuttle Planner UI Spec
 
-> Date: March 11, 2026
-> Status: Draft
+> Original date: March 11, 2026
+> Status: Initial workspace implemented; target design retained
+> Implementation snapshot reviewed: September 4, 2026
 > Visual reference: `components/workspaces/OnDemandWorkspace.tsx`
 
 ## 1. Intent
 
 This document translates the Shuttle Planner PRD into a concrete screen design and implementation-ready UI structure.
+
+The initial workspace is implemented in `components/Analytics/ShuttlePlannerWorkspace.tsx`, with state and actions in `components/Analytics/useShuttlePlannerController.ts`. It lives inside Fixed Route's Planning Data hub. The implementation uses one composed workspace rather than the originally proposed panel-per-file structure.
+
+Current UI coverage includes project/scenario controls, map route and stop editing, road-snap status, Barrie/custom stops, service assumptions, derived metrics and warnings, departure preview, two-scenario comparison, and Markdown export. The remaining future-tense statements in this document are target design, not proof that every interaction is shipped.
 
 The Shuttle Planner should inherit the Transit On Demand workspace theme and interaction density, while reorganizing the page around a map-first workflow.
 
@@ -337,24 +342,15 @@ When the scenario has route, stops, service assumptions, and a valid timetable:
 - allow export
 - allow promotion to downstream workflow later
 
-## 11. Proposed Component Inventory
+## 11. Current Component Inventory
 
 | Component | Responsibility |
 |------|----------------|
-| `ShuttlePlannerWorkspace` | page shell and state orchestration |
-| `ShuttleWorkspaceHeader` | title, scenario selection, actions |
-| `ShuttleProjectSidebar` | projects and scenarios |
-| `ShuttleStopPanel` | ordered stop management |
-| `ShuttleMapCanvas` | route and stop editing |
-| `ShuttleMapToolbar` | editing tools |
-| `ShuttleServicePanel` | operating assumptions |
-| `ShuttleMetricsPanel` | KPI cards |
-| `ShuttleWarningsPanel` | validation and warnings |
-| `ShuttleTimetablePanel` | draft timetable |
-| `ShuttleComparisonPanel` | compare table and toggles |
-| `ShuttleExportModal` | concept summary export |
+| `ShuttlePlannerWorkspace` and `ShuttlePlannerWorkspaceView` | composed page shell, controls, map, panels, comparison, and export |
+| `useShuttlePlannerController` | project loading/saving, selected objects, map edits, road snapping, scenario actions, and compare state |
+| `MapBase` | shared map lifecycle and rendering surface |
 
-## 12. Suggested Implementation Order
+## 12. Original Suggested Implementation Order
 
 ### Step 1
 

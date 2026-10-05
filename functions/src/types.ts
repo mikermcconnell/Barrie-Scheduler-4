@@ -604,7 +604,8 @@ export interface DailySummary {
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 14;
+// v15 includes InBetween passenger movements; operational/load eligibility is unchanged.
+export const PERFORMANCE_SCHEMA_VERSION = 15;
 export const RIDERSHIP_STABLE_TRIP_SCHEMA_VERSION = 14;
 export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 4;
 
@@ -667,4 +668,5 @@ export interface PerformanceMetadata {
   monthlyStoragePaths?: Record<string, string>;
   routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
   loadProfileMonthlyStoragePaths?: Record<string, string>;
+  serviceDateImportVersions?: Record<string, string>;
 }

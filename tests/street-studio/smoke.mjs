@@ -1,0 +1,16 @@
+import { chromium } from 'playwright';
+const browser=await chromium.launch({headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1,acceptDownloads:true});
+const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
+await page.goto('http://127.0.0.1:3008/tests/street-studio/harness.html');
+await page.waitForTimeout(3000);
+console.log('title',await page.title(),'map',await page.locator('.maplibregl-canvas').count(),'status',await page.locator('.sds-save').innerText(),'errors',errors.slice(0,5));
+await page.screenshot({path:'docs/street-design-studio/studio-1440.png',fullPage:true});
+await page.getByRole('button',{name:'Freeze existing baseline'}).click();
+await page.getByRole('button',{name:'Create alternative from baseline'}).click();
+await page.getByRole('button',{name:'Replace with 0.60 m buffer + cycle'}).click();
+console.log('alt',await page.getByLabel('Scenario').inputValue(),await page.locator('.sds-status').innerText());
+await page.screenshot({path:'docs/street-design-studio/studio-alternative.png',fullPage:true});
+await page.waitForTimeout(1000);console.log('save',await page.locator('.sds-save').innerText());
+await page.reload();await page.waitForTimeout(2000);console.log('reload',await page.locator('.sds-save').innerText(),await page.getByLabel('Scenario').locator('option').count());
+await browser.close();

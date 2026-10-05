@@ -31,6 +31,7 @@ export const FEATURE_DEFINITIONS = {
     analyticsNetworkConnections: { defaultEnabled: true, hideInDemoMode: true },
     analyticsRoutePlanner2: { defaultEnabled: true, hideInDemoMode: true },
     analyticsRouteConceptPlanner: { defaultEnabled: false, hideInDemoMode: true },
+    analyticsStreetDesignStudio: { defaultEnabled: false, hideInDemoMode: true },
     analyticsShuttlePlanner: { defaultEnabled: true, hideInDemoMode: true },
     analyticsFarePrograms: { defaultEnabled: true, hideInDemoMode: false },
     analyticsCouncilIntelligence: { defaultEnabled: true, hideInDemoMode: true },

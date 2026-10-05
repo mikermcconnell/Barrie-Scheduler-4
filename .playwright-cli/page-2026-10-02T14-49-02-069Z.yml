@@ -1,0 +1,48 @@
+- generic [ref=e2]:
+  - generic [ref=e3]: Browser verification · fixture bus masters / real public GO GTFS
+  - region "Regional Transit Connections" [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - paragraph [ref=e8]: Trip-by-trip connection chart
+        - heading "GO Train & Barrie Transit connections" [level=2] [ref=e9]
+        - paragraph [ref=e10]: Every train across the top. Every connecting route down the side.
+      - generic [ref=e11]:
+        - button "Refresh sources" [disabled] [ref=e12]
+        - button "Print chart" [disabled] [ref=e18]
+    - paragraph [ref=e23]:
+      - strong [ref=e24]: Scheduled connections, not live performance.
+      - text: Current published master trips are compared with date-valid static GO train schedules. Raw gaps exclude walking and boarding allowances; colours do not guarantee a feasible or reliable transfer.
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - text: Service date
+        - textbox "Service date" [ref=e27]: 2026-10-02
+      - group "GO station" [ref=e28]:
+        - button "Allandale Waterfront" [pressed] [ref=e29] [cursor=pointer]
+        - button "Barrie South" [ref=e30] [cursor=pointer]
+      - group "Connection direction" [ref=e31]:
+        - button "Both directions" [pressed] [ref=e32] [cursor=pointer]
+        - button "To GO" [ref=e33] [cursor=pointer]
+        - button "From GO" [ref=e34] [cursor=pointer]
+      - paragraph [ref=e35]:
+        - strong [ref=e36]: Weekday
+        - text: Local annual calendar applied
+    - generic "Scheduled gap legend" [ref=e37]:
+      - generic [ref=e38]: 6–15 min
+      - generic [ref=e40]: 1–5 min · tight
+      - generic [ref=e42]: 16–30 min
+      - generic [ref=e44]: No 1–30 min gap
+      - generic [ref=e46]: Unavailable
+      - generic [ref=e48]: Gap excludes walking & boarding allowance
+    - generic [ref=e49]:
+      - strong [ref=e50]: Allandale Waterfront GO
+      - text: · 2026-10-02GO source has not been loaded.
+    - generic [ref=e51]:
+      - status [ref=e52]: Loading GO static timetable…
+      - alert [ref=e53]:
+        - strong [ref=e54]: 1 master source unavailable.
+        - text: These rows are not counted as verified connections.
+        - list [ref=e55]:
+          - listitem [ref=e56]: "Route 7 · listed v3: Browser fixture: unavailable master source"
+        - button "Retry sources" [ref=e57] [cursor=pointer]
+    - group [ref=e58]:
+      - generic "Sources & interpretation" [ref=e59] [cursor=pointer]

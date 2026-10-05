@@ -1,8 +1,9 @@
 # New Schedule Wizard Step 2 Rebuild Spec
 
-Status: Proposed  
-Date: March 27, 2026  
-Audience: Engineers working on the New Schedule wizard rebuild before implementation starts
+Status: Implemented (approved runtime contract schema v2; original proposal retained)
+Original date: March 27, 2026
+Implementation snapshot reviewed: September 4, 2026
+Audience: Engineers maintaining the New Schedule wizard runtime-review flow
 Context entrypoint: `docs/new-schedule-step2/README.md`
 
 ---
@@ -15,9 +16,19 @@ The goal is to replace the current Step 2 with a contract-first workflow that pr
 
 Internal workflow note: Step 2 should not force a separate human decision gate. It may auto-approve the current review when the user continues, while still saving the same durable runtime contract for Step 3 and Step 4.
 
-This is a pre-implementation spec. It defines the target behavior, architecture, boundaries, and edge-case handling that future code must satisfy.
+The rebuild described here is implemented. Sections written in future tense preserve the original design contract and rationale; they are not a current delivery-status checklist. Use the implementation snapshot below, current code, and focused tests for as-built facts.
 
 For the proposed Step 2 object model, invalidation rules, and component breakdown, also read `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`.
+
+### Current implementation snapshot
+
+- `ApprovedRuntimeContract` is schema version 2 and is defined in `components/NewSchedule/utils/step2ReviewTypes.ts`.
+- Pure helpers build the review result, evaluate health, create approval snapshots, detect stale approvals, and gate later wizard steps.
+- Continuing from a reviewable, non-blocked Step 2 creates or refreshes the approved contract; Step 3 and Step 4 are gated on a current approval.
+- Project save/resume persists the schema-v2 contract. Legacy or structurally invalid runtime artifacts are reset rather than trusted.
+- Review evidence and generation-approved buckets are separate. Generation consumes only eligible approved buckets and the approved direction-band summary.
+- The current UI is composed from `components/NewSchedule/steps/Step2Analysis.tsx`, `components/NewSchedule/step2/`, and `components/NewSchedule/NewScheduleWizard.tsx`.
+- Current verification lives in the focused `tests/step2*.test.*`, `tests/Step2*.test.*`, `tests/NewScheduleWizard*.test.tsx`, and wizard persistence/state tests.
 
 ---
 
@@ -521,7 +532,7 @@ The rebuild must explicitly support these cases.
 
 ---
 
-## 19. Proposed Module Shape
+## 19. Original Proposed Module Shape
 
 The rebuild should keep a modular-monolith shape inside the existing app.
 
@@ -533,9 +544,9 @@ Example responsibility:
 
 - build the full Step 2 runtime review result from Step 1 inputs
 
-Likely file area:
+Implemented file area:
 
-- `components/NewSchedule/utils/` or `utils/new-schedule/`
+- `components/NewSchedule/utils/`
 
 ### 19.2 Health Evaluator
 
@@ -637,9 +648,9 @@ Minimum test layers:
 
 ---
 
-## 23. Acceptance Checklist
+## 23. Original Acceptance Checklist
 
-The Step 2 rebuild is not done until all are true:
+This checklist records the original acceptance contract. Delivery status must be verified from the current implementation and tests rather than inferred from unchecked historical boxes:
 
 - [ ] Step 2 has an explicit runtime review state model
 - [ ] Step 2 auto-approves the current contract on continue for this internal workflow

@@ -1,5 +1,7 @@
 import * as admin from 'firebase-admin';
+import { createHash, randomUUID } from 'node:crypto';
 import { onRequest } from 'firebase-functions/v2/https';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { parseSTREETSCSV } from './parser';
 export { sendDailyReport, testDailyReport, testStaleReportAlert } from './dailyReport';
@@ -46,13 +48,18 @@ type HeaderCarrier = {
   headers: Record<string, string | string[] | undefined>;
 };
 
+interface PerformanceIngestActor {
+  id: string;
+  mode: 'automated' | 'interactive';
+}
+
 async function resolvePerformanceIngestActor(
   req: HeaderCarrier,
   teamId: string,
-): Promise<string | null> {
+): Promise<PerformanceIngestActor | null> {
   const apiKey = req.headers['x-api-key'];
   if (apiKey && apiKey === INGEST_API_KEY.value()) {
-    return 'auto-ingest';
+    return { id: 'auto-ingest', mode: 'automated' };
   }
 
   const authHeader = req.headers.authorization;
@@ -70,7 +77,9 @@ async function resolvePerformanceIngestActor(
       .doc(`teams/${teamId}/members/${decoded.uid}`)
       .get();
     const role = memberSnap.data()?.role;
-    if (memberSnap.exists && (role === 'owner' || role === 'admin')) return decoded.uid;
+    if (memberSnap.exists && (role === 'owner' || role === 'admin')) {
+      return { id: decoded.uid, mode: 'interactive' };
+    }
     if (decoded.schedulerAdmin === true) {
       const supportSnap = await getDb().doc(`developerSupportSessions/${decoded.uid}`).get();
       const support = supportSnap.data();
@@ -80,7 +89,7 @@ async function resolvePerformanceIngestActor(
           && support?.mode === 'edit'
           && typeof expiresAtMs === 'number'
           && expiresAtMs > Date.now()) {
-        return decoded.uid;
+        return { id: decoded.uid, mode: 'interactive' };
       }
     }
     return null;
@@ -131,7 +140,7 @@ type RoutePlannerGeocodeRateLimitState = {
 
 const routePlannerGeocodeRateLimitState = new Map<string, RoutePlannerGeocodeRateLimitState>();
 
-interface PerformanceImportRunRecord {
+export interface PerformanceImportRunRecord {
   importedAt?: admin.firestore.Timestamp | null;
   importedBy?: string;
   rawStoragePath?: string;
@@ -141,6 +150,12 @@ interface PerformanceImportRunRecord {
   warningCount?: number;
   contentLength?: number;
   contentType?: string;
+  contentHash?: string;
+  processorVersion?: string;
+  status?: 'queued' | 'processing' | 'publishing' | 'completed' | 'failed';
+  attemptCount?: number;
+  errorMessage?: string;
+  sourceRevision?: string | number;
 }
 
 interface ExistingPerformanceSummaryLoad {
@@ -153,6 +168,7 @@ interface ExistingPerformanceSummaryLoad {
   routeMonthlyStoragePaths?: Record<string, Record<string, string>>;
   loadProfileMonthlyStoragePaths?: Record<string, string>;
   metadata: Partial<PerformanceMetadata> | null;
+  metadataUpdateTime: admin.firestore.Timestamp | null;
   readError?: Error;
 }
 
@@ -359,6 +375,41 @@ function readStringRecord(value: unknown): Record<string, string> | undefined {
   );
 }
 
+const PERFORMANCE_SOURCE_REVISION_TIMESTAMP_WIDTH = 13;
+
+export function buildPerformanceSourceRevision(
+  timestamp: number = Date.now(),
+  uniqueId: string = randomUUID(),
+): string {
+  if (!Number.isFinite(timestamp) || timestamp < 0) {
+    throw new Error('Performance source revision timestamp must be a non-negative finite number.');
+  }
+  const normalizedTimestamp = Math.trunc(timestamp)
+    .toString()
+    .padStart(PERFORMANCE_SOURCE_REVISION_TIMESTAMP_WIDTH, '0');
+  return `${normalizedTimestamp}-${uniqueId}`;
+}
+
+function normalizePerformanceSourceRevision(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return buildPerformanceSourceRevision(value, 'legacy-number');
+  }
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return buildPerformanceSourceRevision(Number(trimmed), 'legacy-number');
+  }
+  return /^\d{13,}-.+$/.test(trimmed) ? trimmed : undefined;
+}
+
+function readPerformanceSourceRevisionRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value)
+    .map(([date, revision]) => [date, normalizePerformanceSourceRevision(revision)] as const)
+    .filter((entry): entry is readonly [string, string] => entry[1] !== undefined);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function readNestedStringRecord(value: unknown): Record<string, Record<string, string>> | undefined {
   if (!isRecord(value)) return undefined;
   const entries = Object.entries(value)
@@ -380,7 +431,9 @@ async function mapWithConcurrency<T>(
       await task(item);
     }
   });
-  await Promise.all(workers);
+  const results = await Promise.allSettled(workers);
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failure) throw failure.reason;
 }
 
 const REPORT_DAY_COUNT = 56;
@@ -665,20 +718,49 @@ function buildPerformanceReportSummary(summary: PerformanceDataSummary): Perform
   };
 }
 
-function mergeDailySummaries(
+export function mergeDailySummariesByImportVersion(
   existingSummaries: PerformanceDataSummary['dailySummaries'],
   replacementSummaries: PerformanceDataSummary['dailySummaries'],
+  existingVersions: Record<string, string | number>,
+  replacementVersion: string | number,
   retentionDays = MAX_RETENTION_DAYS,
-): PerformanceDataSummary['dailySummaries'] {
+  existingUnversionedFallback?: string | number,
+): {
+  summaries: PerformanceDataSummary['dailySummaries'];
+  serviceDateImportVersions: Record<string, string>;
+} {
   const mergedMap = new Map(existingSummaries.map(s => [s.date, s]));
+  const mergedVersions = Object.fromEntries(
+    Object.entries(existingVersions)
+      .map(([date, revision]) => [date, normalizePerformanceSourceRevision(revision)] as const)
+      .filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
+  );
+  const normalizedReplacementVersion = normalizePerformanceSourceRevision(replacementVersion);
+  if (!normalizedReplacementVersion) {
+    throw new Error('Performance replacement revision is invalid.');
+  }
+  const normalizedFallbackVersion = normalizePerformanceSourceRevision(existingUnversionedFallback);
+  if (normalizedFallbackVersion) {
+    for (const summary of existingSummaries) {
+      mergedVersions[summary.date] ??= normalizedFallbackVersion;
+    }
+  }
   for (const summary of replacementSummaries) {
+    const existingVersion = mergedVersions[summary.date] ?? normalizedFallbackVersion;
+    if (mergedMap.has(summary.date) && existingVersion && normalizedReplacementVersion < existingVersion) continue;
     mergedMap.set(summary.date, summary);
+    mergedVersions[summary.date] = normalizedReplacementVersion;
   }
 
   const cutoffStr = getRetentionCutoffDateString(retentionDays);
-  return Array.from(mergedMap.values())
+  const summaries = Array.from(mergedMap.values())
     .filter(s => s.date >= cutoffStr)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const retainedDates = new Set(summaries.map(summary => summary.date));
+  const serviceDateImportVersions = Object.fromEntries(
+    Object.entries(mergedVersions).filter(([date]) => retainedDates.has(date)),
+  );
+  return { summaries, serviceDateImportVersions };
 }
 
 export function mergeRebuiltDailySummaries(
@@ -711,15 +793,61 @@ export function mergeRebuiltDailySummaries(
   return merged.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+export function mergeRebuiltDailySummariesByImportVersion(
+  existingSummaries: PerformanceDataSummary['dailySummaries'],
+  rebuiltSummaries: PerformanceDataSummary['dailySummaries'],
+  startDate: string,
+  endDate: string,
+  existingVersions: Record<string, string | number>,
+  rebuildVersion: string | number,
+  existingUnversionedFallback?: string | number,
+  retentionDays = MAX_RETENTION_DAYS,
+): {
+  summaries: PerformanceDataSummary['dailySummaries'];
+  serviceDateImportVersions: Record<string, string>;
+} {
+  const normalizedRebuildVersion = normalizePerformanceSourceRevision(rebuildVersion);
+  if (!normalizedRebuildVersion) throw new Error('Performance rebuild revision is invalid.');
+
+  const rebuiltDates = new Set(rebuiltSummaries.map(summary => summary.date));
+  const versioned = mergeDailySummariesByImportVersion(
+    existingSummaries,
+    rebuiltSummaries,
+    existingVersions,
+    normalizedRebuildVersion,
+    retentionDays,
+    existingUnversionedFallback,
+  );
+  const summaries = versioned.summaries.filter(summary => {
+    if (summary.date < startDate || summary.date > endDate || rebuiltDates.has(summary.date)) return true;
+    const existingVersion = versioned.serviceDateImportVersions[summary.date];
+    return !!existingVersion && existingVersion > normalizedRebuildVersion;
+  });
+  const retainedDates = new Set(summaries.map(summary => summary.date));
+  const serviceDateImportVersions = Object.fromEntries(
+    Object.entries(versioned.serviceDateImportVersions)
+      .filter(([date]) => retainedDates.has(date)),
+  );
+  return { summaries, serviceDateImportVersions };
+}
+
 async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingPerformanceSummaryLoad> {
   const metadataRef = getPerformanceMetadataRef(teamId);
   const metadataSnap = await metadataRef.get();
 
   if (!metadataSnap.exists) {
-    return { summary: null, storagePath: null, overviewStoragePath: null, reportStoragePath: null, metadata: null };
+    return {
+      summary: null,
+      storagePath: null,
+      overviewStoragePath: null,
+      reportStoragePath: null,
+      metadata: null,
+      metadataUpdateTime: null,
+    };
   }
 
   const meta = metadataSnap.data() || {};
+  const metadataUpdateTime = metadataSnap.updateTime ?? null;
   const storagePath = typeof meta.storagePath === 'string' ? meta.storagePath : null;
   const overviewStoragePath = typeof meta.overviewStoragePath === 'string' ? meta.overviewStoragePath : null;
   const reportStoragePath = typeof meta.reportStoragePath === 'string' ? meta.reportStoragePath : null;
@@ -727,6 +855,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
   const monthlyStoragePaths = readStringRecord(meta.monthlyStoragePaths);
   const routeMonthlyStoragePaths = readNestedStringRecord(meta.routeMonthlyStoragePaths);
   const loadProfileMonthlyStoragePaths = readStringRecord(meta.loadProfileMonthlyStoragePaths);
+  const serviceDateImportVersions = readPerformanceSourceRevisionRecord(meta.serviceDateImportVersions);
   const metadata: Partial<PerformanceMetadata> = {
     importedAt: meta.importedAt?.toDate?.()?.toISOString?.(),
     importedBy: typeof meta.importedBy === 'string' ? meta.importedBy : undefined,
@@ -743,6 +872,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
     monthlyStoragePaths,
     routeMonthlyStoragePaths,
     loadProfileMonthlyStoragePaths,
+    serviceDateImportVersions,
   };
 
   if (monthlyStoragePaths && Object.keys(monthlyStoragePaths).length > 0) {
@@ -766,7 +896,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
         schemaVersion: PERFORMANCE_SCHEMA_VERSION,
       };
       const summary = buildPerformanceSummaryFromBase(base, dailySummaries, metadata);
-      return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
+      return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata, metadataUpdateTime };
     } catch (error) {
       return {
         summary: null,
@@ -778,20 +908,21 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
         routeMonthlyStoragePaths,
         loadProfileMonthlyStoragePaths,
         metadata,
+        metadataUpdateTime,
         readError: error instanceof Error ? error : new Error(String(error)),
       };
     }
   }
 
   if (!storagePath) {
-    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
+    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata, metadataUpdateTime };
   }
 
   try {
     const file = getBucket().file(storagePath);
     const [content] = await file.download();
     const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
-    return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata };
+    return { summary, storagePath, overviewStoragePath, reportStoragePath, routeStoragePaths, monthlyStoragePaths, routeMonthlyStoragePaths, loadProfileMonthlyStoragePaths, metadata, metadataUpdateTime };
   } catch (error) {
     return {
       summary: null,
@@ -803,6 +934,7 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
       routeMonthlyStoragePaths,
       loadProfileMonthlyStoragePaths,
       metadata,
+      metadataUpdateTime,
       readError: error instanceof Error ? error : new Error(String(error)),
     };
   }
@@ -899,6 +1031,7 @@ async function savePerformanceImportArchive(params: {
   warningCount: number;
   importedBy: string;
   contentType: string;
+  sourceRevision: string;
 }): Promise<string> {
   const rawStoragePath = buildRawPerformanceImportStoragePath(params.teamId, params.runId);
   const serviceDates = params.newSummaries.map(summary => summary.date).sort();
@@ -928,9 +1061,256 @@ async function savePerformanceImportArchive(params: {
     warningCount: params.warningCount,
     contentLength: Buffer.byteLength(params.csvText, 'utf8'),
     contentType: params.contentType,
+    sourceRevision: params.sourceRevision,
+    status: 'publishing',
   });
 
   return rawStoragePath;
+}
+
+const MAX_QUEUED_IMPORT_ATTEMPTS = 3;
+const PERFORMANCE_IMPORT_PROCESSOR_VERSION = `queue-v3-schema-${PERFORMANCE_SCHEMA_VERSION}-runtime-${PERFORMANCE_RUNTIME_LOGIC_VERSION}`;
+const MAX_PERFORMANCE_METADATA_CONFLICT_ATTEMPTS = 3;
+
+class PerformanceMetadataConflictError extends Error {
+  constructor() {
+    super('Performance data changed while this import was processing. The import will be retried safely.');
+    this.name = 'PerformanceMetadataConflictError';
+  }
+}
+
+export function performanceMetadataVersionMatches(
+  expected: admin.firestore.Timestamp | null,
+  currentExists: boolean,
+  currentUpdateTime?: admin.firestore.Timestamp,
+): boolean {
+  if (expected === null) return !currentExists;
+  return currentExists
+    && currentUpdateTime !== undefined
+    && currentUpdateTime.isEqual(expected);
+}
+
+function isPerformanceMetadataConflictError(error: unknown): boolean {
+  return error instanceof PerformanceMetadataConflictError
+    || (error instanceof Error && error.name === 'PerformanceMetadataConflictError');
+}
+
+export function shouldCleanupFailedPerformanceGeneration(
+  metadataPublishStarted: boolean,
+  error: unknown,
+): boolean {
+  // Firestore may commit even when the client receives a timeout. Once
+  // publication starts, preserve the generation unless the transaction
+  // explicitly rejected a stale metadata revision.
+  return !metadataPublishStarted || isPerformanceMetadataConflictError(error);
+}
+
+export async function retryPerformanceMetadataConflicts<T>(
+  operation: (attempt: number) => Promise<T>,
+  maxAttempts = MAX_PERFORMANCE_METADATA_CONFLICT_ATTEMPTS,
+): Promise<T> {
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error('Performance metadata retry attempts must be a positive integer.');
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      if (!isPerformanceMetadataConflictError(error) || attempt === maxAttempts) throw error;
+    }
+  }
+
+  throw new Error('Performance metadata retry loop exited unexpectedly.');
+}
+
+export function shouldClaimQueuedPerformanceImport(
+  status: PerformanceImportRunRecord['status'],
+  attemptCount: number | undefined,
+): boolean {
+  if (!['queued', 'processing', 'failed'].includes(status || '')) return false;
+  return (attemptCount ?? 0) < MAX_QUEUED_IMPORT_ATTEMPTS;
+}
+
+export function shouldFinalizeExhaustedPerformanceImport(
+  status: PerformanceImportRunRecord['status'],
+  attemptCount: number | undefined,
+): boolean {
+  return status === 'processing' && (attemptCount ?? 0) >= MAX_QUEUED_IMPORT_ATTEMPTS;
+}
+
+export function shouldDeduplicatePerformanceImport(
+  status: PerformanceImportRunRecord['status'],
+): boolean {
+  return status === 'queued' || status === 'processing' || status === 'completed';
+}
+
+export function buildPerformanceImportId(
+  csvText: string,
+  processorVersion = PERFORMANCE_IMPORT_PROCESSOR_VERSION,
+): string {
+  return createHash('sha256')
+    .update(processorVersion, 'utf8')
+    .update('\0', 'utf8')
+    .update(csvText, 'utf8')
+    .digest('hex');
+}
+
+function getPerformanceImportChronology(
+  run: PerformanceImportRunRecord & { id: string },
+): string {
+  const storedRevision = normalizePerformanceSourceRevision(run.sourceRevision);
+  if (storedRevision) return storedRevision;
+  const importedAt = run.importedAt?.toMillis?.();
+  if (typeof importedAt === 'number' && Number.isFinite(importedAt)) {
+    return buildPerformanceSourceRevision(importedAt, run.id);
+  }
+  const legacyTimestamp = Number(run.id.match(/^\d{10,}/)?.[0]);
+  return buildPerformanceSourceRevision(
+    Number.isFinite(legacyTimestamp) ? legacyTimestamp : 0,
+    run.id,
+  );
+}
+
+export function getRebuildEligiblePerformanceImports<T extends PerformanceImportRunRecord & { id: string }>(
+  runs: T[],
+): T[] {
+  return runs
+    .filter(run => run.status === undefined || run.status === 'completed')
+    .sort((a, b) => {
+      const chronologyDifference = getPerformanceImportChronology(a).localeCompare(getPerformanceImportChronology(b));
+      return chronologyDifference || a.id.localeCompare(b.id);
+    });
+}
+
+function performanceImportOverlapsWindow(
+  run: PerformanceImportRunRecord,
+  startDate: string,
+  endDate: string,
+): boolean {
+  if (Array.isArray(run.serviceDates) && run.serviceDates.length > 0) {
+    return run.serviceDates.some(date => date >= startDate && date <= endDate);
+  }
+  return dateRangesOverlap(run.dateRange?.start, run.dateRange?.end, startDate, endDate);
+}
+
+export function getBlockingPerformanceImportsForRebuild<T extends PerformanceImportRunRecord & { id: string }>(
+  runs: T[],
+  startDate: string,
+  endDate: string,
+): T[] {
+  return runs.filter(run => {
+    if (!performanceImportOverlapsWindow(run, startDate, endDate)) return false;
+    if (run.status === 'queued' || run.status === 'processing' || run.status === 'publishing') return true;
+    return run.status === 'failed'
+      && typeof run.processorVersion === 'string'
+      && (run.attemptCount ?? 0) < MAX_QUEUED_IMPORT_ATTEMPTS;
+  });
+}
+
+export function buildPerformanceGenerationId(
+  timestamp: number = Date.now(),
+  uniqueId: string = randomUUID(),
+): string {
+  return `${timestamp}-${uniqueId}`;
+}
+
+async function queuePerformanceImport(params: {
+  teamId: string;
+  csvText: string;
+  importedBy: string;
+  contentType: string;
+  serviceDates: string[];
+  recordCount: number;
+  warningCount: number;
+}): Promise<{ runId: string; rawStoragePath: string; deduplicated: boolean; status: string }> {
+  const contentHash = buildPerformanceImportId(params.csvText);
+  const imports = getPerformanceImportsCollection(params.teamId);
+  const sourceRevision = buildPerformanceSourceRevision();
+  const archiveId = `${contentHash}-${sourceRevision}-${randomUUID()}`;
+  const rawStoragePath = buildRawPerformanceImportStoragePath(params.teamId, archiveId);
+
+  await getBucket().file(rawStoragePath).save(params.csvText, {
+    contentType: params.contentType,
+    metadata: {
+      metadata: {
+        importedBy: params.importedBy,
+        serviceDates: params.serviceDates.join(','),
+        recordCount: String(params.recordCount),
+        warningCount: String(params.warningCount),
+      },
+    },
+  });
+
+  const cleanupUnreferencedArchive = async (): Promise<void> => {
+    try {
+      await getBucket().file(rawStoragePath).delete();
+    } catch {
+      // The unreferenced archive may already be gone.
+    }
+  };
+
+  try {
+    const result = await getDb().runTransaction(async transaction => {
+      const matching = await transaction.get(imports.where('contentHash', '==', contentHash));
+      const duplicate = matching.docs.find(snapshot => {
+        const status = snapshot.data().status as PerformanceImportRunRecord['status'];
+        return shouldDeduplicatePerformanceImport(status);
+      });
+      if (duplicate) {
+        const data = duplicate.data() as PerformanceImportRunRecord;
+        return {
+          runId: duplicate.id,
+          rawStoragePath: data.rawStoragePath || '',
+          deduplicated: true,
+          status: data.status || 'existing',
+        };
+      }
+
+      // A terminal failure must be re-runnable. The first job keeps the stable
+      // hash ID; later jobs get unique IDs while retaining the same contentHash.
+      const runId = matching.empty
+        ? contentHash
+        : `${contentHash}-${Date.now()}-${randomUUID()}`;
+      const importRef = imports.doc(runId);
+      transaction.create(importRef, {
+        importedAt: admin.firestore.FieldValue.serverTimestamp(),
+        queuedAt: admin.firestore.FieldValue.serverTimestamp(),
+        importedBy: params.importedBy,
+        rawStoragePath,
+        dateRange: {
+          start: params.serviceDates[0],
+          end: params.serviceDates[params.serviceDates.length - 1],
+        },
+        serviceDates: params.serviceDates,
+        recordCount: params.recordCount,
+        warningCount: params.warningCount,
+        contentLength: Buffer.byteLength(params.csvText, 'utf8'),
+        contentType: params.contentType,
+        contentHash,
+        processorVersion: PERFORMANCE_IMPORT_PROCESSOR_VERSION,
+        sourceRevision,
+        status: 'queued',
+        attemptCount: 0,
+      });
+      return { runId, rawStoragePath, deduplicated: false, status: 'queued' };
+    });
+
+    if (result.deduplicated) await cleanupUnreferencedArchive();
+    return result;
+  } catch (error) {
+    // A network timeout can make a committed transaction look failed. Verify
+    // that no queue record references this unique archive before deleting it.
+    try {
+      const persisted = await imports.where('rawStoragePath', '==', rawStoragePath).limit(1).get();
+      if (persisted.empty) await cleanupUnreferencedArchive();
+    } catch (verificationError) {
+      // Preserve the archive when publication is ambiguous, and never replace
+      // the original queue error with a secondary cleanup/lookup error.
+      console.error('Could not verify failed performance queue publication:', verificationError);
+    }
+    throw error;
+  }
 }
 
 async function savePerformanceSummary(params: {
@@ -945,9 +1325,13 @@ async function savePerformanceSummary(params: {
   oldMonthlyStoragePaths?: Record<string, string> | null;
   oldRouteMonthlyStoragePaths?: Record<string, Record<string, string>> | null;
   oldLoadProfileMonthlyStoragePaths?: Record<string, string> | null;
+  serviceDateImportVersions?: Record<string, string>;
+  expectedMetadataUpdateTime?: admin.firestore.Timestamp | null;
   deleteOld?: boolean;
 }): Promise<string> {
-  const timestamp = Date.now().toString();
+  // Concurrent imports must never share temporary object names. A losing
+  // optimistic-write attempt deletes only its own unpublished generation.
+  const timestamp = buildPerformanceGenerationId();
   const overviewStoragePath = buildPerformanceDataStoragePath(params.teamId, timestamp, `${params.suffix ?? ''}-overview`);
   const reportStoragePath = buildPerformanceDataStoragePath(params.teamId, timestamp, `${params.suffix ?? ''}-report`);
   const overviewJsonStr = JSON.stringify(buildPerformanceOverviewSummary(params.summary));
@@ -955,48 +1339,90 @@ async function savePerformanceSummary(params: {
   const monthlyStoragePaths: Record<string, string> = {};
   const routeMonthlyStoragePaths: Record<string, Record<string, string>> = {};
   const loadProfileMonthlyStoragePaths: Record<string, string> = {};
+  const createdPaths = new Set<string>();
+  const saveJson = async (path: string, value: unknown): Promise<void> => {
+    await getBucket().file(path).save(
+      typeof value === 'string' ? value : JSON.stringify(value),
+      { contentType: 'application/json' },
+    );
+    createdPaths.add(path);
+  };
+  const cleanupCreatedPaths = async (): Promise<void> => {
+    await Promise.all([...createdPaths].map(async path => {
+      try {
+        await getBucket().file(path).delete();
+      } catch {
+        // Best effort: these paths were never published in metadata.
+      }
+    }));
+  };
+  let metadataPublishStarted = false;
 
-  await mapWithConcurrency([...buildMonthlyPerformanceSummaries(params.summary).entries()], 3, async ([month, monthSummary]) => {
-    const monthPath = buildPerformanceMonthlyStoragePath(params.teamId, timestamp, month);
-    await getBucket().file(monthPath).save(JSON.stringify(monthSummary), { contentType: 'application/json' });
-    monthlyStoragePaths[month] = monthPath;
-  });
-  await mapWithConcurrency([...buildMonthlyPerformanceSummaries(params.summary).entries()], 3, async ([month, monthSummary]) => {
-    const monthPath = buildPerformanceLoadProfileMonthlyStoragePath(params.teamId, timestamp, month);
-    await getBucket().file(monthPath).save(JSON.stringify(buildLoadProfileMonthlyView(monthSummary)), {
-      contentType: 'application/json',
+  try {
+    const monthlySummaries = buildMonthlyPerformanceSummaries(params.summary);
+    await mapWithConcurrency([...monthlySummaries.entries()], 3, async ([month, monthSummary]) => {
+      const monthPath = buildPerformanceMonthlyStoragePath(params.teamId, timestamp, month);
+      await saveJson(monthPath, monthSummary);
+      monthlyStoragePaths[month] = monthPath;
     });
-    loadProfileMonthlyStoragePaths[month] = monthPath;
-  });
-  await getBucket().file(overviewStoragePath).save(overviewJsonStr, { contentType: 'application/json' });
-  await getBucket().file(reportStoragePath).save(reportJsonStr, { contentType: 'application/json' });
-
-  await mapWithConcurrency(getAvailablePerformanceRoutes(params.summary), 2, async route => {
-    const routeSummary = filterPerformanceSummaryByRoute(params.summary, route.routeId);
-    if (!routeSummary) return;
-    routeMonthlyStoragePaths[route.routeId] = {};
-    await mapWithConcurrency([...buildMonthlyPerformanceSummaries(routeSummary).entries()], 2, async ([month, monthSummary]) => {
-      const routeMonthPath = buildPerformanceRouteMonthlyStoragePath(params.teamId, timestamp, route.routeId, month);
-      await getBucket().file(routeMonthPath).save(JSON.stringify(monthSummary), { contentType: 'application/json' });
-      routeMonthlyStoragePaths[route.routeId][month] = routeMonthPath;
+    await mapWithConcurrency([...monthlySummaries.entries()], 3, async ([month, monthSummary]) => {
+      const monthPath = buildPerformanceLoadProfileMonthlyStoragePath(params.teamId, timestamp, month);
+      await saveJson(monthPath, buildLoadProfileMonthlyView(monthSummary));
+      loadProfileMonthlyStoragePaths[month] = monthPath;
     });
-  });
+    await saveJson(overviewStoragePath, overviewJsonStr);
+    await saveJson(reportStoragePath, reportJsonStr);
 
-  await getPerformanceMetadataRef(params.teamId).set({
-    importedAt: admin.firestore.FieldValue.serverTimestamp(),
-    importedBy: params.importedBy,
-    storageMode: 'monthly',
-    overviewStoragePath,
-    reportStoragePath,
-    monthlyStoragePaths,
-    routeMonthlyStoragePaths,
-    loadProfileMonthlyStoragePaths,
-    dateRange: params.summary.metadata.dateRange,
-    dayCount: params.summary.metadata.dayCount,
-    totalRecords: params.summary.metadata.totalRecords,
-    runtimeLogicVersion: params.summary.metadata.runtimeLogicVersion,
-    cleanHistoryStartDate: params.summary.metadata.cleanHistoryStartDate ?? null,
-  });
+    await mapWithConcurrency(getAvailablePerformanceRoutes(params.summary), 2, async route => {
+      const routeSummary = filterPerformanceSummaryByRoute(params.summary, route.routeId);
+      if (!routeSummary) return;
+      routeMonthlyStoragePaths[route.routeId] = {};
+      await mapWithConcurrency([...buildMonthlyPerformanceSummaries(routeSummary).entries()], 2, async ([month, monthSummary]) => {
+        const routeMonthPath = buildPerformanceRouteMonthlyStoragePath(params.teamId, timestamp, route.routeId, month);
+        await saveJson(routeMonthPath, monthSummary);
+        routeMonthlyStoragePaths[route.routeId][month] = routeMonthPath;
+      });
+    });
+
+    const metadataPayload = {
+      importedAt: admin.firestore.FieldValue.serverTimestamp(),
+      importedBy: params.importedBy,
+      storageMode: 'monthly',
+      overviewStoragePath,
+      reportStoragePath,
+      monthlyStoragePaths,
+      routeMonthlyStoragePaths,
+      loadProfileMonthlyStoragePaths,
+      dateRange: params.summary.metadata.dateRange,
+      dayCount: params.summary.metadata.dayCount,
+      totalRecords: params.summary.metadata.totalRecords,
+      runtimeLogicVersion: params.summary.metadata.runtimeLogicVersion,
+      cleanHistoryStartDate: params.summary.metadata.cleanHistoryStartDate ?? null,
+      serviceDateImportVersions: params.serviceDateImportVersions ?? {},
+    };
+    const metadataRef = getPerformanceMetadataRef(params.teamId);
+    const expectedMetadataUpdateTime = params.expectedMetadataUpdateTime;
+    metadataPublishStarted = true;
+    if (expectedMetadataUpdateTime === undefined) {
+      await metadataRef.set(metadataPayload);
+    } else {
+      await getDb().runTransaction(async transaction => {
+        const current = await transaction.get(metadataRef);
+        const matchesExpectedVersion = performanceMetadataVersionMatches(
+          expectedMetadataUpdateTime,
+          current.exists,
+          current.updateTime,
+        );
+        if (!matchesExpectedVersion) throw new PerformanceMetadataConflictError();
+        transaction.set(metadataRef, metadataPayload);
+      });
+    }
+  } catch (error) {
+    if (shouldCleanupFailedPerformanceGeneration(metadataPublishStarted, error)) {
+      await cleanupCreatedPaths();
+    }
+    throw error;
+  }
 
   if (params.deleteOld) {
     const cleanupPaths = new Set<string>();
@@ -1031,6 +1457,111 @@ async function savePerformanceSummary(params: {
   }
 
   return Object.values(monthlyStoragePaths)[0] || overviewStoragePath;
+}
+
+async function mergeAndSavePerformanceSummariesAttempt(params: {
+  teamId: string;
+  importedBy: string;
+  newSummaries: PerformanceDataSummary['dailySummaries'];
+  sourceRevision: string;
+}): Promise<{ storagePath: string; totalDaysStored: number }> {
+  let existingSummaries: PerformanceDataSummary['dailySummaries'] = [];
+  let oldStoragePath: string | null = null;
+  let oldOverviewStoragePath: string | null = null;
+  let oldReportStoragePath: string | null = null;
+  let oldRouteStoragePaths: Record<string, string> | null = null;
+  let oldMonthlyStoragePaths: Record<string, string> | null = null;
+  let oldRouteMonthlyStoragePaths: Record<string, Record<string, string>> | null = null;
+  let oldLoadProfileMonthlyStoragePaths: Record<string, string> | null = null;
+
+  const existing = await loadExistingPerformanceSummary(params.teamId);
+  if (shouldAbortPerformanceSummaryOverwrite(
+    existing.storagePath || (existing.monthlyStoragePaths ? 'monthly-performance-history' : null),
+    existing.summary,
+  )) {
+    throw new Error(
+      `Could not read the existing saved performance history; refusing to overwrite it${existing.readError ? `: ${existing.readError.message}` : '.'}`,
+    );
+  }
+
+  existingSummaries = existing.summary?.dailySummaries || [];
+  oldStoragePath = existing.storagePath;
+  oldOverviewStoragePath = existing.metadata?.overviewStoragePath ?? null;
+  oldReportStoragePath = existing.metadata?.reportStoragePath ?? null;
+  oldRouteStoragePaths = existing.routeStoragePaths ?? null;
+  oldMonthlyStoragePaths = existing.monthlyStoragePaths ?? null;
+  oldRouteMonthlyStoragePaths = existing.routeMonthlyStoragePaths ?? null;
+  oldLoadProfileMonthlyStoragePaths = existing.loadProfileMonthlyStoragePaths ?? null;
+  const existingCleanHistoryStartDate = mergeStoredPerformanceRuntimeMetadata(
+    existing.summary?.metadata,
+    existing.metadata,
+  ).cleanHistoryStartDate;
+  if (existingSummaries.length > 0) {
+    console.log(`Loaded ${existingSummaries.length} existing day(s)`);
+  }
+
+  const versionedMerge = mergeDailySummariesByImportVersion(
+    existingSummaries,
+    params.newSummaries,
+    existing.metadata?.serviceDateImportVersions ?? {},
+    params.sourceRevision,
+    MAX_RETENTION_DAYS,
+    buildPerformanceSourceRevision(existing.metadataUpdateTime?.toMillis?.() ?? 0, 'legacy-metadata'),
+  );
+  const mergedSummaries = enrichDailySummariesWithMissedTrips(versionedMerge.summaries);
+  const preFilterCount = new Set([
+    ...existingSummaries.map(summary => summary.date),
+    ...params.newSummaries.map(summary => summary.date),
+  ]).size;
+  const pruned = preFilterCount - mergedSummaries.length;
+  if (pruned > 0) {
+    console.log(`Pruned ${pruned} days older than ${getRetentionCutoffDateString()} (${MAX_RETENTION_DAYS}-day retention)`);
+  }
+
+  const summary = buildPerformanceSummary(
+    mergedSummaries,
+    params.importedBy,
+    resolveCleanHistoryStartDate(
+      existingCleanHistoryStartDate,
+      params.newSummaries,
+      PERFORMANCE_RUNTIME_LOGIC_VERSION,
+    ),
+  );
+  const storagePath = await savePerformanceSummary({
+    teamId: params.teamId,
+    summary,
+    importedBy: params.importedBy,
+    oldStoragePath,
+    oldOverviewStoragePath,
+    oldReportStoragePath,
+    oldRouteStoragePaths,
+    oldMonthlyStoragePaths,
+    oldRouteMonthlyStoragePaths,
+    oldLoadProfileMonthlyStoragePaths,
+    serviceDateImportVersions: versionedMerge.serviceDateImportVersions,
+    expectedMetadataUpdateTime: existing.metadataUpdateTime,
+    deleteOld: true,
+  });
+  console.log(`Saved ${summary.dailySummaries.length} day(s) to ${storagePath}`);
+
+  return {
+    storagePath,
+    totalDaysStored: summary.dailySummaries.length,
+  };
+}
+
+async function mergeAndSavePerformanceSummaries(params: {
+  teamId: string;
+  importedBy: string;
+  newSummaries: PerformanceDataSummary['dailySummaries'];
+  sourceRevision: string;
+}): Promise<{ storagePath: string; totalDaysStored: number }> {
+  return retryPerformanceMetadataConflicts(async attempt => {
+    if (attempt > 1) {
+      console.warn(`Retrying performance import for team ${params.teamId} after a concurrent metadata update (attempt ${attempt}).`);
+    }
+    return mergeAndSavePerformanceSummariesAttempt(params);
+  });
 }
 
 /**
@@ -1164,6 +1695,7 @@ export const ingestPerformanceData = onRequest(
     cpu: 2,
     timeoutSeconds: 300,
     maxInstances: 1,
+    concurrency: 1,
     region: 'us-central1',
     cors: [
       'https://transitscheduler.ca',
@@ -1174,6 +1706,7 @@ export const ingestPerformanceData = onRequest(
     ],
   },
   async (req, res) => {
+    let manualImportRef: admin.firestore.DocumentReference | null = null;
     // --- Auth check ---
     if (req.method !== 'POST') {
       res.status(405).json({ error: 'Method not allowed. Use POST.' });
@@ -1181,8 +1714,8 @@ export const ingestPerformanceData = onRequest(
     }
 
     const teamId = (req.query.teamId as string) || DEFAULT_TEAM_ID;
-    const importedBy = await resolvePerformanceIngestActor(req, teamId);
-    if (!importedBy) {
+    const actor = await resolvePerformanceIngestActor(req, teamId);
+    if (!actor) {
       res.status(401).json({ error: 'Invalid or missing ingest authorization' });
       return;
     }
@@ -1228,15 +1761,45 @@ export const ingestPerformanceData = onRequest(
 
       console.log(`Parsed ${records.length} records with ${warnings.length} warnings`);
 
+      const newDates = Array.from(new Set(records.map(record => record.date))).sort();
+      // csvText is decoded above even when Power Automate wrapped it in JSON.
+      // The archived object is therefore always CSV, not the request envelope.
+      const normalizedContentType = 'text/csv';
+
+      if (actor.mode === 'automated') {
+        const queued = await queuePerformanceImport({
+          teamId,
+          csvText,
+          importedBy: actor.id,
+          contentType: normalizedContentType,
+          serviceDates: newDates,
+          recordCount: records.length,
+          warningCount: warnings.length,
+        });
+
+        console.log(`Queued automated performance import ${queued.runId} for ${newDates.join(', ')}`);
+        res.status(202).json({
+          success: true,
+          queued: true,
+          runId: queued.runId,
+          deduplicated: queued.deduplicated,
+          status: queued.status,
+          dates: newDates,
+          recordsParsed: records.length,
+          warnings,
+        });
+        return;
+      }
+
       // --- Aggregate ---
       const loadCapacityConfig = await loadPerformanceLoadCapacityConfig(teamId);
       const newSummaries = enrichDailySummariesWithMissedTrips(
         aggregateDailySummaries(records, loadCapacityConfig),
       );
-      const newDates = newSummaries.map(s => s.date);
       console.log(`Aggregated ${newSummaries.length} day(s): ${newDates.join(', ')}`);
 
-      const runId = Date.now().toString();
+      const sourceRevision = buildPerformanceSourceRevision();
+      const runId = sourceRevision;
       const rawStoragePath = await savePerformanceImportArchive({
         teamId,
         runId,
@@ -1244,87 +1807,25 @@ export const ingestPerformanceData = onRequest(
         newSummaries,
         recordCount: records.length,
         warningCount: warnings.length,
-        importedBy,
-        contentType: contentType.includes('json') ? 'application/json' : 'text/csv',
+        importedBy: actor.id,
+        contentType: normalizedContentType,
+        sourceRevision,
       });
+      manualImportRef = getPerformanceImportsCollection(teamId).doc(runId);
 
-      // --- Load existing data (to append) ---
-      let existingSummaries: PerformanceDataSummary['dailySummaries'] = [];
-      let oldStoragePath: string | null = null;
-      let oldOverviewStoragePath: string | null = null;
-      let oldReportStoragePath: string | null = null;
-      let oldRouteStoragePaths: Record<string, string> | null = null;
-      let oldMonthlyStoragePaths: Record<string, string> | null = null;
-      let oldRouteMonthlyStoragePaths: Record<string, Record<string, string>> | null = null;
-      let oldLoadProfileMonthlyStoragePaths: Record<string, string> | null = null;
-      let existingCleanHistoryStartDate: string | undefined;
-
-      try {
-        const existing = await loadExistingPerformanceSummary(teamId);
-        if (shouldAbortPerformanceSummaryOverwrite(
-          existing.storagePath || (existing.monthlyStoragePaths ? 'monthly-performance-history' : null),
-          existing.summary,
-        )) {
-          console.error('Aborting ingest because the existing performance summary could not be read:', existing.readError);
-          res.status(500).json({
-            error: 'Could not read the existing saved performance history, so the import was aborted to avoid overwriting it.',
-          });
-          return;
-        }
-
-        existingSummaries = existing.summary?.dailySummaries || [];
-        oldStoragePath = existing.storagePath;
-        oldOverviewStoragePath = existing.metadata?.overviewStoragePath ?? null;
-        oldReportStoragePath = existing.metadata?.reportStoragePath ?? null;
-        oldRouteStoragePaths = existing.routeStoragePaths ?? null;
-        oldMonthlyStoragePaths = existing.monthlyStoragePaths ?? null;
-        oldRouteMonthlyStoragePaths = existing.routeMonthlyStoragePaths ?? null;
-        oldLoadProfileMonthlyStoragePaths = existing.loadProfileMonthlyStoragePaths ?? null;
-        existingCleanHistoryStartDate = mergeStoredPerformanceRuntimeMetadata(
-          existing.summary?.metadata,
-          existing.metadata,
-        ).cleanHistoryStartDate;
-        if (existingSummaries.length > 0) {
-          console.log(`Loaded ${existingSummaries.length} existing day(s)`);
-        }
-      } catch (err) {
-        console.error('Could not load existing data, aborting ingest to avoid overwriting history:', err);
-        res.status(500).json({
-          error: 'Could not read the existing saved performance history, so the import was aborted to avoid overwriting it.',
-        });
-        return;
-      }
-
-      const mergedSummaries = enrichDailySummariesWithMissedTrips(mergeDailySummaries(existingSummaries, newSummaries));
-      const preFilterCount = new Set([...existingSummaries.map(s => s.date), ...newSummaries.map(s => s.date)]).size;
-      const pruned = preFilterCount - mergedSummaries.length;
-      if (pruned > 0) {
-        console.log(`Pruned ${pruned} days older than ${getRetentionCutoffDateString()} (${MAX_RETENTION_DAYS}-day retention)`);
-      }
-
-      const summary = buildPerformanceSummary(
-        mergedSummaries,
-        importedBy,
-        resolveCleanHistoryStartDate(
-          existingCleanHistoryStartDate,
-          newSummaries,
-          PERFORMANCE_RUNTIME_LOGIC_VERSION,
-        ),
-      );
-      const storagePath = await savePerformanceSummary({
+      const saved = await mergeAndSavePerformanceSummaries({
         teamId,
-        summary,
-        importedBy,
-        oldStoragePath,
-        oldOverviewStoragePath,
-        oldReportStoragePath,
-        oldRouteStoragePaths,
-        oldMonthlyStoragePaths,
-        oldRouteMonthlyStoragePaths,
-        oldLoadProfileMonthlyStoragePaths,
-        deleteOld: true,
+        importedBy: actor.id,
+        newSummaries,
+        sourceRevision,
       });
-      console.log(`Saved ${summary.dailySummaries.length} day(s) to ${storagePath}`);
+
+      await manualImportRef.set({
+        status: 'completed',
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        totalDaysStored: saved.totalDaysStored,
+        errorMessage: admin.firestore.FieldValue.delete(),
+      }, { merge: true });
 
       console.log('Ingest complete');
 
@@ -1332,19 +1833,147 @@ export const ingestPerformanceData = onRequest(
         success: true,
         daysIngested: newSummaries.length,
         dates: newDates,
-        totalDaysStored: mergedSummaries.length,
+        totalDaysStored: saved.totalDaysStored,
         recordsParsed: records.length,
         warnings,
         rawStoragePath,
       });
     } catch (err) {
       console.error('Ingest failed:', err);
+      if (manualImportRef) {
+        try {
+          await manualImportRef.set({
+            status: 'failed',
+            failedAt: admin.firestore.FieldValue.serverTimestamp(),
+            errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+          }, { merge: true });
+        } catch (statusError) {
+          console.error('Could not record failed manual performance import:', statusError);
+        }
+      }
       res.status(500).json({
         error: 'Ingest failed',
         message: err instanceof Error ? err.message : String(err),
       });
     }
   }
+);
+
+/**
+ * Processes Power Automate imports after the HTTP endpoint has acknowledged receipt.
+ * Keeping the long merge/save work off the synchronous request prevents Logic Apps
+ * from timing out and retrying an import that is still running successfully.
+ */
+export const processQueuedPerformanceImport = onDocumentCreated(
+  {
+    document: 'teams/{teamId}/performanceImports/{runId}',
+    memory: '8GiB',
+    cpu: 2,
+    timeoutSeconds: 540,
+    maxInstances: 1,
+    concurrency: 1,
+    retry: true,
+    region: 'northamerica-northeast2',
+  },
+  async event => {
+    const importRef = event.data?.ref;
+    if (!importRef) return;
+
+    const teamId = event.params.teamId;
+    const runId = event.params.runId;
+    const claim = await getDb().runTransaction(async transaction => {
+      const snapshot = await transaction.get(importRef);
+      if (!snapshot.exists) return null;
+
+      const data = snapshot.data() as PerformanceImportRunRecord;
+      const attemptCount = typeof data.attemptCount === 'number' ? data.attemptCount : 0;
+      if (!shouldClaimQueuedPerformanceImport(data.status, attemptCount)) {
+        if (shouldFinalizeExhaustedPerformanceImport(data.status, attemptCount)) {
+          transaction.set(importRef, {
+            status: 'failed',
+            failedAt: admin.firestore.FieldValue.serverTimestamp(),
+            errorMessage: 'Import stopped after reaching the retry limit. Submit the file again to create a new run.',
+          }, { merge: true });
+        }
+        return null;
+      }
+      if (!data.rawStoragePath || !data.rawStoragePath.startsWith(`teams/${teamId}/performanceImports/raw/`)) {
+        transaction.set(importRef, {
+          status: 'failed',
+          errorMessage: 'Queued import has an invalid raw storage path.',
+          failedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        return null;
+      }
+
+      const nextAttemptCount = attemptCount + 1;
+      transaction.set(importRef, {
+        status: 'processing',
+        attemptCount: nextAttemptCount,
+        processingStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+        errorMessage: admin.firestore.FieldValue.delete(),
+      }, { merge: true });
+
+      return {
+        rawStoragePath: data.rawStoragePath,
+        importedBy: data.importedBy || 'auto-ingest',
+        attemptCount: nextAttemptCount,
+        sourceRevision: normalizePerformanceSourceRevision(data.sourceRevision)
+          ?? buildPerformanceSourceRevision(data.importedAt?.toMillis?.() ?? 0, runId),
+      };
+    });
+
+    if (!claim) return;
+
+    try {
+      console.log(`Processing queued performance import ${runId} for team ${teamId} (attempt ${claim.attemptCount})`);
+      const [content] = await getBucket().file(claim.rawStoragePath).download();
+      const csvText = content.toString('utf-8');
+      const { records, warnings } = parseSTREETSCSV(csvText);
+      if (records.length === 0) {
+        throw new Error(`No valid records found in queued CSV${warnings.length > 0 ? `: ${warnings.slice(0, 3).join('; ')}` : ''}`);
+      }
+
+      const loadCapacityConfig = await loadPerformanceLoadCapacityConfig(teamId);
+      const newSummaries = enrichDailySummariesWithMissedTrips(
+        aggregateDailySummaries(records, loadCapacityConfig),
+      );
+      const newDates = newSummaries.map(summary => summary.date).sort();
+      const saved = await mergeAndSavePerformanceSummaries({
+        teamId,
+        importedBy: claim.importedBy,
+        newSummaries,
+        sourceRevision: claim.sourceRevision,
+      });
+
+      await importRef.set({
+        status: 'completed',
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        serviceDates: newDates,
+        dateRange: {
+          start: newDates[0],
+          end: newDates[newDates.length - 1],
+        },
+        recordCount: records.length,
+        warningCount: warnings.length,
+        totalDaysStored: saved.totalDaysStored,
+        errorMessage: admin.firestore.FieldValue.delete(),
+      }, { merge: true });
+      console.log(`Queued performance import ${runId} completed for ${newDates.join(', ')}`);
+    } catch (error) {
+      const errorMessage = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+      await importRef.set({
+        status: 'failed',
+        failedAt: admin.firestore.FieldValue.serverTimestamp(),
+        errorMessage,
+      }, { merge: true });
+      console.error(`Queued performance import ${runId} failed on attempt ${claim.attemptCount}:`, error);
+
+      if (claim.attemptCount < MAX_QUEUED_IMPORT_ATTEMPTS) {
+        throw error;
+      }
+    }
+  },
 );
 
 /**
@@ -1529,20 +2158,32 @@ export const rebuildPerformanceHistory = onRequest(
     );
     const apply = parseBooleanFlag(req.query.apply ?? body.apply, false);
     const deleteOld = parseBooleanFlag(req.query.deleteOld ?? body.deleteOld, false);
+    // Allocate this before checking active imports. Any import accepted after
+    // the check receives a later revision and remains authoritative.
+    const rebuildSourceRevision = buildPerformanceSourceRevision(Date.now(), '!history-rebuild');
 
     try {
       // One immutable capacity snapshot keeps every replayed day consistent.
       const loadCapacityConfig = await loadPerformanceLoadCapacityConfig(teamId);
       const runSnap = await getPerformanceImportsCollection(teamId).get();
-      const importRuns = runSnap.docs
-        .map(doc => ({ id: doc.id, ...(doc.data() as PerformanceImportRunRecord) }))
-        .filter(run => {
-          if (Array.isArray(run.serviceDates) && run.serviceDates.length > 0) {
-            return run.serviceDates.some(date => date >= startDate && date <= endDate);
-          }
-          return dateRangesOverlap(run.dateRange?.start, run.dateRange?.end, startDate, endDate);
-        })
-        .sort((a, b) => a.id.localeCompare(b.id));
+      const allImportRuns = runSnap.docs
+        .map(doc => ({ id: doc.id, ...(doc.data() as PerformanceImportRunRecord) }));
+      const blockingImportRuns = getBlockingPerformanceImportsForRebuild(
+        allImportRuns,
+        startDate,
+        endDate,
+      );
+      if (blockingImportRuns.length > 0) {
+        res.status(409).json({
+          error: 'Performance history cannot be rebuilt while overlapping imports are still active or retryable.',
+          startDate,
+          endDate,
+          blockingImportRuns: blockingImportRuns.map(run => ({ runId: run.id, status: run.status })),
+        });
+        return;
+      }
+      const importRuns = getRebuildEligiblePerformanceImports(allImportRuns)
+        .filter(run => performanceImportOverlapsWindow(run, startDate, endDate));
 
       if (importRuns.length === 0) {
         res.status(404).json({
@@ -1613,12 +2254,16 @@ export const rebuildPerformanceHistory = onRequest(
         return;
       }
 
-      const mergedSummaries = mergeRebuiltDailySummaries(
+      const versionedRebuild = mergeRebuiltDailySummariesByImportVersion(
         existing.summary.dailySummaries || [],
         rebuiltSummaries,
         startDate,
         endDate,
+        existing.metadata?.serviceDateImportVersions ?? {},
+        rebuildSourceRevision,
+        buildPerformanceSourceRevision(existing.metadataUpdateTime?.toMillis?.() ?? 0, 'legacy-metadata'),
       );
+      const mergedSummaries = versionedRebuild.summaries;
       const nextSummary = buildPerformanceSummary(
         mergedSummaries,
         'history-rebuild',
@@ -1643,6 +2288,8 @@ export const rebuildPerformanceHistory = onRequest(
         oldMonthlyStoragePaths: existing.monthlyStoragePaths ?? null,
         oldRouteMonthlyStoragePaths: existing.routeMonthlyStoragePaths ?? null,
         oldLoadProfileMonthlyStoragePaths: existing.loadProfileMonthlyStoragePaths ?? null,
+        serviceDateImportVersions: versionedRebuild.serviceDateImportVersions,
+        expectedMetadataUpdateTime: existing.metadataUpdateTime,
         deleteOld,
       });
 

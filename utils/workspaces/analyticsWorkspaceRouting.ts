@@ -13,6 +13,7 @@ export type AnalyticsWorkspaceView =
     | 'residential-growth'
     | 'route-planner-2'
     | 'route-concept-planner'
+    | 'street-design-studio'
     | 'network-connections'
     | 'shuttle-planner'
     | 'fare-programs'
@@ -33,6 +34,7 @@ const ANALYTICS_WORKSPACE_VIEWS = new Set<AnalyticsWorkspaceView>([
     'residential-growth',
     'route-planner-2',
     'route-concept-planner',
+    'street-design-studio',
     'network-connections',
     'shuttle-planner',
     'fare-programs',
@@ -54,6 +56,7 @@ const ANALYTICS_WORKSPACE_VIEW_LABELS: Record<AnalyticsWorkspaceView, string> = 
     'residential-growth': 'Residential Growth',
     'route-planner-2': 'Camp Shuttle Planner',
     'route-concept-planner': 'Route Concept Planner',
+    'street-design-studio': 'Street Design Studio',
     'network-connections': 'Network Connections',
     'shuttle-planner': 'Shuttle Planner',
     'fare-programs': 'Fare Programs',

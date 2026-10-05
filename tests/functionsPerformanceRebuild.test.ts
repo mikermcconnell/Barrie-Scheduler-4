@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mergeRebuiltDailySummaries, resolveRebuildWindow } from '../functions/src/index';
+import {
+  buildPerformanceSourceRevision,
+  mergeRebuiltDailySummaries,
+  mergeRebuiltDailySummariesByImportVersion,
+  resolveRebuildWindow,
+} from '../functions/src/index';
 import type { DailySummary, STREETSRecord } from '../functions/src/types';
 import { aggregateDailySummaries } from '../functions/src/aggregator';
 
@@ -90,5 +95,44 @@ describe('functions performance rebuild helpers', () => {
     expect(merged.find(summary => summary.date === '2026-03-20')?.system.totalBoardings).toBe(10);
     expect(merged.find(summary => summary.date === '2026-03-21')?.system.totalBoardings).toBe(99);
     expect(merged.find(summary => summary.date === '2026-03-22')?.system.totalBoardings).toBe(88);
+  });
+
+  it('preserves a newer import that completes while an older rebuild is running', () => {
+    const older = buildPerformanceSourceRevision(100, 'older');
+    const rebuild = buildPerformanceSourceRevision(200, '!history-rebuild');
+    const newer = buildPerformanceSourceRevision(300, 'newer');
+    const existing = [
+      makeSummary('2026-03-20', '10', 10),
+      makeSummary('2026-03-21', '10', 99),
+      makeSummary('2026-03-22', '10', 22),
+      makeSummary('2026-03-23', '10', 23),
+    ];
+    const rebuilt = [
+      makeSummary('2026-03-21', '10', 11),
+      makeSummary('2026-03-23', '10', 33),
+    ];
+
+    const merged = mergeRebuiltDailySummariesByImportVersion(
+      existing,
+      rebuilt,
+      '2026-03-21',
+      '2026-03-23',
+      {
+        '2026-03-20': older,
+        '2026-03-21': newer,
+        '2026-03-22': older,
+        '2026-03-23': older,
+      },
+      rebuild,
+      undefined,
+      10_000,
+    );
+
+    expect(merged.summaries.map(summary => summary.date))
+      .toEqual(['2026-03-20', '2026-03-21', '2026-03-23']);
+    expect(merged.summaries.find(summary => summary.date === '2026-03-21')?.system.totalBoardings).toBe(99);
+    expect(merged.summaries.find(summary => summary.date === '2026-03-23')?.system.totalBoardings).toBe(33);
+    expect(merged.serviceDateImportVersions['2026-03-21']).toBe(newer);
+    expect(merged.serviceDateImportVersions['2026-03-23']).toBe(rebuild);
   });
 });

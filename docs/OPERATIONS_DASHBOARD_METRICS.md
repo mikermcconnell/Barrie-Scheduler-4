@@ -1,10 +1,10 @@
 # Operations Dashboard Metric Register
 
-> Last reviewed: July 29, 2026
+> Last reviewed: September 4, 2026
 > Scope: STREETS AVL/APC Operations Dashboard  
 > Purpose: durable definitions and validation status for operational metrics
 
-The current aggregation contract is performance schema version 14. Version 10 corrected OTP, route-hour, stop-breakdown, and in-between-row handling. Version 11 added reliable stop-level load observation counts. Version 12 added deterministic dwell-incident IDs, incident operating context, and route/operator eligible-timepoint exposure so Dwell Incident Review rates remain scope-correct. Version 13 adds occurrence-aware stop identity so repeated loop visits remain separate while shifted route positions still align. Version 14 gives heatmap trips stable identity and stores vehicle/applied capacity so same-time trips remain separate and inference uses the configured fleet limit. Older stored days remain visible with unavailable fields labelled honestly until rebuilt or re-imported.
+The current aggregation contract is performance schema version 15. Version 10 corrected OTP, route-hour, stop-breakdown, and in-between-row handling. Version 11 added reliable stop-level load observation counts. Version 12 added deterministic dwell-incident IDs, incident operating context, and route/operator eligible-timepoint exposure so Dwell Incident Review rates remain scope-correct. Version 13 adds occurrence-aware stop identity so repeated loop visits remain separate while shifted route positions still align. Version 14 gives heatmap trips stable identity and stores vehicle/applied capacity so same-time trips remain separate and inference uses the configured fleet limit. Version 15 includes InBetween passenger movements in new ridership summaries without treating intermediate updates as stop-visit, observed-load, or runtime evidence. Existing stored days are not automatically recalculated.
 
 Use this document when changing dashboard calculations, filters, labels, imports, or reports. A passing test confirms implementation behavior; operational sign-off confirms that the behavior is the intended Barrie Transit definition.
 
@@ -12,7 +12,7 @@ Use this document when changing dashboard calculations, filters, labels, imports
 
 `STREETS import -> parser -> daily aggregation -> stored overview/monthly summaries -> authorized route/date/day filters -> dashboard modules`
 
-The dashboard uses one shared time-range and day-type filter across Overview, OTP Analysis, Ridership, Load Profiles, and Dwell Incident Review. Preset ranges and the inclusive custom start/end range persist when moving between tabs, and every module must apply the same selected dates and day type to its numerator and denominator.
+The dashboard uses one shared time-range and day-type filter across Overview, OTP Analysis, Ridership, and Dwell Incident Review. Preset ranges and the inclusive custom start/end range persist when moving between tabs, and every module must apply the same selected dates and day type to its numerator and denominator.
 
 Primary calculation locations:
 
@@ -23,7 +23,16 @@ Primary calculation locations:
 - loading and date-range trimming: `utils/performanceDataService.ts`
 - legacy compact load-profile projection retained for backward-compatible API reads: `utils/performanceLoadProfileView.ts` and `functions/src/performanceLoadProfileView.ts`
 
-Passenger load is presented in **Ridership -> Passenger Flow by Stop**; there is no standalone Load Profiles tab. The legacy compact load-profile read model, backend detail mode, and access key remain temporarily for backward compatibility and repair workflows, not as a supported navigation surface. Multi-day average load uses `loadObservationCount` weighting when every included value has reliable counts; mixed legacy history falls back to a daily-average estimate, and ambiguous legacy zeroes are omitted. Missing or non-positive APC source values are excluded from observed load calculations rather than treated as valid zero loads.
+### Current navigation
+
+The Operations workspace opens the **Operations Dashboard** and exposes these dashboard tabs:
+
+1. **Overview**
+2. **OTP Analysis**
+3. **Ridership**
+4. **Dwell Incident Review** (feature/access controlled and labelled Testing)
+
+**STREETS Reports** is a separate Operations subview, not a dashboard tab. Passenger load is presented in **Ridership -> Passenger Flow by Stop**; there is no standalone Load Profiles tab. The legacy compact load-profile read model, backend detail mode, and access key remain temporarily for backward compatibility and repair workflows, not as a supported navigation surface. Multi-day average load uses `loadObservationCount` weighting when every included value has reliable counts; mixed legacy history falls back to a daily-average estimate, and ambiguous legacy zeroes are omitted. Missing or non-positive APC source values are excluded from observed load calculations rather than treated as valid zero loads.
 
 ## Metric contracts
 
@@ -31,8 +40,8 @@ Passenger load is presented in **Ridership -> Passenger Flow by Stop**; there is
 |---|---|---|---|
 | On-time performance | Eligible timepoint departures classified as early, on-time, or late; period rollups combine raw observation counts | Early is more than 3 minutes early. Late is more than 5 minutes late. Boundary values are on-time. Final trip stops, in-between rows, trippers, missing observed departures, and duplicate trip/stop observations are excluded. | Code-validated with synthetic cases; reconcile against a real STREETS period before operational sign-off |
 | Early / on-time / late percentages | Bucket count divided by total eligible OTP observations | Multi-day, route, stop, and hour values must be weighted by observations, never by averaging stored percentages | Code-validated |
-| Boardings / total ridership | Sum of STREETS `Boardings` | This is boarding activity, not unique riders | Code-validated; APC coverage still affects confidence |
-| Alightings | Sum of STREETS `Alightings` | Presented separately from boardings; it is not subtracted from ridership | Code-validated; APC coverage still affects confidence |
+| Boardings / total ridership | Sum of all STREETS `Boardings`, including InBetween updates, for newly aggregated schema-v15 days | This is boarding activity, not unique riders. Intermediate rows retain source stop association, not proof of a physical stop visit. | Code-validated; APC coverage still affects confidence |
+| Alightings | Sum of all STREETS `Alightings`, including InBetween updates, for newly aggregated schema-v15 days | Presented separately from boardings; it is not subtracted from ridership | Code-validated; APC coverage still affects confidence |
 | Stop activity change | Current average activity per included service day minus the equivalent prior-period average. The map supports boardings, alightings, and combined activity. Past-week, past-month, and past-three-month views compare with the immediately preceding equal-length calendar window; single-day views compare with the same weekday one week earlier. | Circle size reflects absolute activity change per day, while colour shows increase, decrease, or little change. Percentage change is supporting context only because low-volume stops can produce unstable percentages. Route, day-type, and time-of-day filters must apply consistently to both periods. Shared stops use route-level breakdowns when a route is selected; all-route activity must not be substituted. Stops without comparable hourly data in both periods are omitted and disclosed rather than mixing hourly and all-day totals. | Code-validated with synthetic period-selection, route-scope, and hourly-availability cases; operational interpretation remains advisory |
 | Average riders per day | Total boardings divided by distinct included service dates | A/B branches combined into one route must still count each date once | Code-validated |
 | Trips observed | Distinct STREETS `TripID` values | Indicates trips represented in AVL/APC data, not necessarily scheduled trips operated | Code-validated |
@@ -50,6 +59,29 @@ Passenger load is presented in **Ridership -> Passenger Flow by Stop**; there is
 | Action Queue priority | Heuristic combining severity, persistence, and relative rider impact | Decision-support ranking only; it is not an audited operating metric | Definition sign-off required |
 
 Passenger Flow by Stop uses one combined chart: boarding and alighting bars share the stop sequence with the estimated onboard-load line. Separate view controls are not used; dual axes keep passenger movement and onboard load readable together.
+
+### Passenger counting versus operational evidence (schema v15)
+
+- New aggregation includes all source boarding/alighting movements, including nonzero `InBetween` updates, in system, route, hour, stop, route-stop/hour breakdowns, and ridership heatmap cells. Zero-activity intermediate updates do not create additional passenger-flow opportunities.
+- `InBetween` rows remain excluded from OTP, dwell/cascade, service-hour spans, observed vehicle/trip counts, reliable departure-load samples, runtime patterns, and stop-deviation evidence. The existing `dataQuality.inBetweenFiltered` field counts this operational exclusion, not discarded passenger movements.
+- Existing observed-trip rows gain their matching intermediate boardings. Passenger-only trips do not become `byTrip` operational evidence for suspected missed-trip matching. Legacy load-profile passenger averages include movements matched to existing observed trip-stop occurrences; load sample counts, visit identity, and denominators stay unchanged.
+- Stop and hour attribution uses the source stop association and existing `ArrivalTime` bucket. An intermediate update is not proof of the bus's physical stop location or a newly observed arrival/departure.
+- Schema v15 marks newly calculated passenger totals; the stored field shape and runtime logic version are unchanged. Previously stored days and already-sent emails are not rewritten. Historical correction requires a separately approved replay of retained source exports, with backups and missing-source safeguards.
+
+### Local historical passenger-correction preparation
+
+`scripts/prepareRidershipCorrection.mjs` stages an offline correction using `scripts/lib/ridershipCorrection.ts`. It is **not a live migration or a general history rebuild**. It accepts only local inputs and has no deploy, apply, Firebase-write or email-send mode.
+
+- Use `node scripts/prepareRidershipCorrection.mjs --manifest <local.json> --out <new-local-folder>`. The manifest has `version: 1`, `storedFiles` (full stored performance JSON files with disjoint dates), `dates` (the explicit correction scope), and `sources`. Each source identifies `date`, `csvPath`, `sha256`, `archiveId` and `recordCount`. Choose exactly one proven source export per service date; never sum separate exports. Relative paths resolve beside the manifest.
+- Missing/unreadable originals, checksum/count errors, malformed passenger values, passenger-attribution mismatches, compact-only inputs and ambiguous pre-v14 heatmaps are skipped without changing that date. No partial system-only correction is allowed. The seven-day increase must not be extrapolated to missing history.
+- A normal source observation with both passenger fields blank retains its existing import treatment only after full baseline reconciliation; the ledger records `missingNormalPassengerRows` as missing evidence, never confirmed zero or recovered passengers. Partial blanks, blank intermediate counts, and missing/unknown `InBetween` flags fail closed.
+- Source normal-only passenger figures must reconcile with every existing passenger surface and observed-trip identity. Already-corrected passenger figures are recognized from content, making repeats safe without relying on schema labels.
+- Only passenger values and necessary passenger-only rows/cells change. Existing OTP, dwell/cascade, service hours, observed trips/vehicles, APC load samples, capacities, runtime evidence, missing-trip results, data quality and unrelated fields remain unchanged. Historical schema/runtime/identity versions are retained; the separate local ledger identifies the passenger correction rather than claiming a complete operational schema upgrade.
+- Some persisted days use service-hour buckets `24+` and omit those hours from the 24-slot stop-hour arrays. Preparation preserves this exact convention only when its source reconstruction matches the stored passenger figures. Corrected daily stop totals still include after-midnight passengers; those older hourly stop arrays remain incomplete for that activity. Migrating historical hourly conventions is a separate decision, not part of this correction.
+- Output includes byte-for-byte originals, corrected full/month/route/load-profile projections, overview/report projections, an unsent email preview, daily/route comparisons, selected-period/month impact, exceptions, checksums and a correction ledger. Existing output folders and overlapping stored dates are refused. `COMPLETE.json` is written last; a folder without it is an incomplete local run.
+- Archive fingerprints use `ordered-day-sha256-v1`: all non-daily archive fields plus ordered service dates and their complete day hashes. Original-byte checksums are also retained. This avoids hashing a second canonical copy of the entire archive in memory; stage bounded monthly batches rather than loading all historical exports at once.
+- Exact-date replacement refuses stale before/after fingerprints. Rollback verifies original backups and refuses to overwrite later imports. There is no retention or date-window deletion. Local preparation verifies repeat runs, fresh corrected-content detection, operational preservation and restoration of the entire input history.
+- Live publication remains separately gated: deploy and verify corrected imports first, refresh metadata/source revisions and active imports, compare deployed access rules, reconcile older `performanceSnapshots` coverage, stage immutable projections and publish consistently with revision protection, then perform authenticated read-back. Do not regenerate older monthly snapshots from incomplete active history, and do not resend historical emails.
 
 ## Passenger-load confidence method v1
 

@@ -64,9 +64,22 @@ const collectMarkdownFiles = directory => {
 };
 
 const isExternalTarget = target => /^(?:https?:|mailto:|tel:|data:|#)/i.test(target);
-const repositoryPathPattern = /^(?:\.agents|\.claude|\.codex|api|components|docs|functions|hooks|scripts|tests|utils)\//;
-const shouldValidateCodePaths = relativePath => requiredContextFiles.includes(relativePath)
-  || ['ORCHESTRATOR.md', 'README.md'].includes(relativePath);
+const repositoryPathPattern = /^(?:(?:\.agents|\.claude|\.codex|api|components|docs|functions|hooks|scripts|tests|utils)\/|(?:\.env\.example|\.firebaserc|AGENTS\.md|App\.tsx|FIREBASE_RULES\.md|ORCHESTRATOR\.md|README\.md|cors\.json|firebase\.json|firestore\.indexes\.json|firestore\.rules|index\.html|index\.tsx|package-lock\.json|package\.json|storage\.rules|tsconfig\.json|vercel\.json|vite\.config\.ts)$)/;
+const proposedPathsStartMarker = '<!-- docs:allow-missing-paths-begin -->';
+const proposedPathsEndMarker = '<!-- docs:allow-missing-paths-end -->';
+
+// Active context is expected to describe real repository paths. Proposed file
+// layouts must opt out explicitly so an old path cannot silently become
+// accepted merely because it lives outside Tier 1.
+const shouldValidateCodePaths = relativePath => !excludedRelativeFiles.has(relativePath);
+
+const intentionalClaudeAdapterDifferences = new Set([
+  'doc-review',
+  'pm-review',
+  'pm-review-auto',
+]);
+
+const normalizeText = value => value.replace(/\r\n/g, '\n').trimEnd();
 
 const isOutsideWorkspace = resolvedPath => {
   const relativeTarget = path.relative(workspaceRoot, resolvedPath);
@@ -105,8 +118,25 @@ for (const absolutePath of markdownFiles) {
   const contents = readFileSync(absolutePath, 'utf8');
   const lines = contents.split(/\r?\n/);
 
+  let allowsMissingCodePaths = false;
+
   lines.forEach((line, index) => {
     const lineNumber = index + 1;
+
+    if (line.includes(proposedPathsStartMarker)) {
+      if (allowsMissingCodePaths) {
+        errors.push(`${relativePath}:${lineNumber}: nested proposed-path opt-out marker`);
+      }
+      allowsMissingCodePaths = true;
+      return;
+    }
+    if (line.includes(proposedPathsEndMarker)) {
+      if (!allowsMissingCodePaths) {
+        errors.push(`${relativePath}:${lineNumber}: proposed-path opt-out ends without a start marker`);
+      }
+      allowsMissingCodePaths = false;
+      return;
+    }
 
     const hasWindowsMachinePath = /[A-Za-z]:[\\/](?:Users|Documents)[\\/]/i.test(line)
       || /\\\\[^\\\s]+\\[^\\\s]+/.test(line);
@@ -130,7 +160,7 @@ for (const absolutePath of markdownFiles) {
       });
     }
 
-    if (shouldValidateCodePaths(relativePath)) {
+    if (shouldValidateCodePaths(relativePath) && !allowsMissingCodePaths) {
       for (const match of line.matchAll(/`([^`\r\n]+)`/g)) {
         const candidate = match[1].trim().replace(/:\d+(?:-\d+)?$/, '');
         if (!repositoryPathPattern.test(candidate) || /[*{}\s]/.test(candidate)) continue;
@@ -199,6 +229,10 @@ for (const absolutePath of markdownFiles) {
     }
   });
 
+  if (allowsMissingCodePaths) {
+    errors.push(`${relativePath}: proposed-path opt-out marker is not closed`);
+  }
+
   if (relativePath.endsWith('/SKILL.md')) {
     const frontmatter = contents.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!frontmatter) {
@@ -215,6 +249,76 @@ for (const absolutePath of markdownFiles) {
 
   if (!statSync(absolutePath).isFile()) {
     errors.push(`${relativePath}: expected a regular Markdown file`);
+  }
+}
+
+const portableSkillsRoot = path.join(workspaceRoot, '.agents', 'skills');
+const claudeSkillsRoot = path.join(workspaceRoot, '.claude', 'skills');
+if (existsSync(portableSkillsRoot) && existsSync(claudeSkillsRoot)) {
+  const portableSkillNames = readdirSync(portableSkillsRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .filter(name => existsSync(path.join(portableSkillsRoot, name, 'SKILL.md')));
+  const claudeSkillNames = readdirSync(claudeSkillsRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .filter(name => existsSync(path.join(claudeSkillsRoot, name, 'SKILL.md')));
+
+  for (const skillName of portableSkillNames) {
+    const portablePath = path.join(portableSkillsRoot, skillName, 'SKILL.md');
+    const claudePath = path.join(claudeSkillsRoot, skillName, 'SKILL.md');
+    if (!existsSync(claudePath)) {
+      errors.push(`.claude/skills/${skillName}/SKILL.md: missing adapter for portable skill`);
+      continue;
+    }
+    if (!intentionalClaudeAdapterDifferences.has(skillName)) {
+      const portableContents = normalizeText(readFileSync(portablePath, 'utf8'));
+      const claudeContents = normalizeText(readFileSync(claudePath, 'utf8'));
+      if (portableContents !== claudeContents) {
+        errors.push(`.claude/skills/${skillName}/SKILL.md: drifted from portable skill without an approved adapter exception`);
+      }
+    }
+  }
+
+  for (const skillName of claudeSkillNames) {
+    if (!portableSkillNames.includes(skillName)) {
+      errors.push(`.claude/skills/${skillName}/SKILL.md: adapter has no portable source`);
+    }
+  }
+}
+
+const staleSemanticPatterns = [
+  {
+    file: 'ORCHESTRATOR.md',
+    pattern: /without closest-bucket/i,
+    message: 'obsolete exact-only runtime rule; nearest eligible same-orientation fallback is locked',
+  },
+  {
+    file: '.agents/skills/fixed-route-pipeline/SKILL.md',
+    pattern: /fall back to raw CSV/i,
+    message: 'unsafe raw-runtime fallback conflicts with the approved-runtime trust boundary',
+  },
+  {
+    file: '.agents/skills/time-parsing/SKILL.md',
+    pattern: /1\.02083\)\)\.toBe\(30\)/,
+    message: 'fixed-route Excel next-day example discards the day offset',
+  },
+  {
+    file: '.agents/skills/schedule-domain/SKILL.md',
+    pattern: /Short-turn[^\n]*Not currently supported/i,
+    message: 'short turns are supported by the current Schedule Editor',
+  },
+  {
+    file: '.claude/context.md',
+    pattern: /Locked Logic \(6 Rules\)/,
+    message: 'locked-rule count is stale',
+  },
+];
+
+for (const check of staleSemanticPatterns) {
+  const absolutePath = path.join(workspaceRoot, check.file);
+  if (existsSync(absolutePath) && check.pattern.test(readFileSync(absolutePath, 'utf8'))) {
+    errors.push(`${check.file}: ${check.message}`);
   }
 }
 

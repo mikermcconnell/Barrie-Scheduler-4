@@ -7,6 +7,8 @@ This reference distinguishes two layers:
 - **Stored document shape** describes Firestore/Storage wire data. Server-written dates are Firestore `Timestamp` values unless a field is explicitly documented as an ISO string.
 - **Application model** describes the deserialized TypeScript shape used by the UI and services. These models commonly expose Firestore timestamps as `Date` values.
 
+Street Design Studio currently has **no Firestore or Storage collection**. Its schema-version-1 native project is defined in `utils/street-design-studio/domain.ts` and stored by `utils/street-design-studio/storage.ts` in device-local IndexedDB (`street-design-studio-v1`). The active project ID is a localStorage pointer only. The `analyticsStreetDesignStudio` key is a Planning Data workspace access feature; it does not grant a new Firebase data path. Check `docs/street-design-studio/` before proposing cloud persistence.
+
 Type excerpts below are intentionally abridged navigation aids. The linked TypeScript declaration is authoritative; update this file when a persisted field, collection, storage path, or canonical type location changes.
 
 ---
@@ -40,7 +42,7 @@ firebase/
 │   ├── performanceConfig/load            # Team passenger-capacity policy
 │   ├── todPickupData/{docId}             # Monthly Transit On Demand pickup map datasets
 │   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
-│   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
+│   ├── performanceImports/{importId}     # STREETS raw-import audit and server queue metadata
 │   ├── parking/default                   # Shared parking-code settings + active storage pointer
 │   │   └── months/{month}                # Monthly parking usage/revenue import metadata
 │   ├── odMatrixData/{docId}              # Origin-destination datasets
@@ -66,6 +68,7 @@ firebase/
 ├── teamInvites/{inviteCode}              # Invite lookup -> teamId + teamName + default join access
 ├── developerSupportSessions/{adminUid}   # One expiring inspect/edit session per scheduler admin
 ├── developerSupportAudit/{auditId}       # Append-only support-session start/stop audit
+├── mail/{mailId}                          # Server-created outbound email queue consumed by Firebase extension
 │
 └── migrations/                           # Data migration tracking
 ```
@@ -78,10 +81,13 @@ firebase/
 `teams/{teamId}/detourNotices/{noticeId}` stores editable notice copy, effective schedule, map frame, workflow status, and optimistic revision. Route overlays snapshot GTFS geometry/stops so later feed changes do not rewrite saved notices. Each overlay stores immutable operational `closureStart`/`closureEnd` anchors, sparse interior `closureWaypoints` used only to reshape the published closed-section line, sparse `detourWaypoints`, dense closure/detour geometry, and an optional `routeLabelPosition` that is re-snapped to the detour line. Temporary stop impacts may store an optional `temporaryStopCode` alongside their public name and position. Older overlays without `closureWaypoints` load with an empty list. Publication records store the posted revision, generated filenames, MyRide URL, and posting audit fields; version 1 keeps PDF/PNG files as browser downloads rather than Cloud Storage objects.
 `teams/{teamId}/routeConceptPlannerProjects/{projectId}` is separate neutral Route Concept Planner storage. Its integer `revision` supports optimistic conflict detection; alternatives and their patterns are saved atomically with the root document.
 `teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
+`mail/{mailId}` is an outbound queue written by trusted report Functions and consumed by the configured `firestore-send-email` extension. It is not a client-readable or client-writable application collection.
 
 ### Device-local browser storage
 
 Fare Programs keeps one optional source workbook in IndexedDB database `scheduler4-fare-programs`, object store `workbooks`, key `high-school-pass-source`. The record contains the workbook `Blob`, file name, MIME type, source `lastModified`, and local `savedAt` timestamp. This is browser-and-device-local convenience storage: it is not synchronized between users or devices, is not written to Firestore or Cloud Storage, is replaced when a planner selects another workbook, and is deleted through the workspace's **Remove saved workbook** action. Parsed transaction rows and Mapbox geocodes are not separately persisted.
+
+Camp Shuttle Planner keeps one crash/refresh recovery copy per active team-and-user scope in IndexedDB database `scheduler4-route-planner-2`, object store `drafts`. The record key is `{teamId}:{userId}` and the value contains the complete unsaved `RoutePlanner2Project`, a record version, and a numeric `savedAt` timestamp. Recovery is device-local, expires after 30 days, and is removed after a successful team save. It is not shared persistence and must never be restored across users or teams.
 
 ### Cloud Storage Paths
 
@@ -110,6 +116,7 @@ storage/
     ├── performanceViews/load-profiles/{generation}-{YYYY-MM}.json
     ├── performanceImports/raw/{timestamp}.csv
     ├── parking/{month}_{timestamp}.json
+    ├── parking/revenue/{month}_{source}_{timestamp}.json
     ├── odMatrixData/{allPaths}
     ├── residentialGrowth/{allPaths}
     └── fleetPlan/v{versionNumber}_{timestamp}.json
@@ -123,6 +130,11 @@ storage/
 - `overviewStoragePath`: lightweight recent overview payload for dashboard first-load
 - `reportStoragePath`: report-focused snapshot used by the daily email
 - `storagePath`: legacy full performance summary pointer used by older imports only
+- `serviceDateImportVersions`: service date → sortable receipt revision (`13-digit timestamp-UUID`); prevents an older import from replacing a newer correction for the same date. Numeric legacy revisions are normalized on read, and dates without a stored revision use the current metadata document update time as a conservative fallback.
+
+`teams/{teamId}/performanceImports/{importId}` is both the raw-import audit record and the queue boundary for Power Automate uploads. For automated uploads, `contentHash` is a SHA-256 hash of the decoded CSV plus the processor/schema/runtime version. The first job uses that hash as `importId`; re-deliveries reuse a queued, processing, or completed job, while content whose prior jobs reached terminal failure receives a unique hash-prefixed `importId` and can be processed again. Automated imports move through `queued` → `processing` → `completed`; failures store a bounded `errorMessage`, increment `attemptCount`, and retry at most three times. Interactive imports move through `publishing` → `completed` or `failed`, and the create trigger ignores their non-queue `publishing` state. The document records `processorVersion` where applicable, the sortable string `sourceRevision`, `rawStoragePath`, service dates, record/warning counts, content length/type, actor, and lifecycle timestamps. The raw CSV is written to a unique object before the queue document is created, so the background processor never observes a job without its source object. History rebuilds replay only completed and legacy status-less records in deterministic receipt order; a rebuild is blocked when an overlapping queued, processing, publishing, or retryable-failed import exists.
+
+Server-created performance summary object names use a timestamp plus a unique generation identifier. Server metadata publication compares the Firestore document revision read before aggregation; on a conflict, the unpublished generation is removed and the merge is retried from the newly published history. The retry also compares `serviceDateImportVersions`, retaining a newer existing same-day correction while still accepting dates not already present. In-app CSV imports and Excel imports converted to normalized CSV both use this authenticated server publication boundary, so they cannot bypass the revision check with a direct browser metadata write.
 
 Load Profiles view schema v1 stores only date/day type, route-direction load profiles, reliable stop-level observation counts, compact positive peak-load trip candidates, data-quality fields, and the source performance schema version. It preserves `occurrenceIndex` when available. The files are not directly readable by ordinary members; `sharedWorkspaceData` validates the metadata-owned team path and enforces `workspaceOperations` plus `operationsLoadProfiles` before returning a bounded date/route-filtered response. Team owners/admins publish performance metadata and Storage generations; ordinary members have read-only dashboard access. Writers upload every monthly view before replacing the metadata pointer. Existing history can be prepared with `functions/scripts/backfill-load-profile-views.mjs`; the script is dry-run by default and uses a transaction so a stale backfill cannot replace a newer import.
 
@@ -137,6 +149,10 @@ Performance schema v12 extends daily dwell summaries with `exposureByRouteOperat
 Performance schema v13 adds optional `occurrenceIndex` to load-profile and ridership-heatmap stops. The value is the zero-based visit number for that physical stop within one trip. It keeps repeated loop visits separate and aligns the same visit when other stops shift its `routeStopIndex`. Ridership heatmaps may also store `multipleStopPatterns` so the dashboard can disclose within-day pattern variation. Older summaries remain readable but cannot recover repeated visits that were already collapsed; rebuild or re-import them when occurrence-level passenger flow is required.
 
 Performance schema v14 adds stable `tripId` identity to ridership-heatmap columns so distinct trips with the same terminal departure time no longer merge. New trip columns also retain `vehicleId` and the applied `capacity`; each daily summary retains the applied default capacity and capacity-config version. Pre-v14 summaries remain readable, but same-time collisions cannot be repaired without rebuild or re-import.
+
+Performance schema v15 changes passenger-count semantics without adding fields: new system, route, hour, stop, route-hour and heatmap summaries include `InBetween` boarding/alighting movements. Matching intermediate boardings are included on existing observed-trip rows; passenger-only trips do not become observed-trip evidence. Operational timing, dwell, service hours, trip/vehicle counts, and observed-load eligibility remain normal-row-only. The existing `dataQuality.inBetweenFiltered` value denotes operational exclusion, not passenger-count exclusion. Runtime logic remains version 4 and stable heatmap trip identity remains version 14. Existing stored days are not automatically rebuilt. See `docs/OPERATIONS_DASHBOARD_METRICS.md` for attribution and historical-correction boundaries.
+
+Local historical passenger correction is prepared by `scripts/prepareRidershipCorrection.mjs` and `scripts/lib/ridershipCorrection.ts`. The local manifest/ledger and staged files do not add a Firestore collection, change persisted field shapes, or write Firebase data; no rules/index changes are required for this offline tool. Historical daily schema and import/runtime revisions are preserved rather than presenting a passenger-only patch as a full operational rebuild. Before any separately approved live migration, correction provenance/version protection and all monthly/route/overview/report/load-profile pointers and `performanceSnapshots` coverage must be reconciled and reviewed with deployed rules. See the Operations metric register for the staging and exception contract.
 
 `teams/{teamId}/performanceConfig/load` stores the team-managed passenger-capacity policy: `schemaVersion: 1`, `defaultCapacity`, normalized `vehicleCapacities`, monotonic `version`, `updatedAt`, and `updatedBy`. Capacities are whole numbers from 20 through 150, with at most 500 vehicle overrides. Members may read the policy; owners/admins may write it. Writes use an expected-version transaction. Server CSV ingest and history rebuild load one policy snapshot before aggregation; workbook import loads it immediately before browser aggregation. The 65-passenger value is only the fallback when no valid team policy exists.
 
@@ -206,12 +222,13 @@ interface Team extends Omit<TeamDocument, 'createdAt'> {
 
 ### TeamMember (`teams/{teamId}/members/{userId}`)
 
+#### Stored document shape
+
 ```typescript
 type TeamRole = 'owner' | 'admin' | 'member';
 type WorkspaceAccessLevel = 'none' | 'production' | 'planner' | 'external-planner' | 'transit-app-only' | 'parking' | 'admin' | 'internal';
 
-interface TeamMember {
-  id: string;
+interface TeamMemberDocument {
   userId: string;
   role: TeamRole;
   accessLevel?: WorkspaceAccessLevel; // Controls visible workspaces; missing values fall back by role.
@@ -219,8 +236,14 @@ interface TeamMember {
   joinedAt: Timestamp;
   displayName: string;
   email: string;
+  inviteCode?: string; // Retained on records created through an invite join.
 }
 ```
+
+The document ID is the member ID and must match `userId`; `id` is not stored in
+the document. `utils/services/teamService.ts` attaches the document ID,
+converts `joinedAt` to `Date`, normalizes access defaults, and returns the
+application `TeamMember` declared in `utils/masterScheduleTypes.ts`.
 
 `role` controls team permissions and writes. Team owners and admins can manage team settings and members. `accessLevel` controls which app workspaces are visible. Use `none` for brand-new users or newly created teams that should see only Team Management until access is explicitly granted. Use `parking` for staff who should see only the Parking workspace by default. Use `external-planner` or `transit-app-only` for external agencies that should see only Transit App Data through the top-level Planning Data view. Existing members without `accessLevel` are treated as `internal` for owners/admins and `planner` for regular members.
 
@@ -238,11 +261,12 @@ Scheduler administrators can read user-uploaded file metadata and matching `user
 
 ### DraftSchedule (`users/{userId}/draftSchedules/{draftId}`)
 
+#### Stored document shape
+
 ```typescript
 type DraftStatus = 'draft' | 'ready_for_review';
-type UploadSource = 'wizard' | 'tweaker' | 'draft';
 
-interface DraftBasedOn {
+interface DraftBasedOnDocument {
   type: 'master' | 'gtfs' | 'generated' | 'legacy';
   id?: string;
   importedAt?: Timestamp;
@@ -252,24 +276,25 @@ interface DraftBasedOn {
   sourceUpdatedAt?: Timestamp;
 }
 
-interface DraftSchedule {
-  id: string;
+interface DraftScheduleDocument {
   name: string;
   routeNumber: string;
   dayType: DayType;
   status: DraftStatus;
-
-  // Content stored in Cloud Storage
   storagePath?: string;
-  content?: MasterScheduleContent;  // Loaded on demand
-
-  // Provenance
-  basedOn?: DraftBasedOn;
+  basedOn?: DraftBasedOnDocument | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
   createdBy: string;
 }
 ```
+
+The Firestore document does not store `id` or schedule `content`.
+`utils/services/draftService.ts` attaches the document ID, converts stored
+timestamps (including provenance timestamps) to `Date`, and loads the optional
+`MasterScheduleContent` application field from the referenced Cloud Storage
+object. The resulting application model is `DraftSchedule` in
+`utils/schedule/scheduleTypes.ts`.
 
 Named checkpoints store `name`, `storagePath`, `createdAt`, and `createdBy` under
 `users/{userId}/draftSchedules/{draftId}/checkpoints/{checkpointId}`. Their full
@@ -345,7 +370,7 @@ Public timetable settings are readable by team members and should only be writte
 interface RoutePlanner2ProjectMetadata {
   id: string;
   name: string;
-  status: 'local-draft' | 'local-saved' | 'archived';
+  status: 'local-saved' | 'archived';
   selectedScenarioId: string;
   preferredScenarioId?: string;
   scenarioOrder: string[];
@@ -356,6 +381,12 @@ interface RoutePlanner2ProjectMetadata {
   savedAt: Timestamp;
 }
 ```
+
+Normal Firestore writes use `local-saved` or `archived`. The broader application
+type also includes `local-draft`, which means the project has unsaved changes
+and belongs only in current UI state or the scoped IndexedDB recovery copy.
+Saving a non-archived project normalizes it to `local-saved`. Readers tolerate
+older Firestore roots that contain `local-draft`, but new writes do not emit it.
 
 Each editable route concept is stored at `teams/{teamId}/routePlanner2Projects/{projectId}/scenarios/{scenarioId}` using the `RoutePlanner2Scenario` shape from `utils/route-planner-2/routePlanner2Types.ts`. GTFS-imported Barrie merged A/B routes may include optional `routeFamily` metadata so directions such as 2A and 2B display as one route family while remaining independently editable scenarios. Reads and writes require `analyticsRoutePlanner2` workspace access; scoped developer-support sessions use the separate audited support boundary defined in `firestore.rules`.
 
@@ -998,9 +1029,10 @@ Firestore documents store metadata; actual schedule content lives in Cloud Stora
 { northTable: {...}, southTable: {...}, metadata: {...} }
 ```
 
-### 2. Excel Time Values
+### 2. Fixed-route and Master Schedule Excel Time Values
 
-Excel stores times as fractions of 24 hours. Values >= 1.0 are post-midnight:
+For fixed-route and Master Schedule imports, Excel stores times as fractions of
+24 hours and values `>= 1.0` are post-midnight service values:
 
 ```typescript
 // Same day (before midnight)
@@ -1011,6 +1043,11 @@ Excel stores times as fractions of 24 hours. Values >= 1.0 are post-midnight:
 1.02083 → 12:30 AM (next day)
 1.25    → 6:00 AM (next day)
 ```
+
+This is not a universal workbook rule. Domain-specific importers may
+deliberately normalize time-of-day values within 24 hours or infer overnight
+order from surrounding shift data. Follow the relevant parser contract and
+tests rather than reusing this fixed-route rule automatically.
 
 ### 3. Block Chaining
 

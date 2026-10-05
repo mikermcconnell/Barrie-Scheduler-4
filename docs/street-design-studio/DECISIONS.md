@@ -1,0 +1,9 @@
+# Decisions
+
+1. **Integrate, do not scaffold.** Street Design Studio is a Planning Data workspace behind existing access controls. The feature flag defaults off, so unfinished functionality is not exposed by default.
+2. **Local-only persistence.** IndexedDB/Dexie stores a versioned native project with revision-checked writes and one prior checkpoint. No Firebase schema, rules, indexes, or Storage changes are needed. This is not cloud sync or a multi-device backup.
+3. **Synthetic-first.** The initial fixture is clearly fictional and starts in tile-free clean mode. No municipal survey, standards compliance, or real imagery is implied.
+4. **Domain ownership.** Project JSON and local projected metres are authoritative. The MapLibre GeoJSON display and SVG/PDF are derived. Width budgets are locked; no implicit donor.
+5. **Reference drawing.** Terra Draw packages and peer metadata were inspected, then removed. The working editor uses MapLibre public click events for bounded reference tracing; browser tests exercise that path. Terra Draw needs its own browser spike before any future adoption.
+6. **No cloud authorization shortcut.** The existing Planning Data profile gates the route. The module never writes Firestore. Before any future shared storage release, server authorization and rules/indexes must be designed and tested.
+7. **Mapped roads are not surveyed widths.** OpenFreeMap road strokes are symbolic. The editor snaps clicked control points to its rendered transportation centrelines (12 px tolerance, Shift bypass), but does not silently infer an envelope width or route between snapped points. The planner may explicitly change the total metre width; all bands and side budgets scale proportionally in one validated, undoable command. Real road-edge fitting requires an authorized, dimensionally reliable source.

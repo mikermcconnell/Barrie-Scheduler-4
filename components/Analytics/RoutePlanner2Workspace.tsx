@@ -53,6 +53,11 @@ import {
     deleteRoutePlanner2SavedProject,
     type RoutePlanner2SavedProjectSummary,
 } from '../../utils/route-planner-2/routePlanner2ProjectPersistence';
+import {
+    loadRoutePlanner2LocalDraft,
+    removeRoutePlanner2LocalDraft,
+    saveRoutePlanner2LocalDraft,
+} from '../../utils/route-planner-2/routePlanner2LocalDraft';
 import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import { buildCorridorSpeedIndex } from '../../utils/gtfs/corridorSpeed';
 import { DAY_TYPES, TIME_PERIODS, type DayType, type TimePeriod } from '../../utils/gtfs/corridorHeadway';
@@ -962,6 +967,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         (): RoutePlanner2ProjectHistory => ({ past: [], present: createRoutePlanner2Project(), future: [] }),
     );
     const project = projectHistory.present;
+    const hasProjectHistoryRef = useRef(false);
+    hasProjectHistoryRef.current = projectHistory.past.length > 0;
     const canUndoProject = projectHistory.past.length > 0;
     const canRedoProject = projectHistory.future.length > 0;
     const setProject = useCallback((
@@ -1019,6 +1026,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
+    const [exportError, setExportError] = useState<string | null>(null);
+    const [localDraftMessage, setLocalDraftMessage] = useState<string | null>(null);
+    const [hydratedLocalDraftKey, setHydratedLocalDraftKey] = useState<string | null>(null);
     const [runtimeRefreshState, setRuntimeRefreshState] = useState<RuntimeRefreshState | null>(null);
     const [showRuntimeSourceOverlay, setShowRuntimeSourceOverlay] = useState(false);
     const [showRoadNameLabels, setShowRoadNameLabels] = useState(true);
@@ -1033,6 +1043,46 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [addressInsertAfterStopId, setAddressInsertAfterStopId] = useState('__end');
     const [addressSearchLoading, setAddressSearchLoading] = useState(false);
     const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
+    const localDraftScope = useMemo(
+        () => teamId && userId ? { teamId, userId } : null,
+        [teamId, userId],
+    );
+    const localDraftKey = localDraftScope ? `${localDraftScope.teamId}:${localDraftScope.userId}` : null;
+    useEffect(() => {
+        if (!localDraftScope || !localDraftKey) return;
+        let cancelled = false;
+
+        void loadRoutePlanner2LocalDraft(localDraftScope)
+            .then((draft) => {
+                if (cancelled || !draft || draft.project.status !== 'local-draft' || hasProjectHistoryRef.current) return;
+                resetProjectHistory(draft.project);
+                setSelectedSavedProjectId('');
+                setLocalDraftMessage('Restored the latest route plan recovery copy from this device.');
+            })
+            .catch((error) => {
+                console.warn('Could not restore the Route Planner recovery copy.', error);
+            })
+            .finally(() => {
+                if (!cancelled) setHydratedLocalDraftKey(localDraftKey);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [localDraftKey, localDraftScope, resetProjectHistory]);
+    useEffect(() => {
+        if (!localDraftScope || hydratedLocalDraftKey !== localDraftKey) return;
+        const timeoutId = window.setTimeout(() => {
+            const operation = project.status === 'local-draft'
+                ? saveRoutePlanner2LocalDraft(localDraftScope, project)
+                : removeRoutePlanner2LocalDraft(localDraftScope);
+            void operation.catch((error) => {
+                console.warn('Could not update the Route Planner recovery copy.', error);
+            });
+        }, 250);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [hydratedLocalDraftKey, localDraftKey, localDraftScope, project]);
     const projectSummary = useMemo(() => summarizeRoutePlanner2Project(project), [project]);
     const routeConceptGroups = useMemo(() => buildRoutePlanner2ConceptGroups(project.scenarios), [project.scenarios]);
     const selectedScenario = useMemo(
@@ -1539,10 +1589,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setSaveMessage(null);
         try {
             const savedProject = await saveRoutePlanner2Project(teamId, userId, project);
+            try {
+                await removeRoutePlanner2LocalDraft({ teamId, userId });
+            } catch (error) {
+                console.warn('Could not clear the Route Planner recovery copy after saving.', error);
+            }
             setProject(savedProject, { trackHistory: false });
             setSelectedSavedProjectId(savedProject.id);
             setSaveState('saved');
             setSaveMessage('Saved to the team workspace.');
+            setLocalDraftMessage(null);
             await refreshSavedProjects();
         } catch (error) {
             console.error('Failed to save Route Planner project', error);
@@ -1561,10 +1617,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         try {
             const projectCopy = createRoutePlanner2ProjectCopy(project);
             const savedProject = await saveRoutePlanner2Project(teamId, userId, projectCopy);
+            try {
+                await removeRoutePlanner2LocalDraft({ teamId, userId });
+            } catch (error) {
+                console.warn('Could not clear the Route Planner recovery copy after saving a copy.', error);
+            }
             resetProjectHistory(savedProject);
             setSelectedSavedProjectId(savedProject.id);
             setSaveState('saved');
             setSaveMessage('Saved as a new route plan.');
+            setLocalDraftMessage(null);
             await refreshSavedProjects();
         } catch (error) {
             console.error('Failed to save Route Planner project as a copy', error);
@@ -2330,6 +2392,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     async function exportOperatorDirections() {
         if (!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf) return;
         setIsExportingOperatorPdf(true);
+        setExportError(null);
         try {
             const mapImage = await mapCanvasRef.current?.captureMapImage({
                 padding: 96,
@@ -2368,6 +2431,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                 mapImage,
                 segmentMapPages,
             });
+        } catch (error) {
+            console.error('Failed to export Route Planner 2 operator PDF', error);
+            setExportError(error instanceof Error ? error.message : 'Operator PDF export failed. Please try again.');
         } finally {
             setIsExportingOperatorPdf(false);
         }
@@ -2375,7 +2441,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     async function exportMapPdf() {
         if (!selectedScenario || selectedScenario.stops.length < 2 || isExportingMapPdf) return;
         setIsExportingMapPdf(true);
-        setSaveMessage(null);
+        setExportError(null);
         try {
             const mapImage = await mapCanvasRef.current?.captureMapImage({
                 padding: 96,
@@ -2417,8 +2483,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             });
         } catch (error) {
             console.error('Failed to export Route Planner 2 map PDF', error);
-            setSaveState('error');
-            setSaveMessage(error instanceof Error ? error.message : 'Map PDF export failed. Please try again.');
+            setExportError(error instanceof Error ? error.message : 'Map PDF export failed. Please try again.');
         } finally {
             setIsExportingMapPdf(false);
         }
@@ -2918,6 +2983,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         : 'border-emerald-200 bg-emerald-50 text-emerald-700'
                                     }`}>
                                         {visibleSaveMessage}
+                                    </div>
+                                )}
+                                {localDraftMessage && (
+                                    <div className="pointer-events-auto mt-1 rounded-2xl border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 shadow-lg">
+                                        {localDraftMessage}
+                                    </div>
+                                )}
+                                {exportError && (
+                                    <div role="alert" className="pointer-events-auto mt-1 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 shadow-lg">
+                                        PDF export failed: {exportError}
                                     </div>
                                 )}
                             </div>

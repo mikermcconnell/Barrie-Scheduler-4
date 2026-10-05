@@ -23,4 +23,21 @@ describe('functions parser boolean coercion', () => {
         expect(parsed.records[0].timePoint).toBe(true);
         expect(parsed.records[0].inBetween).toBe(false);
     });
+
+    it.each([
+        ['1/2/2026', '2026-01-02'],
+        ['46023', '2026-01-01'],
+        ['2026/01/03', '2026-01-03'],
+    ])('normalizes service date %s to %s', (rawDate, expectedDate) => {
+        const headers = [...STREETS_REQUIRED_COLUMNS];
+        const row = headers.map((header) => {
+            if (header === 'Date') return rawDate;
+            if (header === 'Day') return 'FRIDAY';
+            if (header === 'ArrivalTime' || header === 'StopTime' || header === 'TerminalDepartureTime') return '08:00';
+            return '1';
+        });
+
+        const parsed = parseSTREETSCSV(`${headers.join(',')}\n${row.join(',')}`);
+        expect(parsed.records[0].date).toBe(expectedDate);
+    });
 });

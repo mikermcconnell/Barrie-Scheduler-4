@@ -1,0 +1,739 @@
+- generic [active] [ref=f10e1]:
+  - banner [ref=f10e2]:
+    - strong [ref=f10e3]: DESIGN REVIEW · GO TRAIN CONNECTION GRID
+    - link "Earlier design options →" [ref=f10e4] [cursor=pointer]:
+      - /url: index.html
+  - main [ref=f10e5]:
+    - generic [ref=f10e6]:
+      - heading "Master Schedule" [level=1] [ref=f10e7]
+      - paragraph [ref=f10e8]: Source of truth for all route schedules
+    - navigation "Master Schedule preview" [ref=f10e9]:
+      - button "Overview" [disabled] [ref=f10e10]
+      - button "Platforms" [disabled] [ref=f10e11]
+      - generic [ref=f10e12]: Regional Transit Connections
+      - button "400" [disabled] [ref=f10e13]
+      - button "100" [disabled] [ref=f10e14]
+      - button "101" [disabled] [ref=f10e15]
+      - button "2" [disabled] [ref=f10e16]
+      - button "7" [disabled] [ref=f10e17]
+      - button "8A" [disabled] [ref=f10e18]
+      - button "8B" [disabled] [ref=f10e19]
+      - button "10" [disabled] [ref=f10e20]
+      - button "11" [disabled] [ref=f10e21]
+      - button "12" [disabled] [ref=f10e22]
+    - generic [ref=f10e23]:
+      - generic [ref=f10e24]:
+        - generic [ref=f10e25]: Trip-by-trip connection chart
+        - heading "GO Train & Barrie Transit connections" [level=2] [ref=f10e26]
+        - paragraph [ref=f10e27]: Every train across the top. Every connecting route down the side.
+      - button "Print chart" [ref=f10e28] [cursor=pointer]
+    - generic [ref=f10e29]:
+      - strong [ref=f10e30]: Reference-based preview, not a live comparison.
+      - text: Times and route labels are transcribed from the City's chart updated September 8, 2026. They have not been checked against your current master schedule or GO GTFS. Colours below are recalculated from the printed times.
+    - generic [ref=f10e31]:
+      - generic [ref=f10e32]:
+        - group "GO station" [ref=f10e33]:
+          - button "Allandale Waterfront" [pressed] [ref=f10e34] [cursor=pointer]
+          - button "Barrie South" [ref=f10e35] [cursor=pointer]
+        - group "Connection direction" [ref=f10e36]:
+          - button "Both directions" [pressed] [ref=f10e37] [cursor=pointer]
+          - button "To GO" [ref=f10e38] [cursor=pointer]
+          - button "From GO" [ref=f10e39] [cursor=pointer]
+      - generic [ref=f10e40]:
+        - strong [ref=f10e41]: Weekday · reference snapshot
+        - text: Bus time + scheduled gap in every cell
+    - generic "Scheduled gap legend" [ref=f10e42]:
+      - generic [ref=f10e43]: 6–15 min
+      - generic [ref=f10e45]: 1–5 min · tight
+      - generic [ref=f10e47]: 16–30 min
+      - generic [ref=f10e49]: Not listed in chart
+      - generic [ref=f10e51]: Outside 1–30 min / check source
+      - generic [ref=f10e53]: Gap excludes walking & boarding allowance
+    - generic [ref=f10e54]:
+      - generic [ref=f10e55]:
+        - generic [ref=f10e56]:
+          - heading "Allandale Waterfront GO" [level=3] [ref=f10e57]
+          - paragraph [ref=f10e58]: Barrie Allandale Transit Terminal · source route directions
+        - generic [ref=f10e59]: GO Transit · Barrie line
+      - generic [ref=f10e60]:
+        - generic [ref=f10e61]:
+          - generic [ref=f10e62]:
+            - generic [aria-hidden] [ref=f10e63]: ↗
+            - generic [ref=f10e64]:
+              - heading "To GO · bus arrives before the train departs" [level=3] [ref=f10e65]
+              - paragraph [ref=f10e66]: Local bus arrival times shown in the cells
+          - generic [ref=f10e67]: 8 GO train trips
+        - region "To GO connection grid" [ref=f10e68]:
+          - table [ref=f10e69]:
+            - caption [ref=f10e70]: Train trips → · Bus routes ↓ · Click a cell for timing details
+            - rowgroup [ref=f10e71]:
+              - row [ref=f10e72]:
+                - columnheader "Bus route / direction GO departs →" [ref=f10e73]: Bus route / directionGO departs →
+                - columnheader "Train 6606 5:13 AM" [ref=f10e74]:
+                  - generic [ref=f10e75]: Train 6606
+                  - time [ref=f10e76]: 5:13 AM
+                - columnheader "Train 6806 5:43 AM" [ref=f10e77]:
+                  - generic [ref=f10e78]: Train 6806
+                  - time [ref=f10e79]: 5:43 AM
+                - columnheader "Train 6608 6:13 AM" [ref=f10e80]:
+                  - generic [ref=f10e81]: Train 6608
+                  - time [ref=f10e82]: 6:13 AM
+                - columnheader "Train 6808 6:53 AM" [ref=f10e83]:
+                  - generic [ref=f10e84]: Train 6808
+                  - time [ref=f10e85]: 6:53 AM
+                - columnheader "Train 6908 7:08 AM" [ref=f10e86]:
+                  - generic [ref=f10e87]: Train 6908
+                  - time [ref=f10e88]: 7:08 AM
+                - columnheader "Train 6910 8:02 AM" [ref=f10e89]:
+                  - generic [ref=f10e90]: Train 6910
+                  - time [ref=f10e91]: 8:02 AM
+                - columnheader "Train 6912 9:02 AM" [ref=f10e92]:
+                  - generic [ref=f10e93]: Train 6912
+                  - time [ref=f10e94]: 9:02 AM
+                - columnheader "Train 6920 1:09 PM" [ref=f10e95]:
+                  - generic [ref=f10e96]: Train 6920
+                  - time [ref=f10e97]: 1:09 PM
+            - rowgroup [ref=f10e98]:
+              - row [ref=f10e99]:
+                - rowheader "7A Source direction" [ref=f10e100]:
+                  - generic [ref=f10e101]: 7A
+                  - emphasis [ref=f10e102]: Source direction
+                - cell [ref=f10e103]:
+                  - button "7A, train 6606, not listed" [ref=f10e104] [cursor=pointer]:
+                    - time [ref=f10e105]: —
+                    - generic [ref=f10e106]: Not listed
+                - cell [ref=f10e107]:
+                  - button "7A, train 6806, not listed" [ref=f10e108] [cursor=pointer]:
+                    - time [ref=f10e109]: —
+                    - generic [ref=f10e110]: Not listed
+                - cell [ref=f10e111]:
+                  - button "7A, train 6608, 6:06 AM, 7 minute scheduled gap" [ref=f10e112] [cursor=pointer]:
+                    - time [ref=f10e113]: 6:06 AM
+                    - generic [ref=f10e114]: 7 min
+                - cell [ref=f10e115]:
+                  - button "7A, train 6808, 6:36 AM, 17 minute scheduled gap" [ref=f10e116] [cursor=pointer]:
+                    - time [ref=f10e117]: 6:36 AM
+                    - generic [ref=f10e118]: 17 min
+                - cell [ref=f10e119]:
+                  - button "7A, train 6908, 7:07 AM, 1 minute scheduled gap" [ref=f10e120] [cursor=pointer]:
+                    - time [ref=f10e121]: 7:07 AM
+                    - generic [ref=f10e122]: 1 min · tight
+                - cell [ref=f10e123]:
+                  - button "7A, train 6910, 7:32 AM, 30 minute scheduled gap" [ref=f10e124] [cursor=pointer]:
+                    - time [ref=f10e125]: 7:32 AM
+                    - generic [ref=f10e126]: 30 min
+                - cell [ref=f10e127]:
+                  - button "7A, train 6912, 8:32 AM, 30 minute scheduled gap" [ref=f10e128] [cursor=pointer]:
+                    - time [ref=f10e129]: 8:32 AM
+                    - generic [ref=f10e130]: 30 min
+                - cell [ref=f10e131]:
+                  - button "7A, train 6920, 1:06 PM, 3 minute scheduled gap" [ref=f10e132] [cursor=pointer]:
+                    - time [ref=f10e133]: 1:06 PM
+                    - generic [ref=f10e134]: 3 min · tight
+              - row [ref=f10e135]:
+                - rowheader "7B Source direction" [ref=f10e136]:
+                  - generic [ref=f10e137]: 7B
+                  - emphasis [ref=f10e138]: Source direction
+                - cell [ref=f10e139]:
+                  - button "7B, train 6606, not listed" [ref=f10e140] [cursor=pointer]:
+                    - time [ref=f10e141]: —
+                    - generic [ref=f10e142]: Not listed
+                - cell [ref=f10e143]:
+                  - button "7B, train 6806, not listed" [ref=f10e144] [cursor=pointer]:
+                    - time [ref=f10e145]: —
+                    - generic [ref=f10e146]: Not listed
+                - cell [ref=f10e147]:
+                  - button "7B, train 6608, 5:49 AM, 24 minute scheduled gap" [ref=f10e148] [cursor=pointer]:
+                    - time [ref=f10e149]: 5:49 AM
+                    - generic [ref=f10e150]: 24 min
+                - cell [ref=f10e151]:
+                  - button "7B, train 6808, 6:49 AM, 4 minute scheduled gap" [ref=f10e152] [cursor=pointer]:
+                    - time [ref=f10e153]: 6:49 AM
+                    - generic [ref=f10e154]: 4 min · tight
+                - cell [ref=f10e155]:
+                  - button "7B, train 6908, 6:49 AM, 19 minute scheduled gap" [ref=f10e156] [cursor=pointer]:
+                    - time [ref=f10e157]: 6:49 AM
+                    - generic [ref=f10e158]: 19 min
+                - cell [ref=f10e159]:
+                  - button "7B, train 6910, 7:50 AM, 12 minute scheduled gap" [ref=f10e160] [cursor=pointer]:
+                    - time [ref=f10e161]: 7:50 AM
+                    - generic [ref=f10e162]: 12 min
+                - cell [ref=f10e163]:
+                  - button "7B, train 6912, 8:50 AM, 12 minute scheduled gap" [ref=f10e164] [cursor=pointer]:
+                    - time [ref=f10e165]: 8:50 AM
+                    - generic [ref=f10e166]: 12 min
+                - cell [ref=f10e167]:
+                  - button "7B, train 6920, 12:49 PM, 20 minute scheduled gap" [ref=f10e168] [cursor=pointer]:
+                    - time [ref=f10e169]: 12:49 PM
+                    - generic [ref=f10e170]: 20 min
+              - row [ref=f10e171]:
+                - rowheader "12A Source direction" [ref=f10e172]:
+                  - generic [ref=f10e173]: 12A
+                  - emphasis [ref=f10e174]: Source direction
+                - cell [ref=f10e175]:
+                  - button "12A, train 6606, not listed" [ref=f10e176] [cursor=pointer]:
+                    - time [ref=f10e177]: —
+                    - generic [ref=f10e178]: Not listed
+                - cell [ref=f10e179]:
+                  - button "12A, train 6806, not listed" [ref=f10e180] [cursor=pointer]:
+                    - time [ref=f10e181]: —
+                    - generic [ref=f10e182]: Not listed
+                - cell [ref=f10e183]:
+                  - button "12A, train 6608, not listed" [ref=f10e184] [cursor=pointer]:
+                    - time [ref=f10e185]: —
+                    - generic [ref=f10e186]: Not listed
+                - cell [ref=f10e187]:
+                  - button "12A, train 6808, 6:47 AM, 6 minute scheduled gap" [ref=f10e188] [cursor=pointer]:
+                    - time [ref=f10e189]: 6:47 AM
+                    - generic [ref=f10e190]: 6 min
+                - cell [ref=f10e191]:
+                  - button "12A, train 6908, 6:47 AM, 21 minute scheduled gap" [ref=f10e192] [cursor=pointer]:
+                    - time [ref=f10e193]: 6:47 AM
+                    - generic [ref=f10e194]: 21 min
+                - cell [ref=f10e195]:
+                  - button "12A, train 6910, 7:51 AM, 11 minute scheduled gap" [ref=f10e196] [cursor=pointer]:
+                    - time [ref=f10e197]: 7:51 AM
+                    - generic [ref=f10e198]: 11 min
+                - cell [ref=f10e199]:
+                  - button "12A, train 6912, 8:56 AM, 6 minute scheduled gap" [ref=f10e200] [cursor=pointer]:
+                    - time [ref=f10e201]: 8:56 AM
+                    - generic [ref=f10e202]: 6 min
+                - cell [ref=f10e203]:
+                  - button "12A, train 6920, 12:41 PM, 28 minute scheduled gap" [ref=f10e204] [cursor=pointer]:
+                    - time [ref=f10e205]: 12:41 PM
+                    - generic [ref=f10e206]: 28 min
+              - row [ref=f10e207]:
+                - rowheader "12B Source direction" [ref=f10e208]:
+                  - generic [ref=f10e209]: 12B
+                  - emphasis [ref=f10e210]: Source direction
+                - cell [ref=f10e211]:
+                  - button "12B, train 6606, not listed" [ref=f10e212] [cursor=pointer]:
+                    - time [ref=f10e213]: —
+                    - generic [ref=f10e214]: Not listed
+                - cell [ref=f10e215]:
+                  - button "12B, train 6806, 5:30 AM, 13 minute scheduled gap" [ref=f10e216] [cursor=pointer]:
+                    - time [ref=f10e217]: 5:30 AM
+                    - generic [ref=f10e218]: 13 min
+                - cell [ref=f10e219]:
+                  - button "12B, train 6608, 6:05 AM, 8 minute scheduled gap" [ref=f10e220] [cursor=pointer]:
+                    - time [ref=f10e221]: 6:05 AM
+                    - generic [ref=f10e222]: 8 min
+                - cell [ref=f10e223]:
+                  - button "12B, train 6808, 6:28 AM, 25 minute scheduled gap" [ref=f10e224] [cursor=pointer]:
+                    - time [ref=f10e225]: 6:28 AM
+                    - generic [ref=f10e226]: 25 min
+                - cell [ref=f10e227]:
+                  - button "12B, train 6908, 6:56 AM, 12 minute scheduled gap" [ref=f10e228] [cursor=pointer]:
+                    - time [ref=f10e229]: 6:56 AM
+                    - generic [ref=f10e230]: 12 min
+                - cell [ref=f10e231]:
+                  - button "12B, train 6910, not listed" [ref=f10e232] [cursor=pointer]:
+                    - time [ref=f10e233]: —
+                    - generic [ref=f10e234]: Not listed
+                - cell [ref=f10e235]:
+                  - button "12B, train 6912, 8:36 AM, 26 minute scheduled gap" [ref=f10e236] [cursor=pointer]:
+                    - time [ref=f10e237]: 8:36 AM
+                    - generic [ref=f10e238]: 26 min
+                - cell [ref=f10e239]:
+                  - button "12B, train 6920, 12:55 PM, 14 minute scheduled gap" [ref=f10e240] [cursor=pointer]:
+                    - time [ref=f10e241]: 12:55 PM
+                    - generic [ref=f10e242]: 14 min
+              - row [ref=f10e243]:
+                - rowheader "8A NB" [ref=f10e244]:
+                  - generic [ref=f10e245]: 8A
+                  - emphasis [ref=f10e246]: NB
+                - cell [ref=f10e247]:
+                  - button "8A-NB, train 6606, 5:07 AM, 6 minute scheduled gap" [ref=f10e248] [cursor=pointer]:
+                    - time [ref=f10e249]: 5:07 AM
+                    - generic [ref=f10e250]: 6 min
+                - cell [ref=f10e251]:
+                  - button "8A-NB, train 6806, 5:37 AM, 6 minute scheduled gap" [ref=f10e252] [cursor=pointer]:
+                    - time [ref=f10e253]: 5:37 AM
+                    - generic [ref=f10e254]: 6 min
+                - cell [ref=f10e255]:
+                  - button "8A-NB, train 6608, 6:12 AM, 1 minute scheduled gap" [ref=f10e256] [cursor=pointer]:
+                    - time [ref=f10e257]: 6:12 AM
+                    - generic [ref=f10e258]: 1 min · tight
+                - cell [ref=f10e259]:
+                  - button "8A-NB, train 6808, 6:37 AM, 16 minute scheduled gap" [ref=f10e260] [cursor=pointer]:
+                    - time [ref=f10e261]: 6:37 AM
+                    - generic [ref=f10e262]: 16 min
+                - cell [ref=f10e263]:
+                  - button "8A-NB, train 6908, 7:07 AM, 1 minute scheduled gap" [ref=f10e264] [cursor=pointer]:
+                    - time [ref=f10e265]: 7:07 AM
+                    - generic [ref=f10e266]: 1 min · tight
+                - cell [ref=f10e267]:
+                  - button "8A-NB, train 6910, 7:37 AM, 25 minute scheduled gap" [ref=f10e268] [cursor=pointer]:
+                    - time [ref=f10e269]: 7:37 AM
+                    - generic [ref=f10e270]: 25 min
+                - cell [ref=f10e271]:
+                  - button "8A-NB, train 6912, 8:37 AM, 25 minute scheduled gap" [ref=f10e272] [cursor=pointer]:
+                    - time [ref=f10e273]: 8:37 AM
+                    - generic [ref=f10e274]: 25 min
+                - cell [ref=f10e275]:
+                  - button "8A-NB, train 6920, not listed" [ref=f10e276] [cursor=pointer]:
+                    - time [ref=f10e277]: —
+                    - generic [ref=f10e278]: Not listed
+              - row [ref=f10e279]:
+                - rowheader "8A SB" [ref=f10e280]:
+                  - generic [ref=f10e281]: 8A
+                  - emphasis [ref=f10e282]: SB
+                - cell [ref=f10e283]:
+                  - button "8A-SB, train 6606, not listed" [ref=f10e284] [cursor=pointer]:
+                    - time [ref=f10e285]: —
+                    - generic [ref=f10e286]: Not listed
+                - cell [ref=f10e287]:
+                  - button "8A-SB, train 6806, not listed" [ref=f10e288] [cursor=pointer]:
+                    - time [ref=f10e289]: —
+                    - generic [ref=f10e290]: Not listed
+                - cell [ref=f10e291]:
+                  - button "8A-SB, train 6608, not listed" [ref=f10e292] [cursor=pointer]:
+                    - time [ref=f10e293]: —
+                    - generic [ref=f10e294]: Not listed
+                - cell [ref=f10e295]:
+                  - button "8A-SB, train 6808, 6:45 AM, 8 minute scheduled gap" [ref=f10e296] [cursor=pointer]:
+                    - time [ref=f10e297]: 6:45 AM
+                    - generic [ref=f10e298]: 8 min
+                - cell [ref=f10e299]:
+                  - button "8A-SB, train 6908, 6:45 AM, 23 minute scheduled gap" [ref=f10e300] [cursor=pointer]:
+                    - time [ref=f10e301]: 6:45 AM
+                    - generic [ref=f10e302]: 23 min
+                - cell [ref=f10e303]:
+                  - button "8A-SB, train 6910, 7:45 AM, 17 minute scheduled gap" [ref=f10e304] [cursor=pointer]:
+                    - time [ref=f10e305]: 7:45 AM
+                    - generic [ref=f10e306]: 17 min
+                - cell [ref=f10e307]:
+                  - button "8A-SB, train 6912, 8:45 AM, 17 minute scheduled gap" [ref=f10e308] [cursor=pointer]:
+                    - time [ref=f10e309]: 8:45 AM
+                    - generic [ref=f10e310]: 17 min
+                - cell [ref=f10e311]:
+                  - button "8A-SB, train 6920, 12:48 PM, 21 minute scheduled gap" [ref=f10e312] [cursor=pointer]:
+                    - time [ref=f10e313]: 12:48 PM
+                    - generic [ref=f10e314]: 21 min
+              - row [ref=f10e315]:
+                - rowheader "8B NB" [ref=f10e316]:
+                  - generic [ref=f10e317]: 8B
+                  - emphasis [ref=f10e318]: NB
+                - cell [ref=f10e319]:
+                  - button "8B-NB, train 6606, not listed" [ref=f10e320] [cursor=pointer]:
+                    - time [ref=f10e321]: —
+                    - generic [ref=f10e322]: Not listed
+                - cell [ref=f10e323]:
+                  - button "8B-NB, train 6806, not listed" [ref=f10e324] [cursor=pointer]:
+                    - time [ref=f10e325]: —
+                    - generic [ref=f10e326]: Not listed
+                - cell [ref=f10e327]:
+                  - button "8B-NB, train 6608, 6:07 AM, 6 minute scheduled gap" [ref=f10e328] [cursor=pointer]:
+                    - time [ref=f10e329]: 6:07 AM
+                    - generic [ref=f10e330]: 6 min
+                - cell [ref=f10e331]:
+                  - button "8B-NB, train 6808, not listed" [ref=f10e332] [cursor=pointer]:
+                    - time [ref=f10e333]: —
+                    - generic [ref=f10e334]: Not listed
+                - cell [ref=f10e335]:
+                  - button "8B-NB, train 6908, 7:07 AM, 1 minute scheduled gap" [ref=f10e336] [cursor=pointer]:
+                    - time [ref=f10e337]: 7:07 AM
+                    - generic [ref=f10e338]: 1 min · tight
+                - cell [ref=f10e339]:
+                  - button "8B-NB, train 6910, 7:37 AM, 25 minute scheduled gap" [ref=f10e340] [cursor=pointer]:
+                    - time [ref=f10e341]: 7:37 AM
+                    - generic [ref=f10e342]: 25 min
+                - cell [ref=f10e343]:
+                  - button "8B-NB, train 6912, 8:37 AM, 25 minute scheduled gap" [ref=f10e344] [cursor=pointer]:
+                    - time [ref=f10e345]: 8:37 AM
+                    - generic [ref=f10e346]: 25 min
+                - cell [ref=f10e347]:
+                  - button "8B-NB, train 6920, 1:07 PM, 2 minute scheduled gap" [ref=f10e348] [cursor=pointer]:
+                    - time [ref=f10e349]: 1:07 PM
+                    - generic [ref=f10e350]: 2 min · tight
+              - row [ref=f10e351]:
+                - rowheader "8B SB" [ref=f10e352]:
+                  - generic [ref=f10e353]: 8B
+                  - emphasis [ref=f10e354]: SB
+                - cell [ref=f10e355]:
+                  - button "8B-SB, train 6606, 4:54 AM, 19 minute scheduled gap" [ref=f10e356] [cursor=pointer]:
+                    - time [ref=f10e357]: 4:54 AM
+                    - generic [ref=f10e358]: 19 min
+                - cell [ref=f10e359]:
+                  - button "8B-SB, train 6806, not listed" [ref=f10e360] [cursor=pointer]:
+                    - time [ref=f10e361]: —
+                    - generic [ref=f10e362]: Not listed
+                - cell [ref=f10e363]:
+                  - button "8B-SB, train 6608, 5:54 AM, 19 minute scheduled gap" [ref=f10e364] [cursor=pointer]:
+                    - time [ref=f10e365]: 5:54 AM
+                    - generic [ref=f10e366]: 19 min
+                - cell [ref=f10e367]:
+                  - button "8B-SB, train 6808, not listed" [ref=f10e368] [cursor=pointer]:
+                    - time [ref=f10e369]: —
+                    - generic [ref=f10e370]: Not listed
+                - cell [ref=f10e371]:
+                  - button "8B-SB, train 6908, 6:45 AM, 23 minute scheduled gap" [ref=f10e372] [cursor=pointer]:
+                    - time [ref=f10e373]: 6:45 AM
+                    - generic [ref=f10e374]: 23 min
+                - cell [ref=f10e375]:
+                  - button "8B-SB, train 6910, 7:45 AM, 17 minute scheduled gap" [ref=f10e376] [cursor=pointer]:
+                    - time [ref=f10e377]: 7:45 AM
+                    - generic [ref=f10e378]: 17 min
+                - cell [ref=f10e379]:
+                  - button "8B-SB, train 6912, 8:45 AM, 17 minute scheduled gap" [ref=f10e380] [cursor=pointer]:
+                    - time [ref=f10e381]: 8:45 AM
+                    - generic [ref=f10e382]: 17 min
+                - cell [ref=f10e383]:
+                  - button "8B-SB, train 6920, 12:48 PM, 21 minute scheduled gap" [ref=f10e384] [cursor=pointer]:
+                    - time [ref=f10e385]: 12:48 PM
+                    - generic [ref=f10e386]: 21 min
+              - row [ref=f10e387]:
+                - rowheader "Routes with a 6–30 min gap*" [ref=f10e388]: Routes with a6–30 min gap*
+                - cell "2 / 8 routes" [ref=f10e389]
+                - cell "2 / 8 routes" [ref=f10e390]
+                - cell "5 / 8 routes" [ref=f10e391]
+                - cell "5 / 8 routes" [ref=f10e392]
+                - cell "5 / 8 routes" [ref=f10e393]
+                - cell "7 / 8 routes" [ref=f10e394]
+                - cell "8 / 8 routes" [ref=f10e395]
+                - cell "5 / 8 routes" [ref=f10e396]
+        - generic [ref=f10e397]: "ToD Zones C & D: source lists service 5:30 AM–12:00 AM. No fixed timetable or guaranteed connection.*Scheduled-gap count only, not confirmed walk-adjusted connections. “+1” means next service-day calendar date."
+      - generic [ref=f10e398]:
+        - generic [ref=f10e399]:
+          - generic [ref=f10e400]:
+            - generic [aria-hidden] [ref=f10e401]: ↙
+            - generic [ref=f10e402]:
+              - heading "From GO · bus departs after the train arrives" [level=3] [ref=f10e403]
+              - paragraph [ref=f10e404]: Local bus departure times shown in the cells
+          - generic [ref=f10e405]: 8 GO train trips
+        - region "From GO connection grid" [ref=f10e406]:
+          - table [ref=f10e407]:
+            - caption [ref=f10e408]: Train trips → · Bus routes ↓ · Click a cell for timing details
+            - rowgroup [ref=f10e409]:
+              - row [ref=f10e410]:
+                - columnheader "Bus route / direction GO arrives →" [ref=f10e411]: Bus route / directionGO arrives →
+                - columnheader "Train 6911 11:37 AM" [ref=f10e412]:
+                  - generic [ref=f10e413]: Train 6911
+                  - time [ref=f10e414]: 11:37 AM
+                - columnheader "Train 6919 3:44 PM" [ref=f10e415]:
+                  - generic [ref=f10e416]: Train 6919
+                  - time [ref=f10e417]: 3:44 PM
+                - columnheader "Train 6923 5:41 PM" [ref=f10e418]:
+                  - generic [ref=f10e419]: Train 6923
+                  - time [ref=f10e420]: 5:41 PM
+                - columnheader "Train 6825 6:26 PM" [ref=f10e421]:
+                  - generic [ref=f10e422]: Train 6825
+                  - time [ref=f10e423]: 6:26 PM
+                - columnheader "Train 6627 6:56 PM" [ref=f10e424]:
+                  - generic [ref=f10e425]: Train 6627
+                  - time [ref=f10e426]: 6:56 PM
+                - columnheader "Train 6727 7:11 PM" [ref=f10e427]:
+                  - generic [ref=f10e428]: Train 6727
+                  - time [ref=f10e429]: 7:11 PM
+                - columnheader "Train 6927 7:41 PM" [ref=f10e430]:
+                  - generic [ref=f10e431]: Train 6927
+                  - time [ref=f10e432]: 7:41 PM
+                - columnheader "Train 6935 12:07 AM Next day" [ref=f10e433]:
+                  - generic [ref=f10e434]: Train 6935
+                  - time [ref=f10e435]: 12:07 AM
+                  - generic [ref=f10e436]: Next day
+            - rowgroup [ref=f10e437]:
+              - row [ref=f10e438]:
+                - rowheader "7A Source direction" [ref=f10e439]:
+                  - generic [ref=f10e440]: 7A
+                  - emphasis [ref=f10e441]: Source direction
+                - cell [ref=f10e442]:
+                  - button "7A, train 6911, 11:39 AM, 2 minute scheduled gap" [ref=f10e443] [cursor=pointer]:
+                    - time [ref=f10e444]: 11:39 AM
+                    - generic [ref=f10e445]: 2 min · tight
+                - cell [ref=f10e446]:
+                  - button "7A, train 6919, 4:08 PM, 24 minute scheduled gap" [ref=f10e447] [cursor=pointer]:
+                    - time [ref=f10e448]: 4:08 PM
+                    - generic [ref=f10e449]: 24 min
+                - cell [ref=f10e450]:
+                  - button "7A, train 6923, 6:08 PM, 27 minute scheduled gap" [ref=f10e451] [cursor=pointer]:
+                    - time [ref=f10e452]: 6:08 PM
+                    - generic [ref=f10e453]: 27 min
+                - cell [ref=f10e454]:
+                  - button "7A, train 6825, 6:58 PM, 32 minute scheduled gap" [ref=f10e455] [cursor=pointer]:
+                    - time [ref=f10e456]: 6:58 PM
+                    - generic [ref=f10e457]: Check source · 32 min
+                - cell [ref=f10e458]:
+                  - button "7A, train 6627, 7:10 PM, 14 minute scheduled gap" [ref=f10e459] [cursor=pointer]:
+                    - time [ref=f10e460]: 7:10 PM
+                    - generic [ref=f10e461]: 14 min
+                - cell [ref=f10e462]:
+                  - button "7A, train 6727, 8:08 PM, 57 minute scheduled gap" [ref=f10e463] [cursor=pointer]:
+                    - time [ref=f10e464]: 8:08 PM
+                    - generic [ref=f10e465]: Check source · 57 min
+                - cell [ref=f10e466]:
+                  - button "7A, train 6927, 8:08 PM, 27 minute scheduled gap" [ref=f10e467] [cursor=pointer]:
+                    - time [ref=f10e468]: 8:08 PM
+                    - generic [ref=f10e469]: 27 min
+                - cell [ref=f10e470]:
+                  - button "7A, train 6935, not listed" [ref=f10e471] [cursor=pointer]:
+                    - time [ref=f10e472]: —
+                    - generic [ref=f10e473]: Not listed
+              - row [ref=f10e474]:
+                - rowheader "7B Source direction" [ref=f10e475]:
+                  - generic [ref=f10e476]: 7B
+                  - emphasis [ref=f10e477]: Source direction
+                - cell [ref=f10e478]:
+                  - button "7B, train 6911, 11:53 AM, 16 minute scheduled gap" [ref=f10e479] [cursor=pointer]:
+                    - time [ref=f10e480]: 11:53 AM
+                    - generic [ref=f10e481]: 16 min
+                - cell [ref=f10e482]:
+                  - button "7B, train 6919, 3:53 PM, 9 minute scheduled gap" [ref=f10e483] [cursor=pointer]:
+                    - time [ref=f10e484]: 3:53 PM
+                    - generic [ref=f10e485]: 9 min
+                - cell [ref=f10e486]:
+                  - button "7B, train 6923, 5:52 PM, 11 minute scheduled gap" [ref=f10e487] [cursor=pointer]:
+                    - time [ref=f10e488]: 5:52 PM
+                    - generic [ref=f10e489]: 11 min
+                - cell [ref=f10e490]:
+                  - button "7B, train 6825, 7:34 PM, 68 minute scheduled gap" [ref=f10e491] [cursor=pointer]:
+                    - time [ref=f10e492]: 7:34 PM
+                    - generic [ref=f10e493]: Check source · 68 min
+                - cell [ref=f10e494]:
+                  - button "7B, train 6627, 7:24 PM, 28 minute scheduled gap" [ref=f10e495] [cursor=pointer]:
+                    - time [ref=f10e496]: 7:24 PM
+                    - generic [ref=f10e497]: 28 min
+                - cell [ref=f10e498]:
+                  - button "7B, train 6727, 7:24 PM, 13 minute scheduled gap" [ref=f10e499] [cursor=pointer]:
+                    - time [ref=f10e500]: 7:24 PM
+                    - generic [ref=f10e501]: 13 min
+                - cell [ref=f10e502]:
+                  - button "7B, train 6927, 7:56 PM, 15 minute scheduled gap" [ref=f10e503] [cursor=pointer]:
+                    - time [ref=f10e504]: 7:56 PM
+                    - generic [ref=f10e505]: 15 min
+                - cell [ref=f10e506]:
+                  - button "7B, train 6935, not listed" [ref=f10e507] [cursor=pointer]:
+                    - time [ref=f10e508]: —
+                    - generic [ref=f10e509]: Not listed
+              - row [ref=f10e510]:
+                - rowheader "12A Source direction" [ref=f10e511]:
+                  - generic [ref=f10e512]: 12A
+                  - emphasis [ref=f10e513]: Source direction
+                - cell [ref=f10e514]:
+                  - button "12A, train 6911, 11:41 AM, 4 minute scheduled gap" [ref=f10e515] [cursor=pointer]:
+                    - time [ref=f10e516]: 11:41 AM
+                    - generic [ref=f10e517]: 4 min · tight
+                - cell [ref=f10e518]:
+                  - button "12A, train 6919, 4:08 PM, 24 minute scheduled gap" [ref=f10e519] [cursor=pointer]:
+                    - time [ref=f10e520]: 4:08 PM
+                    - generic [ref=f10e521]: 24 min
+                - cell [ref=f10e522]:
+                  - button "12A, train 6923, 5:53 PM, 12 minute scheduled gap" [ref=f10e523] [cursor=pointer]:
+                    - time [ref=f10e524]: 5:53 PM
+                    - generic [ref=f10e525]: 12 min
+                - cell [ref=f10e526]:
+                  - button "12A, train 6825, not listed" [ref=f10e527] [cursor=pointer]:
+                    - time [ref=f10e528]: —
+                    - generic [ref=f10e529]: Not listed
+                - cell [ref=f10e530]:
+                  - button "12A, train 6627, not listed" [ref=f10e531] [cursor=pointer]:
+                    - time [ref=f10e532]: —
+                    - generic [ref=f10e533]: Not listed
+                - cell [ref=f10e534]:
+                  - button "12A, train 6727, 7:33 PM, 22 minute scheduled gap" [ref=f10e535] [cursor=pointer]:
+                    - time [ref=f10e536]: 7:33 PM
+                    - generic [ref=f10e537]: 22 min
+                - cell [ref=f10e538]:
+                  - button "12A, train 6927, 8:08 PM, 27 minute scheduled gap" [ref=f10e539] [cursor=pointer]:
+                    - time [ref=f10e540]: 8:08 PM
+                    - generic [ref=f10e541]: 27 min
+                - cell [ref=f10e542]:
+                  - button "12A, train 6935, not listed" [ref=f10e543] [cursor=pointer]:
+                    - time [ref=f10e544]: —
+                    - generic [ref=f10e545]: Not listed
+              - row [ref=f10e546]:
+                - rowheader "12B Source direction" [ref=f10e547]:
+                  - generic [ref=f10e548]: 12B
+                  - emphasis [ref=f10e549]: Source direction
+                - cell [ref=f10e550]:
+                  - button "12B, train 6911, 11:51 AM, 14 minute scheduled gap" [ref=f10e551] [cursor=pointer]:
+                    - time [ref=f10e552]: 11:51 AM
+                    - generic [ref=f10e553]: 14 min
+                - cell [ref=f10e554]:
+                  - button "12B, train 6919, 3:49 PM, 5 minute scheduled gap" [ref=f10e555] [cursor=pointer]:
+                    - time [ref=f10e556]: 3:49 PM
+                    - generic [ref=f10e557]: 5 min · tight
+                - cell [ref=f10e558]:
+                  - button "12B, train 6923, 6:09 PM, 28 minute scheduled gap" [ref=f10e559] [cursor=pointer]:
+                    - time [ref=f10e560]: 6:09 PM
+                    - generic [ref=f10e561]: 28 min
+                - cell [ref=f10e562]:
+                  - button "12B, train 6825, 6:44 PM, 18 minute scheduled gap" [ref=f10e563] [cursor=pointer]:
+                    - time [ref=f10e564]: 6:44 PM
+                    - generic [ref=f10e565]: 18 min
+                - cell [ref=f10e566]:
+                  - button "12B, train 6627, 7:07 PM, 11 minute scheduled gap" [ref=f10e567] [cursor=pointer]:
+                    - time [ref=f10e568]: 7:07 PM
+                    - generic [ref=f10e569]: 11 min
+                - cell [ref=f10e570]:
+                  - button "12B, train 6727, not listed" [ref=f10e571] [cursor=pointer]:
+                    - time [ref=f10e572]: —
+                    - generic [ref=f10e573]: Not listed
+                - cell [ref=f10e574]:
+                  - button "12B, train 6927, 7:42 PM, 1 minute scheduled gap" [ref=f10e575] [cursor=pointer]:
+                    - time [ref=f10e576]: 7:42 PM
+                    - generic [ref=f10e577]: 1 min · tight
+                - cell [ref=f10e578]:
+                  - button "12B, train 6935, 12:17 AM · next day, 10 minute scheduled gap" [ref=f10e579] [cursor=pointer]:
+                    - time [ref=f10e580]: 12:17 AM +1
+                    - generic [ref=f10e581]: 10 min
+              - row [ref=f10e582]:
+                - rowheader "8A NB" [ref=f10e583]:
+                  - generic [ref=f10e584]: 8A
+                  - emphasis [ref=f10e585]: NB
+                - cell [ref=f10e586]:
+                  - button "8A-NB, train 6911, 11:42 AM, 5 minute scheduled gap" [ref=f10e587] [cursor=pointer]:
+                    - time [ref=f10e588]: 11:42 AM
+                    - generic [ref=f10e589]: 5 min · tight
+                - cell [ref=f10e590]:
+                  - button "8A-NB, train 6919, 4:12 PM, 28 minute scheduled gap" [ref=f10e591] [cursor=pointer]:
+                    - time [ref=f10e592]: 4:12 PM
+                    - generic [ref=f10e593]: 28 min
+                - cell [ref=f10e594]:
+                  - button "8A-NB, train 6923, 5:42 PM, 1 minute scheduled gap" [ref=f10e595] [cursor=pointer]:
+                    - time [ref=f10e596]: 5:42 PM
+                    - generic [ref=f10e597]: 1 min · tight
+                - cell [ref=f10e598]:
+                  - button "8A-NB, train 6825, 6:42 PM, 16 minute scheduled gap" [ref=f10e599] [cursor=pointer]:
+                    - time [ref=f10e600]: 6:42 PM
+                    - generic [ref=f10e601]: 16 min
+                - cell [ref=f10e602]:
+                  - button "8A-NB, train 6627, 7:14 PM, 18 minute scheduled gap" [ref=f10e603] [cursor=pointer]:
+                    - time [ref=f10e604]: 7:14 PM
+                    - generic [ref=f10e605]: 18 min
+                - cell [ref=f10e606]:
+                  - button "8A-NB, train 6727, 7:14 PM, 3 minute scheduled gap" [ref=f10e607] [cursor=pointer]:
+                    - time [ref=f10e608]: 7:14 PM
+                    - generic [ref=f10e609]: 3 min · tight
+                - cell [ref=f10e610]:
+                  - button "8A-NB, train 6927, 7:42 PM, 1 minute scheduled gap" [ref=f10e611] [cursor=pointer]:
+                    - time [ref=f10e612]: 7:42 PM
+                    - generic [ref=f10e613]: 1 min · tight
+                - cell [ref=f10e614]:
+                  - button "8A-NB, train 6935, not listed" [ref=f10e615] [cursor=pointer]:
+                    - time [ref=f10e616]: —
+                    - generic [ref=f10e617]: Not listed
+              - row [ref=f10e618]:
+                - rowheader "8A SB" [ref=f10e619]:
+                  - generic [ref=f10e620]: 8A
+                  - emphasis [ref=f10e621]: SB
+                - cell [ref=f10e622]:
+                  - button "8A-SB, train 6911, 11:52 AM, 15 minute scheduled gap" [ref=f10e623] [cursor=pointer]:
+                    - time [ref=f10e624]: 11:52 AM
+                    - generic [ref=f10e625]: 15 min
+                - cell [ref=f10e626]:
+                  - button "8A-SB, train 6919, 3:53 PM, 9 minute scheduled gap" [ref=f10e627] [cursor=pointer]:
+                    - time [ref=f10e628]: 3:53 PM
+                    - generic [ref=f10e629]: 9 min
+                - cell [ref=f10e630]:
+                  - button "8A-SB, train 6923, 5:51 PM, 10 minute scheduled gap" [ref=f10e631] [cursor=pointer]:
+                    - time [ref=f10e632]: 5:51 PM
+                    - generic [ref=f10e633]: 10 min
+                - cell [ref=f10e634]:
+                  - button "8A-SB, train 6825, 7:34 PM, 68 minute scheduled gap" [ref=f10e635] [cursor=pointer]:
+                    - time [ref=f10e636]: 7:34 PM
+                    - generic [ref=f10e637]: Check source · 68 min
+                - cell [ref=f10e638]:
+                  - button "8A-SB, train 6627, not listed" [ref=f10e639] [cursor=pointer]:
+                    - time [ref=f10e640]: —
+                    - generic [ref=f10e641]: Not listed
+                - cell [ref=f10e642]:
+                  - button "8A-SB, train 6727, 7:56 PM, 45 minute scheduled gap" [ref=f10e643] [cursor=pointer]:
+                    - time [ref=f10e644]: 7:56 PM
+                    - generic [ref=f10e645]: Check source · 45 min
+                - cell [ref=f10e646]:
+                  - button "8A-SB, train 6927, not listed" [ref=f10e647] [cursor=pointer]:
+                    - time [ref=f10e648]: —
+                    - generic [ref=f10e649]: Not listed
+                - cell [ref=f10e650]:
+                  - button "8A-SB, train 6935, not listed" [ref=f10e651] [cursor=pointer]:
+                    - time [ref=f10e652]: —
+                    - generic [ref=f10e653]: Not listed
+              - row [ref=f10e654]:
+                - rowheader "8B NB" [ref=f10e655]:
+                  - generic [ref=f10e656]: 8B
+                  - emphasis [ref=f10e657]: NB
+                - cell [ref=f10e658]:
+                  - button "8B-NB, train 6911, 11:42 PM, 725 minute scheduled gap" [ref=f10e659] [cursor=pointer]:
+                    - time [ref=f10e660]: 11:42 PM
+                    - generic [ref=f10e661]: Check source · 725 min
+                - cell [ref=f10e662]:
+                  - button "8B-NB, train 6919, 4:12 PM, 28 minute scheduled gap" [ref=f10e663] [cursor=pointer]:
+                    - time [ref=f10e664]: 4:12 PM
+                    - generic [ref=f10e665]: 28 min
+                - cell [ref=f10e666]:
+                  - button "8B-NB, train 6923, not listed" [ref=f10e667] [cursor=pointer]:
+                    - time [ref=f10e668]: —
+                    - generic [ref=f10e669]: Not listed
+                - cell [ref=f10e670]:
+                  - button "8B-NB, train 6825, not listed" [ref=f10e671] [cursor=pointer]:
+                    - time [ref=f10e672]: —
+                    - generic [ref=f10e673]: Not listed
+                - cell [ref=f10e674]:
+                  - button "8B-NB, train 6627, 7:16 PM, 20 minute scheduled gap" [ref=f10e675] [cursor=pointer]:
+                    - time [ref=f10e676]: 7:16 PM
+                    - generic [ref=f10e677]: 20 min
+                - cell [ref=f10e678]:
+                  - button "8B-NB, train 6727, 7:16 PM, 5 minute scheduled gap" [ref=f10e679] [cursor=pointer]:
+                    - time [ref=f10e680]: 7:16 PM
+                    - generic [ref=f10e681]: 5 min · tight
+                - cell [ref=f10e682]:
+                  - button "8B-NB, train 6927, not listed" [ref=f10e683] [cursor=pointer]:
+                    - time [ref=f10e684]: —
+                    - generic [ref=f10e685]: Not listed
+                - cell [ref=f10e686]:
+                  - button "8B-NB, train 6935, not listed" [ref=f10e687] [cursor=pointer]:
+                    - time [ref=f10e688]: —
+                    - generic [ref=f10e689]: Not listed
+              - row [ref=f10e690]:
+                - rowheader "8B SB" [ref=f10e691]:
+                  - generic [ref=f10e692]: 8B
+                  - emphasis [ref=f10e693]: SB
+                - cell [ref=f10e694]:
+                  - button "8B-SB, train 6911, 11:52 PM, 735 minute scheduled gap" [ref=f10e695] [cursor=pointer]:
+                    - time [ref=f10e696]: 11:52 PM
+                    - generic [ref=f10e697]: Check source · 735 min
+                - cell [ref=f10e698]:
+                  - button "8B-SB, train 6919, 3:53 PM, 9 minute scheduled gap" [ref=f10e699] [cursor=pointer]:
+                    - time [ref=f10e700]: 3:53 PM
+                    - generic [ref=f10e701]: 9 min
+                - cell [ref=f10e702]:
+                  - button "8B-SB, train 6923, 5:56 PM, 15 minute scheduled gap" [ref=f10e703] [cursor=pointer]:
+                    - time [ref=f10e704]: 5:56 PM
+                    - generic [ref=f10e705]: 15 min
+                - cell [ref=f10e706]:
+                  - button "8B-SB, train 6825, not listed" [ref=f10e707] [cursor=pointer]:
+                    - time [ref=f10e708]: —
+                    - generic [ref=f10e709]: Not listed
+                - cell [ref=f10e710]:
+                  - button "8B-SB, train 6627, 7:25 PM, 29 minute scheduled gap" [ref=f10e711] [cursor=pointer]:
+                    - time [ref=f10e712]: 7:25 PM
+                    - generic [ref=f10e713]: 29 min
+                - cell [ref=f10e714]:
+                  - button "8B-SB, train 6727, 7:25 PM, 14 minute scheduled gap" [ref=f10e715] [cursor=pointer]:
+                    - time [ref=f10e716]: 7:25 PM
+                    - generic [ref=f10e717]: 14 min
+                - cell [ref=f10e718]:
+                  - button "8B-SB, train 6927, not listed" [ref=f10e719] [cursor=pointer]:
+                    - time [ref=f10e720]: —
+                    - generic [ref=f10e721]: Not listed
+                - cell [ref=f10e722]:
+                  - button "8B-SB, train 6935, not listed" [ref=f10e723] [cursor=pointer]:
+                    - time [ref=f10e724]: —
+                    - generic [ref=f10e725]: Not listed
+              - row [ref=f10e726]:
+                - rowheader "Routes with a 6–30 min gap*" [ref=f10e727]: Routes with a6–30 min gap*
+                - cell "3 / 8 routes" [ref=f10e728]
+                - cell "7 / 8 routes" [ref=f10e729]
+                - cell "6 / 8 routes" [ref=f10e730]
+                - cell "2 / 8 routes" [ref=f10e731]
+                - cell "6 / 8 routes" [ref=f10e732]
+                - cell "3 / 8 routes" [ref=f10e733]
+                - cell "3 / 8 routes" [ref=f10e734]
+                - cell "1 / 8 routes" [ref=f10e735]
+        - generic [ref=f10e736]: "ToD Zones C & D: source lists service 5:30 AM–12:00 AM. No fixed timetable or guaranteed connection.*Scheduled-gap count only, not confirmed walk-adjusted connections. “+1” means next service-day calendar date."
+    - group [ref=f10e737]:
+      - generic "Reference, interpretation & proposed implementation" [ref=f10e738] [cursor=pointer]
+    - generic [ref=f10e739]:
+      - generic [ref=f10e740]: Read-only HTML concept · No application or schedule changes
+      - generic [ref=f10e741]: "Reference: City of Barrie · chart updated September 8, 2026"

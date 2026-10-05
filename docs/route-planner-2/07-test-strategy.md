@@ -96,6 +96,7 @@ Before calling v1 work complete:
 - warnings are actionable
 - comparison table is understandable
 - save/load UI reflects team-scoped persistence state clearly
+- the latest signed-in team/user project restores from its device recovery copy after a refresh, while team/user switches remount before the previous project can render or autosave into the new scope
 - importing one or more GTFS routes creates new route concepts with line, all stops, and scheduled segment runtime evidence
 - imported stops can still be moved, renamed, reordered, and deleted
 - imported route line can still be edited with bend anchors
@@ -104,4 +105,5 @@ Before calling v1 work complete:
 - stop ranges can be copied or moved into another route concept at a chosen insertion position
 - map PDF exports show centered text in stop labels, header KPI cards, and the
   legend; no label text should sit on the lower edge of its pill/card
+- Camp Shuttle PDF dependencies load with the workspace, and PDF failures remain separate from save status
 - large camp/address-import routes stay responsive: stop labels are capped, the stop-order rail virtualizes, and fallback segment runtimes appear even when automatic road snapping is skipped

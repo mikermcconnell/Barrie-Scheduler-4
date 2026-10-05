@@ -85,7 +85,7 @@ Load these only when relevant:
 - [Archive](docs/archive/README.md) - Historical notes that should not drive current implementation
 - [Artifacts](docs/artifacts/README.md) - Supporting files and examples, not default context
 
-Run `npm run docs:check` after changing agent-facing Markdown. It validates required context files, inline and reference-style repository links, declared file paths, code-formatted paths in canonical context, portable paths, and skill frontmatter. CI runs the same check; historical Tier 3 documents are excluded.
+Run `npm run docs:check` after changing agent-facing Markdown. It validates required context files, inline and reference-style repository links, declared and code-formatted paths across active context, portable paths, skill frontmatter, portable/Claude skill parity, and a small set of critical stale-rule regressions. Intentionally proposed nonexistent paths must be enclosed by the checker's explicit `docs:allow-missing-paths` markers. CI runs the same check; historical Tier 3 documents are excluded from current-path validation.
 
 ## Fixed-Route Routes Supported
 

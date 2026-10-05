@@ -1,3 +1,4 @@
+import { jsPDF } from 'jspdf';
 import { buildRoutePlanner2StopSegmentPaths, buildRoutePlanner2StopVisitSequence } from './routePlanner2Segments';
 import { getRoutePlanner2KidsAtStop } from './routePlanner2StopTimes';
 import type { RoutePlanner2Scenario, RoutePlanner2Stop } from './routePlanner2Types';
@@ -426,7 +427,6 @@ export async function exportRoutePlanner2MapPdf(
         throw new Error('The route map image could not be captured. Please wait for the map to finish loading and try again.');
     }
 
-    const { jsPDF } = await import('jspdf');
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }) as unknown as JsPdfInstance;
     const routeLabel = options.routeLabel?.trim() || scenario.name;
     const title = `${options.projectName} - ${routeLabel}`;

@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { buildResidentialGrowthRange, getResidentialGrowthMonthOptions, periodFromText } from '../utils/residential-growth/filters';
+import {
+    buildResidentialGrowthRange,
+    formatResidentialGrowthPeriodSelection,
+    getResidentialGrowthMonthOptions,
+    periodFromText,
+} from '../utils/residential-growth/filters';
 import type { ResidentialGrowthMonthlyDataset, ResidentialGrowthRecord } from '../utils/residential-growth/types';
 
 function record(id: string, layer: 'issued' | 'occupied', date: string, units: number): ResidentialGrowthRecord {
@@ -71,6 +76,7 @@ describe('residential growth range filters', () => {
         expect(result.issued.map((entry) => entry.id)).toEqual(['april', 'march', 'feb']);
         expect(result.issued.reduce((sum, entry) => sum + entry.units, 0)).toBe(90);
         expect(result.occupied.reduce((sum, entry) => sum + entry.units, 0)).toBe(1);
+        expect(formatResidentialGrowthPeriodSelection(result.periods)).toBe('Feb 2026, Mar 2026, and Apr 2026');
     });
 
     it('deduplicates repeated uploads of the same stable record', () => {
@@ -124,6 +130,9 @@ describe('residential growth range filters', () => {
 
         const result = buildResidentialGrowthRange([februaryVeda], 'selected-month', '2026-02');
         expect(result.occupied.map((entry) => entry.id)).toEqual(['veda-feb']);
+        expect(result.periods).toEqual(['2026-02']);
+        expect(result.fromDate).toBe('2026-02-01');
+        expect(result.toDate).toBe('2026-02-28');
     });
 
     it('extracts periods from common upload filenames', () => {

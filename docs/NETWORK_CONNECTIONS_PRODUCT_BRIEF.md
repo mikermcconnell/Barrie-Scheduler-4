@@ -1,7 +1,8 @@
 # Network Connections Product Brief
 
-> Date: March 11, 2026
-> Status: Working draft
+> Original date: March 11, 2026
+> Status: Implemented initial workspace; roadmap sections retained
+> Implementation snapshot reviewed: September 4, 2026
 > Product fit: Network-level connection analysis and retiming guidance within Scheduler 4 Fixed Route
 > Visual direction: Friendly design theme, map-first workspace
 
@@ -18,6 +19,16 @@ The feature should use published schedules or draft schedules to:
 - feed strong or intentional connection points into downstream schedule editing
 
 This is not just a library of manual targets. It is a network scanner and recommendation engine built on the full schedule.
+
+### Current implementation boundary
+
+- Entry: **Fixed Route -> Planning Data -> Network Connections**.
+- The current analysis loads the selected day type from the team's published master schedules. Draft-set comparison remains future scope.
+- The workspace discovers exact shared-stop and nearby-stop hubs, scores route-pair opportunities by time band, shows map/detail views, and creates schedule-based recommendations.
+- Transit App transfer summaries are loaded when available and shown as observed-demand signals for the selected pattern and saved actions. They do not rewrite the schedule-based analysis result.
+- Saved Actions support status tracking, CSV export, copied Markdown briefs, published-schedule handoff, and copying a route to a draft before opening Schedule Editor.
+- Saved Actions are browser-local, team-keyed `localStorage` data. They are not Firestore records and do not sync across browsers or users.
+- One-use navigation handoffs use `sessionStorage`.
 
 ## 2. Problem Statement
 
@@ -130,11 +141,8 @@ The feature should help answer the following questions:
 
 ## 9. Core Workflow
 
-1. Open Network Connections from Fixed Route.
-2. Choose source schedule set:
-   - published master schedule
-   - active system draft
-   - selected draft set
+1. Open Network Connections from Fixed Route Planning Data.
+2. The workspace loads the team's published master schedules.
 3. Choose day type and optional time band.
 4. System builds transfer hubs from shared stops, nearby stops, and known terminal groupings.
 5. System scores route-to-route connections across the network.
@@ -202,16 +210,15 @@ This should feel like a warm planning workspace, not a GIS analyst tool.
 
 ## 11. Key Views and Modules
 
-| Module | Responsibility | Proposed Path |
+| Module | Responsibility | Current Path |
 |------|----------------|--------------|
-| Workspace shell | Routing, filters, state | `components/NetworkConnections/NetworkConnectionsWorkspace.tsx` |
-| Filter bar | Day type, schedule set, time band, issue filters | `components/NetworkConnections/NetworkConnectionsFilterBar.tsx` |
-| Hub ranking panel | Rank transfer hubs and route pairs | `components/NetworkConnections/HubRankingPanel.tsx` |
+| Workspace shell, filters, rankings, details, recommendations, and saved actions | UI and orchestration | `components/Analytics/NetworkConnectionsWorkspace.tsx` |
 | Network map | Show hubs, route overlays, connection severity | `components/NetworkConnections/NetworkConnectionsMap.tsx` |
-| Detail panel | Show exact connection patterns for selected hub or route pair | `components/NetworkConnections/ConnectionDetailPanel.tsx` |
-| Recommendation panel | Explain recommended fixes and expected benefit | `components/NetworkConnections/ConnectionRecommendationPanel.tsx` |
 | Service layer | Build hubs, score connections, generate recommendations | `utils/network-connections/networkConnectionAnalysis.ts` |
 | Types | Analysis result, hub model, recommendation model | `utils/network-connections/networkConnectionTypes.ts` |
+| Observed signals and exports | Match Transit App transfer summaries and build saved-action exports | `utils/network-connections/networkConnectionObservedSignals.ts` |
+| Saved action store | Team-keyed browser-local persistence and status updates | `utils/network-connections/networkConnectionRecommendationStore.ts` |
+| Navigation handoff | One-use master/editor handoffs | `utils/network-connections/networkConnectionHandoff.ts` |
 
 ## 12. Core Analysis Model
 
@@ -327,7 +334,7 @@ Use when:
 
 The feature should not mutate core schedule objects directly during analysis. It should build derived analysis objects.
 
-Suggested core entities:
+The following are the original conceptual entities. Current exported shapes are authoritative in `utils/network-connections/networkConnectionTypes.ts`; saved-action shapes are in `utils/network-connections/networkConnectionRecommendationStore.ts`.
 
 ```ts
 interface NetworkTransferHub {
@@ -394,7 +401,7 @@ The existing corridor and junction logic should be reused where possible for:
 
 ### Transit App transfer analytics
 
-Phase 2 should combine schedule-based analysis with observed rider transfer patterns.
+The current workspace combines schedule-based analysis with observed Transit App transfer patterns as a supporting signal. The UI and saved-action exports disclose matched transfer volume, average observed wait, priority, demand level, matched stop, and GO linkage. The core recommendation algorithm remains schedule-based.
 
 That creates a more useful priority model:
 
@@ -402,20 +409,20 @@ That creates a more useful priority model:
 - scheduled weak + observed low volume = lower priority
 - scheduled good + observed high volume = confirm and protect
 
-## 16. MVP Scope
+## 16. MVP Scope and Current Status
 
 The MVP should stay narrow and useful.
 
-### Included in MVP
+### Implemented in the current initial workspace
 
 - analyze one selected day type at a time
-- use published master schedules and optionally active system draft input
+- use published master schedules
 - auto-discover hubs from shared and nearby stops
 - rank route-pair patterns by connection quality
 - show exact trip-level arrival/departure comparisons in detail panel
 - generate simple recommendation categories
 - support export of findings
-- support handoff into existing route-level connections workflow
+- support published-route and copy-to-draft editor handoffs
 
 ### Excluded from MVP
 
@@ -424,11 +431,12 @@ The MVP should stay narrow and useful.
 - reliability modeling from AVL
 - rider-demand weighting in the base algorithm
 - multi-day calendar and holiday logic beyond existing day types
+- active-system-draft or selected-draft-set analysis
 
 ## 17. Phase 2 Expansion
 
-- merge observed transfer demand from Transit App analytics
-- weight recommendations by actual transfer volume
+- **Implemented as supporting evidence:** merge observed transfer demand from Transit App analytics into the workspace and Saved Actions exports
+- **Still proposed:** weight the base recommendation algorithm by actual transfer volume
 - factor in route reliability and late-running exposure
 - allow before/after comparison between published and draft network connection quality
 - add hub importance scoring

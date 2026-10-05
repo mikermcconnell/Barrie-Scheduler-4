@@ -55,9 +55,22 @@ npx firebase functions:secrets:set INGEST_API_KEY
 ```
 It will prompt you to type a value. Enter something like: `streets-auto-2026-barrie` (or any string you want — just remember it).
 
-### 2c. Deploy
+### 2c. Deploy safely in two stages
+
+Pause the Power Automate flow before deploying. The queue processor must exist
+before the receipt endpoint can create queue records.
+
 ```bash
-cd functions && npm run build && cd .. && npx firebase deploy --only functions
+cd functions
+npm run build
+cd ..
+npx firebase deploy --only functions:processQueuedPerformanceImport
+```
+
+In Firebase Console, confirm `processQueuedPerformanceImport` is active. Then deploy the receipt endpoint:
+
+```bash
+npx firebase deploy --only functions:ingestPerformanceData
 ```
 
 Wait for it to finish. It will print a URL like:
@@ -66,6 +79,10 @@ https://us-central1-barrie-scheduler-7844a.cloudfunctions.net/ingestPerformanceD
 ```
 
 **Copy this URL** — you need it for Step 4.
+
+After both functions are active, re-enable the Power Automate flow. Do not deploy
+the receipt endpoint first: queue documents created before the Firestore trigger
+exists will not automatically trigger later.
 
 ### 2d. Verify Firebase is on Blaze plan
 Cloud Functions require the Blaze (pay-as-you-go) plan. If deployment fails with a billing error:
@@ -97,15 +114,17 @@ You should get back:
 ```json
 {
   "success": true,
-  "daysIngested": 1,
+  "queued": true,
+  "runId": "...",
+  "deduplicated": false,
+  "status": "queued",
   "dates": ["2026-02-12"],
-  "totalDaysStored": 15,
   "recordsParsed": 36421,
   "warnings": []
 }
 ```
 
-Then check the app — your Performance Dashboard should show the data.
+The HTTP request returns as soon as the validated CSV is safely queued. Allow several minutes for background processing, then check the app — your Performance Dashboard should show the data.
 
 ---
 
@@ -176,7 +195,12 @@ Click the trigger and set:
 The next morning after the daily email arrives:
 1. Open Power Automate → **My flows** → `STREETS Daily Import`
 2. Check the **Run history** — it should show a successful run
-3. Open the Scheduler app → Performance Dashboard — yesterday's data should be there
+3. In Firestore, open `teams/{teamId}/performanceImports/{runId}` and confirm its status becomes `completed`
+4. Open the Scheduler app → Performance Dashboard — yesterday's data should be there
+
+Power Automate turning green confirms only that Firebase accepted and queued the
+CSV. A later background failure appears on the import record and in
+`processQueuedPerformanceImport` logs.
 
 ---
 
@@ -185,11 +209,11 @@ The next morning after the daily email arrives:
 1. **Email arrives** in your Outlook with a CSV attachment
 2. **Power Automate** detects it, extracts the CSV attachment
 3. **HTTP POST** sends the raw CSV to the Cloud Function
-4. **Cloud Function** parses the CSV using the same STREETS parser your app uses
-5. **Aggregation** computes OTP, ridership, load profiles (same as manual import)
-6. **Merge** — loads existing data, adds the new day (or replaces if same date), saves back
-7. **Firebase Storage** stores monthly performance JSON chunks plus lightweight overview/report snapshots, **Firestore** stores the metadata and chunk pointers
-8. **Performance Dashboard** shows the updated data next time you open it
+4. **Receipt function** validates and archives the CSV, creates a queued import record, and immediately acknowledges Power Automate
+5. **Background function** claims the queued record and computes OTP, ridership, and load profiles using the same server parser and aggregator as the in-app import
+6. **Merge** — loads existing data, adds the new day (or replaces an older copy of that date), and publishes it with a revision check; concurrent server imports reload and retry safely, and an older queued file cannot overwrite a newer same-day correction
+7. **Firebase Storage** stores monthly performance JSON chunks plus lightweight overview/report snapshots, while **Firestore** stores queue status, metadata, and chunk pointers
+8. **Performance Dashboard** shows the updated data after background processing finishes
 
 Data accumulates over time — each day appends to your history. The app stores performance history in monthly chunks so the daily import does not have to rebuild one huge all-history JSON file.
 
@@ -202,7 +226,9 @@ Data accumulates over time — each day appends to your history. The app stores 
 | Power Automate flow fails with 401 | API key doesn't match. Re-check `x-api-key` header matches what you set in Step 2b |
 | Flow fails with 400 "No valid records" | The CSV format may have changed. Try a manual import in the app to verify the CSV |
 | Flow fails with 500 | Check Cloud Function logs: Firebase Console → Functions → Logs |
-| Data doesn't appear in dashboard | Check the team ID is correct. Open DevTools → Network to verify |
+| Flow times out after several minutes | Confirm both `ingestPerformanceData` and `processQueuedPerformanceImport` are deployed. Automated requests should return a queued response within seconds. |
+| Power Automate is green but data doesn't appear | Find the returned `runId` under `teams/{teamId}/performanceImports`, check its status/error, then inspect `processQueuedPerformanceImport` logs. |
+| Data doesn't appear in dashboard | Check the team ID is correct. Open DevTools → Network to verify. |
 | Duplicate days | Not a problem — the function replaces existing dates automatically |
 | Firebase billing error | Upgrade to Blaze plan (Step 2d). Free tier covers this usage |
 
@@ -210,7 +236,11 @@ Data accumulates over time — each day appends to your history. The app stores 
 1. Go to https://console.firebase.google.com
 2. Select your project
 3. Left sidebar → **Functions** → **Logs**
-4. Look for `ingestPerformanceData` entries
+4. Check both `ingestPerformanceData` and `processQueuedPerformanceImport`
+
+In-app CSV imports and Excel imports converted to normalized CSV use the same
+server publication boundary. If a queued import publishes first, an overlapping
+in-app import reloads the latest history and retries instead of overwriting it.
 
 ---
 
