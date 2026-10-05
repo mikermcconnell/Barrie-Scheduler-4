@@ -3,12 +3,12 @@ import type { MasterRouteTable, MasterTrip } from '../parsers/masterSchedulePars
 import { getRouteConfig, isLoop } from '../config/routeDirectionConfig';
 import { HUBS } from '../platform/platformConfig';
 import { fromMinutes } from '../timeUtils';
-import type { ConnectionCell, GoDateResult, GoStationKey, GoTrainEvent, LocalConnectionRow, PublishedRouteSource, RegionalGoFeed } from './types';
+import type { ConnectionCell, GoDateResult, GoStationKey, GoTrainEvent, LocalConnectionRow, PublishedRouteSource, RegionalGoFeed, RejectedBusTrip } from './types';
 
 const FEED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const STATIONS = {
-    allandale: { id: 'AD', names: ['allandale waterfront go', 'allandale waterfront', 'barrie allandale waterfront go'], hub: 'Barrie Allandale Transit Terminal', nearbyStopCodes: ['14'] },
-    south: { id: 'BA', names: ['barrie south go', 'barrie south'], hub: 'Barrie South GO', nearbyStopCodes: [] },
+    allandale: { id: 'AD', names: ['allandale waterfront go', 'allandale waterfront', 'barrie allandale waterfront go'], hub: 'Barrie Allandale Transit Terminal', nearbyStopCodes: ['14'], stopNamePattern: /allandale/i },
+    south: { id: 'BA', names: ['barrie south go', 'barrie south'], hub: 'Barrie South GO', nearbyStopCodes: [], stopNamePattern: /barrie south/i },
 } as const;
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 
@@ -226,15 +226,34 @@ function recordedTripSpan(trip: MasterTrip, stops: string[]): { first: number; l
     return indexes.length >= 2 ? { first: indexes[0], last: indexes[indexes.length - 1] } : null;
 }
 
+/**
+ * Earliest recorded clock of an interlined row when it precedes the nominal start, else null.
+ * Only rows carrying interline markers are relaxed, and never by more than an hour.
+ */
+function interlinedLegStart(trip: MasterTrip, stops: string[]): number | null {
+    const marked = trip as MasterTrip & { interlinePrev?: unknown; interlineNext?: unknown };
+    if (!marked.interlinePrev && !marked.interlineNext) return null;
+    if (!validMinutes(trip.startTime) || !validMinutes(trip.endTime) || trip.endTime < trip.startTime) return null;
+    const clocks = stops.map(stop => clockMinutes(trip.stops?.[stop])).flatMap(raw => raw === null ? [] :
+        [[raw, raw + 1440, raw + 2880].sort((a, b) => Math.abs(a - trip.startTime) - Math.abs(b - trip.startTime))[0]]);
+    const earliest = Math.min(...clocks);
+    return earliest < trip.startTime && earliest >= trip.startTime - 60 ? earliest : null;
+}
+
+/** Minutes in which a rejected trip could call at the station, padded by any recorded dwell or recovery. */
+function tripWindow(trip: MasterTrip): [number, number] | null {
+    if (!validMinutes(trip.startTime) || !validMinutes(trip.endTime) || trip.endTime < trip.startTime) return null;
+    const slack = Math.max(0, ...[trip.recoveryTime, ...Object.values(trip.recoveryTimes ?? {})].filter(validMinutes));
+    return [trip.startTime - slack, trip.endTime + slack];
+}
+
 function rowsForSource(source: PublishedRouteSource, station: GoStationKey, date: string): LocalConnectionRow[] {
     const { entry, content } = source;
     const base: Pick<LocalConnectionRow, 'routeNumber' | 'version' | 'arrivals' | 'departures' | 'stopNames' | 'stopCodes'> = {
         routeNumber: entry.routeNumber, version: entry.currentVersion, arrivals: [], departures: [], stopNames: [], stopCodes: [],
     };
     const failure = source.error || (!content ? 'Published schedule could not be loaded.' : undefined) ||
-        (content && (content.metadata.routeNumber !== entry.routeNumber || content.metadata.dayType !== entry.dayType) ? 'Published content does not match this route and service day.' : undefined) ||
-        (entry.effectiveDate && (!dateKey(entry.effectiveDate) || entry.effectiveDate > date) ? 'The current published version is not effective on this date.' : undefined) ||
-        (content?.metadata.effectiveDate && (!dateKey(content.metadata.effectiveDate) || content.metadata.effectiveDate > date) ? 'The published content is not effective on this date.' : undefined);
+        (content && (content.metadata.routeNumber !== entry.routeNumber || content.metadata.dayType !== entry.dayType) ? 'Published content does not match this route and service day.' : undefined);
     if (failure) return [{ ...base, id: entry.id, direction: 'Not loaded', status: 'unavailable', issue: failure }];
     // Connection area includes approved nearby curbside stops, without changing platform assignment.
     const codes = new Set<string>([...(HUBS.find(hub => hub.name === STATIONS[station].hub)?.stopCodes ?? []), ...STATIONS[station].nearbyStopCodes]);
@@ -252,13 +271,31 @@ function rowsForSource(source: PublishedRouteSource, station: GoStationKey, date
         const stops = table.stops.map((stopName, index) => ({ stopName, index })).filter(stop => codes.has(table.stopIds[stop.stopName]));
         row.stopNames = [...new Set(stops.map(stop => stop.stopName))];
         row.stopCodes = row.stopNames.map(stop => table.stopIds[stop]);
-        if (!stops.length) return [{ ...row, status: 'unavailable' as const, issue: 'No exact station stop code is mapped in this direction.' }];
-        for (const trip of table.trips) {
+        if (!stops.length) {
+            // A direction that never names the station does not serve it; one that names it without a mapped code is a data gap.
+            return table.stops.some(stopName => STATIONS[station].stopNamePattern.test(stopName))
+                ? [{ ...row, status: 'unavailable' as const, issue: 'The station appears by name in this direction, but no exact station stop code is mapped.' }] : [];
+        }
+        // One bad trip is excluded on its own; it blocks only cells within its service window.
+        const reject = (kind: 'arrival' | 'departure', trip: MasterTrip, issue: string) => {
+            const entry: RejectedBusTrip = { tripId: trip.id, window: tripWindow(trip), issue };
+            if (kind === 'arrival') { row.arrivalIssue ??= issue; (row.rejectedArrivals ??= []).push(entry); }
+            else { row.departureIssue ??= issue; (row.rejectedDepartures ??= []).push(entry); }
+        };
+        for (const storedTrip of table.trips) {
+            // Adapter imports store a post-midnight end as a wrapped clock (end < same-day start), as cycleTime does.
+            // Only that convention is unwrapped; starts already past midnight stay rejected below.
+            const unwrapped = validMinutes(storedTrip.startTime) && validMinutes(storedTrip.endTime) &&
+                storedTrip.startTime < 1440 && storedTrip.endTime < storedTrip.startTime
+                ? { ...storedTrip, endTime: storedTrip.endTime + 1440 } : storedTrip;
+            // Interlined round-trip rows (e.g. 8B-T-77) can begin their onward leg before the row's nominal start.
+            const legStart = interlinedLegStart(unwrapped, table.stops);
+            const trip = legStart === null ? unwrapped : { ...unwrapped, startTime: legStart };
             const startIndex = trip.startStopIndex ?? 0;
             const endIndex = trip.endStopIndex ?? table.stops.length - 1;
             if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex) || startIndex < 0 || endIndex >= table.stops.length || startIndex > endIndex) {
                 const issue = tripBoundsIssue(trip, startIndex, endIndex, table.stops.length, 'Active stop bounds do not fit this direction table.');
-                row.arrivalIssue ??= issue; row.departureIssue ??= issue;
+                reject('arrival', trip, issue); reject('departure', trip, issue);
                 continue;
             }
             const recordedSpan = recordedTripSpan(trip, table.stops);
@@ -269,30 +306,32 @@ function rowsForSource(source: PublishedRouteSource, station: GoStationKey, date
             if (!activeStops.length) continue;
             if (!validMinutes(trip.startTime) || !validMinutes(trip.endTime) || trip.endTime < trip.startTime) {
                 const issue = tripBoundsIssue(trip, startIndex, endIndex, table.stops.length, 'Trip start/end are invalid or reversed; service-day anchors are not guessed.');
-                row.arrivalIssue ??= issue; row.departureIssue ??= issue;
+                reject('arrival', trip, issue); reject('departure', trip, issue);
                 continue;
             }
             for (const { stopName, index } of activeStops) {
                 // Riders must actually travel to/from the station within this active trip.
                 // A terminal DEP is not an onward journey, and an origin ARR is not a feeder.
-                const hasInboundSegment = index > startIndex;
                 const hasOnwardSegment = index < endIndex;
-                if (!hasInboundSegment && !hasOnwardSegment) continue;
+                if (index <= startIndex && !hasOnwardSegment) continue;
                 if (activeStops.filter(stop => stop.stopName === stopName).length > 1) {
                     // Name-keyed timing cannot distinguish multiple active calls at one stop.
-                    if (hasInboundSegment) row.arrivalIssue = 'Repeated station stop calls have ambiguous arrival timing.';
-                    if (hasOnwardSegment) row.departureIssue = 'Repeated station stop calls have ambiguous departure timing.';
+                    if (index > startIndex) reject('arrival', trip, `Repeated station stop calls have ambiguous arrival timing. Rejected bus trip: ${trip.id}; stop: ${stopName}.`);
+                    if (hasOnwardSegment) reject('departure', trip, `Repeated station stop calls have ambiguous departure timing. Rejected bus trip: ${trip.id}; stop: ${stopName}.`);
                     continue;
                 }
                 const departure = departureMinutes(trip, stopName);
+                // A call before the nominal start begins the interlined leg; this route did not carry riders into it.
+                const hasInboundSegment = index > startIndex && !(legStart !== null && departure !== null && departure < unwrapped.startTime);
                 const arrival = arrivalMinutes(trip, stopName, departure, index === endIndex);
                 const detail = { tripId: trip.id, stopName, stopCode: table.stopIds[stopName] };
                 if (hasOnwardSegment) {
-                    if (departure === null) row.departureIssue = 'A station-serving bus trip is missing a valid departure time.';
+                    if (departure === null) reject('departure', trip, `A station-serving bus trip is missing a valid departure time. Rejected bus trip: ${trip.id}; stop: ${stopName}; ` +
+                        `stop time: ${JSON.stringify(trip.stops?.[stopName]) ?? 'not recorded'}; trip start/end minutes: ${trip.startTime}/${trip.endTime}.`);
                     else row.departures.push({ ...detail, minutes: departure });
                 }
                 if (hasInboundSegment) {
-                    if (arrival === null) row.arrivalIssue ??= arrivalTimingIssue(trip, stopName, departure, index === endIndex);
+                    if (arrival === null) reject('arrival', trip, arrivalTimingIssue(trip, stopName, departure, index === endIndex));
                     else row.arrivals.push({ ...detail, minutes: arrival });
                 }
             }
@@ -313,17 +352,22 @@ export function buildLocalConnectionRows(sources: PublishedRouteSource[], statio
 }
 
 export function findConnection(row: LocalConnectionRow, event: GoTrainEvent): ConnectionCell {
-    const issue = row.status === 'unavailable' ? row.issue ?? 'Published bus schedule unavailable.' :
-        event.direction === 'to-go' ? row.arrivalIssue : row.departureIssue;
+    const issue = row.status === 'unavailable' ? row.issue ?? 'Published bus schedule unavailable.' : undefined;
     if (issue || !validMinutes(event.minutes)) return { status: 'unavailable', issue: issue ?? 'Train time is invalid.' };
-    const times = event.direction === 'to-go' ? row.arrivals : row.departures;
+    const toGo = event.direction === 'to-go';
+    const times = toGo ? row.arrivals : row.departures;
     if (times.some(time => !validMinutes(time.minutes))) return { status: 'unavailable', issue: 'Bus timing is invalid.' };
-    const matches = times.map(time => ({ ...time, gap: event.direction === 'to-go' ? event.minutes - time.minutes : time.minutes - event.minutes }))
+    const matches = times.map(time => ({ ...time, gap: toGo ? event.minutes - time.minutes : time.minutes - event.minutes }))
         .filter(time => time.gap >= 1 && time.gap <= 30).sort((a, b) => a.gap - b.gap || a.tripId.localeCompare(b.tripId));
     const best = matches[0];
-    if (!best) return { status: 'no-connection' };
+    // A rejected trip matters only if it could fall in this train's 1–30 minute window; unknown windows always matter.
+    const [low, high] = toGo ? [event.minutes - 30, event.minutes - 1] : [event.minutes + 1, event.minutes + 30];
+    const blocking = (toGo ? row.rejectedArrivals : row.rejectedDepartures)?.find(rejected =>
+        !rejected.window || (rejected.window[0] <= high && rejected.window[1] >= low));
+    if (!best) return blocking ? { status: 'unavailable', issue: blocking.issue } : { status: 'no-connection' };
     return { status: best.gap <= 5 ? 'tight' : best.gap <= 15 ? 'comfortable' : 'long',
-        busMinutes: best.minutes, gapMinutes: best.gap, tripId: best.tripId, stopName: best.stopName, stopCode: best.stopCode };
+        busMinutes: best.minutes, gapMinutes: best.gap, tripId: best.tripId, stopName: best.stopName, stopCode: best.stopCode,
+        issue: blocking ? `Bus trip ${blocking.tripId} near this train could not be assessed, so a closer connection may exist.` : undefined };
 }
 
 export function formatServiceTime(minutes: number): string {

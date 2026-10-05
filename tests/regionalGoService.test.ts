@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { strToU8, unzipSync, zipSync } from 'fflate';
+import { IDBFactory } from 'fake-indexeddb';
 import { parseRegionalGoZip, validateRegionalGoFeed } from '../utils/gtfs/regionalGoParser';
 
 function feedData() {
@@ -29,7 +30,7 @@ function feedData() {
     };
 }
 
-function zipFeed(raw: Record<string, unknown>): ArrayBuffer {
+function zipFeed(raw: Record<string, unknown>, quoted = true): ArrayBuffer {
     const names: Record<string, string> = { stopTimes: 'stop_times', calendarDates: 'calendar_dates' };
     const files: Record<string, Uint8Array> = {};
     for (const [key, value] of Object.entries(raw)) {
@@ -37,14 +38,14 @@ function zipFeed(raw: Record<string, unknown>): ArrayBuffer {
         const table = value as Record<string, unknown>[];
         if (!table.length) { files[`${names[key] || key}.txt`] = strToU8(''); continue; }
         const headers = [...new Set(table.flatMap(row => Object.keys(row)))];
-        const quote = (text: unknown) => `"${String(text ?? '').replace(/"/g, '""')}"`;
+        const quote = (text: unknown) => quoted ? `"${String(text ?? '').replace(/"/g, '""')}"` : String(text ?? '');
         files[`${names[key] || key}.txt`] = strToU8('\uFEFF' + [headers.join(','), ...table.map(row => headers.map(header => quote(row[header])).join(','))].join('\r\n'));
     }
     return zipSync(files).buffer as ArrayBuffer;
 }
 
-function response(raw: Record<string, unknown> = feedData()) {
-    return { ok: true, headers: new Headers(), arrayBuffer: async () => zipFeed(raw) };
+function response(raw: Record<string, unknown> = feedData(), headers: Record<string, string> = {}) {
+    return { ok: true, headers: new Headers(headers), arrayBuffer: vi.fn(async () => zipFeed(raw)) };
 }
 
 class MockWorker {
@@ -126,6 +127,31 @@ describe('regional public GO feed service', () => {
         vi.advanceTimersByTime(15 * 60_000);
         await fetchRegionalGoFeed();
         expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('reuses the stored parse only for the same published version', async () => {
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        vi.useRealTimers();
+        const first = response(feedData(), { etag: '"v1"' });
+        fetchMock.mockResolvedValueOnce(first);
+        await fetchRegionalGoFeed();
+        await vi.waitFor(async () => {
+            const { loadStoredRegionalGoFeed } = await import('../utils/gtfs/regionalGoFeedStore');
+            expect(await loadStoredRegionalGoFeed('"v1"')).not.toBeNull();
+        });
+        const same = response(feedData(), { etag: '"v1"' });
+        fetchMock.mockResolvedValueOnce(same);
+        const reused = await fetchRegionalGoFeed({ forceRefresh: true });
+        expect(same.arrayBuffer).not.toHaveBeenCalled();
+        expect(reused.stopTimes).toHaveLength(2);
+        expect(MockWorker.instances).toHaveLength(1);
+        const changedRaw = feedData();
+        changedRaw.stopTimes = changedRaw.stopTimes.slice(0, 1);
+        const changed = response(changedRaw, { etag: '"v2"' });
+        fetchMock.mockResolvedValueOnce(changed);
+        const reparsed = await fetchRegionalGoFeed({ forceRefresh: true });
+        expect(changed.arrayBuffer).toHaveBeenCalledTimes(1);
+        expect(reparsed.stopTimes).toHaveLength(1);
     });
 
     it('does not turn HTTP or network failures into an empty or fallback feed', async () => {
@@ -265,6 +291,11 @@ describe('regional GO ZIP parser', () => {
         const raw: Record<string, unknown> = feedData();
         delete raw.agency;
         expect(() => parseRegionalGoZip(zipFeed(raw))).toThrow('missing agency.txt');
+    });
+
+    it('parses unquoted tables on the fast path identically to quoted CSV', () => {
+        const strip = (feed: ReturnType<typeof parseRegionalGoZip>) => ({ ...feed, fetchedAt: '' });
+        expect(strip(parseRegionalGoZip(zipFeed(feedData(), false)))).toEqual(strip(parseRegionalGoZip(zipFeed(feedData()))));
     });
 
     it('ignores large unrelated files instead of extracting shapes', () => {

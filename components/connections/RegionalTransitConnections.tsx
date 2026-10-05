@@ -90,6 +90,7 @@ function ConnectionDetail({ detail, stationName, date, onClose }: { detail: Timi
             <div className={`regional-go-detail-status regional-go-${cell.status}`}>
                 {cell.gapMinutes === undefined ? cell.issue || BAND_LABELS[cell.status] : `${cell.gapMinutes}-minute scheduled gap${cell.status === 'tight' ? ' · tight' : ''}.`}
                 {cell.gapMinutes !== undefined && <p>{event.direction === 'to-go' ? 'Train departure − bus arrival' : 'Bus departure − train arrival'} = {cell.gapMinutes} minutes.</p>}
+                {cell.gapMinutes !== undefined && cell.issue && <p>{cell.issue}</p>}
             </div>
             {cell.stopCode === '14' && stationName === STATIONS.allandale && <p>Stop 14 (Essa at Gowan) is across the street from Allandale GO. Allow time to cross.</p>}
             <p>Walking and boarding time are not deducted. Transfers are not guaranteed.</p>
@@ -276,7 +277,7 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
                         <tbody>{displayedCells.map(({ row, cells: rowCells }) => <tr key={row.id}>
                             <th scope="row" className="regional-go-sticky regional-go-route"><strong>{routeLabel(row)}</strong></th>
                             {rowCells.map((cell, index) => <td className={`regional-go-${cell.status}`} key={events[index].id}><button type="button" className="regional-go-cell" onClick={() => setDetail({ row, event: events[index], cell })} aria-label={`${routeLabel(row)}, GO ${toGo ? 'departure' : 'arrival'} ${formatServiceTime(events[index].minutes)}, ${cell.busMinutes === undefined ? `${BAND_LABELS[cell.status]}${cell.status === 'unavailable' ? ', not assessed; see source warning' : ''}` : `${formatServiceTime(cell.busMinutes)}, ${cell.gapMinutes} minute scheduled gap${cell.status === 'tight' ? ', tight' : ''}`}`}>
-                                {cell.busMinutes === undefined ? <span className="regional-go-no-result">No Connection{cell.status === 'unavailable' && <sup aria-hidden="true">†</sup>}</span> : <><time>{formatServiceTime(cell.busMinutes)}</time><small>{`${cell.gapMinutes} min${cell.status === 'tight' ? ' · tight' : ''}`}</small></>}
+                                {cell.busMinutes === undefined ? <span className="regional-go-no-result">No Connection{cell.status === 'unavailable' && <sup aria-hidden="true">†</sup>}</span> : <><time>{formatServiceTime(cell.busMinutes)}</time><small>{`${cell.gapMinutes} min${cell.status === 'tight' ? ' · tight' : ''}`}{cell.issue && <sup aria-hidden="true">†</sup>}</small></>}
                             </button></td>)}
                         </tr>)}</tbody>
                         {rows.length > 0 && <tfoot><tr><th scope="row" className="regional-go-sticky">6–30 min gaps*</th>{events.map((event, index) => <td key={event.id}><strong>{cells.filter(({ cells: rowCells }) => rowCells[index].status === 'comfortable' || rowCells[index].status === 'long').length}</strong> / {cells.filter(({ cells: rowCells }) => rowCells[index].status !== 'unavailable').length} checked{cells.some(({ cells: rowCells }) => rowCells[index].status === 'unavailable') && <small> + not assessed</small>}</td>)}</tr></tfoot>}
@@ -325,7 +326,7 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
             <p>Routes without any 1–30 minute connection in the selected station, date and direction view are hidden. A connected route keeps all its direction rows. Counts include all assessed rows, including hidden routes.</p>
             {station === 'allandale' && <p>Includes Stop 14 (Essa at Gowan), across the street from Allandale GO—not a terminal platform. Walking and crossing time are not deducted.</p>}
             <p>Times are scheduled, not live. To GO uses bus arrival; From GO uses bus departure. Walking and boarding time are not deducted; transfers are not guaranteed.</p>
-            <p>White “No Connection” means no 1–30 minute gap is shown. † means the row could not be checked, not confirmed absence of service. Missing data is excluded from the checked count.</p>
+            <p>White “No Connection” means no 1–30 minute gap is shown. † means a nearby bus trip could not be checked, so the cell is not confirmed absence of service or the closest gap. Missing data is excluded from the checked count.</p>
             <p>*Counts include 6–30 minute gaps; tight gaps are shown separately in yellow. +1 day means after midnight.</p>
             <p>Published bus schedules and date-valid GO train GTFS only; GO buses, on-demand, fares, accessibility and live reliability are not assessed. Source trip IDs and master versions are in cell details.</p>
             {feed && <p><a href={feed.sourceUrl} target="_blank" rel="noopener noreferrer">GO static timetable source</a></p>}

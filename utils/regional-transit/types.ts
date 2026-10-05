@@ -34,6 +34,12 @@ export interface PublishedRouteSource {
     content?: MasterScheduleContent;
     error?: string;
 }
+export interface RejectedBusTrip {
+    tripId: string;
+    /** Service minutes the trip could call at the station; null when its anchors are unusable. */
+    window: [number, number] | null;
+    issue: string;
+}
 export interface LocalConnectionRow {
     id: string;
     routeNumber: string;
@@ -45,6 +51,9 @@ export interface LocalConnectionRow {
     issue?: string;
     arrivalIssue?: string;
     departureIssue?: string;
+    /** Trips excluded from assessment; each blocks only cells its service window could reach. */
+    rejectedArrivals?: RejectedBusTrip[];
+    rejectedDepartures?: RejectedBusTrip[];
     arrivals: { tripId: string; minutes: number; stopName: string; stopCode: string }[];
     departures: { tripId: string; minutes: number; stopName: string; stopCode: string }[];
 }

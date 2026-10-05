@@ -93,13 +93,14 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(document.querySelector('[role=dialog]')?.textContent).toContain('am · v10');
     });
 
-    it('shows the rejected bus trip and timing evidence in unassessed arrival details', async () => {
+    it('shows the rejected bus trip and timing evidence in sources without blocking unrelated trains', async () => {
         const data = content();
         data.northTable.trips[1].arrivalTimes = { Allandale: '' };
         vi.mocked(getMasterSchedule).mockResolvedValue({ entry: entry(), content: data });
         await render();
         await click(container.querySelector('section[aria-labelledby=regional-to-go-title] .regional-go-cell'));
-        const text = document.querySelector('[role=dialog]')?.textContent;
+        expect(document.querySelector('[role=dialog]')?.textContent).toContain('10-minute scheduled gap');
+        const text = container.textContent;
         expect(text).toContain('First rejected bus trip: pm');
         expect(text).toContain('arrival: ""');
         expect(text).toContain('trip start/end minutes: 600/630');
@@ -139,7 +140,7 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(labels).toContain('Route 12B');
         expect(container.textContent).not.toContain('First rejected bus trip: 7-N-1');
         expect(container.textContent).not.toContain('First rejected bus trip: 12-N-2');
-        expect(container.textContent).toContain('Route 12B: No exact station stop code');
+        expect(container.textContent).toContain('Route 12B: The station appears by name in this direction, but no exact station stop code is mapped.');
         expect(container.querySelector('button[aria-label^="Route 12A, GO departure 8:00 AM"]')?.textContent).toContain('10 min');
     });
 
@@ -327,7 +328,7 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(container.querySelectorAll('tbody td.regional-go-unavailable')).toHaveLength(4);
         expect(container.querySelector('tfoot td')?.textContent).toBe('1 / 1 checked + not assessed');
         await click(container.querySelector('td.regional-go-unavailable button'));
-        expect(document.querySelector('[role=dialog]')?.textContent).toContain('No exact station stop code');
+        expect(document.querySelector('[role=dialog]')?.textContent).toContain('no exact station stop code is mapped');
     });
 
     it('opens a full-screen chart, preserves context and closes details before exiting with Escape', async () => {

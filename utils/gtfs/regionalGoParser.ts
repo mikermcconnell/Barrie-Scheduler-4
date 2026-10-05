@@ -177,6 +177,41 @@ function* csvRecords(content: string): Generator<RecordValue> {
     if (quoted) invalid('unterminated CSV quote');
 }
 
+/**
+ * Yields rows whose `column` value passes `keep`. Unquoted tables take a fast path that reads one
+ * column per line and builds records only for kept rows; any quote falls back to the full CSV parser.
+ */
+function* selectRecords(content: string, column: string, keep: (value: string) => boolean): Generator<RecordValue> {
+    if (content.includes('"')) {
+        for (const row of csvRecords(content)) if (keep(String(row[column]))) yield row;
+        return;
+    }
+    const headerEnd = content.indexOf('\n');
+    if (headerEnd === -1) return;
+    const headerLine = content.slice(content.charCodeAt(0) === 0xfeff ? 1 : 0, headerEnd);
+    const headers = headerLine.split(',').map(header => header.trim());
+    if (new Set(headers).size !== headers.length) invalid('duplicate CSV columns');
+    const target = headers.indexOf(column);
+    if (target === -1) invalid(`missing ${column} column`);
+    let start = headerEnd + 1;
+    while (start < content.length) {
+        let end = content.indexOf('\n', start);
+        if (end === -1) end = content.length;
+        // Locate the target field without splitting the whole line.
+        let fieldStart = start;
+        for (let index = 0; index < target && fieldStart !== 0; index++) fieldStart = content.indexOf(',', fieldStart) + 1;
+        if (fieldStart === 0 || fieldStart > end) { if (content.slice(start, end).trim()) invalid('CSV column count'); start = end + 1; continue; }
+        let fieldEnd = content.indexOf(',', fieldStart);
+        if (fieldEnd === -1 || fieldEnd > end) fieldEnd = end;
+        if (keep(content.slice(fieldStart, fieldEnd).replace(/\r$/, '').trim())) {
+            const fields = content.slice(start, end).replace(/\r$/, '').split(',').map(field => field.trim());
+            if (fields.length !== headers.length) invalid('CSV column count');
+            yield Object.fromEntries(headers.map((header, index) => [header, fields[index]]));
+        }
+        start = end + 1;
+    }
+}
+
 /** Runs in a worker. Only Barrie station rail trips cross back to the UI thread. */
 export function parseRegionalGoZip(buffer: ArrayBuffer): RegionalGoFeed {
     if (!buffer.byteLength || buffer.byteLength > GO_ZIP_MAX_BYTES) invalid('ZIP size');
@@ -199,14 +234,15 @@ export function parseRegionalGoZip(buffer: ArrayBuffer): RegionalGoFeed {
         if (unpackedBytes > UNPACKED_MAX_BYTES) invalid('unpacked size');
         contents.set(path.split('/').pop()!.toLowerCase(), bytes);
     }
-    const table = (name: string, optional = false): Generator<RecordValue> => {
+    const decode = (name: string, optional = false): string => {
         const bytes = contents.get(name);
         if (!bytes) {
-            if (optional) return csvRecords('');
+            if (optional) return '';
             invalid(`missing ${name}`);
         }
-        return csvRecords(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     };
+    const table = (name: string, optional = false): Generator<RecordValue> => csvRecords(decode(name, optional));
     const agency = [...table('agency.txt')];
     const routes = [...table('routes.txt')];
     const railRouteIds = new Set(routes.filter(route => {
@@ -217,12 +253,13 @@ export function parseRegionalGoZip(buffer: ArrayBuffer): RegionalGoFeed {
     const stationIds = new Set(stops.filter(stop => /allandale|barrie south/i.test(text(stop.stop_name, 'stop name'))).map(stop => text(stop.stop_id, 'stop ID')));
     // Include platform children even when their names only identify a platform.
     for (const stop of stops) if (stationIds.has(String(stop.parent_station))) stationIds.add(String(stop.stop_id));
-    const trips = [...table('trips.txt')].filter(trip => railRouteIds.has(String(trip.route_id)));
+    // Station calls first (a tiny subset of stop_times), then only the trips they reference.
+    const stationTimes = [...selectRecords(decode('stop_times.txt'), 'stop_id', id => stationIds.has(id))];
+    const stationTripIds = new Set(stationTimes.map(stop => String(stop.trip_id)));
+    const trips = [...selectRecords(decode('trips.txt'), 'trip_id', id => stationTripIds.has(id))]
+        .filter(trip => railRouteIds.has(String(trip.route_id)));
     const railTripIds = new Set(trips.map(trip => text(trip.trip_id, 'trip ID')));
-    const stopTimes: RecordValue[] = [];
-    for (const stop of table('stop_times.txt')) {
-        if (railTripIds.has(String(stop.trip_id)) && stationIds.has(String(stop.stop_id))) stopTimes.push(stop);
-    }
+    const stopTimes = stationTimes.filter(stop => railTripIds.has(String(stop.trip_id)));
     const relevantTrips = new Set(stopTimes.map(stop => String(stop.trip_id)));
     return validateRegionalGoFeed({
         agency, routes, stops, stopTimes,

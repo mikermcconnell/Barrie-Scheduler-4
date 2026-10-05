@@ -150,12 +150,13 @@ describe('published bus schedule analysis', () => {
         const local = row(trip({ startTime: 1440, endTime: 1490, recoveryTime: 5, stopMinutes: { GO: 1450 } }));
         expect(findConnection(local, event(1460))).toMatchObject({ busMinutes: 1450, gapMinutes: 10 });
     });
-    it('identifies the first rejected trip when one malformed arrival blocks the whole direction', () => {
+    it('identifies the first rejected trip and flags overlapping connections it could have beaten', () => {
         const data = source();
         data.content!.northTable.trips.push(trip({ id: 'invalid-arrival-1', arrivalTimes: { GO: '12:00 AM' } }), trip({ id: 'invalid-arrival-2', arrivalTimes: { GO: '' } }));
         const local = buildLocalConnectionRows([data], 'allandale', DATE, 'Weekday')[0];
         expect(local.arrivals).toHaveLength(1);
-        expect(findConnection(local, event())).toMatchObject({ status: 'unavailable', issue: expect.stringContaining('First rejected bus trip: invalid-arrival-1') });
+        expect(findConnection(local, event())).toMatchObject({ status: 'comfortable', tripId: 'bus1', issue: expect.stringContaining('invalid-arrival-1') });
+        expect(findConnection(local, event(445))).toMatchObject({ status: 'unavailable', issue: expect.stringContaining('First rejected bus trip: invalid-arrival-1') });
         expect(local.arrivalIssue).toContain('arrival: "12:00 AM"');
         expect(local.arrivalIssue).not.toContain('invalid-arrival-2');
         expect(findConnection(local, event(400, 'from-go')).status).toBe('comfortable');
@@ -257,6 +258,50 @@ describe('published bus schedule analysis', () => {
         expect(findConnection(local, event(1460))).toMatchObject({ busMinutes: 1450, gapMinutes: 10 });
         expect(formatServiceTime(1450)).toBe('12:10 AM (+1 day)');
     });
+    it('unwraps an adapter-imported end clock for a same-day trip crossing midnight', () => {
+        const local = row(trip({ id: '7-T-75', startTime: 1412, endTime: 14, stopMinutes: undefined,
+            stops: { Origin: '11:32 PM', GO: '11:50 PM', End: '12:14 AM' } }));
+        expect(local.arrivalIssue).toBeUndefined(); expect(local.departureIssue).toBeUndefined();
+        expect(local.arrivals[0].minutes).toBe(1430);
+        expect(findConnection(local, event(1440))).toMatchObject({ busMinutes: 1430, gapMinutes: 10 });
+    });
+    it('blocks only cells near a trip carrying another trip station clock (8B-T-77)', () => {
+        const local = row(); const data = source();
+        data.content!.northTable.trips.push(trip({ id: '8B-T-77', startTime: 1223, endTime: 1343, recoveryTime: 39, stopMinutes: undefined,
+            stops: { Origin: '8:23 PM', GO: '8:12 PM', End: '10:23 PM' } }));
+        const mixed = buildLocalConnectionRows([data], 'allandale', DATE, 'Weekday')[0];
+        expect(mixed.arrivalIssue).toContain('8B-T-77'); expect(mixed.departureIssue).toContain('8B-T-77');
+        expect(findConnection(mixed, event())).toEqual(findConnection(local, event()));
+        expect(findConnection(mixed, event(400, 'from-go'))).toMatchObject({ busMinutes: 410, gapMinutes: 10 });
+        expect(findConnection(mixed, event(1300)).status).toBe('unavailable');
+        expect(findConnection(mixed, event(1300, 'from-go')).status).toBe('unavailable');
+        expect(findConnection(mixed, event(1000)).status).toBe('no-connection');
+    });
+    it('assesses the earlier onward leg of an interlined round-trip row as departure only (8B-T-77)', () => {
+        const interlined = { ...trip({ id: '8B-T-77', startTime: 1223, endTime: 1343, recoveryTime: 39, stopMinutes: undefined,
+            stops: { Origin: '8:23 PM', GO: '8:12 PM', End: '10:23 PM' } }), interlinePrev: { route: '8A', time: 1267 } } as MasterTrip;
+        const local = row(interlined);
+        expect(local.departureIssue).toBeUndefined(); expect(local.arrivalIssue).toBeUndefined();
+        expect(local.departures).toMatchObject([{ tripId: '8B-T-77', minutes: 1212 }]);
+        expect(local.arrivals).toEqual([]);
+        expect(findConnection(local, event(1190, 'from-go'))).toMatchObject({ busMinutes: 1212, gapMinutes: 22 });
+        const tooEarly = row({ ...interlined, stops: { Origin: '8:23 PM', GO: '7:12 PM', End: '10:23 PM' } } as MasterTrip);
+        expect(tooEarly.departureIssue).toContain('8B-T-77');
+    });
+    it('keeps a late trip missing its station clock (7-T-75) from hiding daytime connections', () => {
+        const data = source();
+        data.content!.northTable.trips.push(trip({ id: '7-T-75', startTime: 1412, endTime: 1454, stopMinutes: undefined,
+            stops: { Origin: '11:32 PM', End: '12:14 AM' } }));
+        const local = buildLocalConnectionRows([data], 'allandale', DATE, 'Weekday')[0];
+        expect(local.arrivalIssue).toContain('7-T-75');
+        expect(findConnection(local, event())).toMatchObject({ busMinutes: 410, gapMinutes: 10 });
+        expect(findConnection(local, event(1450)).status).toBe('unavailable');
+    });
+    it('treats rejected trips with unusable anchors as blocking every empty cell', () => {
+        const local = row(trip({ id: 'reversed', startTime: 1500, endTime: 20 }));
+        expect(findConnection(local, event(100)).status).toBe('unavailable');
+        expect(findConnection(local, event(900, 'from-go')).status).toBe('unavailable');
+    });
     it('preserves explicit numeric next-day minutes, never joining an early same-day bus to a next-day train', () => {
         const local = row(trip({ startTime: 1440, endTime: 1490, stopMinutes: { GO: 1450 } }));
         expect(findConnection(local, event(1460)).status).toBe('comfortable');
@@ -319,7 +364,7 @@ describe('published bus schedule analysis', () => {
         expect(local).toMatchObject({ direction: 'South', stopCodes: ['14'], status: 'ready' });
         expect(findConnection(local, event())).toMatchObject({ busMinutes: 410, gapMinutes: 10, stopCode: '14' });
         expect(findConnection(local, event(400, 'from-go'))).toMatchObject({ busMinutes: 410, gapMinutes: 10, stopCode: '14' });
-        expect(buildLocalConnectionRows([data], 'south', DATE, 'Weekday')[0].status).toBe('unavailable');
+        expect(buildLocalConnectionRows([data], 'south', DATE, 'Weekday')).toEqual([]);
         expect(JSON.stringify(data)).toBe(before);
     });
     it('uses exact HUB stop codes rather than similarly named stations', () => {
@@ -329,17 +374,22 @@ describe('published bus schedule analysis', () => {
         const south = source(); south.content!.northTable.stopIds.GO = '725';
         expect(buildLocalConnectionRows([south], 'south', DATE, 'Weekday')[0].status).toBe('ready');
     });
-    it('discloses failed loads, null timing, malformed timing and future versions as unavailable', () => {
+    it('discloses failed loads, null timing and malformed timing as unavailable', () => {
         const failed = source(); failed.content = undefined; failed.error = 'Read failed';
         expect(buildLocalConnectionRows([failed], 'allandale', DATE, 'Weekday')[0]).toMatchObject({ status: 'unavailable', issue: 'Read failed' });
         expect(findConnection(row(trip({ stopMinutes: undefined, stops: { GO: '' } })), event()).status).toBe('unavailable');
         expect(findConnection(row(trip({ stopMinutes: { GO: NaN } })), event()).status).toBe('unavailable');
-        const future = source(); future.entry.effectiveDate = '2026-10-03';
-        expect(buildLocalConnectionRows([future], 'allandale', DATE, 'Weekday')[0].status).toBe('unavailable');
     });
     it('uses the explicitly selected holiday day type rather than deriving weekdays internally', () => {
         expect(buildLocalConnectionRows([source()], 'allandale', DATE, 'Sunday')).toEqual([]);
         expect(buildLocalConnectionRows([source()], 'allandale', DATE, 'No Service')).toEqual([]);
+    });
+    it('omits directions that never name the station but flags a named station without a mapped code', () => {
+        const data = source(); data.content!.northTable.stopIds.GO = '999';
+        expect(buildLocalConnectionRows([data], 'allandale', DATE, 'Weekday')).toEqual([]);
+        data.content!.northTable.stops = ['Origin', 'Barrie Allandale Transit Terminal', 'End'];
+        data.content!.northTable.stopIds['Barrie Allandale Transit Terminal'] = '999';
+        expect(buildLocalConnectionRows([data], 'allandale', DATE, 'Weekday')[0]).toMatchObject({ status: 'unavailable', issue: expect.stringContaining('appears by name') });
     });
     it('keeps loop rows loop-labelled rather than manufacturing North or South directions', () => {
         const data = source(); data.entry.routeNumber = '100'; data.entry.id = '100-Weekday'; data.content!.metadata.routeNumber = '100';

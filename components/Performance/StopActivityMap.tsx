@@ -3,7 +3,7 @@ import { Layer, Popup, Source } from 'react-map-gl/mapbox';
 import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import type { StopMetrics } from '../../utils/performanceDataTypes';
 import { findStopCoords } from '../../utils/gtfs/gtfsStopLookup';
-import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
+import { loadGtfsRouteShapeVariants } from '../../utils/gtfs/gtfsShapesLoader';
 import {
   getStopActivityChange,
   getStopRouteActivityBreakdown,
@@ -223,7 +223,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({
     : currentHasHourlyData;
   const canCompare = comparisonDayCount > 0 && comparisonStops.length > 0;
   const availableRoutes = useMemo(() => Array.from(new Set(enrichedStops.flatMap((stop) => stop.routes || []))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [enrichedStops]);
-  const routeShapes = useMemo(() => { try { return loadGtfsRouteShapes(); } catch { return []; } }, []);
+  const routeShapes = useMemo(() => { try { return loadGtfsRouteShapeVariants(); } catch { return []; } }, []);
   const routeFilteredStops = useMemo(() => {
     let result = enrichedStops;
     if (selectedRoute !== 'all') result = result.filter((stop) => stop.routes?.includes(selectedRoute));
