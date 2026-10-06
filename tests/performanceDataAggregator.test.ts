@@ -395,12 +395,11 @@ describe('aggregateDailySummaries', () => {
             expect.objectContaining({ occurrenceIndex: 0, loadObservationCount: 2, avgLoad: 6.5 }),
             expect.objectContaining({ occurrenceIndex: 1, loadObservationCount: 2, avgLoad: 3 }),
         ]);
-        // CW loop route: boardings and alightings are kept, but load is not inferred.
+        // Route 10 is a loop: T1 drops 3 at its second Stop A with only 2 boardings before it, so one rider was already aboard.
         const loadView = buildRouteLoadViews([summary])[0];
-        expect(loadView.inferenceBlocked).toBe('loop');
         expect(loadView.stops.filter(stop => stop.stopId === 'A')).toEqual([
-            expect.objectContaining({ occurrenceIndex: 0, avgBoardings: 3, avgAlightings: 0, avgLoad: null }),
-            expect.objectContaining({ occurrenceIndex: 1, avgBoardings: 0, avgAlightings: 4, avgLoad: null }),
+            expect.objectContaining({ occurrenceIndex: 0, avgBoardings: 3, avgAlightings: 0, avgLoad: 4 }),
+            expect.objectContaining({ occurrenceIndex: 1, avgBoardings: 0, avgAlightings: 4, avgLoad: 0 }),
         ]);
     });
 
