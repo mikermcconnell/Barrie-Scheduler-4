@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useRef, useState } from 'react';
 import {
     getPerformanceData,
@@ -19,9 +19,48 @@ import {
     PERFORMANCE_OVERVIEW_LOAD_PROFILE,
     recordPerformanceLoadDuration,
 } from '../utils/performanceLoadTiming';
+import { resolveDetailDateRange } from '../utils/performanceDetailDateRange';
 
 const PERFORMANCE_QUERY_STALE_MS = 1000 * 60 * 30;
 const PERFORMANCE_QUERY_GC_MS = 1000 * 60 * 60;
+
+function buildPerformanceMetadataQueryKey(teamId: string | undefined, requestingTeamId?: string) {
+    return ['performanceMetadata', teamId, requestingTeamId ?? teamId ?? ''] as const;
+}
+
+function buildPerformanceDataQueryKey(
+    teamId: string | undefined,
+    metadata?: PerformanceMetadata | null,
+    routeId?: string | null,
+    requestingTeamId?: string,
+    options?: PerformanceDataLoadOptions,
+) {
+    return [
+        'performanceData',
+        teamId,
+        requestingTeamId ?? teamId ?? '',
+        metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null),
+        JSON.stringify(metadata?.loadProfileMonthlyStoragePaths ?? null),
+        JSON.stringify(metadata?.dashboardMonthlyStoragePaths ?? null),
+        routeId ?? 'all',
+        options?.dateRange?.start ?? '',
+        options?.dateRange?.end ?? '',
+        options?.detailMode ?? 'all',
+    ] as const;
+}
+
+function buildPerformanceOverviewQueryKey(
+    teamId: string | undefined,
+    metadata?: PerformanceMetadata | null,
+    requestingTeamId?: string,
+) {
+    return [
+        'performanceOverview',
+        teamId,
+        requestingTeamId ?? teamId ?? '',
+        metadata?.overviewStoragePath ?? metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null),
+    ] as const;
+}
 
 function useLoadProgressChannel(signature: string) {
     const currentSignatureRef = useRef(signature);
@@ -44,10 +83,11 @@ function useLoadProgressChannel(signature: string) {
 
 // Fetch Metadata
 export function usePerformanceMetadataQuery(teamId: string | undefined, requestingTeamId?: string) {
-    const signature = JSON.stringify(['performanceMetadata', teamId, requestingTeamId ?? teamId ?? '']);
+    const queryKey = buildPerformanceMetadataQueryKey(teamId, requestingTeamId);
+    const signature = JSON.stringify(queryKey);
     const { isCurrentRequest } = useLoadProgressChannel(signature);
     const query = useQuery({
-        queryKey: ['performanceMetadata', teamId, requestingTeamId ?? teamId ?? ''],
+        queryKey,
         queryFn: async () => {
             if (!teamId) return null;
             const startedAt = Date.now();
@@ -78,18 +118,7 @@ export function usePerformanceDataQuery(
     requestingTeamId?: string,
     options?: PerformanceDataLoadOptions,
 ) {
-    const queryKey = [
-            'performanceData',
-            teamId,
-            requestingTeamId ?? teamId ?? '',
-            metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null),
-            JSON.stringify(metadata?.loadProfileMonthlyStoragePaths ?? null),
-            JSON.stringify(metadata?.dashboardMonthlyStoragePaths ?? null),
-            routeId ?? 'all',
-            options?.dateRange?.start ?? '',
-            options?.dateRange?.end ?? '',
-            options?.detailMode ?? 'all',
-        ] as const;
+    const queryKey = buildPerformanceDataQueryKey(teamId, metadata, routeId, requestingTeamId, options);
     const signature = JSON.stringify(queryKey);
     const unitCount = getExpectedPerformanceLoadUnits(teamId, metadata, routeId, requestingTeamId, options);
     const usesSharedRequest = !!requestingTeamId && (
@@ -140,7 +169,7 @@ export function usePerformanceOverviewQuery(
     metadata?: PerformanceMetadata | null,
     requestingTeamId?: string,
 ) {
-    const queryKey = ['performanceOverview', teamId, requestingTeamId ?? teamId ?? '', metadata?.overviewStoragePath ?? metadata?.storagePath ?? JSON.stringify(metadata?.monthlyStoragePaths ?? null)] as const;
+    const queryKey = buildPerformanceOverviewQueryKey(teamId, metadata, requestingTeamId);
     const signature = JSON.stringify(queryKey);
     const { loadProgress, reportProgress, isCurrentRequest } = useLoadProgressChannel(signature);
     const query = useQuery({
@@ -164,6 +193,47 @@ export function usePerformanceOverviewQuery(
         loadProgress,
         loadProfileKey: PERFORMANCE_OVERVIEW_LOAD_PROFILE,
     };
+}
+
+// Warm the cache for the dashboard's default Ridership view (all routes, Past
+// Week plus its comparison week) so opening it later skips the download.
+// Keys come from the same builders the hooks use, so the dashboard finds them.
+export async function prefetchOperationsRidership(
+    queryClient: QueryClient,
+    teamId: string,
+    requestingTeamId: string,
+): Promise<void> {
+    const metadata = await queryClient.fetchQuery({
+        queryKey: buildPerformanceMetadataQueryKey(teamId, requestingTeamId),
+        queryFn: () => getPerformanceMetadata(teamId, requestingTeamId),
+        staleTime: PERFORMANCE_QUERY_STALE_MS,
+        gcTime: PERFORMANCE_QUERY_GC_MS,
+    });
+    if (!metadata) return;
+
+    const routeId = 'all';
+    const options: PerformanceDataLoadOptions = {
+        dateRange: resolveDetailDateRange(metadata, 'past-week', null, null, true),
+        detailMode: 'ridership',
+    };
+    await Promise.all([
+        queryClient.prefetchQuery({
+            queryKey: buildPerformanceOverviewQueryKey(teamId, metadata, requestingTeamId),
+            queryFn: () => getPerformanceOverviewData(teamId, metadata, requestingTeamId),
+            staleTime: PERFORMANCE_QUERY_STALE_MS,
+            gcTime: PERFORMANCE_QUERY_GC_MS,
+        }),
+        queryClient.prefetchQuery({
+            queryKey: buildPerformanceDataQueryKey(teamId, metadata, routeId, requestingTeamId, options),
+            queryFn: async () => {
+                const result = await getPerformanceData(teamId, metadata, routeId, requestingTeamId, options);
+                if (!result) throw new Error('The requested performance details are unavailable.');
+                return result;
+            },
+            staleTime: PERFORMANCE_QUERY_STALE_MS,
+            gcTime: PERFORMANCE_QUERY_GC_MS,
+        }),
+    ]);
 }
 
 // Mutation for saving new data (to invalidate queries)

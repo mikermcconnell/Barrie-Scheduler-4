@@ -93,4 +93,13 @@ describe('performance load timing', () => {
         recordPerformanceLoadDuration(exactKey, 3000);
         expect(getPerformanceLoadEstimateMs(exactKey)).toBe(3000);
     });
+
+    it('scales per-file history from other file counts when the exact profile is new', () => {
+        recordPerformanceLoadDuration('operations:detail:storage:all-routes:ridership:3', 9000);
+        recordPerformanceLoadDuration('operations:detail:storage:all-routes:otp:1', 1000);
+
+        expect(getPerformanceLoadEstimateMs('operations:detail:storage:all-routes:ridership:2')).toBe(6000);
+        expect(getPerformanceLoadEstimateMs('operations:detail:storage:route:dwell:4')).toBe(8000);
+        expect(getPerformanceLoadEstimateMs('operations:overview')).toBeNull();
+    });
 });

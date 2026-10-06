@@ -86,6 +86,31 @@ describe('PerformanceLoadStatus', () => {
         expect(progressbar?.getAttribute('aria-valuemax')).toBe('3');
     });
 
+    it('counts down from observed file progress when there is no history', async () => {
+        const props = {
+            isLoading: true,
+            profileKey: 'operations:detail:storage:all-routes:ridership:2',
+            label: 'Past Week',
+        };
+        const progress = (completedUnits: number) => ({
+            phase: 'downloading' as const,
+            completedUnits,
+            totalUnits: 2,
+            unitLabel: 'monthly-file' as const,
+        });
+        await act(async () => root.render(<PerformanceLoadStatus {...props} progress={progress(0)} />));
+        await act(async () => vi.advanceTimersByTime(8000));
+        expect(container.textContent).toContain('Estimating time…');
+
+        await act(async () => root.render(<PerformanceLoadStatus {...props} progress={progress(1)} />));
+        await act(async () => vi.advanceTimersByTime(1000));
+        expect(container.textContent).toContain('About 7 seconds remaining');
+        expect(container.textContent).toContain('Based on files loaded so far');
+
+        await act(async () => vi.advanceTimersByTime(8000));
+        expect(container.textContent).toContain('Almost done…');
+    });
+
     it('starts a fresh countdown when a new request has the same timing profile', async () => {
         const props = { isLoading: true, profileKey: 'operations:overview', label: 'dashboard overview' };
         recordPerformanceLoadDuration(props.profileKey, 10000);

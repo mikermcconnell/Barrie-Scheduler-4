@@ -20,6 +20,9 @@ interface ActiveLoadRun {
     startedAt: number;
     now: number;
     visible: boolean;
+    /** When completedUnits last increased, used to extrapolate without history. */
+    lastUnitAt: number | null;
+    lastUnitCount: number;
 }
 
 function formatRemainingTime(seconds: number): string {
@@ -54,7 +57,7 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
         }
 
         const startedAt = Date.now();
-        setRun({ requestKey, startedAt, now: startedAt, visible: false });
+        setRun({ requestKey, startedAt, now: startedAt, visible: false, lastUnitAt: null, lastUnitCount: 0 });
         const showTimer = window.setTimeout(() => {
             setRun(current => current?.requestKey === requestKey
                 ? { ...current, visible: true, now: Date.now() }
@@ -72,6 +75,13 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
         };
     }, [isLoading, requestKey]);
 
+    const reportedUnits = progress?.completedUnits ?? 0;
+    useEffect(() => {
+        setRun(current => current?.requestKey === requestKey && reportedUnits > current.lastUnitCount
+            ? { ...current, lastUnitAt: Date.now(), lastUnitCount: reportedUnits }
+            : current);
+    }, [reportedUnits, requestKey, run?.requestKey]);
+
     const estimate = useMemo(() => {
         if (!run || run.requestKey !== requestKey) return null;
         const elapsedMs = Math.max(0, run.now - run.startedAt);
@@ -79,18 +89,31 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
         const totalUnits = progress?.totalUnits ?? 0;
 
         if (totalUnits > 0 && completedUnits >= totalUnits) {
-            return { remainingSeconds: null, isOverrun: false, isProcessing: true };
+            return { remainingSeconds: null, isOverrun: false, isProcessing: true, source: null };
         }
 
-        // File requests run concurrently and vary in size. A completed-file
-        // rate is not a reliable estimate of the remaining wall-clock time.
+        // Prefer learned history: file requests run concurrently and vary in
+        // size, so a completed-file rate is only a rough first-use fallback.
         const learnedDurationMs = getPerformanceLoadEstimateMs(profileKey);
-        if (learnedDurationMs == null) return null;
-        const remainingMs = learnedDurationMs - elapsedMs;
+        if (learnedDurationMs != null) {
+            const remainingMs = learnedDurationMs - elapsedMs;
+            return {
+                remainingSeconds: remainingMs > 0 ? Math.max(1, Math.ceil(remainingMs / 1000)) : null,
+                isOverrun: remainingMs <= 0,
+                isProcessing: false,
+                source: 'history' as const,
+            };
+        }
+
+        if (run.lastUnitAt == null || run.lastUnitCount <= 0 || totalUnits <= run.lastUnitCount) return null;
+        const msPerUnit = (run.lastUnitAt - run.startedAt) / run.lastUnitCount;
+        if (msPerUnit <= 0) return null;
+        const remainingMs = msPerUnit * (totalUnits - run.lastUnitCount) - (run.now - run.lastUnitAt);
         return {
             remainingSeconds: remainingMs > 0 ? Math.max(1, Math.ceil(remainingMs / 1000)) : null,
             isOverrun: remainingMs <= 0,
             isProcessing: false,
+            source: 'progress' as const,
         };
     }, [profileKey, progress, requestKey, run]);
 
@@ -110,7 +133,7 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
     const estimateLabel = estimate?.isProcessing
         ? 'Preparing the requested view'
         : estimate?.isOverrun
-            ? 'Taking longer than recent loads…'
+            ? estimate.source === 'progress' ? 'Almost done…' : 'Taking longer than recent loads…'
             : estimate?.remainingSeconds
                 ? formatRemainingTime(estimate.remainingSeconds)
                 : 'Estimating time…';
@@ -144,7 +167,9 @@ export const PerformanceLoadStatus: React.FC<PerformanceLoadStatusProps> = ({
                     {!compact && <div className="text-[10px] font-bold uppercase tracking-wide text-cyan-700">Estimated time left</div>}
                     <div className={compact ? '' : 'mt-0.5 text-base font-bold tabular-nums text-cyan-950'}>{estimateLabel}</div>
                     {!compact && estimate?.remainingSeconds && (
-                        <div className="mt-0.5 text-[11px] text-cyan-700">Based on recent loads</div>
+                        <div className="mt-0.5 text-[11px] text-cyan-700">
+                            {estimate.source === 'progress' ? 'Based on files loaded so far' : 'Based on recent loads'}
+                        </div>
                     )}
                 </div>
             </div>

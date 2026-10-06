@@ -1,5 +1,5 @@
 import { usePerformanceAggregation } from './performanceAggregation';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     LineChart, Line, Legend,
@@ -8,13 +8,12 @@ import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import { StopActivityMap } from './StopActivityMap';
 import { TodDailyKpiSection } from './TodDailyKpiSection';
-import type { DailySummary, PerformanceDataSummary, PerformanceLoadCapacityConfig } from '../../utils/performanceDataTypes';
+import type { DailySummary, PerformanceDataSummary } from '../../utils/performanceDataTypes';
 import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
 import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
-import { RidershipStopProfileChart } from './RidershipStopProfileChart';
-import { buildRidershipStopProfiles, type RidershipStopProfileResult } from '../../utils/performanceRidershipStopProfile';
-import { PerformanceLoadCapacityPanel } from './PerformanceLoadCapacityPanel';
+import { RidershipLoadSection } from './RidershipLoadSection';
+import { buildRouteLoadAnalysis } from '../../utils/performanceRouteLoad';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useTodPickupDataQuery, useTodPickupMetadataQuery } from '../../hooks/useTodPickupData';
@@ -26,9 +25,6 @@ interface RidershipModuleProps {
     dayTypeFilter?: PerformanceDayTypeFilter;
     comparisonDays?: DailySummary[];
     comparisonRange?: { start: string; end: string } | null;
-    loadConfigTeamId?: string;
-    loadConfigUserId?: string;
-    canManageLoadConfig?: boolean;
 }
 
 const ROUTE_COLORS = ['#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#22c55e', '#ec4899', '#3b82f6', '#14b8a6', '#f97316', '#6366f1', '#a855f7', '#84cc16'];
@@ -94,23 +90,16 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     dayTypeFilter = 'all',
     comparisonDays = [],
     comparisonRange = null,
-    loadConfigTeamId,
-    loadConfigUserId,
-    canManageLoadConfig = false,
 }) => {
     const { team, accessLevel, canManageTeam } = useTeam();
     const { user } = useAuth();
-    const canViewPassengerFlow = accessLevel === 'admin' || accessLevel === 'internal';
+    const canViewLoad = accessLevel === 'admin' || accessLevel === 'internal';
     const filtered = data.dailySummaries;
     const { mode, divisor, unit } = usePerformanceAggregation();
     const countLabel = mode === 'average' ? `Boardings / ${unit}` : 'Total boardings';
     const formatCount = (value: number) => (value / divisor).toLocaleString(undefined, { maximumFractionDigits: 1 });
     const [routeSortKey, setRouteSortKey] = useState<RouteSortKey>('ridership');
     const [routeSortDir, setRouteSortDir] = useState<SortDir>('desc');
-    const [loadCapacityConfig, setLoadCapacityConfig] = useState<PerformanceLoadCapacityConfig>();
-    const handleLoadConfigChange = useCallback((config: PerformanceLoadCapacityConfig | undefined) => {
-        setLoadCapacityConfig(config);
-    }, []);
 
     // Daily ridership trend
     const dailyTrend = useMemo(() =>
@@ -244,11 +233,9 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     const todIsLoading = todMetadataQuery.isLoading || todDataQuery.isLoading;
     const todError = todMetadataQuery.error || todDataQuery.error;
     const hasStoredTodReports = (todDataQuery.data?.dailyReports?.length || 0) > 0;
-    const stopProfiles = useMemo(
-        (): RidershipStopProfileResult => canViewPassengerFlow
-            ? buildRidershipStopProfiles(filtered, loadCapacityConfig)
-            : { options: [], defaultOptionKey: null },
-        [canViewPassengerFlow, filtered, loadCapacityConfig],
+    const routeLoadAnalysis = useMemo(
+        () => (canViewLoad ? buildRouteLoadAnalysis(filtered) : { views: [], vehicles: [] }),
+        [canViewLoad, filtered],
     );
 
     // Route daily trend (multi-line)
@@ -340,19 +327,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                 )}
             </ChartCard>
 
-            <PerformanceLoadCapacityPanel
-                teamId={loadConfigTeamId}
-                userId={loadConfigUserId}
-                canManage={canManageLoadConfig}
-                onConfigChange={handleLoadConfigChange}
-            />
-
-            {canViewPassengerFlow && (
-                <RidershipStopProfileChart
-                    data={stopProfiles}
-                    periodMode={filtered.length === 1 ? 'single-day' : 'multi-day'}
-                />
-            )}
+            {canViewLoad && <RidershipLoadSection analysis={routeLoadAnalysis} />}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Route Ranking */}

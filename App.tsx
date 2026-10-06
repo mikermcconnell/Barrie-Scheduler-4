@@ -14,6 +14,7 @@ import { lazyWithRetry } from './utils/lazyWithRetry';
 import { isFeatureEnabled } from './utils/features';
 import { clearLegacyFixedRouteResumeState, FIXED_ROUTE_RESUME_UPDATED_EVENT, loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
 import { useWorkspaceAccess } from './hooks/useWorkspaceAccess';
+import { useWorkspacePreload } from './hooks/useWorkspacePreload';
 import { getPendingInviteCode } from './utils/inviteLinks';
 import { ANALYTICS_WORKSPACE_FEATURES } from './utils/workspaceAccess';
 import { parseAnalyticsWorkspaceViewFromHash } from './utils/workspaces/analyticsWorkspaceRouting';
@@ -74,6 +75,8 @@ const AppContent: React.FC = () => {
       (!hasAvailableWorkspace && !hasSwitchableTeam)
     )
   );
+
+  useWorkspacePreload(Boolean(user && !loading && !accessLoading && !mustCompleteTeamSetup), currentView);
 
   // Wrap navigation to sync URL hash
   const setCurrentView = useCallback((view: View) => {

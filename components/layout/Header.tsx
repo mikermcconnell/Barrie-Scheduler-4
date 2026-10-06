@@ -17,7 +17,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
-import { WORKSPACE_ACCESS_LEVEL_LABELS } from '../../utils/workspaceAccess';
+import {
+    WORKSPACE_ACCESS_LEVELS,
+    WORKSPACE_ACCESS_LEVEL_LABELS,
+    isWorkspaceAccessLevel,
+} from '../../utils/workspaceAccess';
 
 export type View = 'home' | 'ondemand' | 'fixed' | 'operations' | 'parking' | 'planning';
 
@@ -46,6 +50,9 @@ export const Header: React.FC<HeaderProps> = ({
         isDeveloperPreview,
         developerPreview,
         stopDeveloperPreview,
+        canUseViewAs = false,
+        viewAsAccessLevel = null,
+        setViewAsAccessLevel = () => { },
         availableTeams = [],
         switchTeam: switchActiveTeam = async () => { },
     } = useTeam();
@@ -116,6 +123,26 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                 </div>
             )}
+            {viewAsAccessLevel && !isDeveloperPreview && (
+                <div className="border-b border-purple-200 bg-purple-50 px-6 py-2">
+                    <div className={`mx-auto flex flex-col gap-2 text-xs font-bold text-purple-900 sm:flex-row sm:items-center sm:justify-between ${currentView === 'home' ? 'max-w-7xl' : 'max-w-[1920px]'}`}>
+                        <div className="flex items-center gap-2">
+                            <Eye size={15} />
+                            <span>
+                                Viewing as {WORKSPACE_ACCESS_LEVEL_LABELS[viewAsAccessLevel]} · UI only, your real permissions still apply to data
+                            </span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setViewAsAccessLevel(null)}
+                            className="inline-flex items-center gap-1 rounded-full border border-purple-300 bg-white px-3 py-1 text-purple-800 hover:bg-purple-100"
+                        >
+                            <XCircle size={14} />
+                            Exit view as
+                        </button>
+                    </div>
+                </div>
+            )}
             <div className={`mx-auto px-6 h-16 flex items-center justify-between ${currentView === 'home' ? 'max-w-7xl' : 'max-w-[1920px]'}`}>
 
                 {/* Logo Section */}
@@ -133,6 +160,30 @@ export const Header: React.FC<HeaderProps> = ({
 
                 {/* Right Actions */}
                 <div className="flex items-center gap-4">
+
+                    {user && canUseViewAs && !isDeveloperPreview && (
+                        <label className="flex items-center gap-2 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5">
+                            <Eye size={16} className="shrink-0 text-purple-600" />
+                            <span className="min-w-0">
+                                <span className="block text-[10px] font-semibold uppercase tracking-wide text-purple-700">View as</span>
+                                <select
+                                    aria-label="View app as access level"
+                                    value={viewAsAccessLevel ?? ''}
+                                    onChange={(event) => {
+                                        const next = event.target.value;
+                                        setViewAsAccessLevel(isWorkspaceAccessLevel(next) ? next : null);
+                                        onNavigate('home');
+                                    }}
+                                    className="block max-w-40 cursor-pointer bg-transparent text-sm font-bold leading-tight text-gray-800 focus:outline-none"
+                                >
+                                    <option value="">Myself</option>
+                                    {WORKSPACE_ACCESS_LEVELS.map((level) => (
+                                        <option key={level} value={level}>{WORKSPACE_ACCESS_LEVEL_LABELS[level]}</option>
+                                    ))}
+                                </select>
+                            </span>
+                        </label>
+                    )}
 
                     {user && (
                         <div className="relative">

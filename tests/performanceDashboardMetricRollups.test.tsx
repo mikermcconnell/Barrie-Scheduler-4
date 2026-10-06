@@ -45,7 +45,6 @@ vi.mock('recharts', () => {
 
 import { RidershipModule } from '../components/Performance/RidershipModule';
 import { OTPModule } from '../components/Performance/OTPModule';
-import { LoadProfileModule } from '../components/Performance/LoadProfileModule';
 import { PerformanceAggregationProvider } from '../components/Performance/performanceAggregation';
 import { getPerformanceAggregation } from '../utils/performanceAggregation';
 
@@ -130,7 +129,6 @@ describe('performance dashboard metric rollups', () => {
     ]);
     flushSync(() => root.render(<RidershipModule data={data} />));
 
-    expect(container.textContent).toContain('Passenger Flow by Stop');
     const combinedRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('7A/7B'));
     expect(combinedRow?.querySelectorAll('td')[2].textContent).toBe('600');
     expect(combinedRow?.querySelectorAll('td')[3].textContent).toBe('150.0');
@@ -157,24 +155,25 @@ describe('performance dashboard metric rollups', () => {
     ));
 
     expect(container.textContent).toContain('Boardings / weekday; boards per service hour retains its period ratio');
-    expect(container.querySelector('thead')?.textContent).toContain('Boardings / weekday');
-    expect(container.querySelector('tbody tr')?.querySelectorAll('td')[2].textContent).toBe('150');
+    const routeTable = [...container.querySelectorAll('table')].find(table => table.querySelector('thead')?.textContent?.includes('Route'));
+    expect(routeTable?.querySelector('thead')?.textContent).toContain('Boardings / weekday');
+    expect(routeTable?.querySelector('tbody tr')?.querySelectorAll('td')[2].textContent).toBe('150');
   });
 
-  it('shows Passenger Flow by Stop only for admin and developer access', () => {
+  it('shows Load Along the Route only for admin and internal access', () => {
     const data = summary([day('2026-03-10', [route('1', 100)])]);
 
     teamContext.current.accessLevel = 'planner';
     flushSync(() => root.render(<RidershipModule data={data} />));
-    expect(container.textContent).not.toContain('Passenger Flow by Stop');
+    expect(container.textContent).not.toContain('Load Along the Route');
 
     teamContext.current.accessLevel = 'admin';
     flushSync(() => root.render(<RidershipModule data={data} />));
-    expect(container.textContent).toContain('Passenger Flow by Stop');
+    expect(container.textContent).toContain('Load Along the Route');
 
     teamContext.current.accessLevel = 'internal';
     flushSync(() => root.render(<RidershipModule data={data} />));
-    expect(container.textContent).toContain('Passenger Flow by Stop');
+    expect(container.textContent).toContain('Load Along the Route');
   });
 
   it('places the Transit On Demand module immediately after the combined stop activity map', () => {
@@ -188,7 +187,7 @@ describe('performance dashboard metric rollups', () => {
 
   it('scopes TOD zones to the active team rather than a shared performance source', () => {
     const data = summary([day('2026-03-10', [route('1', 100)])]);
-    flushSync(() => root.render(<RidershipModule data={data} loadConfigTeamId="shared-performance-team" loadConfigUserId="legacy-user" canManageLoadConfig={false} />));
+    flushSync(() => root.render(<RidershipModule data={data} />));
 
     expect(todSectionProps.current.teamId).toBe('team-1');
     expect(todSectionProps.current.userId).toBe('user-1');
@@ -207,17 +206,4 @@ describe('performance dashboard metric rollups', () => {
     expect(chartData.some(value => value.includes('"avgDeviation":300'))).toBe(false);
   });
 
-  it('excludes missing zero-load observations from peak-load trip averages', () => {
-    const data = summary([
-      day('2026-03-10', [route('1', 100)], 40),
-      day('2026-03-11', [route('1', 100)], 0),
-      day('2026-03-12', [route('1', 100)], 0),
-      day('2026-03-13', [route('1', 100)], 0),
-      day('2026-03-14', [route('1', 100)], 0),
-    ]);
-    flushSync(() => root.render(<LoadProfileModule data={data} />));
-
-    const chartData = [...container.querySelectorAll('[data-chart]')].map(node => node.getAttribute('data-chart') ?? '');
-    expect(chartData.some(value => value.includes('"avgMaxLoad":40') && value.includes('"count":1'))).toBe(true);
-  });
 });

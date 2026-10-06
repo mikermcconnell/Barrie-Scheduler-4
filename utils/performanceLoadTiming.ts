@@ -34,6 +34,41 @@ function readTimingHistory(): PerformanceLoadTimingHistory {
     }
 }
 
+function median(values: number[]): number {
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+        ? (sorted[middle - 1] + sorted[middle]) / 2
+        : sorted[middle];
+}
+
+const DETAIL_PROFILE_PATTERN = /^(operations:detail:[^:]+:[^:]+:[^:]+):(\d+)$/;
+
+// Per-file duration learned from other detail profiles, scaled to this
+// profile's file count. Prefers the same mode/scope before any detail load.
+function getScaledDetailEstimateMs(
+    history: PerformanceLoadTimingHistory,
+    profileKey: string,
+): number | null {
+    const target = DETAIL_PROFILE_PATTERN.exec(profileKey);
+    if (!target) return null;
+    const [, targetPrefix, targetCount] = target;
+    const unitCount = Number(targetCount);
+
+    const sameModeRates: number[] = [];
+    const anyDetailRates: number[] = [];
+    Object.entries(history).forEach(([key, samples]) => {
+        const match = DETAIL_PROFILE_PATTERN.exec(key);
+        if (!match) return;
+        const perUnit = median(samples) / Math.max(1, Number(match[2]));
+        anyDetailRates.push(perUnit);
+        if (match[1] === targetPrefix) sameModeRates.push(perUnit);
+    });
+
+    const rates = sameModeRates.length > 0 ? sameModeRates : anyDetailRates;
+    return rates.length > 0 ? median(rates) * unitCount : null;
+}
+
 export function getPerformanceLoadEstimateMs(profileKey: string): number | null {
     const history = readTimingHistory();
     const samples = history[profileKey]
@@ -41,12 +76,8 @@ export function getPerformanceLoadEstimateMs(profileKey: string): number | null 
         // fallback until the exact file count has its own successful loads.
         ?? history[profileKey.replace(/:(\d+)$/, (_, count: string) =>
             `:${getUnitBucket(Number(count))}`)];
-    if (!samples?.length) return null;
-    const sorted = [...samples].sort((a, b) => a - b);
-    const middle = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0
-        ? (sorted[middle - 1] + sorted[middle]) / 2
-        : sorted[middle];
+    if (samples?.length) return median(samples);
+    return getScaledDetailEstimateMs(history, profileKey);
 }
 
 export function recordPerformanceLoadDuration(profileKey: string, durationMs: number): void {

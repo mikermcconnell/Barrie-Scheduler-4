@@ -71,7 +71,6 @@ import {
 } from '../../utils/parking/parkingRevenue';
 import {
   BARRIE_PUBLIC_PARKING_VIEWER_URL,
-  fetchBarriePublicParkingLocations,
   findPublicParkingLocationFallback,
   type PublicParkingLocation,
   type PublicParkingLocationMatch,
@@ -108,12 +107,12 @@ import {
   buildParkingSummary,
 } from '../../utils/parking/parkingAggregation';
 import {
-  loadParkingWorkspaceData,
   rebuildParkingSummaryWithRules,
   saveParkingMonthsData,
   saveParkingRevenueDatasets,
   saveParkingSettings,
 } from '../../utils/parking/parkingService';
+import { getBarriePublicParkingLocations, takeParkingWorkspaceData } from '../../utils/parking/parkingWorkspacePreload';
 import {
   DEFAULT_PARKING_SETTINGS,
   type ParkingCodeFamilyMapping,
@@ -2123,7 +2122,7 @@ export const ParkingDataWorkspace: React.FC<{ embedded?: boolean }> = ({ embedde
     setRevenueSummary(null);
     setLoading(true);
     setErrorMessage('');
-    loadParkingWorkspaceData(teamId, loadScope)
+    takeParkingWorkspaceData(teamId, loadScope)
       .then(({ settings: loadedSettings, summary: loadedData, revenueSummary: loadedRevenueData }) => {
         if (cancelled) return;
         loadedTeamIdRef.current = teamId;
@@ -2174,7 +2173,7 @@ export const ParkingDataWorkspace: React.FC<{ embedded?: boolean }> = ({ embedde
     let cancelled = false;
     setPublicParkingLoading(true);
     setPublicParkingError('');
-    fetchBarriePublicParkingLocations()
+    getBarriePublicParkingLocations()
       .then(locations => {
         if (cancelled) return;
         setPublicParkingLocations(locations);
