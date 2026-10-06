@@ -367,7 +367,7 @@ describe('parking replacement and export', () => {
     const summary = buildParkingReplacementSummary(null, dataset('2026-06', 112), 'user-1', 'parking.json', settings.flagRules);
     const workbook = createParkingExportWorkbook(summary);
 
-    expect(workbook.SheetNames).toEqual(['Overview', 'Department Summary', 'Flagged Plates', 'Raw Rows']);
+    expect(workbook.SheetNames).toEqual(['Raw Observations', 'Flagged Plates', 'Department Summary', 'Overview']);
   });
 
   it('marks unsaved preview months in the export only when provided', () => {
@@ -377,7 +377,7 @@ describe('parking replacement and export', () => {
 
     const marked = createParkingExportWorkbook(summary, { unsavedMonths: ['2026-06'] });
     expect(XLSX.utils.sheet_to_json<Record<string, unknown>>(marked.Sheets['Overview'])[0]['Unsaved Preview Months']).toBe('2026-06');
-    expect(XLSX.utils.sheet_to_json<Record<string, unknown>>(marked.Sheets['Raw Rows']).every(row => row.Status === '(unsaved preview)')).toBe(true);
+    expect(XLSX.utils.sheet_to_json<Record<string, unknown>>(marked.Sheets['Raw Observations']).every(row => row.Status === '(unsaved preview)')).toBe(true);
   });
 
   it('normalizes and protects storage path replacement', () => {
@@ -597,7 +597,7 @@ describe('parking replacement and export', () => {
 
     exportParkingWorkbook(summary, 'parking.xlsx');
 
-    expect(XLSX.writeFile).toHaveBeenCalledWith(expect.objectContaining({ SheetNames: ['Overview', 'Department Summary', 'Flagged Plates', 'Raw Rows'] }), 'parking.xlsx');
+    expect(XLSX.writeFile).toHaveBeenCalledWith(expect.objectContaining({ SheetNames: ['Raw Observations', 'Flagged Plates', 'Department Summary', 'Overview'] }), 'parking.xlsx');
   });
 });
 

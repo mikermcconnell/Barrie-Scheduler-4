@@ -73,8 +73,9 @@ export function createParkingRawObservationsWorkbook(
     'Total Value': money(totalValue),
   }];
 
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Report Summary');
+  // Raw data first so the workbook opens on it; the one-row summary is easy to mistake for an empty export.
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rawObservationExportRows(rows)), 'Raw Observations');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Report Summary');
   return workbook;
 }
 
@@ -212,10 +213,11 @@ export function createParkingExportWorkbook(summary: ParkingSummary, options: Pa
     ...(unsavedMonths.size > 0 ? { 'Unsaved Preview Months': [...unsavedMonths].sort().join(', ') } : {}),
   }];
 
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(overviewRows), 'Overview');
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(withStatus(departmentRows)), 'Department Summary');
+  // Raw data first so the workbook opens on it; the one-row overview is easy to mistake for an empty export.
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(withStatus(rawRows)), 'Raw Observations');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(withStatus(flagRows)), 'Flagged Plates');
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(withStatus(rawRows)), 'Raw Rows');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(withStatus(departmentRows)), 'Department Summary');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(overviewRows), 'Overview');
   return workbook;
 }
 
