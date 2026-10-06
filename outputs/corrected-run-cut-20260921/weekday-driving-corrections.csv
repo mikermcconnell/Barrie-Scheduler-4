@@ -1,0 +1,10 @@
+Trip,Block,Departs,Stored driving,Driving from stop times,Difference,Starting layover,Match
+8B-N-31,8B-1,8:12 PM,24,29,5,5,yes
+8A-N-37,8A-1,10:42 PM,22,27,5,5,yes
+8A-N-35,8A-5,9:42 PM,22,27,5,5,yes
+8B-N-33,8B-2,9:12 PM,24,29,5,5,yes
+8A-N-39,8A-2,11:46 PM,18,27,9,9,yes
+8A-N-33,8A-3,8:42 PM,24,29,5,5,yes
+8B-N-37,8B-3,11:12 PM,24,29,5,5,yes
+8B-N-35,8B-5,10:12 PM,24,29,5,5,yes
+8A-N-40,8A-5,12:42 AM,1,6,5,5,yes
