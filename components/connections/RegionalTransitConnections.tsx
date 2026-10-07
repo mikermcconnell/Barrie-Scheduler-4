@@ -1,20 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, Info, Maximize2, Minimize2, Printer, RefreshCw, TrainFront, X } from 'lucide-react';
+import { AlertTriangle, FlaskConical, Info, Maximize2, Minimize2, Printer, RefreshCw, TrainFront } from 'lucide-react';
 import { getRouteConfig, getRouteVariant } from '../../utils/config/routeDirectionConfig';
 import { buildRouteIdentity, type DayType } from '../../utils/masterScheduleTypes';
 import { getMasterSchedule } from '../../utils/services/masterScheduleService';
 import { fetchRegionalGoFeed } from '../../utils/gtfs/regionalGoService';
 import { buildLocalConnectionRows, findConnection, formatServiceTime, getGoTrainEvents } from '../../utils/regional-transit/connectionAnalysis';
 import type { ConnectionCell, ConnectionDirection, GoStationKey, GoTrainEvent, LocalConnectionRow, PublishedRouteSource, RegionalConnectionsProps, RegionalGoFeed } from '../../utils/regional-transit/types';
-import { GoScheduleChanges } from './GoScheduleChanges';
+import { columnTags, compareConnections, isConnected, type CellOutcome, type GoTimetableComparison } from '../../utils/regional-transit/connectionCompare';
+import { buildDemoGoChange } from '../../utils/regional-transit/demoGoChange';
+import { diffGoFeedsOnDates, representativeServiceDate } from '../../utils/regional-transit/feedDiff';
+import { bandLabel, BAND_NAMES, LEGEND_BANDS } from './connectionLabels';
+import { ConnectionCompareGrid } from './ConnectionCompareGrid';
+import { DetailDialog } from './DetailDialog';
+import { GoChangeTable, GoScheduleChanges } from './GoScheduleChanges';
 import './RegionalTransitConnections.css';
 
 const STATIONS: Record<GoStationKey, string> = { allandale: 'Allandale Waterfront GO', south: 'Barrie South GO' };
-const BAND_LABELS: Record<ConnectionCell['status'], string> = {
-    comfortable: '6–15 min', tight: '1–5 min · tight', long: '16–30 min',
-    'no-connection': 'No Connection', unavailable: 'No Connection',
-};
 
 function routeLabel(row: LocalConnectionRow): string {
     const config = getRouteConfig(row.routeNumber);
@@ -63,44 +65,24 @@ async function boundedRead<T>(read: Promise<T>): Promise<T> {
 interface TimingDetail { row: LocalConnectionRow; event: GoTrainEvent; cell: ConnectionCell }
 
 function ConnectionDetail({ detail, stationName, date, onClose }: { detail: TimingDetail; stationName: string; date: string; onClose: () => void }) {
-    const closeButton = useRef<HTMLButtonElement>(null);
-    const panel = useRef<HTMLDivElement>(null);
     const { row, event, cell } = detail;
-    useEffect(() => {
-        const priorFocus = document.activeElement as HTMLElement | null;
-        closeButton.current?.focus();
-        const keydown = (key: KeyboardEvent) => {
-            if (key.key === 'Escape') { key.preventDefault(); onClose(); }
-            if (key.key !== 'Tab') return;
-            const targets = Array.from(panel.current?.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]') ?? []);
-            const first = targets[0], last = targets[targets.length - 1];
-            if (key.shiftKey && document.activeElement === first) { key.preventDefault(); last?.focus(); }
-            else if (!key.shiftKey && document.activeElement === last) { key.preventDefault(); first?.focus(); }
-        };
-        document.addEventListener('keydown', keydown);
-        return () => { document.removeEventListener('keydown', keydown); priorFocus?.focus(); };
-    }, [onClose]);
-
-    return createPortal(<div className="regional-go-modal" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-        <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="regional-go-detail-title" className="regional-go-detail">
-            <button ref={closeButton} type="button" onClick={onClose} className="regional-go-button regional-go-close" aria-label="Close connection detail"><X size={16} /> Close</button>
-            <p className="regional-go-eyebrow">{stationName} · {date} · {event.direction === 'to-go' ? 'To GO' : 'From GO'}</p>
-            <h3 id="regional-go-detail-title">Route {row.routeNumber} {row.direction} × {event.trainNumber ? `Train ${event.trainNumber}` : `GO trip ${event.tripId}`}</h3>
-            <p>GO {event.direction === 'to-go' ? 'departure' : 'arrival'}: <strong>{formatServiceTime(event.minutes)}</strong><br />
-                Bus {event.direction === 'to-go' ? 'arrival' : 'departure'}: <strong>{cell.busMinutes === undefined ? BAND_LABELS[cell.status] : formatServiceTime(cell.busMinutes)}</strong></p>
-            <div className={`regional-go-detail-status regional-go-${cell.status}`}>
-                {cell.gapMinutes === undefined ? cell.issue || BAND_LABELS[cell.status] : `${cell.gapMinutes}-minute scheduled gap${cell.status === 'tight' ? ' · tight' : ''}.`}
-                {cell.gapMinutes !== undefined && <p>{event.direction === 'to-go' ? 'Train departure − bus arrival' : 'Bus departure − train arrival'} = {cell.gapMinutes} minutes.</p>}
-                {cell.gapMinutes !== undefined && cell.issue && <p>{cell.issue}</p>}
-            </div>
-            {cell.stopCode === '14' && stationName === STATIONS.allandale && <p>Stop 14 (Essa at Gowan) is across the street from Allandale GO. Allow time to cross.</p>}
-            <p>Walking and boarding time are not deducted. Transfers are not guaranteed.</p>
-            <dl><dt>Bus stop</dt><dd>{cell.stopName || row.stopNames.join('; ') || 'Not available'}{cell.stopCode && ` · code ${cell.stopCode}`}</dd>
-                <dt>Matched bus stop codes</dt><dd>{row.stopCodes.join(', ') || 'None verified'}</dd>
-                <dt>Bus trip / master version</dt><dd>{cell.tripId || 'No matching bus trip'} · v{row.version}</dd>
-                <dt>GO trip / stop ID</dt><dd>{event.tripId} · {event.stationStopId}</dd></dl>
+    return <DetailDialog titleId="regional-go-detail-title" onClose={onClose}>
+        <p className="regional-go-eyebrow">{stationName} · {date} · {event.direction === 'to-go' ? 'To GO' : 'From GO'}</p>
+        <h3 id="regional-go-detail-title">Route {row.routeNumber} {row.direction} × {event.trainNumber ? `Train ${event.trainNumber}` : `GO trip ${event.tripId}`}</h3>
+        <p>GO {event.direction === 'to-go' ? 'departure' : 'arrival'}: <strong>{formatServiceTime(event.minutes)}</strong><br />
+            Bus {event.direction === 'to-go' ? 'arrival' : 'departure'}: <strong>{cell.busMinutes === undefined ? BAND_NAMES[cell.status] : formatServiceTime(cell.busMinutes)}</strong></p>
+        <div className={`regional-go-detail-status regional-go-${cell.status}`}>
+            {cell.gapMinutes === undefined ? cell.issue || BAND_NAMES[cell.status] : `${cell.gapMinutes}-minute scheduled gap · ${BAND_NAMES[cell.status]}.`}
+            {cell.gapMinutes !== undefined && <p>{event.direction === 'to-go' ? 'Train departure − bus arrival' : 'Bus departure − train arrival'} = {cell.gapMinutes} minutes.</p>}
+            {cell.gapMinutes !== undefined && cell.issue && <p>{cell.issue}</p>}
         </div>
-    </div>, document.body);
+        {cell.stopCode === '14' && stationName === STATIONS.allandale && <p>Stop 14 (Essa at Gowan) is across the street from Allandale GO. Allow time to cross.</p>}
+        <p>Walking and boarding time are not deducted. Transfers are not guaranteed.</p>
+        <dl><dt>Bus stop</dt><dd>{cell.stopName || row.stopNames.join('; ') || 'Not available'}{cell.stopCode && ` · code ${cell.stopCode}`}</dd>
+            <dt>Matched bus stop codes</dt><dd>{row.stopCodes.join(', ') || 'None verified'}</dd>
+            <dt>Bus trip / master version</dt><dd>{cell.tripId || 'No matching bus trip'} · v{row.version}</dd>
+            <dt>GO trip / stop ID</dt><dd>{event.tripId} · {event.stationStopId}</dd></dl>
+    </DetailDialog>;
 }
 
 export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({ schedules, readTeamId, dayTypeForDate, onRefreshSchedules }) => {
@@ -114,6 +96,11 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
     const [masterState, setMasterState] = useState<{ key: string; loading: boolean; sources: PublishedRouteSource[]; notices: string[] }>({ key: '', loading: true, sources: [], notices: [] });
     const [detail, setDetail] = useState<TimingDetail | null>(null);
     const [fullScreen, setFullScreen] = useState(false);
+    const [demoOn, setDemoOn] = useState(false);
+    const [savedComparison, setSavedComparison] = useState<GoTimetableComparison | null>(null);
+    const [compareView, setCompareView] = useState<'before' | 'after' | 'compare'>('compare');
+    const [focus, setFocus] = useState<CellOutcome | null>(null);
+    const [changesOnly, setChangesOnly] = useState(true);
     const chartRef = useRef<HTMLElement>(null);
     const fullScreenButton = useRef<HTMLButtonElement>(null);
     const closeDetail = React.useCallback(() => setDetail(null), []);
@@ -207,8 +194,30 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [masterKey]);
 
-    useEffect(() => { setDetail(null); }, [station, direction, date]);
     const feed = feedState.refresh === refresh ? feedState.feed : undefined;
+    const demo = useMemo(() => demoOn && feed && validDate ? buildDemoGoChange(feed, date) : null, [demoOn, feed, validDate, date]);
+    const comparison = useMemo((): GoTimetableComparison | null => {
+        if (savedComparison) return savedComparison;
+        if (!demo || !feed) return null;
+        return { source: 'demo', before: feed, after: demo.feed, beforeLabel: 'Current GO', afterLabel: 'Demo change', summary: demo.summary };
+    }, [savedComparison, demo, feed]);
+    const comparing = demoOn || Boolean(savedComparison);
+    const serviceDayType = dayType && dayType !== 'No Service' ? dayType : null;
+    // The demo edits the selected date; saved schedules use one normal service day of the selected day type each.
+    const compareDates = useMemo(() => !comparison || !validDate ? null : comparison.source === 'demo' || !serviceDayType ? { before: date, after: date } : {
+        before: representativeServiceDate(comparison.before, serviceDayType), after: representativeServiceDate(comparison.after, serviceDayType),
+    }, [comparison, validDate, date, serviceDayType]);
+    const beforeResult = useMemo(() => comparison && compareDates?.before ? getGoTrainEvents(comparison.before, station, compareDates.before) : null, [comparison, compareDates, station]);
+    const afterResult = useMemo(() => comparison && compareDates?.after ? getGoTrainEvents(comparison.after, station, compareDates.after) : null, [comparison, compareDates, station]);
+    useEffect(() => { setDetail(null); }, [station, direction, date, compareView, comparison]);
+    const closeComparison = () => { setDemoOn(false); setSavedComparison(null); setFocus(null); setChangesOnly(true); };
+    const startComparison = (next: GoTimetableComparison | null) => {
+        setSavedComparison(next);
+        setDemoOn(!next);
+        setCompareView('compare');
+        setFocus(null);
+        chartRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    };
     const selectServiceDay = (target: DayType) => {
         const base = new Date(`${validDate ? date : localToday()}T12:00:00`);
         // Prefer today/next matching day, then a recent matching day if feed coverage ends.
@@ -228,7 +237,8 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
         // Keep coverage failures explicit rather than applying the wrong GO timetable.
         if (fallback) setDate(fallback);
     };
-    const goResult = useMemo(() => feed && validDate ? getGoTrainEvents(feed, station, date) : null, [feed, validDate, station, date]);
+    const liveResult = useMemo(() => feed && validDate ? getGoTrainEvents(feed, station, date) : null, [feed, validDate, station, date]);
+    const goResult = comparison ? (compareView === 'before' ? beforeResult : afterResult) : liveResult;
     const rows = useMemo(() => dayType && dayType !== 'No Service' && !masterLoading ? buildLocalConnectionRows(sources, station, date, dayType).flatMap(row => {
         // Keep configured direction labels after failed reads, without inventing timing.
         const config = row.direction === 'Not loaded' ? getRouteConfig(row.routeNumber) : null;
@@ -243,9 +253,19 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
         .flatMap(matrix => matrix.cells.filter(item => item.cells.some(cell =>
             cell.status === 'tight' || cell.status === 'comfortable' || cell.status === 'long'))
             .map(item => item.row.routeNumber))), [matrices, direction]);
+    const compareMatrices = useMemo(() => !comparison || !beforeResult || !afterResult ? [] : (['to-go', 'from-go'] as const)
+        .map(connectionDirection => compareConnections(rows, beforeResult.events, afterResult.events, connectionDirection)), [comparison, beforeResult, afterResult, rows]);
+    const compareRoutes = useMemo(() => new Set(compareMatrices
+        .filter(matrix => direction === 'both' || direction === matrix.direction)
+        .flatMap(matrix => matrix.rows.filter(item => item.cells.some(cell => isConnected(cell.before) || isConnected(cell.after))).map(item => item.row.routeNumber))), [compareMatrices, direction]);
+    const goChanges = useMemo(() => comparison && compareDates && serviceDayType
+        ? diffGoFeedsOnDates(comparison.before, comparison.after, compareDates.before, compareDates.after, serviceDayType) : null, [comparison, compareDates, serviceDayType]);
+    const headerTags = useMemo(() => compareView === 'compare' ? null : new Map(compareMatrices.flatMap(matrix => [...columnTags(matrix.columns, compareView)])), [compareMatrices, compareView]);
     const unassessedRows = rows.filter(row => row.status === 'unavailable' || row.arrivalIssue || row.departureIssue);
     const sourceErrors = sources.filter(source => source.error);
-    const canShowGrids = goResult?.status === 'ready' && !masterLoading && !feedLoading && !refreshBlocked;
+    const compareReady = Boolean(beforeResult && afterResult && beforeResult.status !== 'unavailable' && afterResult.status !== 'unavailable' && (beforeResult.status === 'ready' || afterResult.status === 'ready'));
+    const goReady = comparison && compareView === 'compare' ? compareReady : goResult?.status === 'ready';
+    const canShowGrids = goReady && !masterLoading && !feedLoading && !refreshBlocked;
 
     useEffect(() => {
         const matrices = Array.from(chartRef.current?.querySelectorAll<HTMLElement>('.regional-go-matrix') ?? []);
@@ -262,26 +282,27 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
         matrices.forEach(matrix => observer?.observe(matrix));
         window.addEventListener('resize', measure);
         return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
-    }, [canShowGrids, fullScreen, station, direction, date, rows.length]);
+    }, [canShowGrids, fullScreen, station, direction, date, rows.length, compareView, changesOnly]);
 
     const renderGrid = (connectionDirection: ConnectionDirection) => {
         const { events, cells } = matrices.find(matrix => matrix.direction === connectionDirection)!;
         const displayedCells = cells.filter(({ row }) => connectedRoutes.has(row.routeNumber));
         const toGo = connectionDirection === 'to-go';
+        const label = comparison ? <span className="regional-go-compare-badge">{compareView === 'before' ? comparison.beforeLabel : comparison.afterLabel}</span> : null;
         return <section key={connectionDirection} className="regional-go-matrix" aria-labelledby={`regional-${connectionDirection}-title`}>
-            <header className="regional-go-panel-head"><div><div className="regional-go-panel-title"><h3 id={`regional-${connectionDirection}-title`}>{STATIONS[station]}</h3><span className={`regional-go-direction regional-go-direction-${connectionDirection}`}>{toGo ? 'To GO' : 'From GO'}</span></div><p>{date} · {toGo ? 'Bus arrival → GO departure' : 'GO arrival → bus departure'}</p></div><div className="regional-go-panel-actions"><span className="regional-go-train-count"><TrainFront size={15} aria-hidden="true" />{events.length} GO train trips</span>{fullScreen && <button type="button" className="regional-go-button" onClick={() => setFullScreen(false)}><Minimize2 size={15} /> Exit full screen</button>}</div></header>
+            <header className="regional-go-panel-head"><div><div className="regional-go-panel-title"><h3 id={`regional-${connectionDirection}-title`}>{STATIONS[station]}</h3><span className={`regional-go-direction regional-go-direction-${connectionDirection}`}>{toGo ? 'To GO' : 'From GO'}</span>{label}</div><p>{gridDate} · {toGo ? 'Bus arrival → GO departure' : 'GO arrival → bus departure'}</p></div><div className="regional-go-panel-actions"><span className="regional-go-train-count"><TrainFront size={15} aria-hidden="true" />{events.length} GO train trips</span>{fullScreen && <button type="button" className="regional-go-button" onClick={() => setFullScreen(false)}><Minimize2 size={15} /> Exit full screen</button>}</div></header>
             {events.length === 0 ? <p className="regional-go-empty">No GO train {toGo ? 'departures' : 'arrivals'} are scheduled at this station for the selected date.</p> : <>
                 <div className="regional-go-scroll" tabIndex={0} role="region" aria-label={`${toGo ? 'To GO' : 'From GO'} connection grid; scroll horizontally for all trains`}>
                     <table style={{ minWidth: fullScreen ? 0 : Math.max(560, 170 + events.length * 92) }}>
                         <caption className="regional-go-sr-only">{STATIONS[station]} · {toGo ? 'To GO: bus arrival times' : 'From GO: bus departure times'}. Select a cell for details.</caption>
-                        <thead><tr><th scope="col" className="regional-go-sticky">Bus route<br /><span>GO {toGo ? 'departure' : 'arrival'} →</span></th>{events.map(event => <th scope="col" key={event.id}><time>{formatServiceTime(event.minutes)}</time></th>)}</tr></thead>
+                        <thead><tr><th scope="col" className="regional-go-sticky">Bus route<br /><span>GO {toGo ? 'departure' : 'arrival'} →</span></th>{events.map(event => <th scope="col" key={event.id} className={headerTags?.has(event.tripId) ? 'regional-go-demo-column' : undefined}><time>{formatServiceTime(event.minutes)}</time>{headerTags?.has(event.tripId) && <small className="regional-go-demo-tag">{headerTags.get(event.tripId)}</small>}</th>)}</tr></thead>
                         <tbody>{displayedCells.map(({ row, cells: rowCells }) => <tr key={row.id}>
                             <th scope="row" className="regional-go-sticky regional-go-route"><strong>{routeLabel(row)}</strong></th>
-                            {rowCells.map((cell, index) => <td className={`regional-go-${cell.status}`} key={events[index].id}><button type="button" className="regional-go-cell" onClick={() => setDetail({ row, event: events[index], cell })} aria-label={`${routeLabel(row)}, GO ${toGo ? 'departure' : 'arrival'} ${formatServiceTime(events[index].minutes)}, ${cell.busMinutes === undefined ? `${BAND_LABELS[cell.status]}${cell.status === 'unavailable' ? ', not assessed; see source warning' : ''}` : `${formatServiceTime(cell.busMinutes)}, ${cell.gapMinutes} minute scheduled gap${cell.status === 'tight' ? ', tight' : ''}`}`}>
-                                {cell.busMinutes === undefined ? <span className="regional-go-no-result">No Connection{cell.status === 'unavailable' && <sup aria-hidden="true">†</sup>}</span> : <><time>{formatServiceTime(cell.busMinutes)}</time><small>{`${cell.gapMinutes} min${cell.status === 'tight' ? ' · tight' : ''}`}{cell.issue && <sup aria-hidden="true">†</sup>}</small></>}
+                            {rowCells.map((cell, index) => <td className={`regional-go-${cell.status}`} key={events[index].id}><button type="button" className="regional-go-cell" onClick={() => setDetail({ row, event: events[index], cell })} aria-label={`${routeLabel(row)}, GO ${toGo ? 'departure' : 'arrival'} ${formatServiceTime(events[index].minutes)}, ${cell.busMinutes === undefined ? `${BAND_NAMES[cell.status]}${cell.status === 'unavailable' ? ', not assessed; see source warning' : ''}` : `${formatServiceTime(cell.busMinutes)}, ${cell.gapMinutes} minute scheduled gap, ${BAND_NAMES[cell.status]}`}`}>
+                                {cell.busMinutes === undefined ? <span className="regional-go-no-result">No connection{cell.status === 'unavailable' && <sup aria-hidden="true">†</sup>}</span> : <><time>{formatServiceTime(cell.busMinutes)}</time><small>{`${cell.gapMinutes} min${cell.status === 'tight' ? ' · Tight' : ''}`}{cell.issue && <sup aria-hidden="true">†</sup>}</small></>}
                             </button></td>)}
                         </tr>)}</tbody>
-                        {rows.length > 0 && <tfoot><tr><th scope="row" className="regional-go-sticky">6–30 min gaps*</th>{events.map((event, index) => <td key={event.id}><strong>{cells.filter(({ cells: rowCells }) => rowCells[index].status === 'comfortable' || rowCells[index].status === 'long').length}</strong> / {cells.filter(({ cells: rowCells }) => rowCells[index].status !== 'unavailable').length} checked{cells.some(({ cells: rowCells }) => rowCells[index].status === 'unavailable') && <small> + not assessed</small>}</td>)}</tr></tfoot>}
+                        {rows.length > 0 && <tfoot><tr><th scope="row" className="regional-go-sticky">Comfortable or long wait*</th>{events.map((event, index) => <td key={event.id}><strong>{cells.filter(({ cells: rowCells }) => rowCells[index].status === 'comfortable' || rowCells[index].status === 'long').length}</strong> / {cells.filter(({ cells: rowCells }) => rowCells[index].status !== 'unavailable').length} checked{cells.some(({ cells: rowCells }) => rowCells[index].status === 'unavailable') && <small> + not assessed</small>}</td>)}</tr></tfoot>}
                     </table>
                 </div>
                 {rows.length > 0 && displayedCells.length === 0 && <p className="regional-go-empty">No 1–30 minute connections to show. Routes without a connection are hidden.</p>}
@@ -291,9 +312,11 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
         </section>;
     };
 
+    const gridDate = comparison ? (compareView === 'before' ? compareDates?.before : compareDates?.after) ?? date : date;
     const chart = <section ref={chartRef} className={`regional-go-chart${fullScreen ? ' regional-go-fullscreen' : ''}`} role={fullScreen ? 'dialog' : undefined} aria-modal={fullScreen ? true : undefined} aria-label="Regional Transit Connections">
         <header className="regional-go-heading"><div className="regional-go-title"><span className="regional-go-brand-icon" aria-hidden="true"><TrainFront size={23} /></span><img className="regional-go-logo" src="/brand/go-transit-logo.svg" alt="GO Transit" width="69" height="28" /><h2>GO train connections</h2></div><div className="regional-go-actions">
             <button ref={fullScreenButton} type="button" className="regional-go-button regional-go-primary" onClick={() => setFullScreen(value => !value)}>{fullScreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}{fullScreen ? 'Exit full screen' : 'Full screen'}</button>
+            <button type="button" className="regional-go-button" aria-pressed={demoOn} onClick={() => demoOn ? closeComparison() : startComparison(null)} disabled={!feed}><FlaskConical size={15} /> {demoOn ? 'Exit demo' : 'Demo GO change'}</button>
             <button type="button" className="regional-go-button" onClick={refreshSources} disabled={feedLoading || masterLoading || listRefreshing}><RefreshCw size={15} /> Refresh</button>
             <button type="button" className="regional-go-button" onClick={() => window.print()} disabled={!canShowGrids}><Printer size={15} /> Print</button>
         </div></header>
@@ -303,7 +326,23 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
             <label>Date<input type="date" value={date} aria-label="Service date" onChange={event => setDate(event.target.value)} /></label>
             <div className="regional-go-segments" role="group" aria-label="Connection direction">{(['both', 'to-go', 'from-go'] as const).map(value => <button type="button" key={value} aria-pressed={direction === value} onClick={() => setDirection(value)}>{value === 'both' ? 'Both directions' : value === 'to-go' ? 'To GO' : 'From GO'}</button>)}</div>
         </div>
-        <div className="regional-go-legend" aria-label="Scheduled gap legend">{Object.entries(BAND_LABELS).filter(([band]) => band !== 'unavailable').map(([band, label]) => <span key={band}><i className={`regional-go-${band}`} aria-hidden="true" />{label}</span>)}<span>Scheduled gaps · no walking/boarding allowance</span></div>
+        {comparing && <div className="regional-go-demo" role="region" aria-label="GO timetable comparison">
+            <div className="regional-go-demo-head">
+                {comparison?.source === 'saved'
+                    ? <p><strong>Comparing saved GO schedules.</strong> {comparison.beforeLabel} → {comparison.afterLabel}. GO service days: {compareDates?.before ?? `no ${serviceDayType ?? ''} service`} vs {compareDates?.after ?? `no ${serviceDayType ?? ''} service`}. Bus times: current published {serviceDayType ?? ''} schedules.</p>
+                    : <p><strong>Demo only.</strong> A made-up GO timetable change applied to {date}, not published by Metrolinx. Trains are chosen from Allandale&apos;s real schedule.</p>}
+                <div className="regional-go-segments" role="group" aria-label="Timetable view">{(['before', 'after', 'compare'] as const).map(value => <button type="button" key={value} aria-pressed={compareView === value} onClick={() => setCompareView(value)}>{value === 'before' ? `Before (${comparison?.beforeLabel ?? 'current'})` : value === 'after' ? `After (${comparison?.afterLabel ?? 'change'})` : 'Compare'}</button>)}</div>
+                <button type="button" className="regional-go-button regional-go-primary" onClick={() => setFullScreen(value => !value)}>{fullScreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}{fullScreen ? 'Exit full screen' : 'Full screen'}</button>
+                {comparison?.source === 'saved' && <button type="button" className="regional-go-button" onClick={closeComparison}>Close comparison</button>}
+            </div>
+            {!comparison ? <p className="regional-go-notice">No demo is possible for this date: Allandale needs at least 2 To GO and 3 From GO trains. Pick a weekday.</p> : <>
+                {comparison.summary.length > 0 && <ul>{comparison.summary.map(line => <li key={line}>{line}</li>)}</ul>}
+                {compareView === 'compare' && <label className="regional-go-compare-toggle"><input type="checkbox" checked={changesOnly} onChange={event => setChangesOnly(event.target.checked)} /> Changes only</label>}
+                {goChanges && <details className="regional-go-compare-trains"><summary>GO train changes on {serviceDayType} ({goChanges.changes.length})</summary>
+                    {goChanges.changes.length ? <GoChangeTable changes={goChanges.changes} /> : <p>No GO train changes at Allandale Waterfront or Barrie South.</p>}</details>}
+            </>}
+        </div>}
+        <div className="regional-go-legend" aria-label="Connection legend">{LEGEND_BANDS.map(band => <span key={band}><i className={`regional-go-${band}`} aria-hidden="true" />{bandLabel(band)}</span>)}<span>Scheduled gaps · no walking/boarding allowance</span></div>
         {!validDate && <p className="regional-go-error" role="alert">Choose a valid service date.</p>}
         {!readTeamId && <p className="regional-go-error" role="alert">Select a team to read published master schedules.</p>}
         <div aria-live="polite" aria-atomic="true">
@@ -313,10 +352,15 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
             {!refreshBlocked && !feedLoading && feedState.error && <p className="regional-go-error" role="alert"><strong>GO times unavailable.</strong> {feedState.error} <button type="button" className="regional-go-inline-button" onClick={refreshSources}>Retry sources</button></p>}
             {!refreshBlocked && sourceErrors.length > 0 && <div className="regional-go-warning" role="alert"><AlertTriangle size={16} aria-hidden="true" /><span>Route{sourceErrors.length > 1 ? 's' : ''} {sourceErrors.map(source => source.entry.routeNumber).join(', ')} not assessed. Check Sources &amp; notes.</span><button type="button" className="regional-go-inline-button" onClick={refreshSources}>Retry sources</button></div>}
             {!refreshBlocked && goResult?.issues.map(issue => <p className="regional-go-notice" key={issue}>{issue}</p>)}
-            {!refreshBlocked && !feedLoading && goResult?.status === 'unavailable' && <p className="regional-go-error">No GO times for this date. Check the feed dates in Sources & notes.</p>}
-            {!refreshBlocked && !feedLoading && goResult?.status === 'no-service' && <p className="regional-go-empty">No GO trains scheduled for this station and date.</p>}
+            {!refreshBlocked && !feedLoading && comparison && compareView === 'compare' && !compareReady && <p className="regional-go-error">One of the timetables has no GO times for this station and day type, so they cannot be compared.</p>}
+            {!refreshBlocked && !feedLoading && !(comparison && compareView === 'compare') && goResult?.status === 'unavailable' && <p className="regional-go-error">No GO times for this date. Check the feed dates in Sources & notes.</p>}
+            {!refreshBlocked && !feedLoading && !(comparison && compareView === 'compare') && goResult?.status === 'no-service' && <p className="regional-go-empty">No GO trains scheduled for this station and date.</p>}
         </div>
-        {canShowGrids && readTeamId && (['to-go', 'from-go'] as const).filter(value => direction === 'both' || direction === value).map(renderGrid)}
+        {canShowGrids && readTeamId && comparison && compareView === 'compare' && compareDates?.before && compareDates.after
+            ? compareMatrices.filter(matrix => direction === 'both' || direction === matrix.direction).map(matrix => <ConnectionCompareGrid key={matrix.direction}
+                comparison={matrix} stationName={STATIONS[station]} beforeDate={compareDates.before!} afterDate={compareDates.after!} visibleRoutes={compareRoutes}
+                changesOnly={changesOnly} focus={focus} onFocus={setFocus} routeLabel={routeLabel} fullScreen={fullScreen} onToggleFullScreen={() => setFullScreen(value => !value)} />)
+            : canShowGrids && readTeamId && (['to-go', 'from-go'] as const).filter(value => direction === 'both' || direction === value).map(renderGrid)}
         {canShowGrids && unassessedRows.length > 0 && <p className="regional-go-grid-note" role="note">Routes {Array.from(new Set(unassessedRows.map(row => row.routeNumber))).join(', ')} have unassessed timing. Missing data is not confirmed absence of service. See Sources &amp; notes; † marks unassessed cells.</p>}
         <details className="regional-go-notes"><summary><Info size={15} aria-hidden="true" /> Sources &amp; notes</summary><div>
             <p className="regional-go-source-note">{STATIONS[station]} · {date || 'No date selected'}<br />{feed ? <>GO feed loaded {new Date(feed.fetchedAt).toLocaleString()} · {feed.timezone}<br />Feed dates: {displayFeedDate(goResult?.validFrom)} to {displayFeedDate(goResult?.validTo)}</> : 'GO source has not loaded.'}</p>
@@ -327,13 +371,13 @@ export const RegionalTransitConnections: React.FC<RegionalConnectionsProps> = ({
             <p>Routes without any 1–30 minute connection in the selected station, date and direction view are hidden. A connected route keeps all its direction rows. Counts include all assessed rows, including hidden routes.</p>
             {station === 'allandale' && <p>Includes Stop 14 (Essa at Gowan), across the street from Allandale GO—not a terminal platform. Walking and crossing time are not deducted.</p>}
             <p>Times are scheduled, not live. To GO uses bus arrival; From GO uses bus departure. Walking and boarding time are not deducted; transfers are not guaranteed.</p>
-            <p>White “No Connection” means no 1–30 minute gap is shown. † means a nearby bus trip could not be checked, so the cell is not confirmed absence of service or the closest gap. Missing data is excluded from the checked count.</p>
-            <p>*Counts include 6–30 minute gaps; tight gaps are shown separately in yellow. +1 day means after midnight.</p>
+            <p>Bands: Comfortable (6–15 min), Long wait (16–30 min), Tight (1–5 min). White “No connection” means no 1–30 minute gap is shown. † means a nearby bus trip could not be checked, so the cell is not confirmed absence of service or the closest gap. Missing data is excluded from the checked count.</p>
+            <p>*Counts include Comfortable and Long wait connections; Tight connections are shown in yellow but not counted. +1 day means after midnight.</p>
             <p>Published bus schedules and date-valid GO train GTFS only; GO buses, on-demand, fares, accessibility and live reliability are not assessed. Source trip IDs and master versions are in cell details.</p>
             {feed && <p><a href={feed.sourceUrl} target="_blank" rel="noopener noreferrer">GO static timetable source</a></p>}
         </div></details>
-        <GoScheduleChanges />
-        {detail && <ConnectionDetail detail={detail} stationName={STATIONS[station]} date={date} onClose={closeDetail} />}
+        <GoScheduleChanges onShowImpact={startComparison} />
+        {detail && <ConnectionDetail detail={detail} stationName={STATIONS[station]} date={gridDate} onClose={closeDetail} />}
     </section>;
     return fullScreen ? createPortal(chart, document.body) : chart;
 };
