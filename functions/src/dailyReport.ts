@@ -2,7 +2,8 @@ import * as admin from 'firebase-admin';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
-import { buildReportHtml } from './reportHtml';
+import { buildReportGlance, buildReportHtml, emailIconAttachments } from './reportHtml';
+import type { RouteHistoryDay } from './dailyGlance';
 import {
   appendFeaturedTripHistory,
   FeaturedTrip,
@@ -122,6 +123,7 @@ async function queueMail(params: {
     message: {
       subject: params.subject,
       html: params.html,
+      attachments: emailIconAttachments(params.html),
     },
   });
 }
@@ -189,6 +191,52 @@ async function loadLatestDayTripDetail(params: {
 
   const fullDay = await dayFromFile(asPath(meta.monthlyStoragePaths?.[month]));
   return { ...latestDay, ridershipHeatmaps: fullDay?.ridershipHeatmaps, byTrip: fullDay?.byTrip ?? [] };
+}
+
+/** Days of route history the glance section looks back over (covers its APC window). */
+const GLANCE_HISTORY_DAYS = 60;
+
+/**
+ * Route history for the glance section, read from the monthly dashboard files because
+ * the report snapshot keeps route detail for the latest day only. Undefined on failure,
+ * which makes the email fall back to the older summary.
+ */
+async function loadGlanceInputs(params: {
+  bucket: { file(path: string): { download(): Promise<[Buffer]> } };
+  meta: FirebaseFirestore.DocumentData;
+  summary: PerformanceDataSummary;
+  latestDay: DaySummary;
+}): Promise<{ routeHistory?: RouteHistoryDay[]; lastMissedTripDataDate: string | null }> {
+  const { bucket, meta, summary, latestDay } = params;
+  const lastMissedTripDataDate = summary.dailySummaries
+    .filter(day => day.date <= latestDay.date && (day.missedTrips?.totalScheduled ?? 0) > 0)
+    .reduce<string | null>((latest, day) => (!latest || day.date > latest ? day.date : latest), null);
+
+  const startDate = new Date(`${latestDay.date}T12:00:00Z`);
+  startDate.setUTCDate(startDate.getUTCDate() - GLANCE_HISTORY_DAYS);
+  const start = startDate.toISOString().slice(0, 10);
+  const months: string[] = [];
+  for (let month = start.slice(0, 7); month <= latestDay.date.slice(0, 7);) {
+    months.push(month);
+    const next = new Date(`${month}-15T12:00:00Z`);
+    next.setUTCMonth(next.getUTCMonth() + 1);
+    month = next.toISOString().slice(0, 7);
+  }
+
+  try {
+    const files = await Promise.all(months.map(async month => {
+      const path = meta.dashboardMonthlyStoragePaths?.overview?.[month] ?? meta.monthlyStoragePaths?.[month];
+      return typeof path === 'string' ? loadSummaryJson(bucket, path) : null;
+    }));
+    const routeHistory = files
+      .flatMap(file => file?.dailySummaries ?? [])
+      .filter(day => day.date > start && day.date <= latestDay.date && (day.byRoute?.length ?? 0) > 0)
+      .map(day => ({ date: day.date, dayType: day.dayType, byRoute: day.byRoute }));
+    return { routeHistory, lastMissedTripDataDate };
+  } catch (error) {
+    console.warn('Glance route history unavailable; using the older summary section.', error);
+    return { lastMissedTripDataDate };
+  }
 }
 
 async function pickFeaturedTrip(params: {
@@ -360,7 +408,8 @@ export const sendDailyReport = onSchedule(
       return;
     }
 
-    const { featuredTrip, history } = await pickFeaturedTrip({ db, bucket, meta, latestDay });
+    const { featuredTrip, history, tripDay } = await pickFeaturedTrip({ db, bucket, meta, latestDay });
+    const glanceInputs = await loadGlanceInputs({ bucket, meta, summary, latestDay });
 
     await queueMail({
       db,
@@ -372,6 +421,8 @@ export const sendDailyReport = onSchedule(
         teamName: TEAM_NAME,
         featuredTrip,
         ...weeklyDwellForReport(summary, latestDay.date),
+        ...glanceInputs,
+        latestTrips: tripDay.byTrip ?? [],
       }),
     });
 
@@ -431,12 +482,43 @@ export const testDailyReport = onRequest(
     }
     const summary = summaryResult.summary;
 
-    const sorted = [...summary.dailySummaries].sort((a, b) => b.date.localeCompare(a.date));
+    // ?date=YYYY-MM-DD previews the email as it would have looked for that service day.
+    const asOfDate = (req.query.date as string) || '';
+    const sorted = [...summary.dailySummaries]
+      .filter(day => !asOfDate || day.date <= asOfDate)
+      .sort((a, b) => b.date.localeCompare(a.date));
+    if (sorted.length === 0) { res.status(404).json({ error: `No data on or before ${asOfDate}` }); return; }
     const latestDay = sorted[0];
     const trendDays = sorted.slice(0, 56).reverse();
     // Test sends preview the pick but never record it, so they don't affect rotation.
     const { featuredTrip, tripDay } = await pickFeaturedTrip({ db, bucket, meta, latestDay });
     const weekly = weeklyDwellForReport(summary, latestDay.date, forceWeeklyDwell);
+    const glanceInputs = await loadGlanceInputs({ bucket, meta, summary, latestDay });
+    const reportData = {
+      latestDay,
+      trendDays,
+      teamName: TEAM_NAME,
+      featuredTrip,
+      ...weekly,
+      ...glanceInputs,
+      latestTrips: tripDay.byTrip ?? [],
+    };
+
+    // ?preview=1 returns the email HTML instead of sending it. Icons are cid attachments, so they show as broken images here.
+    if ((req.query.preview as string) === '1') {
+      res.type('html').send(buildReportHtml(reportData));
+      return;
+    }
+
+    if ((req.query.debug as string) === 'glance') {
+      res.json({
+        latestDate: latestDay.date,
+        routeHistoryDays: glanceInputs.routeHistory?.length ?? null,
+        lastMissedTripDataDate: glanceInputs.lastMissedTripDataDate,
+        glance: buildReportGlance(reportData),
+      });
+      return;
+    }
 
     if (debug) {
       const reportableIncidents = (latestDay.byOperatorDwell?.incidents ?? []).filter(isReportableDwellIncident);
@@ -547,13 +629,7 @@ export const testDailyReport = onRequest(
       db,
       to: [to],
       subject: buildReportSubject(latestDay),
-      html: buildReportHtml({
-        latestDay,
-        trendDays,
-        teamName: TEAM_NAME,
-        featuredTrip,
-        ...weekly,
-      }),
+      html: buildReportHtml(reportData),
     });
     res.json({
       success: true,

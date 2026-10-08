@@ -1,7 +1,10 @@
-import { DailySummary, RouteMetrics, HourMetrics, StopMetrics, DwellIncident } from './types';
+import { DailySummary, RouteMetrics, HourMetrics, StopMetrics, DwellIncident, TripMetrics } from './types';
 import { FULL_LOAD } from '../../utils/performanceRouteLoad';
 import type { FeaturedTrip } from './featuredTrip';
-import type { WeeklyDwellSummary } from '../../utils/performanceDwellHistory';
+import { EMAIL_ICON_PNG } from './emailIconData';
+import { apcDiscrepancyPctForRoute, apcStatusForRoute } from './routeApc';
+import { buildGlance, type GlanceModel, type GlanceTone, type RouteHistoryDay } from './dailyGlance';
+import { median, type WeeklyDwellSummary } from '../../utils/performanceDwellHistory';
 
 export interface ReportData {
   latestDay: DailySummary;
@@ -11,11 +14,24 @@ export interface ReportData {
   weeklyDwell?: WeeklyDwellSummary | null;
   /** Full weekly dwell section (Monday emails); other days get one line in the dwell card. */
   showWeeklyDwellSection?: boolean;
+  /** Route-level history; when present the glance section compares each route with its usual. */
+  routeHistory?: RouteHistoryDay[];
+  /** Latest day's trips, for late-trip patterns in the glance section. */
+  latestTrips?: TripMetrics[];
+  lastMissedTripDataDate?: string | null;
 }
 
 // Reset dwell comparison baselines from the current report rollout onward.
 // The morning report currently uses 2026-03-09 as its latest service day.
 const DWELL_AVG_BASELINE_START_DATE = '2026-03-09';
+// Fixed height keeps all four KPI cards the same size; fits up to three grey lines.
+const KPI_CARD_HEIGHT_PX = 190;
+const DWELL_MEDIAN_MIN_DAYS = 3;
+const DWELL_DAY_TYPE_LABEL: Record<DailySummary['dayType'], string> = {
+  weekday: 'Weekday',
+  saturday: 'Saturday',
+  sunday: 'Sunday',
+};
 
 /** Hub definitions — stops at the same hub get merged in stop rankings */
 const HUBS: { name: string; stopCodes: string[] }[] = [
@@ -170,24 +186,50 @@ function routeOtpCell(otp: RouteMetrics['otp']): string {
     </div>`;
 }
 
-type EmailIconName = 'bus' | 'performance' | 'ridership' | 'trips' | 'dwell' | 'alert' | 'stable';
+type EmailIconName = 'bus' | 'performance' | 'ridership' | 'trips' | 'dwell';
 
-const EMAIL_ICON_SYMBOL: Record<EmailIconName, string> = {
-  bus: '&#128652;',
-  performance: '&#128200;',
-  ridership: '&#128101;',
-  trips: '&#128652;',
-  dwell: '&#9201;',
-  alert: '&#9888;',
-  stable: '&#10003;',
+const EMAIL_ICON_ALT: Record<EmailIconName, string> = {
+  bus: 'Bus',
+  performance: 'Clock',
+  ridership: 'Riders',
+  trips: 'Route',
+  dwell: 'Stopwatch',
 };
 
-function emailIcon(name: EmailIconName, color = '#0f3a76', size = 24): string {
-  return `<span style="display:inline-block;font-size:${size}px;line-height:1;color:${color};font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',Arial,sans-serif;">${EMAIL_ICON_SYMBOL[name]}</span>`;
+// Colour used when an icon has no PNG for the requested colour.
+const EMAIL_ICON_DEFAULT_COLOR: Record<EmailIconName, string> = {
+  bus: '#ffffff',
+  performance: '#16a34a',
+  ridership: '#2563eb',
+  trips: '#6d28d9',
+  dwell: '#0891b2',
+};
+
+const EMAIL_ICON_CID_PATTERN = /cid:icon-([a-z]+-[0-9a-f]{6})/g;
+
+function emailIconKey(name: EmailIconName, color: string): string {
+  const key = `${name}-${color.replace('#', '').toLowerCase()}`;
+  return EMAIL_ICON_PNG[key] ? key : `${name}-${EMAIL_ICON_DEFAULT_COLOR[name].slice(1)}`;
 }
 
-function iconBadge(name: EmailIconName, color = '#0f3a76', bg = '#eff6ff', size = 24): string {
-  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size + 14}px;height:${size + 14}px;border-radius:14px;background:${bg};border:1px solid ${color}22;color:${color};">${emailIcon(name, color, size)}</span>`;
+/** Icon badge as an embedded PNG; the badge background is part of the image. */
+function iconBadge(name: EmailIconName, color: string, size: number): string {
+  const box = size + 14;
+  return `<img src="cid:icon-${emailIconKey(name, color)}" width="${box}" height="${box}" alt="${EMAIL_ICON_ALT[name]}" style="display:inline-block;width:${box}px;height:${box}px;border:0;outline:none;text-decoration:none;vertical-align:middle;" />`;
+}
+
+/** Inline attachments for each icon the email references, for the mail extension's nodemailer. */
+export function emailIconAttachments(html: string): Array<{ filename: string; content: string; encoding: 'base64'; contentType: 'image/png'; cid: string }> {
+  const keys = new Set([...html.matchAll(EMAIL_ICON_CID_PATTERN)].map(match => match[1]));
+  return [...keys]
+    .filter(key => EMAIL_ICON_PNG[key])
+    .map(key => ({
+      filename: `${key}.png`,
+      content: EMAIL_ICON_PNG[key],
+      encoding: 'base64',
+      contentType: 'image/png',
+      cid: `icon-${key}`,
+    }));
 }
 
 function kpiCard(label: string, value: string, subtitle?: string, accentColor = '#2563eb', subtitleColor?: string, icon?: EmailIconName): string {
@@ -195,8 +237,8 @@ function kpiCard(label: string, value: string, subtitle?: string, accentColor = 
   const subWeight = subtitleColor ? 'font-weight:600;' : '';
   return `
     <td style="width:25%;padding:6px;vertical-align:top;">
-      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
-        ${icon ? `<div style="line-height:1;margin-bottom:8px;">${iconBadge(icon, accentColor, '#f8fafc', 18)}</div>` : ''}
+      <div style="box-sizing:border-box;height:${KPI_CARD_HEIGHT_PX}px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
+        ${icon ? `<div style="line-height:1;margin-bottom:8px;">${iconBadge(icon, accentColor, 18)}</div>` : ''}
         <div style="font-size:13px;color:#1e3a5f;font-weight:700;">${label}</div>
         <div style="font-size:28px;font-weight:800;color:${accentColor};margin:8px 0 4px;letter-spacing:-0.5px;">${value}</div>
         ${subtitle ? `<div style="font-size:11px;color:${subColor};${subWeight}">${subtitle}</div>` : ''}
@@ -232,21 +274,6 @@ function bphPill(value: number): string {
   return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:12px;">${value.toFixed(1)}</span>`;
 }
 
-function apcDiscrepancyPctForRoute(route: RouteMetrics): number {
-  if (typeof route.apcDiscrepancyPct === 'number') return route.apcDiscrepancyPct;
-  const baseline = Math.max(route.ridership, route.alightings, 1);
-  return Math.round((Math.abs(route.ridership - route.alightings) * 1000) / baseline) / 10;
-}
-
-function apcStatusForRoute(route: RouteMetrics): 'ok' | 'review' | 'suspect' {
-  if (route.apcStatus === 'review' || route.apcStatus === 'suspect' || route.apcStatus === 'ok') {
-    return route.apcStatus;
-  }
-  const discrepancyPct = apcDiscrepancyPctForRoute(route);
-  if (discrepancyPct >= 50) return 'suspect';
-  if (discrepancyPct >= 25) return 'review';
-  return 'ok';
-}
 
 function apcStatusBg(status: 'ok' | 'review' | 'suspect'): string {
   if (status === 'suspect') return '#fef2f2';
@@ -426,37 +453,140 @@ function buildExecutiveSummary(latestDay: DailySummary): string {
     `;
 }
 
-function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): string {
-  const dwell = latestDay.byOperatorDwell;
-  const tripCount = latestDay.system.tripCount;
+const DASHBOARD_OTP_URL = 'https://transitscheduler.ca/#operations/performance/otp';
 
-  if (!dwell || !(tripCount > 0)) {
+const GLANCE_STATUS_STYLE: Record<GlanceModel['status'], { bg: string; color: string }> = {
+  STABLE: { bg: '#dcfce7', color: '#166534' },
+  REVIEW: { bg: '#fef3c7', color: '#92400e' },
+  'NEEDS ATTENTION': { bg: '#fee2e2', color: '#991b1b' },
+};
+const GLANCE_TONE_COLOR: Record<GlanceTone, string> = {
+  neutral: '#64748b',
+  good: '#16a34a',
+  bad: '#dc2626',
+  warn: '#d97706',
+};
+const GLANCE_SEVERITY_COLOR = { high: '#dc2626', medium: '#d97706', low: '#94a3b8' } as const;
+
+function buildRouteDwellLeader(latestDay: DailySummary): { routeId: string | null; hours: number } {
+  const [top] = [...buildRouteDwellMap(latestDay).entries()].sort((a, b) => b[1] - a[1]);
+  return top ? { routeId: top[0], hours: top[1] / 3600 } : { routeId: null, hours: 0 };
+}
+
+/** "Yesterday at a Glance" from the glance model: headline, usual comparisons, standouts, ongoing. */
+function buildGlanceSummary(glance: GlanceModel): string {
+  const status = GLANCE_STATUS_STYLE[glance.status];
+  const comparisons = glance.comparisons.length === 0 ? '' : `
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 4px;">
+      ${glance.comparisons.map(row => `
+        <tr>
+          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:#64748b;width:24%;">${row.label}</td>
+          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:13px;color:#0f172a;font-weight:700;width:20%;">${row.value}</td>
+          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:#94a3b8;width:22%;">${row.usual}</td>
+          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:${GLANCE_TONE_COLOR[row.tone]};font-weight:${row.tone === 'neutral' ? 600 : 700};text-align:right;">${row.verdict}</td>
+        </tr>`).join('')}
+    </table>`;
+  const standouts = glance.standouts.length === 0 ? '' : `
+    <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:0.4px;text-transform:uppercase;margin:12px 0 6px;">What stood out</div>
+    ${glance.standouts.map(standout => `
+      <table cellpadding="0" cellspacing="0" style="margin:6px 0;">
+        <tr>
+          <td style="width:18px;vertical-align:top;font-size:13px;line-height:1.5;color:#dc2626;font-weight:800;">&#9660;</td>
+          <td style="vertical-align:top;">
+            <div style="font-size:13px;line-height:1.5;color:#374151;"><b>Route ${escapeHtml(standout.routeId)}</b> ${escapeHtml(standout.sentence)}</div>
+            ${standout.latePattern ? `<div style="font-size:12px;line-height:1.45;color:#64748b;">${escapeHtml(standout.latePattern)}</div>` : ''}
+          </td>
+        </tr>
+      </table>`).join('')}`;
+  const newTag = (routeId: string) => `<span style="background:#dbeafe;color:#1d4ed8;font-weight:700;padding:0 5px;border-radius:4px;">${escapeHtml(routeId)} new</span>`;
+  const ongoing = glance.ongoing.length === 0 ? '' : `
+    <div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border-radius:8px;">
+      <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:0.4px;text-transform:uppercase;margin-bottom:4px;">Ongoing</div>
+      <div style="font-size:12px;line-height:1.55;color:#64748b;">
+        ${glance.ongoing.map(item => `${escapeHtml(item.text)}${(item.newRoutes ?? []).map(routeId => ` ${newTag(routeId)}`).join('')}`).join('<br>')}
+      </div>
+    </div>`;
+
+  return `
+    ${sectionHeader('Yesterday at a Glance')}
+    ${cardWrap(`
+      <div style="font-size:15px;font-weight:700;color:#0f172a;line-height:1.4;">
+        <span style="display:inline-block;background:${status.bg};color:${status.color};padding:3px 9px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.3px;vertical-align:2px;margin-right:6px;">${glance.status}</span>${escapeHtml(glance.headline)}
+      </div>
+      ${comparisons}${standouts}${ongoing}`)}`;
+}
+
+/** Ranked follow-ups from the glance model; a quiet note when there are none. */
+function buildGlanceActions(glance: GlanceModel): string {
+  const body = glance.actions.length === 0
+    ? `<div style="font-size:13px;color:#475569;line-height:1.5;">Nothing new to follow up today.</div>
+       ${glance.ongoing.length > 0 ? '<div style="font-size:12px;color:#94a3b8;line-height:1.5;margin-top:6px;">Ongoing items are listed on the left.</div>' : ''}`
+    : glance.actions.map((action, i) => `
+      <div style="background:#ffffff;border-left:4px solid ${GLANCE_SEVERITY_COLOR[action.severity]};border-radius:8px;padding:9px 11px;margin:${i === 0 ? 0 : 8}px 0 0;">
+        <div style="font-size:13px;font-weight:700;color:#082b63;">${i + 1}. ${escapeHtml(action.title)}</div>
+        <div style="font-size:12px;color:#475569;line-height:1.45;margin-top:2px;">${escapeHtml(action.detail)}</div>
+        ${action.link ? `<div style="font-size:12px;margin-top:4px;"><a href="${action.link}" style="color:#2563eb;font-weight:600;text-decoration:none;">Open on-time dashboard &rarr;</a></div>` : ''}
+      </div>`).join('');
+
+  return `
+    ${sectionHeader('Action Focus')}
+    ${cardWrap(body, '#eff6ff')}`;
+}
+
+/** Today's dwell rate against the same day type's median; null when there is no dwell data. */
+function dwellComparison(latestDay: DailySummary, trendDays: DailySummary[]): {
+  per100: number;
+  typicalPer100: number | null;
+  elevated: boolean;
+} | null {
+  if (!latestDay.byOperatorDwell || !(latestDay.system.tripCount > 0)) return null;
+  const per100 = dwellMinutesPer100Trips(latestDay);
+
+  // Compare per-100-trip rates, not raw hours, so busy and quiet days compare fairly.
+  const priorSameDayTypeRates = trendDays
+    .filter(day =>
+      day.date >= DWELL_AVG_BASELINE_START_DATE
+      && day.date < latestDay.date
+      && day.dayType === latestDay.dayType
+      && typeof day.byOperatorDwell?.totalTrackedDwellMinutes === 'number'
+      && day.system.tripCount > 0
+    )
+    .map(dwellMinutesPer100Trips);
+  const typicalPer100 = priorSameDayTypeRates.length >= DWELL_MEDIAN_MIN_DAYS
+    ? median(priorSameDayTypeRates)
+    : null;
+  const elevated = typicalPer100 !== null && typicalPer100 > 0 && per100 > typicalPer100 * 1.5;
+  return { per100, typicalPer100, elevated };
+}
+
+function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): string {
+  const comparison = dwellComparison(latestDay, trendDays);
+  if (!comparison) {
     return kpiCard('Operator Dwell', '—', 'No dwell data', '#0891b2', undefined, 'dwell');
   }
 
-  const reportableSeconds = getDailyReportableDwellSeconds(latestDay);
-  const totalHours = (reportableSeconds / 3600).toFixed(1);
-  const minutesPer100 = Math.round((reportableSeconds / 60 / tripCount) * 100);
-
-  const sameDayTypeDays = trendDays.filter(day =>
-    day.date >= DWELL_AVG_BASELINE_START_DATE
-    && day.dayType === latestDay.dayType
-    && typeof day.byOperatorDwell?.totalTrackedDwellMinutes === 'number'
-  );
-  const averageSeconds = sameDayTypeDays.length > 0
-    ? sameDayTypeDays.reduce((sum, day) => sum + getDailyReportableDwellSeconds(day), 0) / sameDayTypeDays.length
-    : 0;
-  const elevated = averageSeconds > 0 && reportableSeconds > (averageSeconds * 1.5);
+  const totalHours = (getDailyReportableDwellSeconds(latestDay) / 3600).toFixed(1);
+  const minutesPer100 = Math.round(comparison.per100);
+  const { typicalPer100, elevated } = comparison;
   const accentColor = elevated ? '#d97706' : '#0891b2';
+  const medianLine = typicalPer100 !== null
+    ? `<div>${DWELL_DAY_TYPE_LABEL[latestDay.dayType]} median:<br>${Math.round(typicalPer100)} min / 100 trips</div>`
+    : '';
+  // Gap and "Today" label keep the total from reading as part of the median.
+  const totalLine = `<div style="margin-top:${medianLine ? 8 : 0}px;">Today: ${totalHours} hrs total</div>`;
 
   return kpiCard(
     'Operator Dwell',
     `${minutesPer100} <span style="font-size:12px;font-weight:700;">min / 100 trips</span>`,
-    `${totalHours} hrs total`,
+    `${medianLine}${totalLine}`,
     accentColor,
     undefined,
     'dwell',
   );
+}
+
+function dwellMinutesPer100Trips(day: DailySummary): number {
+  return (getDailyReportableDwellSeconds(day) / 60 / day.system.tripCount) * 100;
 }
 
 function formatDwellHours(totalSeconds: number): string {
@@ -1477,6 +1607,25 @@ function buildFeaturedTripSection(trip: FeaturedTrip | null | undefined): string
   return `${sectionHeader('Trip of the Day', 'One notable trip from yesterday, picked automatically. Rider counts are estimated from boardings and alightings.')}${cardWrap(content)}`;
 }
 
+/** Glance model for the report, or null when there is no route history (falls back to the older summary). */
+export function buildReportGlance(data: ReportData): GlanceModel | null {
+  if (!data.routeHistory) return null;
+  const { latestDay, trendDays } = data;
+  const dwell = dwellComparison(latestDay, trendDays);
+  const leader = buildRouteDwellLeader(latestDay);
+  return buildGlance({
+    latestDay,
+    systemHistory: trendDays,
+    routeHistory: data.routeHistory,
+    latestTrips: data.latestTrips ?? [],
+    lastMissedTripDataDate: data.lastMissedTripDataDate ?? null,
+    dwell: dwell
+      ? { per100: dwell.per100, usualPer100: dwell.typicalPer100, elevated: dwell.elevated, topRouteId: leader.routeId, topRouteHours: leader.hours }
+      : null,
+    routeLink: DASHBOARD_OTP_URL,
+  });
+}
+
 export function buildReportHtml(data: ReportData): string {
   const { latestDay, trendDays, teamName, featuredTrip, weeklyDwell, showWeeklyDwellSection } = data;
   const sys = latestDay.system;
@@ -1486,6 +1635,7 @@ export function buildReportHtml(data: ReportData): string {
   const dwellByHour = buildHourlyDwellMap(latestDay);
   const trendRows = buildTrendRows(trendDays);
   const status = deriveReportStatus(latestDay);
+  const glance = buildReportGlance(data);
   const missedTripsSection = latestDay.missedTrips && latestDay.missedTrips.totalMissed > 0
     ? buildMissedTripsTable(latestDay, trendDays)
     : '';
@@ -1538,7 +1688,7 @@ export function buildReportHtml(data: ReportData): string {
   <div style="max-width:760px;margin:0 auto;background:#ffffff;">
     <!-- Header -->
     <div style="background:#082f69;padding:26px 24px 20px;text-align:center;border-bottom:4px solid #3b82f6;">
-      <div style="line-height:1;margin-bottom:8px;">${iconBadge('bus', '#ffffff', '#0f3a76', 24)}</div>
+      <div style="line-height:1;margin-bottom:8px;">${iconBadge('bus', '#ffffff', 24)}</div>
       <div style="font-size:30px;font-weight:900;color:#ffffff;line-height:1.15;">${teamName}</div>
       <div style="font-size:27px;font-weight:900;color:#ffffff;margin-top:8px;line-height:1.15;">Daily Performance Report</div>
       <div style="font-size:17px;color:#60a5fa;font-weight:800;margin-top:10px;">${formatDateLong(latestDay.date)}</div>
@@ -1566,8 +1716,8 @@ export function buildReportHtml(data: ReportData): string {
       <!-- ═══ 2. EXECUTIVE SUMMARY ═══ -->
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="width:62%;padding:0 6px 0 0;vertical-align:top;">${buildExecutiveSummary(latestDay)}</td>
-          <td style="width:38%;padding:0 0 0 6px;vertical-align:top;">${buildActionFocus(latestDay)}</td>
+          <td style="width:${glance ? 60 : 62}%;padding:0 6px 0 0;vertical-align:top;">${glance ? buildGlanceSummary(glance) : buildExecutiveSummary(latestDay)}</td>
+          <td style="width:${glance ? 40 : 38}%;padding:0 0 0 6px;vertical-align:top;">${glance ? buildGlanceActions(glance) : buildActionFocus(latestDay)}</td>
         </tr>
       </table>
 
