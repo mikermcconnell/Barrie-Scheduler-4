@@ -44,6 +44,7 @@ firebase/
 │   ├── todPickupData/{docId}             # Monthly pickup maps + daily On Demand KPI reports
 │   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
 │   ├── performanceImports/{importId}     # STREETS raw-import audit and server queue metadata
+│   ├── simulatorFeed/metadata            # City Simulator day-feed pointers (server-written; see docs/SIMULATOR_FEED.md)
 │   ├── parking/default                   # Shared parking-code settings + active storage pointer
 │   │   └── months/{month}                # Monthly parking usage/revenue import metadata
 │   ├── parking/history                   # LocoMobi strategy-history manifest + active aggregate pointer
@@ -115,6 +116,7 @@ storage/
     ├── performanceData/months/{timestamp}-route-{routeId}-{YYYY-MM}.json
     ├── performanceData/views/{timestamp}-{detailMode}-{YYYY-MM}.json
     ├── performanceViews/load-profiles/{generation}-{YYYY-MM}.json
+    ├── performanceViews/simulator-days/{YYYY-MM-DD}/{generation}.json
     ├── performanceImports/raw/{timestamp}.csv
     ├── parking/{month}_{timestamp}.json
     ├── parking/revenue/{month}_{source}_{timestamp}.json
@@ -144,6 +146,8 @@ Load Profiles view schema v1 stores only date/day type, route-direction load pro
 The full monthly performance archives still include load-profile fields for legacy consumers and are readable through the broader Operations access rule. The compact-view permission is therefore the supported UI/API boundary, not complete field-level secrecy, until the remaining performance readers move behind backend-filtered views.
 
 Dashboard monthly views retain the same daily metric objects required by their named tab while omitting unrelated tab data and schedule-runtime evidence. The Operator Dwell view also retains aggregated load profiles because its incident map and timeline use them for passenger-context estimates. Same-team and shared-source readers prefer these pointers only when they cover every requested source month, then fall back to route-scoped or full monthly archives when an older generation is absent or incomplete. Shared-source detail reads request and merge one month per backend response to keep bounded HTTP payloads. Every generation is uploaded before the Firestore pointer changes, uses an immutable versioned path with private browser caching, and is removed only after a later metadata commit. Existing active history can be prepared with `functions/scripts/backfill-performance-dashboard-views.mjs`; the script is dry-run by default and transactionally refuses to publish if the source generation changes.
+
+Simulator day feed schema v1 (`functions/src/simulatorDay.ts`) stores one service day of STREETS stop visits for the City Simulator's replay view: per-trip scheduled and observed times, boardings, alightings, sanitized APC load, GTFS match, and data-quality counts, with no operator identity. `teams/{teamId}/simulatorFeed/metadata` holds `days`, a map of service date → `{ storagePath, sourceRevision, importId, dayType, gtfsVersion, trips, tripsMatched, generatedAt }`, plus `lastError` from the most recent failed publication. Only the `publishSimulatorDays` trigger and its backfill script write these paths; a date is replaced only by an equal-or-newer source revision, and generations are deleted after the pointer moves. There are no client rules beyond the support-session catch-alls: reads go through `sharedWorkspaceData` (`simulatorDayIndex`, `simulatorDay`) with the Load Profiles permission boundary. See `docs/SIMULATOR_FEED.md`.
 
 Ridership Trends projection schema v1 stores the cutover date, generated baseline hash, latest service date, update time, and one fixed-route boarding total per post-cutover service date. It deliberately omits route, stop, trip, operator, alighting, load, and Transit On Demand detail. Performance publishers must preserve dates that have aged out of detailed retention, replace same-date corrections idempotently, upload the next projection before changing `ridershipTrendStoragePath`, and remove the prior object only after the metadata commit. Standalone same-team reads require `analyticsRidershipTrend`; Strategic Plan contextual reads require `analyticsStrategicPlan`. Shared and contextual reads use `sharedWorkspaceData` and the requesting team's configured performance source. See `docs/RIDERSHIP_TRENDS.md`.
 

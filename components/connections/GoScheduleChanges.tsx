@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { History } from 'lucide-react';
-import { diffGoFeeds, type GoFeedDiff, type TrainChange } from '../../utils/regional-transit/feedDiff';
+import type { GoTimetableComparison } from '../../utils/regional-transit/connectionCompare';
+import { archivedFeed, diffGoFeeds, type GoFeedDiff, type TrainChange } from '../../utils/regional-transit/feedDiff';
+import type { RegionalGoFeed } from '../../utils/regional-transit/types';
 import type { GtfsArchiveStatus, GtfsSnapshotSummary } from '../../utils/services/gtfsArchiveService';
 
 const STATION_NAMES = { allandale: 'Allandale Waterfront', south: 'Barrie South' } as const;
@@ -27,13 +29,26 @@ function message(error: unknown): string {
     return error instanceof Error && error.message ? error.message : 'Something went wrong.';
 }
 
-export const GoScheduleChanges: React.FC = () => {
+export const GoChangeTable: React.FC<{ changes: TrainChange[] }> = ({ changes }) => <table className="regional-go-changes-table">
+    <thead><tr><th>Day</th><th>Station</th><th>Direction</th><th>Train</th><th>Change</th><th>Time</th></tr></thead>
+    <tbody>{changes.map((change, index) => <tr key={`${change.dayType}-${change.station}-${change.direction}-${change.trainNumber}-${change.kind}-${index}`}>
+        <td>{change.dayType}</td>
+        <td>{STATION_NAMES[change.station]}</td>
+        <td>{change.direction === 'to-go' ? 'To GO' : 'From GO'}</td>
+        <td>{change.trainNumber || '—'}{change.headsign ? ` · ${change.headsign}` : ''}</td>
+        <td>{KIND_LABELS[change.kind]}</td>
+        <td>{change.kind === 'shifted' ? `${clock(change.beforeMinutes)} → ${clock(change.afterMinutes)}` : clock(change.afterMinutes ?? change.beforeMinutes)}</td>
+    </tr>)}</tbody>
+</table>;
+
+export const GoScheduleChanges: React.FC<{ onShowImpact?: (comparison: GoTimetableComparison) => void }> = ({ onShowImpact }) => {
     const [opened, setOpened] = useState(false);
     const [archive, setArchive] = useState<GtfsArchiveStatus | null>(null);
     const [archiveError, setArchiveError] = useState<string | null>(null);
     const [beforeId, setBeforeId] = useState('');
     const [afterId, setAfterId] = useState('');
     const [diff, setDiff] = useState<GoFeedDiff | null>(null);
+    const [feeds, setFeeds] = useState<{ before: RegionalGoFeed; after: RegionalGoFeed; beforeLabel: string; afterLabel: string } | null>(null);
     const [diffError, setDiffError] = useState<string | null>(null);
     const [diffLoading, setDiffLoading] = useState(false);
 
@@ -61,9 +76,11 @@ export const GoScheduleChanges: React.FC = () => {
         try {
             const { loadGoStationSnapshot } = await import('../../utils/services/gtfsArchiveService');
             const [beforeFeed, afterFeed] = await Promise.all([loadGoStationSnapshot(before), loadGoStationSnapshot(after)]);
-            if (isCurrent()) setDiff(diffGoFeeds(beforeFeed, afterFeed));
+            if (!isCurrent()) return;
+            setDiff(diffGoFeeds(beforeFeed, afterFeed));
+            setFeeds({ before: beforeFeed, after: afterFeed, beforeLabel: `Saved ${before.fetchedAt.slice(0, 10)}`, afterLabel: `Saved ${after.fetchedAt.slice(0, 10)}` });
         } catch (error) {
-            if (isCurrent()) { setDiff(null); setDiffError(message(error)); }
+            if (isCurrent()) { setDiff(null); setFeeds(null); setDiffError(message(error)); }
         } finally {
             if (isCurrent()) setDiffLoading(false);
         }
@@ -72,7 +89,7 @@ export const GoScheduleChanges: React.FC = () => {
     useEffect(() => {
         const before = archive?.snapshots.find(item => item.snapshotId === beforeId);
         const after = archive?.snapshots.find(item => item.snapshotId === afterId);
-        if (!before || !after || before.snapshotId === after.snapshotId) { setDiff(null); return; }
+        if (!before || !after || before.snapshotId === after.snapshotId) { setDiff(null); setFeeds(null); return; }
         let current = true;
         void compare(before, after, () => current);
         return () => { current = false; };
@@ -98,20 +115,13 @@ export const GoScheduleChanges: React.FC = () => {
                 {diffError && <p className="regional-go-error" role="alert">Comparison failed. {diffError}</p>}
                 {diff && !diffLoading && <>
                     <p>{diff.comparisons.filter(item => item.beforeDate || item.afterDate).map(item => `${item.dayType}: ${item.beforeDate ?? 'no service'} vs ${item.afterDate ?? 'no service'}`).join(' · ')}. One normal service day per day type; trains are matched by train number.</p>
+                    {onShowImpact && feeds && <button type="button" className="regional-go-button" onClick={() => onShowImpact({
+                        source: 'saved', before: archivedFeed(feeds.before), after: archivedFeed(feeds.after), beforeLabel: feeds.beforeLabel, afterLabel: feeds.afterLabel, summary: [],
+                    })}>Show impact on bus connections</button>}
                     {diff.comparisons.flatMap(item => item.issues).map(issue => <p className="regional-go-notice" key={issue}>{issue}</p>)}
                     {diff.changes.length === 0
                         ? <p>No changes at Allandale Waterfront or Barrie South. {diff.comparisons.reduce((sum, item) => sum + item.unchanged, 0)} train calls are the same.</p>
-                        : <table className="regional-go-changes-table">
-                            <thead><tr><th>Day</th><th>Station</th><th>Direction</th><th>Train</th><th>Change</th><th>Time</th></tr></thead>
-                            <tbody>{diff.changes.map((change, index) => <tr key={`${change.dayType}-${change.station}-${change.direction}-${change.trainNumber}-${change.kind}-${index}`}>
-                                <td>{change.dayType}</td>
-                                <td>{STATION_NAMES[change.station]}</td>
-                                <td>{change.direction === 'to-go' ? 'To GO' : 'From GO'}</td>
-                                <td>{change.trainNumber || '—'}{change.headsign ? ` · ${change.headsign}` : ''}</td>
-                                <td>{KIND_LABELS[change.kind]}</td>
-                                <td>{change.kind === 'shifted' ? `${clock(change.beforeMinutes)} → ${clock(change.afterMinutes)}` : clock(change.afterMinutes ?? change.beforeMinutes)}</td>
-                            </tr>)}</tbody>
-                        </table>}
+                        : <GoChangeTable changes={diff.changes} />}
                 </>}
             </>}
             {archive?.lastCheckedAt && <p className="regional-go-source-note">Last checked for a new GO schedule {new Date(archive.lastCheckedAt).toLocaleString()}.</p>}

@@ -10,6 +10,7 @@ export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
 export { developerSupportAccess } from './developerSupportAccess';
 export { archiveGtfsFeeds } from './gtfsArchiveJob';
+export { publishSimulatorDays } from './simulatorDayJob';
 export { ingestTodDailyKpi } from './todDailyKpi';
 export { cleanupNewScheduleRuntimeMigrationBackups } from './newScheduleRuntimeBackupCleanup';
 import {

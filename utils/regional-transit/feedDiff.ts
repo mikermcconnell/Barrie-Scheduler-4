@@ -38,7 +38,7 @@ const CANDIDATES_PER_DAY_TYPE = 8;
 const SHIFT_THRESHOLD_MINUTES = 0.5;
 
 /** Archived snapshots are old by design, so the live-feed freshness check is bypassed. */
-function archivedFeed(feed: RegionalGoFeed): RegionalGoFeed {
+export function archivedFeed(feed: RegionalGoFeed): RegionalGoFeed {
     return { ...feed, fetchedAt: new Date().toISOString() };
 }
 
@@ -81,6 +81,46 @@ function groupByTrain(events: GoTrainEvent[]): Map<string, GoTrainEvent[]> {
     return groups;
 }
 
+function compareServiceDates(beforeFeed: RegionalGoFeed, afterFeed: RegionalGoFeed, comparison: DayTypeComparison, changes: TrainChange[]): void {
+    const { dayType, beforeDate, afterDate } = comparison;
+    if (!beforeDate && !afterDate) return;
+    for (const station of STATIONS) {
+        const beforeResult = beforeDate ? getGoTrainEvents(beforeFeed, station, beforeDate) : null;
+        const afterResult = afterDate ? getGoTrainEvents(afterFeed, station, afterDate) : null;
+        for (const result of [beforeResult, afterResult]) {
+            if (result?.status === 'unavailable') comparison.issues.push(...result.issues);
+        }
+        const beforeGroups = groupByTrain(beforeResult?.events ?? []);
+        const afterGroups = groupByTrain(afterResult?.events ?? []);
+        for (const key of new Set([...beforeGroups.keys(), ...afterGroups.keys()])) {
+            const olds = beforeGroups.get(key) ?? [];
+            const news = afterGroups.get(key) ?? [];
+            for (let index = 0; index < Math.max(olds.length, news.length); index++) {
+                const old = olds[index];
+                const next = news[index];
+                const reference = next ?? old;
+                const base = { station, direction: reference.direction, dayType, trainNumber: reference.trainNumber, headsign: reference.headsign };
+                if (old && next) {
+                    if (Math.abs(old.minutes - next.minutes) >= SHIFT_THRESHOLD_MINUTES) {
+                        changes.push({ ...base, kind: 'shifted', beforeMinutes: old.minutes, afterMinutes: next.minutes });
+                    } else {
+                        comparison.unchanged++;
+                    }
+                } else if (old) {
+                    changes.push({ ...base, kind: 'removed', beforeMinutes: old.minutes });
+                } else {
+                    changes.push({ ...base, kind: 'added', afterMinutes: next.minutes });
+                }
+            }
+        }
+    }
+}
+
+function sortChanges(changes: TrainChange[]): TrainChange[] {
+    return changes.sort((a, b) => a.dayType.localeCompare(b.dayType) || a.station.localeCompare(b.station) ||
+        a.direction.localeCompare(b.direction) || (a.afterMinutes ?? a.beforeMinutes ?? 0) - (b.afterMinutes ?? b.beforeMinutes ?? 0));
+}
+
 /** Compares two GO snapshots at Barrie's stations, one normal Weekday, Saturday and Sunday each; trains are matched by train number. */
 export function diffGoFeeds(before: RegionalGoFeed, after: RegionalGoFeed): GoFeedDiff {
     const changes: TrainChange[] = [];
@@ -88,43 +128,19 @@ export function diffGoFeeds(before: RegionalGoFeed, after: RegionalGoFeed): GoFe
     const beforeFeed = archivedFeed(before);
     const afterFeed = archivedFeed(after);
     for (const { dayType } of DAY_TYPES) {
-        const beforeDate = representativeServiceDate(before, dayType);
-        const afterDate = representativeServiceDate(after, dayType);
-        const comparison: DayTypeComparison = { dayType, beforeDate, afterDate, unchanged: 0, issues: [] };
+        const comparison: DayTypeComparison = {
+            dayType, beforeDate: representativeServiceDate(before, dayType), afterDate: representativeServiceDate(after, dayType), unchanged: 0, issues: [],
+        };
         comparisons.push(comparison);
-        if (!beforeDate && !afterDate) continue;
-        for (const station of STATIONS) {
-            const beforeResult = beforeDate ? getGoTrainEvents(beforeFeed, station, beforeDate) : null;
-            const afterResult = afterDate ? getGoTrainEvents(afterFeed, station, afterDate) : null;
-            for (const result of [beforeResult, afterResult]) {
-                if (result?.status === 'unavailable') comparison.issues.push(...result.issues);
-            }
-            const beforeGroups = groupByTrain(beforeResult?.events ?? []);
-            const afterGroups = groupByTrain(afterResult?.events ?? []);
-            for (const key of new Set([...beforeGroups.keys(), ...afterGroups.keys()])) {
-                const olds = beforeGroups.get(key) ?? [];
-                const news = afterGroups.get(key) ?? [];
-                for (let index = 0; index < Math.max(olds.length, news.length); index++) {
-                    const old = olds[index];
-                    const next = news[index];
-                    const reference = next ?? old;
-                    const base = { station, direction: reference.direction, dayType, trainNumber: reference.trainNumber, headsign: reference.headsign };
-                    if (old && next) {
-                        if (Math.abs(old.minutes - next.minutes) >= SHIFT_THRESHOLD_MINUTES) {
-                            changes.push({ ...base, kind: 'shifted', beforeMinutes: old.minutes, afterMinutes: next.minutes });
-                        } else {
-                            comparison.unchanged++;
-                        }
-                    } else if (old) {
-                        changes.push({ ...base, kind: 'removed', beforeMinutes: old.minutes });
-                    } else {
-                        changes.push({ ...base, kind: 'added', afterMinutes: next.minutes });
-                    }
-                }
-            }
-        }
+        compareServiceDates(beforeFeed, afterFeed, comparison, changes);
     }
-    changes.sort((a, b) => a.dayType.localeCompare(b.dayType) || a.station.localeCompare(b.station) ||
-        a.direction.localeCompare(b.direction) || (a.afterMinutes ?? a.beforeMinutes ?? 0) - (b.afterMinutes ?? b.beforeMinutes ?? 0));
-    return { changes, comparisons };
+    return { changes: sortChanges(changes), comparisons };
+}
+
+/** Compares two GO timetables on chosen service dates at Barrie's stations; trains are matched by train number. */
+export function diffGoFeedsOnDates(before: RegionalGoFeed, after: RegionalGoFeed, beforeDate: string | null, afterDate: string | null, dayType: ServiceDayType): GoFeedDiff {
+    const changes: TrainChange[] = [];
+    const comparison: DayTypeComparison = { dayType, beforeDate, afterDate, unchanged: 0, issues: [] };
+    compareServiceDates(before, after, comparison, changes);
+    return { changes: sortChanges(changes), comparisons: [comparison] };
 }
