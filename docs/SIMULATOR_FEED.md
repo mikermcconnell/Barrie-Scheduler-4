@@ -56,10 +56,13 @@ interface SimulatorDay {
     // [stopId, routeStopIndex, schedArr, schedDep, obsArr|null, obsDep|null, boardings, alightings, load|null, flags]
     visits: [string, number, number, number, number | null, number | null, number, number, number | null, number][];
   }[];
+  // Optional: [lat, lon] of each stop that did not resolve to GTFS, keyed by its `streets:<StopID>`
+  // visit id (mostly temporary detour stops). Omitted when every stop resolved.
+  stops?: Record<string, [number, number]>;
 }
 ```
 
-Visit flags: `1` timepoint, `2` passenger-only. Breaking changes bump `schema` and must be made in both repositories (`functions/src/simulatorDay.ts` here, `src/data/streetsDay.ts` in the simulator).
+Visit flags: `1` timepoint, `2` passenger-only. `stops` is an additive field within schema 1: readers that don't know it ignore it. The simulator uses it to place temporary stops when it draws detour paths. Breaking changes bump `schema` and must be made in both repositories (`functions/src/simulatorDay.ts` here, `src/data/streetsDay.ts` in the simulator).
 
 ## Access
 
