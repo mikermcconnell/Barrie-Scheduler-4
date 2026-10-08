@@ -57,6 +57,7 @@ Load feature docs only when the task directly touches that feature.
 - Read-only GO connection grid in Master Schedule: `docs/REGIONAL_TRANSIT_CONNECTIONS.md`
 - Schedule Editor verification history: `docs/SCHEDULE_EDITOR_TEST_SUMMARY.md` only when point-in-time test history is relevant
 - GTFS/STREETS auto-ingest: `docs/AUTO_INGEST_SETUP.md`
+- City Simulator day feed (STREETS replay read model): `docs/SIMULATOR_FEED.md`; add `docs/SCHEMA.md` for persistence/access changes
 - Dwell Incident Review: `docs/DWELL_CASCADE_FEATURE.md`
 - Operations metrics and schemas: `docs/OPERATIONS_DASHBOARD_METRICS.md`
 - Transit On Demand zone editor and assignment: `docs/TOD_ZONES.md`

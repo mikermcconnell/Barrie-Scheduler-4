@@ -17,6 +17,8 @@ import {
   hydrateLoadProfileMonthlyViews,
   isLoadProfileMonthlyView,
 } from './performanceLoadProfileView';
+import { simulatorDayIndex, type SimulatorDayPointer } from './simulatorDay';
+import { SIMULATOR_FEED_METADATA_PATH } from './simulatorDayPublish';
 import {
   getPerformanceMonthlyPaths,
   PERFORMANCE_DASHBOARD_VIEW_MODES,
@@ -35,7 +37,9 @@ type SharedWorkspace =
   | 'strategicPlanRidershipTrend'
   | 'ridershipTrendTod'
   | 'strategicPlanRidershipTod'
-  | 'fleetPlan';
+  | 'fleetPlan'
+  | 'simulatorDayIndex'
+  | 'simulatorDay';
 
 type DataSourceKind = 'transitApp' | 'performance' | 'fleetPlan';
 
@@ -46,6 +50,8 @@ interface SharedWorkspacePayload {
   routeId?: string | null;
   dateRange?: { start: string; end: string };
   detailMode?: PerformanceDetailMode;
+  /** YYYY-MM-DD, for `simulatorDay`. */
+  serviceDate?: string;
 }
 
 function getDb() {
@@ -85,6 +91,8 @@ function isWorkspace(value: unknown): value is SharedWorkspace {
     'ridershipTrendTod',
     'strategicPlanRidershipTod',
     'fleetPlan',
+    'simulatorDayIndex',
+    'simulatorDay',
   ].includes(String(value));
 }
 
@@ -250,6 +258,12 @@ export function canReadLoadProfiles(
   return operationsAllowed && loadProfilesAllowed;
 }
 
+/**
+ * The simulator day feed carries per-trip passenger loads, so it uses the Load Profiles boundary
+ * (Operations access plus passenger-load access; admin/internal by default). See docs/SIMULATOR_FEED.md.
+ */
+export const canReadSimulatorFeed = canReadLoadProfiles;
+
 async function assertCanReadLoadProfiles(
   uid: string,
   requestingTeamId: string,
@@ -396,6 +410,12 @@ export function assertValidLoadProfilesRequest(payload: SharedWorkspacePayload):
   if (inclusiveDays > 120) {
     throw Object.assign(new Error('Load Profiles date ranges cannot exceed 120 days.'), { status: 400 });
   }
+}
+
+export function isSimulatorDayPath(path: unknown, sourceTeamId: string, date: string): boolean {
+  if (typeof path !== 'string') return false;
+  const prefix = `teams/${sourceTeamId}/performanceViews/simulator-days/${date}/`;
+  return path.startsWith(prefix) && /^[A-Za-z0-9-]+[.]json$/.test(path.slice(prefix.length));
 }
 
 function dateInRange(date: string, range?: { start: string; end: string }): boolean {
@@ -750,6 +770,24 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
       return getTodRidershipProjection(payload.sourceTeamId);
     case 'fleetPlan':
       return getFleetPlan(payload.sourceTeamId);
+    case 'simulatorDayIndex': {
+      const snap = await getDb().doc(SIMULATOR_FEED_METADATA_PATH(payload.sourceTeamId)).get();
+      const days = snap.data()?.days as Record<string, SimulatorDayPointer> | undefined;
+      return days ? simulatorDayIndex(days) : null;
+    }
+    case 'simulatorDay': {
+      const date = payload.serviceDate ?? '';
+      if (!isStrictDate(date)) {
+        throw Object.assign(new Error('serviceDate must be a valid YYYY-MM-DD date.'), { status: 400 });
+      }
+      const snap = await getDb().doc(SIMULATOR_FEED_METADATA_PATH(payload.sourceTeamId)).get();
+      const pointer = (snap.data()?.days as Record<string, SimulatorDayPointer> | undefined)?.[date];
+      if (!pointer) return null;
+      if (!isSimulatorDayPath(pointer.storagePath, payload.sourceTeamId, date)) {
+        throw new Error('Stored simulator day path is invalid.');
+      }
+      return readStorageJson(pointer.storagePath);
+    }
     default:
       return null;
   }
@@ -806,6 +844,14 @@ export const sharedWorkspaceData = onRequest(
       if (payload.workspace === 'fleetPlan' && !canReadFleetPlanEvidence(requestingMember, decoded)) {
         throw Object.assign(new Error('Fleet Plan or Strategic Plan access is required.'), { status: 403 });
       }
+      if (payload.workspace === 'simulatorDayIndex' || payload.workspace === 'simulatorDay') {
+        await assertCanReadLoadProfiles(
+          decoded.uid,
+          payload.requestingTeamId,
+          requestingMember,
+          decoded,
+        );
+      }
       const operatorDwellAllowed = canReadOperatorDwell(requestingMember, decoded);
       const operatorDwellRequested = payload.workspace === 'performanceData'
         && payload.detailMode === 'operator-dwell';
@@ -831,6 +877,7 @@ export const sharedWorkspaceData = onRequest(
         routeId: typeof payload.routeId === 'string' ? payload.routeId : null,
         dateRange: payload.dateRange,
         detailMode: payload.detailMode,
+        serviceDate: typeof payload.serviceDate === 'string' ? payload.serviceDate : undefined,
       });
       const data = payload.workspace.startsWith('performance') && !operatorDwellAllowed
         ? redactOperatorDwellEvidence(loadedData)
