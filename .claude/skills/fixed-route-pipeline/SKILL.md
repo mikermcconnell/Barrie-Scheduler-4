@@ -1,53 +1,58 @@
 ---
 name: fixed-route-pipeline
-description: Use when modifying the New Schedule wizard, CSV/performance parsing, runtime approval, or schedule generation. Ensures data flow integrity.
+description: Use when modifying the New Schedule wizard (Steps 1-5), CSV parsing, runtime analysis, schedule generation, or connection handoff. Ensures data flow integrity.
 ---
 
 ## Fixed Route Pipeline
 
-The New Schedule build flow has four core steps followed by an optional
-connections step. Always respect this data flow and the trusted-runtime gate.
+The New Schedule feature follows a strict five-step pipeline followed by protected draft review and publishing. Always respect this data flow.
 
 ### Pipeline Flow
 
-```
-Uploaded runtime CSV or selected Performance data
+```text
+Runtime CSV or imported performance history
     ↓
-Step 1: Select/import source → RuntimeData
+Step 1: Select source → parser/performance computer → RuntimeData
     ↓
-Step 2: Review + approve → ApprovedRuntimeContract v2
+Step 2: Analyze and approve → ApprovedRuntimeContract v2
     ↓
-Step 3: Configure → User sets cycle time, recovery mode, blocks
+Step 3: Configure → cycle, recovery, and blocks
     ↓
 Step 4: Generate/edit → scheduleGenerator.ts → MasterRouteTable[]
     ↓
-Step 5: Add/review connections
+Step 5: Configure/optimize connections
+    ↓
+Protected draft editor → Save Draft → Submit for Review → Ready → Publish
 ```
 
 ### Key Files
 
 | Step | Component | Utility |
 |------|-----------|---------|
-| 1 | `components/NewSchedule/steps/Step1Upload.tsx` | `components/NewSchedule/utils/csvParser.ts` |
-| 2 | `components/NewSchedule/steps/Step2Analysis.tsx` | `utils/ai/runtimeAnalysis.ts`, `utils/ai/runtimeEvidenceEligibility.ts` |
-| 3 | `components/NewSchedule/steps/Step3Build.tsx` | `components/NewSchedule/utils/step2ApprovedRuntimeModelAdapter.ts` |
-| 4 | `components/NewSchedule/steps/Step4Schedule.tsx` | `utils/schedule/scheduleGenerator.ts` |
-| 5 | `components/NewSchedule/steps/Step5Connections.tsx` | `utils/connections/` |
+| 1 | `Step1Upload.tsx` | `csvParser.ts`, `performanceRuntimeComputer.ts` |
+| 2 | `Step2Analysis.tsx` | `runtimeAnalysis.ts`, `step2ReviewBuilder.ts` |
+| 3 | `Step3Build.tsx` | `scheduleGenerator.ts` validation |
+| 4 | `Step4Schedule.tsx` | `scheduleGenerator.ts` |
+| 5 | `Step5Connections.tsx` | `connectionOptimizer.ts` |
 
 ### Critical Data Handoffs
 
-1. **Step 1 → Step 2**: parsed runtime observations and source metadata.
-2. **Step 2 review → approval**: visible `reviewBuckets` remain separate from trusted `approvedBuckets`; approval produces a current `ApprovedRuntimeContract` schema v2.
-3. **Approval → Step 3/4**: stale or missing approval blocks navigation, generation, export, and Master upload.
-4. **Wizard → generator**: pass only the approved planning buckets, bands, direction summary, canonical stop order, and start-orientation buckets from the current contract.
-5. **Generator → Step 4**: `MasterRouteTable[]` with per-segment `runtimeSourceBreakdown` provenance.
+1. **Step 1 → Step 2**: parsed or computed `RuntimeData` plus source/canonical-stop evidence.
+2. **Step 2 → Wizard state**: a current schema-v2 `ApprovedRuntimeContract`; visible review data alone is never a generation input.
+3. **Approved contract → Generator**: only trusted buckets and direction-band summaries from the current contract.
+4. **Generator → Step 4**: `MasterRouteTable[]` plus an exact generation-input fingerprint.
+5. **Step 4 → Step 5**: edited tables remain bound to the same approved/configured input lineage.
+6. **Step 5 → Draft editor**: optimized or unchanged tables; never a direct Master write.
 
 ### Rules
 
-- `docs/rules/LOCKED_LOGIC.md` owns eligibility and generation behavior.
-- Strict wizard generation uses an eligible approved bucket. It never falls
-  back to raw CSV segments, another orientation, unapproved data, or a default
-  runtime.
+- The current `ApprovedRuntimeContract` is the source of truth for travel times; raw, weak, missing, or stale evidence never becomes a generation fallback.
+- Review North-start and South-start paired cycles independently; exclusions are orientation-specific.
+- State flows down through the wizard, never back up.
+- Each step validates before allowing progression.
+- Changing source, approval, day type, autofill, or Step 3 configuration invalidates generated output until regeneration.
+- Step 4 regularization cannot be applied when its preview contains overlaps.
+- Publishing remains in the Draft → Review → Ready → Publish workflow.
 - Use the exact approved half-hour bucket when available. Otherwise use the
   nearest eligible approved bucket from the same direction/start orientation,
   measured around the 24-hour clock with the earlier bucket winning a tie.
@@ -56,4 +61,3 @@ Step 5: Add/review connections
 - If no eligible same-orientation bucket exists, or the chosen bucket lacks a
   canonical segment, generation fails closed with
   `MissingApprovedRuntimeError`.
-- State flows down through the wizard; each step validates before progression.
