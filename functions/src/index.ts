@@ -39,6 +39,7 @@ import {
   parseRidershipTrendProjection,
 } from '../../utils/ridership-trends/model';
 import { RIDERSHIP_TREND_BASELINE_HASH } from '../../utils/ridership-trends/types';
+import { buildDwellHistory } from '../../utils/performanceDwellHistory';
 import {
   DEFAULT_PERFORMANCE_LOAD_CAPACITY_CONFIG,
   normalizePerformanceLoadCapacityConfig,
@@ -747,6 +748,7 @@ function buildPerformanceReportSummary(summary: PerformanceDataSummary): Perform
   return {
     ...summary,
     dailySummaries: reportDays,
+    dwellHistory: buildDwellHistory(sortedDays),
     metadata: {
       ...summary.metadata,
       dateRange: reportDates.length > 0

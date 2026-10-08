@@ -3,7 +3,17 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { buildReportHtml } from './reportHtml';
+import {
+  appendFeaturedTripHistory,
+  FeaturedTrip,
+  FeaturedTripHistoryEntry,
+  parseFeaturedTripHistory,
+  recentFeaturedRouteIds,
+  selectFeaturedTrip,
+} from './featuredTrip';
 import { DwellIncident, PerformanceDataSummary } from './types';
+import { inferDayTripLoads } from '../../utils/performanceRouteLoad';
+import { buildDwellHistory, summarizeWeeklyDwell, WeeklyDwellSummary } from '../../utils/performanceDwellHistory';
 import { hasValidApiKey } from './requestAuth';
 
 const REPORT_RECIPIENTS = defineSecret('REPORT_RECIPIENTS');
@@ -124,6 +134,81 @@ function latestDayHasDwellSnapshotGap(summary: PerformanceDataSummary): boolean 
   if (!dwell) return false;
 
   return dwell.totalTrackedDwellMinutes > 0 && (dwell.incidents?.length ?? 0) === 0;
+}
+
+type DaySummary = PerformanceDataSummary['dailySummaries'][number];
+
+/**
+ * Weekly dwell ranking for the email. The full section shows when the latest day
+ * closes a Monday–Sunday week (the Monday send); `forceSection` previews it any day.
+ */
+function weeklyDwellForReport(
+  summary: PerformanceDataSummary,
+  latestDate: string,
+  forceSection = false,
+): { weeklyDwell: WeeklyDwellSummary | null; showWeeklyDwellSection: boolean } {
+  const weeklyDwell = summarizeWeeklyDwell(summary.dwellHistory ?? buildDwellHistory(summary.dailySummaries), latestDate);
+  return {
+    weeklyDwell,
+    showWeeklyDwellSection: !!weeklyDwell && (forceSection || weeklyDwell.lastWeek.weekEnd === latestDate),
+  };
+}
+
+function featuredTripHistoryRef(db: admin.firestore.Firestore): admin.firestore.DocumentReference {
+  // Kept apart from the metadata doc, which each import overwrites.
+  return db.doc(`teams/${DEFAULT_TEAM_ID}/performanceData/featuredTripHistory`);
+}
+
+/**
+ * The report snapshot strips trip-level detail, so the latest day's ridership
+ * heatmaps and trip OTP are read from that month's dashboard views, or the
+ * full month file when those views are missing.
+ */
+async function loadLatestDayTripDetail(params: {
+  bucket: { file(path: string): { download(): Promise<[Buffer]> } };
+  meta: FirebaseFirestore.DocumentData;
+  latestDay: DaySummary;
+}): Promise<DaySummary> {
+  const { bucket, meta, latestDay } = params;
+  if (latestDay.ridershipHeatmaps?.length && latestDay.byTrip?.length) return latestDay;
+
+  const month = latestDay.date.slice(0, 7);
+  const asPath = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
+  const dayFromFile = async (path: string | undefined): Promise<DaySummary | undefined> => {
+    if (!path) return undefined;
+    const file = await loadSummaryJson(bucket, path);
+    return file.dailySummaries.find(day => day.date === latestDay.date);
+  };
+
+  const ridershipViewPath = asPath(meta.dashboardMonthlyStoragePaths?.ridership?.[month]);
+  const overviewViewPath = asPath(meta.dashboardMonthlyStoragePaths?.overview?.[month]);
+  if (ridershipViewPath && overviewViewPath) {
+    const [ridershipDay, overviewDay] = await Promise.all([dayFromFile(ridershipViewPath), dayFromFile(overviewViewPath)]);
+    return { ...latestDay, ridershipHeatmaps: ridershipDay?.ridershipHeatmaps, byTrip: overviewDay?.byTrip ?? [] };
+  }
+
+  const fullDay = await dayFromFile(asPath(meta.monthlyStoragePaths?.[month]));
+  return { ...latestDay, ridershipHeatmaps: fullDay?.ridershipHeatmaps, byTrip: fullDay?.byTrip ?? [] };
+}
+
+async function pickFeaturedTrip(params: {
+  db: admin.firestore.Firestore;
+  bucket: { file(path: string): { download(): Promise<[Buffer]> } };
+  meta: FirebaseFirestore.DocumentData;
+  latestDay: DaySummary;
+}): Promise<{ featuredTrip: FeaturedTrip | null; history: FeaturedTripHistoryEntry[]; tripDay: DaySummary }> {
+  let tripDay = params.latestDay;
+  let history: FeaturedTripHistoryEntry[] = [];
+  try {
+    tripDay = await loadLatestDayTripDetail(params);
+    const historySnap = await featuredTripHistoryRef(params.db).get();
+    history = parseFeaturedTripHistory(historySnap.data()?.entries);
+    const priorHistory = history.filter(entry => entry.serviceDate !== tripDay.date);
+    return { featuredTrip: selectFeaturedTrip(tripDay, recentFeaturedRouteIds(priorHistory)), history, tripDay };
+  } catch (error) {
+    console.warn(`Trip of the Day skipped: ${error instanceof Error ? error.message : String(error)}`);
+    return { featuredTrip: null, history, tripDay };
+  }
 }
 
 async function loadSummaryJson(
@@ -275,17 +360,31 @@ export const sendDailyReport = onSchedule(
       return;
     }
 
+    const { featuredTrip, history } = await pickFeaturedTrip({ db, bucket, meta, latestDay });
+
     await queueMail({
       db,
       to: recipients,
       subject: buildReportSubject(latestDay),
-      html: buildReportHtml({ latestDay, trendDays, teamName: TEAM_NAME }),
+      html: buildReportHtml({
+        latestDay,
+        trendDays,
+        teamName: TEAM_NAME,
+        featuredTrip,
+        ...weeklyDwellForReport(summary, latestDay.date),
+      }),
     });
 
     await metadataRef.set({
       lastReportSentServiceDate: latestServiceDate,
       lastReportSentAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
+
+    if (featuredTrip) {
+      await featuredTripHistoryRef(db).set({
+        entries: appendFeaturedTripHistory(history, latestServiceDate, featuredTrip),
+      });
+    }
 
     console.log(`Daily report queued for ${recipients.length} recipient(s): ${latestServiceDate}`);
   }
@@ -312,6 +411,7 @@ export const testDailyReport = onRequest(
     }
     const useFullSummary = ((req.query.useFullSummary as string) || '') === '1';
     const debug = ((req.query.debug as string) || '') === '1';
+    const forceWeeklyDwell = ((req.query.weeklyDwell as string) || '') === '1';
 
     const db = admin.firestore();
     const bucket = admin.storage().bucket();
@@ -334,6 +434,9 @@ export const testDailyReport = onRequest(
     const sorted = [...summary.dailySummaries].sort((a, b) => b.date.localeCompare(a.date));
     const latestDay = sorted[0];
     const trendDays = sorted.slice(0, 56).reverse();
+    // Test sends preview the pick but never record it, so they don't affect rotation.
+    const { featuredTrip, tripDay } = await pickFeaturedTrip({ db, bucket, meta, latestDay });
+    const weekly = weeklyDwellForReport(summary, latestDay.date, forceWeeklyDwell);
 
     if (debug) {
       const reportableIncidents = (latestDay.byOperatorDwell?.incidents ?? []).filter(isReportableDwellIncident);
@@ -368,6 +471,40 @@ export const testDailyReport = onRequest(
         useFullSummary,
         summarySource: summaryResult.source,
         latestDate: latestDay.date,
+        tripDetailPaths: {
+          ridershipViews: Object.keys(meta.dashboardMonthlyStoragePaths?.ridership ?? {}),
+          overviewViews: Object.keys(meta.dashboardMonthlyStoragePaths?.overview ?? {}),
+          monthly: Object.keys(meta.monthlyStoragePaths ?? {}),
+        },
+        featuredTripInputs: (() => {
+          const inferred = inferDayTripLoads(tripDay);
+          return {
+            heatmaps: tripDay.ridershipHeatmaps?.length ?? 0,
+            heatmapTrips: (tripDay.ridershipHeatmaps ?? []).reduce((sum, heatmap) => sum + heatmap.trips.length, 0),
+            byTrip: tripDay.byTrip?.length ?? 0,
+            usableTrips: inferred.length,
+            peakLoadAtLeast15: inferred.filter(trip => trip.peakLoad >= 15).length,
+            fiveOrMoreStops: inferred.filter(trip => trip.stops.length >= 5).length,
+            clampedStopsAtMost2: inferred.filter(trip => trip.clampedStops <= 2).length,
+            maxPeakLoad: inferred.reduce((max, trip) => Math.max(max, trip.peakLoad), 0),
+          };
+        })(),
+        featuredTrip: featuredTrip
+          ? {
+              routeId: featuredTrip.routeId,
+              direction: featuredTrip.direction,
+              departure: featuredTrip.departure,
+              block: featuredTrip.block,
+              peakLoad: Math.round(featuredTrip.peakLoad),
+              peakStopName: featuredTrip.peakStopName,
+              fullStops: featuredTrip.fullStops,
+              lateMinutes: featuredTrip.lateMinutes,
+              reason: featuredTrip.reason,
+              score: featuredTrip.score,
+              scoreParts: featuredTrip.scoreParts,
+              stops: featuredTrip.stops,
+            }
+          : null,
         byRouteCount: latestDay.byRoute.length,
         byHourCount: latestDay.byHour.length,
         totalDwellMinutes: latestDay.byOperatorDwell?.totalTrackedDwellMinutes ?? null,
@@ -414,11 +551,26 @@ export const testDailyReport = onRequest(
         latestDay,
         trendDays,
         teamName: TEAM_NAME,
+        featuredTrip,
+        ...weekly,
       }),
     });
     res.json({
       success: true,
       sentTo: to,
+      weeklyDwell: weekly.weeklyDwell
+        ? {
+            lastWeek: weekly.weeklyDwell.lastWeek,
+            weeksCompared: weekly.weeklyDwell.weeks.length,
+            percentile: weekly.weeklyDwell.percentile,
+            medianPer100Trips: weekly.weeklyDwell.medianPer100Trips,
+            trendPercent: weekly.weeklyDwell.trendPercent,
+            sectionShown: weekly.showWeeklyDwellSection,
+          }
+        : null,
+      featuredTrip: featuredTrip
+        ? `Route ${featuredTrip.routeId} ${featuredTrip.direction} ${featuredTrip.departure} (${featuredTrip.reason})`
+        : null,
       subject: buildReportSubject(latestDay),
       summarySource: summaryResult.source,
       useFullSummary,

@@ -242,6 +242,7 @@ interface StopAccumulator {
 }
 
 interface TripRecord {
+    tripId: string | null;
     routeId: string;
     date: string;
     departure: string;
@@ -307,6 +308,43 @@ function analyzeTrip(trip: TripRecord): void {
     const run = runLoads(trip.served.map(s => s.movement), isLoopRoute(trip.routeId));
     trip.carriedInLoad = run.loads ? run.carriedIn : 0;
     trip.analysis = { loads: run.loads, ratio: run.ratio, clampedStops: run.clamped.filter(Boolean).length };
+}
+
+type RidershipHeatmap = NonNullable<DailySummary['ridershipHeatmaps']>[number];
+
+function buildHeatmapTripRecords(heatmap: RidershipHeatmap, stopKeys: string[], date: string): TripRecord[] {
+    const records: TripRecord[] = [];
+    heatmap.trips.forEach((trip, tripIndex) => {
+        const served: TripRecord['served'] = [];
+        const servedStops: Array<{ stopId: string; stopName: string }> = [];
+        heatmap.cells.forEach((row, stopIndex) => {
+            const cell = row[tripIndex];
+            if (!cell) return;
+            served.push({ stopKey: stopKeys[stopIndex], movement: cell });
+            servedStops.push(heatmap.stops[stopIndex]);
+        });
+        if (served.length === 0) return;
+        const first = servedStops[0];
+        const last = servedStops[servedStops.length - 1];
+        records.push({
+            tripId: trip.tripId ?? null,
+            routeId: heatmap.routeId,
+            date,
+            departure: trip.terminalDepartureTime,
+            block: trip.block,
+            vehicleId: trip.vehicleId ?? null,
+            served,
+            firstStopId: first.stopId,
+            firstStopName: first.stopName,
+            lastStopId: last.stopId,
+            lastStopName: last.stopName,
+            boardings: served.reduce((sum, s) => sum + s.movement[0], 0),
+            hasCounts: served.some(({ movement: [b, a] }) => b > 0 || a > 0),
+            carriedInLoad: 0,
+            analysis: { loads: null, ratio: null, clampedStops: 0 },
+        });
+    });
+    return records;
 }
 
 function buildBusiestTrips(trips: TripRecord[], stopNames: Map<string, string>): BusyTrip[] {
@@ -478,37 +516,10 @@ export function buildRouteLoadAnalysis(days: DailySummary[], period: LoadTimePer
                 return key;
             });
 
-            heatmap.trips.forEach((trip, tripIndex) => {
-                const served: TripRecord['served'] = [];
-                const servedStops: Array<{ stopId: string; stopName: string }> = [];
-                heatmap.cells.forEach((row, stopIndex) => {
-                    const cell = row[tripIndex];
-                    if (!cell) return;
-                    served.push({ stopKey: stopKeys[stopIndex], movement: cell });
-                    servedStops.push(heatmap.stops[stopIndex]);
-                });
-                if (served.length === 0) return;
-                const first = servedStops[0];
-                const last = servedStops[servedStops.length - 1];
-                const record: TripRecord = {
-                    routeId: heatmap.routeId,
-                    date: day.date,
-                    departure: trip.terminalDepartureTime,
-                    block: trip.block,
-                    vehicleId: trip.vehicleId ?? null,
-                    served,
-                    firstStopId: first.stopId,
-                    firstStopName: first.stopName,
-                    lastStopId: last.stopId,
-                    lastStopName: last.stopName,
-                    boardings: served.reduce((sum, s) => sum + s.movement[0], 0),
-                    hasCounts: served.some(({ movement: [b, a] }) => b > 0 || a > 0),
-                    carriedInLoad: 0,
-                    analysis: { loads: null, ratio: null, clampedStops: 0 },
-                };
-                route!.trips.push(record);
+            for (const record of buildHeatmapTripRecords(heatmap, stopKeys, day.date)) {
+                route.trips.push(record);
                 dayTrips.push(record);
-            });
+            }
         }
         dayTrips.filter(trip => trip.hasCounts).forEach(analyzeTrip);
         allTrips.push(...dayTrips);
@@ -610,4 +621,66 @@ export function buildRouteLoadAnalysis(days: DailySummary[], period: LoadTimePer
 
 export function buildRouteLoadViews(days: DailySummary[], period: LoadTimePeriod = 'all'): RouteLoadView[] {
     return buildRouteLoadAnalysis(days, period).views;
+}
+
+export interface InferredTripStop {
+    stopName: string;
+    stopId: string;
+    isTimepoint: boolean;
+    boardings: number;
+    alightings: number;
+    /** Inferred onboard load leaving this stop. */
+    load: number;
+}
+
+export interface InferredTripLoad {
+    tripId: string | null;
+    routeId: string;
+    routeName: string;
+    direction: string;
+    departure: string;
+    block: string;
+    stops: InferredTripStop[];
+    peakLoad: number;
+    peakStopName: string;
+    boardings: number;
+    clampedStops: number;
+}
+
+/**
+ * Inferred load for every usable trip on one service day, in stop order. Uses
+ * the same inference as the route views, including loop carry-over.
+ */
+export function inferDayTripLoads(day: Pick<DailySummary, 'date' | 'ridershipHeatmaps'>): InferredTripLoad[] {
+    const result: InferredTripLoad[] = [];
+    for (const heatmap of day.ridershipHeatmaps ?? []) {
+        const stopsByKey = new Map(heatmap.stops.map(stop => [stopKeyFor(stop), stop]));
+        const records = buildHeatmapTripRecords(heatmap, heatmap.stops.map(stopKeyFor), day.date);
+        for (const record of records) {
+            if (!record.hasCounts) continue;
+            analyzeTrip(record);
+            const loads = record.analysis.loads;
+            if (!loads) continue;
+            let peakIndex = 0;
+            loads.forEach((load, index) => { if (load > loads[peakIndex]) peakIndex = index; });
+            const stops = record.served.map(({ stopKey, movement: [boardings, alightings] }, index): InferredTripStop => {
+                const stop = stopsByKey.get(stopKey)!;
+                return { stopName: stop.stopName, stopId: stop.stopId, isTimepoint: stop.isTimepoint, boardings, alightings, load: loads[index] };
+            });
+            result.push({
+                tripId: record.tripId,
+                routeId: heatmap.routeId,
+                routeName: heatmap.routeName,
+                direction: heatmap.direction,
+                departure: record.departure,
+                block: record.block,
+                stops,
+                peakLoad: loads[peakIndex],
+                peakStopName: stops[peakIndex].stopName,
+                boardings: record.boardings,
+                clampedStops: record.analysis.clampedStops,
+            });
+        }
+    }
+    return result;
 }
