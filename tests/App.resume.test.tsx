@@ -47,13 +47,6 @@ vi.mock('../components/contexts/ToastContext', () => ({
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-vi.mock('../hooks/useWorkspaceAccess', () => ({
-  useWorkspaceAccess: () => ({
-    canAccess: () => true,
-    loading: workspaceAccessState.loading,
-  }),
-}));
-
 vi.mock('../components/modals/AuthModal', () => ({
   AuthModal: (): null => null,
 }));
@@ -87,7 +80,7 @@ vi.mock('../components/layout/Header', () => ({
 vi.mock('../hooks/useWorkspaceAccess', () => ({
   useWorkspaceAccess: () => ({
     canAccess: (feature: string) => !workspaceAccessState.blockedFeatures.has(feature),
-    loading: false,
+    loading: workspaceAccessState.loading,
   }),
 }));
 
