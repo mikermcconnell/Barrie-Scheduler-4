@@ -9,7 +9,8 @@
     "deploy": "firebase deploy --only functions",
     "admin:scheduler": "node scripts/set-scheduler-admin.mjs",
     "backfill:dashboard-views": "npm run build && node scripts/backfill-performance-dashboard-views.mjs",
-    "bootstrap:ridership-trends": "npm run build && node scripts/bootstrap-ridership-trends.mjs"
+    "bootstrap:ridership-trends": "npm run build && node scripts/bootstrap-ridership-trends.mjs",
+    "backfill:simulator-days": "npm run build && node scripts/backfill-simulator-days.mjs"
   },
   "engines": {
     "node": "22"

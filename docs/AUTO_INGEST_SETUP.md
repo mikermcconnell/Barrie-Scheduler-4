@@ -263,7 +263,8 @@ CSV. A later background failure appears on the import record and in
 6. **Merge** — loads existing data, adds the new day (or replaces an older copy of that date), and publishes it with a revision check; concurrent server imports reload and retry safely, and an older queued file cannot overwrite a newer same-day correction
 7. **Firebase Storage** stores monthly performance JSON chunks plus lightweight overview/report snapshots, while **Firestore** stores queue status, metadata, and chunk pointers
 8. **Performance Dashboard** shows the updated data after background processing finishes
-9. **Ridership Trends** replaces the matching service date in its compact long-range boarding projection, so annual Planning Data history survives detailed-data retention
+9. **City Simulator feed** — after the import completes, `publishSimulatorDays` publishes a per-day replay file for the City Simulator (`docs/SIMULATOR_FEED.md`); a failure there does not affect the import
+10. **Ridership Trends** replaces the matching service date in its compact long-range boarding projection, so annual Planning Data history survives detailed-data retention
 
 Data accumulates over time — each day appends to your history. The app stores performance history in monthly chunks so the daily import does not have to rebuild one huge all-history JSON file.
 
