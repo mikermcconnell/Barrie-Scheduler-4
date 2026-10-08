@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   // Ignore build output and dependencies
-  { ignores: ['dist/**', '.vercel/**', 'node_modules/**', '.claude/**', '.codex-temp/**', '.tmp/**', '.worktrees/**', 'android/**/build/**', 'android/**/assets/**', 'api/**', 'functions/lib/**'] },
+  { ignores: ['dist/**', '.vercel/**', 'node_modules/**', '.claude/**', '.codex-temp/**', '.tmp/**', '.worktrees/**', 'android/**/build/**', 'android/**/assets/**', 'api/**', 'functions/lib/**', 'output/**', 'outputs/**', 'docs/artifacts/**'] },
 
   // Base JS recommended rules
   js.configs.recommended,
@@ -22,9 +22,12 @@ export default tseslint.config(
   },
 
 
-  // Node-based utility scripts
+  // Node-based utility scripts (Playwright ones also run code in the page, hence the browser globals)
   {
-    files: ['scripts/**/*.{js,cjs,mjs,ts}', 'functions/scripts/**/*.{js,cjs,mjs,ts}', 'output/**/*.{js,cjs,mjs,ts}'],
+    files: [
+      'scripts/**/*.{js,cjs,mjs,ts}', 'functions/scripts/**/*.{js,cjs,mjs,ts}', 'tests/**/*.{js,cjs,mjs}',
+      '.codex/hooks/**/*.{js,cjs,mjs}', '*.{js,cjs,mjs}',
+    ],
     languageOptions: {
       globals: {
         Buffer: 'readonly',
@@ -34,6 +37,11 @@ export default tseslint.config(
         process: 'readonly',
         require: 'readonly',
         setTimeout: 'readonly',
+        CustomEvent: 'readonly',
+        File: 'readonly',
+        HTMLElement: 'readonly',
+        document: 'readonly',
+        window: 'readonly',
       },
     },
   },
