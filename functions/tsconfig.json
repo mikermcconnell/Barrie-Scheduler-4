@@ -14,7 +14,8 @@
     "baseUrl": ".",
     "paths": {
       "@google/generative-ai": ["./node_modules/@google/generative-ai"],
-      "xlsx": ["./node_modules/xlsx"]
+      "xlsx": ["./node_modules/xlsx"],
+      "fflate": ["./node_modules/fflate"]
     }
   },
   "compileOnSave": true,

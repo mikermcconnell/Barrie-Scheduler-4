@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
-import type { PerformanceDataSummary } from '../utils/performanceDataTypes';
+import type { PerformanceDataSummary, PerformanceTab } from '../utils/performanceDataTypes';
 
 const accessState = vi.hoisted(() => ({ allowDwell: true }));
 const canAccess = vi.hoisted(() => (feature: string) =>
@@ -37,7 +37,8 @@ vi.mock('../utils/lazyWithRetry', () => ({
         (): React.ReactElement => <div data-testid={label}>{label}</div>,
 }));
 
-vi.mock('../components/Performance/PerformanceFilterBar', () => ({
+vi.mock('../components/Performance/PerformanceFilterBar', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../components/Performance/PerformanceFilterBar')>()),
     PerformanceFilterBar: (): null => null,
     filterDailySummaries: (days: unknown[]) => days,
     getPerformanceDateWindow: (): null => null,
@@ -76,21 +77,25 @@ describe('PerformanceWorkspace navigation', () => {
         window.location.hash = '';
     });
 
-    async function renderWorkspace(): Promise<void> {
+    // URL hash routing lives in OperationsWorkspace (see performanceWorkspaceRouting.test.ts);
+    // the workspace itself takes initialTab and reports changes through onTabChange.
+    async function renderWorkspace(initialTab: PerformanceTab, onTabChange = vi.fn()): Promise<typeof onTabChange> {
         await act(async () => {
             root.render(
                 <PerformanceWorkspace
                     data={data}
                     onReimport={() => undefined}
                     onBack={() => undefined}
+                    initialTab={initialTab}
+                    onTabChange={onTabChange}
                 />
             );
         });
+        return onTabChange;
     }
 
-    it('restores Ridership on refresh and records tab changes in the URL', async () => {
-        window.location.hash = '#operations/performance/ridership';
-        await renderWorkspace();
+    it('opens the requested section and reports tab changes', async () => {
+        const onTabChange = await renderWorkspace('ridership');
 
         expect(container.textContent).toContain('performance-ridership-module');
         expect(container.querySelector('[data-tab="ridership"]')?.getAttribute('aria-pressed')).toBe('true');
@@ -98,18 +103,13 @@ describe('PerformanceWorkspace navigation', () => {
         const otpButton = container.querySelector('[data-tab="otp"]') as HTMLButtonElement;
         await act(async () => otpButton.click());
 
-        expect(window.location.hash).toBe('#operations/performance/otp');
+        expect(onTabChange).toHaveBeenLastCalledWith('otp');
         expect(container.textContent).toContain('performance-otp-module');
     });
 
-    it('updates the selected section when browser history changes the hash', async () => {
-        window.location.hash = '#operations/performance/ridership';
-        await renderWorkspace();
-
-        await act(async () => {
-            window.location.hash = '#operations/performance/otp';
-            window.dispatchEvent(new HashChangeEvent('hashchange'));
-        });
+    it('updates the selected section when the requested tab changes', async () => {
+        const onTabChange = await renderWorkspace('ridership');
+        await renderWorkspace('otp', onTabChange);
 
         expect(container.querySelector('[data-tab="otp"]')?.getAttribute('aria-pressed')).toBe('true');
         expect(container.textContent).toContain('performance-otp-module');
@@ -117,10 +117,9 @@ describe('PerformanceWorkspace navigation', () => {
 
     it('falls back safely when the requested section is inaccessible', async () => {
         accessState.allowDwell = false;
-        window.location.hash = '#operations/performance/operator-dwell';
-        await renderWorkspace();
+        const onTabChange = await renderWorkspace('operator-dwell');
 
-        expect(window.location.hash).toBe('#operations/performance');
+        expect(onTabChange).toHaveBeenCalledWith('overview');
         expect(container.querySelector('[data-tab="overview"]')?.getAttribute('aria-pressed')).toBe('true');
         expect(container.textContent).toContain('performance-system-overview');
     });
