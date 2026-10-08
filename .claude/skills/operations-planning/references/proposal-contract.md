@@ -187,6 +187,6 @@ A version 2 piece adds event boundaries. `startReliefPoint` and
 
 Scheduler 4 validates references, coverage, block immutability, source
 freshness, rule compliance, and all time/pay metrics after import. Do not add
-self-reported totals. Run `scripts/validate-proposal.cjs` to get the same
+self-reported totals. Run `.claude/skills/operations-planning/scripts/validate-proposal.cjs` to get the same
 assessment locally before hand-off. Imported content remains a draft until the protected
 submit/approve workflow succeeds.
