@@ -89,6 +89,11 @@ export interface SimulatorDay {
   gtfs: SimulatorFeedInfo & { covers: boolean; origin: string };
   quality: SimulatorDayQuality;
   trips: SimulatorTrip[];
+  /**
+   * [lat, lon] of each stop that did not resolve to GTFS, keyed by its visit id (`streets:<StopID>`):
+   * mostly temporary detour stops. Optional and additive (readers of schema 1 ignore it).
+   */
+  stops?: Record<string, [number, number]>;
 }
 
 /** Days available to replay, newest first (what the feed index returns). */
@@ -446,6 +451,16 @@ export function buildSimulatorDay(records: STREETSRecord[], options: BuildSimula
   }
   trips.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
 
+  // Where the unresolved (mostly temporary detour) stops are, so consumers can place them.
+  const stops: Record<string, [number, number]> = {};
+  for (const r of rows) {
+    const id = r.stopId.trim();
+    if (!id || gtfs?.stop(id)) continue;
+    const key = `streets:${id}`;
+    if (key in stops || !Number.isFinite(r.stopLat) || !Number.isFinite(r.stopLon) || (r.stopLat === 0 && r.stopLon === 0)) continue;
+    stops[key] = [Math.round(r.stopLat * 1e6) / 1e6, Math.round(r.stopLon * 1e6) / 1e6];
+  }
+
   return {
     schema: SIMULATOR_DAY_SCHEMA,
     serviceDate,
@@ -455,6 +470,7 @@ export function buildSimulatorDay(records: STREETSRecord[], options: BuildSimula
     gtfs: { ...(gtfs?.feed ?? { version: null, start: null, end: null }), covers: options.gtfsCovers, origin: options.gtfsOrigin },
     quality,
     trips,
+    ...(Object.keys(stops).length ? { stops } : {}),
   };
 }
 
