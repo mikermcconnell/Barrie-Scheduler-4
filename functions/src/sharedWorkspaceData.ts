@@ -9,6 +9,7 @@ import type {
   PerformanceMetadata,
 } from './types';
 import { parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
+import { RIDERSHIP_TREND_FILENAME_PATTERN } from '../../utils/ridership-trends/types';
 import { createTodRidershipProjection } from '../../utils/ridership-trends/tod';
 import type { TodPickupSummary } from '../../utils/todPickupTypes';
 import { PERFORMANCE_SCHEMA_VERSION } from './types';
@@ -747,7 +748,7 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
       const expectedPrefix = `teams/${payload.sourceTeamId}/performanceViews/ridership-trends/`;
       const filename = metadata.ridershipTrendStoragePath.slice(expectedPrefix.length);
       if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
-          || !/^\d+[.]json$/.test(filename)) {
+          || !RIDERSHIP_TREND_FILENAME_PATTERN.test(filename)) {
         throw new Error('Stored Ridership Trends projection path is invalid.');
       }
       const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);
@@ -759,7 +760,7 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
       const expectedPrefix = `teams/${payload.sourceTeamId}/performanceViews/ridership-trends/`;
       const filename = metadata.ridershipTrendStoragePath.slice(expectedPrefix.length);
       if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
-          || !/^\d+[.]json$/.test(filename)) {
+          || !RIDERSHIP_TREND_FILENAME_PATTERN.test(filename)) {
         throw new Error('Stored Ridership Trends projection path is invalid.');
       }
       const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);

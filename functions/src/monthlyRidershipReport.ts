@@ -16,7 +16,7 @@ import {
   parseTodRidershipProjection,
   type TodRidershipProjectionV1,
 } from '../../utils/ridership-trends/tod';
-import type { RidershipTrendProjectionV1 } from '../../utils/ridership-trends/types';
+import { RIDERSHIP_TREND_FILENAME_PATTERN, type RidershipTrendProjectionV1 } from '../../utils/ridership-trends/types';
 import type { TodPickupSummary } from '../../utils/todPickupTypes';
 import type { PerformanceDataSummary } from './types';
 import {
@@ -120,7 +120,7 @@ async function loadFixedProjection(params: {
   const path = metadataSnap.data()?.ridershipTrendStoragePath;
   if (typeof path !== 'string' || !path.trim()) return null;
   const prefix = `teams/${params.teamId}/performanceViews/ridership-trends/`;
-  assertTeamStoragePath(path, prefix, /^\d+[.]json$/);
+  assertTeamStoragePath(path, prefix, RIDERSHIP_TREND_FILENAME_PATTERN);
   return parseRidershipTrendProjection(await readStorageJson(params.bucket, path));
 }
 
