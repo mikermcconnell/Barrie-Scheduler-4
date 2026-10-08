@@ -106,46 +106,6 @@ function gcloudUserCredential() {
   };
 }
 
-function parseCsvLine(line) {
-  const values = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (ch === ',' && !inQuotes) {
-      values.push(current);
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-
-  values.push(current);
-  return values;
-}
-
-function parseCsv(raw, mapper) {
-  const lines = raw.split(/\r?\n/).filter(l => l.trim().length > 0);
-  if (lines.length < 2) return [];
-  const headers = parseCsvLine(lines[0]).map(h => h.trim());
-  const hdr = new Map(headers.map((h, i) => [h, i]));
-  const out = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i]);
-    const mapped = mapper(cols, hdr);
-    if (mapped) out.push(mapped);
-  }
-  return out;
-}
-
 function toGtfsDate(dateStr) {
   return String(dateStr || '').replace(/-/g, '');
 }
@@ -282,43 +242,35 @@ function isRouteReliable(stats) {
   return (stats.matched / stats.scheduled) >= MIN_ROUTE_MATCH_RATIO;
 }
 
+function dayBeforeGtfsDate(gtfsDate) {
+  const date = new Date(Date.UTC(Number(gtfsDate.slice(0, 4)), Number(gtfsDate.slice(4, 6)) - 1, Number(gtfsDate.slice(6, 8))));
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+/** Same stitching as utils/gtfs/gtfsScheduleBundle.ts: each feed ends the day before the next starts. */
 function loadGtfsState(rootDir) {
-  const tripsRaw = readFileSync(path.join(rootDir, 'gtfs', 'trips.txt'), 'utf8');
-  const calendarRaw = readFileSync(path.join(rootDir, 'gtfs', 'calendar.txt'), 'utf8');
-  const calendarDatesRaw = readFileSync(path.join(rootDir, 'gtfs', 'calendar_dates.txt'), 'utf8');
-  const tripIndex = JSON.parse(readFileSync(path.join(rootDir, 'data', 'gtfsTripIndex.json'), 'utf8'));
+  const bundle = JSON.parse(readFileSync(path.join(rootDir, 'data', 'gtfsScheduleBundle.json'), 'utf8'));
+  const feeds = [...bundle.feeds].sort((a, b) => a.feedStartDate.localeCompare(b.feedStartDate));
+  const trips = [];
+  const calendar = [];
+  const calendarDates = [];
+  const tripIndex = {};
 
-  const trips = parseCsv(tripsRaw, (cols, hdr) => ({
-    routeId: cols[hdr.get('route_id')]?.trim() ?? '',
-    serviceId: cols[hdr.get('service_id')]?.trim() ?? '',
-    tripId: cols[hdr.get('trip_id')]?.trim() ?? '',
-    headsign: cols[hdr.get('trip_headsign')]?.trim() ?? '',
-    blockId: cols[hdr.get('block_id')]?.trim() ?? '',
-  }));
-
-  const calendar = parseCsv(calendarRaw, (cols, hdr) => ({
-    serviceId: cols[hdr.get('service_id')]?.trim() ?? '',
-    days: [
-      cols[hdr.get('monday')]?.trim() === '1',
-      cols[hdr.get('tuesday')]?.trim() === '1',
-      cols[hdr.get('wednesday')]?.trim() === '1',
-      cols[hdr.get('thursday')]?.trim() === '1',
-      cols[hdr.get('friday')]?.trim() === '1',
-      cols[hdr.get('saturday')]?.trim() === '1',
-      cols[hdr.get('sunday')]?.trim() === '1',
-    ],
-    startDate: cols[hdr.get('start_date')]?.trim() ?? '',
-    endDate: cols[hdr.get('end_date')]?.trim() ?? '',
-  }));
-
-  const calendarDates = parseCsv(calendarDatesRaw, (cols, hdr) => {
-    const et = Number.parseInt(cols[hdr.get('exception_type')]?.trim() ?? '0', 10);
-    if (et !== 1 && et !== 2) return null;
-    return {
-      serviceId: cols[hdr.get('service_id')]?.trim() ?? '',
-      date: cols[hdr.get('date')]?.trim() ?? '',
-      exceptionType: et,
-    };
+  feeds.forEach((feed, i) => {
+    const windowEnd = feeds[i + 1] ? dayBeforeGtfsDate(feeds[i + 1].feedStartDate) : '99991231';
+    for (const [serviceId, days, startDate, endDate] of feed.calendar) {
+      const clippedEnd = endDate < windowEnd ? endDate : windowEnd;
+      if (startDate > clippedEnd) continue;
+      calendar.push({ serviceId, days: days.split('').map(flag => flag === '1'), startDate, endDate: clippedEnd });
+    }
+    for (const [serviceId, date, exceptionType] of feed.calendarDates) {
+      if (date <= windowEnd) calendarDates.push({ serviceId, date, exceptionType });
+    }
+    for (const [tripId, routeId, serviceId, headsign, blockId, departure] of feed.trips) {
+      trips.push({ tripId, routeId, serviceId, headsign, blockId });
+      tripIndex[tripId] = departure;
+    }
   });
 
   const calendarDatesByDate = new Map();

@@ -2,19 +2,19 @@
  * GTFS Schedule Index — cross-references GTFS feed against STREETS data
  * to identify missed trips (scheduled but not operated).
  *
- * Uses ?raw imports for bundled GTFS text files (~400KB total) and a
- * pre-built trip departure index from data/gtfsTripIndex.json.
+ * Schedules come from data/gtfsScheduleBundle.json (built by
+ * scripts/buildGtfsScheduleBundle.ts), one entry per GTFS feed.
  *
  * Holiday handling (Option D):
  *  - Known Ontario statutory holidays map to their actual service type
  *  - Unknown mismatches use best-fit matching (try all 3 service types,
  *    pick the one with the strongest route+time match quality)
  */
-import tripsRaw from '../../gtfs/trips.txt?raw';
-import calendarRaw from '../../gtfs/calendar.txt?raw';
-import calendarDatesRaw from '../../gtfs/calendar_dates.txt?raw';
-import tripIndex from '../../data/gtfsTripIndex.json';
+import packagedBundleJson from '../../data/gtfsScheduleBundle.json';
+import { flattenScheduleBundle, type ScheduleBundle } from './gtfsScheduleBundle';
 import type { DayType } from '../performanceDataTypes';
+
+const packagedBundle = packagedBundleJson as ScheduleBundle;
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ export interface ScheduledTrip {
     routeId: string;
     headsign: string;
     blockId: string;
-    departure: string;   // HH:MM from tripIndex
+    departure: string;   // HH:MM, first stop
     serviceId: string;
 }
 
@@ -46,85 +46,46 @@ interface GtfsTrip {
     tripId: string;
     headsign: string;
     blockId: string;
+    departure: string;   // HH:MM, first stop
 }
 
 // ─── Ontario Statutory Holidays ─────────────────────────────────────
 // Maps known holidays to the service type Barrie Transit actually runs.
-// Covers the current GTFS period (May 2026 – Aug 2026).
-// Update when a new GTFS feed is loaded or a new year begins.
+// Feed calendar_dates usually cover holidays already; this list is for ones they miss.
+// Update when a new year begins.
 
 const ONTARIO_HOLIDAYS: Record<string, DayType> = {
     '2026-07-01': 'sunday',   // Canada Day
 };
 
-// ─── Parse raw GTFS text ────────────────────────────────────────────
+// ─── Schedule data ──────────────────────────────────────────────────
+// One or more GTFS feeds, stitched in time order (see utils/gtfs/gtfsScheduleBundle.ts).
 
-function parseCsv<T>(raw: string, mapper: (cols: string[], hdr: Map<string, number>) => T | null): T[] {
-    const lines = raw.split('\n');
-    if (lines.length < 2) return [];
-    const headers = lines[0].trim().split(',');
-    const hdr = new Map(headers.map((h, i) => [h.trim(), i]));
-    const results: T[] = [];
-    for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        const cols = line.split(',');
-        const item = mapper(cols, hdr);
-        if (item) results.push(item);
+let calendar: CalendarEntry[] = [];
+let trips: GtfsTrip[] = [];
+let calendarDatesByDate = new Map<string, CalendarDateException[]>();
+let tripsByService = new Map<string, GtfsTrip[]>();
+
+/** Replaces the schedule used for matching, e.g. with feeds archived after this build. */
+export function setScheduleBundle(bundle: ScheduleBundle): void {
+    const flat = flattenScheduleBundle(bundle);
+    calendar = flat.calendar;
+    trips = flat.trips;
+    calendarDatesByDate = new Map();
+    for (const cd of flat.calendarDates) {
+        const existing = calendarDatesByDate.get(cd.date) || [];
+        existing.push(cd);
+        calendarDatesByDate.set(cd.date, existing);
     }
-    return results;
+    tripsByService = new Map();
+    for (const t of trips) {
+        const existing = tripsByService.get(t.serviceId) || [];
+        existing.push(t);
+        tripsByService.set(t.serviceId, existing);
+    }
 }
 
-const trips: GtfsTrip[] = parseCsv(tripsRaw, (cols, hdr) => ({
-    routeId: cols[hdr.get('route_id')!]?.trim() ?? '',
-    serviceId: cols[hdr.get('service_id')!]?.trim() ?? '',
-    tripId: cols[hdr.get('trip_id')!]?.trim() ?? '',
-    headsign: cols[hdr.get('trip_headsign')!]?.trim() ?? '',
-    blockId: cols[hdr.get('block_id')!]?.trim() ?? '',
-}));
-
-const calendar: CalendarEntry[] = parseCsv(calendarRaw, (cols, hdr) => ({
-    serviceId: cols[hdr.get('service_id')!]?.trim() ?? '',
-    days: [
-        cols[hdr.get('monday')!]?.trim() === '1',
-        cols[hdr.get('tuesday')!]?.trim() === '1',
-        cols[hdr.get('wednesday')!]?.trim() === '1',
-        cols[hdr.get('thursday')!]?.trim() === '1',
-        cols[hdr.get('friday')!]?.trim() === '1',
-        cols[hdr.get('saturday')!]?.trim() === '1',
-        cols[hdr.get('sunday')!]?.trim() === '1',
-    ],
-    startDate: cols[hdr.get('start_date')!]?.trim() ?? '',
-    endDate: cols[hdr.get('end_date')!]?.trim() ?? '',
-}));
-
-const calendarDates: CalendarDateException[] = parseCsv(calendarDatesRaw, (cols, hdr) => {
-    const et = parseInt(cols[hdr.get('exception_type')!]?.trim() ?? '0', 10);
-    if (et !== 1 && et !== 2) return null;
-    return {
-        serviceId: cols[hdr.get('service_id')!]?.trim() ?? '',
-        date: cols[hdr.get('date')!]?.trim() ?? '',
-        exceptionType: et as 1 | 2,
-    };
-});
-
-// Pre-index calendar_dates by date for fast lookup
-const calendarDatesByDate = new Map<string, CalendarDateException[]>();
-for (const cd of calendarDates) {
-    const existing = calendarDatesByDate.get(cd.date) || [];
-    existing.push(cd);
-    calendarDatesByDate.set(cd.date, existing);
-}
-
-// Pre-index trips by serviceId
-const tripsByService = new Map<string, GtfsTrip[]>();
-for (const t of trips) {
-    const existing = tripsByService.get(t.serviceId) || [];
-    existing.push(t);
-    tripsByService.set(t.serviceId, existing);
-}
-
-const departureIndex = tripIndex as Record<string, string>;
+setScheduleBundle(packagedBundle);
 
 export interface RouteMatchStats {
     scheduled: number;
@@ -185,14 +146,12 @@ export function getTripsForDayType(dateStr: string, dayType: DayType): Scheduled
     for (const serviceId of activeServices) {
         const serviceTrips = tripsByService.get(serviceId) || [];
         for (const t of serviceTrips) {
-            const departure = departureIndex[t.tripId];
-            if (!departure) continue;
             result.push({
                 tripId: t.tripId,
                 routeId: t.routeId,
                 headsign: t.headsign,
                 blockId: t.blockId,
-                departure,
+                departure: t.departure,
                 serviceId: t.serviceId,
             });
         }

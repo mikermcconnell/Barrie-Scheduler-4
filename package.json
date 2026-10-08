@@ -25,7 +25,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "prepare": "husky",
-    "gtfs:index": "npx tsx scripts/buildGtfsTripIndex.ts",
+    "gtfs:schedules": "npx tsx scripts/buildGtfsScheduleBundle.ts",
     "backfill:missed-trips": "node functions/scripts/backfill-missed-trips.mjs",
     "backfill-missed-trips": "node functions/scripts/backfill-missed-trips.mjs"
   },
