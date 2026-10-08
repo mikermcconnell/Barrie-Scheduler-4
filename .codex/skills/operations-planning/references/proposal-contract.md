@@ -2,7 +2,7 @@
 
 The TypeScript definitions and validator under `utils/run-cutting/` are the
 machine-readable authority. This reference describes the semantic contract for
-Codex proposal generation.
+proposal generation. If this file and `types.ts` disagree, `types.ts` wins.
 
 ## Identity and source binding
 
@@ -148,10 +148,38 @@ derived from the input. Do not copy the example identifiers literally.
       "category": "integrity",
       "severity": "error",
       "code": "<stable code>",
-      "message": "<concise planner explanation>"
+      "message": "<concise planner explanation>",
+      "dayType": "<optional Weekday | Saturday | Sunday>",
+      "runId": "<optional>",
+      "crewId": "<optional>",
+      "blockId": "<optional vehicleBlockKey>",
+      "tripId": "<optional>",
+      "details": { "ruleSourceId": "<optional>", "affectedTripIds": "<optional, comma-separated>" }
     }
   ],
   "methodNotes": ["<material optimization trade-off>"]
+}
+```
+
+Finding fields are limited to those shown. Put rule references and extra
+affected IDs in `details`, whose values must be strings, numbers, booleans, or
+null (not arrays or objects).
+
+### Version 2 piece
+
+A version 2 piece adds event boundaries. `startReliefPoint` and
+`endReliefPoint` must match the referenced events' locations.
+
+```json
+{
+  "id": "weekday-run-001-piece-2",
+  "blockId": "<input trip.vehicleBlockKey>",
+  "routeNumber": "<input trip.routeNumber>",
+  "tripIds": ["<first trip>", "<...>", "<last trip>"],
+  "startEventId": "<stop event ID on the first trip>",
+  "endEventId": "<stop event ID on the last trip>",
+  "startReliefPoint": "<location of startEventId>",
+  "endReliefPoint": "<location of endEventId>"
 }
 ```
 
@@ -159,5 +187,6 @@ derived from the input. Do not copy the example identifiers literally.
 
 Scheduler 4 validates references, coverage, block immutability, source
 freshness, rule compliance, and all time/pay metrics after import. Do not add
-self-reported totals. Imported content remains a draft until the protected
+self-reported totals. Run `.codex/skills/operations-planning/scripts/validate-proposal.cjs` to get the same
+assessment locally before hand-off. Imported content remains a draft until the protected
 submit/approve workflow succeeds.

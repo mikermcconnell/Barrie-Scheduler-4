@@ -1,6 +1,8 @@
 // Performance Dashboard Types — STREETS Datawarehouse AVL/APC data
 // Schema: 35 columns per stop-event record, ~36K records/day
 
+import type { DwellHistoryDay } from './performanceDwellHistory';
+
 // ─── Day Type ───────────────────────────────────────────────────────
 export type DayType = 'weekday' | 'saturday' | 'sunday';
 
@@ -635,6 +637,8 @@ export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];
   metadata: PerformanceMetadata;
   schemaVersion: number;
+  /** Report snapshots only: per-day dwell totals for every retained day, for weekly ranking. */
+  dwellHistory?: DwellHistoryDay[];
 }
 
 export type PerformanceDetailMode =

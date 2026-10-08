@@ -44,6 +44,7 @@ import {
 } from './ridership-trends/model';
 import {
     RIDERSHIP_TREND_BASELINE_HASH,
+    RIDERSHIP_TREND_FILENAME_PATTERN,
     type RidershipTrendProjectionV1,
 } from './ridership-trends/types';
 import {
@@ -473,7 +474,7 @@ export async function savePerformanceData(
     if (oldRidershipTrendStoragePath) {
         const expectedPrefix = `teams/${teamId}/performanceViews/ridership-trends/`;
         if (!oldRidershipTrendStoragePath.startsWith(expectedPrefix)
-            || !/^\d+[.]json$/.test(oldRidershipTrendStoragePath.slice(expectedPrefix.length))) {
+            || !RIDERSHIP_TREND_FILENAME_PATTERN.test(oldRidershipTrendStoragePath.slice(expectedPrefix.length))) {
             throw new Error('Stored Ridership Trends projection path is invalid.');
         }
         const storedProjection = await downloadStorageJson<unknown>(oldRidershipTrendStoragePath);
@@ -679,7 +680,7 @@ export async function getRidershipTrendProjection(
     if (!metadata?.ridershipTrendStoragePath) return null;
     const expectedPrefix = `teams/${teamId}/performanceViews/ridership-trends/`;
     if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
-        || !/^\d+[.]json$/.test(metadata.ridershipTrendStoragePath.slice(expectedPrefix.length))) {
+        || !RIDERSHIP_TREND_FILENAME_PATTERN.test(metadata.ridershipTrendStoragePath.slice(expectedPrefix.length))) {
         throw new Error('Stored Ridership Trends projection path is invalid.');
     }
     const projection = await downloadStorageJson<unknown>(metadata.ridershipTrendStoragePath);

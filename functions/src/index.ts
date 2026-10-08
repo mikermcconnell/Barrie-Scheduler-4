@@ -20,7 +20,8 @@ import {
   processResidentialGrowthIfComplete,
 } from './residentialGrowth';
 import { aggregateDailySummaries } from './aggregator';
-import { computeMissedTripsForDay } from './gtfsScheduleIndex';
+import { computeMissedTripsForDay, hasGtfsCoverage } from './gtfsScheduleIndex';
+import { refreshScheduleFromArchive } from './gtfsScheduleArchive';
 import {
   type PerformanceDashboardViewMode,
   PerformanceDataSummary,
@@ -39,7 +40,8 @@ import {
   mergeRidershipTrendProjection,
   parseRidershipTrendProjection,
 } from '../../utils/ridership-trends/model';
-import { RIDERSHIP_TREND_BASELINE_HASH } from '../../utils/ridership-trends/types';
+import { RIDERSHIP_TREND_BASELINE_HASH, RIDERSHIP_TREND_FILENAME_PATTERN } from '../../utils/ridership-trends/types';
+import { buildDwellHistory } from '../../utils/performanceDwellHistory';
 import {
   DEFAULT_PERFORMANCE_LOAD_CAPACITY_CONFIG,
   normalizePerformanceLoadCapacityConfig,
@@ -625,11 +627,14 @@ function buildMonthlyPerformanceSummaries(summary: PerformanceDataSummary): Map<
   return result;
 }
 
-function enrichDailySummariesWithMissedTrips(
+async function enrichDailySummariesWithMissedTrips(
   dailySummaries: PerformanceDataSummary['dailySummaries'],
-): PerformanceDataSummary['dailySummaries'] {
+): Promise<PerformanceDataSummary['dailySummaries']> {
+  await refreshScheduleFromArchive(getBucket());
   return dailySummaries.map(day => {
     const missedTrips = computeMissedTripsForDay(day.date, day.dayType, day.byTrip);
+    // With no schedule for the date, keep what was stored rather than erase it.
+    if (!missedTrips && !hasGtfsCoverage(day.date)) return day;
     if (!missedTrips) {
       const dayWithoutMissedTrips = { ...day };
       delete dayWithoutMissedTrips.missedTrips;
@@ -748,6 +753,7 @@ function buildPerformanceReportSummary(summary: PerformanceDataSummary): Perform
   return {
     ...summary,
     dailySummaries: reportDays,
+    dwellHistory: buildDwellHistory(sortedDays),
     metadata: {
       ...summary.metadata,
       dateRange: reportDates.length > 0
@@ -1427,7 +1433,7 @@ async function savePerformanceSummary(params: {
   if (oldRidershipTrendStoragePath) {
     const expectedPrefix = `teams/${params.teamId}/performanceViews/ridership-trends/`;
     if (!oldRidershipTrendStoragePath.startsWith(expectedPrefix)
-        || !/^\d+[.]json$/.test(oldRidershipTrendStoragePath.slice(expectedPrefix.length))) {
+        || !RIDERSHIP_TREND_FILENAME_PATTERN.test(oldRidershipTrendStoragePath.slice(expectedPrefix.length))) {
       throw new Error('Stored Ridership Trends projection path is invalid.');
     }
     const [storedProjection] = await getBucket().file(oldRidershipTrendStoragePath).download();
@@ -1625,7 +1631,7 @@ async function mergeAndSavePerformanceSummariesAttempt(params: {
     MAX_RETENTION_DAYS,
     buildPerformanceSourceRevision(existing.metadataUpdateTime?.toMillis?.() ?? 0, 'legacy-metadata'),
   );
-  const mergedSummaries = enrichDailySummariesWithMissedTrips(versionedMerge.summaries);
+  const mergedSummaries = await enrichDailySummariesWithMissedTrips(versionedMerge.summaries);
   const preFilterCount = new Set([
     ...existingSummaries.map(summary => summary.date),
     ...params.newSummaries.map(summary => summary.date),
@@ -1910,7 +1916,7 @@ export const ingestPerformanceData = onRequest(
 
       // --- Aggregate ---
       const loadCapacityConfig = await loadPerformanceLoadCapacityConfig(teamId);
-      const newSummaries = enrichDailySummariesWithMissedTrips(
+      const newSummaries = await enrichDailySummariesWithMissedTrips(
         aggregateDailySummaries(records, loadCapacityConfig),
       );
       console.log(`Aggregated ${newSummaries.length} day(s): ${newDates.join(', ')}`);
@@ -2052,7 +2058,7 @@ export const processQueuedPerformanceImport = onDocumentCreated(
       }
 
       const loadCapacityConfig = await loadPerformanceLoadCapacityConfig(teamId);
-      const newSummaries = enrichDailySummariesWithMissedTrips(
+      const newSummaries = await enrichDailySummariesWithMissedTrips(
         aggregateDailySummaries(records, loadCapacityConfig),
       );
       const newDates = newSummaries.map(summary => summary.date).sort();
@@ -2325,9 +2331,9 @@ export const rebuildPerformanceHistory = onRequest(
           const [content] = await getBucket().file(run.rawStoragePath).download();
           const csvText = content.toString('utf8');
           const parsed = parseSTREETSCSV(csvText);
-          const summaries = enrichDailySummariesWithMissedTrips(
+          const summaries = (await enrichDailySummariesWithMissedTrips(
             aggregateDailySummaries(parsed.records, loadCapacityConfig),
-          )
+          ))
             .filter(summary => summary.date >= startDate && summary.date <= endDate);
 
           for (const summary of summaries) {

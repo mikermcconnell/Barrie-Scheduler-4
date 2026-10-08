@@ -97,3 +97,10 @@ export interface RidershipTrendView {
         complete: boolean;
     };
 }
+
+/**
+ * Stored projection file names: a millisecond timestamp, optionally followed by the
+ * generation's UUID (server writes use `${Date.now()}-${randomUUID()}`).
+ */
+export const RIDERSHIP_TREND_FILENAME_PATTERN =
+    /^\d+(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?[.]json$/;

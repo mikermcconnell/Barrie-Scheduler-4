@@ -6,6 +6,7 @@ import {
     buildRouteLoadViews,
     FULL_LOAD,
     inferTripLoads,
+    isInLoadTimePeriod,
     MAX_TRIP_IMBALANCE_RATIO,
 } from '../utils/performanceRouteLoad';
 
@@ -19,8 +20,8 @@ function heatmap(
     tripOverrides: Array<Partial<RidershipHeatmapTrip>> = [],
 ): RouteRidershipHeatmap {
     return {
-        routeId: '8A',
-        routeName: 'RVH/YONGE',
+        routeId: '3',
+        routeName: 'GEORGIAN COLLEGE',
         direction: 'N',
         trips: trips.map((_, index) => ({
             tripId: `T${index}`,
@@ -78,7 +79,7 @@ describe('buildRouteLoadAnalysis', () => {
             day('2026-09-02', [heatmap(['A', 'B', 'C'], [[[8, 0], [0, 4], [0, 4]]])]),
         ]);
 
-        expect(view.inferenceBlocked).toBeNull();
+        expect(view.carriesLoad).toBe(false);
         expect(view.serviceDays).toBe(2);
         expect(view.tripCount).toBe(2);
         expect(view.usableTripCount).toBe(2);
@@ -126,39 +127,41 @@ describe('buildRouteLoadAnalysis', () => {
         expect(view.peakStop?.stopId).toBe('A');
     });
 
-    it('withholds load on loop routes by direction or trip shape but keeps boardings', () => {
-        const byDirection = buildRouteLoadViews([day('2026-09-01', [
-            heatmap(['A', 'B'], [[[3, 0], [0, 3]]], { routeId: '100', direction: 'CW' }),
-        ])])[0];
-        const loopStops = ['A', 'B', 'A'];
-        const byShape = buildRouteLoadViews([day('2026-09-01', [heatmap(loopStops, [[[3, 0], [1, 1], [0, 3]]], {
-            stops: [
-                { stopId: 'A', stopName: 'Terminal', routeStopIndex: 0, occurrenceIndex: 0, isTimepoint: true },
-                { stopId: 'B', stopName: 'Stop B', routeStopIndex: 1, isTimepoint: false },
-                { stopId: 'A', stopName: 'Terminal', routeStopIndex: 2, occurrenceIndex: 1, isTimepoint: true },
-            ],
-        })])])[0];
-
-        expect(byDirection.inferenceBlocked).toBe('loop');
-        expect(byShape.inferenceBlocked).toBe('loop');
-        expect(byShape.stops.map(s => [s.stopId, s.occurrenceIndex])).toEqual([['A', 0], ['B', 0], ['A', 1]]);
-        expect(byShape.stops.every(s => s.avgLoad === null)).toBe(true);
-        expect(byShape.stops[0].avgBoardings).toBe(3);
-        expect(byShape.usableShare).toBeNull();
-        expect(byShape.busiestTrips).toEqual([]);
-    });
-
-    it('withholds load on routes whose trips mostly continue as another route', () => {
+    it('starts every trip empty on non-loop routes, even when the bus continues as another route', () => {
         const views = buildRouteLoadViews([day('2026-09-01', [
-            heatmap(['A', 'T'], [[[5, 0], [0, 5]]], { routeId: '8A' }, [{ block: 'B1', terminalDepartureTime: '07:00' }]),
-            heatmap(['T', 'C'], [[[5, 0], [0, 5]]], { routeId: '8B' }, [{ block: 'B1', terminalDepartureTime: '07:30' }]),
+            heatmap(['A', 'T'], [[[5, 0], [0, 5]]], { routeId: '2A' }, [{ block: 'B1', terminalDepartureTime: '07:00' }]),
+            heatmap(['T', 'C'], [[[3, 0], [0, 3]]], { routeId: '2B' }, [{ block: 'B1', terminalDepartureTime: '07:30' }]),
         ])]);
         const byRoute = Object.fromEntries(views.map(v => [v.routeId, v]));
 
-        expect(byRoute['8A'].inferenceBlocked).toBe('interlined');
-        expect(byRoute['8A'].diagnostics.interlinedTripShare).toBe(1);
-        // The last trip of the block does not continue, so 8B is still inferred.
-        expect(byRoute['8B'].inferenceBlocked).toBeNull();
+        expect(byRoute['2A'].carriesLoad).toBe(false);
+        expect(byRoute['2B'].stops.map(s => s.avgLoad)).toEqual([3, 0]);
+        expect(byRoute['2B'].diagnostics.avgCarriedInLoad).toBeNull();
+    });
+
+    it('infers riders already aboard at the start of a loop trip', () => {
+        // Four riders get off at A before anyone boards, so they must have been carried in.
+        const [view] = buildRouteLoadViews([day('2026-09-01', [heatmap(['A', 'B', 'C', 'D'], [
+            [[0, 4], [10, 2], [0, 3], [0, 5]],
+        ], { routeId: '100', direction: 'CW' }, [{ block: '100-1', terminalDepartureTime: '07:00' }])])]);
+
+        expect(view.carriesLoad).toBe(true);
+        const byId = Object.fromEntries(view.stops.map(s => [s.stopId, s]));
+        expect(byId.A.avgLoad).toBe(0);
+        expect(byId.B.avgLoad).toBe(8);
+        expect(byId.C.avgLoad).toBe(5);
+        expect(byId.D.avgLoad).toBe(0);
+        expect(view.diagnostics.avgCarriedInLoad).toBe(4);
+    });
+
+    it('does not let count errors pile up across back-to-back loop trips', () => {
+        // Each trip over-counts boardings by 2; a day-long chain would drift upward, per-trip balancing cannot.
+        const trips = Array.from({ length: 6 }, (_, i) => ({ block: '8-1', terminalDepartureTime: `0${6 + i}:00` }));
+        const cells: Cell[][] = trips.map(() => [[10, 0], [0, 8]]);
+        const [view] = buildRouteLoadViews([day('2026-09-01', [heatmap(['A', 'B'], cells, { routeId: '8A' }, trips)])]);
+
+        expect(view.maxTripLoad).toBe(10);
+        expect(view.diagnostics.avgCarriedInLoad).toBe(0);
     });
 
     it('ranks busiest scheduled trips and counts trips reaching full load', () => {
@@ -195,7 +198,7 @@ describe('buildRouteLoadAnalysis', () => {
     it('compares inferred load with APC load where APC has enough readings', () => {
         const trips = Array.from({ length: 5 }, (): Cell[] => [[10, 0], [0, 10]]);
         const apc: RouteLoadProfile = {
-            routeId: '8A', routeName: 'RVH/YONGE', direction: 'N', tripCount: 5,
+            routeId: '3', routeName: 'GEORGIAN COLLEGE', direction: 'N', tripCount: 5,
             stops: [{ stopId: 'A', stopName: 'Stop A', routeStopIndex: 0, avgBoardings: 10, avgAlightings: 0, avgLoad: 7, loadObservationCount: 5, maxLoad: 9, isTimepoint: false }],
         };
         const [view] = buildRouteLoadViews([day('2026-09-01', [heatmap(['A', 'B'], trips)], [apc])]);
@@ -212,6 +215,48 @@ describe('buildRouteLoadAnalysis', () => {
 
         expect(diagnostics[0]).toEqual(expect.objectContaining({ vehicleId: '2112', trips: 5, medianRatio: 1.3, flagged: true }));
         expect(diagnostics.find(v => v.vehicleId === '2200')?.flagged).toBe(false);
+    });
+
+    it('summarises only the trips departing in the chosen time of day', () => {
+        const trips: Cell[][] = [[[40, 0], [0, 40]], [[4, 0], [0, 4]]];
+        const times = [{ terminalDepartureTime: '07:30' }, { terminalDepartureTime: '13:00' }];
+        const data = [day('2026-09-01', [heatmap(['A', 'B'], trips, {}, times)])];
+
+        expect(buildRouteLoadViews(data, 'am')[0].stops[0].avgLoad).toBe(40);
+        expect(buildRouteLoadViews(data, 'midday')[0].stops[0].avgLoad).toBe(4);
+        expect(buildRouteLoadViews(data, 'all')[0].stops[0].avgLoad).toBe(22);
+        // No evening service: the route drops out rather than showing empty.
+        expect(buildRouteLoadViews(data, 'evening')).toEqual([]);
+    });
+
+    it('treats trips after midnight as evening', () => {
+        expect(isInLoadTimePeriod('23:15', 'evening')).toBe(true);
+        expect(isInLoadTimePeriod('24:20', 'evening')).toBe(true);
+        expect(isInLoadTimePeriod('00:30', 'evening')).toBe(true);
+        expect(isInLoadTimePeriod('06:00', 'am')).toBe(true);
+        expect(isInLoadTimePeriod('09:00', 'am')).toBe(false);
+    });
+
+    it('reports the middle 80% of trip loads at each stop', () => {
+        const trips = Array.from({ length: 11 }, (_, i): Cell[] => [[i * 2, 0], [0, i * 2]]);
+        const [view] = buildRouteLoadViews([day('2026-09-01', [heatmap(['A', 'B'], trips.slice(1))])]);
+
+        // Loads at A are 2, 4, ... 20.
+        expect(view.stops[0].p10Load).toBeCloseTo(3.8);
+        expect(view.stops[0].p90Load).toBeCloseTo(18.2);
+        expect(view.stops[0].maxLoad).toBe(20);
+    });
+
+    it('keeps each busiest trip average stop-by-stop load for drawing it on the chart', () => {
+        const times = [{ terminalDepartureTime: '07:40' }];
+        const [view] = buildRouteLoadViews([
+            day('2026-09-01', [heatmap(['A', 'B', 'C'], [[[10, 0], [5, 3], [0, 12]]], {}, times)]),
+            day('2026-09-02', [heatmap(['A', 'B', 'C'], [[[20, 0], [5, 3], [0, 22]]], {}, times)]),
+        ]);
+
+        expect(view.busiestTrips[0].stopLoads).toEqual({ A__0: 15, B__0: 17, C__0: 0 });
+        expect(view.busiestTrips[0].stopBoardings).toEqual({ A__0: 15, B__0: 5, C__0: 0 });
+        expect(view.busiestTrips[0].stopAlightings).toEqual({ A__0: 0, B__0: 3, C__0: 17 });
     });
 
     it('returns no views for days without heatmaps', () => {

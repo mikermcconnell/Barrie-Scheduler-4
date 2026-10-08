@@ -2,22 +2,26 @@ import type { DailySummary } from './performanceDataTypes';
 
 /** Passengers onboard at which a bus is considered full. */
 export const FULL_LOAD = 55;
+/**
+ * Loop routes: riders can stay on through the terminal, so a trip may start with
+ * riders already aboard (inferred from alightings its own boardings can't explain).
+ * Every other route (including direction pairs such as 2A/2B) starts each trip empty.
+ */
+export const LOOP_ROUTE_IDS: ReadonlySet<string> = new Set(['10', '11', '100', '101', '8A', '8B']);
 /** Stops served by fewer usable trips than this show a gap instead of a value. */
 export const MIN_LOAD_SAMPLES = 5;
 /** Stops served by less than this share of the route's usable trips are treated as partial-pattern stops. */
 export const PARTIAL_PATTERN_SHARE = 0.2;
 /**
- * Trips whose total boardings and alightings differ by more than this factor are
- * excluded: the counts are too inconsistent to reconstruct a load from.
+ * Trips whose total boardings and alightings differ by
+ * more than this factor are excluded: the counts are too inconsistent to
+ * reconstruct a load from.
  */
 export const MAX_TRIP_IMBALANCE_RATIO = 1.5;
-/** Inference is withheld when more than this share of a route's trips loop or continue as another route. */
-export const ROUTE_CLASSIFICATION_SHARE = 0.5;
 /** A vehicle whose median boardings/alightings ratio falls outside this band is flagged. */
 export const VEHICLE_RATIO_BAND: readonly [number, number] = [0.85, 1.15];
 /** Running-load shortfalls smaller than this are rounding noise, not a clamp. */
 const CLAMP_TOLERANCE = 0.5;
-const LOOP_DIRECTION = /^(cw|ccw|loop)$/i;
 const BUSIEST_TRIP_LIMIT = 10;
 
 export const IMBALANCE_BUCKETS = [
@@ -28,7 +32,29 @@ export const IMBALANCE_BUCKETS = [
     { label: 'Far more boardings', max: Infinity },
 ] as const;
 
-export type LoadInferenceBlock = 'loop' | 'interlined';
+export function isLoopRoute(routeId: string): boolean {
+    return LOOP_ROUTE_IDS.has(routeId.trim().toUpperCase());
+}
+
+export type LoadTimePeriod = 'all' | 'am' | 'midday' | 'pm' | 'evening';
+
+/** Time-of-day windows by trip departure, in minutes after midnight (evening wraps past midnight). */
+export const LOAD_TIME_PERIODS: ReadonlyArray<{ id: LoadTimePeriod; label: string; range: string; start: number; end: number }> = [
+    { id: 'all', label: 'All day', range: '', start: 0, end: Infinity },
+    { id: 'am', label: 'AM peak', range: '6–9', start: 6 * 60, end: 9 * 60 },
+    { id: 'midday', label: 'Midday', range: '9–3', start: 9 * 60, end: 15 * 60 },
+    { id: 'pm', label: 'PM peak', range: '3–6', start: 15 * 60, end: 18 * 60 },
+    { id: 'evening', label: 'Evening', range: '6pm+', start: 18 * 60, end: 30 * 60 },
+];
+
+export function isInLoadTimePeriod(departure: string, period: LoadTimePeriod): boolean {
+    if (period === 'all') return true;
+    const window = LOAD_TIME_PERIODS.find(p => p.id === period)!;
+    let minutes = timeToMinutes(departure);
+    // Early-morning trips before 6:00 belong with the previous evening.
+    if (period === 'evening' && minutes < 6 * 60) minutes += 24 * 60;
+    return minutes >= window.start && minutes < window.end;
+}
 
 export interface RouteLoadStop {
     key: string;
@@ -46,6 +72,9 @@ export interface RouteLoadStop {
     avgLoad: number | null;
     /** Highest inferred onboard load leaving this stop on any single trip. */
     maxLoad: number | null;
+    /** 10th and 90th percentile of trip loads leaving this stop: the spread of typical trips without outliers. */
+    p10Load: number | null;
+    p90Load: number | null;
     /** Usable trips that served this stop. */
     loadSamples: number;
     lowSample: boolean;
@@ -63,6 +92,11 @@ export interface BusyTrip {
     peakStopName: string;
     /** Days this trip reached FULL_LOAD. */
     fullDays: number;
+    /** Average load leaving each stop on this scheduled trip, keyed by stop key. */
+    stopLoads: Record<string, number>;
+    /** Average boardings and alightings at each stop on this scheduled trip, keyed by stop key. */
+    stopBoardings: Record<string, number>;
+    stopAlightings: Record<string, number>;
 }
 
 export interface ApcComparison {
@@ -83,10 +117,8 @@ export interface RouteLoadDiagnostics {
     skippedAvgBoardings: number | null;
     /** Share of kept trips where the running load had to be floored at zero. */
     clampedTripShare: number | null;
-    /** Share of loop-shaped trips (first stop is also the last). */
-    loopTripShare: number | null;
-    /** Share of trips that continue on the same block as a different route from the same stop. */
-    interlinedTripShare: number | null;
+    /** Average riders carried in from the previous trip (loop routes only; null otherwise). */
+    avgCarriedInLoad: number | null;
     apcComparison: ApcComparison | null;
 }
 
@@ -95,13 +127,13 @@ export interface RouteLoadView {
     routeId: string;
     routeName: string;
     direction: string;
+    /** True for loop routes, where riders are carried across consecutive trips on a block. */
+    carriesLoad: boolean;
     /** Trips with any passenger counts. */
     tripCount: number;
     /** Trips whose counts were consistent enough to infer a load. */
     usableTripCount: number;
     serviceDays: number;
-    /** Why load is not inferred for this route; null when it is. */
-    inferenceBlocked: LoadInferenceBlock | null;
     stops: RouteLoadStop[];
     /** Stop with the highest average load, excluding low-sample and partial-pattern stops. */
     peakStop: RouteLoadStop | null;
@@ -137,30 +169,55 @@ export interface TripMovementAnalysis {
     clampedStops: number;
 }
 
+interface LoadRun {
+    loads: number[] | null;
+    ratio: number | null;
+    clamped: boolean[];
+    carriedIn: number;
+}
+
 /**
- * Reconstructs onboard load leaving each stop of one trip from its boardings and
- * alightings. Alightings are scaled so the trip balances (everyone who boards
- * gets off), and the running load never drops below zero. The trip is unusable
- * when its counts are empty or too unbalanced to trust.
+ * Reconstructs onboard load leaving each stop of one trip. Alightings are
+ * scaled so the trip balances (everyone who boards gets off), and the running
+ * load never drops below zero. When `inferCarry` is set (loop routes), riders
+ * already aboard at the start are inferred from the alightings that boardings
+ * alone cannot explain. The trip is unusable when its counts are empty or too
+ * unbalanced to trust.
  */
-export function analyzeTripMovements(movements: Array<[number, number]>): TripMovementAnalysis {
+function runLoads(movements: Array<[number, number]>, inferCarry = false): LoadRun {
     const totalBoardings = movements.reduce((sum, [b]) => sum + b, 0);
     const totalAlightings = movements.reduce((sum, [, a]) => sum + a, 0);
-    if (totalBoardings <= 0 || totalAlightings <= 0) return { loads: null, ratio: null, clampedStops: 0 };
-    const ratio = totalBoardings / totalAlightings;
+    if (totalBoardings <= 0 || totalAlightings <= 0) return { loads: null, ratio: null, clamped: [], carriedIn: 0 };
+
+    let carriedIn = 0;
+    if (inferCarry) {
+        let running = 0;
+        for (const [boardings, alightings] of movements) {
+            running += boardings - alightings;
+            carriedIn = Math.max(carriedIn, -running);
+        }
+        carriedIn = Math.min(carriedIn, FULL_LOAD);
+    }
+    const ratio = (totalBoardings + carriedIn) / totalAlightings;
     if (ratio > MAX_TRIP_IMBALANCE_RATIO || ratio < 1 / MAX_TRIP_IMBALANCE_RATIO) {
-        return { loads: null, ratio, clampedStops: 0 };
+        return { loads: null, ratio, clamped: [], carriedIn };
     }
 
-    let load = 0;
-    let clampedStops = 0;
+    let load = carriedIn;
+    const clamped: boolean[] = [];
     const loads = movements.map(([boardings, alightings]) => {
         const next = load + boardings - alightings * ratio;
-        if (next < -CLAMP_TOLERANCE) clampedStops++;
+        clamped.push(next < -CLAMP_TOLERANCE);
         load = Math.max(0, next);
         return load;
     });
-    return { loads, ratio, clampedStops };
+    return { loads, ratio, clamped, carriedIn };
+}
+
+/** Infers the load of a single trip that starts empty. */
+export function analyzeTripMovements(movements: Array<[number, number]>): TripMovementAnalysis {
+    const run = runLoads(movements);
+    return { loads: run.loads, ratio: run.ratio, clampedStops: run.clamped.filter(Boolean).length };
 }
 
 export function inferTripLoads(movements: Array<[number, number]>): number[] | null {
@@ -179,12 +236,13 @@ interface StopAccumulator {
     loadSum: number;
     loadTrips: number;
     maxLoad: number;
+    loads: number[];
     apcLoadWeighted: number;
     apcSamples: number;
 }
 
 interface TripRecord {
-    routeKey: string;
+    tripId: string | null;
     routeId: string;
     date: string;
     departure: string;
@@ -192,10 +250,13 @@ interface TripRecord {
     vehicleId: string | null;
     served: Array<{ stopKey: string; movement: [number, number] }>;
     firstStopId: string;
+    firstStopName: string;
     lastStopId: string;
+    lastStopName: string;
     boardings: number;
     hasCounts: boolean;
-    continuesAsOtherRoute: boolean;
+    /** Riders onboard when the trip started (carried from the previous loop trip). */
+    carriedInLoad: number;
     analysis: TripMovementAnalysis;
 }
 
@@ -235,26 +296,55 @@ function share(part: number, whole: number): number | null {
     return whole > 0 ? part / whole : null;
 }
 
-/** Flags trips that continue on their block as a different route from the stop where they ended. */
-function markInterlinedTrips(trips: TripRecord[]): void {
-    const byBlock = new Map<string, TripRecord[]>();
-    for (const trip of trips) {
-        if (!trip.block) continue;
-        const key = `${trip.date}__${trip.block}`;
-        const list = byBlock.get(key);
-        if (list) list.push(trip);
-        else byBlock.set(key, [trip]);
-    }
-    for (const blockTrips of byBlock.values()) {
-        blockTrips.sort((a, b) => timeToMinutes(a.departure) - timeToMinutes(b.departure));
-        for (let i = 0; i < blockTrips.length - 1; i++) {
-            const current = blockTrips[i];
-            const next = blockTrips[i + 1];
-            if (next.routeId !== current.routeId && next.firstStopId === current.lastStopId) {
-                current.continuesAsOtherRoute = true;
-            }
-        }
-    }
+function quantile(sorted: number[], q: number): number | null {
+    if (sorted.length === 0) return null;
+    const position = (sorted.length - 1) * q;
+    const lower = Math.floor(position);
+    const upper = Math.ceil(position);
+    return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+}
+
+function analyzeTrip(trip: TripRecord): void {
+    const run = runLoads(trip.served.map(s => s.movement), isLoopRoute(trip.routeId));
+    trip.carriedInLoad = run.loads ? run.carriedIn : 0;
+    trip.analysis = { loads: run.loads, ratio: run.ratio, clampedStops: run.clamped.filter(Boolean).length };
+}
+
+type RidershipHeatmap = NonNullable<DailySummary['ridershipHeatmaps']>[number];
+
+function buildHeatmapTripRecords(heatmap: RidershipHeatmap, stopKeys: string[], date: string): TripRecord[] {
+    const records: TripRecord[] = [];
+    heatmap.trips.forEach((trip, tripIndex) => {
+        const served: TripRecord['served'] = [];
+        const servedStops: Array<{ stopId: string; stopName: string }> = [];
+        heatmap.cells.forEach((row, stopIndex) => {
+            const cell = row[tripIndex];
+            if (!cell) return;
+            served.push({ stopKey: stopKeys[stopIndex], movement: cell });
+            servedStops.push(heatmap.stops[stopIndex]);
+        });
+        if (served.length === 0) return;
+        const first = servedStops[0];
+        const last = servedStops[servedStops.length - 1];
+        records.push({
+            tripId: trip.tripId ?? null,
+            routeId: heatmap.routeId,
+            date,
+            departure: trip.terminalDepartureTime,
+            block: trip.block,
+            vehicleId: trip.vehicleId ?? null,
+            served,
+            firstStopId: first.stopId,
+            firstStopName: first.stopName,
+            lastStopId: last.stopId,
+            lastStopName: last.stopName,
+            boardings: served.reduce((sum, s) => sum + s.movement[0], 0),
+            hasCounts: served.some(({ movement: [b, a] }) => b > 0 || a > 0),
+            carriedInLoad: 0,
+            analysis: { loads: null, ratio: null, clampedStops: 0 },
+        });
+    });
+    return records;
 }
 
 function buildBusiestTrips(trips: TripRecord[], stopNames: Map<string, string>): BusyTrip[] {
@@ -275,6 +365,19 @@ function buildBusiestTrips(trips: TripRecord[], stopNames: Map<string, string>):
             for (const entry of entries) peakStopCounts.set(entry.peakStopKey, (peakStopCounts.get(entry.peakStopKey) ?? 0) + 1);
             const commonPeakStop = [...peakStopCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
             const latest = [...entries].sort((a, b) => b.trip.date.localeCompare(a.trip.date))[0];
+            const stopSums = new Map<string, { load: number; boardings: number; alightings: number; count: number }>();
+            for (const { trip } of entries) {
+                trip.served.forEach(({ stopKey, movement: [boardings, alightings] }, index) => {
+                    const acc = stopSums.get(stopKey) ?? { load: 0, boardings: 0, alightings: 0, count: 0 };
+                    acc.load += trip.analysis.loads![index];
+                    acc.boardings += boardings;
+                    acc.alightings += alightings;
+                    acc.count++;
+                    stopSums.set(stopKey, acc);
+                });
+            }
+            const averageBy = (pick: (acc: { load: number; boardings: number; alightings: number; count: number }) => number) =>
+                Object.fromEntries([...stopSums.entries()].map(([key, acc]) => [key, pick(acc) / acc.count]));
             return {
                 departure,
                 block: latest.trip.block,
@@ -283,13 +386,22 @@ function buildBusiestTrips(trips: TripRecord[], stopNames: Map<string, string>):
                 maxPeakLoad: Math.max(...entries.map(e => e.peak)),
                 peakStopName: stopNames.get(commonPeakStop) ?? '',
                 fullDays: entries.filter(e => e.peak >= FULL_LOAD).length,
+                stopLoads: averageBy(acc => acc.load),
+                stopBoardings: averageBy(acc => acc.boardings),
+                stopAlightings: averageBy(acc => acc.alightings),
             };
         })
         .sort((a, b) => b.avgPeakLoad - a.avgPeakLoad || timeToMinutes(a.departure) - timeToMinutes(b.departure))
         .slice(0, BUSIEST_TRIP_LIMIT);
 }
 
-function buildDiagnostics(route: RouteAccumulator, countedTrips: TripRecord[], inferredStops: RouteLoadStop[]): RouteLoadDiagnostics {
+function buildDiagnostics(
+    route: RouteAccumulator,
+    periodTrips: TripRecord[],
+    countedTrips: TripRecord[],
+    inferredStops: RouteLoadStop[],
+    carriesLoad: boolean,
+): RouteLoadDiagnostics {
     const ratios = countedTrips.map(t => t.analysis.ratio).filter((r): r is number => r !== null);
     const kept = countedTrips.filter(t => t.analysis.loads);
     const skipped = countedTrips.filter(t => !t.analysis.loads);
@@ -303,7 +415,7 @@ function buildDiagnostics(route: RouteAccumulator, countedTrips: TripRecord[], i
         .filter((d): d is number => d !== null);
 
     return {
-        noCountTrips: route.trips.length - countedTrips.length,
+        noCountTrips: periodTrips.length - countedTrips.length,
         imbalanceBuckets: IMBALANCE_BUCKETS.map((bucket, index) => {
             const min = index === 0 ? -Infinity : IMBALANCE_BUCKETS[index - 1].max;
             return { label: bucket.label, trips: ratios.filter(r => r >= min && r < bucket.max).length };
@@ -312,8 +424,7 @@ function buildDiagnostics(route: RouteAccumulator, countedTrips: TripRecord[], i
         keptAvgBoardings: mean(kept.map(t => t.boardings)),
         skippedAvgBoardings: mean(skipped.map(t => t.boardings)),
         clampedTripShare: share(kept.filter(t => t.analysis.clampedStops > 0).length, kept.length),
-        loopTripShare: share(countedTrips.filter(t => t.firstStopId === t.lastStopId).length, countedTrips.length),
-        interlinedTripShare: share(countedTrips.filter(t => t.continuesAsOtherRoute).length, countedTrips.length),
+        avgCarriedInLoad: carriesLoad ? mean(kept.map(t => t.carriedInLoad)) : null,
         apcComparison: apcPairs.length > 0
             ? {
                 stopsCompared: apcPairs.length,
@@ -352,9 +463,11 @@ function buildVehicleDiagnostics(trips: TripRecord[]): VehicleCountDiagnostic[] 
  * Builds per-trip load views per route and direction from the daily
  * stop-by-trip boarding/alighting grids, plus diagnostics on how trustworthy
  * the inference is. Load is inferred, never read from APC departure loads;
- * APC loads appear only as a diagnostic comparison.
+ * APC loads appear only as a diagnostic comparison. Loads are always inferred
+ * over the whole day (so loop carry-over is right); the period only selects
+ * which trips are summarised.
  */
-export function buildRouteLoadAnalysis(days: DailySummary[]): RouteLoadAnalysis {
+export function buildRouteLoadAnalysis(days: DailySummary[], period: LoadTimePeriod = 'all'): RouteLoadAnalysis {
     const routes = new Map<string, RouteAccumulator>();
     const allTrips: TripRecord[] = [];
 
@@ -392,6 +505,7 @@ export function buildRouteLoadAnalysis(days: DailySummary[]): RouteLoadAnalysis 
                         loadSum: 0,
                         loadTrips: 0,
                         maxLoad: 0,
+                        loads: [],
                         apcLoadWeighted: 0,
                         apcSamples: 0,
                     });
@@ -402,36 +516,12 @@ export function buildRouteLoadAnalysis(days: DailySummary[]): RouteLoadAnalysis 
                 return key;
             });
 
-            heatmap.trips.forEach((trip, tripIndex) => {
-                const served: TripRecord['served'] = [];
-                const servedStopIds: string[] = [];
-                heatmap.cells.forEach((row, stopIndex) => {
-                    const cell = row[tripIndex];
-                    if (!cell) return;
-                    served.push({ stopKey: stopKeys[stopIndex], movement: cell });
-                    servedStopIds.push(heatmap.stops[stopIndex].stopId);
-                });
-                if (served.length === 0) return;
-                const record: TripRecord = {
-                    routeKey,
-                    routeId: heatmap.routeId,
-                    date: day.date,
-                    departure: trip.terminalDepartureTime,
-                    block: trip.block,
-                    vehicleId: trip.vehicleId ?? null,
-                    served,
-                    firstStopId: servedStopIds[0],
-                    lastStopId: servedStopIds[servedStopIds.length - 1],
-                    boardings: served.reduce((sum, s) => sum + s.movement[0], 0),
-                    hasCounts: served.some(({ movement: [b, a] }) => b > 0 || a > 0),
-                    continuesAsOtherRoute: false,
-                    analysis: analyzeTripMovements(served.map(s => s.movement)),
-                };
-                route!.trips.push(record);
+            for (const record of buildHeatmapTripRecords(heatmap, stopKeys, day.date)) {
+                route.trips.push(record);
                 dayTrips.push(record);
-            });
+            }
         }
-        markInterlinedTrips(dayTrips);
+        dayTrips.filter(trip => trip.hasCounts).forEach(analyzeTrip);
         allTrips.push(...dayTrips);
 
         // APC departure loads are kept only to compare against the inference.
@@ -449,14 +539,12 @@ export function buildRouteLoadAnalysis(days: DailySummary[]): RouteLoadAnalysis 
     }
 
     const views = Array.from(routes.entries())
-        .map(([key, route]): RouteLoadView => {
-            const countedTrips = route.trips.filter(t => t.hasCounts);
-            const loopShare = share(countedTrips.filter(t => t.firstStopId === t.lastStopId).length, countedTrips.length) ?? 0;
-            const interlinedShare = share(countedTrips.filter(t => t.continuesAsOtherRoute).length, countedTrips.length) ?? 0;
-            const inferenceBlocked: LoadInferenceBlock | null = LOOP_DIRECTION.test(route.direction) || loopShare > ROUTE_CLASSIFICATION_SHARE
-                ? 'loop'
-                : interlinedShare > ROUTE_CLASSIFICATION_SHARE ? 'interlined' : null;
-            const usedTrips = inferenceBlocked ? [] : countedTrips.filter(t => t.analysis.loads);
+        .map(([key, route]) => ({ key, route, periodTrips: route.trips.filter(t => isInLoadTimePeriod(t.departure, period)) }))
+        .filter(({ periodTrips }) => periodTrips.length > 0)
+        .map(({ key, route, periodTrips }): RouteLoadView => {
+            const carriesLoad = isLoopRoute(route.routeId);
+            const countedTrips = periodTrips.filter(t => t.hasCounts);
+            const usedTrips = countedTrips.filter(t => t.analysis.loads);
 
             for (const trip of countedTrips) {
                 trip.served.forEach(({ stopKey, movement: [boardings, alightings] }, index) => {
@@ -464,20 +552,23 @@ export function buildRouteLoadAnalysis(days: DailySummary[]): RouteLoadAnalysis 
                     acc.boardings += boardings;
                     acc.alightings += alightings;
                     acc.countTrips++;
-                    const load = inferenceBlocked ? undefined : trip.analysis.loads?.[index];
+                    const load = trip.analysis.loads?.[index];
                     if (load === undefined) return;
                     acc.loadSum += load;
                     acc.loadTrips++;
                     acc.maxLoad = Math.max(acc.maxLoad, load);
+                    acc.loads.push(load);
                 });
             }
 
             const ordered = Array.from(route.stops.entries())
+                .filter(([, s]) => s.countTrips > 0)
                 .sort(([, a], [, b]) => a.routeStopIndex - b.routeStopIndex
                     || a.occurrenceIndex - b.occurrenceIndex
                     || a.stopName.localeCompare(b.stopName));
             const stops = ordered.map(([stopKey, s], index): RouteLoadStop => {
                 const hasLoad = s.loadTrips > 0;
+                const sortedLoads = [...s.loads].sort((a, b) => a - b);
                 return {
                     key: stopKey,
                     stopNumber: index + 1,
@@ -490,6 +581,8 @@ export function buildRouteLoadAnalysis(days: DailySummary[]): RouteLoadAnalysis 
                     avgAlightings: s.countTrips > 0 ? s.alightings / s.countTrips : 0,
                     avgLoad: hasLoad ? s.loadSum / s.loadTrips : null,
                     maxLoad: hasLoad ? s.maxLoad : null,
+                    p10Load: quantile(sortedLoads, 0.1),
+                    p90Load: quantile(sortedLoads, 0.9),
                     loadSamples: s.loadTrips,
                     lowSample: s.loadTrips < MIN_LOAD_SAMPLES,
                     partialPattern: usedTrips.length > 0 && s.loadTrips < usedTrips.length * PARTIAL_PATTERN_SHARE,
@@ -507,17 +600,17 @@ export function buildRouteLoadAnalysis(days: DailySummary[]): RouteLoadAnalysis 
                 routeId: route.routeId,
                 routeName: route.routeName,
                 direction: route.direction,
+                carriesLoad,
                 tripCount: countedTrips.length,
                 usableTripCount: usedTrips.length,
                 serviceDays: route.days.size,
-                inferenceBlocked,
                 stops,
                 peakStop,
                 maxTripLoad: tripMaxima.length > 0 ? Math.max(...tripMaxima) : null,
                 fullTripCount: usedTrips.filter(t => t.analysis.loads!.some(load => load >= FULL_LOAD)).length,
-                usableShare: inferenceBlocked ? null : share(usedTrips.length, countedTrips.length),
+                usableShare: share(usedTrips.length, countedTrips.length),
                 busiestTrips: buildBusiestTrips(usedTrips, stopNames),
-                diagnostics: buildDiagnostics(route, countedTrips, stops),
+                diagnostics: buildDiagnostics(route, periodTrips, countedTrips, stops, carriesLoad),
             };
         })
         .sort((a, b) => a.routeId.localeCompare(b.routeId, undefined, { numeric: true, sensitivity: 'base' })
@@ -526,6 +619,68 @@ export function buildRouteLoadAnalysis(days: DailySummary[]): RouteLoadAnalysis 
     return { views, vehicles: buildVehicleDiagnostics(allTrips) };
 }
 
-export function buildRouteLoadViews(days: DailySummary[]): RouteLoadView[] {
-    return buildRouteLoadAnalysis(days).views;
+export function buildRouteLoadViews(days: DailySummary[], period: LoadTimePeriod = 'all'): RouteLoadView[] {
+    return buildRouteLoadAnalysis(days, period).views;
+}
+
+export interface InferredTripStop {
+    stopName: string;
+    stopId: string;
+    isTimepoint: boolean;
+    boardings: number;
+    alightings: number;
+    /** Inferred onboard load leaving this stop. */
+    load: number;
+}
+
+export interface InferredTripLoad {
+    tripId: string | null;
+    routeId: string;
+    routeName: string;
+    direction: string;
+    departure: string;
+    block: string;
+    stops: InferredTripStop[];
+    peakLoad: number;
+    peakStopName: string;
+    boardings: number;
+    clampedStops: number;
+}
+
+/**
+ * Inferred load for every usable trip on one service day, in stop order. Uses
+ * the same inference as the route views, including loop carry-over.
+ */
+export function inferDayTripLoads(day: Pick<DailySummary, 'date' | 'ridershipHeatmaps'>): InferredTripLoad[] {
+    const result: InferredTripLoad[] = [];
+    for (const heatmap of day.ridershipHeatmaps ?? []) {
+        const stopsByKey = new Map(heatmap.stops.map(stop => [stopKeyFor(stop), stop]));
+        const records = buildHeatmapTripRecords(heatmap, heatmap.stops.map(stopKeyFor), day.date);
+        for (const record of records) {
+            if (!record.hasCounts) continue;
+            analyzeTrip(record);
+            const loads = record.analysis.loads;
+            if (!loads) continue;
+            let peakIndex = 0;
+            loads.forEach((load, index) => { if (load > loads[peakIndex]) peakIndex = index; });
+            const stops = record.served.map(({ stopKey, movement: [boardings, alightings] }, index): InferredTripStop => {
+                const stop = stopsByKey.get(stopKey)!;
+                return { stopName: stop.stopName, stopId: stop.stopId, isTimepoint: stop.isTimepoint, boardings, alightings, load: loads[index] };
+            });
+            result.push({
+                tripId: record.tripId,
+                routeId: heatmap.routeId,
+                routeName: heatmap.routeName,
+                direction: heatmap.direction,
+                departure: record.departure,
+                block: record.block,
+                stops,
+                peakLoad: loads[peakIndex],
+                peakStopName: stops[peakIndex].stopName,
+                boardings: record.boardings,
+                clampedStops: record.analysis.clampedStops,
+            });
+        }
+    }
+    return result;
 }

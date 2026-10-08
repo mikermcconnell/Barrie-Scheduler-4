@@ -26,10 +26,8 @@ function number(value: number | null, digits = 1): string {
     return value === null ? '—' : value.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
-function blockLabel(view: RouteLoadView): string {
-    if (view.inferenceBlocked === 'loop') return 'Not inferred: loop';
-    if (view.inferenceBlocked === 'interlined') return 'Not inferred: interlined';
-    return 'Inferred';
+function methodLabel(view: RouteLoadView): string {
+    return view.carriesLoad ? 'Loop: riders aboard at start' : 'Starts empty';
 }
 
 function Check({ ok, label, detail }: { ok: boolean | null; label: string; detail: string }) {
@@ -84,8 +82,10 @@ export const RidershipLoadDiagnostics: React.FC<RidershipLoadDiagnosticsProps> =
                         />
                         <Check
                             ok={null}
-                            label="Route shape:"
-                            detail={`${percent(d.loopTripShare)} of trips loop and ${percent(d.interlinedTripShare)} continue as another route; inference is withheld above 50%.`}
+                            label="Starting load:"
+                            detail={selected.carriesLoad
+                                ? `loop route; trips start with ${number(d.avgCarriedInLoad)} riders already aboard at the start on average.`
+                                : 'each trip starts empty.'}
                         />
                     </ul>
 
@@ -115,7 +115,7 @@ export const RidershipLoadDiagnostics: React.FC<RidershipLoadDiagnosticsProps> =
                             <thead>
                                 <tr className="border-b border-gray-100 text-left uppercase text-gray-400">
                                     <th className="py-1.5 pr-2">Route</th>
-                                    <th className="py-1.5 pr-2">Status</th>
+                                    <th className="py-1.5 pr-2">Method</th>
                                     <th className="py-1.5 pr-2 text-right">Trips</th>
                                     <th className="py-1.5 pr-2 text-right">Used</th>
                                     <th className="py-1.5 pr-2 text-right">Median ratio</th>
@@ -133,13 +133,13 @@ export const RidershipLoadDiagnostics: React.FC<RidershipLoadDiagnosticsProps> =
                                     return (
                                         <tr key={view.key} className={`border-b border-gray-50 ${view.key === selected.key ? 'bg-cyan-50/60' : ''}`}>
                                             <td className="py-1 pr-2 font-semibold text-gray-700">{view.routeId} {view.direction}</td>
-                                            <td className="py-1 pr-2 text-gray-500">{blockLabel(view)}</td>
+                                            <td className="py-1 pr-2 text-gray-500">{methodLabel(view)}</td>
                                             <td className="py-1 pr-2 text-right tabular-nums">{view.tripCount.toLocaleString()}</td>
                                             <td className="py-1 pr-2 text-right tabular-nums">{percent(view.usableShare)}</td>
                                             <td className="py-1 pr-2 text-right tabular-nums">{number(vd.medianRatio, 2)}</td>
                                             <td className="py-1 pr-2 text-right tabular-nums">{percent(vd.clampedTripShare)}</td>
                                             <td className={`py-1 pr-2 text-right tabular-nums ${ratio !== null && ratio >= SKIPPED_BUSIER_WARNING ? 'font-semibold text-amber-700' : ''}`}>{number(ratio, 2)}</td>
-                                            <td className="py-1 pr-2 text-right tabular-nums">{view.inferenceBlocked ? '—' : view.fullTripCount.toLocaleString()}</td>
+                                            <td className="py-1 pr-2 text-right tabular-nums">{view.fullTripCount.toLocaleString()}</td>
                                         </tr>
                                     );
                                 })}

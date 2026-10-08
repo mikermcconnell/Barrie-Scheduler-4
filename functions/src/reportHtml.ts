@@ -1,14 +1,37 @@
-import { DailySummary, RouteMetrics, HourMetrics, StopMetrics, DwellIncident } from './types';
+import { DailySummary, RouteMetrics, HourMetrics, StopMetrics, DwellIncident, TripMetrics } from './types';
+import { FULL_LOAD } from '../../utils/performanceRouteLoad';
+import type { FeaturedTrip } from './featuredTrip';
+import { EMAIL_ICON_PNG } from './emailIconData';
+import { apcDiscrepancyPctForRoute, apcStatusForRoute } from './routeApc';
+import { buildGlance, type GlanceModel, type GlanceTone, type RouteHistoryDay } from './dailyGlance';
+import { median, type WeeklyDwellSummary } from '../../utils/performanceDwellHistory';
 
 export interface ReportData {
   latestDay: DailySummary;
   trendDays: DailySummary[];
   teamName: string;
+  featuredTrip?: FeaturedTrip | null;
+  weeklyDwell?: WeeklyDwellSummary | null;
+  /** Full weekly dwell section (Monday emails); other days get one line in the dwell card. */
+  showWeeklyDwellSection?: boolean;
+  /** Route-level history; when present the glance section compares each route with its usual. */
+  routeHistory?: RouteHistoryDay[];
+  /** Latest day's trips, for late-trip patterns in the glance section. */
+  latestTrips?: TripMetrics[];
+  lastMissedTripDataDate?: string | null;
 }
 
 // Reset dwell comparison baselines from the current report rollout onward.
 // The morning report currently uses 2026-03-09 as its latest service day.
 const DWELL_AVG_BASELINE_START_DATE = '2026-03-09';
+// Fixed height keeps all four KPI cards the same size; fits up to three grey lines.
+const KPI_CARD_HEIGHT_PX = 190;
+const DWELL_MEDIAN_MIN_DAYS = 3;
+const DWELL_DAY_TYPE_LABEL: Record<DailySummary['dayType'], string> = {
+  weekday: 'Weekday',
+  saturday: 'Saturday',
+  sunday: 'Sunday',
+};
 
 /** Hub definitions — stops at the same hub get merged in stop rankings */
 const HUBS: { name: string; stopCodes: string[] }[] = [
@@ -163,24 +186,50 @@ function routeOtpCell(otp: RouteMetrics['otp']): string {
     </div>`;
 }
 
-type EmailIconName = 'bus' | 'performance' | 'ridership' | 'trips' | 'dwell' | 'alert' | 'stable';
+type EmailIconName = 'bus' | 'performance' | 'ridership' | 'trips' | 'dwell';
 
-const EMAIL_ICON_SYMBOL: Record<EmailIconName, string> = {
-  bus: '&#128652;',
-  performance: '&#128200;',
-  ridership: '&#128101;',
-  trips: '&#128652;',
-  dwell: '&#9201;',
-  alert: '&#9888;',
-  stable: '&#10003;',
+const EMAIL_ICON_ALT: Record<EmailIconName, string> = {
+  bus: 'Bus',
+  performance: 'Clock',
+  ridership: 'Riders',
+  trips: 'Route',
+  dwell: 'Stopwatch',
 };
 
-function emailIcon(name: EmailIconName, color = '#0f3a76', size = 24): string {
-  return `<span style="display:inline-block;font-size:${size}px;line-height:1;color:${color};font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',Arial,sans-serif;">${EMAIL_ICON_SYMBOL[name]}</span>`;
+// Colour used when an icon has no PNG for the requested colour.
+const EMAIL_ICON_DEFAULT_COLOR: Record<EmailIconName, string> = {
+  bus: '#ffffff',
+  performance: '#16a34a',
+  ridership: '#2563eb',
+  trips: '#6d28d9',
+  dwell: '#0891b2',
+};
+
+const EMAIL_ICON_CID_PATTERN = /cid:icon-([a-z]+-[0-9a-f]{6})/g;
+
+function emailIconKey(name: EmailIconName, color: string): string {
+  const key = `${name}-${color.replace('#', '').toLowerCase()}`;
+  return EMAIL_ICON_PNG[key] ? key : `${name}-${EMAIL_ICON_DEFAULT_COLOR[name].slice(1)}`;
 }
 
-function iconBadge(name: EmailIconName, color = '#0f3a76', bg = '#eff6ff', size = 24): string {
-  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size + 14}px;height:${size + 14}px;border-radius:14px;background:${bg};border:1px solid ${color}22;color:${color};">${emailIcon(name, color, size)}</span>`;
+/** Icon badge as an embedded PNG; the badge background is part of the image. */
+function iconBadge(name: EmailIconName, color: string, size: number): string {
+  const box = size + 14;
+  return `<img src="cid:icon-${emailIconKey(name, color)}" width="${box}" height="${box}" alt="${EMAIL_ICON_ALT[name]}" style="display:inline-block;width:${box}px;height:${box}px;border:0;outline:none;text-decoration:none;vertical-align:middle;" />`;
+}
+
+/** Inline attachments for each icon the email references, for the mail extension's nodemailer. */
+export function emailIconAttachments(html: string): Array<{ filename: string; content: string; encoding: 'base64'; contentType: 'image/png'; cid: string }> {
+  const keys = new Set([...html.matchAll(EMAIL_ICON_CID_PATTERN)].map(match => match[1]));
+  return [...keys]
+    .filter(key => EMAIL_ICON_PNG[key])
+    .map(key => ({
+      filename: `${key}.png`,
+      content: EMAIL_ICON_PNG[key],
+      encoding: 'base64',
+      contentType: 'image/png',
+      cid: `icon-${key}`,
+    }));
 }
 
 function kpiCard(label: string, value: string, subtitle?: string, accentColor = '#2563eb', subtitleColor?: string, icon?: EmailIconName): string {
@@ -188,8 +237,8 @@ function kpiCard(label: string, value: string, subtitle?: string, accentColor = 
   const subWeight = subtitleColor ? 'font-weight:600;' : '';
   return `
     <td style="width:25%;padding:6px;vertical-align:top;">
-      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
-        ${icon ? `<div style="line-height:1;margin-bottom:8px;">${iconBadge(icon, accentColor, '#f8fafc', 18)}</div>` : ''}
+      <div style="box-sizing:border-box;height:${KPI_CARD_HEIGHT_PX}px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
+        ${icon ? `<div style="line-height:1;margin-bottom:8px;">${iconBadge(icon, accentColor, 18)}</div>` : ''}
         <div style="font-size:13px;color:#1e3a5f;font-weight:700;">${label}</div>
         <div style="font-size:28px;font-weight:800;color:${accentColor};margin:8px 0 4px;letter-spacing:-0.5px;">${value}</div>
         ${subtitle ? `<div style="font-size:11px;color:${subColor};${subWeight}">${subtitle}</div>` : ''}
@@ -225,21 +274,6 @@ function bphPill(value: number): string {
   return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:12px;">${value.toFixed(1)}</span>`;
 }
 
-function apcDiscrepancyPctForRoute(route: RouteMetrics): number {
-  if (typeof route.apcDiscrepancyPct === 'number') return route.apcDiscrepancyPct;
-  const baseline = Math.max(route.ridership, route.alightings, 1);
-  return Math.round((Math.abs(route.ridership - route.alightings) * 1000) / baseline) / 10;
-}
-
-function apcStatusForRoute(route: RouteMetrics): 'ok' | 'review' | 'suspect' {
-  if (route.apcStatus === 'review' || route.apcStatus === 'suspect' || route.apcStatus === 'ok') {
-    return route.apcStatus;
-  }
-  const discrepancyPct = apcDiscrepancyPctForRoute(route);
-  if (discrepancyPct >= 50) return 'suspect';
-  if (discrepancyPct >= 25) return 'review';
-  return 'ok';
-}
 
 function apcStatusBg(status: 'ok' | 'review' | 'suspect'): string {
   if (status === 'suspect') return '#fef2f2';
@@ -419,68 +453,140 @@ function buildExecutiveSummary(latestDay: DailySummary): string {
     `;
 }
 
-function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): string {
-  const dwell = latestDay.byOperatorDwell;
-  const testingNote = '<div style="font-size:10px;color:#9ca3af;margin-top:3px;">Operator dwell metric under testing.</div>';
+const DASHBOARD_OTP_URL = 'https://transitscheduler.ca/#operations/performance/otp';
 
-  if (!dwell) {
-    return `
-      <td style="width:25%;padding:6px;vertical-align:top;">
-        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid #0891b2;box-shadow:0 2px 8px rgba(15,23,42,0.06);">
-          <div style="line-height:1;margin-bottom:8px;">${iconBadge('dwell', '#0891b2', '#f8fafc', 18)}</div>
-          <div style="font-size:13px;color:#1e3a5f;font-weight:700;">Operator Dwell</div>
-          <div style="font-size:28px;font-weight:800;color:#0891b2;margin:8px 0 4px;letter-spacing:-0.5px;">—</div>
-          <div style="font-size:11px;color:#9ca3af;">No dwell data</div>
-          ${testingNote}
-        </div>
-      </td>`;
-  }
+const GLANCE_STATUS_STYLE: Record<GlanceModel['status'], { bg: string; color: string }> = {
+  STABLE: { bg: '#dcfce7', color: '#166534' },
+  REVIEW: { bg: '#fef3c7', color: '#92400e' },
+  'NEEDS ATTENTION': { bg: '#fee2e2', color: '#991b1b' },
+};
+const GLANCE_TONE_COLOR: Record<GlanceTone, string> = {
+  neutral: '#64748b',
+  good: '#16a34a',
+  bad: '#dc2626',
+  warn: '#d97706',
+};
+const GLANCE_SEVERITY_COLOR = { high: '#dc2626', medium: '#d97706', low: '#94a3b8' } as const;
 
-  const reportableIncidents = getReportableDwellIncidents(latestDay);
-  const reportableSeconds = reportableIncidents.reduce((sum, incident) => sum + incident.trackedDwellSeconds, 0);
-  const totalHours = (reportableSeconds / 3600).toFixed(1);
-  const highCount = reportableIncidents.filter(incident => incident.severity === 'high').length;
-  const moderateCount = reportableIncidents.filter(incident => incident.severity === 'moderate').length;
+function buildRouteDwellLeader(latestDay: DailySummary): { routeId: string | null; hours: number } {
+  const [top] = [...buildRouteDwellMap(latestDay).entries()].sort((a, b) => b[1] - a[1]);
+  return top ? { routeId: top[0], hours: top[1] / 3600 } : { routeId: null, hours: 0 };
+}
 
-  let accentColor = '#0891b2';
-  let valueColor = '#111827';
-  let averageLine = '';
-
-  const sameDayTypeDays = trendDays.filter(day =>
-    day.date >= DWELL_AVG_BASELINE_START_DATE
-    && day.dayType === latestDay.dayType
-    && typeof day.byOperatorDwell?.totalTrackedDwellMinutes === 'number'
-  );
-
-  if (sameDayTypeDays.length > 0) {
-    const averageSeconds = sameDayTypeDays.reduce((sum, day) => sum + getDailyReportableDwellSeconds(day), 0)
-      / sameDayTypeDays.length;
-    const dayTypeLabel = latestDay.dayType === 'weekday'
-      ? 'Weekday'
-      : latestDay.dayType === 'saturday'
-        ? 'Saturday'
-        : 'Sunday';
-
-    if (averageSeconds > 0 && reportableSeconds > (averageSeconds * 1.5)) {
-      accentColor = '#d97706';
-      valueColor = '#d97706';
-      averageLine = `<div style="font-size:10px;color:#d97706;margin-top:3px;">&#9650; ${dayTypeLabel} avg: ${(averageSeconds / 3600).toFixed(1)} hrs</div>`;
-    } else {
-      averageLine = `<div style="font-size:10px;color:#b0b8c4;margin-top:3px;">${dayTypeLabel} avg: ${(averageSeconds / 3600).toFixed(1)} hrs</div>`;
-    }
-  }
+/** "Yesterday at a Glance" from the glance model: headline, usual comparisons, standouts, ongoing. */
+function buildGlanceSummary(glance: GlanceModel): string {
+  const status = GLANCE_STATUS_STYLE[glance.status];
+  const comparisons = glance.comparisons.length === 0 ? '' : `
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 4px;">
+      ${glance.comparisons.map(row => `
+        <tr>
+          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:#64748b;width:24%;">${row.label}</td>
+          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:13px;color:#0f172a;font-weight:700;width:20%;">${row.value}</td>
+          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:#94a3b8;width:22%;">${row.usual}</td>
+          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:${GLANCE_TONE_COLOR[row.tone]};font-weight:${row.tone === 'neutral' ? 600 : 700};text-align:right;">${row.verdict}</td>
+        </tr>`).join('')}
+    </table>`;
+  const standouts = glance.standouts.length === 0 ? '' : `
+    <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:0.4px;text-transform:uppercase;margin:12px 0 6px;">What stood out</div>
+    ${glance.standouts.map(standout => `
+      <table cellpadding="0" cellspacing="0" style="margin:6px 0;">
+        <tr>
+          <td style="width:18px;vertical-align:top;font-size:13px;line-height:1.5;color:#dc2626;font-weight:800;">&#9660;</td>
+          <td style="vertical-align:top;">
+            <div style="font-size:13px;line-height:1.5;color:#374151;"><b>Route ${escapeHtml(standout.routeId)}</b> ${escapeHtml(standout.sentence)}</div>
+            ${standout.latePattern ? `<div style="font-size:12px;line-height:1.45;color:#64748b;">${escapeHtml(standout.latePattern)}</div>` : ''}
+          </td>
+        </tr>
+      </table>`).join('')}`;
+  const newTag = (routeId: string) => `<span style="background:#dbeafe;color:#1d4ed8;font-weight:700;padding:0 5px;border-radius:4px;">${escapeHtml(routeId)} new</span>`;
+  const ongoing = glance.ongoing.length === 0 ? '' : `
+    <div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border-radius:8px;">
+      <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:0.4px;text-transform:uppercase;margin-bottom:4px;">Ongoing</div>
+      <div style="font-size:12px;line-height:1.55;color:#64748b;">
+        ${glance.ongoing.map(item => `${escapeHtml(item.text)}${(item.newRoutes ?? []).map(routeId => ` ${newTag(routeId)}`).join('')}`).join('<br>')}
+      </div>
+    </div>`;
 
   return `
-    <td style="width:25%;padding:6px;vertical-align:top;">
-      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
-        <div style="line-height:1;margin-bottom:8px;">${iconBadge('dwell', accentColor, '#f8fafc', 18)}</div>
-        <div style="font-size:13px;color:#1e3a5f;font-weight:700;">Operator Dwell</div>
-        <div style="font-size:28px;font-weight:800;color:${valueColor};margin:8px 0 4px;letter-spacing:-0.5px;">${totalHours} hrs</div>
-        <div style="font-size:11px;color:#9ca3af;">${highCount} high · ${moderateCount} moderate</div>
-        ${averageLine}
-        ${testingNote}
+    ${sectionHeader('Yesterday at a Glance')}
+    ${cardWrap(`
+      <div style="font-size:15px;font-weight:700;color:#0f172a;line-height:1.4;">
+        <span style="display:inline-block;background:${status.bg};color:${status.color};padding:3px 9px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.3px;vertical-align:2px;margin-right:6px;">${glance.status}</span>${escapeHtml(glance.headline)}
       </div>
-      </td>`;
+      ${comparisons}${standouts}${ongoing}`)}`;
+}
+
+/** Ranked follow-ups from the glance model; a quiet note when there are none. */
+function buildGlanceActions(glance: GlanceModel): string {
+  const body = glance.actions.length === 0
+    ? `<div style="font-size:13px;color:#475569;line-height:1.5;">Nothing new to follow up today.</div>
+       ${glance.ongoing.length > 0 ? '<div style="font-size:12px;color:#94a3b8;line-height:1.5;margin-top:6px;">Ongoing items are listed on the left.</div>' : ''}`
+    : glance.actions.map((action, i) => `
+      <div style="background:#ffffff;border-left:4px solid ${GLANCE_SEVERITY_COLOR[action.severity]};border-radius:8px;padding:9px 11px;margin:${i === 0 ? 0 : 8}px 0 0;">
+        <div style="font-size:13px;font-weight:700;color:#082b63;">${i + 1}. ${escapeHtml(action.title)}</div>
+        <div style="font-size:12px;color:#475569;line-height:1.45;margin-top:2px;">${escapeHtml(action.detail)}</div>
+        ${action.link ? `<div style="font-size:12px;margin-top:4px;"><a href="${action.link}" style="color:#2563eb;font-weight:600;text-decoration:none;">Open on-time dashboard &rarr;</a></div>` : ''}
+      </div>`).join('');
+
+  return `
+    ${sectionHeader('Action Focus')}
+    ${cardWrap(body, '#eff6ff')}`;
+}
+
+/** Today's dwell rate against the same day type's median; null when there is no dwell data. */
+function dwellComparison(latestDay: DailySummary, trendDays: DailySummary[]): {
+  per100: number;
+  typicalPer100: number | null;
+  elevated: boolean;
+} | null {
+  if (!latestDay.byOperatorDwell || !(latestDay.system.tripCount > 0)) return null;
+  const per100 = dwellMinutesPer100Trips(latestDay);
+
+  // Compare per-100-trip rates, not raw hours, so busy and quiet days compare fairly.
+  const priorSameDayTypeRates = trendDays
+    .filter(day =>
+      day.date >= DWELL_AVG_BASELINE_START_DATE
+      && day.date < latestDay.date
+      && day.dayType === latestDay.dayType
+      && typeof day.byOperatorDwell?.totalTrackedDwellMinutes === 'number'
+      && day.system.tripCount > 0
+    )
+    .map(dwellMinutesPer100Trips);
+  const typicalPer100 = priorSameDayTypeRates.length >= DWELL_MEDIAN_MIN_DAYS
+    ? median(priorSameDayTypeRates)
+    : null;
+  const elevated = typicalPer100 !== null && typicalPer100 > 0 && per100 > typicalPer100 * 1.5;
+  return { per100, typicalPer100, elevated };
+}
+
+function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): string {
+  const comparison = dwellComparison(latestDay, trendDays);
+  if (!comparison) {
+    return kpiCard('Operator Dwell', '—', 'No dwell data', '#0891b2', undefined, 'dwell');
+  }
+
+  const totalHours = (getDailyReportableDwellSeconds(latestDay) / 3600).toFixed(1);
+  const minutesPer100 = Math.round(comparison.per100);
+  const { typicalPer100, elevated } = comparison;
+  const accentColor = elevated ? '#d97706' : '#0891b2';
+  const medianLine = typicalPer100 !== null
+    ? `<div>${DWELL_DAY_TYPE_LABEL[latestDay.dayType]} median:<br>${Math.round(typicalPer100)} min / 100 trips</div>`
+    : '';
+  // Gap and "Today" label keep the total from reading as part of the median.
+  const totalLine = `<div style="margin-top:${medianLine ? 8 : 0}px;">Today: ${totalHours} hrs total</div>`;
+
+  return kpiCard(
+    'Operator Dwell',
+    `${minutesPer100} <span style="font-size:12px;font-weight:700;">min / 100 trips</span>`,
+    `${medianLine}${totalLine}`,
+    accentColor,
+    undefined,
+    'dwell',
+  );
+}
+
+function dwellMinutesPer100Trips(day: DailySummary): number {
+  return (getDailyReportableDwellSeconds(day) / 60 / day.system.tripCount) * 100;
 }
 
 function formatDwellHours(totalSeconds: number): string {
@@ -735,6 +841,156 @@ function buildTrendTable(trendRows: Array<{ day: DailySummary; dwellSeconds: num
       ${rows}
     </table>
     <div style="font-size:11px;color:#9ca3af;margin-top:6px;">7-day avg dwell is the rolling average of reportable operator dwell hours for that day and the prior six days.</div>`;
+}
+
+const WEEKLY_DWELL_CHART_HEIGHT = 120;
+const WEEKLY_DWELL_LAST_COLOR = '#d97706';
+const WEEKLY_DWELL_EARLIER_COLOR = '#93c5fd';
+const WEEKLY_DWELL_MEDIAN_LINE = '1px dashed #1f2937';
+const WEEKLY_DWELL_WORSE_COLOR = '#b45309';
+const WEEKLY_DWELL_BETTER_COLOR = '#15803d';
+/** Trend changes smaller than this (percent) read as steady. */
+const WEEKLY_DWELL_STEADY_PERCENT = 2;
+
+function formatShortDate(dateStr: string): string {
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+}
+
+/** Plain-language rank: a higher percentile means more dwell, which is worse. */
+function weeklyDwellRank(weekly: WeeklyDwellSummary): string {
+  if (weekly.percentile >= 100) return `Most dwell of ${weekly.weeks.length} weeks`;
+  if (weekly.percentile <= 0) return `Least dwell of ${weekly.weeks.length} weeks`;
+  if (weekly.percentile >= 50) {
+    return `Worse than ${Math.min(9, Math.max(5, Math.round(weekly.percentile / 10)))} in 10 weeks`;
+  }
+  return `Better than ${Math.min(9, Math.max(1, Math.round((100 - weekly.percentile) / 10)))} in 10 weeks`;
+}
+
+function weeklyDwellTrend(weekly: WeeklyDwellSummary): { label: string; color: string; accent: string } | null {
+  if (weekly.trendPercent === null) return null;
+  if (Math.abs(weekly.trendPercent) < WEEKLY_DWELL_STEADY_PERCENT) {
+    return { label: 'Steady', color: '#374151', accent: '#9ca3af' };
+  }
+  const rounded = Math.round(Math.abs(weekly.trendPercent));
+  return weekly.trendPercent > 0
+    ? { label: `&#9650; ${rounded}%`, color: WEEKLY_DWELL_WORSE_COLOR, accent: '#d97706' }
+    : { label: `&#9660; ${rounded}%`, color: WEEKLY_DWELL_BETTER_COLOR, accent: '#16a34a' };
+}
+
+/** One line for the Operator Dwell KPI card on days without the weekly section. */
+/** Fixed-height card: title, big number, unit, and one grey detail line. */
+function weeklyDwellTile(title: string, value: string, detail: string, valueColor: string, accent: string): string {
+  return `
+    <td style="width:33%;padding:4px;vertical-align:top;">
+      <div style="height:104px;background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid ${accent};border-radius:10px;padding:10px 12px;">
+        <div style="font-size:12px;color:#1e3a5f;font-weight:700;">${title}</div>
+        <div style="font-size:26px;font-weight:800;color:${valueColor};margin:4px 0 0;line-height:1.15;">${value}</div>
+        <div style="font-size:11px;color:#374151;">min per 100 trips</div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:3px;">${detail}</div>
+      </div>
+    </td>`;
+}
+
+/** Bars of dwell per 100 trips by week; last week highlighted with its percentile, dashed median. */
+function buildWeeklyDwellChart(weekly: WeeklyDwellSummary): string {
+  const scaleMax = (Math.max(...weekly.weeks.map(week => week.minutesPer100Trips)) * 1.08) || 1;
+  const heightFor = (value: number): number => Math.round((value / scaleMax) * WEEKLY_DWELL_CHART_HEIGHT);
+  const medianTop = WEEKLY_DWELL_CHART_HEIGHT - heightFor(weekly.medianPer100Trips);
+  const block = (height: number, style: string): string =>
+    height > 0 ? `<div style="height:${height}px;${style}font-size:0;line-height:0;">&nbsp;</div>` : '';
+
+  const columns = weekly.weeks.map((week, index) => {
+    const isLast = index === weekly.weeks.length - 1;
+    const bar = `background:${isLast ? WEEKLY_DWELL_LAST_COLOR : WEEKLY_DWELL_EARLIER_COLOR};`;
+    const barHeight = heightFor(week.minutesPer100Trips);
+    const barTop = WEEKLY_DWELL_CHART_HEIGHT - barHeight;
+    // The median line is a top border on whichever block starts at its height.
+    const body = barTop <= medianTop
+      ? block(barTop, '')
+        + block(medianTop - barTop, `${bar}border-radius:3px 3px 0 0;`)
+        + block(WEEKLY_DWELL_CHART_HEIGHT - medianTop, `${bar}border-top:${WEEKLY_DWELL_MEDIAN_LINE};`)
+      : block(medianTop, '')
+        + block(barTop - medianTop, `border-top:${WEEKLY_DWELL_MEDIAN_LINE};`)
+        + block(barHeight, `${bar}border-radius:3px 3px 0 0;`);
+    const title = `Week of ${formatShortDate(week.weekStart)}: ${week.minutesPer100Trips.toFixed(0)} min per 100 trips (${week.dwellHours.toFixed(1)} hrs)`;
+    return `<td valign="bottom" style="padding:0 1px;vertical-align:bottom;" title="${title}">${body}</td>`;
+  }).join('');
+
+  const months = weekly.weeks.map((week, index) => {
+    const startsMonth = index === 0 || weekly.weeks[index - 1].weekStart.slice(0, 7) !== week.weekStart.slice(0, 7);
+    if (!startsMonth) return '<td></td>';
+    const month = new Date(`${week.weekStart}T12:00:00`).toLocaleDateString('en-CA', { month: 'short' });
+    return `<td style="font-size:10px;color:#6b7280;padding-top:3px;white-space:nowrap;">${month}</td>`;
+  }).join('');
+
+  return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;border-bottom:1px solid #9ca3af;">
+      <tr>${columns}</tr>
+    </table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;">
+      <tr>${months}</tr>
+    </table>
+    <div style="font-size:11px;color:#6b7280;margin-top:8px;">
+      <span style="display:inline-block;width:10px;height:10px;background:${WEEKLY_DWELL_LAST_COLOR};border-radius:2px;vertical-align:middle;"></span> Last week
+      &nbsp;&nbsp;<span style="display:inline-block;width:10px;height:10px;background:${WEEKLY_DWELL_EARLIER_COLOR};border-radius:2px;vertical-align:middle;"></span> Earlier weeks
+      &nbsp;&nbsp;<span style="display:inline-block;width:14px;border-top:${WEEKLY_DWELL_MEDIAN_LINE};vertical-align:middle;"></span> Typical week (median)
+    </div>`;
+}
+
+/** Where last week sits between the best and worst weeks compared. */
+function buildWeeklyDwellRankStrip(weekly: WeeklyDwellSummary): string {
+  const rates = weekly.weeks.map(week => week.minutesPer100Trips);
+  const position = Math.min(98, Math.max(0, weekly.percentile));
+  const track = 'height:8px;background:#e5e7eb;font-size:0;line-height:0;';
+  const before = position > 0
+    ? `<td style="width:${position}%;padding:0;"><div style="${track}border-radius:4px 0 0 4px;">&nbsp;</div></td>`
+    : '';
+  return `
+    <div style="margin-top:14px;font-size:12px;font-weight:700;color:#374151;">Last week: ${weeklyDwellRank(weekly).toLowerCase()}</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:6px;table-layout:fixed;">
+      <tr>
+        ${before}
+        <td style="width:2%;padding:0;"><div style="height:16px;margin-top:-4px;background:#92400e;border-radius:2px;font-size:0;line-height:0;">&nbsp;</div></td>
+        <td style="padding:0;"><div style="${track}border-radius:0 4px 4px 0;">&nbsp;</div></td>
+      </tr>
+    </table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:3px;">
+      <tr>
+        <td style="font-size:10px;color:#6b7280;">Best week (${Math.min(...rates).toFixed(0)} min)</td>
+        <td style="font-size:10px;color:#6b7280;text-align:center;">Typical (${weekly.medianPer100Trips.toFixed(0)} min)</td>
+        <td style="font-size:10px;color:#6b7280;text-align:right;">Worst week (${Math.max(...rates).toFixed(0)} min)</td>
+      </tr>
+    </table>`;
+}
+
+function buildWeeklyDwellSection(weekly: WeeklyDwellSummary | null | undefined): string {
+  if (!weekly) return '';
+  const { lastWeek } = weekly;
+  const trend = weeklyDwellTrend(weekly);
+  const trendDetail = trend && weekly.recentAvgPer100Trips !== null && weekly.priorAvgPer100Trips !== null
+    ? `${weekly.recentAvgPer100Trips.toFixed(0)} now vs ${weekly.priorAvgPer100Trips.toFixed(0)} before`
+    : 'Needs 8 weeks of data';
+
+  const content = `
+    <table width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;">
+      <tr>
+        ${weeklyDwellTile(
+          `Last week (${formatShortDate(lastWeek.weekStart)} – ${formatShortDate(lastWeek.weekEnd)})`,
+          lastWeek.minutesPer100Trips.toFixed(0),
+          `${lastWeek.dwellHours.toFixed(1)} hrs total`,
+          '#111827',
+          '#0891b2',
+        )}
+        ${weeklyDwellTile('Typical week', weekly.medianPer100Trips.toFixed(0), `Median of ${weekly.weeks.length} weeks`, '#111827', '#9ca3af')}
+        ${weeklyDwellTile('4-week trend', trend ? trend.label : '—', trendDetail, trend ? trend.color : '#6b7280', trend ? trend.accent : '#9ca3af')}
+      </tr>
+    </table>
+    <div style="font-size:13px;font-weight:700;color:#374151;margin:14px 0 6px;">Dwell minutes per 100 trips, by week</div>
+    ${buildWeeklyDwellChart(weekly)}
+    ${buildWeeklyDwellRankStrip(weekly)}
+    <div style="font-size:11px;color:#9ca3af;margin-top:10px;">Moderate and high dwell only. Weeks with fewer than 5 days of data are left out.</div>`;
+
+  return `${sectionHeader('Weekly Operator Dwell', 'Monday to Sunday weeks. Higher means more dwell.')}${cardWrap(content)}`;
 }
 
 /** Horizontal stacked bar showing early/on-time/late distribution */
@@ -1130,8 +1386,248 @@ function buildTopStops(stops: StopMetrics[]): string {
   return html;
 }
 
+const TRIP_CHART_HEIGHT = 110;
+const TRIP_LINE_WIDTH = 2;
+/** Headroom above the plot for the peak label. */
+const TRIP_LABEL_ROOM = 16;
+const TRIP_LOAD_COLOR = '#2563eb';
+const TRIP_LOAD_FILL = '#dbeafe';
+const TRIP_FULL_LOAD_COLOR = '#dc2626';
+const TRIP_BOARD_COLOR = '#0d9488';
+const TRIP_ALIGHT_COLOR = '#ea580c';
+/** Stops with more than this many boardings or alightings are listed as major stops. */
+const MAJOR_STOP_MIN_MOVEMENT = 3;
+const MAJOR_STOP_BAR_MAX_PX = 110;
+/** Labels in the right part of the axis read leftwards from their tick so they stay on the chart. */
+const AXIS_RIGHT_ANCHOR_SHARE = 0.65;
+/** Minimum gap between labelled stops, as a share of the trip's stops. */
+const AXIS_MIN_LABEL_GAP_SHARE = 0.07;
+
+function isMajorStop(stop: { boardings: number; alightings: number }): boolean {
+  return Math.round(stop.boardings) > MAJOR_STOP_MIN_MOVEMENT || Math.round(stop.alightings) > MAJOR_STOP_MIN_MOVEMENT;
+}
+
+/**
+ * Stop names under the load line. The ends and the peak come first, then the
+ * busiest major stops, then timepoints, skipping any too close to a name
+ * already placed. Names alternate between two rows; each starts (or, near the
+ * right edge, ends) at its stop's tick.
+ */
+function buildTripStopAxis(trip: FeaturedTrip, peakIndex: number): string {
+  const count = trip.stops.length;
+  const minGap = Math.max(1, Math.ceil(count * AXIS_MIN_LABEL_GAP_SHARE));
+  const priority = (stop: FeaturedTrip['stops'][number], index: number): number => {
+    if (index === 0 || index === count - 1 || index === peakIndex) return Number.POSITIVE_INFINITY;
+    if (isMajorStop(stop)) return 1000 + stop.boardings + stop.alightings;
+    return stop.isTimepoint ? 1 : 0;
+  };
+  const placed: number[] = [];
+  trip.stops
+    .map((stop, index) => ({ index, rank: priority(stop, index) }))
+    .filter(candidate => candidate.rank > 0)
+    .sort((a, b) => b.rank - a.rank || a.index - b.index)
+    .forEach(({ index }) => {
+      if (placed.every(other => Math.abs(other - index) >= minGap)) placed.push(index);
+    });
+  const labelled = placed
+    .sort((a, b) => a - b)
+    .map(index => ({ stop: trip.stops[index], index }));
+  const labelledIndexes = new Set(labelled.map(({ index }) => index));
+  const tickColor = '#6b7280';
+
+  const ticks = trip.stops.map((_, index) => `<td style="height:5px;padding:0;font-size:0;line-height:0;${labelledIndexes.has(index) ? `border-left:1px solid ${tickColor};` : ''}">&nbsp;</td>`).join('');
+  const labelRow = (row: typeof labelled): string => {
+    const cells: string[] = [];
+    let cursor = 0;
+    const filler = (end: number): void => {
+      if (end > cursor) cells.push(`<td colspan="${end - cursor}" style="padding:0;"></td>`);
+      cursor = Math.max(cursor, end);
+    };
+    row.forEach(({ stop, index }, position) => {
+      const next = row[position + 1];
+      const rightAnchored = index >= count * AXIS_RIGHT_ANCHOR_SHARE;
+      let start: number;
+      let end: number;
+      if (rightAnchored) {
+        start = cursor;
+        end = index + 1;
+      } else {
+        start = index;
+        const nextRight = next && next.index >= count * AXIS_RIGHT_ANCHOR_SHARE;
+        end = !next ? count : nextRight ? Math.ceil((index + next.index + 1) / 2) : next.index;
+      }
+      filler(start);
+      end = Math.max(end, cursor + 1);
+      const isPeak = index === peakIndex;
+      const shortName = stop.stopName.replace(/\s+Platform\s+\S+$/i, '');
+      cells.push(`<td colspan="${end - cursor}" title="${escapeHtml(stop.stopName)}" style="padding:2px ${rightAnchored ? '0 0 2px' : '2px 0 0'};font-size:10px;line-height:13px;color:${isPeak ? '#111827' : '#4b5563'};font-weight:${isPeak ? 800 : 400};text-align:${rightAnchored ? 'right' : 'left'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(shortName)}</td>`);
+      cursor = end;
+    });
+    filler(count);
+    return `<tr>${cells.join('')}</tr>`;
+  };
+
+  return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;">
+      <tr>${ticks}</tr>
+      ${labelRow(labelled.filter((_, position) => position % 2 === 0))}
+      ${labelRow(labelled.filter((_, position) => position % 2 === 1))}
+    </table>`;
+}
+
+function formatClockTime(time: string): string {
+  const [hoursText, minutesText = '00'] = time.split(':');
+  const hours = Number.parseInt(hoursText, 10);
+  if (!Number.isFinite(hours)) return time;
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  const suffix = hours % 24 < 12 ? 'AM' : 'PM';
+  return `${hour12}:${minutesText.padStart(2, '0')} ${suffix}`;
+}
+
+const DIRECTION_LABELS: Record<string, string> = { N: 'northbound', S: 'southbound', E: 'eastbound', W: 'westbound' };
+
+function directionLabel(direction: string): string {
+  return DIRECTION_LABELS[direction.trim().toUpperCase()] ?? direction;
+}
+
+/**
+ * Load along the trip as a stepped line. Email clients drop SVG, so each stop
+ * is a table column whose stacked divs draw the step and its vertical joint.
+ */
+function buildTripLoadChart(trip: FeaturedTrip): string {
+  const scaleMax = Math.max(trip.peakLoad, FULL_LOAD);
+  const peakIndex = trip.stops.findIndex(stop => stop.load === trip.peakLoad);
+  const yFor = (load: number): number =>
+    TRIP_CHART_HEIGHT - Math.max(TRIP_LINE_WIDTH, Math.round((load / scaleMax) * TRIP_CHART_HEIGHT));
+  const block = (height: number, style: string): string =>
+    height > 0 ? `<div style="height:${height}px;${style}font-size:0;line-height:0;">&nbsp;</div>` : '';
+
+  const columns = trip.stops.map((stop, index) => {
+    const riders = Math.round(stop.load);
+    const color = stop.load >= FULL_LOAD ? TRIP_FULL_LOAD_COLOR : TRIP_LOAD_COLOR;
+    const y = yFor(stop.load);
+    const prevY = index === 0 ? y : yFor(trip.stops[index - 1].load);
+    const joint = `border-left:${TRIP_LINE_WIDTH}px solid ${color};`;
+    const step = `border-top:${TRIP_LINE_WIDTH}px solid ${color};`;
+    const fill = `background:${TRIP_LOAD_FILL};`;
+    // The top spacer carries the peak label, sitting just above the line.
+    const top = Math.min(y, prevY) + TRIP_LABEL_ROOM;
+    const spacer = index === peakIndex
+      ? block(top - TRIP_LABEL_ROOM, '')
+        + `<div style="height:${TRIP_LABEL_ROOM}px;font-size:11px;line-height:${TRIP_LABEL_ROOM}px;font-weight:800;color:#111827;text-align:center;white-space:nowrap;">${riders}</div>`
+      : block(top, '');
+    // Rising: joint hangs below the new level, inside the fill. Falling: joint drops down to it.
+    let body: string;
+    if (y < prevY) {
+      body = block(prevY - y, step + joint + fill) + block(TRIP_CHART_HEIGHT - prevY, fill);
+    } else if (y > prevY) {
+      body = block(y - prevY, joint) + block(TRIP_CHART_HEIGHT - y, step + fill);
+    } else {
+      body = block(TRIP_CHART_HEIGHT - y, step + fill);
+    }
+    return `<td valign="bottom" style="padding:0;vertical-align:bottom;" title="${escapeHtml(stop.stopName)}: ${riders} on board">${spacer}${body}</td>`;
+  }).join('');
+
+  return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;border-bottom:1px solid #9ca3af;">
+      <tr>${columns}</tr>
+    </table>
+    ${buildTripStopAxis(trip, peakIndex)}
+    <div style="font-size:11px;color:#6b7280;margin-top:6px;">
+      <span style="display:inline-block;width:14px;height:0;border-top:${TRIP_LINE_WIDTH}px solid ${TRIP_LOAD_COLOR};vertical-align:middle;"></span> Load (people on board)
+      &nbsp;&nbsp;<span style="display:inline-block;width:14px;height:0;border-top:${TRIP_LINE_WIDTH}px solid ${TRIP_FULL_LOAD_COLOR};vertical-align:middle;"></span> Full (${FULL_LOAD}+ riders)
+    </div>`;
+}
+
+/** Boardings and alightings at stops with more than MAJOR_STOP_MIN_MOVEMENT of either, in route order. */
+function buildMajorStopsChart(trip: FeaturedTrip): string {
+  const majorStops = trip.stops
+    .map(stop => ({ ...stop, on: Math.round(stop.boardings), off: Math.round(stop.alightings) }))
+    .filter(isMajorStop);
+  if (majorStops.length === 0) return '';
+
+  const scaleMax = Math.max(...majorStops.map(stop => Math.max(stop.on, stop.off)));
+  const bar = (value: number, color: string): string => {
+    const width = value > 0 ? Math.max(2, Math.round((value / scaleMax) * MAJOR_STOP_BAR_MAX_PX)) : 0;
+    const mark = width > 0
+      ? `<span style="display:inline-block;width:${width}px;height:10px;background:${color};border-radius:0 4px 4px 0;vertical-align:middle;"></span> `
+      : '';
+    return `${mark}<span style="font-size:12px;color:#374151;vertical-align:middle;">${value}</span>`;
+  };
+  const cell = 'padding:4px 8px;font-size:12px;border-bottom:1px solid #f3f4f6;';
+  const head = 'padding:5px 8px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;';
+  const rows = majorStops.map((stop, index) => `
+      <tr style="background:${index % 2 === 0 ? '#ffffff' : '#f9fafb'};">
+        <td style="${cell}font-weight:600;color:#374151;">${escapeHtml(stop.stopName)}</td>
+        <td style="${cell}white-space:nowrap;">${bar(stop.on, TRIP_BOARD_COLOR)}</td>
+        <td style="${cell}white-space:nowrap;">${bar(stop.off, TRIP_ALIGHT_COLOR)}</td>
+        <td style="${cell}text-align:right;color:#6b7280;">${Math.round(stop.load)}</td>
+      </tr>`).join('');
+
+  return `
+    <div style="font-size:13px;font-weight:700;color:#374151;margin:18px 0 6px;">Major stops (more than ${MAJOR_STOP_MIN_MOVEMENT} on or off)</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+      <tr>
+        <th style="${head}">Stop</th>
+        <th style="${head}"><span style="display:inline-block;width:10px;height:10px;background:${TRIP_BOARD_COLOR};border-radius:2px;vertical-align:middle;"></span> Boardings</th>
+        <th style="${head}"><span style="display:inline-block;width:10px;height:10px;background:${TRIP_ALIGHT_COLOR};border-radius:2px;vertical-align:middle;"></span> Alightings</th>
+        <th style="${head}text-align:right;">Load after</th>
+      </tr>${rows}
+    </table>`;
+}
+
+function buildFeaturedTripSection(trip: FeaturedTrip | null | undefined): string {
+  if (!trip) return '';
+
+  const peakRiders = Math.round(trip.peakLoad);
+  const isFull = trip.fullStops > 0;
+  const tagColor = isFull ? '#b91c1c' : trip.scoreParts.lateness >= 0.5 ? '#b45309' : '#1d4ed8';
+  const tagBg = isFull ? '#fef2f2' : trip.scoreParts.lateness >= 0.5 ? '#fffbeb' : '#eff6ff';
+  const facts = [
+    `Up to <strong>${peakRiders} people</strong> were on the bus at once, near <strong>${escapeHtml(trip.peakStopName)}</strong>.`,
+    isFull
+      ? `The bus was <strong style="color:#b91c1c;">full</strong> (${FULL_LOAD}+ riders) for ${trip.fullStops} stop${trip.fullStops === 1 ? '' : 's'}.`
+      : `The bus never got full (full is ${FULL_LOAD}+ riders).`,
+    `${num(trip.boardings)} people got on during the trip.`,
+  ];
+  if (trip.lateMinutes !== null && trip.lateMinutes >= 1) {
+    facts.push(`It ran about <strong>${Math.round(trip.lateMinutes)} minute${Math.round(trip.lateMinutes) === 1 ? '' : 's'} late</strong>.`);
+  }
+
+  const content = `
+    <div style="margin-bottom:10px;">
+      <span style="display:inline-block;background:${tagBg};color:${tagColor};padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;">${escapeHtml(trip.reason)}</span>
+    </div>
+    <div style="font-size:20px;font-weight:800;color:#082b63;margin-bottom:8px;">Route ${escapeHtml(trip.routeId)} ${escapeHtml(directionLabel(trip.direction))} · ${formatClockTime(trip.departure)} departure</div>
+    ${facts.map(fact => `<div style="font-size:14px;line-height:1.6;color:#374151;">${fact}</div>`).join('')}
+    <div style="font-size:13px;font-weight:700;color:#374151;margin:16px 0 6px;">Load along the route</div>
+    ${buildTripLoadChart(trip)}
+    ${buildMajorStopsChart(trip)}`;
+
+  return `${sectionHeader('Trip of the Day', 'One notable trip from yesterday, picked automatically. Rider counts are estimated from boardings and alightings.')}${cardWrap(content)}`;
+}
+
+/** Glance model for the report, or null when there is no route history (falls back to the older summary). */
+export function buildReportGlance(data: ReportData): GlanceModel | null {
+  if (!data.routeHistory) return null;
+  const { latestDay, trendDays } = data;
+  const dwell = dwellComparison(latestDay, trendDays);
+  const leader = buildRouteDwellLeader(latestDay);
+  return buildGlance({
+    latestDay,
+    systemHistory: trendDays,
+    routeHistory: data.routeHistory,
+    latestTrips: data.latestTrips ?? [],
+    lastMissedTripDataDate: data.lastMissedTripDataDate ?? null,
+    dwell: dwell
+      ? { per100: dwell.per100, usualPer100: dwell.typicalPer100, elevated: dwell.elevated, topRouteId: leader.routeId, topRouteHours: leader.hours }
+      : null,
+    routeLink: DASHBOARD_OTP_URL,
+  });
+}
+
 export function buildReportHtml(data: ReportData): string {
-  const { latestDay, trendDays, teamName } = data;
+  const { latestDay, trendDays, teamName, featuredTrip, weeklyDwell, showWeeklyDwellSection } = data;
   const sys = latestDay.system;
   // System totals
   const totalServiceHours = latestDay.byRoute.reduce((s, r) => s + r.serviceHours, 0);
@@ -1139,6 +1635,7 @@ export function buildReportHtml(data: ReportData): string {
   const dwellByHour = buildHourlyDwellMap(latestDay);
   const trendRows = buildTrendRows(trendDays);
   const status = deriveReportStatus(latestDay);
+  const glance = buildReportGlance(data);
   const missedTripsSection = latestDay.missedTrips && latestDay.missedTrips.totalMissed > 0
     ? buildMissedTripsTable(latestDay, trendDays)
     : '';
@@ -1169,15 +1666,17 @@ export function buildReportHtml(data: ReportData): string {
     : '';
   const tripsOperatedValue = (() => {
     const mt = latestDay.missedTrips;
-    if (mt && mt.totalScheduled > 0) return num(mt.totalMatched);
+    if (mt && mt.totalScheduled > 0) {
+      return `${num(mt.totalMatched)} <span style="font-size:14px;font-weight:700;color:#9ca3af;">of ${num(mt.totalScheduled)}</span>`;
+    }
     return num(sys.tripCount);
   })();
   const tripsOperatedSubtitle = (() => {
     const mt = latestDay.missedTrips;
     if (mt && mt.totalScheduled > 0) {
       return mt.totalMissed === 0
-        ? `${num(mt.totalScheduled)} scheduled · all operated`
-        : `<strong style="font-weight:800;color:#dc2626;">${num(mt.totalMissed)}</strong> missed of ${num(mt.totalScheduled)} scheduled`;
+        ? 'all scheduled trips operated'
+        : `<strong style="font-weight:800;color:#dc2626;">${num(mt.totalMissed)}</strong> missed`;
     }
     return `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`;
   })();
@@ -1189,7 +1688,7 @@ export function buildReportHtml(data: ReportData): string {
   <div style="max-width:760px;margin:0 auto;background:#ffffff;">
     <!-- Header -->
     <div style="background:#082f69;padding:26px 24px 20px;text-align:center;border-bottom:4px solid #3b82f6;">
-      <div style="line-height:1;margin-bottom:8px;">${iconBadge('bus', '#ffffff', '#0f3a76', 24)}</div>
+      <div style="line-height:1;margin-bottom:8px;">${iconBadge('bus', '#ffffff', 24)}</div>
       <div style="font-size:30px;font-weight:900;color:#ffffff;line-height:1.15;">${teamName}</div>
       <div style="font-size:27px;font-weight:900;color:#ffffff;margin-top:8px;line-height:1.15;">Daily Performance Report</div>
       <div style="font-size:17px;color:#60a5fa;font-weight:800;margin-top:10px;">${formatDateLong(latestDay.date)}</div>
@@ -1217,8 +1716,8 @@ export function buildReportHtml(data: ReportData): string {
       <!-- ═══ 2. EXECUTIVE SUMMARY ═══ -->
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="width:62%;padding:0 6px 0 0;vertical-align:top;">${buildExecutiveSummary(latestDay)}</td>
-          <td style="width:38%;padding:0 0 0 6px;vertical-align:top;">${buildActionFocus(latestDay)}</td>
+          <td style="width:${glance ? 60 : 62}%;padding:0 6px 0 0;vertical-align:top;">${glance ? buildGlanceSummary(glance) : buildExecutiveSummary(latestDay)}</td>
+          <td style="width:${glance ? 40 : 38}%;padding:0 0 0 6px;vertical-align:top;">${glance ? buildGlanceActions(glance) : buildActionFocus(latestDay)}</td>
         </tr>
       </table>
 
@@ -1234,10 +1733,16 @@ export function buildReportHtml(data: ReportData): string {
       <!-- ═══ 6. MISSED TRIPS - EXCEPTION ONLY ═══ -->
       ${missedTripsSection}
 
-      <!-- ═══ 7. OPERATOR DWELL BY STOP ═══ -->
+      <!-- ═══ 7. TRIP OF THE DAY ═══ -->
+      ${buildFeaturedTripSection(featuredTrip)}
+
+      <!-- ═══ 8a. WEEKLY OPERATOR DWELL (MONDAYS) ═══ -->
+      ${showWeeklyDwellSection ? buildWeeklyDwellSection(weeklyDwell) : ''}
+
+      <!-- ═══ 8. OPERATOR DWELL BY STOP ═══ -->
       ${buildStopDwellTable(latestDay)}
 
-      <!-- ═══ 8. STOP HIGHLIGHTS ═══ -->
+      <!-- ═══ 9. STOP HIGHLIGHTS ═══ -->
       ${buildTopStops(latestDay.byStop)}
 
     </div>

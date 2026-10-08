@@ -26,12 +26,14 @@ export default tseslint.config(
   {
     files: [
       'scripts/**/*.{js,cjs,mjs,ts}', 'functions/scripts/**/*.{js,cjs,mjs,ts}', 'tests/**/*.{js,cjs,mjs}',
-      '.codex/hooks/**/*.{js,cjs,mjs}', '*.{js,cjs,mjs}',
+      '.codex/hooks/**/*.{js,cjs,mjs}', '.agents/skills/*/scripts/**/*.{js,cjs,mjs}',
+      '.codex/skills/*/scripts/**/*.{js,cjs,mjs}', '*.{js,cjs,mjs}',
     ],
     languageOptions: {
       globals: {
         Buffer: 'readonly',
         URL: 'readonly',
+        __dirname: 'readonly',
         console: 'readonly',
         fetch: 'readonly',
         process: 'readonly',

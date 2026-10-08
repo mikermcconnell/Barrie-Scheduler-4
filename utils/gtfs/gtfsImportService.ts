@@ -981,6 +981,13 @@ export function convertToMasterSchedule(
         const lastDeparture = lastStop.departureMinutes;
         const rawCycle = ((lastDeparture - firstDeparture) + 1440) % 1440;
         const cycleTime = rawCycle > 0 ? rawCycle : trip.travelTime + totalRecovery;
+        // Recovery at the first stop happens before firstDeparture, so the
+        // departure-to-departure cycle never contains it. Subtracting it again
+        // understates driving (e.g. 8A/8B interline trips starting at B.A.T.T.).
+        const firstStop = trip.stopTimes[0];
+        const originRecovery = rawCycle > 0 && firstStop
+            ? Math.max(0, firstStop.departureMinutes - firstStop.arrivalMinutes)
+            : 0;
 
         return {
             id: `${routeShortName}-${direction[0]}-${index + 1}`,
@@ -994,7 +1001,7 @@ export function convertToMasterSchedule(
             endTime: trip.endTime,
             recoveryTime: totalRecovery,
             recoveryTimes: Object.keys(recoveryTimes).length > 0 ? recoveryTimes : undefined,
-            travelTime: Math.max(0, cycleTime - totalRecovery),
+            travelTime: Math.max(0, cycleTime - (totalRecovery - originRecovery)),
             cycleTime,
             stops,
             arrivalTimes: Object.keys(arrivalTimes).length > 0 ? arrivalTimes : undefined,

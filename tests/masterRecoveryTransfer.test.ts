@@ -77,6 +77,45 @@ describe('copyNearestMasterRecoveryToGenerated', () => {
     expect(copied.travelTime).toBe(30);
   });
 
+  it('does not subtract first-stop recovery from driving time', () => {
+    const generated = table({
+      stops: ['Park Place', 'Mapleview', 'Downtown'],
+      trips: [
+        trip({
+          id: 'generated-origin-layover',
+          startTime: 420,
+          endTime: 450,
+          stops: { 'Park Place': '7:00 AM', Mapleview: '7:10 AM', Downtown: '7:30 AM' },
+          arrivalTimes: { 'Park Place': '7:00 AM', Mapleview: '7:10 AM', Downtown: '7:30 AM' },
+          stopMinutes: { 'Park Place': 420, Mapleview: 430, Downtown: 450 },
+        }),
+      ],
+    });
+
+    const master = table({
+      stops: ['Park Place', 'Mapleview', 'Downtown'],
+      trips: [
+        trip({
+          id: 'master-origin-layover',
+          startTime: 425,
+          endTime: 460,
+          recoveryTime: 10,
+          recoveryTimes: { 'Park Place': 5, Mapleview: 2, Downtown: 3 },
+          stops: { 'Park Place': '7:05 AM', Mapleview: '7:12 AM', Downtown: '7:40 AM' },
+          arrivalTimes: { 'Park Place': '7:00 AM', Mapleview: '7:10 AM', Downtown: '7:37 AM' },
+        }),
+      ],
+    });
+
+    const copied = copyNearestMasterRecoveryToGenerated([generated], [master]).tables[0].trips[0];
+
+    // Depart 7:05, arrive Mapleview 7:15, depart 7:17, arrive Downtown 7:37: 10 + 20 driving.
+    expect(copied.startTime).toBe(425);
+    expect(copied.cycleTime).toBe(35);
+    expect(copied.recoveryTime).toBe(10);
+    expect(copied.travelTime).toBe(30);
+  });
+
   it('normalizes ARRIVE/DEPART stop names when mapping master recovery', () => {
     const generated = table({
       stops: ['Park Place', 'Downtown Terminal'],

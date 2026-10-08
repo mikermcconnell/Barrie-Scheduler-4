@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildReportHtml } from '../functions/src/reportHtml';
+import { buildReportHtml, emailIconAttachments } from '../functions/src/reportHtml';
+import { summarizeWeeklyDwell, type DwellHistoryDay } from '../utils/performanceDwellHistory';
 import type {
   DailySummary,
   DwellIncident,
@@ -300,7 +301,7 @@ describe('buildReportHtml trips operated KPI', () => {
     });
 
     expect(html).toContain(
-      '<strong style="font-weight:800;color:#dc2626;">3</strong> missed of 20 scheduled',
+      '<strong style="font-weight:800;color:#dc2626;">3</strong> missed',
     );
   });
 });
@@ -327,7 +328,8 @@ describe('buildReportHtml dwell reporting', () => {
     });
 
     expect(html).toContain('Dwell (hrs)');
-    expect(html).toContain('>4.5 hrs<');
+    expect(html).toContain('4.5 hrs total');
+    expect(html).toContain('min / 100 trips');
 
     const routeSection = between(html, 'Route Scorecard', 'Boardings by Hour');
     const route2Row = rowForText(routeSection, 'Route 2');
@@ -524,7 +526,7 @@ describe('buildReportHtml dwell reporting', () => {
       teamName: 'Barrie Transit',
     });
 
-    expect(html).toContain('Weekday avg: 1.5 hrs');
+    expect(html).toContain('1.0 hrs total');
   });
 
 
@@ -684,7 +686,7 @@ describe('buildReportHtml dwell reporting', () => {
     expect(beforeKpis).not.toContain('Mostly stable');
   });
 
-  it('uses inline icon symbols and removes the feedback reply notice', () => {
+  it('embeds duotone icons as inline attachments and removes the feedback reply notice', () => {
     const latestDay = makeSummary({
       date: '2026-04-20',
     });
@@ -695,9 +697,145 @@ describe('buildReportHtml dwell reporting', () => {
       teamName: 'Barrie Transit',
     });
 
-    expect(html).not.toContain('<img src=');
     expect(html).not.toContain('email-icons');
     expect(html).not.toContain('Questions or feedback?');
-    expect(html).toContain('&#128652;');
+    expect(html).not.toContain('&#128652;');
+    expect(html).toContain('src="cid:icon-bus-ffffff"');
+    expect(html).toContain('src="cid:icon-ridership-2563eb"');
+
+    const attachments = emailIconAttachments(html);
+    const cids = attachments.map(attachment => attachment.cid);
+    expect(new Set(cids).size).toBe(cids.length);
+    expect(cids).toEqual(expect.arrayContaining(['icon-bus-ffffff', 'icon-ridership-2563eb', 'icon-trips-6d28d9']));
+    for (const cid of [...html.matchAll(/src="cid:([^"]+)"/g)].map(match => match[1])) {
+      expect(cids).toContain(cid);
+    }
+    for (const attachment of attachments) {
+      expect(attachment.encoding).toBe('base64');
+      expect(Buffer.from(attachment.content, 'base64').subarray(1, 4).toString()).toBe('PNG');
+    }
+  });
+});
+
+describe('buildReportHtml weekly operator dwell', () => {
+  /** Eight Monday–Sunday weeks from 2026-03-09; each day has `rate` minutes over 100 trips. */
+  function weeklyDwell() {
+    const history: DwellHistoryDay[] = [10, 10, 10, 10, 20, 20, 20, 20].flatMap((rate, weekIndex) =>
+      Array.from({ length: 7 }, (_, dayIndex) => {
+        const date = new Date(Date.UTC(2026, 2, 9 + weekIndex * 7 + dayIndex, 12));
+        return { date: date.toISOString().slice(0, 10), dayType: 'weekday', reportableDwellMinutes: rate, tripCount: 100 };
+      }));
+    return summarizeWeeklyDwell(history, '2026-05-03');
+  }
+
+  const latestDay = makeSummary({ date: '2026-05-03', dayType: 'sunday' });
+
+  it('shows the full section with rank, trend and chart on the week-closing send', () => {
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+      weeklyDwell: weeklyDwell(),
+      showWeeklyDwellSection: true,
+    });
+    const section = between(html, 'Weekly Operator Dwell', '8. OPERATOR DWELL BY STOP');
+
+    expect(section).toContain('Last week: worse than 6 in 10 weeks');
+    expect(section).toContain('2.3 hrs total');
+    expect(section).toContain('Median of 8 weeks');
+    expect(section).toContain('&#9650; 100%');
+    expect(section).toContain('20 now vs 10 before');
+    expect(section).not.toContain('percentile');
+    expect(section.match(/height:104px/g)).toHaveLength(3);
+    expect(section).toContain('Week of Mar 9: 10 min per 100 trips');
+    expect(html).not.toContain('min per 100 trips · worse');
+  });
+
+  it('keeps the weekly section off other days without adding a line to the dwell card', () => {
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+      weeklyDwell: weeklyDwell(),
+      showWeeklyDwellSection: false,
+    });
+
+    expect(html).not.toContain('Weekly Operator Dwell');
+    expect(html).not.toContain('Last week:');
+  });
+
+  it('leaves both out without enough weeks to rank', () => {
+    const html = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit', weeklyDwell: null, showWeeklyDwellSection: true });
+
+    expect(html).not.toContain('Weekly Operator Dwell');
+    expect(html).not.toContain('Last week:');
+  });
+});
+
+describe('buildReportHtml dwell KPI card median', () => {
+  const dwellDay = (date: string, seconds: number, dayType: DailySummary['dayType'] = 'weekday') =>
+    makeSummary({
+      date,
+      dayType,
+      incidents: [makeIncident({ date, trackedDwellSeconds: seconds, severity: 'moderate' })],
+    });
+
+  it('shows the median per-100-trip rate for earlier days of the same day type', () => {
+    // 20 trips per day: 1800s = 150 min / 100 trips, 3600s = 300.
+    const latestDay = dwellDay('2026-04-20', 3600);
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [
+        dwellDay('2026-04-14', 1800),
+        dwellDay('2026-04-15', 1200),
+        dwellDay('2026-04-16', 2400),
+        dwellDay('2026-04-18', 36000, 'saturday'),
+        latestDay,
+      ],
+      teamName: 'Barrie Transit',
+    });
+
+    expect(html).toContain('<div>Weekday median:<br>150 min / 100 trips</div><div style="margin-top:8px;">Today: 1.0 hrs total</div>');
+    // 300 is more than 1.5x the median, so the card turns amber.
+    expect(html).toContain('border-left:4px solid #d97706;box-shadow');
+  });
+
+  it('leaves the median out until there are enough earlier days', () => {
+    const latestDay = dwellDay('2026-04-20', 3600);
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [dwellDay('2026-04-16', 1800), dwellDay('2026-04-17', 1800), latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    expect(html).toContain('1.0 hrs total');
+    expect(html).not.toContain('Weekday median');
+  });
+});
+
+describe('buildReportHtml KPI card sizing', () => {
+  it('gives all four KPI cards the same fixed height', () => {
+    const latestDay = makeSummary({ date: '2026-04-20' });
+    const html = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit' });
+    const heights = [...html.matchAll(/box-sizing:border-box;height:(\d+)px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center/g)].map(m => m[1]);
+
+    expect(heights).toHaveLength(4);
+    expect(new Set(heights).size).toBe(1);
+  });
+});
+
+describe('buildReportHtml glance section', () => {
+  it('uses the glance section when route history is given, and the older summary otherwise', () => {
+    const latestDay = makeSummary({ date: '2026-04-20' });
+    const routeHistory = [{ date: latestDay.date, dayType: latestDay.dayType, byRoute: latestDay.byRoute }];
+
+    const glanceHtml = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit', routeHistory, lastMissedTripDataDate: '2026-04-20' });
+    const glanceSection = between(glanceHtml, 'Yesterday at a Glance', 'Action Focus');
+    expect(glanceSection).toContain('No route ran well below its usual.');
+    expect(glanceSection).not.toContain('Service delivery was');
+    expect(between(glanceHtml, 'Action Focus', 'Route Scorecard')).toContain('Nothing new to follow up today.');
+
+    const olderHtml = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit' });
+    expect(between(olderHtml, 'Yesterday at a Glance', 'Action Focus')).toContain('Service delivery was');
   });
 });
