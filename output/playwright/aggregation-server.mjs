@@ -1,0 +1,3 @@
+﻿import {createServer} from 'vite';
+const server=await createServer({configFile:false,server:{host:'127.0.0.1',port:5198},plugins:[{name:'aggregation-fixture-boundaries',enforce:'pre',resolveId(id){if(id.endsWith('/hooks/useWorkspaceAccess'))return '\0fixture-access';if(id.endsWith('/hooks/usePerformanceData'))return '\0fixture-data';},load(id){if(id==='\0fixture-access')return 'const canAccess=()=>true; export const useWorkspaceAccess=()=>({canAccess});';if(id==='\0fixture-data')return 'export const usePerformanceDataQuery=()=>({data:null,isError:false,isFetching:false,refetch:()=>{}});';}}]});
+await server.listen(); console.log('Aggregation harness: http://127.0.0.1:5198/output/playwright/aggregation-harness.html');

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Executive Evidence Board — Parking Strategy</title>
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    .coverage { margin-bottom: 18px; }
+    .coverage-top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:14px; }
+    .main-grid { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(290px,.72fr); gap:18px; margin-top:18px; }
+    .chart-card { padding:21px; }
+    .signal-stack { display:grid; gap:12px; }
+    .signal-stack .card { padding:17px; }
+    .signal-item { display:grid; grid-template-columns:34px 1fr; gap:10px; align-items:start; }
+    .signal-icon { width:34px;height:34px;display:grid;place-items:center;border-radius:10px;color:#fff;background:var(--blue); }
+    .signal-item + .signal-item { margin-top:15px; padding-top:15px; border-top:1px solid #e7ebef; }
+    .signal-item p { margin:3px 0 0;color:var(--muted);font-size:12px; }
+    .lower-grid { display:grid; grid-template-columns:1.15fr .85fr; gap:18px; margin-top:18px; align-items:start; }
+    .location-panel { padding:20px; }
+    .location-bar { width:100%; padding:7px 8px; display:grid; gap:6px; border:1px solid transparent; border-radius:11px; color:inherit; background:transparent; text-align:left; cursor:pointer; }
+    .location-bar:hover { border-color:#d9e3eb; background:#f8fafb; }
+    .location-bar.active { border-color:#b9ddf1; background:var(--blue-soft); box-shadow:0 0 0 2px rgba(21,155,232,.08); }
+    .location-map-section { margin-top:21px; padding-top:19px; border-top:1px solid #e4e9ef; }
+    .location-map-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:12px; }
+    .executive-map { position:relative; min-height:330px; overflow:hidden; border:1px solid #d7e0e6; border-radius:17px; background:#eaf2ec; isolation:isolate; }
+    .executive-map .water { position:absolute; right:-8%; top:-10%; width:48%; height:125%; border-radius:45% 0 0 50%; background:#d9eff9; border-left:3px solid rgba(255,255,255,.8); transform:rotate(-5deg); }
+    .executive-map .road { position:absolute; height:7px; border:2px solid #fff; border-radius:99px; background:#d9dcd7; transform-origin:left center; opacity:.95; }
+    .executive-map .r1{left:4%;top:27%;width:68%;transform:rotate(11deg)}.executive-map .r2{left:3%;top:60%;width:74%;transform:rotate(-4deg)}.executive-map .r3{left:17%;top:4%;width:7px;height:80%;transform:rotate(5deg)}.executive-map .r4{left:47%;top:10%;width:7px;height:78%;transform:rotate(-12deg)}
+    .executive-map .block { position:absolute; border:1px solid #dce1db; border-radius:7px; background:#f7f6ef; opacity:.95; }
+    .executive-map .b1{left:7%;top:10%;width:15%;height:10%}.executive-map .b2{left:26%;top:10%;width:17%;height:13%}.executive-map .b3{left:8%;top:35%;width:22%;height:15%}.executive-map .b4{left:35%;top:33%;width:14%;height:18%}.executive-map .b5{left:10%;top:67%;width:18%;height:17%}.executive-map .b6{left:34%;top:64%;width:20%;height:20%}.executive-map .b7{left:57%;top:19%;width:12%;height:14%}.executive-map .b8{left:59%;top:57%;width:11%;height:20%}
+    .executive-map .map-label { position:absolute; color:#84928e; font-size:9px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; pointer-events:none; }
+    .executive-marker { position:absolute; z-index:4; width:34px; height:34px; display:grid; place-items:center; border:3px solid #fff; border-radius:50% 50% 50% 10%; color:#fff; background:var(--blue); box-shadow:0 3px 9px rgba(19,38,61,.25); transform:translate(-50%,-50%) rotate(-45deg); cursor:pointer; transition:transform .16s ease,background .16s ease; }
+    .executive-marker span { transform:rotate(45deg); font-size:10px; font-weight:850; }
+    .executive-marker:hover,.executive-marker.active { z-index:6; background:var(--violet); transform:translate(-50%,-50%) rotate(-45deg) scale(1.18); }
+    .executive-marker.high-activity { box-shadow:0 0 0 9px rgba(21,155,232,.12),0 3px 9px rgba(19,38,61,.25); }
+    .map-selection { position:absolute; left:12px; top:12px; z-index:7; min-width:220px; max-width:calc(100% - 24px); padding:10px 12px; border:1px solid #d8cef6; border-radius:12px; color:#4f358d; background:rgba(248,245,255,.96); box-shadow:var(--shadow); }
+    .map-selection strong { display:block; color:var(--ink); font-size:13px; }
+    .map-selection span { display:block; margin-top:2px; font-size:10px; }
+    .map-caption { position:absolute; left:12px; right:12px; bottom:12px; z-index:7; padding:8px 10px; border:1px solid #dbe2e8; border-radius:10px; color:#67768a; background:rgba(255,255,255,.94); font-size:10px; }
+    .strategic-questions { display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:13px; }
+    .question { padding:14px;border:1px solid #dce3ea;border-radius:14px;background:#fafbfc; }
+    .question span { display:grid;place-items:center;width:29px;height:29px;margin-bottom:9px;border-radius:9px;color:var(--violet);background:var(--violet-soft); }
+    .question p { margin:4px 0 0;color:var(--muted);font-size:11px; }
+    .method-note { display:flex;gap:10px;align-items:flex-start;margin-top:15px;padding:12px 14px;border-radius:12px;color:#72500e;background:var(--amber-soft);border:1px solid #f0d189;font-size:12px; }
+    @media(max-width:1050px){.main-grid,.lower-grid{grid-template-columns:1fr}.signal-stack{grid-template-columns:1fr 1fr}}
+    @media(max-width:700px){.signal-stack,.strategic-questions{grid-template-columns:1fr}.coverage-top,.location-map-head{flex-direction:column}.chart-card{padding:15px}.executive-map{min-height:390px}.map-selection{min-width:0}}
+  </style>
+</head>
+<body>
+  <header class="appbar">
+    <a class="brand" href="index.html"><span class="brand-mark" id="brandIcon"></span><span><span class="brand-name">Parking<span>Strategy</span></span><span class="brand-kicker">Executive evidence board</span></span></a>
+    <div class="appbar-actions"><button class="icon-button" aria-label="About this evidence" id="aboutBtn"></button><span class="status-pill green"><span class="dot"></span> Reconciled archive</span></div>
+  </header>
+  <main class="page">
+    <a class="crumb" href="index.html">← Back to concepts</a>
+    <div class="page-head">
+      <div><p class="eyebrow">Municipal Parking Strategy · Evidence baseline</p><h1>Five-year parking story</h1><p class="subtitle">A management view of what payment activity tells us—and what it cannot tell us yet.</p></div>
+      <div class="action-row"><button class="button" id="printBtn"></button><button class="button primary" id="briefBtn"></button></div>
+    </div>
+
+    <section class="shell coverage" aria-labelledby="coverageTitle">
+      <div class="coverage-top">
+        <div><div class="section-title"><span id="calIcon"></span><div><h2 id="coverageTitle">Evidence coverage</h2><p class="helper">Choose a year to focus the briefing. Missing history is never treated as zero.</p></div></div></div>
+        <span class="status-pill amber"><span class="dot"></span> 21 of 60 months observed</span>
+      </div>
+      <div class="coverage-years" id="coverageYears">
+        <button class="coverage-year unavailable" data-year="2021"><strong>2021</strong><span>Unavailable</span></button>
+        <button class="coverage-year unavailable" data-year="2022"><strong>2022</strong><span>Unavailable</span></button>
+        <button class="coverage-year unavailable" data-year="2023"><strong>2023</strong><span>Unavailable</span></button>
+        <button class="coverage-year partial" data-year="2024"><span class="coverage-fill" style="width:76%"></span><strong>2024</strong><span>Mar 28–Dec 31</span></button>
+        <button class="coverage-year partial" data-year="2025"><span class="coverage-fill" style="width:87%"></span><strong>2025</strong><span>Jan 1–Nov 11</span></button>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:13px;flex-wrap:wrap">
+        <div class="legend"><span><i class="dot" style="color:var(--blue)"></i>Observed payment records</span><span><i class="dot" style="color:#c6cdd6"></i>Not available</span></div>
+        <button class="button small" id="allYears">Show full 2021–2025 frame</button>
+      </div>
+    </section>
+
+    <section class="kpi-grid" aria-label="Key archive measures">
+      <article class="kpi blue"><span class="kpi-icon" id="kpi1Icon"></span><div><div class="kpi-label">Payment records</div><div class="kpi-value" id="recordsValue">44,236</div><div class="kpi-sub" id="recordsSub">Deduplicated archive</div></div></article>
+      <article class="kpi green"><span class="kpi-icon" id="kpi2Icon"></span><div><div class="kpi-label">Reported amount</div><div class="kpi-value" id="amountValue">$592,495</div><div class="kpi-sub" id="amountSub">Location-attributed · CAD</div></div></article>
+      <article class="kpi violet"><span class="kpi-icon" id="kpi3Icon"></span><div><div class="kpi-label">Meter locations</div><div class="kpi-value" id="locationsValue">18</div><div class="kpi-sub">Named activity points</div></div></article>
+      <article class="kpi amber"><span class="kpi-icon" id="kpi4Icon"></span><div><div class="kpi-label">Zero-dollar records</div><div class="kpi-value">2,193</div><div class="kpi-sub">4.96% · review classification</div></div></article>
+    </section>
+
+    <div class="main-grid">
+      <section class="shell chart-card">
+        <div class="section-head"><div><p class="eyebrow">Pattern over time</p><h2 id="chartTitle">Monthly payment activity</h2><p class="helper" id="chartSubtitle">March 2024–November 2025 within the five-year frame</p></div><div class="control-tray" aria-label="Chart metric"><button class="seg active" data-metric="transactions">Transactions</button><button class="seg" data-metric="amount">Reported amount</button></div></div>
+        <div class="chart-wrap" id="trendChart"><div class="chart-tooltip"></div></div>
+        <div class="method-note"><span id="methodIcon"></span><span><strong>Interpret with care.</strong> This is payment activity, not occupancy. Peaks may reflect season, rate, duration, operating rules, or payment behaviour.</span></div>
+      </section>
+
+      <aside class="signal-stack">
+        <section class="card">
+          <p class="eyebrow">What we know</p><div class="signal-item"><span class="signal-icon" id="signal1"></span><div><h3>Summer drives the archive</h3><p>July and August account for 45.7% of dated payment records and 56.6% of location-attributed reported amount.</p></div></div>
+          <div class="signal-item"><span class="signal-icon" style="background:var(--green)" id="signal2"></span><div><h3>Activity is concentrated</h3><p>The top five named locations represent 59.7% of observed records.</p></div></div>
+        </section>
+        <section class="card">
+          <p class="eyebrow" style="color:#9a6506">What needs more evidence</p><div class="signal-item"><span class="signal-icon" style="background:var(--amber)" id="signal3"></span><div><h3>No physical occupancy</h3><p>Capacity and occupancy counts are required before using an 85% utilization threshold.</p></div></div>
+          <div class="signal-item"><span class="signal-icon" style="background:var(--violet)" id="signal4"></span><div><h3>No comparable five-year trend yet</h3><p>2021–2023 are unavailable, and both observed years are partial.</p></div></div>
+        </section>
+      </aside>
+    </div>
+
+    <div class="lower-grid">
+      <section class="card location-panel">
+        <div class="section-head"><div><p class="eyebrow">Location concentration</p><h2>Where payment activity appears</h2><p class="helper">Select a location in the ranking or map to connect the evidence.</p></div><span class="badge">Top 6 of 18</span></div>
+        <div class="bar-list" id="locationBars"></div>
+        <div class="location-map-section">
+          <div class="location-map-head"><div><p class="eyebrow">Mapping element</p><h2>Top-location activity map</h2><p class="helper">The location names and aggregates are observed; placement is illustrative.</p></div><span class="status-pill amber"><span class="dot"></span> GIS confirmation needed</span></div>
+          <div class="executive-map" id="locationMap" aria-label="Illustrative map of the six highest-activity parking locations">
+            <div class="water"></div><div class="road r1"></div><div class="road r2"></div><div class="road r3"></div><div class="road r4"></div>
+            <div class="block b1"></div><div class="block b2"></div><div class="block b3"></div><div class="block b4"></div><div class="block b5"></div><div class="block b6"></div><div class="block b7"></div><div class="block b8"></div>
+            <span class="map-label" style="right:9%;top:45%;transform:rotate(85deg)">Kempenfelt Bay</span><span class="map-label" style="left:12%;top:55%">Downtown</span><span class="map-label" style="left:50%;top:7%">Waterfront</span>
+            <div class="map-selection" aria-live="polite"><strong id="mapSelectedName">SPIRIT CATCHER</strong><span id="mapSelectedDetail">6,193 records · $90,745 reported amount</span></div>
+            <div id="locationMapMarkers"></div>
+            <div class="map-caption"><strong>Concept map:</strong> top-six marker placement must be replaced with authoritative GIS coordinates before this becomes an operational location map.</div>
+          </div>
+        </div>
+      </section>
+      <section class="card"><p class="eyebrow">Strategic plan prompts</p><h2>Turn evidence into the next questions</h2><div class="strategic-questions">
+        <div class="question"><span id="q1"></span><h3>Measure</h3><p>Which locations need occupancy or turnover studies first?</p></div>
+        <div class="question"><span id="q2"></span><h3>Align</h3><p>Where do rates, permits, access, and objectives conflict?</p></div>
+        <div class="question"><span id="q3"></span><h3>Invest</h3><p>Which assets need renewal, accessibility, or EV readiness?</p></div>
+      </div></section>
+    </div>
+  </main>
+
+  <script src="shared-data.js"></script>
+  <script>
+    const D = ParkingData;
+    brandIcon.innerHTML=D.icon('grid'); aboutBtn.innerHTML=D.icon('info'); calIcon.innerHTML=D.icon('calendar');
+    printBtn.innerHTML=D.icon('download',18)+'<span class="optional">Print / PDF</span>'; briefBtn.innerHTML=D.icon('bulb',18)+'Build strategy brief';
+    kpi1Icon.innerHTML=D.icon('database'); kpi2Icon.innerHTML=D.icon('dollar'); kpi3Icon.innerHTML=D.icon('pin'); kpi4Icon.innerHTML=D.icon('alert');
+    signal1.innerHTML=D.icon('calendar',18); signal2.innerHTML=D.icon('chart',18); signal3.innerHTML=D.icon('alert',18); signal4.innerHTML=D.icon('database',18);
+    q1.innerHTML=D.icon('target',17); q2.innerHTML=D.icon('compare',17); q3.innerHTML=D.icon('layers',17); methodIcon.innerHTML=D.icon('info',18);
+
+    let selectedYear='all', metric='transactions';
+    const buttons=[...document.querySelectorAll('.coverage-year')];
+    const metricButtons=[...document.querySelectorAll('[data-metric]')];
+    function filtered(){ return selectedYear==='all'?D.monthly:D.monthly.filter(d=>d.month.startsWith(selectedYear)); }
+    function setYear(year){ selectedYear=year; buttons.forEach(b=>b.classList.toggle('active',b.dataset.year===year)); allYears.classList.toggle('primary',year==='all'); updateSummary(); renderChart(); }
+    function updateSummary(){
+      const data=filtered(), available=data.length>0;
+      const records=data.reduce((s,d)=>s+d.transactions,0), amount=data.reduce((s,d)=>s+d.amount,0);
+      recordsValue.textContent=available?D.integer(selectedYear==='all'?D.totals.records:records):'Unavailable';
+      amountValue.textContent=available?D.money(selectedYear==='all'?D.totals.amount:amount):'Unavailable';
+      locationsValue.textContent=available?'18':'—';
+      recordsSub.textContent=selectedYear==='all'?'Deduplicated archive':available?selectedYear+' observed months':'No supplied records';
+      amountSub.textContent=available?'Location-attributed · CAD':'Missing is not zero';
+      chartSubtitle.textContent=selectedYear==='all'?'March 2024–November 2025 within the five-year frame':available?data.length+' observed months in '+selectedYear:'No source data supplied for '+selectedYear;
+    }
+    buttons.forEach(b=>b.addEventListener('click',()=>setYear(b.dataset.year))); allYears.addEventListener('click',()=>setYear('all'));
+    metricButtons.forEach(b=>b.addEventListener('click',()=>{metric=b.dataset.metric;metricButtons.forEach(x=>x.classList.toggle('active',x===b));renderChart();}));
+
+    function renderChart(){
+      const data=filtered(), host=trendChart, tip=host.querySelector('.chart-tooltip'); host.querySelector('svg')?.remove();
+      const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'); svg.setAttribute('viewBox','0 0 1000 260'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Monthly '+metric+' chart');
+      if(!data.length){svg.innerHTML='<rect x="0" y="0" width="1000" height="250" rx="12" fill="#f5f7f9"/><text x="500" y="120" text-anchor="middle" fill="#627187" font-size="18" font-weight="700">No payment records supplied</text><text x="500" y="149" text-anchor="middle" fill="#8a97a8" font-size="12">Unavailable periods are not interpreted as zero.</text>';host.appendChild(svg);return;}
+      const vals=data.map(d=>d[metric]), max=Math.max(...vals)*1.12, x=i=>40+(i/(Math.max(1,data.length-1)))*920, y=v=>220-(v/max)*175;
+      let html='<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#159be8" stop-opacity=".25"/><stop offset="1" stop-color="#159be8" stop-opacity="0"/></linearGradient></defs>';
+      for(let i=0;i<4;i++){const yy=45+i*58;html+='<line x1="40" y1="'+yy+'" x2="960" y2="'+yy+'" stroke="#dfe5ec" stroke-dasharray="3 5"/><text x="34" y="'+(yy+4)+'" text-anchor="end" fill="#8b98aa" font-size="10">'+(metric==='amount'?D.money(max*(3-i)/4):D.integer(max*(3-i)/4))+'</text>';}
+      const pts=data.map((d,i)=>x(i)+','+y(d[metric])).join(' '), area='40,220 '+pts+' 960,220';
+      html+='<polygon points="'+area+'" fill="url(#area)"/><polyline points="'+pts+'" fill="none" stroke="#159be8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>';
+      data.forEach((d,i)=>{const show=i===0||i===data.length-1||i%Math.ceil(data.length/8)===0; html+='<circle class="point" data-i="'+i+'" cx="'+x(i)+'" cy="'+y(d[metric])+'" r="6" fill="#fff" stroke="#159be8" stroke-width="3" tabindex="0"/>'+(show?'<text x="'+x(i)+'" y="246" text-anchor="middle" fill="#738297" font-size="10">'+D.monthLabel(d.month).replace(' 20',' ’')+'</text>':'');});
+      svg.innerHTML=html;host.appendChild(svg);
+      svg.querySelectorAll('.point').forEach(p=>{const show=()=>{const d=data[+p.dataset.i];tip.innerHTML='<strong>'+D.monthLabel(d.month)+'</strong>'+D.integer(d.transactions)+' records · '+D.money(d.amount,2);tip.style.left=(+p.getAttribute('cx')/10)+'%';tip.style.top=(+p.getAttribute('cy')/2.6)+'%';tip.classList.add('show');};p.addEventListener('mouseenter',show);p.addEventListener('focus',show);p.addEventListener('mouseleave',()=>tip.classList.remove('show'));p.addEventListener('blur',()=>tip.classList.remove('show'));});
+    }
+    const topLocations=D.locations.slice(0,6), maxLoc=topLocations[0].transactions;
+    let selectedLocationId=topLocations[0].id;
+    function selectLocation(id){selectedLocationId=id;renderLocationEvidence();}
+    function renderLocationEvidence(){
+      const selected=topLocations.find(l=>l.id===selectedLocationId)||topLocations[0];
+      locationBars.innerHTML=topLocations.map((l,i)=>'<button type="button" class="location-bar '+(l.id===selected.id?'active':'')+'" data-location-id="'+l.id+'" aria-label="Show '+l.name+' on the concept map"><div class="bar-meta"><strong>'+(i+1)+'. '+l.name+'</strong><span>'+D.integer(l.transactions)+' records</span></div><div class="bar-track"><div class="bar-fill" style="width:'+(l.transactions/maxLoc*100)+'%;background:'+(l.id===selected.id?'var(--violet)':'var(--blue)')+'"></div></div></button>').join('');
+      locationMapMarkers.innerHTML=topLocations.map((l,i)=>'<button type="button" class="executive-marker '+(l.id===selected.id?'active ':'')+(l.transactions>5000?'high-activity':'')+'" style="left:'+l.x+'%;top:'+l.y+'%" data-location-id="'+l.id+'" aria-label="Select '+l.name+'"><span>'+(i+1)+'</span></button>').join('');
+      mapSelectedName.textContent=selected.name;
+      mapSelectedDetail.textContent=D.integer(selected.transactions)+' records · '+D.money(selected.amount)+' reported amount';
+      document.querySelectorAll('[data-location-id]').forEach(el=>el.addEventListener('click',()=>selectLocation(+el.dataset.locationId)));
+    }
+    printBtn.addEventListener('click',()=>window.print()); briefBtn.addEventListener('click',()=>D.toast('Brief outline prepared from the visible evidence.')); aboutBtn.addEventListener('click',()=>D.toast('Figures are de-identified aggregates from the supplied LocoMobi archive.'));
+    renderLocationEvidence();setYear('all');
+  </script>
+</body>
+</html>

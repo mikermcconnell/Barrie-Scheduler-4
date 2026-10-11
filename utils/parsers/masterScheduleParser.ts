@@ -7,6 +7,8 @@ import {
     TripForMatching,
     MatchConfigPresets
 } from '../blocks/blockAssignmentCore';
+import { getRouteConfig } from '../config/routeDirectionConfig';
+import { getOperationalOccupiedEndTime, getOperationalStartTime } from '../schedule/tripTiming';
 
 // --- Types ---
 
@@ -224,8 +226,13 @@ export const validateRouteTable = (table: MasterRouteTable): MasterRouteTable =>
     });
 
     Object.values(blocks).forEach(blockTrips => {
-        // Sort by trip number
-        blockTrips.sort((a, b) => a.tripNumber - b.tripNumber);
+        blockTrips.sort((a, b) => (
+            getOperationalStartTime(a) - getOperationalStartTime(b)
+            || a.tripNumber - b.tripNumber
+            || a.id.localeCompare(b.id)
+        ));
+        const routeNumber = table.routeName.match(/^\s*([A-Za-z0-9]+)/)?.[1] || '';
+        const isLoopRoute = getRouteConfig(routeNumber)?.segments.length === 1;
 
         for (let i = 0; i < blockTrips.length; i++) {
             const trip = blockTrips[i];
@@ -233,22 +240,18 @@ export const validateRouteTable = (table: MasterRouteTable): MasterRouteTable =>
             // Checks
             trip.isOverlap = false;
             trip.isTightRecovery = false;
+            if (isLoopRoute) {
+                trip.isBlockStart = i === 0;
+                trip.isBlockEnd = i === blockTrips.length - 1;
+            }
 
-            // Recovery Check (Local)
-            if (trip.recoveryTime < 5) trip.isTightRecovery = true;
+            // Recovery is operational only when another trip follows in the block.
+            if (!trip.isBlockEnd && trip.recoveryTime < 5) trip.isTightRecovery = true;
 
             // Overlap Check (vs Previous Trip)
             if (i > 0) {
                 const prev = blockTrips[i - 1];
-                const prevEnd = prev.endTime + prev.recoveryTime; // When bus is actually free? 
-                // Usually Recovery is AFTER trip. So Bus Free at End + Rec.
-                // Next trip must start >= Prev End + Prev Rec.
-                // Or is Recovery part of the "Wait"? 
-                // Definition: Cycle Time = Travel + Recovery.
-                // So Trip A End -> Recovery -> Trip B Start.
-                // Thus Trip B Start must be >= Trip A End + Trip A Recovery.
-
-                if (trip.startTime < (prev.endTime + prev.recoveryTime)) {
+                if (getOperationalStartTime(trip) < getOperationalOccupiedEndTime(table, prev)) {
                     trip.isOverlap = true;
                 }
             }
@@ -935,4 +938,3 @@ export const convertMasterRouteTablesToRequirements = (tables: MasterRouteTable[
 
     return schedules;
 };
-

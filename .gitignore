@@ -51,6 +51,9 @@ chat-attachments/
 tmp/pdfs/
 output/pdf/fare-programs-high-school-address-verification-*.pdf
 output/pdf/fare-programs-high-school-usage-map-*.pdf
+output/operations-planning/
+.playwright-cli/operations-planning-*.json
+.playwright-cli/page-*.yml
 
 # Git worktrees
 .worktrees/

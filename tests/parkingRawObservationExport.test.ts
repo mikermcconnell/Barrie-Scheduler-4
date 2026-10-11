@@ -61,7 +61,7 @@ describe('parking raw-observation exports', () => {
       { title: 'January observations', subtitle: 'All departments', fileName: 'january.xlsx' },
     );
 
-    expect(workbook.SheetNames).toEqual(['Report Summary', 'Raw Observations']);
+    expect(workbook.SheetNames).toEqual(['Raw Observations', 'Report Summary']);
     expect(XLSX.utils.sheet_to_json(workbook.Sheets['Report Summary'])).toEqual([{
       Report: 'January observations',
       Context: 'All departments',
@@ -94,7 +94,7 @@ describe('parking raw-observation exports', () => {
     });
 
     expect(XLSX.writeFile).toHaveBeenCalledWith(
-      expect.objectContaining({ SheetNames: ['Report Summary', 'Raw Observations'] }),
+      expect.objectContaining({ SheetNames: ['Raw Observations', 'Report Summary'] }),
       'Parking-January-Transit.xlsx',
     );
   });

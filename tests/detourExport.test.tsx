@@ -8,6 +8,7 @@ import {
 } from '../utils/detours/detourCopy';
 import { createDetourPdf, DetourExportError } from '../utils/detours/detourExport';
 import { buildDetourFilename, toDetourFilenameSlug } from '../utils/detours/detourFilename';
+import type { DetourStopSheet } from '../utils/detours/detourStopSheets';
 
 const notice: DetourExportNoticeInput = {
   noticeType: 'route-detour',
@@ -86,12 +87,14 @@ describe('detour PDF and preview', () => {
     expect(doc.internal.pageSize.getHeight()).toBeCloseTo(612, 0);
     const commands = ((doc.internal as unknown as { pages: string[][] }).pages[1] ?? []).join('\n');
     expect(commands).toContain('BARRIE TRANSIT');
-    expect(commands).toContain('Livingstone Avenue Detour');
+    expect(commands).toContain('DETOUR NOTICE');
+    expect(commands).toContain('Routes 8A & 100');
     expect(commands).not.toContain('Routes not shown are on regular routing.');
-    expect(commands).toContain('MAP LEGEND');
-    expect(commands).toContain('Service Barrie 705-726-4242');
-    expect(commands).toContain('servicebarrie@barrie.ca');
-    expect(commands).toContain('barrie.ca/TransitNotices');
+    expect(commands).toContain('Legend');
+    expect(commands).toContain('Service Barrie at 705-726-4242');
+    expect(commands).toContain('ServiceBarrie@barrie.ca');
+    expect(commands).toContain('www.barrie.ca/TransitNotices');
+    expect(commands).not.toContain('Revision 2');
   });
 
   it('rejects missing or malformed map captures with a typed error', () => {
@@ -111,15 +114,16 @@ describe('detour PDF and preview', () => {
     expect(html).toContain('Out-of-Service Stops');
     expect(html).toContain('Temporary Stops');
     expect(html.match(/data-legend-item="true"/g)).toHaveLength(5);
-    expect(html.match(/flex min-w-0 flex-col items-center gap-2 text-center/g)).toHaveLength(5);
-    expect(html).toContain('Effective Date');
+    expect(html).toContain('Effective Dates');
     expect(html).not.toContain('Routes not shown are on regular routing.');
     expect(html).toContain('For More Information Contact');
     expect(html).toContain('data-contact-icon="phone"');
     expect(html).toContain('data-contact-icon="email"');
     expect(html).toContain('data-contact-icon="website"');
     expect(html).toContain('data-warning-icon="true"');
-    expect(html).toContain('h-[82px] w-[82px]');
+    expect(html).toContain('h-[146px]');
+    expect(html).toContain('h-[101px]');
+    expect(html).toContain('h-[90px] w-[90px]');
   });
 
   it('keeps a date-only effective range on one line in previews and PDFs', () => {
@@ -157,5 +161,51 @@ describe('detour PDF and preview', () => {
     const commands = ((doc.internal as unknown as { pages: string[][] }).pages[1] ?? []).join('\n');
     expect(commands).not.toContain('BARRIE TRANSIT');
     expect(doc.getNumberOfPages()).toBe(1);
+  });
+
+  it('adds one branded PDF page for each derived stop sheet', () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const closed: DetourStopSheet = {
+      id: 'closed:959', kind: 'closed', stopCode: '959', stopName: 'Johnson at Indian Arrow Road',
+      position: { longitude: -79.67, latitude: 44.4 }, routes: [{ routeShortName: '8B', directionLabel: 'Southbound' }],
+    };
+    const temporary: DetourStopSheet = {
+      id: 'temporary:1420', kind: 'temporary', stopCode: '1420', stopName: 'Codrington at Puget',
+      position: { longitude: -79.68, latitude: 44.39 }, routes: [{ routeShortName: '8B', directionLabel: 'Southbound' }, { routeShortName: '100', directionLabel: 'Clockwise' }],
+    };
+
+    const doc = createDetourPdf({
+      notice,
+      mapImageDataUrl: png,
+      stopSheets: [{ sheet: closed, mapImageDataUrl: png }, { sheet: temporary, mapImageDataUrl: png }],
+    });
+
+    expect(doc.getNumberOfPages()).toBe(3);
+    const pages = (doc.internal as unknown as { pages: string[][] }).pages;
+    expect((pages[2] ?? []).join('\n')).toContain('STOP CLOSURE NOTICE');
+    expect((pages[2] ?? []).join('\n')).toContain('Stop 959 - Johnson at Indian Arrow Road');
+    expect((pages[3] ?? []).join('\n')).toContain('TEMPORARY STOP 1420');
+    expect((pages[3] ?? []).join('\n')).toContain('Routes 8B-SB & 100');
+  });
+
+  it('previews closed and temporary stop sheet branding', () => {
+    const closed: DetourStopSheet = {
+      id: 'closed:959', kind: 'closed', stopCode: '959', stopName: 'Johnson at Indian Arrow Road',
+      position: { longitude: -79.67, latitude: 44.4 }, routes: [{ routeShortName: '8B', directionLabel: 'Southbound' }],
+    };
+    const temporary: DetourStopSheet = {
+      id: 'temporary:1420', kind: 'temporary', stopCode: '1420', stopName: 'Codrington at Puget',
+      position: { longitude: -79.68, latitude: 44.39 }, routes: [{ routeShortName: '8B', directionLabel: 'Southbound' }],
+    };
+
+    const closedHtml = renderToStaticMarkup(<DetourNoticePreview notice={notice} stopSheet={closed} />);
+    const temporaryHtml = renderToStaticMarkup(<DetourNoticePreview notice={notice} stopSheet={temporary} />);
+    expect(closedHtml).toContain('STOP CLOSURE NOTICE');
+    expect(closedHtml).toContain('Stop 959 - Johnson at Indian Arrow Road');
+    expect(closedHtml).toContain('background-color:#BF1E2D');
+    expect(closedHtml).toContain('data-stop-sheet-icon="closed"');
+    expect(temporaryHtml).toContain('TEMPORARY STOP 1420');
+    expect(temporaryHtml).toContain('Route 8B-SB');
+    expect(temporaryHtml).toContain('background-color:#066839');
   });
 });

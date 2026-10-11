@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
 import { parseIssuanceListing, parseOccupancyCertificate, summarizeResidentialGrowth } from '../utils/residential-growth/parser';
+import { parseOccupancyCertificateBuffer } from '../functions/src/residentialGrowth';
 
 function workbookBuffer(rows: unknown[][], sheetName = 'Sheet1'): ArrayBuffer {
     const workbook = XLSX.utils.book_new();
@@ -10,6 +11,22 @@ function workbookBuffer(rows: unknown[][], sheetName = 'Sheet1'): ArrayBuffer {
     const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
     return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
 }
+
+function textBuffer(value: string): ArrayBuffer {
+    const buffer = Buffer.from(value, 'utf8');
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+}
+
+const occupancyTable = `
+<table class="ReportTable"><tr>
+<td><div>File Number</div></td><td><div>Location</div></td><td>Type of Project</td>
+<td>Residential Subtype</td><td>Primary Application Purpose</td><td>Inspection Type</td>
+<td>Date Scheduled</td><td>Date Inspection</td><td>Status</td><td>Inspector Name</td>
+</tr><tr>
+<td>PMT26-00777</td><td>10 TESTER ST, BARRIE, ON</td><td>Residential</td>
+<td>Rowhouse</td><td>New</td><td>Occupancy Inspection</td>
+<td>7/7/2026</td><td>7/7/2026</td><td>Passed</td><td>Inspector</td>
+</tr></table>`;
 
 describe('residential growth parser', () => {
     it('parses issuance listings into issued residential unit records', () => {
@@ -63,6 +80,34 @@ describe('residential growth parser', () => {
             status: 'Passed',
         });
         expect(result.records[0].warnings).toEqual([]);
+    });
+
+    it('parses occupancy reports exported as raw HTML with an .xls extension', () => {
+        const htmlWithExcelSerialDates = occupancyTable
+            .replace('<td>7/7/2026</td><td>7/7/2026</td>', '<td><div class="xls-date-ShortDateFormat">46251</div></td><td><div class="xls-date-ShortDateFormat">46251.5</div></td>');
+        const result = parseOccupancyCertificate(textBuffer(`<html><body>${htmlWithExcelSerialDates}</body></html>`));
+
+        expect(result.period).toBe('2026-08');
+        expect(result.records).toHaveLength(1);
+        expect(result.records[0]).toMatchObject({
+            fileNumber: 'PMT26-00777',
+            address: '10 TESTER ST, Barrie, ON',
+            date: '2026-08-17',
+        });
+    });
+
+    it('parses quoted-printable MHTML occupancy reports in the Cloud Function', () => {
+        const encodedTable = occupancyTable.replace(/=/g, '=3D').replace(/File Number/g, 'File Number');
+        const archive = `MIME-Version: 1.0\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n<html><body>${encodedTable}</body></html>`;
+        const result = parseOccupancyCertificateBuffer(Buffer.from(archive, 'utf8'));
+
+        expect(result.period).toBe('2026-07');
+        expect(result.records).toHaveLength(1);
+        expect(result.records[0]).toMatchObject({
+            fileNumber: 'PMT26-00777',
+            address: '10 TESTER ST, Barrie, ON',
+            date: '2026-07-07',
+        });
     });
 
     it('summarizes issued and occupied layers separately', () => {

@@ -24,7 +24,7 @@ import {
 import type { Step2StopOrderHealth } from './step2StopOrder';
 
 export interface WizardProgressLike {
-    step: 1 | 2 | 3 | 4;
+    step: 1 | 2 | 3 | 4 | 5;
     fileNames: string[];
     importMode?: ImportMode;
     performanceConfig?: {
@@ -34,6 +34,7 @@ export interface WizardProgressLike {
 }
 
 export interface WizardProjectLike {
+    wizardStep?: 1 | 2 | 3 | 4 | 5;
     isGenerated?: boolean;
     generatedSchedules?: MasterRouteTable[];
     config?: ScheduleConfig;
@@ -941,7 +942,10 @@ export const buildApprovedRuntimeModel = (params: {
 
 export const deriveWizardStepFromProject = (
     project: WizardProjectLike
-): 1 | 2 | 3 | 4 => {
+): 1 | 2 | 3 | 4 | 5 => {
+    if (project.wizardStep === 5 && project.isGenerated && project.generatedSchedules?.length) {
+        return 5;
+    }
     if (project.isGenerated && project.generatedSchedules?.length) {
         return 4;
     }
@@ -955,9 +959,9 @@ export const deriveWizardStepFromProject = (
 };
 
 export const clampWizardStepToCurrentStep2Approval = (
-    step: 1 | 2 | 3 | 4,
+    step: 1 | 2 | 3 | 4 | 5,
     _approvalState: Step2ApprovalState
-): 1 | 2 | 3 | 4 => step;
+): 1 | 2 | 3 | 4 | 5 => step;
 
 export const hasRestorableWizardProgress = (
     progress: WizardProgressLike | null
@@ -971,4 +975,4 @@ export const hasRestorableWizardProgress = (
 export const shouldShowNextStepAction = (
     step: number,
     importMode: ImportMode
-): boolean => !(step === 4 || (step === 1 && importMode === 'gtfs'));
+): boolean => !(step === 1 && importMode === 'gtfs');

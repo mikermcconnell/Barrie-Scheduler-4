@@ -130,6 +130,12 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
             ...(typeof rawDataSourceTeamIds.masterSchedules === 'string' && rawDataSourceTeamIds.masterSchedules
                 ? { masterSchedules: rawDataSourceTeamIds.masterSchedules }
                 : {}),
+            ...(typeof rawDataSourceTeamIds.fleetPlan === 'string' && rawDataSourceTeamIds.fleetPlan
+                ? { fleetPlan: rawDataSourceTeamIds.fleetPlan }
+                : {}),
+            ...(typeof rawDataSourceTeamIds.strategicPlanWorkplan === 'string' && rawDataSourceTeamIds.strategicPlanWorkplan
+                ? { strategicPlanWorkplan: rawDataSourceTeamIds.strategicPlanWorkplan }
+                : {}),
         }
         : undefined;
 
@@ -148,6 +154,8 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
     };
 }
 
+const RETIRED_WORKSPACE_OVERRIDE_KEYS = new Set(['analyticsCouncilIntelligence']);
+
 function sanitizeWorkspaceOverrides(overrides: unknown): WorkspaceAccessOverrides | undefined {
     if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
         return undefined;
@@ -155,6 +163,7 @@ function sanitizeWorkspaceOverrides(overrides: unknown): WorkspaceAccessOverride
 
     const sanitized: WorkspaceAccessOverrides = {};
     Object.entries(overrides as Record<string, unknown>).forEach(([key, value]) => {
+        if (RETIRED_WORKSPACE_OVERRIDE_KEYS.has(key)) return;
         if (!isWorkspaceAccessFeature(key as any)) {
             throw new Error(`Invalid workspace override key: ${key}`);
         }
@@ -174,14 +183,14 @@ async function getTeamDefaultWorkspaceAccess(teamId: string): Promise<{
     const teamRef = doc(db, 'teams', teamId);
     const teamSnap = await getDoc(teamRef);
     if (!teamSnap.exists()) {
-        return { accessLevel: getDefaultWorkspaceAccessLevelForRole('member') };
+        return { accessLevel: NEW_TEAM_DEFAULT_ACCESS_LEVEL };
     }
 
     const defaultAccessLevel = teamSnap.data().defaultMemberAccessLevel;
     return {
         accessLevel: isWorkspaceAccessLevel(defaultAccessLevel)
             ? defaultAccessLevel
-            : getDefaultWorkspaceAccessLevelForRole('member'),
+            : NEW_TEAM_DEFAULT_ACCESS_LEVEL,
         workspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides),
     };
 }
@@ -753,7 +762,8 @@ export async function updateTeamWorkspaceAccess(
 }
 
 /**
- * Set read-only source teams for partner workspaces.
+ * Set source teams for partner workspaces. Evidence sources are read-only;
+ * Strategic Plan work-plan collaboration is explicitly editable by rule.
  * Empty values remove the override and make the workspace use its own team data.
  */
 export async function updateTeamDataSourceTeamIds(
@@ -763,7 +773,9 @@ export async function updateTeamDataSourceTeamIds(
     const normalized = {
         ...(dataSourceTeamIds?.transitApp ? { transitApp: dataSourceTeamIds.transitApp } : {}),
         ...(dataSourceTeamIds?.performance ? { performance: dataSourceTeamIds.performance } : {}),
+        ...(dataSourceTeamIds?.fleetPlan ? { fleetPlan: dataSourceTeamIds.fleetPlan } : {}),
         ...(dataSourceTeamIds?.masterSchedules ? { masterSchedules: dataSourceTeamIds.masterSchedules } : {}),
+        ...(dataSourceTeamIds?.strategicPlanWorkplan ? { strategicPlanWorkplan: dataSourceTeamIds.strategicPlanWorkplan } : {}),
     };
 
     await updateDoc(doc(db, 'teams', teamId), {

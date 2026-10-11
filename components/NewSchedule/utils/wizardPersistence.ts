@@ -7,9 +7,9 @@ export interface WizardPersistenceOverrides {
 }
 
 export const resolveWizardPersistenceStep = (
-    step: 1 | 2 | 3 | 4,
+    step: 1 | 2 | 3 | 4 | 5,
     overrides?: WizardPersistenceOverrides
-): 1 | 2 | 3 | 4 => {
+): 1 | 2 | 3 | 4 | 5 => {
     const hasStep4Payload =
         overrides?.generatedSchedules !== undefined ||
         overrides?.originalGeneratedSchedules !== undefined;

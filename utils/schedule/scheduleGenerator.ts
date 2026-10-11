@@ -1,6 +1,6 @@
 
 import { MasterRouteTable, MasterTrip } from '../parsers/masterScheduleParser';
-import { ScheduleConfig } from '../../components/NewSchedule/steps/Step3Build';
+import type { ScheduleConfig } from '../../components/NewSchedule/steps/Step3Build';
 import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary, MIN_RELIABLE_OBSERVATIONS } from '../ai/runtimeAnalysis';
 import { SegmentRawData, extractTimepointsFromSegments } from '../../components/NewSchedule/utils/csvParser';
 import { getOperationalSortTime, reassignBlocksForTables } from '../blocks/blockAssignmentCore';
@@ -31,6 +31,126 @@ export class MissingApprovedRuntimeError extends Error {
         this.segmentName = segmentName;
     }
 }
+
+export const MAX_RECOVERY_RATIO_PERCENT = 100;
+
+export type ScheduleGenerationValidationCode =
+    | 'strict-cycle'
+    | 'recovery-ratio'
+    | 'band-recovery-ratio'
+    | 'blocks-empty'
+    | 'block-id-empty'
+    | 'block-id-duplicate'
+    | 'block-start-time'
+    | 'block-end-time';
+
+export interface ScheduleGenerationValidationIssue {
+    code: ScheduleGenerationValidationCode;
+    message: string;
+    blockIndex?: number;
+}
+
+export class InvalidScheduleGenerationConfigError extends Error {
+    readonly issues: ScheduleGenerationValidationIssue[];
+
+    constructor(issues: ScheduleGenerationValidationIssue[]) {
+        super(issues.map(issue => issue.message).join(' '));
+        this.name = 'InvalidScheduleGenerationConfigError';
+        this.issues = issues;
+    }
+}
+
+const isValidClockTime = (value: string): boolean => (
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)
+);
+
+export const validateScheduleGenerationConfig = (
+    config: ScheduleConfig
+): ScheduleGenerationValidationIssue[] => {
+    const issues: ScheduleGenerationValidationIssue[] = [];
+    const isFloating = config.cycleMode === 'Floating';
+
+    if (!isFloating && (!Number.isFinite(config.cycleTime) || config.cycleTime < 1)) {
+        issues.push({
+            code: 'strict-cycle',
+            message: 'Strict cycle time must be a finite value of at least 1 minute.',
+        });
+    }
+
+    if (isFloating) {
+        const recoveryRatio = config.recoveryRatio ?? 15;
+        if (
+            !Number.isFinite(recoveryRatio)
+            || recoveryRatio < 0
+            || recoveryRatio > MAX_RECOVERY_RATIO_PERCENT
+        ) {
+            issues.push({
+                code: 'recovery-ratio',
+                message: `Target recovery must be between 0% and ${MAX_RECOVERY_RATIO_PERCENT}%.`,
+            });
+        }
+
+        config.bandRecoveryDefaults?.forEach(defaults => {
+            if (
+                !Number.isFinite(defaults.avgRecoveryRatio)
+                || defaults.avgRecoveryRatio < 0
+                || defaults.avgRecoveryRatio > MAX_RECOVERY_RATIO_PERCENT
+            ) {
+                issues.push({
+                    code: 'band-recovery-ratio',
+                    message: `Band ${defaults.bandId} recovery must be between 0% and ${MAX_RECOVERY_RATIO_PERCENT}%.`,
+                });
+            }
+        });
+    }
+
+    if (!Array.isArray(config.blocks) || config.blocks.length === 0) {
+        issues.push({
+            code: 'blocks-empty',
+            message: 'Add at least one block before generating the schedule.',
+        });
+        return issues;
+    }
+
+    const normalizedIds = config.blocks.map(block => block.id.trim().toLocaleLowerCase());
+    const duplicateIds = new Set(
+        normalizedIds.filter((id, index) => id !== '' && normalizedIds.indexOf(id) !== index)
+    );
+
+    config.blocks.forEach((block, blockIndex) => {
+        const normalizedId = normalizedIds[blockIndex];
+        if (!normalizedId) {
+            issues.push({
+                code: 'block-id-empty',
+                blockIndex,
+                message: `Block ${blockIndex + 1} needs a block ID.`,
+            });
+        } else if (duplicateIds.has(normalizedId)) {
+            issues.push({
+                code: 'block-id-duplicate',
+                blockIndex,
+                message: `Block ID "${block.id.trim()}" is duplicated. Block IDs must be unique.`,
+            });
+        }
+
+        if (!isValidClockTime(block.startTime)) {
+            issues.push({
+                code: 'block-start-time',
+                blockIndex,
+                message: `Block ${block.id.trim() || blockIndex + 1} needs a valid start time.`,
+            });
+        }
+        if (!isValidClockTime(block.endTime)) {
+            issues.push({
+                code: 'block-end-time',
+                blockIndex,
+                message: `Block ${block.id.trim() || blockIndex + 1} needs a valid end time.`,
+            });
+        }
+    });
+
+    return issues;
+};
 
 const normalizeStopLookupKey = (value: string): string => {
     return value
@@ -165,10 +285,10 @@ export const generateSchedule = (
     const strictApprovedRuntime = options.strictApprovedRuntime === true;
     const approvedBucketMode = options.approvedBucketMode ?? 'trip-start';
     // 1. Validation
-    const isFloatingMode = config.cycleMode === 'Floating';
-    const cycleTimeMinutes = config.cycleTime;
-    if (!isFloatingMode && (!cycleTimeMinutes || cycleTimeMinutes <= 0)) return [];
-
+    const validationIssues = validateScheduleGenerationConfig(config);
+    if (validationIssues.length > 0) {
+        throw new InvalidScheduleGenerationConfigError(validationIssues);
+    }
     // 2. Identify available directions
     const directionKeys = new Set([
         ...Object.keys(segmentsMap),
@@ -422,8 +542,18 @@ export const generateSchedule = (
             }
         }
 
+        // At minute-level schedule precision, a valid trip advances by at least
+        // one minute. The cap is a final guard against malformed data defeating
+        // the explicit forward-progress check below.
+        const maxTripIterations = Math.ceil(endMins - startMins) + 1;
+        let tripIterations = 0;
+
         // Loop until we exceed the block end time
         while (currentTime < endMins) {
+            tripIterations += 1;
+            if (tripIterations > maxTripIterations) {
+                throw new Error(`Schedule generation stopped because block ${block.id} did not make forward progress.`);
+            }
             const dirSegments = segmentsMap[currentDir] || [];
             const dirTimepoints = timepointsMap[currentDir];
             const usePairedCycleBucket = (
@@ -587,6 +717,9 @@ export const generateSchedule = (
                 }
             }
             const pureTravelTime = allocatedTime;
+            if (!Number.isFinite(pureTravelTime) || pureTravelTime < 1) {
+                throw new Error(`Schedule generation stopped because block ${block.id} has no positive finite travel time.`);
+            }
 
             // 3. Cycle & Recovery Calculation (Strict vs Floating)
             let tripCycleAllocated = 0;
@@ -641,6 +774,17 @@ export const generateSchedule = (
                 tripCycleAllocated = Math.min(partialCycleCap, targetPartialCycle);
                 totalRecovery = Math.max(0, tripCycleAllocated - pureTravelTime);
                 nextTripStart = currentTime + tripCycleAllocated;
+            }
+
+            if (
+                !Number.isFinite(totalRecovery)
+                || totalRecovery < 0
+                || !Number.isFinite(tripCycleAllocated)
+                || tripCycleAllocated < 1
+                || !Number.isFinite(nextTripStart)
+                || nextTripStart < currentTime + 1
+            ) {
+                throw new Error(`Schedule generation stopped because block ${block.id} has an invalid cycle or recovery value.`);
             }
 
             // 4. Put generated recovery at the active trip terminus.

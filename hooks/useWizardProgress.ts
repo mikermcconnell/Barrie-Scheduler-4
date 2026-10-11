@@ -17,6 +17,7 @@ import { hasRestorableWizardProgress } from '../components/NewSchedule/utils/wiz
 const WIZARD_PROGRESS_KEY = 'newScheduleWizard_progress';
 
 export type WizardImportMode = 'csv' | 'gtfs' | 'performance';
+export type WizardProgressStep = 1 | 2 | 3 | 4 | 5;
 
 export interface WizardPerformanceConfig {
     routeId: string;
@@ -24,7 +25,7 @@ export interface WizardPerformanceConfig {
 }
 
 export interface WizardProgress {
-    step: 1 | 2 | 3 | 4;
+    step: WizardProgressStep;
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
     importMode?: WizardImportMode;
     performanceConfig?: WizardPerformanceConfig;
@@ -36,11 +37,28 @@ export interface WizardProgress {
     config?: ScheduleConfig;
     generatedSchedules?: MasterRouteTable[]; // Added for persistence
     originalGeneratedSchedules?: MasterRouteTable[]; // Stable Step 4 delta baseline
+    generatedScheduleInputFingerprint?: string;
     parsedData?: RuntimeData[]; // Added for persistence
     approvedRuntimeContract?: ApprovedRuntimeContract;
     approvedRuntimeModel?: ApprovedRuntimeModel;
     updatedAt: string;
 }
+
+const isWizardProgress = (value: unknown): value is WizardProgress => {
+    if (!value || typeof value !== 'object') return false;
+
+    const progress = value as Partial<WizardProgress>;
+    return (
+        Number.isInteger(progress.step)
+        && (progress.step as number) >= 1
+        && (progress.step as number) <= 5
+        && ['Weekday', 'Saturday', 'Sunday'].includes(progress.dayType ?? '')
+        && Array.isArray(progress.fileNames)
+        && progress.fileNames.every((fileName) => typeof fileName === 'string')
+        && typeof progress.updatedAt === 'string'
+        && !Number.isNaN(Date.parse(progress.updatedAt))
+    );
+};
 
 export function useWizardProgress() {
     const [hasCheckedProgress, setHasCheckedProgress] = useState(false);
@@ -49,29 +67,38 @@ export function useWizardProgress() {
         try {
             const stored = localStorage.getItem(WIZARD_PROGRESS_KEY);
             if (!stored) return null;
-            return JSON.parse(stored) as WizardProgress;
+            const parsed: unknown = JSON.parse(stored);
+            if (!isWizardProgress(parsed)) {
+                console.warn('Ignoring invalid wizard progress in local storage.');
+                return null;
+            }
+            return parsed;
         } catch (e) {
             console.error('Failed to load wizard progress:', e);
             return null;
         }
     }, []);
 
-    const save = useCallback((progress: WizardProgress): void => {
+    const save = useCallback((progress: WizardProgress): boolean => {
         try {
             localStorage.setItem(WIZARD_PROGRESS_KEY, JSON.stringify({
                 ...progress,
                 updatedAt: new Date().toISOString()
             }));
+            return true;
         } catch (e) {
             console.error('Failed to save wizard progress:', e);
+            return false;
         }
     }, []);
 
-    const clear = useCallback((): void => {
+    const clear = useCallback((): boolean => {
         try {
             localStorage.removeItem(WIZARD_PROGRESS_KEY);
+            return true;
         } catch (e) {
             console.error('Failed to clear wizard progress:', e);
+            return false;
         }
     }, []);
 

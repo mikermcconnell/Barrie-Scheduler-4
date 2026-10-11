@@ -49,7 +49,7 @@ export function mergeParkingRevenueLocationMappings(
     ));
     if (overlapIndex >= 0) {
       const current = next[overlapIndex];
-      next[overlapIndex] = overwriteExisting
+      const merged = overwriteExisting
         ? {
           ...current,
           ...importedMapping,
@@ -63,6 +63,15 @@ export function mergeParkingRevenueLocationMappings(
           capacitySpaces: current.capacitySpaces ?? importedMapping.capacitySpaces,
           sourceRefs: mergeSourceRefs(current, importedMapping),
         };
+      const locationKind = overwriteExisting
+        ? importedMapping.locationKind
+        : current.locationKind ?? importedMapping.locationKind;
+      if (locationKind) {
+        merged.locationKind = locationKind;
+      } else {
+        delete merged.locationKind;
+      }
+      next[overlapIndex] = merged;
     } else {
       next.push(importedMapping);
     }

@@ -102,6 +102,11 @@ import {
     downloadBlob,
     downloadDetourPdf,
 } from '../../utils/detours/detourExport';
+import {
+    buildDetourStopSheets,
+    formatDetourStopSheetSubtitle,
+    type DetourStopSheet,
+} from '../../utils/detours/detourStopSheets';
 import { loadRoutePlanner2GtfsImportPatterns } from '../../utils/route-planner-2/routePlanner2GtfsClient';
 import type { RoutePlanner2GtfsImportPattern } from '../../utils/route-planner-2/routePlanner2GtfsImport';
 import { useUnsavedChangesWarning } from '../../hooks/useUnsavedChangesWarning';
@@ -226,6 +231,9 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
     const [showPreview, setShowPreview] = useState(false);
     const [publicMapPreview, setPublicMapPreview] = useState(false);
     const [mapImage, setMapImage] = useState<string>('');
+    const [selectedPreviewPageId, setSelectedPreviewPageId] = useState('master');
+    const [stopSheetMapImages, setStopSheetMapImages] = useState<Record<string, string>>({});
+    const [previewMapLoading, setPreviewMapLoading] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [lastExport, setLastExport] = useState<{ pdf: string; png: string } | null>(null);
     const [showPostDialog, setShowPostDialog] = useState(false);
@@ -267,6 +275,7 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
     const validation = useMemo(() => notice ? validateDetourNotice(notice) : null, [notice]);
     const exportNotice = useMemo(() => notice ? toDetourExportNoticeInput(notice) : null, [notice]);
     const myRideCopy = useMemo(() => exportNotice ? buildMyRideCopyPackage(exportNotice) : null, [exportNotice]);
+    const stopSheets = useMemo(() => notice ? buildDetourStopSheets(notice) : [], [notice]);
 
     const commitNotice = useCallback((updater: (current: DetourNotice) => DetourNotice, trackHistory = true) => {
         setNotice((current) => {
@@ -277,6 +286,7 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         });
         setDirty(true);
         setLastExport(null);
+        setStopSheetMapImages({});
     }, []);
 
     const updateOverlay = useCallback((overlayId: string, updater: (overlay: DetourRouteOverlay) => DetourRouteOverlay, trackHistory = true) => {
@@ -295,6 +305,8 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         setFuture([]);
         setDirty(true);
         setMapImage('');
+        setSelectedPreviewPageId('master');
+        setStopSheetMapImages({});
         setPublicMapPreview(false);
         setLastExport(null);
         setValidationVisible(false);
@@ -312,6 +324,8 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
             setFuture([]);
             setDirty(false);
             setMapImage('');
+            setSelectedPreviewPageId('master');
+            setStopSheetMapImages({});
             setPublicMapPreview(false);
             setLastExport(null);
             setValidationVisible(false);
@@ -845,9 +859,36 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         return captured;
     }, []);
 
+    const captureStopSheetMap = useCallback(async (sheet: DetourStopSheet): Promise<string | null> => {
+        const captured = await mapRef.current?.captureImage('image/png', undefined, {
+            kind: sheet.kind,
+            position: sheet.position,
+        }) ?? null;
+        if (captured) setStopSheetMapImages(current => ({ ...current, [sheet.id]: captured }));
+        return captured;
+    }, []);
+
+    const selectPreviewPage = useCallback(async (pageId: string, forceCapture = false) => {
+        setSelectedPreviewPageId(pageId);
+        if (pageId === 'master') {
+            if (forceCapture || !mapImage) await captureMap();
+            return;
+        }
+        const sheet = stopSheets.find(item => item.id === pageId);
+        if (!sheet || (!forceCapture && stopSheetMapImages[pageId])) return;
+        setPreviewMapLoading(true);
+        try {
+            await captureStopSheetMap(sheet);
+        } finally {
+            setPreviewMapLoading(false);
+        }
+    }, [captureMap, captureStopSheetMap, mapImage, stopSheetMapImages, stopSheets]);
+
     const openPreview = useCallback(async () => {
         if (!notice) return;
         setPublicMapPreview(true);
+        setSelectedPreviewPageId('master');
+        setStopSheetMapImages({});
         await captureMap();
         setValidationVisible(true);
         setShowPreview(true);
@@ -856,6 +897,7 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
     const closePreview = useCallback(() => {
         setShowPreview(false);
         setPublicMapPreview(false);
+        setSelectedPreviewPageId('master');
         setMapMode('select');
     }, []);
 
@@ -878,23 +920,30 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
         }
         setExporting(true);
         try {
+            const stopSheetExports: Array<{ sheet: DetourStopSheet; mapImageDataUrl: string }> = [];
+            for (const sheet of stopSheets) {
+                const sheetMap = stopSheetMapImages[sheet.id] || await captureStopSheetMap(sheet);
+                if (!sheetMap) throw new Error(`The map for ${formatDetourStopSheetSubtitle(sheet)} could not be captured.`);
+                stopSheetExports.push({ sheet, mapImageDataUrl: sheetMap });
+            }
             const pdf = downloadDetourPdf({
                 notice: exportNotice,
                 mapImageDataUrl: captured,
                 brandAssets: DETOUR_BRAND_ASSETS,
+                stopSheets: stopSheetExports,
             });
             await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)));
             const pngResult = await captureDetourNoticePng(previewRef.current, exportNotice);
             downloadBlob(pngResult.blob, pngResult.filename);
             setLastExport({ pdf, png: pngResult.filename });
-            toast?.success('Notice package ready', 'PDF and PNG downloaded. MyRide copy is ready below.');
+            toast?.success('Notice package ready', `${stopSheets.length + 1}-page PDF and master PNG downloaded. MyRide copy is ready below.`);
         } catch (error) {
             console.error('Detour export failed', error);
             toast?.error('Export failed', error instanceof Error ? error.message : 'The notice could not be exported.');
         } finally {
             setExporting(false);
         }
-    }, [captureMap, dirty, exportNotice, mapImage, notice, toast]);
+    }, [captureMap, captureStopSheetMap, dirty, exportNotice, mapImage, notice, stopSheetMapImages, stopSheets, toast]);
 
     const copyText = useCallback(async (text: string, label: string) => {
         try {
@@ -1075,6 +1124,17 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
     const weeklyRecurrence = notice.schedule.recurrence.mode === 'weekly'
         ? notice.schedule.recurrence
         : null;
+    const selectedStopSheet = selectedPreviewPageId === 'master'
+        ? undefined
+        : stopSheets.find(sheet => sheet.id === selectedPreviewPageId);
+    const selectedPreviewMapImage = selectedStopSheet
+        ? stopSheetMapImages[selectedStopSheet.id] ?? ''
+        : mapImage;
+    const selectedPreviewPageNumber = selectedStopSheet
+        ? stopSheets.findIndex(sheet => sheet.id === selectedStopSheet.id) + 2
+        : 1;
+    const closedStopSheetCount = stopSheets.filter(sheet => sheet.kind === 'closed').length;
+    const temporaryStopSheetCount = stopSheets.length - closedStopSheetCount;
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-slate-100">
@@ -1367,14 +1427,34 @@ export function DetourPublisherWorkspace({ onClose }: DetourPublisherWorkspacePr
 
             {showPreview && exportNotice && (
                 <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 p-4" role="dialog" aria-modal="true" aria-label="Detour notice preview">
-                    <div className="mx-auto max-w-7xl rounded-2xl bg-white shadow-2xl">
-                        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 p-4"><div className="flex-1"><h2 className="text-lg font-black text-slate-900">Notice preview and MyRide package</h2><p className="text-xs text-slate-500">Review the map and public copy before downloading.</p></div><button type="button" onClick={() => void captureMap()} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black text-slate-700"><FileImage className="mr-2 inline h-4 w-4" />Recapture map</button><button type="button" disabled={exporting} onClick={() => void exportPackage()} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-black text-white disabled:opacity-50"><Download className="mr-2 inline h-4 w-4" />{exporting ? 'Exporting' : 'Download package'}</button><button type="button" onClick={closePreview} aria-label="Close preview and return to editing" className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-                        <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-                            <div className="overflow-auto rounded-xl bg-slate-100 p-4"><div className="origin-top-left" style={{ width: 1100, height: 850, transform: 'scale(0.72)', transformOrigin: 'top left', marginBottom: -238, marginRight: -308 }}><DetourNoticePreview ref={previewRef} notice={exportNotice} mapImageDataUrl={mapImage} brandAssets={DETOUR_BRAND_ASSETS} /></div></div>
+                    <div className="mx-auto max-w-[1600px] rounded-2xl bg-white shadow-2xl">
+                        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 p-4">
+                            <div className="flex-1">
+                                <h2 className="text-lg font-black text-slate-900">Notice preview and MyRide package</h2>
+                                <p className="text-xs text-slate-500">{stopSheets.length + 1} pages: 1 master, {closedStopSheetCount} closed stop, {temporaryStopSheetCount} temporary stop.</p>
+                            </div>
+                            <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600">Page {selectedPreviewPageNumber} of {stopSheets.length + 1}</span>
+                            <button type="button" disabled={previewMapLoading} onClick={() => void selectPreviewPage(selectedPreviewPageId, true)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black text-slate-700 disabled:opacity-50"><FileImage className="mr-2 inline h-4 w-4" />Recapture map</button>
+                            <button type="button" disabled={exporting} onClick={() => void exportPackage()} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-black text-white disabled:opacity-50"><Download className="mr-2 inline h-4 w-4" />{exporting ? 'Exporting' : `Download ${stopSheets.length + 1}-page package`}</button>
+                            <button type="button" onClick={closePreview} aria-label="Close preview and return to editing" className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+                        </div>
+                        <div className="grid gap-5 p-5 2xl:grid-cols-[220px_minmax(0,1fr)_360px]">
+                            <nav className="max-h-[650px] space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-3" aria-label="Publication pages">
+                                <div className="mb-3 text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">Publication pages</div>
+                                <button type="button" aria-pressed={selectedPreviewPageId === 'master'} onClick={() => void selectPreviewPage('master')} className={cx('w-full rounded-lg border-l-4 border-[#07557F] px-3 py-2 text-left text-xs transition', selectedPreviewPageId === 'master' ? 'bg-blue-50 text-blue-950 ring-1 ring-blue-200' : 'bg-slate-50 text-slate-700 hover:bg-slate-100')}><span className="block font-black">Master notice</span><span className="mt-0.5 block text-[10px] font-semibold opacity-70">Barrie blue</span></button>
+                                {stopSheets.map((sheet, index) => (
+                                    <button key={sheet.id} type="button" aria-pressed={selectedPreviewPageId === sheet.id} onClick={() => void selectPreviewPage(sheet.id)} style={{ borderLeftColor: sheet.kind === 'closed' ? '#BF1E2D' : '#066839' }} className={cx('w-full rounded-lg border-l-4 px-3 py-2 text-left text-xs transition', selectedPreviewPageId === sheet.id ? sheet.kind === 'closed' ? 'bg-red-50 text-red-950 ring-1 ring-red-200' : 'bg-emerald-50 text-emerald-950 ring-1 ring-emerald-200' : 'bg-slate-50 text-slate-700 hover:bg-slate-100')}><span className="block font-black">{index + 2}. {sheet.kind === 'closed' ? `Stop ${sheet.stopCode || sheet.stopName}` : `Temporary ${sheet.stopCode || sheet.stopName}`}</span><span className="mt-0.5 block truncate text-[10px] font-semibold opacity-70">{formatDetourStopSheetSubtitle(sheet)}</span></button>
+                                ))}
+                            </nav>
+                            <div className="relative overflow-auto rounded-xl bg-slate-100 p-4">
+                                {previewMapLoading && <div className="absolute inset-0 z-10 grid place-items-center bg-white/75"><span className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-black text-slate-700 shadow"><Loader2 className="h-4 w-4 animate-spin" />Preparing stop map</span></div>}
+                                <div className="origin-top-left" style={{ width: 1100, height: 850, transform: 'scale(0.72)', transformOrigin: 'top left', marginBottom: -238, marginRight: -308 }}><DetourNoticePreview notice={exportNotice} mapImageDataUrl={selectedPreviewMapImage} brandAssets={DETOUR_BRAND_ASSETS} stopSheet={selectedStopSheet} /></div>
+                            </div>
                             <aside className="space-y-3">{myRideCopy && <><CopyCard label="MyRide title" text={myRideCopy.title} onCopy={copyText} /><CopyCard label="Summary" text={myRideCopy.summary} onCopy={copyText} /><CopyCard label="Accessible details" text={myRideCopy.accessibleDetails} onCopy={copyText} /><CopyCard label="Image alt text" text={myRideCopy.altText} onCopy={copyText} /><div className="rounded-xl border border-slate-200 p-3"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Route tags</div><div className="mt-2 flex flex-wrap gap-1">{myRideCopy.routeTags.map(tag => <span key={tag} className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{tag}</span>)}</div></div></>}
                                 {lastExport && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><div className="flex items-center gap-2 text-sm font-black text-emerald-800"><Check className="h-4 w-4" /> Files exported</div><p className="mt-1 break-all text-xs text-emerald-700">{lastExport.pdf}<br />{lastExport.png}</p><button type="button" onClick={() => setShowPostDialog(true)} className="mt-3 w-full rounded-lg bg-emerald-700 py-2 text-xs font-black text-white"><Upload className="mr-1 inline h-4 w-4" />Mark posted to MyRide</button></div>}
                             </aside>
                         </div>
+                        <div className="fixed left-[-10000px] top-0" aria-hidden="true"><DetourNoticePreview ref={previewRef} notice={exportNotice} mapImageDataUrl={mapImage} brandAssets={DETOUR_BRAND_ASSETS} /></div>
                     </div>
                 </div>
             )}

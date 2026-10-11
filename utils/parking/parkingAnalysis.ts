@@ -1,10 +1,12 @@
 import {
   type ParkingRevenueAnalytics,
+  type ParkingRevenueLocationKind,
   type ParkingRevenueLocationSummary,
   type ParkingRevenueRawRow,
   type ParkingRevenueSource,
   type ParkingRevenueTrendPoint,
 } from './parkingTypes';
+import { getParkingTaxInclusiveRevenue } from './parkingRevenue';
 
 export interface ParkingCapacityInfo {
   spaces: number | null;
@@ -32,6 +34,7 @@ export interface ParkingLotComparisonPoint {
   categoryId?: string | null;
   categoryLabel?: string;
   categoryColorHex?: string;
+  locationKind: ParkingRevenueLocationKind;
   revenue: number;
   sessions: number;
   paidMinutes: number;
@@ -114,6 +117,7 @@ export interface ParkingSelectedLotAnalysis {
   sessionsPerSpace: number | null;
   paidMinutes: number;
   utilizationPercent: number | null;
+  rows: ParkingRevenueRawRow[];
   hourlyProfile: ParkingAnalysisChartPoint[];
   dailyTrend: ParkingAnalysisChartPoint[];
   monthlyTrend: ParkingAnalysisChartPoint[];
@@ -181,7 +185,7 @@ function rowsForMonth(rows: ParkingRevenueRawRow[], month: string): ParkingReven
 }
 
 function revenueForRows(rows: ParkingRevenueRawRow[]): number {
-  return roundMoney(rows.reduce((sum, row) => sum + row.amount, 0));
+  return roundMoney(rows.reduce((sum, row) => sum + getParkingTaxInclusiveRevenue(row), 0));
 }
 
 function trendDirection(changeValue: number | null): ParkingTrendDirection {
@@ -243,7 +247,7 @@ function buildActiveDayMonthlyTrend(
       durationCount: 0,
       activeDates: new Set<string>(),
     };
-    group.revenue += row.amount;
+    group.revenue += getParkingTaxInclusiveRevenue(row);
     group.sessions += 1;
     if (row.durationMinutes > 0) {
       group.durationTotal += row.durationMinutes;
@@ -285,13 +289,13 @@ function buildFastestGrowingLot(rows: ParkingRevenueRawRow[], targetMonth: strin
   for (const row of previousRows) {
     const key = lotTrendKey(row);
     const group = groups.get(key) || { label: lotTrendLabel(row), current: 0, previous: 0 };
-    group.previous += row.amount;
+    group.previous += getParkingTaxInclusiveRevenue(row);
     groups.set(key, group);
   }
   for (const row of currentRows) {
     const key = lotTrendKey(row);
     const group = groups.get(key) || { label: lotTrendLabel(row), current: 0, previous: 0 };
-    group.current += row.amount;
+    group.current += getParkingTaxInclusiveRevenue(row);
     groups.set(key, group);
   }
 
@@ -344,7 +348,7 @@ function buildTrend(
       durationTotal: 0,
       durationCount: 0,
     };
-    group.revenue += row.amount;
+    group.revenue += getParkingTaxInclusiveRevenue(row);
     group.sessions += 1;
     if (row.durationMinutes > 0) {
       group.durationTotal += row.durationMinutes;
@@ -389,7 +393,7 @@ function buildHourlyProfile(rows: ParkingRevenueRawRow[]): ParkingAnalysisChartP
         durationTotal: 0,
         durationCount: 0,
       };
-      bucket.revenue += row.amount * (overlap / duration);
+      bucket.revenue += getParkingTaxInclusiveRevenue(row) * (overlap / duration);
       bucket.sessions += 1;
       if (row.durationMinutes > 0) {
         bucket.durationTotal += row.durationMinutes;
@@ -427,7 +431,7 @@ function buildSourceMix(rows: ParkingRevenueRawRow[]): ParkingSourceMixPoint[] {
   for (const row of rows) {
     const total = totals.get(row.source);
     if (!total) continue;
-    total.revenue += row.amount;
+    total.revenue += getParkingTaxInclusiveRevenue(row);
     total.sessions += 1;
   }
   return (['hotspot', 'qr'] as ParkingRevenueSource[]).map(source => {
@@ -442,7 +446,7 @@ function buildSourceMix(rows: ParkingRevenueRawRow[]): ParkingSourceMixPoint[] {
 }
 
 function rowBelongsToLocation(row: ParkingRevenueRawRow, location: ParkingRevenueLocationSummary): boolean {
-  if (row.physicalLocationId) return row.physicalLocationId === location.key;
+  if (row.physicalLocationId === location.key) return true;
   const refs = new Set(location.sourceIds.map(ref => sourceKey(ref.source, ref.sourceId)));
   if (String(row.sourceId || '').trim()) {
     const rowSourceKey = sourceKey(row.source, row.sourceId);
@@ -467,7 +471,7 @@ export function buildParkingTrendOverview(
 
   return {
     targetMonth,
-    scopeLabel: selectedLocation?.displayName || 'All Parking Lots',
+    scopeLabel: selectedLocation?.displayName || 'All Parking Revenue',
     comparisonCards: [
       comparisonCard('revenue-mom', 'Total revenue MoM', scopedComparisonRows, targetMonth, previous, 'money', revenueForRows),
       comparisonCard('sessions-mom', 'Sessions MoM', scopedComparisonRows, targetMonth, previous, 'number', rows => rows.length),
@@ -496,7 +500,9 @@ function withCapacity(
   hourWindowMinutes = 1440,
 ): ParkingLotComparisonPoint {
   const capacity = capacityForLocation(location, capacityByLocationKey);
-  const spaces = capacity.spaces && capacity.spaces > 0 ? capacity.spaces : null;
+  const spaces = location.locationKind === 'non_spatial'
+    ? null
+    : capacity.spaces && capacity.spaces > 0 ? capacity.spaces : null;
   const paidMinutes = location.paidMinutes || 0;
   const availableSpaceMinutes = spaces && activeDayCount > 0 ? spaces * activeDayCount * hourWindowMinutes : 0;
   return {
@@ -505,6 +511,7 @@ function withCapacity(
     categoryId: location.categoryId ?? null,
     categoryLabel: location.categoryLabel || 'Uncategorized',
     categoryColorHex: location.categoryColorHex,
+    locationKind: location.locationKind,
     revenue: location.totalRevenue,
     sessions: location.rowCount,
     paidMinutes,
@@ -565,6 +572,7 @@ function buildSelectedLotAnalysis(
     sessionsPerSpace: comparison.sessionsPerSpace,
     paidMinutes: comparison.paidMinutes,
     utilizationPercent: comparison.utilizationPercent,
+    rows: selectedRows.slice().sort((a, b) => b.startDate.localeCompare(a.startDate) || b.startMinutes - a.startMinutes),
     hourlyProfile: buildHourlyProfile(selectedRows),
     dailyTrend: buildTrend(selectedRows, row => row.startDate),
     monthlyTrend: buildTrend(selectedRows, row => row.startMonth),
@@ -618,7 +626,8 @@ function buildCategoryComparisonRows(
   }
 
   return [...groups.entries()].map(([key, group]) => {
-    const knownCapacityLots = group.filter(lot => lot.spaces != null && lot.spaces > 0);
+    const physicalLots = group.filter(lot => lot.locationKind !== 'non_spatial');
+    const knownCapacityLots = physicalLots.filter(lot => lot.spaces != null && lot.spaces > 0);
     const sessions = group.reduce((sum, lot) => sum + lot.sessions, 0);
     const revenue = roundMoney(group.reduce((sum, lot) => sum + lot.revenue, 0));
     const capacityCoveredSessions = knownCapacityLots.reduce((sum, lot) => sum + lot.sessions, 0);
@@ -629,6 +638,7 @@ function buildCategoryComparisonRows(
     const paidMinutes = group.reduce((sum, lot) => sum + lot.paidMinutes, 0);
     const capacityCoveredPaidMinutes = knownCapacityLots.reduce((sum, lot) => sum + lot.paidMinutes, 0);
     const availableSpaceMinutes = spaces && activeDayCount > 0 ? spaces * activeDayCount * hourWindowMinutes : 0;
+    const locationKind: ParkingRevenueLocationKind = physicalLots.length > 0 ? 'physical' : 'non_spatial';
     const weightedStaySessions = group.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? Math.max(lot.sessions, 1) : 0), 0);
     const weightedStayTotal = group.reduce((sum, lot) => sum + (lot.averageStayMinutes > 0 ? lot.averageStayMinutes * Math.max(lot.sessions, 1) : 0), 0);
     return {
@@ -637,6 +647,7 @@ function buildCategoryComparisonRows(
       categoryId: key === 'uncategorized' ? null : key,
       categoryLabel: group[0]?.categoryLabel || 'Uncategorized',
       categoryColorHex: group[0]?.categoryColorHex,
+      locationKind,
       revenue,
       sessions,
       paidMinutes,
@@ -646,7 +657,7 @@ function buildCategoryComparisonRows(
       revenuePerSpace: spaces ? roundMoney(capacityCoveredRevenue / spaces) : null,
       sessionsPerSpace: spaces ? roundMoney(capacityCoveredSessions / spaces) : null,
       utilizationPercent: availableSpaceMinutes > 0 ? roundOne((capacityCoveredPaidMinutes / availableSpaceMinutes) * 100) : null,
-      lotCount: group.length,
+      lotCount: physicalLots.length,
       capacityCoveredLotCount: knownCapacityLots.length,
       capacityCoveredRevenue,
       capacityCoveredSessions,

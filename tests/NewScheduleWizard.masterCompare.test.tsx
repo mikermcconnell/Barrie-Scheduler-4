@@ -213,8 +213,18 @@ vi.mock('../hooks/usePerformanceData', () => ({
 
 vi.mock('../hooks/useWizardProgress', () => ({
     useWizardProgress: () => ({
-        save: saveMock,
-        clear: clearMock,
+        load: (): null => null,
+        save: (...args: unknown[]): boolean => {
+            saveMock(...args);
+            return true;
+        },
+        clear: (): boolean => {
+            clearMock();
+            return true;
+        },
+        hasProgress: () => false,
+        hasCheckedProgress: true,
+        setHasCheckedProgress: vi.fn(),
     }),
 }));
 

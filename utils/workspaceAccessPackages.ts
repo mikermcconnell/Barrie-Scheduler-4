@@ -16,6 +16,7 @@ export type WorkspaceAccessPackageId =
     | 'barrie-production'
     | 'barrie-admin'
     | 'barrie-operations'
+    | 'strategic-plan-only'
     | 'transit-app-only'
     | 'transit-app-streets'
     | 'parking-only'
@@ -61,6 +62,15 @@ export const WORKSPACE_ACCESS_PACKAGES: WorkspaceAccessPackage[] = [
         accessLevel: 'none',
         workspaceOverrides: {
             workspaceOperations: true,
+        },
+    },
+    {
+        id: 'strategic-plan-only',
+        label: '2027–2032 Strategic Plan only',
+        description: 'Read-only access to Strategic Plan cards, including shared Transit App, Fleet Plan, and Master Schedule evidence.',
+        accessLevel: 'none',
+        workspaceOverrides: {
+            analyticsStrategicPlan: true,
         },
     },
     {
@@ -118,4 +128,3 @@ export function buildWorkspaceSelectionFromPackage(
         return selection;
     }, {} as Record<WorkspaceAccessFeatureKey, boolean>);
 }
-

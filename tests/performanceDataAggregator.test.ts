@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { aggregateDailySummaries } from '../utils/performanceDataAggregator';
 import { classifyOTP, parseDayType, DEFAULT_LOAD_CAP } from '../utils/performanceDataTypes';
 import type { STREETSRecord } from '../utils/performanceDataTypes';
-import { buildRidershipStopProfiles } from '../utils/performanceRidershipStopProfile';
+import { buildRouteLoadViews } from '../utils/performanceRouteLoad';
 
 // ─── Helper: make a minimal valid STREETS record ────────────────────
 function makeRecord(overrides: Partial<STREETSRecord> = {}): STREETSRecord {
@@ -395,11 +395,12 @@ describe('aggregateDailySummaries', () => {
             expect.objectContaining({ occurrenceIndex: 0, loadObservationCount: 2, avgLoad: 6.5 }),
             expect.objectContaining({ occurrenceIndex: 1, loadObservationCount: 2, avgLoad: 3 }),
         ]);
-        const chartProfile = buildRidershipStopProfiles([summary]).options[0];
-        expect(chartProfile.multipleStopPatterns).toBe(true);
-        expect(chartProfile.rows.filter(stop => stop.stopId === 'A')).toEqual([
-            expect.objectContaining({ occurrenceIndex: 0, boardings: 6, alightings: 0, averageLoad: 6.5 }),
-            expect.objectContaining({ occurrenceIndex: 1, boardings: 0, alightings: 8, averageLoad: 3 }),
+        // CW loop route: boardings and alightings are kept, but load is not inferred.
+        const loadView = buildRouteLoadViews([summary])[0];
+        expect(loadView.inferenceBlocked).toBe('loop');
+        expect(loadView.stops.filter(stop => stop.stopId === 'A')).toEqual([
+            expect.objectContaining({ occurrenceIndex: 0, avgBoardings: 3, avgAlightings: 0, avgLoad: null }),
+            expect.objectContaining({ occurrenceIndex: 1, avgBoardings: 0, avgAlightings: 4, avgLoad: null }),
         ]);
     });
 

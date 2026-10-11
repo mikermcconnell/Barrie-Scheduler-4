@@ -59,6 +59,7 @@ import {
   switchUserTeam,
   updateTeamWorkspaceAccess,
   updateMemberWorkspaceAccess,
+  updateTeamDataSourceTeamIds,
 } from '../utils/services/teamService';
 
 describe('teamService security-sensitive flows', () => {
@@ -197,7 +198,15 @@ describe('teamService security-sensitive flows', () => {
       .mockResolvedValueOnce({
         exists: () => true,
         id: 'team-b',
-        data: () => ({ name: 'Zulu Team', createdBy: 'owner', inviteCode: 'ZULU01' }),
+        data: () => ({
+          name: 'Zulu Team',
+          createdBy: 'owner',
+          inviteCode: 'ZULU01',
+          dataSourceTeamIds: {
+            fleetPlan: 'team-a',
+            strategicPlanWorkplan: 'team-a',
+          },
+        }),
       })
       .mockResolvedValueOnce({
         exists: () => true,
@@ -210,6 +219,10 @@ describe('teamService security-sensitive flows', () => {
     expect(collectionGroupMock).toHaveBeenCalledWith(expect.anything(), 'members');
     expect(whereMock).toHaveBeenCalledWith('userId', '==', 'user-1');
     expect(teams.map(team => team.id)).toEqual(['team-a', 'team-b']);
+    expect(teams.find(team => team.id === 'team-b')?.dataSourceTeamIds).toEqual({
+      fleetPlan: 'team-a',
+      strategicPlanWorkplan: 'team-a',
+    });
   });
 
   it('verifies membership before changing the active team', async () => {
@@ -272,7 +285,7 @@ describe('teamService security-sensitive flows', () => {
     );
   });
 
-  it('defaults newly joined members to planner workspace access', async () => {
+  it('gives newly joined members no workspace access when the team has no default', async () => {
     getDocMock
       .mockResolvedValueOnce({
         exists: () => true,
@@ -292,7 +305,7 @@ describe('teamService security-sensitive flows', () => {
       expect.objectContaining({ path: 'teams/team-1/members/user-2' }),
       expect.objectContaining({
         role: 'member',
-        accessLevel: 'planner',
+        accessLevel: 'none',
       })
     );
   });
@@ -564,6 +577,42 @@ describe('teamService security-sensitive flows', () => {
         workspaceOverrides: {
           analyticsTransitApp: true,
           workspaceFixedRoute: false,
+        },
+      }
+    );
+  });
+
+  it('persists the explicit editable Strategic Plan work-plan source with evidence sources', async () => {
+    await updateTeamDataSourceTeamIds('dillon-team', {
+      transitApp: 'barrie-team',
+      fleetPlan: 'barrie-team',
+      strategicPlanWorkplan: 'barrie-team',
+    });
+
+    expect(updateDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/dillon-team' }),
+      {
+        dataSourceTeamIds: {
+          transitApp: 'barrie-team',
+          fleetPlan: 'barrie-team',
+          strategicPlanWorkplan: 'barrie-team',
+        },
+      },
+    );
+  });
+
+  it('drops retired workspace override keys without rejecting existing access data', async () => {
+    await updateMemberWorkspaceAccess('lane-transit', 'lane-user', 'planner', {
+      analyticsTransitApp: true,
+      analyticsCouncilIntelligence: true,
+    } as any);
+
+    expect(updateDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/lane-transit/members/lane-user' }),
+      {
+        accessLevel: 'planner',
+        workspaceOverrides: {
+          analyticsTransitApp: true,
         },
       }
     );

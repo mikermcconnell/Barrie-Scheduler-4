@@ -66,4 +66,35 @@ describe('parseRuntimeCSV', () => {
         expect(result.sampleCountMode).toBe('observations');
         expect(result.segments[0].timeBuckets['06:00 - 06:29'].n).toBe(12);
     });
+
+    it('parses BOM-prefixed CRLF exports with quoted commas and escaped quotes', async () => {
+        const file = {
+            text: async () => [
+                '\ufeffTitle,"Barrie, Terminal to ""Main"" Stop"',
+                'Half-Hour,"06:00 - 06:29"',
+                '10 Observed Runtime-50%,"14.5"',
+                '10 Observed Runtime-80%,"17.25"',
+                '10 Observed Runtime-Count,"12"',
+            ].join('\r\n'),
+        } as File;
+
+        const result = await parseRuntimeCSV(file);
+
+        expect(result.detectedRouteNumber).toBe('10');
+        expect(result.detectedDirection).toBe('Loop');
+        expect(result.segments[0].segmentName).toBe('Barrie, Terminal to "Main" Stop');
+        expect(result.segments[0].timeBuckets['06:00 - 06:29']).toEqual({
+            p50: 14.5,
+            p80: 17.25,
+            n: 12,
+        });
+    });
+
+    it('rejects an unterminated quoted field', async () => {
+        const file = {
+            text: async () => 'Title,"A to B\nHalf-Hour,06:00 - 06:29',
+        } as File;
+
+        await expect(parseRuntimeCSV(file)).rejects.toThrow('Unclosed quoted field');
+    });
 });

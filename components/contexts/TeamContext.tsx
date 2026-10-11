@@ -16,7 +16,7 @@ import {
     switchUserTeam,
 } from '../../utils/services/teamService';
 import type { Team, TeamMember, TeamRole, WorkspaceAccessLevel } from '../../utils/masterScheduleTypes';
-import { resolveWorkspaceAccessLevel } from '../../utils/workspaceAccess';
+import { isWorkspaceAccessLevel, resolveWorkspaceAccessLevel } from '../../utils/workspaceAccess';
 import { getDevAuthConfig } from '../../utils/dev/devAuth';
 import { clearPendingInviteCodeFromUrl, getPendingInviteCode } from '../../utils/inviteLinks';
 import {
@@ -37,6 +37,9 @@ interface TeamContextType {
     teamRole: TeamRole | null;
     accessLevel: WorkspaceAccessLevel;
     canManageTeam: boolean;
+    canUseViewAs: boolean;
+    viewAsAccessLevel: WorkspaceAccessLevel | null;
+    setViewAsAccessLevel: (level: WorkspaceAccessLevel | null) => void;
     loading: boolean;
     refreshTeam: () => Promise<void>;
     hasTeam: boolean;
@@ -58,6 +61,9 @@ const fallbackTeamContext: TeamContextType = {
     loading: false,
     refreshTeam: async () => { },
     hasTeam: false,
+    canUseViewAs: false,
+    viewAsAccessLevel: null,
+    setViewAsAccessLevel: () => { },
     isDeveloperPreview: false,
     developerPreview: null,
     actualTeam: null,
@@ -66,6 +72,8 @@ const fallbackTeamContext: TeamContextType = {
     startDeveloperPreview: async () => { throw new Error('Team context is unavailable.'); },
     stopDeveloperPreview: async () => { },
 };
+
+const VIEW_AS_STORAGE_KEY = 'scheduler.viewAsAccessLevel';
 
 const TeamContext = createContext<TeamContextType>(fallbackTeamContext);
 
@@ -84,6 +92,23 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
     const [actualTeamRole, setActualTeamRole] = useState<TeamRole | null>(null);
     const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
     const [developerPreview, setDeveloperPreview] = useState<DeveloperPreviewSession | null>(null);
+    const [viewAsAccessLevel, setViewAsAccessLevelState] = useState<WorkspaceAccessLevel | null>(() => {
+        try {
+            const stored = window.sessionStorage.getItem(VIEW_AS_STORAGE_KEY);
+            return isWorkspaceAccessLevel(stored) ? stored : null;
+        } catch {
+            return null;
+        }
+    });
+    const setViewAsAccessLevel = useCallback((level: WorkspaceAccessLevel | null) => {
+        setViewAsAccessLevelState(level);
+        try {
+            if (level) window.sessionStorage.setItem(VIEW_AS_STORAGE_KEY, level);
+            else window.sessionStorage.removeItem(VIEW_AS_STORAGE_KEY);
+        } catch {
+            // sessionStorage unavailable; the override just won't persist across reloads.
+        }
+    }, []);
     const [loading, setLoading] = useState(true);
     const devAuth = getDevAuthConfig();
 
@@ -298,10 +323,14 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
     }, [developerPreview, stopDeveloperPreview]);
 
     const team = developerPreview?.team ?? actualTeam;
-    const teamMember = developerPreview?.teamMember
+    const baseTeamMember = developerPreview?.teamMember
         ?? resolveGlobalAdminHomeTeamMember(actualTeamMember, isGlobalAdmin);
-    const teamRole = teamMember?.role ?? actualTeamRole;
-
+    const teamRole = baseTeamMember?.role ?? actualTeamRole;
+    const canUseViewAs = isGlobalAdmin || teamRole === 'owner' || teamRole === 'admin';
+    const activeViewAs = canUseViewAs && !developerPreview ? viewAsAccessLevel : null;
+    const teamMember = activeViewAs && baseTeamMember
+        ? { ...baseTeamMember, accessLevel: activeViewAs, workspaceOverrides: undefined }
+        : baseTeamMember;
 
     const value: TeamContextType = {
         team,
@@ -309,6 +338,9 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         teamRole,
         accessLevel: resolveWorkspaceAccessLevel(teamMember),
         canManageTeam: teamRole === 'owner' || teamRole === 'admin',
+        canUseViewAs,
+        viewAsAccessLevel: activeViewAs,
+        setViewAsAccessLevel,
         loading,
         refreshTeam,
         hasTeam: team !== null,

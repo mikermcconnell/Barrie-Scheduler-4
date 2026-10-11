@@ -18,24 +18,49 @@ export interface TodPickupMonthlyDataset {
   stops: TodPickupStop[];
 }
 
+export interface TodDailyKpiLocation {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  pickups: number;
+  dropoffs: number;
+}
+
+export interface TodDailyKpiDataset {
+  date: string; // YYYY-MM-DD service date selected during import
+  importedAt: string;
+  importedBy: string;
+  sourceFileName: string;
+  rawStoragePath?: string;
+  rowCount: number;
+  totalCompletedTrips: number;
+  totalDropoffs: number;
+  locations: TodDailyKpiLocation[];
+}
+
 export interface TodPickupMetadata {
   importedAt: string;
   importedBy: string;
   monthCount: number;
   totalRows: number;
   totalPickups: number;
+  dailyReportCount?: number;
+  dailyDateRange?: { start: string; end: string };
+  totalCompletedTrips?: number;
   storagePath?: string;
 }
 
 export interface TodPickupSummary {
   months: TodPickupMonthlyDataset[];
+  dailyReports?: TodDailyKpiDataset[];
   metadata: TodPickupMetadata;
   schemaVersion: number;
 }
 
-export interface TodPickupParseResult {
-  dataset: TodPickupMonthlyDataset;
+export interface TodDailyKpiParseResult {
+  dataset: TodDailyKpiDataset;
   warnings: string[];
 }
 
-export const TOD_PICKUP_SCHEMA_VERSION = 1;
+export const TOD_PICKUP_SCHEMA_VERSION = 2;

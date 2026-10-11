@@ -105,6 +105,56 @@ describe('buildScheduleReview', () => {
         expect(review.publishReady).toBe(false);
     });
 
+    it('ignores stale overlap metadata and suppresses tight recovery on the final trip across directions', () => {
+        const current = content(
+            [trip('north', 'North', 360, {
+                endTime: 390,
+                endTimeIncludesRecovery: true,
+                recoveryTime: 5,
+                recoveryTimes: { Terminal: 5 },
+                stopMinutes: { Terminal: 390 },
+            })],
+            [trip('south', 'South', 390, {
+                blockId: '1',
+                endTime: 420,
+                recoveryTime: 1,
+                isOverlap: true,
+                isTightRecovery: true,
+            })],
+        );
+
+        const review = buildScheduleReview(current);
+
+        expect(review.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'block-overlap' }),
+            expect.objectContaining({ kind: 'tight-recovery', location: expect.objectContaining({ tripId: 'south' }) }),
+        ]));
+        expect(review.publishReady).toBe(true);
+    });
+
+    it('labels Route 100 review issues as clockwise instead of northbound', () => {
+        const loopTable: MasterRouteTable = {
+            ...table('North', [
+                trip('loop-1', 'North', 360, { blockId: '100-1' }),
+                trip('loop-2', 'North', 600, { blockId: '100-2' }),
+            ]),
+            routeName: '100 (Saturday)',
+        };
+        const current: MasterScheduleContent = {
+            northTable: loopTable,
+            southTable: table('South', []),
+            metadata: { routeNumber: '100', dayType: 'Saturday', uploadedAt: '2026-01-01T00:00:00Z' },
+        };
+
+        const review = buildScheduleReview(current);
+        const serviceGap = review.issues.find(issue => issue.kind === 'service-gap');
+
+        expect(serviceGap).toMatchObject({
+            message: expect.stringMatching(/^Clockwise:/),
+            location: expect.objectContaining({ direction: 'Clockwise' }),
+        });
+    });
+
     it('blocks publishing when trip or stop timing is impossible', () => {
         const current = content([
             trip('invalid', 'North', 400, {

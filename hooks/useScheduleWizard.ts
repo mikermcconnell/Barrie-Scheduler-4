@@ -32,7 +32,7 @@ export const DEFAULT_ROUTE_NUMBER = '10';
 export const MAX_FILES = 2;
 
 // Wizard step type
-export type WizardStep = 1 | 2 | 3 | 4;
+export type WizardStep = 1 | 2 | 3 | 4 | 5;
 
 // Day types
 export type DayType = 'Weekday' | 'Saturday' | 'Sunday';
@@ -174,7 +174,7 @@ export const useScheduleWizard = (): UseScheduleWizardReturn => {
 
     // Set step with validation
     const setStep = useCallback((newStep: WizardStep) => {
-        if (newStep >= 1 && newStep <= 4) {
+        if (newStep >= 1 && newStep <= 5) {
             setStepInternal(newStep);
         }
     }, []);

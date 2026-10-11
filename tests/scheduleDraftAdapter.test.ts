@@ -49,6 +49,16 @@ describe('scheduleDraftAdapter', () => {
             expect(result?.content.southTable.routeName).toBe('400 (Saturday) (South)');
             expect(result?.content.southTable.stops.length).toBe(0);
         });
+
+        it('hands a single loop schedule to the draft editor without requiring fabricated N/S output', () => {
+            const loop = makeTable('10 (Weekday) (Loop)', 3);
+
+            const result = buildMasterContentFromTables([loop]);
+
+            expect(result).not.toBeNull();
+            expect(result?.content.northTable).toBe(loop);
+            expect(result?.content.southTable.trips).toEqual([]);
+        });
     });
 
     describe('buildTablesFromContent', () => {

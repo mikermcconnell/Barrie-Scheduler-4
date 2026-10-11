@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import {
     buildRoundTripView,
     parseMasterSchedule,
+    validateRouteTable,
     type MasterRouteTable,
     type MasterTrip,
 } from '../utils/parsers/masterScheduleParser';
@@ -151,6 +152,47 @@ describe('buildRoundTripView overnight pairing', () => {
         expect(trip?.timesMinutes).toEqual({
             'North Start': 1665,
             'North End': 1675,
+        });
+    });
+});
+
+describe('validateRouteTable block timing', () => {
+    it('does not double-count recovery included in endTime or flag a block-end recovery', () => {
+        const first: MasterTrip = {
+            ...makeTrip('first', '100-1', 'North', 600),
+            tripNumber: 1,
+            endTime: 630,
+            recoveryTime: 5,
+            recoveryTimes: { Terminal: 5 },
+            stopMinutes: { Terminal: 630 },
+            endTimeIncludesRecovery: true,
+            isOverlap: true,
+        };
+        const last: MasterTrip = {
+            ...makeTrip('last', '100-1', 'North', 630),
+            tripNumber: 2,
+            endTime: 660,
+            recoveryTime: 1,
+            isTightRecovery: true,
+        };
+
+        const validated = validateRouteTable({
+            ...makeTable('North', [last, first]),
+            routeName: '100 (Saturday)',
+        });
+        const [validatedFirst, validatedLast] = [...validated.trips].sort((a, b) => a.tripNumber - b.tripNumber);
+
+        expect(validatedFirst).toMatchObject({
+            isBlockStart: true,
+            isBlockEnd: false,
+            isOverlap: false,
+            isTightRecovery: false,
+        });
+        expect(validatedLast).toMatchObject({
+            isBlockStart: false,
+            isBlockEnd: true,
+            isOverlap: false,
+            isTightRecovery: false,
         });
     });
 });

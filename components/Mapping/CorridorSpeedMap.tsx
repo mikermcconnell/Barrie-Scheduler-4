@@ -1,23 +1,27 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layer, Popup, Source } from 'react-map-gl/mapbox';
 import type { LayerProps, MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import {
     buildCorridorSpeedMapIndex,
-    getCorridorSpeedStyle,
-    getMetricDisplayValue,
     getStatsForPeriod,
     scopeStatsToRoute,
     type CorridorSpeedIndex,
     type CorridorSpeedMetric,
-    type CorridorSpeedSegment,
     type CorridorSpeedStats,
 } from '../../utils/gtfs/corridorSpeed';
+import {
+    getCorridorSpeedStyle,
+    getMetricDisplayValue,
+} from '../../utils/corridor-performance/corridorPerformancePresentation';
+import { BUNDLED_CORRIDOR_GTFS_PROVENANCE } from '../../utils/corridor-performance/corridorPerformanceProvenance';
 import { DAY_TYPES, TIME_PERIODS, type DayType, type TimePeriod } from '../../utils/gtfs/corridorHeadway';
 import { HeadwayFilterBar } from './HeadwayFilterBar';
 import { CorridorSpeedLegend } from './CorridorSpeedLegend';
 import { CorridorSpeedDetailPanel } from './CorridorSpeedDetailPanel';
+import { CorridorPerformanceRankedList } from './CorridorPerformanceRankedList';
+import { CorridorPerformanceTrustBar } from './CorridorPerformanceTrustBar';
 import { MapBase, toGeoJSON } from '../shared';
 
 interface CorridorSpeedMapProps {
@@ -132,6 +136,22 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
         return scopedStats;
     }, [speedIndex, dayType, period, directionFilter, routeFilter]);
 
+    const visibleSegments = useMemo(() => segments.filter(segment => (
+        (directionFilter === 'all' || segment.directionId === directionFilter)
+        && (routeFilter === 'all' || segment.routes.includes(routeFilter))
+    )), [directionFilter, routeFilter, segments]);
+
+    const evidenceCounts = useMemo(() => {
+        let observed = 0;
+        let usable = 0;
+        for (const segment of visibleSegments) {
+            const stats = statsBySegment.get(segment.id);
+            if (stats?.observedRuntimeMin !== null && stats?.observedRuntimeMin !== undefined) observed += 1;
+            if (stats?.confidenceLevel === 'usable') usable += 1;
+        }
+        return { observed, usable };
+    }, [statsBySegment, visibleSegments]);
+
     const selectedSegment = useMemo(
         () => (selectedSegmentId ? segmentById.get(selectedSegmentId) ?? null : null),
         [segmentById, selectedSegmentId],
@@ -141,16 +161,21 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
         [selectedSegmentId, statsBySegment],
     );
 
+    useEffect(() => {
+        if (!selectedSegmentId) return;
+        if (!visibleSegments.some(segment => segment.id === selectedSegmentId)) {
+            setSelectedSegmentId(null);
+        }
+    }, [selectedSegmentId, visibleSegments]);
+
     const periodLabel = TIME_PERIODS.find(value => value.id === period)?.label ?? '';
     const dayTypeLabel = DAY_TYPES.find(value => value.id === dayType)?.label ?? '';
 
     const segmentGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
         const features: GeoJSON.Feature[] = [];
 
-        for (const segment of segments) {
+        for (const segment of visibleSegments) {
             if (segment.geometry.length < 2) continue;
-            if (directionFilter !== 'all' && segment.directionId !== directionFilter) continue;
-            if (routeFilter !== 'all' && !segment.routes.includes(routeFilter)) continue;
 
             const stats = statsBySegment.get(segment.id) ?? null;
             const style = getCorridorSpeedStyle(stats, metric);
@@ -178,7 +203,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
         }
 
         return { type: 'FeatureCollection', features };
-    }, [segments, statsBySegment, metric, directionFilter, routeFilter]);
+    }, [visibleSegments, statsBySegment, metric, routeFilter]);
 
     const highlightGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
         if (!selectedSegment || selectedSegment.geometry.length < 2) {
@@ -320,20 +345,26 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
     }, [clearSelection, isFullscreen, selectedSegmentId]);
 
     const isLoading = metadataQuery.isLoading || (hasPerformanceData && dataQuery.isLoading);
+    const loadedPerformanceMetadata = dataQuery.data?.metadata ?? metadataQuery.data;
+    const metadataUnavailable = !metadataQuery.isLoading && metadataQuery.isError;
+    const dataUnavailable = !isLoading && hasPerformanceData && !dataQuery.data;
 
     return (
-        <div className={isFullscreen ? 'fixed inset-0 z-50 bg-white flex flex-col' : 'relative'}>
-            <div className="absolute top-2 left-2 right-2 z-[1000] flex flex-wrap items-center gap-2 pointer-events-none">
+        <div className={isFullscreen
+            ? 'fixed inset-0 z-50 flex flex-col bg-white'
+            : 'relative overflow-hidden rounded-xl border border-gray-200 bg-white'}>
+            <div className="relative z-[1000] flex flex-wrap items-center gap-2 bg-white px-3 py-2.5">
                 <button
+                    type="button"
                     onClick={onBack}
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-gray-300 rounded-md shadow-sm text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors pointer-events-auto"
+                    className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-50"
                 >
                     <ArrowLeft size={14} />
                     Back
                 </button>
 
                 <div className="bg-white/90 backdrop-blur-sm rounded-md px-2.5 py-1.5 shadow-sm border border-gray-200 pointer-events-auto">
-                    <span className="text-xs font-bold text-gray-700">Corridor Speed</span>
+                    <span className="text-xs font-bold text-gray-900">Corridor Performance</span>
                     <span className="text-[10px] text-gray-400 ml-1.5">{periodLabel} · {dayTypeLabel}</span>
                     {dataQuery.data?.metadata && (
                         <span className="text-[10px] text-gray-400 ml-1.5">
@@ -354,6 +385,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
                 <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">
                     {METRIC_OPTIONS.map(option => (
                         <button
+                            type="button"
                             key={option.id}
                             onClick={() => setMetric(option.id)}
                             className={`px-2.5 py-1.5 text-[10px] font-bold uppercase transition-colors ${
@@ -369,6 +401,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
 
                 <div className="pointer-events-auto">
                     <select
+                        aria-label="Corridor direction"
                         value={directionFilter}
                         onChange={(event) => setDirectionFilter(event.target.value)}
                         className="px-2.5 py-1.5 text-[10px] font-bold uppercase border border-gray-300 rounded-md shadow-sm bg-white text-gray-600"
@@ -382,6 +415,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
 
                 <div className="pointer-events-auto">
                     <select
+                        aria-label="Corridor route"
                         value={routeFilter}
                         onChange={(event) => setRouteFilter(event.target.value)}
                         className="px-2.5 py-1.5 text-[10px] font-bold uppercase border border-gray-300 rounded-md shadow-sm bg-white text-gray-600"
@@ -396,14 +430,25 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
                 <div className="flex-1" />
 
                 <button
+                    type="button"
                     onClick={toggleFullscreen}
                     className="bg-white border border-gray-300 rounded-md px-2 py-1.5 shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-1.5 text-xs font-medium text-gray-600 pointer-events-auto"
                     title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
                 >
+                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
                     {isFullscreen ? 'Exit' : 'Fullscreen'}
                 </button>
             </div>
 
+            <CorridorPerformanceTrustBar
+                metadata={loadedPerformanceMetadata}
+                provenance={BUNDLED_CORRIDOR_GTFS_PROVENANCE}
+                observedCorridorCount={evidenceCounts.observed}
+                usableCorridorCount={evidenceCounts.usable}
+                totalCorridorCount={visibleSegments.length}
+            />
+
+            <div className={isFullscreen ? 'relative min-h-0 flex-1' : 'relative h-[750px] w-full'}>
             <CorridorSpeedLegend metric={metric} />
 
             {selectedSegment && (
@@ -417,11 +462,21 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
                 />
             )}
 
+            {!selectedSegment && hasTripStopSegmentRuntimeData && (
+                <CorridorPerformanceRankedList
+                    segments={visibleSegments}
+                    statsBySegment={statsBySegment}
+                    metric={metric}
+                    selectedSegmentId={selectedSegmentId}
+                    onSelect={setSelectedSegmentId}
+                />
+            )}
+
             {isLoading && (
                 <div className="absolute inset-0 z-[1001] flex items-center justify-center bg-white/80">
                     <div className="flex items-center gap-2 text-sm text-gray-500">
                         <Loader2 className="animate-spin" size={18} />
-                        Loading stop-to-stop speed data...
+                        Loading trip-linked corridor evidence...
                     </div>
                 </div>
             )}
@@ -435,34 +490,70 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
                 </div>
             )}
 
-            {!isLoading && teamId && !hasPerformanceData && (
+            {metadataUnavailable && (
+                <div className="absolute inset-0 z-[1001] flex items-center justify-center bg-white/85">
+                    <div className="max-w-md rounded-lg border border-red-200 bg-white px-6 py-4 text-center shadow-md">
+                        <div className="mb-1 text-sm font-semibold text-red-700">Unable to check STREETS data</div>
+                        <div className="text-xs text-gray-500">
+                            Performance metadata could not be loaded. Retry before importing or replacing any data.
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => void metadataQuery.refetch()}
+                            className="mt-3 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                        >
+                            Retry
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {!isLoading && teamId && !metadataQuery.isError && !hasPerformanceData && (
                 <div className="absolute inset-0 z-[1001] flex items-center justify-center pointer-events-none">
                     <div className="bg-white/95 rounded-lg shadow-md border border-gray-200 px-6 py-4 text-center max-w-sm">
                         <div className="text-sm font-medium text-gray-700 mb-1">STREETS data required</div>
                         <div className="text-xs text-gray-400">
-                            Import STREETS AVL data in the Operations workspace before using Corridor Speed.
+                            Import STREETS AVL data in the Operations workspace before using Corridor Performance.
                         </div>
                     </div>
                 </div>
             )}
 
-            {!isLoading && teamId && hasPerformanceData && !hasStopSegmentRuntimeData && (
+            {dataUnavailable && (
+                <div className="absolute inset-0 z-[1001] flex items-center justify-center bg-white/85">
+                    <div className="max-w-md rounded-lg border border-red-200 bg-white px-6 py-4 text-center shadow-md">
+                        <div className="mb-1 text-sm font-semibold text-red-700">Performance data unavailable</div>
+                        <div className="text-xs text-gray-500">
+                            The team has performance metadata, but its stored dataset could not be loaded. Retry before re-importing data.
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => void dataQuery.refetch()}
+                            className="mt-3 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                        >
+                            Retry
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {!isLoading && dataQuery.data && !hasStopSegmentRuntimeData && (
                 <div className="absolute inset-0 z-[1001] flex items-center justify-center pointer-events-none">
                     <div className="bg-white/95 rounded-lg shadow-md border border-gray-200 px-6 py-4 text-center max-w-md">
                         <div className="text-sm font-medium text-gray-700 mb-1">Re-import STREETS data</div>
                         <div className="text-xs text-gray-400">
-                            This import only has the older corridor runtime schema. The stop-to-stop speed map needs a fresh import generated with stop-level segment runtimes.
+                            This import predates stop-level runtime evidence. Re-import it before using Corridor Performance.
                         </div>
                     </div>
                 </div>
             )}
 
-            {!isLoading && teamId && hasPerformanceData && hasStopSegmentRuntimeData && !hasTripStopSegmentRuntimeData && (
+            {!isLoading && dataQuery.data && hasStopSegmentRuntimeData && !hasTripStopSegmentRuntimeData && (
                 <div className="absolute inset-0 z-[1001] flex items-center justify-center pointer-events-none">
                     <div className="bg-white/95 rounded-lg shadow-md border border-gray-200 px-6 py-4 text-center max-w-md">
                         <div className="text-sm font-medium text-gray-700 mb-1">Re-import STREETS data</div>
                         <div className="text-xs text-gray-400">
-                            This import has exact stop segments, but not the trip-linked traversal schema required for true corridor observed km/h.
+                            This import has exact stop segments, but not the trip-linked traversals required for observed corridor operating speed.
                         </div>
                     </div>
                 </div>
@@ -471,12 +562,11 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
             {!isLoading && teamId && hasTripStopSegmentRuntimeData && !hasLegacySegmentRuntimeData && (
                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
                     <div className="bg-white/92 backdrop-blur-sm rounded-md shadow-sm border border-gray-200 px-3 py-1.5 text-[10px] text-gray-500">
-                        True corridor traversal mode
+                        Trip-linked traversal mode
                     </div>
                 </div>
             )}
 
-            <div className={isFullscreen ? 'flex-1 w-full min-h-0' : 'h-[750px] w-full rounded-lg'}>
                 <MapBase
                     mapRef={mapRef}
                     showNavigation

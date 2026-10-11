@@ -58,8 +58,8 @@ describe('workspace access', () => {
         expect(allowed).toContain('analyticsStudentPass');
         expect(allowed).toContain('analyticsFleetPlan');
         expect(allowed).toContain('analyticsRoutePlanner2');
-        expect(allowed).toContain('analyticsCouncilIntelligence');
         expect(allowed).toContain('analyticsFarePrograms');
+        expect(allowed).toContain('analyticsStrategicPlan');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
         expect(allowed).not.toContain('workspaceParking');
@@ -78,7 +78,6 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('workspaceOperations');
         expect(allowed).not.toContain('analyticsStudentPass');
         expect(allowed).not.toContain('analyticsFleetPlan');
-        expect(allowed).not.toContain('analyticsCouncilIntelligence');
         expect(allowed).not.toContain('analyticsFarePrograms');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).not.toContain('operationsOperatorDwell');
@@ -88,6 +87,26 @@ describe('workspace access', () => {
         const allowed = getAllowedWorkspaceFeatures('transit-app-only');
 
         expect(allowed).toEqual(['analyticsTransitApp']);
+    });
+
+    it('supports a Strategic Plan-only workspace override', () => {
+        const allowed = getAllowedWorkspaceFeatures('none', { analyticsStrategicPlan: true });
+
+        expect(allowed).toEqual(['analyticsStrategicPlan']);
+        expect(canAccessWorkspaceFeature('analyticsTransitApp', member({
+            accessLevel: 'none',
+            workspaceOverrides: { analyticsStrategicPlan: true },
+        }))).toBe(false);
+    });
+
+    it('gives planners Ridership Trends access with an independent override', () => {
+        expect(getAllowedWorkspaceFeatures('planner')).toContain('analyticsRidershipTrend');
+        expect(getAllowedWorkspaceFeatures('admin')).toContain('analyticsRidershipTrend');
+        expect(getAllowedWorkspaceFeatures('internal')).toContain('analyticsRidershipTrend');
+        expect(canAccessWorkspaceFeature('analyticsRidershipTrend', member({
+            accessLevel: 'planner',
+            workspaceOverrides: { analyticsRidershipTrend: false },
+        }))).toBe(false);
     });
 
     it('gives Parking staff only the Parking workspace by default', () => {
@@ -113,7 +132,6 @@ describe('workspace access', () => {
         const allowed = getAllowedWorkspaceFeatures('admin');
 
         expect(allowed).toContain('analyticsRoutePlanner2');
-        expect(allowed).toContain('analyticsCouncilIntelligence');
         expect(allowed).not.toContain('operationsLoadProfiles');
         expect(allowed).toContain('operationsOperatorDwell');
         expect(allowed).toContain('workspaceParking');
@@ -140,7 +158,6 @@ describe('workspace access', () => {
 
         expect(canAccessWorkspaceFeature('workspaceOndemand', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRoutePlanner2', internal)).toBe(true);
-        expect(canAccessWorkspaceFeature('analyticsCouncilIntelligence', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('workspaceParking', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRouteConceptPlanner', internal, flags)).toBe(true);
     });
@@ -168,4 +185,5 @@ describe('workspace access', () => {
         expect(canAccessWorkspaceFeature('workspaceOndemand', productionWithOverride)).toBe(true);
         expect(canAccessWorkspaceFeature('workspaceFixedRoute', productionWithOverride)).toBe(false);
     });
+
 });

@@ -73,8 +73,9 @@ export function createParkingRawObservationsWorkbook(
     'Total Value': money(totalValue),
   }];
 
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Report Summary');
+  // Raw data first so the workbook opens on it; the one-row summary is easy to mistake for an empty export.
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rawObservationExportRows(rows)), 'Raw Observations');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Report Summary');
   return workbook;
 }
 
@@ -141,8 +142,18 @@ export async function exportParkingRawObservationsPdf(
   doc.save(safeParkingExportFileName(options.fileName, 'pdf'));
 }
 
-export function createParkingExportWorkbook(summary: ParkingSummary): XLSX.WorkBook {
+export interface ParkingExportOptions {
+  unsavedMonths?: string[];
+}
+
+export function createParkingExportWorkbook(summary: ParkingSummary, options: ParkingExportOptions = {}): XLSX.WorkBook {
   const workbook = XLSX.utils.book_new();
+  const unsavedMonths = new Set(options.unsavedMonths ?? []);
+  const withStatus = <T extends { Month: string }>(rows: T[]) => (
+    unsavedMonths.size === 0
+      ? rows
+      : rows.map(row => ({ ...row, Status: unsavedMonths.has(row.Month) ? '(unsaved preview)' : 'Saved' }))
+  );
 
   const rawRows = summary.months.flatMap(month => month.rows).map(row => ({
     Month: row.startMonth,
@@ -199,15 +210,17 @@ export function createParkingExportWorkbook(summary: ParkingSummary): XLSX.WorkB
     Months: summary.metadata.monthCount,
     Rows: summary.metadata.totalRows,
     'Total Value': money(summary.metadata.totalValue),
+    ...(unsavedMonths.size > 0 ? { 'Unsaved Preview Months': [...unsavedMonths].sort().join(', ') } : {}),
   }];
 
+  // Raw data first so the workbook opens on it; the one-row overview is easy to mistake for an empty export.
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(withStatus(rawRows)), 'Raw Observations');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(withStatus(flagRows)), 'Flagged Plates');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(withStatus(departmentRows)), 'Department Summary');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(overviewRows), 'Overview');
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(departmentRows), 'Department Summary');
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(flagRows), 'Flagged Plates');
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rawRows), 'Raw Rows');
   return workbook;
 }
 
-export function exportParkingWorkbook(summary: ParkingSummary, fileName = 'parking-usage-report.xlsx'): void {
-  XLSX.writeFile(createParkingExportWorkbook(summary), fileName);
+export function exportParkingWorkbook(summary: ParkingSummary, fileName = 'parking-usage-report.xlsx', options: ParkingExportOptions = {}): void {
+  XLSX.writeFile(createParkingExportWorkbook(summary, options), fileName);
 }

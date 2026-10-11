@@ -132,4 +132,71 @@ describe('ProjectManagerModal', () => {
         expect(getProjectMock).toHaveBeenCalledTimes(1);
         expect(onLoadGeneratedSchedule).toHaveBeenCalledWith(fullProject);
     });
+
+    it('keeps the current project open when the parent blocks starting a new project', async () => {
+        getAllProjectsMock.mockResolvedValue([]);
+        const onBeforeProjectSwitch = vi.fn().mockResolvedValue(false);
+        const onNewProject = vi.fn();
+        const onClose = vi.fn();
+
+        renderModal({ onBeforeProjectSwitch, onNewProject, onClose });
+        await flushPromises();
+
+        const newProjectButton = Array.from(container?.querySelectorAll('button') || []).find(
+            button => button.textContent?.includes('New Project')
+        );
+        flushSync(() => {
+            newProjectButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await flushPromises();
+
+        expect(onBeforeProjectSwitch).toHaveBeenCalledWith({ destination: 'new' });
+        expect(onNewProject).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('checks the parent guard before loading a saved project', async () => {
+        const listedProject: NewScheduleProject = {
+            id: 'project-2',
+            name: 'In Progress Project',
+            dayType: 'Saturday',
+            routeNumber: '8A',
+            isGenerated: false,
+            updatedAt: new Date('2026-03-18T12:00:00Z'),
+            createdAt: new Date('2026-03-18T11:00:00Z'),
+            generatedSchedules: [],
+            originalGeneratedSchedules: [],
+            analysis: [],
+            bands: [],
+        };
+        getAllProjectsMock.mockResolvedValue([listedProject]);
+        const onBeforeProjectSwitch = vi.fn().mockResolvedValue(false);
+        const onLoadProject = vi.fn();
+        const onClose = vi.fn();
+
+        renderModal({ onBeforeProjectSwitch, onLoadProject, onClose });
+        await flushPromises();
+
+        const projectButton = Array.from(container?.querySelectorAll('button') || []).find(
+            button => button.textContent?.includes('In Progress Project')
+        );
+        flushSync(() => {
+            projectButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        const resumeButton = Array.from(container?.querySelectorAll('button') || []).find(
+            button => button.textContent?.includes('Resume Wizard')
+        );
+        flushSync(() => {
+            resumeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await flushPromises();
+
+        expect(onBeforeProjectSwitch).toHaveBeenCalledWith({
+            destination: 'wizard',
+            project: listedProject,
+        });
+        expect(onLoadProject).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+    });
 });

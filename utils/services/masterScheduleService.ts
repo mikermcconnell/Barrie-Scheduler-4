@@ -35,7 +35,9 @@ import type {
     UploadConfirmation
 } from '../masterScheduleTypes';
 import { buildRouteIdentity } from '../masterScheduleTypes';
-import type { MasterRouteTable } from '../parsers/masterScheduleParser';
+import { validateRouteTable, type MasterRouteTable } from '../parsers/masterScheduleParser';
+import { getRouteConfig } from '../config/routeDirectionConfig';
+import { normalizeLegacyLoopScheduleTable } from '../schedule/legacyLoopScheduleNormalization';
 import { downloadFileContent } from './dataService';
 
 const MAX_VERSIONS = 5;
@@ -63,6 +65,15 @@ export function normalizePublishNote(value?: string): string | undefined {
     const normalized = value.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
     return normalized ? normalized.slice(0, MAX_PUBLISH_NOTE_LENGTH) : undefined;
 }
+
+const prepareTableForStorage = (routeNumber: string, table: MasterRouteTable): MasterRouteTable => {
+    if (getRouteConfig(routeNumber)?.segments.length !== 1) return table;
+    const normalized = normalizeLegacyLoopScheduleTable(routeNumber, table);
+    const isolated = normalized === table
+        ? JSON.parse(JSON.stringify(table)) as MasterRouteTable
+        : normalized;
+    return validateRouteTable(isolated);
+};
 
 function masterEntryFromSnapshot(snapshot: { id: string; data(): Record<string, any> }): MasterScheduleEntry {
     const data = snapshot.data();
@@ -137,6 +148,8 @@ export async function prepareUpload(
     dayType: DayType
 ): Promise<UploadConfirmation> {
     const routeIdentity = buildRouteIdentity(routeNumber, dayType);
+    const storedNorthTable = prepareTableForStorage(routeNumber, northTable);
+    const storedSouthTable = prepareTableForStorage(routeNumber, southTable);
 
     // Get existing entry if exists
     const entryRef = doc(db, 'teams', teamId, 'masterSchedules', routeIdentity);
@@ -154,7 +167,7 @@ export async function prepareUpload(
     const existingVersionCount = versionsSnap.size;
 
     const newVersionNumber = existingEntry ? existingEntry.currentVersion + 1 : 1;
-    const tripCount = northTable.trips.length + southTable.trips.length;
+    const tripCount = storedNorthTable.trips.length + storedSouthTable.trips.length;
 
     return {
         routeIdentity,
@@ -165,8 +178,8 @@ export async function prepareUpload(
         willBumpVersion: existingEntry !== null,
         newVersionNumber,
         tripCount,
-        northStopCount: northTable.stops.length,
-        southStopCount: southTable.stops.length
+        northStopCount: storedNorthTable.stops.length,
+        southStopCount: storedSouthTable.stops.length
     };
 }
 
@@ -202,6 +215,8 @@ export async function uploadToMasterSchedule(
     const routeIdentity = buildRouteIdentity(routeNumber, dayType);
     const cycleMode = options?.cycleMode;
     const publishNote = normalizePublishNote(options?.publishNote);
+    const storedNorthTable = prepareTableForStorage(routeNumber, northTable);
+    const storedSouthTable = prepareTableForStorage(routeNumber, southTable);
 
     // 1. First, get the current version number (outside transaction for storage path)
     const entryRef = doc(db, 'teams', teamId, 'masterSchedules', routeIdentity);
@@ -216,8 +231,8 @@ export async function uploadToMasterSchedule(
     const uploadNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const storagePath = `teams/${teamId}/masterSchedules/${routeIdentity}_v${newVersion}_${uploadNonce}.json`;
     const content: MasterScheduleContent = {
-        northTable,
-        southTable,
+        northTable: storedNorthTable,
+        southTable: storedSouthTable,
         metadata: {
             routeNumber,
             dayType,
@@ -262,7 +277,7 @@ export async function uploadToMasterSchedule(
                 }
             }
 
-            const tripCount = northTable.trips.length + southTable.trips.length;
+            const tripCount = storedNorthTable.trips.length + storedSouthTable.trips.length;
 
             // Create version history entry
             const versionRef = doc(db, 'teams', teamId, 'masterSchedules', routeIdentity, 'versions', String(newVersion));
@@ -285,8 +300,8 @@ export async function uploadToMasterSchedule(
                 currentVersion: newVersion,
                 storagePath,
                 tripCount,
-                northStopCount: northTable.stops.length,
-                southStopCount: southTable.stops.length,
+                northStopCount: storedNorthTable.stops.length,
+                southStopCount: storedSouthTable.stops.length,
                 updatedAt: serverTimestamp(),
                 updatedBy: userId,
                 uploaderName,
@@ -308,8 +323,8 @@ export async function uploadToMasterSchedule(
                 currentVersion: newVersion,
                 storagePath,
                 tripCount,
-                northStopCount: northTable.stops.length,
-                southStopCount: southTable.stops.length,
+                northStopCount: storedNorthTable.stops.length,
+                southStopCount: storedSouthTable.stops.length,
                 updatedAt: new Date(),
                 updatedBy: userId,
                 uploaderName,

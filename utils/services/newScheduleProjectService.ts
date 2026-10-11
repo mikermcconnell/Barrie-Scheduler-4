@@ -128,6 +128,7 @@ export interface NewScheduleProject {
         dateRange: { start: string; end: string } | null;
     };
     routeNumber?: string;
+    wizardStep?: 1 | 2 | 3 | 4 | 5;
     analysis?: TripBucketAnalysis[];
     bands?: TimeBand[];
     approvedRuntimeContract?: ApprovedRuntimeContract;
@@ -137,6 +138,8 @@ export interface NewScheduleProject {
     generatedSchedules?: MasterRouteTable[];
     // Original Step 4 baseline for reset/delta stability
     originalGeneratedSchedules?: MasterRouteTable[];
+    /** Exact approved-runtime/config input fingerprint that produced the schedules. */
+    generatedScheduleInputFingerprint?: string;
     // Raw Data (Required for re-generation) - Stored in Cloud Storage only, not Firestore
     parsedData?: RuntimeData[];
 
@@ -204,6 +207,7 @@ export const saveProject = async (
         const content: Record<string, unknown> = stripUndefinedDeep({
             generatedSchedules: project.generatedSchedules,
             originalGeneratedSchedules: project.originalGeneratedSchedules,
+            generatedScheduleInputFingerprint: project.generatedScheduleInputFingerprint,
             parsedData: project.parsedData, // Save raw data!
             analysis: project.analysis,
             bands: project.bands,
@@ -233,6 +237,7 @@ export const saveProject = async (
         autofillFromMaster: project.autofillFromMaster ?? true,
         performanceConfig: project.performanceConfig || null,
         routeNumber: project.routeNumber || null,
+        wizardStep: project.wizardStep ?? (project.isGenerated ? 4 : 1),
         isGenerated: project.isGenerated || false,
         // Don't store large data in Firestore
         analysis: [],
@@ -355,10 +360,12 @@ export const resetLegacyRuntimeProject = async (
                 bands: [],
                 generatedSchedules: [],
                 originalGeneratedSchedules: [],
+                generatedScheduleInputFingerprint: deleteField(),
                 parsedData: deleteField(),
                 approvedRuntimeContract: deleteField(),
                 approvedRuntimeModel: deleteField(),
                 isGenerated: false,
+                wizardStep: 1,
                 storagePath: replacementStoragePath,
                 projectRevision: previousRevision + 1,
                 runtimeTrustSchemaVersion: deleteField(),
@@ -417,12 +424,14 @@ export const getProject = async (
         autofillFromMaster: data.autofillFromMaster ?? true,
         performanceConfig: data.performanceConfig || undefined,
         routeNumber: data.routeNumber,
+        wizardStep: data.wizardStep,
         isGenerated: data.isGenerated,
         config: data.config,
         analysis: [],
         bands: [],
         generatedSchedules: [],
         originalGeneratedSchedules: [],
+        generatedScheduleInputFingerprint: data.generatedScheduleInputFingerprint,
         parsedData: [], // Default empty
         approvedRuntimeContract: data.approvedRuntimeContract,
         approvedRuntimeModel: data.approvedRuntimeModel,
@@ -446,6 +455,7 @@ export const getProject = async (
                 ...fullData,
                 generatedSchedules: content.generatedSchedules || [],
                 originalGeneratedSchedules: content.originalGeneratedSchedules || [],
+                generatedScheduleInputFingerprint: content.generatedScheduleInputFingerprint,
                 parsedData: content.parsedData || [], // Restore raw data
                 analysis: content.analysis || [],
                 bands: content.bands || [],
@@ -491,12 +501,14 @@ export const getAllProjects = async (userId: string): Promise<NewScheduleProject
             autofillFromMaster: data.autofillFromMaster ?? true,
             performanceConfig: data.performanceConfig || undefined,
             routeNumber: data.routeNumber,
+            wizardStep: data.wizardStep,
             isGenerated: data.isGenerated,
             config: data.config,
             analysis: [] as TripBucketAnalysis[],
             bands: [] as TimeBand[],
             generatedSchedules: [] as MasterRouteTable[],
             originalGeneratedSchedules: [] as MasterRouteTable[],
+            generatedScheduleInputFingerprint: data.generatedScheduleInputFingerprint,
             storagePath: data.storagePath,
             projectRevision: getStoredRevision(data),
             runtimeTrustSchemaVersion: data.runtimeTrustSchemaVersion,
@@ -559,12 +571,14 @@ export const duplicateProject = async (
         autofillFromMaster: project.autofillFromMaster,
         performanceConfig: project.performanceConfig,
         routeNumber: project.routeNumber,
+        wizardStep: project.wizardStep,
         analysis: project.analysis,
         bands: project.bands,
         approvedRuntimeContract: project.approvedRuntimeContract,
         config: project.config,
         generatedSchedules: project.generatedSchedules,
         originalGeneratedSchedules: project.originalGeneratedSchedules,
+        generatedScheduleInputFingerprint: project.generatedScheduleInputFingerprint,
         parsedData: project.parsedData,
         isGenerated: project.isGenerated
     };

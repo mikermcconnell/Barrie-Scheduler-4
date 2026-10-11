@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildAnnualSummaryRows } from '../components/workspaces/ParkingDataWorkspace';
 import { buildParkingObservationDrilldown } from '../utils/parking/parkingObservations';
 import { DEFAULT_PARKING_SETTINGS, type ParkingMonthlyDataset, type ParkingRawRow } from '../utils/parking/parkingTypes';
 
@@ -98,5 +99,30 @@ describe('annual parking raw observation drilldown', () => {
     });
     expect(result.rows.map(row => row.id)).not.toContain('jan-fire');
     expect(result.totalValue).toBe(70);
+  });
+
+  it('always includes a Carefree Boat Club annual column unless Ignore data is set', () => {
+    const cbc = { familyKey: 'CBC', department: 'Carefree Boat Club', codes: ['CBC26'] };
+    const withCbc = (ignoreData: boolean) => ({
+      ...DEFAULT_PARKING_SETTINGS,
+      codeFamilies: [...DEFAULT_PARKING_SETTINGS.codeFamilies.filter(m => m.familyKey !== 'CBC'), { ...cbc, ignoreData }],
+    });
+
+    const shown = buildAnnualSummaryRows(months, '2026', withCbc(false)).find(row => row.codeFamilyKey === 'CBC');
+    expect(shown).toMatchObject({ department: 'Carefree Boat Club', total: 0, totalUseCount: 0 });
+    expect(buildAnnualSummaryRows(months, '2026', withCbc(true)).some(row => row.codeFamilyKey === 'CBC')).toBe(false);
+  });
+
+  it('does not let a blank ignored mapping hide rows with empty department or family', () => {
+    const settings = {
+      ...DEFAULT_PARKING_SETTINGS,
+      codeFamilies: [
+        ...DEFAULT_PARKING_SETTINGS.codeFamilies,
+        { familyKey: '', department: '', codes: [], ignoreData: true },
+      ],
+    };
+    const blankMonths = [month('2026-01', [rawRow('blank', { codeFamilyKey: '', department: '' })])];
+    const result = buildParkingObservationDrilldown(blankMonths, settings, { year: '2026', label: 'All' });
+    expect(result.rows.map(row => row.id)).toEqual(['blank']);
   });
 });

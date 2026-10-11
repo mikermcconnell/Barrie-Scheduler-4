@@ -44,11 +44,14 @@ vi.mock('../utils/lazyWithRetry', () => ({
     }
 
     if (cacheKey === 'performance-dashboard-workspace') {
-      return (props: { onBack: () => void; onReimport: () => void; detailsReady?: boolean }) =>
+      return (props: { onBack: () => void; onReimport: () => void; detailsReady?: boolean; initialTab?: string; onTabChange: (tab: string) => void }) =>
         React.createElement(
           'div',
           null,
           React.createElement('div', null, 'Mock Performance Workspace'),
+          React.createElement('div', { 'data-testid': 'active-tab' }, props.initialTab),
+          React.createElement('button', { onClick: () => props.onTabChange('overview') }, 'Open Overview'),
+          React.createElement('button', { onClick: () => props.onTabChange('specialized-transit') }, 'Open Specialized Transit'),
           React.createElement('div', null, props.detailsReady === false ? 'Overview Only' : 'Full Details Ready'),
           React.createElement('button', { type: 'button', onClick: props.onBack }, 'Back From Workspace'),
           React.createElement('button', { type: 'button', onClick: props.onReimport }, 'Re-import From Workspace'),
@@ -106,6 +109,47 @@ describe('PerformanceDashboard', () => {
     expect(container.textContent).toContain('STREETS AVL Data');
     expect(container.textContent).not.toContain('Mock Performance Workspace');
     expect(container.textContent).not.toContain('Mock Performance Import');
+  });
+
+  it.each([
+    { data: null, isLoading: false },
+    { data: null, isLoading: true },
+    { data: null, isLoading: false, isError: true },
+    { data: { importedAt: '2026-09-01', dayCount: 1 }, isLoading: false },
+  ])('opens Specialized Transit independently of STREETS state %j', async metadataState => {
+    usePerformanceMetadataQueryMock.mockReturnValue(metadataState);
+    usePerformanceOverviewQueryMock.mockReturnValue({ data: null, isLoading: false, isError: true });
+    flushSync(() => {
+      root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen initialTab="specialized-transit" />);
+    });
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="active-tab"]')?.textContent).toBe('specialized-transit'));
+    expect(container.textContent).not.toContain('Mock Performance Import');
+    expect(usePerformanceOverviewQueryMock.mock.calls.at(-1)?.[1]).toBe(false);
+  });
+
+  it('opens Specialized Transit from the landing page without STREETS data', async () => {
+    flushSync(() => { root.render(<PerformanceDashboard onClose={onCloseSpy} />); });
+    Array.from(container.querySelectorAll('button')).find(button => button.textContent?.startsWith('Specialized Transit'))?.click();
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="active-tab"]')?.textContent).toBe('specialized-transit'));
+  });
+
+  it('resumes STREETS loading when leaving Specialized Transit and can return', async () => {
+    usePerformanceMetadataQueryMock.mockReturnValue({ data: { importedAt: '2026-09-01' }, isLoading: false });
+    usePerformanceOverviewQueryMock.mockReturnValue({ data: { rows: ['overview'] }, isLoading: false });
+    flushSync(() => { root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen initialTab="specialized-transit" />); });
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Workspace'));
+    Array.from(container.querySelectorAll('button')).find(button => button.textContent === 'Open Overview')?.click();
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="active-tab"]')?.textContent).toBe('overview'));
+    expect(usePerformanceOverviewQueryMock.mock.calls.at(-1)?.[1]).toBe(true);
+    Array.from(container.querySelectorAll('button')).find(button => button.textContent === 'Open Specialized Transit')?.click();
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="active-tab"]')?.textContent).toBe('specialized-transit'));
+  });
+
+  it('resolves external navigation away from Specialized Transit without STREETS data', async () => {
+    flushSync(() => { root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen initialTab="specialized-transit" />); });
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="active-tab"]')?.textContent).toBe('specialized-transit'));
+    flushSync(() => { root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen initialTab="overview" />); });
+    await vi.waitFor(() => expect(container.textContent).toContain('Mock Performance Import'));
   });
 
   it('opens the workspace directly from the lightweight overview without eagerly loading full details', async () => {

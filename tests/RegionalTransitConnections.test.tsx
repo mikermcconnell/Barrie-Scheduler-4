@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RegionalTransitConnections } from '../components/connections/RegionalTransitConnections';
 import { fetchRegionalGoFeed } from '../utils/gtfs/regionalGoService';
+import { buildDemoGoChange } from '../utils/regional-transit/demoGoChange';
 import { getMasterSchedule } from '../utils/services/masterScheduleService';
 import type { MasterScheduleContent, MasterScheduleEntry } from '../utils/masterScheduleTypes';
 import type { MasterTrip } from '../utils/parsers/masterScheduleParser';
@@ -10,6 +11,7 @@ import type { RegionalConnectionsProps, RegionalGoFeed } from '../utils/regional
 
 vi.mock('../utils/gtfs/regionalGoService', () => ({ fetchRegionalGoFeed: vi.fn() }));
 vi.mock('../utils/services/masterScheduleService', () => ({ getMasterSchedule: vi.fn() }));
+vi.mock('../utils/regional-transit/demoGoChange', () => ({ buildDemoGoChange: vi.fn() }));
 
 function entry(routeNumber = '8A', version = 1): MasterScheduleEntry {
     return { id: `${routeNumber}-Weekday`, routeNumber, dayType: 'Weekday', currentVersion: version,
@@ -93,13 +95,14 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(document.querySelector('[role=dialog]')?.textContent).toContain('am · v10');
     });
 
-    it('shows the rejected bus trip and timing evidence in unassessed arrival details', async () => {
+    it('shows the rejected bus trip and timing evidence in sources without blocking unrelated trains', async () => {
         const data = content();
         data.northTable.trips[1].arrivalTimes = { Allandale: '' };
         vi.mocked(getMasterSchedule).mockResolvedValue({ entry: entry(), content: data });
         await render();
         await click(container.querySelector('section[aria-labelledby=regional-to-go-title] .regional-go-cell'));
-        const text = document.querySelector('[role=dialog]')?.textContent;
+        expect(document.querySelector('[role=dialog]')?.textContent).toContain('10-minute scheduled gap');
+        const text = container.textContent;
         expect(text).toContain('First rejected bus trip: pm');
         expect(text).toContain('arrival: ""');
         expect(text).toContain('trip start/end minutes: 600/630');
@@ -139,7 +142,7 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(labels).toContain('Route 12B');
         expect(container.textContent).not.toContain('First rejected bus trip: 7-N-1');
         expect(container.textContent).not.toContain('First rejected bus trip: 12-N-2');
-        expect(container.textContent).toContain('Route 12B: No exact station stop code');
+        expect(container.textContent).toContain('Route 12B: The station appears by name in this direction, but no exact station stop code is mapped.');
         expect(container.querySelector('button[aria-label^="Route 12A, GO departure 8:00 AM"]')?.textContent).toContain('10 min');
     });
 
@@ -158,6 +161,39 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(document.querySelector('[role=dialog]')?.textContent).toContain('Walking and boarding time are not deducted');
     });
 
+    it('compares bus connections before and after a demo GO change', async () => {
+        // Train 6606 leaves 8:00 → 8:08 (bus 7:50: 10 → 18 min, Comfortable → Long wait); train 6911 is cancelled (10 min connection lost).
+        vi.mocked(buildDemoGoChange).mockImplementation(source => ({
+            summary: ['Demo summary line'],
+            feed: { ...source, trips: source.trips.filter(trip => trip.trip_id !== 'return-1'),
+                stopTimes: source.stopTimes.filter(time => time.trip_id !== 'return-1').map(time => time.trip_id === 'outbound-1' && time.stop_id === 'AD' ? { ...time, departure_time: '08:08:00', arrival_time: '08:08:00' } : time) },
+        }));
+        await render();
+        await click(button('Demo GO change'));
+        expect(container.textContent).toContain('Demo summary line');
+        const compare = [...container.querySelectorAll('.regional-go-compare')];
+        expect(compare).toHaveLength(2);
+        const worse = container.querySelector('td.regional-go-outcome-worse')!;
+        expect(worse.textContent).toContain('18 min · +8');
+        expect(worse.textContent).toContain('was 10 min');
+        expect(worse.className).toContain('regional-go-long');
+        const lost = container.querySelector('td.regional-go-outcome-lost')!;
+        expect(lost.textContent).toContain('Lost');
+        expect(compare[0].textContent).toContain('Moved +8');
+        expect(compare[1].textContent).toContain('Cancelled');
+        expect(compare[0].querySelector('.regional-go-compare-summary')?.textContent).toContain('1 worse');
+        expect(compare[1].querySelector('.regional-go-compare-summary')?.textContent).toContain('1 lost');
+        await click(worse.querySelector('button'));
+        const dialog = document.querySelector('[role=dialog]')!;
+        expect(dialog.textContent).toContain('The wait goes from 10 min (Comfortable) to 18 min (Long wait).');
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+        await click(button('Before (Current GO)'));
+        expect(container.querySelector('.regional-go-compare')).toBeNull();
+        expect(container.textContent).toContain('Moves +8');
+        await click(button('Exit demo'));
+        expect(container.textContent).not.toContain('Demo summary line');
+    });
+
     it('keeps every unique train column, gaps, no-connection and unavailable distinct, and stop timing details accessible', async () => {
         vi.mocked(getMasterSchedule).mockImplementation(async (_team, identity) => {
             if (identity === '7-Weekday') throw new Error('Permission denied');
@@ -170,8 +206,8 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(container.querySelectorAll('thead')[1]?.textContent).not.toContain('overnight-id');
         expect(container.textContent).not.toContain('Train overnight-id');
         expect(container.textContent).toContain('10 min');
-        expect(container.textContent).toContain('5 min · tight');
-        expect(container.textContent).toContain('No Connection');
+        expect(container.textContent).toContain('5 min · Tight');
+        expect(container.textContent).toContain('No connection');
         expect(container.querySelector('tbody')?.textContent).not.toContain('Unavailable');
         expect(container.textContent).toContain('not confirmed absence of service');
         expect(container.textContent).toContain('Permission denied');
@@ -275,7 +311,7 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(container.textContent).toContain('Route 12B: Permission denied');
         expect(container.querySelector('.regional-go-panel-head')?.textContent).toContain('Allandale Waterfront GO');
         expect(container.querySelector('thead')?.textContent).not.toContain('outbound');
-        expect([...container.querySelectorAll('tbody td')].every(el => el.textContent === 'No Connection†')).toBe(true);
+        expect([...container.querySelectorAll('tbody td')].every(el => el.textContent === 'No connection†')).toBe(true);
         expect(container.textContent).toContain('not confirmed absence of service');
         expect(container.querySelector('.regional-go-warning')?.textContent).toContain('Route 12 not assessed');
         expect(container.querySelector('.regional-go-cell')).toBeNull();
@@ -327,7 +363,7 @@ describe('RegionalTransitConnections read-only grid', () => {
         expect(container.querySelectorAll('tbody td.regional-go-unavailable')).toHaveLength(4);
         expect(container.querySelector('tfoot td')?.textContent).toBe('1 / 1 checked + not assessed');
         await click(container.querySelector('td.regional-go-unavailable button'));
-        expect(document.querySelector('[role=dialog]')?.textContent).toContain('No exact station stop code');
+        expect(document.querySelector('[role=dialog]')?.textContent).toContain('no exact station stop code is mapped');
     });
 
     it('opens a full-screen chart, preserves context and closes details before exiting with Escape', async () => {

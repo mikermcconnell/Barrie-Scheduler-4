@@ -31,7 +31,7 @@ function getLegend(metric: CorridorSpeedMetric): { title: string; items: readonl
         case 'delay-percent':
             return { title: 'Observed vs Scheduled', items: DELAY_PERCENT_ITEMS };
         case 'observed-speed':
-            return { title: 'Observed Speed', items: SPEED_ITEMS };
+            return { title: 'Observed Operating Speed', items: SPEED_ITEMS };
         case 'scheduled-speed':
             return { title: 'Scheduled Speed', items: SPEED_ITEMS };
         case 'delay-minutes':

@@ -19,7 +19,7 @@ export interface RuntimeEvidenceEligibilityBucket {
     runtimePatternKind?: 'normal' | 'detour';
     coverageCause?: string;
     missingSegmentNames?: string[];
-    details?: Array<{ n?: number }>;
+    details?: Array<{ n?: number; p50?: number; p80?: number }>;
     contributingDays?: Array<{ date: string }>;
     evidence?: {
         kind: RuntimeEvidenceKind;
@@ -67,6 +67,18 @@ export const evaluateRuntimeBucketEligibility = (
     }
     if (expectedSegmentCount <= 0 || observedSegmentCount < expectedSegmentCount) {
         addReason(reasons, 'Incomplete segment coverage');
+    }
+    const segmentPercentiles = bucket.details ?? [];
+    if (
+        segmentPercentiles.length === 0
+        || segmentPercentiles.some(detail => (
+            !Number.isFinite(detail.p50)
+            || (detail.p50 ?? 0) <= 0
+            || !Number.isFinite(detail.p80)
+            || (detail.p80 ?? 0) <= 0
+        ))
+    ) {
+        addReason(reasons, 'Every segment needs positive finite P50 and P80 runtimes');
     }
     if ((bucket.missingSegmentNames?.length ?? 0) > 0) {
         addReason(reasons, 'Incomplete segment coverage');

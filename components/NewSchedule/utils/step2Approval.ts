@@ -102,6 +102,7 @@ export const createStep2ApprovedRuntimeContract = (
         approvedAt,
         ...(approvedBy ? { approvedBy } : {}),
         ...(normalizedAcknowledgedWarnings ? { acknowledgedWarnings: normalizedAcknowledgedWarnings } : {}),
+        plannerOverrides: cloneSnapshotValue(reviewResult.plannerOverrides),
         sourceSnapshot: cloneSnapshotValue(normalizedSourceSnapshot),
         planning: cloneSnapshotValue(reviewResult.planning),
         healthSnapshot: cloneSnapshotValue(reviewResult.health),

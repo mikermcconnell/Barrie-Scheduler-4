@@ -1,13 +1,20 @@
 import { jsPDF } from 'jspdf';
 import {
-  DetourExportNoticeInput,
+  type DetourExportNoticeInput,
   buildMyRideCopyPackage,
   formatDetourEffectiveSchedule,
-  formatDetourRouteLabel,
   isDetourEffectiveDateOnly,
   sanitizeDetourPlainText,
 } from './detourCopy';
 import { buildDetourFilename } from './detourFilename';
+import {
+  DETOUR_NOTICE_COLORS,
+  formatDetourStopSheetRoutes,
+  formatDetourStopSheetSubtitle,
+  formatDetourStopSheetTitle,
+  type DetourStopSheet,
+  type DetourStopSheetKind,
+} from './detourStopSheets';
 
 export type DetourExportErrorCode = 'missing-preview' | 'capture-failed' | 'invalid-map-image' | 'download-failed';
 
@@ -26,12 +33,25 @@ export interface DetourPdfInput {
     transitLogoDataUrl?: string;
     cityLogoDataUrl?: string;
   };
+  stopSheets?: Array<{
+    sheet: DetourStopSheet;
+    mapImageDataUrl: string;
+  }>;
 }
 
-const BRAND_BLUE = '#005DAA';
-const INK = '#172033';
-const MUTED = '#526176';
-const LIGHT = '#EDF3F8';
+const INK = '#231F20';
+const BRAND_BLUE = DETOUR_NOTICE_COLORS.master;
+const EFFECTIVE_RED = '#F04438';
+const PAGE_WIDTH = 792;
+const HEADER_HEIGHT = 105;
+const FOOTER_Y = 539;
+const LEFT_X = 10;
+const CARD_Y = 116;
+const LEFT_WIDTH = 487;
+const CARD_BOTTOM = 526;
+const LEGEND_Y = 437;
+const RIGHT_X = 509;
+const RIGHT_WIDTH = 273;
 
 function assertImageDataUrl(value: string): void {
   if (!/^data:image\/(png|jpe?g);base64,[A-Za-z0-9+/=\s]+$/i.test(value)) {
@@ -48,6 +68,14 @@ function addWrappedText(doc: jsPDF, text: string, x: number, y: number, width: n
   const visible = lines.slice(0, maxLines);
   doc.text(visible, x, y);
   return y + visible.length * lineHeight;
+}
+
+function fitSingleLineFont(doc: jsPDF, text: string, width: number, maximum: number, minimum: number): number {
+  for (let size = maximum; size >= minimum; size -= 0.5) {
+    doc.setFontSize(size);
+    if (doc.getTextWidth(text) <= width) return size;
+  }
+  return minimum;
 }
 
 function drawPhoneIcon(doc: jsPDF, x: number, y: number): void {
@@ -69,157 +97,269 @@ function drawGlobeIcon(doc: jsPDF, x: number, y: number): void {
   doc.line(x + 5, y - 8, x + 5, y + 2);
 }
 
-/** Builds a one-page letter PDF. All chrome and copy remain vector; only the supplied map is raster. */
-export function createDetourPdf(input: DetourPdfInput): jsPDF {
-  assertImageDataUrl(input.mapImageDataUrl);
-  const { notice } = input;
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter', compress: false });
-  const width = doc.internal.pageSize.getWidth();
-
+function drawTransitStopIcon(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  radius: number,
+  kind: DetourStopSheetKind | 'active',
+): void {
+  const ringColor = kind === 'temporary' ? DETOUR_NOTICE_COLORS.temporary : BRAND_BLUE;
+  doc.setFillColor('#FFFFFF');
+  doc.setDrawColor(ringColor);
+  doc.setLineWidth(Math.max(1.2, radius * 0.12));
+  doc.circle(x, y, radius, 'FD');
   doc.setFillColor(BRAND_BLUE);
-  doc.rect(0, 0, width, 58, 'F');
-  doc.setTextColor('#FFFFFF');
+  doc.circle(x, y, radius * 0.76, 'F');
+
+  doc.setFillColor('#FFFFFF');
+  doc.roundedRect(x - radius * 0.39, y - radius * 0.43, radius * 0.78, radius * 0.82, radius * 0.1, radius * 0.1, 'F');
+  doc.setFillColor(BRAND_BLUE);
+  doc.roundedRect(x - radius * 0.28, y - radius * 0.31, radius * 0.56, radius * 0.28, radius * 0.04, radius * 0.04, 'F');
+  doc.rect(x - radius * 0.28, y + radius * 0.08, radius * 0.56, radius * 0.09, 'F');
+  doc.setFillColor('#FFFFFF');
+  doc.circle(x - radius * 0.22, y + radius * 0.39, radius * 0.1, 'F');
+  doc.circle(x + radius * 0.22, y + radius * 0.39, radius * 0.1, 'F');
+
+  if (kind === 'closed') {
+    doc.setDrawColor(DETOUR_NOTICE_COLORS.closed);
+    doc.setLineWidth(Math.max(2, radius * 0.14));
+    doc.line(x - radius * 0.72, y + radius * 0.72, x + radius * 0.72, y - radius * 0.72);
+  }
+}
+
+function drawWarningIcon(doc: jsPDF, x: number, y: number): void {
+  doc.setDrawColor(EFFECTIVE_RED);
+  doc.setFillColor('#FFFFFF');
+  doc.setLineWidth(5);
+  doc.triangle(x, y - 31, x - 27, y + 25, x + 27, y + 25, 'FD');
+  doc.setTextColor(INK);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(21);
+  doc.setFontSize(25);
+  doc.text('!', x, y + 16, { align: 'center' });
+}
+
+function drawNorthArrow(doc: jsPDF): void {
+  const x = LEFT_X + 15;
+  const top = CARD_Y + 8;
+  doc.setDrawColor(INK);
+  doc.setFillColor(INK);
+  doc.setLineWidth(1.2);
+  doc.line(x, top + 19, x, top + 4);
+  doc.triangle(x, top, x - 4, top + 7, x + 4, top + 7, 'F');
+  doc.setTextColor(INK);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text('N', x, top + 34, { align: 'center' });
+}
+
+function drawRouteLegend(doc: jsPDF, x: number, y: number): void {
+  doc.setLineCap('round');
+  doc.setDrawColor('#E74C3C');
+  doc.setLineWidth(7);
+  doc.line(x - 22, y, x + 22, y);
+  doc.setDrawColor(BRAND_BLUE);
+  doc.setLineWidth(4);
+  doc.line(x - 22, y, x + 22, y);
+  doc.setDrawColor(INK);
+  doc.setLineWidth(1.7);
+  doc.line(x - 22, y, x + 22, y);
+}
+
+function drawLegend(doc: jsPDF): void {
+  doc.setTextColor(INK);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('Legend', LEFT_X + 14, LEGEND_Y + 20);
+
+  const centers = [58, 151, 247, 343, 440];
+  const symbolY = LEGEND_Y + 48;
+  drawRouteLegend(doc, centers[0], symbolY);
+
+  doc.setDrawColor(DETOUR_NOTICE_COLORS.closed);
+  doc.setLineWidth(3.2);
+  doc.setLineDashPattern([5, 4], 0);
+  doc.line(centers[1] - 22, symbolY, centers[1] + 22, symbolY);
+  doc.setLineDashPattern([], 0);
+
+  drawTransitStopIcon(doc, centers[2], symbolY, 8, 'closed');
+  drawTransitStopIcon(doc, centers[3], symbolY, 8, 'active');
+  drawTransitStopIcon(doc, centers[4], symbolY, 8, 'temporary');
+
+  const labels = [
+    ['Active Routing'],
+    ['Out of Service', 'Routing'],
+    ['Out-of-Service Stops'],
+    ['Active Stops'],
+    ['Temporary Stops'],
+  ];
+  doc.setFontSize(6.7);
+  labels.forEach((lines, index) => {
+    doc.text(lines, centers[index], LEGEND_Y + 70, { align: 'center' });
+  });
+}
+
+function drawCityMark(doc: jsPDF, x: number, y: number): void {
+  doc.setTextColor('#FFFFFF');
+  doc.setDrawColor('#FFFFFF');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(24);
+  doc.text('Barrie', x, y);
+  doc.setLineWidth(1.7);
+  doc.line(x, y + 7, x + 22, y + 4);
+  doc.line(x + 22, y + 4, x + 43, y + 8);
+  doc.line(x + 43, y + 8, x + 65, y + 4);
+}
+
+function drawHeader(
+  doc: jsPDF,
+  input: DetourPdfInput,
+  themeColor: string,
+  headerTitle: string,
+  headerSubtitle: string,
+  stopSheet?: DetourStopSheet,
+): void {
+  doc.setFillColor(themeColor);
+  doc.rect(0, 0, PAGE_WIDTH, HEADER_HEIGHT, 'F');
+  doc.setTextColor('#FFFFFF');
+
   if (input.brandAssets?.transitLogoDataUrl) {
     assertImageDataUrl(input.brandAssets.transitLogoDataUrl);
-    doc.addImage(input.brandAssets.transitLogoDataUrl, imageFormat(input.brandAssets.transitLogoDataUrl), 24, 7, 106, 41, undefined, 'FAST');
+    doc.addImage(input.brandAssets.transitLogoDataUrl, imageFormat(input.brandAssets.transitLogoDataUrl), 27, 21, 128, 59, undefined, 'FAST');
   } else {
-    doc.text('BARRIE TRANSIT', 28, 28);
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text(notice.noticeType === 'stop-closure' ? 'STOP CLOSURE' : 'DETOUR NOTICE', 28, 44);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text('BARRIE TRANSIT', 27, 58);
   }
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(17);
-  const title = sanitizeDetourPlainText(notice.title);
-  doc.text((doc.splitTextToSize(title, 480) as string[]).slice(0, 2), 260, 26);
-  const warningX = width - 38;
-  doc.setDrawColor('#EF4444');
-  doc.setFillColor('#FFFFFF');
-  doc.setLineWidth(2.5);
-  doc.triangle(warningX, 7, warningX - 18, 49, warningX + 18, 49, 'FD');
-  doc.setTextColor('#EF4444');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(22);
-  doc.text('!', warningX, 42, { align: 'center' });
 
-  const mapX = 28;
-  const mapY = 76;
-  const mapW = 480;
-  const mapH = 450;
-  doc.setDrawColor('#B9C6D3');
-  doc.setLineWidth(1);
-  doc.rect(mapX, mapY, mapW, mapH);
+  doc.setDrawColor('#FFFFFF');
+  doc.setLineWidth(0.8);
+  doc.line(177, 18, 177, 87);
+  doc.setFont('helvetica', 'bold');
+  const titleSize = fitSingleLineFont(doc, headerTitle, 503, headerTitle.length > 20 ? 33 : 41, 25);
+  doc.setFontSize(titleSize);
+  doc.text(headerTitle, 197, 53);
+  doc.setFontSize(fitSingleLineFont(doc, headerSubtitle, 500, 14, 9));
+  doc.text(headerSubtitle, 197, 78);
+
+  if (stopSheet) drawTransitStopIcon(doc, 751, 52, 33, stopSheet.kind);
+  else drawWarningIcon(doc, 751, 53);
+}
+
+function drawMainMap(doc: jsPDF, input: DetourPdfInput, mapImageDataUrl: string): void {
+  const imageX = LEFT_X + 3;
+  const imageY = CARD_Y + 3;
+  const imageW = LEFT_WIDTH - 6;
+  const imageH = LEGEND_Y - CARD_Y - 3;
   try {
-    doc.addImage(input.mapImageDataUrl, imageFormat(input.mapImageDataUrl), mapX + 1, mapY + 1, mapW - 2, mapH - 2, undefined, 'FAST');
+    doc.addImage(mapImageDataUrl, imageFormat(mapImageDataUrl), imageX, imageY, imageW, imageH, undefined, 'FAST');
   } catch (error) {
     throw new DetourExportError('invalid-map-image', 'The captured map image is invalid or unsupported.', { cause: error });
   }
-  const northX = mapX + mapW - 19;
-  const northY = mapY + 20;
+
+  drawNorthArrow(doc);
   doc.setFillColor('#FFFFFF');
-  doc.setDrawColor('#94A3B8');
-  doc.roundedRect(northX - 13, northY - 12, 26, 38, 3, 3, 'FD');
-  doc.setTextColor(INK);
-  doc.setFont('helvetica', 'bold');
+  doc.setTextColor('#526176');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(4.6);
+  const attribution = sanitizeDetourPlainText(input.mapAttribution ?? 'Map data (c) Mapbox (c) OpenStreetMap');
+  const attributionWidth = Math.min(128, doc.getTextWidth(attribution) + 5);
+  doc.rect(LEFT_X + 6, LEGEND_Y - 10, attributionWidth, 7, 'F');
+  doc.text(attribution, LEFT_X + 8, LEGEND_Y - 5);
+
+  drawLegend(doc);
   doc.setDrawColor(INK);
-  doc.setFillColor(INK);
-  doc.setLineWidth(1.5);
-  doc.line(northX, northY + 8, northX, northY - 3);
-  doc.triangle(northX, northY - 8, northX - 4, northY - 1, northX + 4, northY - 1, 'F');
-  doc.setFontSize(8);
-  doc.text('N', northX, northY + 19, { align: 'center' });
+  doc.setLineWidth(3.2);
+  doc.roundedRect(LEFT_X, CARD_Y, LEFT_WIDTH, CARD_BOTTOM - CARD_Y, 8, 8, 'S');
+  doc.line(LEFT_X, LEGEND_Y, LEFT_X + LEFT_WIDTH, LEGEND_Y);
+}
 
-  const panelX = 528;
-  const panelW = width - panelX - 28;
-  let y = 82;
+function drawRightPanel(doc: jsPDF, notice: DetourExportNoticeInput): void {
   doc.setTextColor(INK);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  y = addWrappedText(doc, formatDetourRouteLabel(notice.routes), panelX, y, panelW, 15, 3) + 8;
+  doc.setFontSize(24);
+  doc.text('Effective Dates', RIGHT_X + 6, 149);
 
-  doc.setFillColor(LIGHT);
-  doc.roundedRect(panelX, y, panelW, 76, 5, 5, 'F');
-  doc.setFontSize(9);
-  doc.setTextColor(BRAND_BLUE);
-  doc.text('EFFECTIVE', panelX + 12, y + 18);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(INK);
-  doc.setFontSize(10);
+  doc.setDrawColor(INK);
+  doc.setLineWidth(3.2);
+  doc.roundedRect(RIGHT_X, 163, RIGHT_WIDTH, 151, 8, 8, 'S');
+
   const effectiveSchedule = formatDetourEffectiveSchedule(notice.effectiveSchedule);
+  doc.setTextColor(EFFECTIVE_RED);
+  doc.setFont('helvetica', 'bold');
   if (isDetourEffectiveDateOnly(notice.effectiveSchedule)) {
-    doc.text(effectiveSchedule, panelX + panelW / 2, y + 42, { align: 'center' });
+    doc.setFontSize(fitSingleLineFont(doc, effectiveSchedule, RIGHT_WIDTH - 28, 23, 11));
+    doc.text(effectiveSchedule, RIGHT_X + RIGHT_WIDTH / 2, 244, { align: 'center' });
   } else {
-    addWrappedText(doc, effectiveSchedule, panelX + 12, y + 37, panelW - 24, 13, 3);
+    doc.setFontSize(16);
+    const lines = (doc.splitTextToSize(effectiveSchedule, RIGHT_WIDTH - 30) as string[]).slice(0, 5);
+    const startY = 239 - ((lines.length - 1) * 10);
+    doc.text(lines, RIGHT_X + RIGHT_WIDTH / 2, startY, { align: 'center', lineHeightFactor: 1.18 });
   }
-  y += 92;
 
+  doc.setTextColor(INK);
   doc.setFont('helvetica', 'bold');
+  doc.setFontSize(24);
+  doc.text('Details', RIGHT_X + 6, 356);
+  doc.setDrawColor(INK);
+  doc.setLineWidth(3.2);
+  doc.roundedRect(RIGHT_X, 367, RIGHT_WIDTH, 158, 8, 8, 'S');
   doc.setFontSize(10);
-  doc.setTextColor(BRAND_BLUE);
-  doc.text('DETAILS', panelX, y);
-  y += 17;
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(INK);
-  doc.setFontSize(10);
-  y = addWrappedText(doc, notice.publicDetails, panelX, y, panelW, 13, 13) + 13;
+  addWrappedText(doc, notice.publicDetails, RIGHT_X + 14, 386, RIGHT_WIDTH - 28, 12.5, 10);
+}
 
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(BRAND_BLUE);
-  doc.text('MAP LEGEND', panelX, y);
-  y += 16;
-  const stopLegend = [
-    { color: '#1682D4', label: 'Active stop' },
-    { color: '#D83535', label: 'Closed stop' },
-    { color: '#1C9B68', label: 'Temporary stop' },
-  ];
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(INK);
-  doc.setDrawColor(BRAND_BLUE);
-  doc.setLineWidth(3);
-  doc.line(panelX, y - 3, panelX + 12, y - 3);
-  doc.setTextColor(INK);
-  doc.text('Active routing', panelX + 18, y);
-  y += 16;
-  doc.setDrawColor('#6E7B8B');
-  doc.setLineWidth(2);
-  doc.setLineDashPattern([4, 3], 0);
-  doc.line(panelX, y - 3, panelX + 12, y - 3);
-  doc.setLineDashPattern([], 0);
-  doc.text('Out-of-service routing', panelX + 18, y);
-  y += 16;
-  stopLegend.forEach(item => {
-    doc.setFillColor(item.color);
-    doc.circle(panelX + 5, y - 3, 4, 'F');
-    doc.text(item.label, panelX + 15, y);
-    y += 16;
-  });
+function drawFooter(doc: jsPDF, input: DetourPdfInput, themeColor: string): void {
+  doc.setFillColor(themeColor);
+  doc.rect(0, FOOTER_Y, PAGE_WIDTH, 612 - FOOTER_Y, 'F');
+  doc.setTextColor('#FFFFFF');
+  doc.setDrawColor('#FFFFFF');
 
-  doc.setDrawColor('#D4DCE5');
-  doc.line(28, 548, width - 28, 548);
-  doc.setFontSize(8.5);
-  doc.setTextColor(MUTED);
-  let footerTextX = 28;
   if (input.brandAssets?.cityLogoDataUrl) {
     assertImageDataUrl(input.brandAssets.cityLogoDataUrl);
-    doc.addImage(input.brandAssets.cityLogoDataUrl, imageFormat(input.brandAssets.cityLogoDataUrl), 28, 553, 42, 18, undefined, 'FAST');
-    footerTextX = 78;
+    doc.addImage(input.brandAssets.cityLogoDataUrl, imageFormat(input.brandAssets.cityLogoDataUrl), 28, 555, 105, 38, undefined, 'FAST');
+  } else {
+    drawCityMark(doc, 28, 580);
   }
-  doc.setDrawColor(MUTED);
-  doc.setLineWidth(1);
-  drawPhoneIcon(doc, footerTextX, 568);
-  doc.text('Service Barrie 705-726-4242', footerTextX + 15, 568);
-  const emailX = footerTextX + 165;
-  drawMailIcon(doc, emailX, 568);
-  doc.text('servicebarrie@barrie.ca', emailX + 15, 568);
-  const websiteX = emailX + 160;
-  drawGlobeIcon(doc, websiteX, 568);
-  doc.text('barrie.ca/TransitNotices', websiteX + 15, 568);
-  doc.text(`Revision ${Math.max(1, Math.trunc(notice.revision || 1))}`, width - 28, 568, { align: 'right' });
-  doc.setFontSize(7);
-  doc.text(sanitizeDetourPlainText(input.mapAttribution ?? 'Map data © Mapbox © OpenStreetMap'), 28, 535);
 
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text('For More Information Contact:', 296, 580, { align: 'center' });
+  const footerTextX = 522;
+  drawPhoneIcon(doc, footerTextX, 558);
+  doc.text('Service Barrie at 705-726-4242', footerTextX + 15, 558);
+  drawMailIcon(doc, footerTextX, 575);
+  doc.text('ServiceBarrie@barrie.ca', footerTextX + 15, 575);
+  drawGlobeIcon(doc, footerTextX, 592);
+  doc.text('www.barrie.ca/TransitNotices', footerTextX + 15, 592);
+}
+
+function drawDetourPdfPage(doc: jsPDF, input: DetourPdfInput, mapImageDataUrl: string, stopSheet?: DetourStopSheet): void {
+  assertImageDataUrl(mapImageDataUrl);
+  const { notice } = input;
+  const themeColor = stopSheet ? DETOUR_NOTICE_COLORS[stopSheet.kind] : BRAND_BLUE;
+  const headerTitle = stopSheet
+    ? formatDetourStopSheetTitle(stopSheet)
+    : notice.noticeType === 'stop-closure' ? 'STOP CLOSURE' : 'DETOUR NOTICE';
+  const headerSubtitle = stopSheet
+    ? formatDetourStopSheetSubtitle(stopSheet)
+    : formatDetourStopSheetRoutes(notice.routes);
+
+  drawHeader(doc, input, themeColor, headerTitle, headerSubtitle, stopSheet);
+  drawMainMap(doc, input, mapImageDataUrl);
+  drawRightPanel(doc, notice);
+  drawFooter(doc, input, themeColor);
+}
+
+/** Builds a landscape-letter publication package. Chrome and copy remain vector; supplied maps stay raster. */
+export function createDetourPdf(input: DetourPdfInput): jsPDF {
+  assertImageDataUrl(input.mapImageDataUrl);
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter', compress: false });
+  drawDetourPdfPage(doc, input, input.mapImageDataUrl);
+  input.stopSheets?.forEach(({ sheet, mapImageDataUrl }) => {
+    doc.addPage('letter', 'landscape');
+    drawDetourPdfPage(doc, input, mapImageDataUrl, sheet);
+  });
   return doc;
 }
 

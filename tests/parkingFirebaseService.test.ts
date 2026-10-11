@@ -116,6 +116,31 @@ describe('parking Firebase service', () => {
     expect(saved.codeFamilies.find(mapping => mapping.familyKey === 'IF')?.ignoreData).toBe(true);
   });
 
+  it('removes undefined values recursively before saving Parking settings', async () => {
+    const { saveParkingSettings } = await import('../utils/parking/parkingService');
+    const settingsWithUndefined: ParkingSettings = {
+      ...strictSettings,
+      revenueLocations: [{
+        id: 'custom-location',
+        displayName: 'Custom location',
+        locationKind: undefined,
+        latitude: null,
+        longitude: null,
+        sourceRefs: [{ source: 'hotspot' as const, sourceId: '1234', label: undefined }],
+      }],
+    };
+
+    const saved = await saveParkingSettings('team-1', 'user-1', settingsWithUndefined);
+    const savedLocation = saved.revenueLocations?.find(location => location.id === 'custom-location');
+    const setPayload = firestoreMock.setDoc.mock.calls[0]?.[1] as { settings: ParkingSettings };
+    const storedLocation = setPayload.settings.revenueLocations?.find(location => location.id === 'custom-location');
+
+    expect(savedLocation).not.toHaveProperty('locationKind');
+    expect(savedLocation?.sourceRefs[0]).not.toHaveProperty('label');
+    expect(storedLocation).not.toHaveProperty('locationKind');
+    expect(storedLocation?.sourceRefs[0]).not.toHaveProperty('label');
+  });
+
   it('saves imported month data with active thresholds without overwriting shared settings', async () => {
     const { parseParkingWorkbook } = await import('../utils/parking/parkingParser');
     const { saveParkingMonthData } = await import('../utils/parking/parkingService');
@@ -178,7 +203,7 @@ describe('parking Firebase service', () => {
   });
 
   it('saves Parking revenue data separately from department-code usage data', async () => {
-    const { parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenue');
+    const { parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenueParser');
     const { saveParkingRevenueDatasets } = await import('../utils/parking/parkingService');
     const dataset = parseParkingRevenueWorkbook(workbookBuffer([
       ['HotSpot'],
@@ -212,7 +237,7 @@ describe('parking Firebase service', () => {
       revenueDatasetCount: 1,
       revenueMonthCount: 1,
       revenueTotalRows: 1,
-      revenueTotalValue: 10,
+      revenueTotalValue: 11.3,
       revenueStoragePath: expect.stringMatching(/^teams\/team-1\/parking\/revenue\/2026-01_hotspot_223456789-/),
     }));
     expect(defaultWrite?.[1]).not.toHaveProperty('settings');
@@ -222,14 +247,15 @@ describe('parking Firebase service', () => {
         month: '2026-01',
         source: 'hotspot',
         kind: 'revenue',
-        totalValue: 10,
+        totalValue: 11.3,
       }),
     );
-    expect(summary.metadata).toMatchObject({ datasetCount: 1, totalRows: 1, totalRevenue: 10 });
+    expect(summary.metadata).toMatchObject({ datasetCount: 1, totalRows: 1, totalRevenue: 11.3 });
   });
 
   it('auto-save persistence preserves other revenue source/month datasets when replacing one import', async () => {
-    const { buildParkingRevenueReplacementSummary, parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenue');
+    const { buildParkingRevenueReplacementSummary } = await import('../utils/parking/parkingRevenue');
+    const { parseParkingRevenueWorkbook } = await import('../utils/parking/parkingRevenueParser');
     const { saveParkingRevenueDatasets } = await import('../utils/parking/parkingService');
     const replacementHotspot = parseParkingRevenueWorkbook(workbookBuffer([
       ['HotSpot'],
@@ -261,11 +287,11 @@ describe('parking Firebase service', () => {
     const summary = await saveParkingRevenueDatasets('team-1', 'user-1', [replacementHotspot], strictSettings);
 
     expect(summary.datasets.map(dataset => `${dataset.month}:${dataset.source}:${dataset.totalRevenue}`)).toEqual([
-      '2025-12:hotspot:7',
-      '2026-01:hotspot:10',
-      '2026-01:qr:5',
+      '2025-12:hotspot:7.91',
+      '2026-01:hotspot:11.3',
+      '2026-01:qr:5.65',
     ]);
-    expect(summary.metadata).toMatchObject({ datasetCount: 3, monthCount: 2, totalRows: 3, totalRevenue: 22 });
+    expect(summary.metadata).toMatchObject({ datasetCount: 3, monthCount: 2, totalRows: 3, totalRevenue: 24.86 });
     expect(storageMock.deleteObject).toHaveBeenCalledWith({ path: 'old-revenue.json' });
   });
 
@@ -326,6 +352,28 @@ describe('parking Firebase service', () => {
       totalRows: 4,
       totalValue: 112,
       storagePath: 'teams/team-1/parking/current.json',
+    });
+  });
+
+  it('restores P12026 to saved settings with Ignore data enabled by default', async () => {
+    const { getParkingSettings } = await import('../utils/parking/parkingService');
+    firestoreMock.getDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        settings: {
+          codeFamilies: strictSettings.codeFamilies,
+          spotLocations: strictSettings.spotLocations,
+          flagRules: strictSettings.flagRules,
+        },
+      }),
+    });
+
+    const settings = await getParkingSettings('team-1');
+
+    expect(settings.codeFamilies.find(mapping => mapping.familyKey === 'P1')).toMatchObject({
+      codes: ['P12026'],
+      department: 'City Staff Underground Parking',
+      ignoreData: true,
     });
   });
 
@@ -450,6 +498,48 @@ describe('parking Firebase service', () => {
       }),
     );
     expect(storageMock.deleteObject).toHaveBeenCalledWith({ path: 'old.json' });
+  });
+
+  it('stores ignored-data rows raw when saving, including already-kept months', async () => {
+    const { parseParkingWorkbook } = await import('../utils/parking/parkingParser');
+    const { buildParkingReplacementSummary } = await import('../utils/parking/parkingAggregation');
+    const { saveParkingMonthsData } = await import('../utils/parking/parkingService');
+    const ignoredSettings: ParkingSettings = {
+      ...strictSettings,
+      codeFamilies: strictSettings.codeFamilies.map(mapping => (
+        mapping.familyKey === 'IF' ? { ...mapping, ignoreData: true } : mapping
+      )),
+    };
+    const newDataset = parseParkingWorkbook(workbookBuffer(parkingRows()), {
+      fileName: 'HotSpot.xlsx',
+      importedBy: 'user-1',
+      settings: ignoredSettings,
+    }).dataset;
+    const oldDataset = {
+      ...newDataset,
+      month: '2026-05',
+      rows: newDataset.rows.map(row => ({ ...row, startMonth: '2026-05', startDate: row.startDate.replace('2026-06', '2026-05') })),
+      departmentSummaries: newDataset.departmentSummaries.map(row => ({ ...row, month: '2026-05' })),
+      platePatterns: newDataset.platePatterns.map(row => ({ ...row, month: '2026-05' })),
+    };
+    const oldSummary = buildParkingReplacementSummary(null, oldDataset, 'user-1', 'old.json', strictSettings, { retainIgnoredRows: true });
+
+    firestoreMock.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ storagePath: 'old.json' }) });
+    storageMock.getDownloadURL.mockResolvedValue('https://storage.example/old.json');
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => oldSummary } as Response);
+    firestoreMock.runTransaction.mockImplementation(async (_db, callback) => callback({
+      get: vi.fn().mockResolvedValue({ exists: () => true, data: () => ({ storagePath: 'old.json' }) }),
+      set: vi.fn(),
+    }));
+
+    await saveParkingMonthsData('team-1', 'user-1', [newDataset], ignoredSettings);
+
+    const payload = storageMock.uploadBytes.mock.calls[0][1] as Uint8Array;
+    const stored = JSON.parse(new TextDecoder().decode(payload)) as ParkingSummary;
+    expect(stored.months.map(month => month.month)).toEqual(['2026-05', '2026-06']);
+    for (const month of stored.months) {
+      expect(month.rows.some(row => row.codeFamilyKey === 'IF')).toBe(true);
+    }
   });
 
   it('cleans up the uploaded Parking file when Firestore transaction detects a stale import', async () => {

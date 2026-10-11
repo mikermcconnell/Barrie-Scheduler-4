@@ -11,6 +11,14 @@ import { filterPerformanceSummaryByRoute as filterBackendByRoute } from '../func
 import { trimDayForDetailMode as trimFrontendDay } from '../utils/performanceDataService';
 import { trimDayForDetailMode as trimBackendDay } from '../functions/src/sharedWorkspaceData';
 import {
+  buildPerformanceDashboardView as buildFrontendDashboardView,
+  PERFORMANCE_DASHBOARD_VIEW_MODES as FRONTEND_DASHBOARD_VIEW_MODES,
+} from '../utils/performanceDashboardView';
+import {
+  buildPerformanceDashboardView as buildBackendDashboardView,
+  PERFORMANCE_DASHBOARD_VIEW_MODES as BACKEND_DASHBOARD_VIEW_MODES,
+} from '../functions/src/performanceDashboardView';
+import {
   PERFORMANCE_RUNTIME_LOGIC_VERSION as BACKEND_RUNTIME_LOGIC_VERSION,
   PERFORMANCE_SCHEMA_VERSION as BACKEND_SCHEMA_VERSION,
 } from '../functions/src/types';
@@ -92,7 +100,31 @@ describe('functions performance aggregation stays aligned with app runtime logic
 
     expect(direct.loadProfiles).toEqual(day.loadProfiles);
     expect(shared.loadProfiles).toEqual(day.loadProfiles);
+    expect(direct.runtimePatterns).toBeUndefined();
+    expect(shared.runtimePatterns).toBeUndefined();
     expect(shared).toEqual(direct);
+  });
+
+  it('keeps every persisted dashboard projection aligned between frontend and backend publishers', () => {
+    const day = aggregateFrontend([makeRecord()])[0];
+    const summary = {
+      dailySummaries: [day],
+      metadata: {
+        importedAt: '2026-09-01T12:00:00Z',
+        importedBy: 'test',
+        dateRange: { start: day.date, end: day.date },
+        dayCount: 1,
+        totalRecords: day.dataQuality.totalRecords,
+      },
+      schemaVersion: FRONTEND_SCHEMA_VERSION,
+    };
+
+    expect(BACKEND_DASHBOARD_VIEW_MODES).toEqual(FRONTEND_DASHBOARD_VIEW_MODES);
+    for (const mode of FRONTEND_DASHBOARD_VIEW_MODES) {
+      expect(buildBackendDashboardView(summary as any, mode)).toEqual(
+        buildFrontendDashboardView(summary, mode),
+      );
+    }
   });
 
   it('keeps loads separate when different stop patterns share a sequence index', () => {

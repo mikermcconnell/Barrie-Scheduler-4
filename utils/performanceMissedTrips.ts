@@ -6,6 +6,7 @@ export interface AggregatedStoredMissedTrips {
     totalObserved: number;
     totalMissed: number;
     missedPct: number;
+    coveredDays: number;
     routesMissed: { routeId: string; count: number; earliestDep: string }[];
     skippedDays: number;
     missingStoredDays: number;
@@ -42,6 +43,7 @@ function buildEmptySummary(): AggregatedStoredMissedTrips {
         totalObserved: 0,
         totalMissed: 0,
         missedPct: 0,
+        coveredDays: 0,
         routesMissed: [],
         skippedDays: 0,
         missingStoredDays: 0,
@@ -62,6 +64,7 @@ export function aggregateStoredMissedTrips(days: readonly DailySummary[]): Aggre
         }
 
         summary.hasCoverage = true;
+        summary.coveredDays++;
         summary.totalScheduled += missed.totalScheduled;
         summary.totalObserved += missed.totalMatched;
         summary.totalMissed += missed.totalMissed;
@@ -107,6 +110,7 @@ export function computeAggregatedMissedTrips(
             continue;
         }
 
+        summary.coveredDays++;
         summary.totalScheduled += missed.totalScheduled;
         summary.totalObserved += missed.totalMatched;
         summary.totalMissed += missed.totalMissed;

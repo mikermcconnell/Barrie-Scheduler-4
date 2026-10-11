@@ -18,6 +18,7 @@ import {
     GraduationCap,
     Bus,
     MapPinned,
+    Scissors,
 } from 'lucide-react';
 import type { SiblingDraft } from './ScheduleEditorWorkspace';
 import { SystemDraftList } from '../layout/SystemDraftList';
@@ -88,8 +89,12 @@ const DetourPublisherWorkspace = lazyWithRetry(
     () => import('./DetourPublisherWorkspace').then(module => ({ default: module.DetourPublisherWorkspace })),
     'fixed-detour-publisher-workspace'
 );
+const RunCuttingWorkspace = lazyWithRetry(
+    () => import('./RunCuttingWorkspace').then(module => ({ default: module.RunCuttingWorkspace })),
+    'fixed-run-cutting-workspace'
+);
 
-type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import' | 'detours';
+type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import' | 'detours' | 'run-cutting';
 type AnalyticsLaunchView = AnalyticsWorkspaceView;
 
 const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<typeof isFeatureEnabled>[0]>> = {
@@ -102,6 +107,7 @@ const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<t
     'system-editor': 'fixedSystemEditor',
     'performance-import': 'fixedPerformanceImport',
     detours: 'fixedDetours',
+    'run-cutting': 'fixedRunCutting',
 };
 
 const isFixedRouteViewEnabled = (viewMode: FixedRouteViewMode): boolean => {
@@ -129,6 +135,7 @@ const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     'system-editor': 'System Draft Editor',
     'performance-import': 'Re-import STREETS Data',
     detours: 'Detour Publisher',
+    'run-cutting': 'Run Cutting & Rostering',
 };
 
 interface DashboardCardProps {
@@ -268,6 +275,8 @@ export const FixedRouteWorkspace: React.FC = () => {
                     return 'Scheduled Transit · Re-import STREETS Data';
                 case 'detours':
                     return 'Scheduled Transit · Detour Publisher';
+                case 'run-cutting':
+                    return 'Scheduled Transit · Run Cutting & Rostering';
                 default:
                     return 'Scheduled Transit';
             }
@@ -730,6 +739,16 @@ export const FixedRouteWorkspace: React.FC = () => {
                         />
                     )}
 
+                    {isFeatureEnabled('fixedRunCutting') && (
+                        <DashboardCard
+                            onClick={() => setViewMode('run-cutting')}
+                            icon={<Scissors size={20} />}
+                            color="emerald"
+                            title="Run Cutting & Rostering"
+                            description="Audit frozen vehicle blocks, review Codex-proposed daily runs, and assemble anonymous weekly crews."
+                        />
+                    )}
+
                     {isFeatureEnabled('fixedAnalytics') && (
                         <DashboardCard
                             onClick={() => handleOpenPlanning('dashboard')}
@@ -1149,6 +1168,12 @@ export const FixedRouteWorkspace: React.FC = () => {
                     {viewMode === 'detours' && canAccessDetours && (
                         <Suspense fallback={<WorkspacePanelLoading label="Loading Detour Publisher..." />}>
                             <DetourPublisherWorkspace onClose={() => setViewMode('dashboard')} />
+                        </Suspense>
+                    )}
+
+                    {viewMode === 'run-cutting' && (
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading Run Cutting & Rostering..." />}>
+                            <RunCuttingWorkspace onClose={() => setViewMode('dashboard')} />
                         </Suspense>
                     )}
 
