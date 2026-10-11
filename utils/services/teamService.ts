@@ -19,10 +19,14 @@ import {
     query,
     where,
 } from 'firebase/firestore';
+import type { DocumentReference } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { Team, TeamMember, TeamWithMembers, TeamRole, WorkspaceAccessLevel, WorkspaceAccessOverrides } from '../masterScheduleTypes';
 import {
     getDefaultWorkspaceAccessLevelForRole,
+    getMemberWorkspaceGrant,
+    getTeamDefaultWorkspaceGrant,
+    haveSameWorkspaceAccess,
     isWorkspaceAccessFeature,
     isWorkspaceAccessLevel,
 } from '../workspaceAccess';
@@ -646,23 +650,9 @@ export async function updateMemberRole(
 }
 
 /**
- * Update member workspace visibility profile (owner/admin only - enforcement via security rules)
- */
-export async function updateMemberAccessLevel(
-    teamId: string,
-    memberId: string,
-    accessLevel: WorkspaceAccessLevel
-): Promise<void> {
-    if (!isWorkspaceAccessLevel(accessLevel)) {
-        throw new Error('Invalid workspace access level');
-    }
-
-    const memberRef = doc(db, 'teams', teamId, 'members', memberId);
-    await updateDoc(memberRef, { accessLevel });
-}
-
-/**
  * Update a member's workspace profile and optional per-workspace overrides.
+ * A member whose access differs from the team default is an "exception" and is
+ * left alone by team-wide access changes.
  */
 export async function updateMemberWorkspaceAccess(
     teamId: string,
@@ -682,64 +672,84 @@ export async function updateMemberWorkspaceAccess(
     });
 }
 
-/**
- * Update the access level assigned to future users who join with this team's invite code.
- */
-export async function updateTeamDefaultMemberAccessLevel(
-    teamId: string,
-    accessLevel: WorkspaceAccessLevel
-): Promise<void> {
-    if (!isWorkspaceAccessLevel(accessLevel)) {
-        throw new Error('Invalid workspace access level');
-    }
-
-    const teamRef = doc(db, 'teams', teamId);
-    const teamSnap = await getDoc(teamRef);
-    await updateDoc(teamRef, { defaultMemberAccessLevel: accessLevel });
-    if (teamSnap.exists()) {
-        const inviteCode = teamSnap.data().inviteCode as string | undefined;
-        if (inviteCode) {
-            await setDoc(doc(db, 'teamInvites', inviteCode), {
-                teamId,
-                teamName: teamSnap.data().name,
-                defaultMemberAccessLevel: accessLevel,
-                updatedAt: serverTimestamp(),
-            }, { merge: true });
-        }
-    }
+export interface TeamAccessUpdateResult {
+    /** Members that followed the previous team default and now follow the new one. */
+    updatedMemberIds: string[];
+    /** Members whose access differed from the previous default and were left untouched. */
+    exceptionMemberIds: string[];
 }
 
+// Firestore caps a batch at 500 writes; leave headroom for the team + invite docs.
+const MEMBER_ACCESS_BATCH_SIZE = 400;
+
 /**
- * Update the workspace profile and optional overrides assigned to future invite joins.
+ * Set the team's workspace access and apply it to every member who was
+ * following the previous team default. Members with different access are
+ * exceptions and keep what they have.
+ *
+ * Member docs are written before the team doc. If the operation is interrupted
+ * and re-run, members that were already moved no longer match the old default,
+ * so they are skipped rather than rewritten, and the rest are completed.
  */
-export async function updateTeamDefaultWorkspaceAccess(
+export async function updateTeamWorkspaceAccess(
     teamId: string,
     accessLevel: WorkspaceAccessLevel,
     workspaceOverrides?: WorkspaceAccessOverrides
-): Promise<void> {
+): Promise<TeamAccessUpdateResult> {
     if (!isWorkspaceAccessLevel(accessLevel)) {
         throw new Error('Invalid workspace access level');
     }
 
+    const sanitizedOverrides = sanitizeWorkspaceOverrides(workspaceOverrides) ?? {};
     const teamRef = doc(db, 'teams', teamId);
-    const sanitizedOverrides = sanitizeWorkspaceOverrides(workspaceOverrides);
     const teamSnap = await getDoc(teamRef);
-    await updateDoc(teamRef, {
-        defaultMemberAccessLevel: accessLevel,
-        defaultMemberWorkspaceOverrides: sanitizedOverrides ?? {},
-    });
-    if (teamSnap.exists()) {
-        const inviteCode = teamSnap.data().inviteCode as string | undefined;
-        if (inviteCode) {
-            await setDoc(doc(db, 'teamInvites', inviteCode), {
-                teamId,
-                teamName: teamSnap.data().name,
-                defaultMemberAccessLevel: accessLevel,
-                defaultMemberWorkspaceOverrides: sanitizedOverrides ?? {},
-                updatedAt: serverTimestamp(),
-            }, { merge: true });
-        }
+    if (!teamSnap.exists()) {
+        throw new Error('Team not found');
     }
+
+    const previousGrant = getTeamDefaultWorkspaceGrant(readTeamData(teamSnap.id, teamSnap.data()));
+
+    const membersSnap = await getDocs(collection(db, 'teams', teamId, 'members'));
+    const updatedMemberIds: string[] = [];
+    const exceptionMemberIds: string[] = [];
+    const memberRefs: DocumentReference[] = [];
+
+    membersSnap.docs.forEach(memberDoc => {
+        const member = readMemberData(memberDoc.id, memberDoc.data());
+        if (haveSameWorkspaceAccess(getMemberWorkspaceGrant(member), previousGrant)) {
+            updatedMemberIds.push(memberDoc.id);
+            memberRefs.push(memberDoc.ref);
+        } else {
+            exceptionMemberIds.push(memberDoc.id);
+        }
+    });
+
+    for (let start = 0; start < memberRefs.length; start += MEMBER_ACCESS_BATCH_SIZE) {
+        const batch = writeBatch(db);
+        memberRefs.slice(start, start + MEMBER_ACCESS_BATCH_SIZE).forEach(memberRef => {
+            batch.update(memberRef, { accessLevel, workspaceOverrides: sanitizedOverrides });
+        });
+        await batch.commit();
+    }
+
+    const teamBatch = writeBatch(db);
+    teamBatch.update(teamRef, {
+        defaultMemberAccessLevel: accessLevel,
+        defaultMemberWorkspaceOverrides: sanitizedOverrides,
+    });
+    const inviteCode = teamSnap.data().inviteCode as string | undefined;
+    if (inviteCode) {
+        teamBatch.set(doc(db, 'teamInvites', inviteCode), {
+            teamId,
+            teamName: teamSnap.data().name,
+            defaultMemberAccessLevel: accessLevel,
+            defaultMemberWorkspaceOverrides: sanitizedOverrides,
+            updatedAt: serverTimestamp(),
+        }, { merge: true });
+    }
+    await teamBatch.commit();
+
+    return { updatedMemberIds, exceptionMemberIds };
 }
 
 /**

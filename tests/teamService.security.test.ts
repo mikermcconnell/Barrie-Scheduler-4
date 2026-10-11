@@ -57,8 +57,7 @@ import {
   joinTeamByInviteCode,
   removeMember,
   switchUserTeam,
-  updateTeamDefaultMemberAccessLevel,
-  updateTeamDefaultWorkspaceAccess,
+  updateTeamWorkspaceAccess,
   updateMemberWorkspaceAccess,
 } from '../utils/services/teamService';
 
@@ -433,76 +432,123 @@ describe('teamService security-sensitive flows', () => {
     );
   });
 
-  it('allows changing the team default member access level', async () => {
-    await updateTeamDefaultMemberAccessLevel('lane-transit', 'external-planner');
-
-    expect(updateDocMock).toHaveBeenCalledWith(
-      expect.objectContaining({ path: 'teams/lane-transit' }),
-      { defaultMemberAccessLevel: 'external-planner' }
-    );
-  });
-
-  it('mirrors updated team default access to the invite lookup', async () => {
-    getDocMock.mockResolvedValueOnce({
-      exists: () => true,
-      data: () => ({ name: 'Lane Transit', inviteCode: 'LANE01' }),
+  describe('updateTeamWorkspaceAccess', () => {
+    const memberDoc = (id: string, data: Record<string, unknown>) => ({
+      id,
+      ref: { path: `teams/lane-transit/members/${id}` },
+      data: () => ({ userId: id, role: 'member', joinedAt: new Date(0), displayName: id, email: `${id}@example.com`, ...data }),
     });
 
-    await updateTeamDefaultMemberAccessLevel('lane-transit', 'external-planner');
+    const mockTeam = (data: Record<string, unknown>) => {
+      getDocMock.mockResolvedValueOnce({
+        exists: () => true,
+        id: 'lane-transit',
+        data: () => ({ name: 'Lane Transit', inviteCode: 'LANE01', createdBy: 'admin', ...data }),
+      });
+    };
 
-    expect(setDocMock).toHaveBeenCalledWith(
-      expect.objectContaining({ path: 'teamInvites/LANE01' }),
-      expect.objectContaining({
-        teamId: 'lane-transit',
-        teamName: 'Lane Transit',
-        defaultMemberAccessLevel: 'external-planner',
-      }),
-      { merge: true }
-    );
-  });
+    const trackBatches = () => {
+      const batches: Array<{
+        update: ReturnType<typeof vi.fn>;
+        set: ReturnType<typeof vi.fn>;
+        commit: ReturnType<typeof vi.fn>;
+      }> = [];
+      writeBatchMock.mockImplementation(() => {
+        const batch = { update: vi.fn(), set: vi.fn(), commit: vi.fn().mockResolvedValue(undefined) };
+        batches.push(batch);
+        return batch;
+      });
+      return batches;
+    };
 
-  it('allows changing the team default workspace access profile and overrides', async () => {
-    await updateTeamDefaultWorkspaceAccess('lane-transit', 'transit-app-only', {
-      analyticsTransitApp: true,
-      workspaceFixedRoute: false,
+    it('moves members that follow the team default and leaves exceptions alone', async () => {
+      const batches = trackBatches();
+      mockTeam({ defaultMemberAccessLevel: 'planner' });
+      getDocsMock.mockResolvedValueOnce({
+        docs: [
+          memberDoc('follower', { accessLevel: 'planner' }),
+          memberDoc('exception', { accessLevel: 'parking' }),
+        ],
+      });
+
+      const result = await updateTeamWorkspaceAccess('lane-transit', 'transit-app-only', {
+        workspaceOperations: true,
+      });
+
+      expect(result).toEqual({ updatedMemberIds: ['follower'], exceptionMemberIds: ['exception'] });
+      expect(batches[0].update).toHaveBeenCalledOnce();
+      expect(batches[0].update).toHaveBeenCalledWith(
+        expect.objectContaining({ path: 'teams/lane-transit/members/follower' }),
+        { accessLevel: 'transit-app-only', workspaceOverrides: { workspaceOperations: true } }
+      );
     });
 
-    expect(updateDocMock).toHaveBeenCalledWith(
-      expect.objectContaining({ path: 'teams/lane-transit' }),
-      {
-        defaultMemberAccessLevel: 'transit-app-only',
-        defaultMemberWorkspaceOverrides: {
-          analyticsTransitApp: true,
-          workspaceFixedRoute: false,
-        },
-      }
-    );
-  });
+    it('treats a member as following the team when the unlocked workspaces match, even with different fields', async () => {
+      trackBatches();
+      mockTeam({ defaultMemberAccessLevel: 'transit-app-only' });
+      getDocsMock.mockResolvedValueOnce({
+        docs: [memberDoc('legacy', { accessLevel: 'external-planner' })],
+      });
 
-  it('mirrors updated default workspace overrides to the invite lookup', async () => {
-    getDocMock.mockResolvedValueOnce({
-      exists: () => true,
-      data: () => ({ name: 'Lane Transit', inviteCode: 'LANE01' }),
+      const result = await updateTeamWorkspaceAccess('lane-transit', 'parking');
+
+      expect(result.updatedMemberIds).toEqual(['legacy']);
     });
 
-    await updateTeamDefaultWorkspaceAccess('lane-transit', 'transit-app-only', {
-      analyticsTransitApp: true,
-      workspaceFixedRoute: false,
+    it('writes the team default and invite lookup after the member updates', async () => {
+      const batches = trackBatches();
+      mockTeam({ defaultMemberAccessLevel: 'planner' });
+      getDocsMock.mockResolvedValueOnce({ docs: [memberDoc('follower', { accessLevel: 'planner' })] });
+
+      await updateTeamWorkspaceAccess('lane-transit', 'transit-app-only', { analyticsTransitApp: true });
+
+      const teamBatch = batches[batches.length - 1];
+      expect(batches).toHaveLength(2);
+      expect(teamBatch.update).toHaveBeenCalledWith(
+        expect.objectContaining({ path: 'teams/lane-transit' }),
+        {
+          defaultMemberAccessLevel: 'transit-app-only',
+          defaultMemberWorkspaceOverrides: { analyticsTransitApp: true },
+        }
+      );
+      expect(teamBatch.set).toHaveBeenCalledWith(
+        expect.objectContaining({ path: 'teamInvites/LANE01' }),
+        expect.objectContaining({
+          teamId: 'lane-transit',
+          teamName: 'Lane Transit',
+          defaultMemberAccessLevel: 'transit-app-only',
+        }),
+        { merge: true }
+      );
+      expect(batches[0].commit.mock.invocationCallOrder[0])
+        .toBeLessThan(teamBatch.commit.mock.invocationCallOrder[0]);
     });
 
-    expect(setDocMock).toHaveBeenCalledWith(
-      expect.objectContaining({ path: 'teamInvites/LANE01' }),
-      expect.objectContaining({
-        teamId: 'lane-transit',
-        teamName: 'Lane Transit',
-        defaultMemberAccessLevel: 'transit-app-only',
-        defaultMemberWorkspaceOverrides: {
-          analyticsTransitApp: true,
-          workspaceFixedRoute: false,
-        },
-      }),
-      { merge: true }
-    );
+    it('splits large teams across batches', async () => {
+      const batches = trackBatches();
+      mockTeam({ defaultMemberAccessLevel: 'planner' });
+      getDocsMock.mockResolvedValueOnce({
+        docs: Array.from({ length: 401 }, (_, index) => memberDoc(`user-${index}`, { accessLevel: 'planner' })),
+      });
+
+      await updateTeamWorkspaceAccess('lane-transit', 'parking');
+
+      // two member batches (400 + 1) and the final team batch
+      expect(batches).toHaveLength(3);
+      expect(batches[0].update).toHaveBeenCalledTimes(400);
+      expect(batches[1].update).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects unknown levels and unknown override keys before writing', async () => {
+      const batches = trackBatches();
+
+      await expect(updateTeamWorkspaceAccess('lane-transit', 'bogus' as never)).rejects.toThrow('Invalid workspace access level');
+      mockTeam({});
+      await expect(
+        updateTeamWorkspaceAccess('lane-transit', 'planner', { madeUpWorkspace: true } as never)
+      ).rejects.toThrow('Invalid workspace override key');
+      expect(batches).toHaveLength(0);
+    });
   });
 
   it('allows changing a specific member workspace access profile and overrides', async () => {

@@ -1,6 +1,6 @@
 import type { FeatureFlags, FeatureKey } from './features';
 import { FEATURE_DEFINITIONS, featureFlags, isFeatureEnabled } from './features';
-import type { TeamMember, TeamRole } from './masterScheduleTypes';
+import type { Team, TeamMember, TeamRole } from './masterScheduleTypes';
 
 export type WorkspaceAccessLevel =
     | 'none'
@@ -192,6 +192,37 @@ export function getAllowedWorkspaceFeatures(
         if (typeof override === 'boolean') return override;
         return WORKSPACE_ACCESS_BY_LEVEL[accessLevel].has(feature);
     });
+}
+
+export interface WorkspaceAccessGrant {
+    accessLevel: WorkspaceAccessLevel;
+    workspaceOverrides?: WorkspaceAccessOverrides;
+}
+
+/**
+ * Two grants are equivalent when they unlock the same assignable workspaces,
+ * regardless of which level/override combination produced the result.
+ */
+export function haveSameWorkspaceAccess(a: WorkspaceAccessGrant, b: WorkspaceAccessGrant): boolean {
+    const left = new Set(getAllowedWorkspaceFeatures(a.accessLevel, a.workspaceOverrides));
+    const right = getAllowedWorkspaceFeatures(b.accessLevel, b.workspaceOverrides);
+    return left.size === right.length && right.every((feature) => left.has(feature));
+}
+
+export function getMemberWorkspaceGrant(member: WorkspaceAccessSubject): WorkspaceAccessGrant {
+    return {
+        accessLevel: resolveWorkspaceAccessLevel(member),
+        workspaceOverrides: member?.workspaceOverrides,
+    };
+}
+
+export function getTeamDefaultWorkspaceGrant(
+    team: Pick<Team, 'defaultMemberAccessLevel' | 'defaultMemberWorkspaceOverrides'>,
+): WorkspaceAccessGrant {
+    return {
+        accessLevel: team.defaultMemberAccessLevel ?? getDefaultWorkspaceAccessLevelForRole('member'),
+        workspaceOverrides: team.defaultMemberWorkspaceOverrides,
+    };
 }
 
 export function canAccessWorkspaceFeature(

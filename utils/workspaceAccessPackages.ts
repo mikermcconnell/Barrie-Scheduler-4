@@ -1,13 +1,20 @@
 import type {
     WorkspaceAccessFeatureKey,
+    WorkspaceAccessGrant,
     WorkspaceAccessLevel,
     WorkspaceAccessOverrides,
 } from './workspaceAccess';
-import { getAllowedWorkspaceFeatures, WORKSPACE_ACCESS_FEATURES } from './workspaceAccess';
+import {
+    getAllowedWorkspaceFeatures,
+    haveSameWorkspaceAccess,
+    WORKSPACE_ACCESS_FEATURES,
+} from './workspaceAccess';
 
 export type WorkspaceAccessPackageId =
     | 'none'
     | 'barrie-planner'
+    | 'barrie-production'
+    | 'barrie-admin'
     | 'barrie-operations'
     | 'transit-app-only'
     | 'transit-app-streets'
@@ -34,6 +41,18 @@ export const WORKSPACE_ACCESS_PACKAGES: WorkspaceAccessPackage[] = [
         label: 'Barrie planner',
         description: 'Standard internal planner tools: schedules, operations, on-demand, and core planning data.',
         accessLevel: 'planner',
+    },
+    {
+        id: 'barrie-production',
+        label: 'Production only',
+        description: 'Production-ready workspaces only: scheduled transit and operations.',
+        accessLevel: 'production',
+    },
+    {
+        id: 'barrie-admin',
+        label: 'Planner + admin tools',
+        description: 'Planner access plus parking, the OD matrix, and dwell incident review.',
+        accessLevel: 'admin',
     },
     {
         id: 'barrie-operations',
@@ -75,6 +94,18 @@ export const WORKSPACE_ACCESS_PACKAGES: WorkspaceAccessPackage[] = [
 
 export function getWorkspaceAccessPackage(id: WorkspaceAccessPackageId): WorkspaceAccessPackage {
     return WORKSPACE_ACCESS_PACKAGES.find(pkg => pkg.id === id) ?? WORKSPACE_ACCESS_PACKAGES[0];
+}
+
+/**
+ * Identify which named package a stored level/override pair corresponds to by
+ * comparing the workspaces it unlocks. Returns null for hand-built combinations
+ * that no package describes.
+ */
+export function findWorkspaceAccessPackage(grant: WorkspaceAccessGrant): WorkspaceAccessPackage | null {
+    return WORKSPACE_ACCESS_PACKAGES.find(pkg => haveSameWorkspaceAccess(grant, {
+        accessLevel: pkg.accessLevel,
+        workspaceOverrides: pkg.workspaceOverrides,
+    })) ?? null;
 }
 
 export function buildWorkspaceSelectionFromPackage(
