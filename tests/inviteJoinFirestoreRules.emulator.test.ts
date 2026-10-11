@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
@@ -53,6 +53,12 @@ describeWithEmulator('Invite join Firestore rules', () => {
         await assertFails(join({ accessLevel: 'planner' }, 'OLD123'));
         await assertFails(join({}));
         await assertFails(join({ accessLevel: 'production', workspaceOverrides: { workspaceOperations: true } }));
+    });
+
+    it('lets a signed-in user look up one invite but not list them all', async () => {
+        const db = environment.authenticatedContext('stranger').firestore();
+        await assertSucceeds(getDoc(doc(db, 'teamInvites/ABC123')));
+        await assertFails(getDocs(collection(db, 'teamInvites')));
     });
 
     it('still refuses a wrong invite code or a non-member role', async () => {

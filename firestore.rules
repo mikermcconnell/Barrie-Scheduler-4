@@ -432,7 +432,7 @@ service cloud.firestore {
 
     // Invite lookup documents support the authenticated join flow.
     match /teamInvites/{inviteCode} {
-      allow read: if request.auth != null;
+      allow get: if request.auth != null;
       allow create, update: if request.auth != null &&
                               request.resource.data.teamId is string &&
                               (isTeamOwnerOrAdmin(request.resource.data.teamId) ||
