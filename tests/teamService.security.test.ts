@@ -286,7 +286,7 @@ describe('teamService security-sensitive flows', () => {
     );
   });
 
-  it('defaults newly joined members to planner workspace access', async () => {
+  it('gives newly joined members no workspace access when the team has no default', async () => {
     getDocMock
       .mockResolvedValueOnce({
         exists: () => true,
@@ -306,7 +306,7 @@ describe('teamService security-sensitive flows', () => {
       expect.objectContaining({ path: 'teams/team-1/members/user-2' }),
       expect.objectContaining({
         role: 'member',
-        accessLevel: 'planner',
+        accessLevel: 'none',
       })
     );
   });

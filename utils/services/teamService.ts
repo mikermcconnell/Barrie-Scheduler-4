@@ -179,14 +179,14 @@ async function getTeamDefaultWorkspaceAccess(teamId: string): Promise<{
     const teamRef = doc(db, 'teams', teamId);
     const teamSnap = await getDoc(teamRef);
     if (!teamSnap.exists()) {
-        return { accessLevel: getDefaultWorkspaceAccessLevelForRole('member') };
+        return { accessLevel: NEW_TEAM_DEFAULT_ACCESS_LEVEL };
     }
 
     const defaultAccessLevel = teamSnap.data().defaultMemberAccessLevel;
     return {
         accessLevel: isWorkspaceAccessLevel(defaultAccessLevel)
             ? defaultAccessLevel
-            : getDefaultWorkspaceAccessLevelForRole('member'),
+            : NEW_TEAM_DEFAULT_ACCESS_LEVEL,
         workspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides),
     };
 }
