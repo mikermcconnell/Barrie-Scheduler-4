@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Team Management – package-first mockup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --green: #16a34a; --green-bg: #ecfdf3;
+    --ink: #111827; --mute: #6b7280; --line: #e5e7eb; --panel: #f9fafb;
+    --blue: #1d4ed8; --amber: #92400e; --amber-bg: #fffbeb; --amber-line: #fde68a;
+    --red: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: #4b5563; }
+  button, select, input { font: inherit; }
+
+  /* page chrome (not part of the design) */
+  .viewbar { position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; align-items: center; padding: 10px 16px; background: #111827; color: #fff; }
+  .viewbar span { font-size: 12px; opacity: .7; margin-right: 6px; }
+  .viewbar button { border: 1px solid #374151; background: #1f2937; color: #e5e7eb; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  .viewbar button.on { background: var(--green); border-color: var(--green); color: #fff; font-weight: 700; }
+  .stage { padding: 24px; display: flex; justify-content: center; }
+  .callout { background: #fef9c3; border: 1px solid #fde047; color: #713f12; border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 14px; }
+
+  /* modal */
+  .modal { width: 100%; background: #fff; border-radius: 16px; box-shadow: 0 20px 50px rgba(0,0,0,.35); overflow: hidden; }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+  .modal-head h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  .x { border: 0; background: none; font-size: 22px; color: #9ca3af; cursor: pointer; }
+  .layout { display: grid; min-height: 660px; }
+  .layout.with-side { grid-template-columns: 260px 1fr; }
+  aside { background: var(--panel); border-right: 1px solid var(--line); padding: 16px; }
+  aside h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--mute); }
+  .newteam { width: 100%; margin-bottom: 12px; border: 1px dashed #86efac; background: var(--green-bg); color: #166534; font-weight: 700; padding: 8px; border-radius: 10px; cursor: pointer; }
+  .search { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; margin-bottom: 8px; }
+  .teams { background: #fff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .teams div { display: flex; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid #f3f4f6; font-size: 13px; cursor: pointer; }
+  .teams div:last-child { border-bottom: 0; }
+  .teams div.sel { background: var(--green-bg); color: #14532d; font-weight: 600; }
+  .teams code { font-size: 11px; color: var(--mute); }
+  main { padding: 24px; min-width: 0; }
+
+  /* edit-session banner */
+  .session { display: flex; align-items: center; gap: 12px; background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; border-radius: 12px; padding: 10px 14px; margin-bottom: 16px; font-weight: 600; }
+  .session .sp { flex: 1; }
+  .session b { font-variant-numeric: tabular-nums; }
+
+  /* header */
+  .team-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .team-head h2 { margin: 0; font-size: 22px; }
+  .team-head p { margin: 2px 0 0; color: var(--mute); }
+  .head-right { display: flex; gap: 10px; align-items: stretch; }
+  .ghost { border: 1px solid #d1d5db; background: #fff; border-radius: 8px; padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer; color: #374151; }
+  .ghost.danger { border-color: #fecaca; color: var(--red); }
+  .ghost.big { font-size: 13px; padding: 8px 12px; }
+  .invite { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+  .invite small { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--mute); }
+  .invite code { font-size: 20px; font-weight: 800; letter-spacing: .12em; }
+
+  /* support menu */
+  .menu-wrap { position: relative; }
+  .support-btn { height: 100%; border: 1px solid var(--amber-line); background: var(--amber-bg); color: var(--amber); font-weight: 700; border-radius: 12px; padding: 0 14px; cursor: pointer; }
+  .menu { position: absolute; right: 0; top: calc(100% + 6px); width: 250px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.18); padding: 6px; z-index: 20; display: none; }
+  .menu.open { display: block; }
+  .menu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 9px 10px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+  .menu button:hover { background: var(--panel); }
+  .menu button small { display: block; font-weight: 400; color: var(--mute); font-size: 12px; }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+  .menu .danger { color: var(--red); }
+
+  /* tabs */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+  .tab { border: 0; background: none; padding: 9px 14px; font-weight: 700; color: var(--mute); border-bottom: 2px solid transparent; cursor: pointer; }
+  .tab.on { color: var(--green); border-color: var(--green); }
+
+  /* cards */
+  .card { border: 1px solid var(--line); border-radius: 14px; background: #fff; margin-bottom: 18px; }
+  .card-h { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); gap: 12px; }
+  .card-h h3 { margin: 0; font-size: 15px; }
+  .card-h p { margin: 2px 0 0; font-size: 12px; color: var(--mute); }
+  .card-b { padding: 18px; }
+  .scope { font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-line); border-radius: 99px; padding: 2px 8px; }
+
+  .pkg-row { display: grid; grid-template-columns: minmax(240px, 340px) 1fr; gap: 20px; align-items: start; }
+  select.pkg { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-weight: 700; background: #fff; }
+  .pkg-desc { margin: 8px 0 0; font-size: 12.5px; color: var(--mute); }
+  .unlock-h, .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); font-weight: 700; margin-bottom: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--green-bg); color: #14532d; border: 1px solid #bbf7d0; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .chip.none { background: #f3f4f6; color: var(--mute); border-color: var(--line); }
+  .actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .actions .note { flex: 1; font-size: 12.5px; color: var(--mute); }
+  .btn { border: 0; background: var(--green); color: #fff; font-weight: 700; padding: 9px 16px; border-radius: 10px; cursor: pointer; }
+  .btn:disabled { background: #d1d5db; cursor: default; }
+  .btn.sec { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+  .dirty { color: var(--amber); font-weight: 700; }
+  .ds { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ds select { width: 100%; padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+  .ds select:disabled { background: #f3f4f6; color: var(--mute); }
+  .lock { color: var(--amber); font-weight: 600; }
+
+  /* members */
+  .member { display: grid; grid-template-columns: 36px 1fr auto auto; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid #f3f4f6; }
+  .member:last-child { border-bottom: 0; }
+  .avatar { width: 36px; height: 36px; border-radius: 50%; background: #e5e7eb; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #4b5563; }
+  .member .nm { font-weight: 600; }
+  .member .em { font-size: 12.5px; color: var(--mute); }
+  .role { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: #f3f4f6; color: #374151; }
+  .role.owner { background: #dcfce7; color: #166534; }
+  .role.admin { background: #dbeafe; color: #1e40af; }
+  .exc { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-line); }
+  .row-r { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+  .trash { border: 0; background: none; color: #9ca3af; cursor: pointer; font-size: 16px; }
+  .leave { margin-top: 6px; border: 0; background: none; color: var(--red); font-weight: 600; cursor: pointer; padding: 6px 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--mute); background: var(--panel); padding: 8px 12px; }
+  td { padding: 9px 12px; border-top: 1px solid #f3f4f6; }
+
+  /* dialogs */
+  .scrim { position: fixed; inset: 0; background: rgba(17,24,39,.5); display: none; place-items: center; z-index: 50; }
+  .scrim.open { display: grid; }
+  .dialog { width: 460px; max-width: calc(100vw - 32px); background: #fff; border-radius: 14px; padding: 20px; box-shadow: 0 20px 50px rgba(0,0,0,.4); }
+  .dialog h3 { margin: 0 0 4px; }
+  .dialog > p { margin: 0 0 14px; color: var(--mute); font-size: 13px; }
+  .opt { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+  .opt:has(input:checked) { border-color: var(--green); background: var(--green-bg); }
+  .opt span { font-size: 12px; color: var(--mute); }
+  .dialog .actions { border: 0; padding-top: 6px; margin-top: 8px; justify-content: flex-end; }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 10px 16px; border-radius: 10px; font-weight: 600; display: none; z-index: 60; }
+  .toast.show { display: block; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="viewbar">
+  <span>Mockup view:</span>
+  <button id="v-owner" class="on" onclick="setView('owner')">1 · Team owner / admin</button>
+  <button id="v-dev" onclick="setView('dev')">2 · You (global admin)</button>
+</div>
+
+<div class="stage"><div style="width:100%;max-width:1080px">
+<div class="callout" id="callout"></div>
+
+<div class="modal">
+  <div class="modal-head">
+    <h1>Team Management</h1>
+    <button class="x" aria-label="Close">×</button>
+  </div>
+
+  <div class="layout" id="layout">
+    <!-- directory: global admin only -->
+    <aside id="side" class="hidden">
+      <button class="newteam" onclick="openNewTeam()">+ New team</button>
+      <h3>Find team</h3>
+      <input class="search" placeholder="Name or code">
+      <div class="teams" id="teams"></div>
+    </aside>
+
+    <main>
+      <div class="session hidden" id="session">
+        <span>● Edit session</span>
+        <span>Changes affect live data for Barrie Transit.</span>
+        <span class="sp"></span>
+        <span><b id="clock">30:00</b> left</span>
+        <button class="ghost big" onclick="endEdit()">End session</button>
+      </div>
+
+      <!-- one header, one invite code -->
+      <div class="team-head">
+        <div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <h2>Barrie Transit</h2>
+            <button class="ghost">Rename</button>
+            <button class="ghost danger">Delete</button>
+          </div>
+          <p><span id="memberCount">5</span> members</p>
+        </div>
+        <div class="head-right">
+          <div class="menu-wrap hidden" id="supportWrap">
+            <button class="support-btn" onclick="toggleMenu(event)">Support ▾</button>
+            <div class="menu" id="menu">
+              <button onclick="inspect('team')">👁 Inspect as team<small>Read-only view of the team's access</small></button>
+              <button onclick="setTab('members'); closeMenu()">👁 Inspect as member…<small>Pick from the Members tab</small></button>
+              <hr>
+              <button class="danger" onclick="startEdit()">✎ Start edit session<small>Audited. Expires after 30 minutes.</small></button>
+            </div>
+          </div>
+          <div class="invite">
+            <div><small>Invite code</small><code>BARRIE</code></div>
+            <button class="ghost">Copy code</button>
+            <button class="ghost">Copy link</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs" id="tabs"></div>
+
+      <!-- ===== MEMBERS ===== -->
+      <section data-panel="members">
+        <div class="card">
+          <div class="card-h">
+            <div><h3>Members</h3><p>Members inherit the team package. Only exceptions are labelled.</p></div>
+          </div>
+          <div id="members"></div>
+        </div>
+        <button class="leave">Leave team</button>
+      </section>
+
+      <!-- ===== ACCESS ===== -->
+      <section data-panel="access" class="hidden">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h3>Team access</h3>
+              <p>Everyone on this team gets the same workspaces. Change it once, it applies to all members.</p>
+            </div>
+            <button class="ghost big">👁 Preview as this team</button>
+          </div>
+          <div class="card-b">
+            <div class="pkg-row">
+              <div>
+                <div class="lbl">Access package</div>
+                <select class="pkg" id="pkg" onchange="onPkg()"></select>
+                <p class="pkg-desc" id="pkgDesc"></p>
+              </div>
+              <div>
+                <div class="unlock-h">This unlocks</div>
+                <div class="chips" id="unlocks"></div>
+              </div>
+            </div>
+            <div class="actions">
+              <div class="note" id="saveNote"></div>
+              <button class="btn sec" id="revert" onclick="revert()" disabled>Revert</button>
+              <button class="btn" id="save" onclick="save()" disabled>Save access</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- global admin only: lives next to the package, not in its own tab -->
+        <div class="card admin-only hidden">
+          <div class="card-h">
+            <div><h3>Data source <span class="scope">Admin</span></h3>
+              <p>Let this team read another team's data. No files are copied; uploads stay with this team.</p></div>
+          </div>
+          <div class="card-b">
+            <div class="ds">
+              <div><div class="lbl">Transit App data</div>
+                <select class="dsel"><option>Use own data</option><option selected>Read from Barrie Transit</option></select></div>
+              <div><div class="lbl">STREETS dashboard / reports</div>
+                <select class="dsel"><option>Use own data</option><option selected>Read from Barrie Transit</option></select></div>
+            </div>
+            <div class="actions">
+              <div class="note lock" id="dsNote">Start an edit session (Support ▾) to change data sources.</div>
+              <button class="btn" id="dsSave" disabled>Save data sources</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== FILES (global admin) ===== -->
+      <section data-panel="files" class="hidden">
+        <div class="card">
+          <div class="card-h">
+            <div><h3>Files</h3><p>Review File Manager uploads for this team.</p></div>
+            <div style="display:flex;gap:6px"><button class="ghost big">Team</button><button class="ghost big">Mine</button><button class="ghost big">All</button></div>
+          </div>
+          <table>
+            <tr><th>File</th><th>Uploader</th><th>Type</th><th>Uploaded</th><th></th></tr>
+            <tr><td><b>Fall_2026_master.xlsx</b></td><td>mike@…</td><td>Master Schedule</td><td>Oct 3</td><td><button class="ghost">Open</button></td></tr>
+            <tr><td><b>transit_app_sept.csv</b></td><td>analyst@…</td><td>Transit App</td><td>Sep 28</td><td><button class="ghost">Open</button></td></tr>
+            <tr><td><b>streets_week39.csv</b></td><td>priya@…</td><td>STREETS</td><td>Sep 26</td><td><button class="ghost">Open</button></td></tr>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+</div></div>
+
+<!-- exception dialog -->
+<div class="scrim" id="scrimExc">
+  <div class="dialog">
+    <h3 id="dlgTitle">Set exception</h3>
+    <p>Rare case. This person gets a different package from the rest of the team. Choose "Same as team" to inherit again.</p>
+    <div id="dlgOpts"></div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeScrim('scrimExc')">Cancel</button>
+      <button class="btn" onclick="applyExc()">Save exception</button>
+    </div>
+  </div>
+</div>
+
+<!-- new team dialog (moved here from Developer Tools) -->
+<div class="scrim" id="scrimNew">
+  <div class="dialog">
+    <h3>New team</h3>
+    <p>Pick a package. Access levels and overrides are no longer exposed.</p>
+    <div class="lbl">Team name</div>
+    <input class="search" placeholder="e.g. Lane Transit">
+    <div class="lbl">Invite code (optional)</div>
+    <input class="search" placeholder="6 characters">
+    <div class="lbl">Access package</div>
+    <select class="pkg" id="newPkg" onchange="newPkgDesc()"></select>
+    <p class="pkg-desc" id="newPkgDesc"></p>
+    <div class="actions">
+      <button class="btn sec" onclick="closeScrim('scrimNew')">Cancel</button>
+      <button class="btn" onclick="closeScrim('scrimNew'); toast('Team created. Invite link copied.')">Create team</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const PACKAGES = [
+  { id: 'none', label: 'No access', desc: 'Team Management only until access is intentionally assigned.', unlocks: [] },
+  { id: 'planner', label: 'Barrie planner', desc: 'Standard internal planner tools: schedules, operations, on-demand, and core planning data.',
+    unlocks: ['Scheduled Transit','Operations','On Demand','Transit App Data','Student Pass','Fleet Plan','Residential Growth','Route Planner','Fare Programs','Council Intelligence'] },
+  { id: 'ops', label: 'Operations dashboards', desc: 'Dashboard & Reporting only, for STREETS performance review without schedule editing.', unlocks: ['Operations'] },
+  { id: 'transit', label: 'Transit App Data only', desc: 'External partner access to only the Transit App Data workspace.', unlocks: ['Transit App Data'] },
+  { id: 'transit-streets', label: 'Transit App + STREETS Dashboard', desc: 'External partner access to Transit App Data and Dashboard & Reporting.', unlocks: ['Transit App Data','Operations'] },
+  { id: 'parking', label: 'Parking only', desc: 'Parking-code usage workspace only.', unlocks: ['Parking'] },
+  { id: 'internal', label: 'Internal developer', desc: 'Full internal access. Use only for trusted development accounts.', unlocks: ['Everything, including unfinished workspaces'] },
+];
+const byId = id => PACKAGES.find(p => p.id === id);
+const TEAMS = [['Barrie Transit','BARRIE'],['Developer','85R4MJ'],['Dillon','QV7SHU'],['Lane Transit','JGKEM9'],['Parking','5EYBEJ'],['Shaw','DREAMT'],['WATT','WATT26']];
+
+const state = {
+  view: 'owner', tab: 'members', savedPkg: 'planner', draftPkg: 'planner',
+  edit: false, secs: 1800, timer: null, dlgMember: null,
+  members: [
+    { id: 1, name: 'Mike McConnell', email: 'mike@example.com', role: 'owner', exc: null, you: true },
+    { id: 2, name: 'Codex Dev Reviewer', email: 'reviewer@example.com', role: 'admin', exc: null },
+    { id: 3, name: 'Priya Shah', email: 'priya@example.com', role: 'member', exc: null },
+    { id: 4, name: 'Tom Alvarez', email: 'tom@example.com', role: 'member', exc: null },
+    { id: 5, name: 'Parking Clerk', email: 'clerk@example.com', role: 'member', exc: 'parking' },
+  ],
+};
+
+const TABS = {
+  owner: [['members','Members'],['access','Access']],
+  dev:   [['members','Members'],['access','Access'],['files','Files']],
+};
+const CALLOUTS = {
+  owner: '<b>Team owner / admin.</b> Two tabs: Members and Access. No pills, no Support menu, no directory. One package for the whole team; exceptions are the rare case.',
+  dev:   '<b>You (global admin).</b> Three tabs. <b>Data source</b> moved into Access. <b>Developer Tools</b> dissolved: inspect / edit-session live in the <b>Support ▾</b> menu, <b>+ New team</b> sits in the directory. Try <i>Support ▾ → Start edit session</i>.',
+};
+
+const $ = s => document.querySelector(s);
+const all = s => document.querySelectorAll(s);
+
+function setView(v) {
+  state.view = v; state.tab = 'members';
+  if (v === 'owner') endEdit(true);
+  $('#v-owner').classList.toggle('on', v === 'owner');
+  $('#v-dev').classList.toggle('on', v === 'dev');
+  $('#side').classList.toggle('hidden', v !== 'dev');
+  $('#layout').classList.toggle('with-side', v === 'dev');
+  $('#supportWrap').classList.toggle('hidden', v !== 'dev');
+  $('#callout').innerHTML = CALLOUTS[v];
+  render();
+}
+
+function render() {
+  const isDev = state.view === 'dev';
+  $('#tabs').innerHTML = TABS[state.view].map(([id, label]) =>
+    `<button class="tab ${state.tab === id ? 'on' : ''}" onclick="setTab('${id}')">${label}</button>`).join('');
+  all('[data-panel]').forEach(el => el.classList.toggle('hidden', el.dataset.panel !== state.tab));
+  all('.admin-only').forEach(el => el.classList.toggle('hidden', !isDev));
+
+  $('#teams').innerHTML = TEAMS.map(([n, c], i) =>
+    `<div class="${i === 0 ? 'sel' : ''}"><span>${n}</span><code>${c}</code></div>`).join('');
+
+  // access
+  $('#pkg').innerHTML = PACKAGES.map(p => `<option value="${p.id}" ${p.id === state.draftPkg ? 'selected' : ''}>${p.label}</option>`).join('');
+  const pkg = byId(state.draftPkg);
+  $('#pkgDesc').textContent = pkg.desc;
+  $('#unlocks').innerHTML = pkg.unlocks.length
+    ? pkg.unlocks.map(u => `<span class="chip">${u}</span>`).join('')
+    : '<span class="chip none">No workspaces</span>';
+  const dirty = state.draftPkg !== state.savedPkg;
+  $('#save').disabled = !dirty;
+  $('#revert').disabled = !dirty;
+  const exc = state.members.filter(m => m.exc).length;
+  const inh = state.members.length - exc;
+  $('#saveNote').innerHTML = (dirty ? '<span class="dirty">Unsaved change.</span> ' : '') +
+    `Applies immediately to <b>${inh} member${inh === 1 ? '' : 's'}</b>.` +
+    (exc ? ` ${exc} with an exception ${exc === 1 ? 'is' : 'are'} not affected.` : '');
+  $('#memberCount').textContent = state.members.length;
+
+  // data source lock
+  all('.dsel').forEach(s => s.disabled = !state.edit);
+  $('#dsSave').disabled = !state.edit;
+  $('#dsNote').classList.toggle('lock', !state.edit);
+  $('#dsNote').innerHTML = state.edit ? 'Edit session active. Saving writes to live team data.' : 'Start an edit session (Support ▾) to change data sources.';
+
+  // session banner
+  $('#session').classList.toggle('hidden', !state.edit);
+
+  // members
+  $('#members').innerHTML = state.members.map(m => {
+    const initials = m.name.split(' ').map(s => s[0]).slice(0, 2).join('');
+    return `<div class="member">
+      <div class="avatar">${initials}</div>
+      <div><div class="nm">${m.name}${m.you ? ' <span style="color:var(--mute);font-weight:400">(you)</span>' : ''}</div><div class="em">${m.email}</div></div>
+      <div class="row-r">
+        <span class="role ${m.role}">${m.role}</span>
+        ${m.exc ? `<span class="exc" title="Differs from team package">Custom: ${byId(m.exc).label}</span>` : ''}
+      </div>
+      <div class="row-r">
+        ${isDev ? `<button class="ghost" onclick="inspect('${m.name}')">Inspect as</button><button class="ghost" onclick="setTab('files')">Files</button>` : ''}
+        <button class="ghost" onclick="openDlg(${m.id})">${m.exc ? 'Edit exception' : 'Set exception…'}</button>
+        ${m.role !== 'owner' && !m.you ? '<button class="trash" title="Remove member">🗑</button>' : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function setTab(t) { state.tab = t; render(); }
+function onPkg() { state.draftPkg = $('#pkg').value; render(); }
+function revert() { state.draftPkg = state.savedPkg; render(); }
+function save() { state.savedPkg = state.draftPkg; render(); toast('Team access saved'); }
+
+/* support menu + edit session */
+function toggleMenu(e) { e.stopPropagation(); $('#menu').classList.toggle('open'); }
+function closeMenu() { $('#menu').classList.remove('open'); }
+document.addEventListener('click', closeMenu);
+function inspect(who) { closeMenu(); toast('Inspecting Barrie Transit as ' + (who === 'team' ? 'team default' : who) + ' (read-only)'); }
+function startEdit() {
+  closeMenu(); state.edit = true; state.secs = 1800; tick();
+  clearInterval(state.timer); state.timer = setInterval(() => { state.secs--; if (state.secs <= 0) endEdit(); else tick(); }, 1000);
+  render();
+}
+function endEdit(silent) {
+  clearInterval(state.timer); state.edit = false; if (!silent) { render(); toast('Edit session ended'); }
+}
+function tick() {
+  const m = String(Math.floor(state.secs / 60)).padStart(2, '0'), s = String(state.secs % 60).padStart(2, '0');
+  $('#clock').textContent = m + ':' + s;
+}
+
+/* dialogs */
+function openDlg(id) {
+  state.dlgMember = id;
+  const m = state.members.find(x => x.id === id);
+  $('#dlgTitle').textContent = 'Exception for ' + m.name;
+  const cur = m.exc || '__team';
+  const teamPkg = byId(state.savedPkg);
+  $('#dlgOpts').innerHTML =
+    `<label class="opt"><input type="radio" name="exc" value="__team" ${cur === '__team' ? 'checked' : ''}> <b>Same as team</b><span> · ${teamPkg.label}</span></label>` +
+    PACKAGES.filter(p => p.id !== state.savedPkg).map(p =>
+      `<label class="opt"><input type="radio" name="exc" value="${p.id}" ${cur === p.id ? 'checked' : ''}> <b>${p.label}</b><br><span>${p.desc}</span></label>`).join('');
+  $('#scrimExc').classList.add('open');
+}
+function applyExc() {
+  const v = document.querySelector('input[name=exc]:checked').value;
+  state.members.find(x => x.id === state.dlgMember).exc = v === '__team' ? null : v;
+  closeScrim('scrimExc'); render();
+}
+function openNewTeam() {
+  $('#newPkg').innerHTML = PACKAGES.map(p => `<option value="${p.id}" ${p.id === 'transit' ? 'selected' : ''}>${p.label}</option>`).join('');
+  newPkgDesc();
+  $('#scrimNew').classList.add('open');
+}
+function newPkgDesc() { $('#newPkgDesc').textContent = byId($('#newPkg').value).desc; }
+function closeScrim(id) { document.getElementById(id).classList.remove('open'); }
+
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+setView('owner');
+</script>
+</body>
+</html>
