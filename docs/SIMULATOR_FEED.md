@@ -64,6 +64,27 @@ interface SimulatorDay {
 
 Visit flags: `1` timepoint, `2` passenger-only. `stops` is an additive field within schema 1: readers that don't know it ignore it. The simulator uses it to place temporary stops when it draws detour paths. Breaking changes bump `schema` and must be made in both repositories (`functions/src/simulatorDay.ts` here, `src/data/streetsDay.ts` in the simulator).
 
+## GPS day file
+
+Bus GPS for the simulator's detour detector. The recorder samples Barrie Transit's GTFS-RT vehicle positions (`https://www.myridebarrie.ca/gtfs/GTFS_VehiclePositions.pb`) twice a minute and keeps one file per service day. Recording starts the day the functions are deployed; earlier days have no file.
+
+Path: `vehiclePositions/days/<YYYY-MM-DD>.json.gz` in the default Storage bucket. The object is plain gzip bytes (no `contentEncoding`), so a download must gunzip it. Raw per-minute objects live under `vehiclePositions/raw/<date>/` until the daily compaction deletes them.
+
+```ts
+interface GpsDay {
+  schema: 1;
+  serviceDate: string;               // YYYY-MM-DD
+  feedUrl: string;
+  fetches: number[];                 // t of every feed fetch (coverage: expect 2 a minute)
+  // [t, vehicleId, tripId|null, routeId|null, lat, lon, bearing|null], sorted by vehicle then t
+  pings: [number, string, string | null, string | null, number, number, number | null][];
+}
+```
+
+`t` is seconds after local midnight of the service date (above 86,400 after midnight). Local times before 04:00 belong to the previous service date unless the feed names a `startDate`. `tripId` is the GTFS trip id, equal to STREETS `gtfsTripId`. Pings older than 5 minutes or more than 120 s in the future are dropped, and `(vehicleId, t)` is unique.
+
+Timing: `recordVehiclePositions` runs every minute (skipping 01:45–04:30); `compactVehiclePositions` runs at 04:15, so yesterday's file is ready by about 04:20. Cost: about 2,880 invocations a day; expect a few dollars a month at most. Additive within schema 1; breaking changes bump `schema` in both repositories (`functions/src/vehiclePositions.ts` here, `src/data/gpsDay.ts` in the simulator).
+
 ## Access
 
 Day files live at `teams/{teamId}/performanceViews/simulator-days/{date}/{generation}.json` and the pointer document at `teams/{teamId}/simulatorFeed/metadata`. Neither has a client rule beyond the support-session catch-alls; ordinary clients read only through `sharedWorkspaceData`:
