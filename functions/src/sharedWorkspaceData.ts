@@ -8,9 +8,9 @@ import type {
   PerformanceDetailMode,
   PerformanceMetadata,
 } from './types';
-import { parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
-import { RIDERSHIP_TREND_FILENAME_PATTERN } from '../../utils/ridership-trends/types';
+import { isRidershipTrendStoragePath, parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
 import { createTodRidershipProjection } from '../../utils/ridership-trends/tod';
+import { performanceGenerationFilePattern } from '../../utils/performanceGeneration';
 import type { TodPickupSummary } from '../../utils/todPickupTypes';
 import { PERFORMANCE_SCHEMA_VERSION } from './types';
 import { filterPerformanceSummaryByRoute } from './performanceRouteFilter';
@@ -587,7 +587,7 @@ async function loadMonthlyPerformanceSummary(
       const path = paths[month];
       if (!/^\d{4}-\d{2}$/.test(month)
           || !path.startsWith(expectedPrefix)
-          || !new RegExp(`^\\d+-${detailMode}-${month}\\.json$`).test(path.slice(expectedPrefix.length))) {
+          || !performanceGenerationFilePattern(`-${detailMode}-${month}`).test(path.slice(expectedPrefix.length))) {
         throw new Error('Stored dashboard view path is invalid.');
       }
     }
@@ -646,7 +646,7 @@ async function loadLoadProfileMonthlyView(
     const path = paths[month];
     if (!/^\d{4}-\d{2}$/.test(month)
         || !path.startsWith(expectedPrefix)
-        || !/^\d+-\d{4}-\d{2}\.json$/.test(path.slice(expectedPrefix.length))) {
+        || !performanceGenerationFilePattern('-\\d{4}-\\d{2}').test(path.slice(expectedPrefix.length))) {
       throw new Error('Stored Load Profiles view path is invalid.');
     }
   }
@@ -745,10 +745,7 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
     case 'ridershipTrend': {
       const metadata = await getPerformanceMetadata(payload.sourceTeamId);
       if (!metadata?.ridershipTrendStoragePath) return null;
-      const expectedPrefix = `teams/${payload.sourceTeamId}/performanceViews/ridership-trends/`;
-      const filename = metadata.ridershipTrendStoragePath.slice(expectedPrefix.length);
-      if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
-          || !RIDERSHIP_TREND_FILENAME_PATTERN.test(filename)) {
+      if (!isRidershipTrendStoragePath(metadata.ridershipTrendStoragePath, payload.sourceTeamId)) {
         throw new Error('Stored Ridership Trends projection path is invalid.');
       }
       const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);
@@ -757,10 +754,7 @@ async function loadWorkspaceData(payload: Required<Pick<SharedWorkspacePayload, 
     case 'strategicPlanRidershipTrend': {
       const metadata = await getPerformanceMetadata(payload.sourceTeamId);
       if (!metadata?.ridershipTrendStoragePath) return null;
-      const expectedPrefix = `teams/${payload.sourceTeamId}/performanceViews/ridership-trends/`;
-      const filename = metadata.ridershipTrendStoragePath.slice(expectedPrefix.length);
-      if (!metadata.ridershipTrendStoragePath.startsWith(expectedPrefix)
-          || !RIDERSHIP_TREND_FILENAME_PATTERN.test(filename)) {
+      if (!isRidershipTrendStoragePath(metadata.ridershipTrendStoragePath, payload.sourceTeamId)) {
         throw new Error('Stored Ridership Trends projection path is invalid.');
       }
       const projection = await readStorageJson<unknown>(metadata.ridershipTrendStoragePath);

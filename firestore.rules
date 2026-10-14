@@ -432,7 +432,7 @@ service cloud.firestore {
 
     // Invite lookup documents support the authenticated join flow.
     match /teamInvites/{inviteCode} {
-      allow read: if request.auth != null;
+      allow get: if request.auth != null;
       allow create, update: if request.auth != null &&
                               request.resource.data.teamId is string &&
                               (isTeamOwnerOrAdmin(request.resource.data.teamId) ||
@@ -513,7 +513,27 @@ service cloud.firestore {
              request.resource.data.role == 'member' &&
              inviteCode is string &&
              exists(/databases/$(database)/documents/teamInvites/$(inviteCode)) &&
-             get(/databases/$(database)/documents/teamInvites/$(inviteCode)).data.teamId == teamId;
+             get(/databases/$(database)/documents/teamInvites/$(inviteCode)).data.teamId == teamId &&
+             joinsWithDefaultAccess(teamId, inviteCode);
+    }
+
+    // A member who joins with an invite code gets the team's default access, never one they pick
+    // themselves. joinTeamByInviteCode copies the default from the invite (written only by team
+    // admins) or, for older invites, the team doc, else 'none'; either trusted source is accepted.
+    function joinsWithDefaultAccess(teamId, inviteCode) {
+      let invite = get(/databases/$(database)/documents/teamInvites/$(inviteCode)).data;
+      let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
+      let level = request.resource.data.get('accessLevel', null);
+      let overrides = request.resource.data.get('workspaceOverrides', null);
+      // 'none' is always allowed: older invites lack the defaults and a joiner can't always read the
+      // team doc, so the client falls back to it, and joining with no access is never a risk.
+      return level is string &&
+             (level == 'none' ||
+              level == invite.get('defaultMemberAccessLevel', team.get('defaultMemberAccessLevel', 'none')) ||
+              level == team.get('defaultMemberAccessLevel', 'none')) &&
+             (overrides == null ||
+              overrides == invite.get('defaultMemberWorkspaceOverrides', null) ||
+              overrides == team.get('defaultMemberWorkspaceOverrides', null));
     }
 
     function canCreateInitialOwner(teamId, memberId) {

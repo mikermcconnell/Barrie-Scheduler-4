@@ -10,6 +10,7 @@ export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
 export { developerSupportAccess } from './developerSupportAccess';
 export { archiveGtfsFeeds } from './gtfsArchiveJob';
+export { compactVehiclePositions, recordVehiclePositions } from './vehiclePositionsJob';
 export { publishSimulatorDays } from './simulatorDayJob';
 export { ingestTodDailyKpi } from './todDailyKpi';
 export { cleanupNewScheduleRuntimeMigrationBackups } from './newScheduleRuntimeBackupCleanup';
@@ -37,10 +38,11 @@ import {
 } from './performanceDashboardView';
 import {
   createRidershipTrendProjection,
+  isRidershipTrendStoragePath,
   mergeRidershipTrendProjection,
   parseRidershipTrendProjection,
 } from '../../utils/ridership-trends/model';
-import { RIDERSHIP_TREND_BASELINE_HASH, RIDERSHIP_TREND_FILENAME_PATTERN } from '../../utils/ridership-trends/types';
+import { RIDERSHIP_TREND_BASELINE_HASH } from '../../utils/ridership-trends/types';
 import { buildDwellHistory } from '../../utils/performanceDwellHistory';
 import {
   DEFAULT_PERFORMANCE_LOAD_CAPACITY_CONFIG,
@@ -1431,9 +1433,7 @@ async function savePerformanceSummary(params: {
     updatedAt: new Date().toISOString(),
   });
   if (oldRidershipTrendStoragePath) {
-    const expectedPrefix = `teams/${params.teamId}/performanceViews/ridership-trends/`;
-    if (!oldRidershipTrendStoragePath.startsWith(expectedPrefix)
-        || !RIDERSHIP_TREND_FILENAME_PATTERN.test(oldRidershipTrendStoragePath.slice(expectedPrefix.length))) {
+    if (!isRidershipTrendStoragePath(oldRidershipTrendStoragePath, params.teamId)) {
       throw new Error('Stored Ridership Trends projection path is invalid.');
     }
     const [storedProjection] = await getBucket().file(oldRidershipTrendStoragePath).download();

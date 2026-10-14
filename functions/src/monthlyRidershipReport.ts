@@ -10,13 +10,14 @@ import {
   getPreviousReportMonth,
   type MonthlyRidershipReportModel,
 } from '../../utils/ridership-trends/monthlyReport';
-import { parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
+import { isRidershipTrendStoragePath, parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
 import {
   createTodRidershipProjection,
   parseTodRidershipProjection,
   type TodRidershipProjectionV1,
 } from '../../utils/ridership-trends/tod';
-import { RIDERSHIP_TREND_FILENAME_PATTERN, type RidershipTrendProjectionV1 } from '../../utils/ridership-trends/types';
+import type { RidershipTrendProjectionV1 } from '../../utils/ridership-trends/types';
+import { performanceGenerationFilePattern } from '../../utils/performanceGeneration';
 import type { TodPickupSummary } from '../../utils/todPickupTypes';
 import type { PerformanceDataSummary } from './types';
 import {
@@ -119,8 +120,9 @@ async function loadFixedProjection(params: {
   if (!metadataSnap.exists) return null;
   const path = metadataSnap.data()?.ridershipTrendStoragePath;
   if (typeof path !== 'string' || !path.trim()) return null;
-  const prefix = `teams/${params.teamId}/performanceViews/ridership-trends/`;
-  assertTeamStoragePath(path, prefix, RIDERSHIP_TREND_FILENAME_PATTERN);
+  if (!isRidershipTrendStoragePath(path, params.teamId)) {
+    throw new Error('Stored ridership source path is invalid.');
+  }
   return parseRidershipTrendProjection(await readStorageJson(params.bucket, path));
 }
 
@@ -144,7 +146,7 @@ async function loadPriorYearFixedDailyTotals(params: {
   const path = (monthlyStoragePaths as Record<string, unknown>)[comparisonMonth];
   if (typeof path !== 'string' || !path.trim()) return null;
   const prefix = `teams/${params.teamId}/performanceData/months/`;
-  assertTeamStoragePath(path, prefix, /^\d+-\d{4}-(0[1-9]|1[0-2])[.]json$/);
+  assertTeamStoragePath(path, prefix, performanceGenerationFilePattern('-\\d{4}-(0[1-9]|1[0-2])'));
 
   return extractPriorYearFixedDailyTotals(await readStorageJson(params.bucket, path), comparisonMonth);
 }
