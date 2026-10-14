@@ -268,10 +268,10 @@ service firebase.storage {
     // Compact long-term fixed-route ridership projection. Unlike the broader
     // Operations archives, this view has its own Planning Data permission.
     match /teams/{teamId}/performanceViews/ridership-trends/{generation} {
-      allow read: if generation.matches('^[0-9]+[.]json$') &&
+      allow read: if generation.matches('^[0-9]+(-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?[.]json$') &&
         (canAccessWorkspace(teamId, 'analyticsRidershipTrend') ||
          canSupportReadTeamData(teamId));
-      allow write: if generation.matches('^[0-9]+[.]json$') &&
+      allow write: if generation.matches('^[0-9]+(-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?[.]json$') &&
         (isTeamManager(teamId) || canSupportWriteTeamData(teamId));
     }
 
