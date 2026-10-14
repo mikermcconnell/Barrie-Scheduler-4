@@ -11,6 +11,7 @@ import {
     type RidershipTrendView,
     type RidershipTrendYear,
 } from './types';
+import { performanceGenerationFilePattern } from '../performanceGeneration';
 
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -35,6 +36,13 @@ function isIsoTimestamp(value: unknown): value is string {
     if (typeof value !== 'string' || !ISO_TIMESTAMP_PATTERN.test(value)) return false;
     const parsed = new Date(value);
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+const RIDERSHIP_TREND_FILENAME_PATTERN = performanceGenerationFilePattern();
+
+export function isRidershipTrendStoragePath(path: string, teamId: string): boolean {
+    const prefix = `teams/${teamId}/performanceViews/ridership-trends/`;
+    return path.startsWith(prefix) && RIDERSHIP_TREND_FILENAME_PATTERN.test(path.slice(prefix.length));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

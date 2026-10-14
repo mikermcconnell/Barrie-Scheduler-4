@@ -36,6 +36,7 @@ import {
 } from './performanceDashboardView';
 import {
   createRidershipTrendProjection,
+  isRidershipTrendStoragePath,
   mergeRidershipTrendProjection,
   parseRidershipTrendProjection,
 } from '../../utils/ridership-trends/model';
@@ -1425,9 +1426,7 @@ async function savePerformanceSummary(params: {
     updatedAt: new Date().toISOString(),
   });
   if (oldRidershipTrendStoragePath) {
-    const expectedPrefix = `teams/${params.teamId}/performanceViews/ridership-trends/`;
-    if (!oldRidershipTrendStoragePath.startsWith(expectedPrefix)
-        || !/^\d+[.]json$/.test(oldRidershipTrendStoragePath.slice(expectedPrefix.length))) {
+    if (!isRidershipTrendStoragePath(oldRidershipTrendStoragePath, params.teamId)) {
       throw new Error('Stored Ridership Trends projection path is invalid.');
     }
     const [storedProjection] = await getBucket().file(oldRidershipTrendStoragePath).download();
