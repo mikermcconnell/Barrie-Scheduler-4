@@ -1,5 +1,5 @@
 import { usePerformanceAggregation } from './performanceAggregation';
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     LineChart, Line, Legend,
@@ -13,7 +13,7 @@ import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayD
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
 import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { RidershipLoadSection } from './RidershipLoadSection';
-import { buildRouteLoadAnalysis } from '../../utils/performanceRouteLoad';
+import { buildRouteLoadAnalysis, type LoadTimePeriod } from '../../utils/performanceRouteLoad';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useTodPickupDataQuery, useTodPickupMetadataQuery } from '../../hooks/useTodPickupData';
@@ -233,9 +233,9 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     const todIsLoading = todMetadataQuery.isLoading || todDataQuery.isLoading;
     const todError = todMetadataQuery.error || todDataQuery.error;
     const hasStoredTodReports = (todDataQuery.data?.dailyReports?.length || 0) > 0;
-    const routeLoadAnalysis = useMemo(
-        () => (canViewLoad ? buildRouteLoadAnalysis(filtered) : { views: [], vehicles: [] }),
-        [canViewLoad, filtered],
+    const routeLoadAnalysisForPeriod = useCallback(
+        (period: LoadTimePeriod) => buildRouteLoadAnalysis(filtered, period),
+        [filtered],
     );
 
     // Route daily trend (multi-line)
@@ -327,7 +327,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
                 )}
             </ChartCard>
 
-            {canViewLoad && <RidershipLoadSection analysis={routeLoadAnalysis} />}
+            {canViewLoad && <RidershipLoadSection analysisForPeriod={routeLoadAnalysisForPeriod} />}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Route Ranking */}

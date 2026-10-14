@@ -405,6 +405,34 @@ describe('convertToMasterSchedule', () => {
         expect(content.northTable.trips[0].stops['Downtown Hub (2)']).toBe('6:30 AM');
         expect(content.northTable.trips[0].recoveryTimes?.['Downtown Hub (2)']).toBe(5);
     });
+
+    it('does not subtract first-stop recovery from driving time', () => {
+        // Mirrors 8B-N-31: arrive B.A.T.T. 8:07, depart 8:12, two minutes at Anne, arrive College 8:43.
+        const content = convertToMasterSchedule(
+            [
+                buildProcessedTrip({
+                    tripId: 'interline-1',
+                    direction: 'North',
+                    blockId: 'bus-1',
+                    startTime: 1212,
+                    endTime: 1243,
+                    travelTime: 31,
+                    stopTimes: [
+                        { stopId: 'BATT', stopName: 'B.A.T.T.', arrivalTime: '20:07:00', departureTime: '20:12:00', arrivalMinutes: 1207, departureMinutes: 1212, sequence: 1, isTimepoint: true },
+                        { stopId: 'ANNE', stopName: 'Anne at Donald', arrivalTime: '20:18:00', departureTime: '20:20:00', arrivalMinutes: 1218, departureMinutes: 1220, sequence: 2, isTimepoint: true },
+                        { stopId: 'GC', stopName: 'Georgian College', arrivalTime: '20:43:00', departureTime: '20:46:00', arrivalMinutes: 1243, departureMinutes: 1246, sequence: 3, isTimepoint: true },
+                    ],
+                }),
+            ],
+            '8B',
+            'Weekday'
+        );
+
+        const trip = content.northTable.trips[0];
+        expect(trip.recoveryTimes).toEqual({ 'B.A.T.T.': 5, 'Anne at Donald': 2, 'Georgian College': 3 });
+        expect(trip.cycleTime).toBe(34);
+        expect(trip.travelTime).toBe(29);
+    });
 });
 
 describe('importRouteFromGTFS', () => {

@@ -2,6 +2,7 @@ import * as admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { ARCHIVE_FEEDS, archiveFeedIfChanged, type ArchiveStore } from './gtfsArchive';
+import { addArchivedScheduleFeed } from './gtfsScheduleArchive';
 
 const ARCHIVE_COLLECTION = 'gtfsArchive';
 
@@ -18,6 +19,15 @@ const firestoreStore: ArchiveStore = {
       await bucket.file(record.reducedPath).save(reducedJson, { contentType: 'application/json', resumable: false });
     }
     await admin.firestore().collection(ARCHIVE_COLLECTION).doc(record.feedId).collection('snapshots').doc(record.snapshotId).set(record);
+    if (record.feedId === 'barrie') {
+      // Missed-trip matching reads this, so a new board takes effect without a deploy.
+      try {
+        const feedVersion = await addArchivedScheduleFeed(bucket, zip, record.snapshotId);
+        console.info('Added Barrie schedule to missed-trip bundle', { feedVersion, snapshotId: record.snapshotId });
+      } catch (error) {
+        console.error('Could not add Barrie schedule to missed-trip bundle', { snapshotId: record.snapshotId, error });
+      }
+    }
   },
   async recordCheck(feedId, checkedAt, state) {
     await admin.firestore().collection(ARCHIVE_COLLECTION).doc(feedId).set({ lastCheckedAt: checkedAt, etag: state.etag, sha256: state.sha256 }, { merge: true });

@@ -20,7 +20,7 @@ The feed is a read model only. It does not change performance history, dashboard
 
 ## GTFS matching
 
-Each day is matched against the archived Barrie GTFS feed (`gtfsArchive/barrie/snapshots`, written by `archiveGtfsFeeds`) whose date range covers the service date; the newest covering snapshot wins. If none covers the date, the newest snapshot is used and the day is marked `gtfs.covers: false`. The bundled `functions/src/gtfs/` files are not used.
+Each day is matched against the archived Barrie GTFS feed (`gtfsArchive/barrie/snapshots`, written by `archiveGtfsFeeds`) whose date range covers the service date; the newest covering snapshot wins. If none covers the date, the newest snapshot is used and the day is marked `gtfs.covers: false`. The packaged missed-trip schedule bundle (`data/gtfsScheduleBundle.json`) is not used.
 
 - A trip matches by identical STREETS `TripID` and GTFS `trip_id` among trips running that date (`match: 'trip-id'`); otherwise by the active trip leaving the same first stop at the same scheduled time, preferring a matching route short name (`match: 'first-stop-time'`). Unmatched trips keep `gtfsTripId: null`.
 - STREETS stop IDs resolve to GTFS `stop_id` directly or through `stop_code`; unresolved stops are written as `streets:<StopID>`.
