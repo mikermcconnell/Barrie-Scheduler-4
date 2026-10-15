@@ -18,6 +18,7 @@ import { useWorkspacePreload } from './hooks/useWorkspacePreload';
 import { getPendingInviteCode } from './utils/inviteLinks';
 import { ANALYTICS_WORKSPACE_FEATURES } from './utils/workspaceAccess';
 import { parseAnalyticsWorkspaceViewFromHash } from './utils/workspaces/analyticsWorkspaceRouting';
+import { SimulatorQuickLink } from './components/Performance/SimulatorLink';
 
 const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
@@ -301,6 +302,7 @@ const AppContent: React.FC = () => {
                     </span>
                     <ArrowRight size={16} aria-hidden="true" className="ml-auto shrink-0 text-gray-300 transition-colors group-hover:text-amber-600" />
                   </button>
+                  <SimulatorQuickLink />
                 </div>
               </section>
             )}
