@@ -8,22 +8,28 @@ import {
   compactDay,
   decodePings,
   isQuietHours,
+  mergeToday,
   secondsOfService,
   serviceDateOf,
   type GpsDayFile,
   type PingRow,
   type RawFile,
+  type TodayFile,
 } from './vehiclePositions';
 
 /**
  * Records Barrie Transit's GTFS-RT vehicle positions for the simulator's GPS detour detector
  * (docs/SIMULATOR_FEED.md, "GPS day file"). Two scheduled functions:
  * - recordVehiclePositions: every minute, two samples 30 s apart, one small raw object per minute
+ * - snapshotVehiclePositions: every 5 minutes, merges today's raw objects so far into one gzip file,
+ *   so the hosted simulator reads one file plus a few minutes instead of hundreds of objects
  * - compactVehiclePositions: 04:15 daily, merges each finished day into one gzip file
  */
 
 const RAW_PREFIX = 'vehiclePositions/raw/';
 const DAY_PREFIX = 'vehiclePositions/days/';
+const TODAY_PREFIX = 'vehiclePositions/today/';
+const PARALLEL_DOWNLOADS = 16;
 const FETCH_TIMEOUT_MS = 10_000;
 const SAMPLE_GAP_MS = 30_000;
 
@@ -84,6 +90,58 @@ export const recordVehiclePositions = onSchedule(
   },
 );
 
+export const snapshotVehiclePositions = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    timeZone: 'America/Toronto',
+    region: 'us-central1',
+    timeoutSeconds: 300,
+    memory: '512MiB',
+    retryCount: 0,
+  },
+  async () => {
+    const now = Date.now();
+    if (isQuietHours(now)) return;
+    const serviceDate = serviceDateOf(now);
+    const bucket = getStorage().bucket();
+    const target = bucket.file(`${TODAY_PREFIX}${serviceDate}.json.gz`);
+    let existing: TodayFile | null = null;
+    // 0 = "must not exist yet": a concurrent writer makes the save fail instead of losing rows.
+    let generation = 0;
+    const [exists] = await target.exists();
+    if (exists) {
+      const [meta] = await target.getMetadata();
+      generation = Number(meta.generation);
+      const [buf] = await target.download();
+      existing = JSON.parse(gunzipSync(buf).toString('utf8')) as TodayFile;
+    }
+    const merged = new Set(existing?.merged ?? []);
+    const [files] = await bucket.getFiles({ prefix: `${RAW_PREFIX}${serviceDate}/` });
+    const fresh = files.filter((f) => !merged.has(f.name.split('/').pop()!));
+    if (!fresh.length) return;
+    const raws: { name: string; file: RawFile }[] = [];
+    for (let i = 0; i < fresh.length; i += PARALLEL_DOWNLOADS) {
+      await Promise.all(
+        fresh.slice(i, i + PARALLEL_DOWNLOADS).map(async (f) => {
+          const [buf] = await f.download();
+          raws.push({ name: f.name.split('/').pop()!, file: JSON.parse(buf.toString('utf8')) as RawFile });
+        }),
+      );
+    }
+    const today = mergeToday(serviceDate, existing, raws);
+    try {
+      await target.save(gzipSync(JSON.stringify(today)), {
+        contentType: 'application/json',
+        resumable: false,
+        preconditionOpts: { ifGenerationMatch: generation },
+      });
+    } catch (error) {
+      // Never throw: the next run merges the same objects again.
+      console.warn('Vehicle positions snapshot write failed', { serviceDate, error: String(error) });
+    }
+  },
+);
+
 export const compactVehiclePositions = onSchedule(
   {
     schedule: 'every day 04:15',
@@ -122,5 +180,8 @@ export const compactVehiclePositions = onSchedule(
       await Promise.all(objects.map((o) => o.delete()));
       console.info('Compacted vehicle positions', { date, objects: objects.length, pings: day.pings.length, fetches: day.fetches.length });
     }
+    // Finished days are in their day file now: drop their "today so far" snapshots.
+    const [snapshots] = await bucket.getFiles({ prefix: TODAY_PREFIX });
+    await Promise.all(snapshots.filter((f) => f.name.slice(TODAY_PREFIX.length, TODAY_PREFIX.length + 10) < today).map((f) => f.delete({ ignoreNotFound: true })));
   },
 );

@@ -83,7 +83,9 @@ interface GpsDay {
 
 `t` is seconds after local midnight of the service date (above 86,400 after midnight). Local times before 04:00 belong to the previous service date unless the feed names a `startDate`. `tripId` is the GTFS trip id, equal to STREETS `gtfsTripId`. Pings older than 5 minutes or more than 120 s in the future are dropped, and `(vehicleId, t)` is unique.
 
-Timing: `recordVehiclePositions` runs every minute (skipping 01:45–04:30); `compactVehiclePositions` runs at 04:15, so yesterday's file is ready by about 04:20. Cost: about 2,880 invocations a day; expect a few dollars a month at most. Additive within schema 1; breaking changes bump `schema` in both repositories (`functions/src/vehiclePositions.ts` here, `src/data/gpsDay.ts` in the simulator).
+Today so far: `vehiclePositions/today/<YYYY-MM-DD>.json.gz` (plain gzip, like the day file) holds the same `GpsDay` fields for the current service day, plus `merged: string[]`, the raw object names (`HHMMSS.json`) already in it. `snapshotVehiclePositions` adds new raw objects every 5 minutes, so a reader needs this file plus the raw objects of the date that are not in `merged` (at most a few minutes). Names are clock times that wrap at midnight, so compare by name, not by order. The 04:15 compaction deletes the snapshots of finished days. The simulator's hosted site reads it for Live Operations (its `api/today.ts`).
+
+Timing: `recordVehiclePositions` runs every minute (skipping 01:45–04:30); `snapshotVehiclePositions` every 5 minutes (same quiet hours); `compactVehiclePositions` runs at 04:15, so yesterday's file is ready by about 04:20. Cost: about 2,880 invocations a day; expect a few dollars a month at most. Additive within schema 1; breaking changes bump `schema` in both repositories (`functions/src/vehiclePositions.ts` here, `src/data/gpsDay.ts` in the simulator).
 
 ## Access
 
