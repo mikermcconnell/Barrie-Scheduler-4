@@ -1,4 +1,5 @@
-import type { OperationsMatrix, RuleProfile } from './types';
+import type { DayType } from '../masterScheduleTypes';
+import type { OperationsMatrix, OperationsMatrixEntry, RuleProfile } from './types';
 
 const MINUTE = 60;
 
@@ -7,16 +8,35 @@ export const BARRIE_RULE_SOURCE_IDS = {
     plannerConfirmations: 'planner-confirmations-2026-08-27',
     parkPlaceOverride: 'park-place-break-override-2026-08-27',
     dutyClarifications: 'planner-duty-clarifications-2026-09-21',
+    reliefConfirmations: 'planner-relief-confirmations-2026-10-07',
+    boardPaddles: 'board-paddles-2026-09-20',
 } as const;
 
+/** Matches any route in an operations matrix entry. */
+export const ANY_ROUTE = '*';
+
 export const createDefaultBarrieRuleProfile = (
-    confirmedAt = '2026-09-21',
+    confirmedAt = '2026-10-07',
 ): RuleProfile => ({
     id: 'barrie-operations-rules-v1',
     name: 'Barrie Transit operations rules',
-    revision: 2,
+    revision: 3,
     confirmedAt,
     sources: [
+        {
+            id: BARRIE_RULE_SOURCE_IDS.boardPaddles,
+            label: 'Cab times from the September 20, 2026 board-period paddles',
+            authority: 'planner-confirmed',
+            confirmedBy: 'Planner',
+            note: 'October 7, 2026: cab and shuttle times taken from the paddles the planner supplied. Downtown Hub to B.A.T.T. is 11 minutes both ways (25 of 25 cab trips); Garage to B.A.T.T. is 10 minutes (100 of 102). A route change needs no break of its own; a meal of 30 minutes or more qualifies on any route, and under 42 minutes is a best-practice warning. Seven relief cars (Car 1 to Car 7) carry operators between the Garage and relief points only at the start or end of a run or around a Garage break; moves between relief points within a run use shuttles, not relief cars.',
+        },
+        {
+            id: BARRIE_RULE_SOURCE_IDS.reliefConfirmations,
+            label: 'Planner confirmation of Downtown Hub meals and route changes at Downtown Hub, Park Place and B.A.T.T.',
+            authority: 'planner-confirmed',
+            confirmedBy: 'Planner',
+            note: 'October 7, 2026: Downtown Hub is a meal location, and operators may change routes at Downtown Hub, Park Place or B.A.T.T. This supersedes the earlier relief-only status of Downtown Hub.',
+        },
         {
             id: BARRIE_RULE_SOURCE_IDS.dutyClarifications,
             label: 'Planner confirmation of no-meal driving cap and whole-gap split threshold',
@@ -80,8 +100,8 @@ export const createDefaultBarrieRuleProfile = (
             id: 'downtown-hub',
             name: 'Downtown Hub',
             aliases: ['Downtown Hub', 'Downtown Terminal', 'Downtown Transit Terminal'],
-            fullBreakPoint: false,
-            sourceId: BARRIE_RULE_SOURCE_IDS.unionPages,
+            fullBreakPoint: true,
+            sourceId: BARRIE_RULE_SOURCE_IDS.reliefConfirmations,
         },
         {
             id: 'garage',
@@ -93,25 +113,25 @@ export const createDefaultBarrieRuleProfile = (
     ],
     travelTimes: ([
         ['Downtown Hub', 15],
-        ['B.A.T.T.', 12],
+        ['B.A.T.T.', 10, BARRIE_RULE_SOURCE_IDS.boardPaddles],
         ['Barrie South GO', 8],
         ['Park Place', 6],
         ['Georgian Mall', 20],
         ['Georgian College', 20],
         ['RVH', 20],
         ['Sproule at Kraus', 20],
-    ] as Array<[string, number]>).map(([location, minutes]) => ({
+    ] as Array<[string, number, string?]>).map(([location, minutes, sourceId]) => ({
         from: 'Garage',
         to: location,
         minutes,
         symmetric: true,
-        sourceId: BARRIE_RULE_SOURCE_IDS.plannerConfirmations as string,
+        sourceId: sourceId ?? BARRIE_RULE_SOURCE_IDS.plannerConfirmations,
     })).concat([{
         from: 'B.A.T.T.',
         to: 'Downtown Hub',
         minutes: 11,
-        symmetric: false,
-        sourceId: BARRIE_RULE_SOURCE_IDS.unionPages as string,
+        symmetric: true,
+        sourceId: BARRIE_RULE_SOURCE_IDS.boardPaddles,
     }]),
     signOnMinutes: 5,
     circleCheckMinutes: 10,
@@ -123,7 +143,8 @@ export const createDefaultBarrieRuleProfile = (
     targetBreakAfterMinutes: { minimum: 4.25 * MINUTE, maximum: 4.75 * MINUTE },
     paidThroughGapMaximumMinutes: 15,
     sameRouteResetMinimumMinutes: 30,
-    routeChangeResetMinimumMinutes: 42,
+    // A route change needs no break of its own; a meal resets continuous driving at the same minimum on any route.
+    routeChangeResetMinimumMinutes: 30,
     standardBreakMinutes: { minimum: 42, maximum: 75 },
     nonSplitExceptionBreakMinutes: { minimum: 76, maximum: 89 },
     splitThresholdMinutes: 90,
@@ -145,7 +166,8 @@ export const createDefaultBarrieRuleProfile = (
         note: '8A/8B interlining is allowed all day Sunday.',
         sourceId: BARRIE_RULE_SOURCE_IDS.plannerConfirmations,
     }],
-    reliefCabCapacity: 6,
+    // Relief cars on the road at once: the September 20, 2026 paddles run Car 1 to Car 7.
+    reliefCabCapacity: 7,
     fleetByDayType: {
         Weekday: { fortyFoot: 31, small: 6 },
         Saturday: { fortyFoot: 31, small: 5 },
@@ -222,6 +244,15 @@ export const createDefaultBarrieOperationsMatrix = (): OperationsMatrix => ({
             minimumTransitionMinutes: 0,
             note: 'Allowed only after 8:00 PM; the time-window validator applies the additional condition.',
         },
+        ...(['Downtown Hub', 'Park Place', 'B.A.T.T.'].map(reliefPoint => ({
+            fromRoute: ANY_ROUTE,
+            toRoute: ANY_ROUTE,
+            dayTypes: ['Weekday', 'Saturday', 'Sunday'] as DayType[],
+            allowed: true,
+            minimumTransitionMinutes: 0,
+            fromReliefPoint: reliefPoint,
+            note: `Operators may change routes when they leave a bus at ${reliefPoint} (planner confirmations, October 7, 2026). Route pairs listed above keep their own rules.`,
+        }))),
     ],
 });
 
@@ -259,4 +290,27 @@ export const getTravelMinutes = (profile: RuleProfile, from: string, to: string)
         rule.symmetric && normalize(rule.from) === normalize(to) && normalize(rule.to) === normalize(from),
     );
     return reverse?.minutes ?? null;
+};
+
+/**
+ * Finds the matrix entry governing an operator's change from one route to another.
+ * Entries naming both routes take precedence over ANY_ROUTE entries, so a specific
+ * pair (for example 8A/8B with its time window) is never widened by a general rule.
+ * Relief points on an entry must match where the operator leaves and boards.
+ */
+export const findOperationsMatrixEntry = (
+    profile: RuleProfile,
+    matrix: OperationsMatrix,
+    transition: { fromRoute: string; toRoute: string; dayType: DayType; fromReliefPoint: string; toReliefPoint: string },
+): OperationsMatrixEntry | undefined => {
+    const samePoint = (expected: string | undefined, actual: string) => {
+        if (!expected) return true;
+        const point = findReliefPoint(profile, expected);
+        return point ? point.id === findReliefPoint(profile, actual)?.id : expected === actual;
+    };
+    const applies = (entry: OperationsMatrixEntry) => entry.dayTypes.includes(transition.dayType)
+        && samePoint(entry.fromReliefPoint, transition.fromReliefPoint)
+        && samePoint(entry.toReliefPoint, transition.toReliefPoint);
+    return matrix.entries.find(entry => entry.fromRoute === transition.fromRoute && entry.toRoute === transition.toRoute && applies(entry))
+        ?? matrix.entries.find(entry => entry.fromRoute === ANY_ROUTE && entry.toRoute === ANY_ROUTE && applies(entry));
 };

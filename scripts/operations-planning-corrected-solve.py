@@ -133,66 +133,103 @@ def solve_daily(data, seconds, seed, excluded=()):
     return result
 
 
-def solve_daily_mip(data, seconds, seed, excluded=()):
-    """Same daily model as solve_daily, as a MIP. The LP relaxation of set
-    partitioning is tight, which suits large candidate pools."""
+def solve_daily_mip(data, seconds, seed, excluded=(), allow_missing=False):
+    """Daily model as one MIP per day type (SCIP). Relief-cab capacity rows are
+    added lazily at over-capacity times until the selection fits. Weekly
+    aggregates are left to the roster stage, which enforces them exactly.
+    allow_missing lets units go uncovered at a large penalty and reports them,
+    which locates candidate-pool conflicts for generate --focus."""
     rules = data["rules"]
-    weekly = rules["weekly"]
     candidates = data["candidates"]
     for candidate in candidates:
         if "unitIds" not in candidate:
             candidate["unitIds"] = [data["units"][i]["id"] for i in candidate["unitIndexes"]]
     unit_days = {u["id"]: u["dayType"] for u in data["units"]}
-    by_unit = {u["id"]: [] for u in data["units"]}
-    for i, candidate in enumerate(candidates):
-        for unit in candidate["unitIds"]:
-            if unit not in by_unit or unit_days[unit] != candidate["dayType"]:
-                raise ValueError("Unknown or wrong-day candidate unit")
-            by_unit[unit].append(i)
-    uncovered = [unit for unit, choices in by_unit.items() if not choices]
-    if uncovered:
-        return {"status": "INFEASIBLE", "reason": "Units have no candidate", "uncoveredUnitIds": uncovered}
-    solver = pywraplp.Solver.CreateSolver("HIGHS")
-    solver.SetTimeLimit(int(seconds * 1000))
-    selected = [solver.BoolVar(c["id"]) for c in candidates]
-    for choices in by_unit.values():
-        solver.Add(sum(selected[i] for i in choices) == 1)
-    for day_type in set(DAY_TYPES):
+    lookup = {c["id"]: i for i, c in enumerate(candidates)}
+    capacity = rules["reliefCabCapacity"]
+    started = time.monotonic()
+    result = {"status": "OPTIMAL", "engine": "scip-mip-by-day", "days": {}, "selectedCandidateIds": [], "objective": 0, "bestBound": 0}
+    day_types = sorted(set(DAY_TYPES))
+    for position, day_type in enumerate(day_types):
         indexes = [i for i, c in enumerate(candidates) if c["dayType"] == day_type]
-        share = rules["longSpreadMinutes"]["maximumShare"]
-        solver.Add(sum(selected[i] for i in indexes if candidates[i]["spreadMinutes"] > rules["longSpreadMinutes"]["threshold"])
-                   <= share * sum(selected[i] for i in indexes))
-        # Cumulative cab capacity: checking each interval start is sufficient.
-        intervals = [(interval["start"], interval["end"], i) for i in indexes
-                     for interval in candidates[i].get("cabIntervals", []) if interval["end"] > interval["start"]]
+        by_unit = {u["id"]: [] for u in data["units"] if u["dayType"] == day_type}
+        for i in indexes:
+            for unit in candidates[i]["unitIds"]:
+                if unit not in by_unit or unit_days[unit] != day_type:
+                    raise ValueError("Unknown or wrong-day candidate unit")
+                by_unit[unit].append(i)
+        uncovered = [unit for unit, choices in by_unit.items() if not choices]
+        if uncovered:
+            return {"status": "INFEASIBLE", "reason": "Units have no candidate", "uncoveredUnitIds": uncovered}
+        intervals = sorted((interval["start"], interval["end"], i) for i in indexes
+                           for interval in candidates[i].get("cabIntervals", []) if interval["end"] != interval["start"])
         if any(end < start for start, end, _ in intervals):
             raise ValueError("Negative cab interval")
-        intervals.sort()
-        for start, _, _ in {(start, 0, 0) for start, _, _ in intervals}:
-            active = [selected[i] for s, e, i in intervals if s <= start < e]
-            if len(active) > rules["reliefCabCapacity"]:
-                solver.Add(sum(active) <= rules["reliefCabCapacity"])
-    weights = [5 if c["dayType"] == "Weekday" else 1 for c in candidates]
-    crews = solver.IntVar(0, rules["workforce"]["fixedCrews"], "aggregate-crews")
-    four_day = solver.IntVar(0, weekly["fourDayRosterMaximumCount"], "aggregate-four-day")
-    solver.Add(four_day <= crews)
-    solver.Add(sum(w * x for w, x in zip(weights, selected)) == 5 * crews - four_day)
-    total_paid = sum(w * c["paidMinutes"] * x for w, c, x in zip(weights, candidates, selected))
-    solver.Add(total_paid >= weekly["minimumPaidMinutes"] * crews)
-    solver.Add(total_paid <= weekly["maximumCombinedMinutes"] * crews)
-    solver.Add(sum(w * c["platformMinutes"] * x for w, c, x in zip(weights, candidates, selected)) <= weekly["maximumPlatformMinutes"] * crews)
-    lookup = {c["id"]: i for i, c in enumerate(candidates)}
-    for prior in excluded:
-        solver.Add(sum(selected[lookup[key]] for key in prior) <= len(prior) - 1)
-    solver.Minimize(sum(round(c.get("cost", c["paidMinutes"])) * w * x for c, w, x in zip(candidates, weights, selected)))
-    started = time.monotonic()
-    status = solver.Solve()
-    names = {pywraplp.Solver.OPTIMAL: "OPTIMAL", pywraplp.Solver.FEASIBLE: "FEASIBLE", pywraplp.Solver.INFEASIBLE: "INFEASIBLE"}
-    result = {"status": names.get(status, "UNKNOWN"), "engine": "highs-mip", "wallSeconds": time.monotonic() - started,
-              "bestBound": solver.Objective().BestBound()}
-    if status in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
-        result.update(selectedCandidateIds=[c["id"] for c, x in zip(candidates, selected) if x.solution_value() > 0.5],
-                      objective=solver.Objective().Value(), aggregateCrews=round(crews.solution_value()))
+        solver = pywraplp.Solver.CreateSolver("SCIP")
+        solver.SetSolverSpecificParametersAsString(f"limits/gap = 0.01\nrandomization/randomseedshift = {seed}\n")
+        infinity = solver.infinity()
+        selected = {i: solver.BoolVar(candidates[i]["id"]) for i in indexes}
+        missing = {}
+        for unit, choices in by_unit.items():
+            row = solver.Constraint(1, 1)
+            for i in choices:
+                row.SetCoefficient(selected[i], 1)
+            if allow_missing:
+                missing[unit] = solver.BoolVar(f"missing-{unit}")
+                row.SetCoefficient(missing[unit], 1)
+        share = rules["longSpreadMinutes"]["maximumShare"]
+        row = solver.Constraint(-infinity, 0)
+        for i in indexes:
+            row.SetCoefficient(selected[i], (1 if candidates[i]["spreadMinutes"] > rules["longSpreadMinutes"]["threshold"] else 0) - share)
+        for prior in excluded:
+            keys = [lookup[key] for key in prior if candidates[lookup[key]]["dayType"] == day_type]
+            # Exclusions are whole-week selections; cut only the part for this day.
+            if keys and len(keys) == sum(1 for key in prior if candidates[lookup[key]]["dayType"] == day_type):
+                row = solver.Constraint(-infinity, len(keys) - 1)
+                for i in keys:
+                    row.SetCoefficient(selected[i], 1)
+        weight = 5 if day_type == "Weekday" else 1
+        objective = solver.Objective()
+        for i in indexes:
+            objective.SetCoefficient(selected[i], round(candidates[i].get("cost", candidates[i]["paidMinutes"])) * weight)
+        for variable in missing.values():
+            objective.SetCoefficient(variable, 1000000)
+        objective.SetMinimization()
+        added, rounds = set(), 0
+        while True:
+            remaining = seconds * (position + 1) / len(day_types) - (time.monotonic() - started)
+            # Cap each lazy cab round so one round cannot consume the day's budget.
+            solver.SetTimeLimit(int(max(min(remaining, 300), 30) * 1000))
+            status = solver.Solve()
+            rounds += 1
+            if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+                result["days"][day_type] = {"status": "INFEASIBLE" if status == pywraplp.Solver.INFEASIBLE else "UNKNOWN", "cabRounds": rounds}
+                return {**result, "status": result["days"][day_type]["status"], "selectedCandidateIds": None}
+            chosen = {i for i in indexes if selected[i].solution_value() > 0.5}
+            # Sweep the chosen cab intervals; add a capacity row at each over-capacity start.
+            used = [(s, e) for s, e, i in intervals if i in chosen]
+            over = [start for start in sorted({s for s, _ in used})
+                    if start not in added and sum(1 for s, e in used if s <= start < e) > capacity]
+            if not over:
+                break
+            for start in over:
+                added.add(start)
+                row = solver.Constraint(-infinity, capacity)
+                for s, e, i in intervals:
+                    if s <= start < e:
+                        row.SetCoefficient(selected[i], row.GetCoefficient(selected[i]) + 1)
+            solver.SetHint([selected[i] for i in indexes], [1.0 if i in chosen else 0.0 for i in indexes])
+        day_status = "OPTIMAL" if status == pywraplp.Solver.OPTIMAL else "FEASIBLE"
+        if day_status != "OPTIMAL":
+            result["status"] = "FEASIBLE"
+        result["days"][day_type] = {"status": day_status, "runs": len(chosen), "objective": objective.Value(), "bestBound": objective.BestBound(),
+                                    "cabRounds": rounds, "cabRows": len(added)}
+        if allow_missing:
+            result["days"][day_type]["missing"] = [unit for unit, variable in missing.items() if variable.solution_value() > 0.5]
+        result["selectedCandidateIds"] += [candidates[i]["id"] for i in sorted(chosen)]
+        result["objective"] += objective.Value()
+        result["bestBound"] += objective.BestBound()
+    result["wallSeconds"] = time.monotonic() - started
     return result
 
 
@@ -275,18 +312,30 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", default="outputs/corrected-run-cut-20260921/candidates.json")
     parser.add_argument("--output", default="outputs/corrected-run-cut-20260921/solution.json")
-    parser.add_argument("--stage", choices=["daily", "weekly", "all"], default="all")
+    parser.add_argument("--stage", choices=["daily", "weekly", "all", "slack"], default="all")
     parser.add_argument("--daily-seconds", type=float, default=120)
     parser.add_argument("--weekly-seconds", type=float, default=180)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument("--daily-engine", choices=["cp-sat", "mip"], default="cp-sat")
+    parser.add_argument("--allow-missing", action="store_true", help="MIP only: return the best partial cover and report uncovered units")
+    parser.add_argument("--ignore-cabs", action="store_true", help="Do not enforce relief-cab capacity; the app still reports any breach")
     args = parser.parse_args()
     raw = Path(args.input).read_bytes()
     data = json.loads(raw)
+    if args.ignore_cabs:
+        for candidate in data["candidates"]:
+            candidate["cabIntervals"] = []
     output = Path(args.output)
     result = {"candidateInputSha256": hashlib.sha256(raw).hexdigest(), "status": "UNKNOWN", "attempts": [], "scope": "Supplied candidate pool; daily legality independently validated by Scheduler 4"}
     excluded = []
+    if args.stage == "slack":
+        # Coverage-slack diagnosis; the output feeds generate --focus.
+        daily = solve_daily_mip(data, args.daily_seconds, args.seed, allow_missing=True)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(daily.get("days", {}), indent=2), encoding="utf-8")
+        print(json.dumps({day: {"status": d["status"], "runs": d.get("runs"), "missing": len(d.get("missing", []))} for day, d in daily.get("days", {}).items()}), flush=True)
+        return
     for iteration in range(1 if args.stage != "all" else args.iterations):
         if args.stage == "weekly":
             previous = json.loads(output.read_text(encoding="utf-8"))
@@ -294,7 +343,10 @@ def main():
                 raise ValueError("Daily selection belongs to a different candidate input")
             daily = previous["daily"]
         else:
-            daily = (solve_daily_mip if args.daily_engine == "mip" else solve_daily)(data, args.daily_seconds, args.seed + iteration, excluded)
+            if args.daily_engine == "mip":
+                daily = solve_daily_mip(data, args.daily_seconds, args.seed + iteration, excluded, allow_missing=args.allow_missing)
+            else:
+                daily = solve_daily(data, args.daily_seconds, args.seed + iteration, excluded)
         result["daily"] = daily
         if daily["status"] not in ("FEASIBLE", "OPTIMAL"):
             result["status"] = daily["status"] if not excluded else "UNKNOWN"

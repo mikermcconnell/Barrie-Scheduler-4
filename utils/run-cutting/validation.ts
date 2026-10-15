@@ -1,8 +1,9 @@
 import { calculateDailyRunMetrics, calculateWeeklyRosterMetrics, expectedDayTypeForRosterDay, getRunTrips } from './metrics';
-import { findReliefPoint, getTravelMinutes } from './rules';
+import { findOperationsMatrixEntry, findReliefPoint, getTravelMinutes } from './rules';
 import { calculatePieceTransition, resolvePieceBoardingTime } from './dutyTransitions';
 import { projectOperationsPlanningInput, projectRun } from './interiorRelief';
 import { stableStringify } from './masterAdapter';
+import { calculateReliefCarTrips, peakReliefCarsOnRoad } from './reliefCars';
 import type {
     DailyRun,
     OperationsPlanningInputV1,
@@ -261,9 +262,10 @@ const validateRun = (
         if (!transition.isSplit && actualBreak >= rules.nonSplitExceptionBreakMinutes.minimum && actualBreak <= rules.nonSplitExceptionBreakMinutes.maximum) {
             finding(findings, 'exception', 'non-split-long-break', `Run ${run.runNumber} has a ${actualBreak}-minute non-split break requiring review.`, { runId: run.id, dayType: run.dayType });
         }
-        if (previous.routeNumber === next.routeNumber
-            && actualBreak >= rules.sameRouteResetMinimumMinutes
-            && actualBreak < rules.standardBreakMinutes.minimum) {
+        const resetMinimum = previous.routeNumber === next.routeNumber
+            ? rules.sameRouteResetMinimumMinutes
+            : rules.routeChangeResetMinimumMinutes;
+        if (actualBreak >= resetMinimum && actualBreak < rules.standardBreakMinutes.minimum) {
             finding(findings, 'best-practice', 'break-shorter-than-standard', `Run ${run.runNumber} has a ${actualBreak}-minute reset, shorter than the standard ${rules.standardBreakMinutes.minimum}-minute break.`, { runId: run.id, dayType: run.dayType });
         }
         if (gap >= rules.splitThresholdMinutes) {
@@ -276,18 +278,19 @@ const validateRun = (
             }
         }
         if (previous.routeNumber !== next.routeNumber) {
-            const matrix = input.operationsMatrix.entries.find(entry =>
-                entry.fromRoute === previous.routeNumber && entry.toRoute === next.routeNumber && entry.dayTypes.includes(run.dayType),
-            );
+            const matrix = findOperationsMatrixEntry(rules, input.operationsMatrix, {
+                fromRoute: previous.routeNumber,
+                toRoute: next.routeNumber,
+                dayType: run.dayType,
+                fromReliefPoint: run.pieces[index - 1].endReliefPoint,
+                toReliefPoint: run.pieces[index].startReliefPoint,
+            });
             const interlineRule = rules.interlining.find(rule =>
                 rule.routes.includes(previous.routeNumber) && rule.routes.includes(next.routeNumber) && rule.dayTypes.includes(run.dayType),
             );
             const timeAllowed = interlineRule?.startMinute === undefined || next.startTime >= interlineRule.startMinute;
             if (!matrix?.allowed || gap < matrix.minimumTransitionMinutes || !timeAllowed) {
                 finding(findings, 'contractual', 'route-transition-not-allowed', `Run ${run.runNumber} transition ${previous.routeNumber} to ${next.routeNumber} is not allowed by the operations matrix.`, { runId: run.id, dayType: run.dayType });
-            }
-            if (actualBreak < rules.routeChangeResetMinimumMinutes) {
-                finding(findings, 'contractual', 'route-change-break-too-short', `Run ${run.runNumber} qualifying route-change break is ${actualBreak} minutes after travel and boarding; ${rules.routeChangeResetMinimumMinutes} are required.`, { runId: run.id, dayType: run.dayType });
             }
         }
     });
@@ -422,34 +425,11 @@ const validateReliefCabCapacity = (
     findings: ValidationFinding[],
 ): void => {
     const tripById = new Map(input.trips.map(trip => [trip.id, trip]));
-    const auditByKey = new Map(input.blockAudits.map(audit => [audit.vehicleBlockKey, audit]));
-    const intervals: Array<{ dayType: DailyRun['dayType']; start: number; end: number }> = [];
-    proposal.dailyRuns.forEach(run => run.pieces.forEach(piece => {
-        const audit = auditByKey.get(piece.blockId);
-        const first = tripById.get(piece.tripIds[0]);
-        const last = tripById.get(piece.tripIds.at(-1) ?? '');
-        if (!audit || !first || !last || last.arrivalTime === null) return;
-        const firstPosition = audit.tripIds.indexOf(first.id);
-        const lastPosition = audit.tripIds.indexOf(last.id);
-        if (firstPosition > 0) {
-            const outbound = getTravelMinutes(input.ruleProfile, input.ruleProfile.garage.name, piece.startReliefPoint);
-            if (outbound !== null && outbound > 0) intervals.push({ dayType: run.dayType, start: first.startTime - outbound, end: first.startTime });
-        }
-        if (lastPosition >= 0 && lastPosition < audit.tripIds.length - 1) {
-            const inbound = getTravelMinutes(input.ruleProfile, piece.endReliefPoint, input.ruleProfile.garage.name);
-            if (inbound !== null && inbound > 0) intervals.push({ dayType: run.dayType, start: last.arrivalTime, end: last.arrivalTime + inbound });
-        }
-    }));
+    const trips = proposal.dailyRuns.flatMap(run => calculateReliefCarTrips(input, run, tripById));
     (['Weekday', 'Saturday', 'Sunday'] as const).forEach(dayType => {
-        const events = intervals.filter(interval => interval.dayType === dayType).flatMap(interval => [
-            { time: interval.start, delta: 1 },
-            { time: interval.end, delta: -1 },
-        ]).sort((left, right) => left.time - right.time || left.delta - right.delta);
-        let active = 0;
-        let peak = 0;
-        events.forEach(event => { active += event.delta; peak = Math.max(peak, active); });
+        const peak = peakReliefCarsOnRoad(input.ruleProfile, trips.filter(trip => trip.dayType === dayType));
         if (peak > input.ruleProfile.reliefCabCapacity) {
-            finding(findings, 'contractual', 'relief-cab-capacity-exceeded', `${dayType} requires ${peak} concurrent relief cabs; only ${input.ruleProfile.reliefCabCapacity} are available.`, { dayType });
+            finding(findings, 'contractual', 'relief-cab-capacity-exceeded', `${dayType} needs ${peak} relief cars on the road at once; only ${input.ruleProfile.reliefCabCapacity} are available.`, { dayType });
         }
     });
 };
