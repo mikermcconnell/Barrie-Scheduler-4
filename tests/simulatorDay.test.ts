@@ -126,13 +126,13 @@ describe('simulator day feed builder', () => {
     expect(day.quality.rows).toBe(1);
   });
 
-  it('publishes coordinates only for stops that did not resolve to GTFS (temporary detour stops)', () => {
+  it('publishes name and rough coordinates only for stops that did not resolve to GTFS (temporary detour stops)', () => {
     const day = build([
       row({ arr: '06:00', dep: '06:00', obsDep: '06:01', idx: 1, stop: '101', trip: 'G-100', start: '06:00' }),
       row({ arr: '06:05', dep: '06:05', obsDep: '06:06', idx: 2, stop: '7560', trip: 'G-100', start: '06:00', tp: false }),
     ]);
     expect(day.trips[0].visits.map(v => v[0])).toEqual(['S1', 'streets:7560']);
-    expect(day.stops).toEqual({ 'streets:7560': [44.3, -79.6] });
+    expect(day.stops).toEqual({ 'streets:7560': { name: 'Stop', lat: 44.3, lon: -79.6 } });
   });
 });
 

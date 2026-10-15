@@ -80,6 +80,13 @@ export interface SimulatorDayQuality {
   tripsMatched: number;
 }
 
+export interface SimulatorUnresolvedStop {
+  name: string;
+  /** As exported by STREETS: rounded to about 1 km. */
+  lat: number;
+  lon: number;
+}
+
 export interface SimulatorDay {
   schema: typeof SIMULATOR_DAY_SCHEMA;
   serviceDate: string;
@@ -90,10 +97,12 @@ export interface SimulatorDay {
   quality: SimulatorDayQuality;
   trips: SimulatorTrip[];
   /**
-   * [lat, lon] of each stop that did not resolve to GTFS, keyed by its visit id (`streets:<StopID>`):
-   * mostly temporary detour stops. Optional and additive (readers of schema 1 ignore it).
+   * Each stop that did not resolve to GTFS, keyed by its visit id (`streets:<StopID>`): mostly
+   * temporary detour stops. STREETS exports coordinates rounded to 2 decimals (about 1 km), so the
+   * name (e.g. "Temporary Stop - Leacock at Broadfoot") is what locates the stop; lat/lon only narrow
+   * the search. Optional and additive (readers of schema 1 ignore it).
    */
-  stops?: Record<string, [number, number]>;
+  stops?: Record<string, SimulatorUnresolvedStop>;
 }
 
 /** Days available to replay, newest first (what the feed index returns). */
@@ -452,13 +461,17 @@ export function buildSimulatorDay(records: STREETSRecord[], options: BuildSimula
   trips.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
 
   // Where the unresolved (mostly temporary detour) stops are, so consumers can place them.
-  const stops: Record<string, [number, number]> = {};
+  const stops: Record<string, SimulatorUnresolvedStop> = {};
   for (const r of rows) {
     const id = r.stopId.trim();
     if (!id || gtfs?.stop(id)) continue;
     const key = `streets:${id}`;
-    if (key in stops || !Number.isFinite(r.stopLat) || !Number.isFinite(r.stopLon) || (r.stopLat === 0 && r.stopLon === 0)) continue;
-    stops[key] = [Math.round(r.stopLat * 1e6) / 1e6, Math.round(r.stopLon * 1e6) / 1e6];
+    if (key in stops) continue;
+    stops[key] = {
+      name: r.stopName?.trim() ?? '',
+      lat: Number.isFinite(r.stopLat) ? r.stopLat : 0,
+      lon: Number.isFinite(r.stopLon) ? r.stopLon : 0,
+    };
   }
 
   return {
