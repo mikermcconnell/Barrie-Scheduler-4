@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { calculatePieceTransition, resolvePieceBoardingTime } from '../utils/run-cutting/dutyTransitions';
 import { calculateDailyRunMetrics } from '../utils/run-cutting/metrics';
-import { createDefaultBarrieRuleProfile } from '../utils/run-cutting/rules';
+import { createDefaultBarrieOperationsMatrix, createDefaultBarrieRuleProfile } from '../utils/run-cutting/rules';
 import { assessOperationsPlanningProposal } from '../utils/run-cutting/validation';
+import { calculateReliefCarTrips, peakReliefCarsOnRoad } from '../utils/run-cutting/reliefCars';
 import type { DailyRun, OperationsPlanningInputV1, OperationsPlanningProposalV1, PlanningTrip, RunPiece, VehicleBlockAudit } from '../utils/run-cutting/types';
 
 const trip = (id: string, startTime: number, arrivalTime: number, overrides: Partial<PlanningTrip> = {}): PlanningTrip => ({
@@ -82,16 +83,66 @@ describe('source-derived relief and transfer activities', () => {
         ]));
     });
 
-    it('does not grant a qualifying meal at Downtown, which is relief-only', () => {
-        const first = trip('first', 400, 460, { endStop: 'Downtown Hub' });
-        const next = trip('next', 520, 580, { startStop: 'Downtown Hub' });
-        const continuing = trip('continuing', 465, 525, { vehicleBlockKey: first.vehicleBlockKey, startStop: 'Downtown Hub' });
-        const arriving = trip('arriving', 450, 520, { vehicleBlockKey: next.vehicleBlockKey, endStop: 'Downtown Hub' });
+    const hubMeal = (routes: { first?: string; next?: string } = {}, point = 'Downtown Hub') => {
+        const first = trip('first', 400, 460, { endStop: point, routeNumber: routes.first ?? '10' });
+        const next = trip('next', 520, 580, { startStop: point, routeNumber: routes.next ?? '10' });
+        const continuing = trip('continuing', 465, 525, { vehicleBlockKey: first.vehicleBlockKey, startStop: point, routeNumber: first.routeNumber });
+        const arriving = trip('arriving', 450, 520, { vehicleBlockKey: next.vehicleBlockKey, endStop: point, routeNumber: next.routeNumber });
+        return fixture([first, continuing, arriving, next], [piece(first), piece(next)]);
+    };
+
+    it('grants a qualifying meal at Downtown Hub under the October 2026 rules', () => {
+        const { input, run, proposal, tripById } = hubMeal();
+        expect(calculatePieceTransition(input, run.pieces[0], run.pieces[1], tripById)).toMatchObject({ breakLocationAllowed: true, qualifyingBreakMinutes: 60 });
+        expect(assessOperationsPlanningProposal(input, proposal).findings.map(item => item.code)).not.toContain('break-location-not-allowed');
+    });
+
+    it('lets an operator change route at the Hub without a break', () => {
+        const first = trip('first', 400, 460, { endStop: 'Downtown Hub', routeNumber: '10' });
+        const next = trip('next', 465, 525, { startStop: 'Downtown Hub', routeNumber: '11' });
+        const continuing = trip('continuing', 465, 525, { vehicleBlockKey: first.vehicleBlockKey, startStop: 'Downtown Hub', routeNumber: '10' });
+        const arriving = trip('arriving', 400, 462, { vehicleBlockKey: next.vehicleBlockKey, endStop: 'Downtown Hub', routeNumber: '11' });
+        const { input, proposal } = fixture([first, continuing, arriving, next], [piece(first), piece(next)]);
+        input.operationsMatrix = createDefaultBarrieOperationsMatrix();
+        const findings = assessOperationsPlanningProposal(input, proposal).findings;
+        expect(findings.filter(item => item.category === 'contractual').map(item => item.code)).toEqual([]);
+        expect(findings.map(item => item.code)).not.toContain('piece-transfer-time-missing');
+    });
+
+    it('counts a 31-minute meal on a route change as a reset, with a best-practice warning', () => {
+        const first = trip('first', 400, 460, { endStop: 'B.A.T.T.', routeNumber: '7' });
+        const next = trip('next', 495, 555, { startStop: 'B.A.T.T.', routeNumber: '8' });
+        const continuing = trip('continuing', 465, 525, { vehicleBlockKey: first.vehicleBlockKey, startStop: 'B.A.T.T.', routeNumber: '7' });
+        const arriving = trip('arriving', 430, 491, { vehicleBlockKey: next.vehicleBlockKey, endStop: 'B.A.T.T.', routeNumber: '8' });
         const { input, run, proposal, tripById } = fixture([first, continuing, arriving, next], [piece(first), piece(next)]);
+        input.operationsMatrix = createDefaultBarrieOperationsMatrix();
+        expect(calculatePieceTransition(input, run.pieces[0], run.pieces[1], tripById)).toMatchObject({ qualifyingBreakMinutes: 31 });
+        expect(assessOperationsPlanningProposal(input, proposal).findings.map(item => item.code)).toContain('break-shorter-than-standard');
+    });
+
+    it('does not grant a qualifying meal at a relief-only point', () => {
+        const { input, run, proposal, tripById } = hubMeal();
+        input.ruleProfile.reliefPoints = input.ruleProfile.reliefPoints.map(point => (
+            point.id === 'downtown-hub' ? { ...point, fullBreakPoint: false } : point
+        ));
         expect(calculatePieceTransition(input, run.pieces[0], run.pieces[1], tripById)).toMatchObject({ breakLocationAllowed: false, qualifyingBreakMinutes: 0 });
         expect(assessOperationsPlanningProposal(input, proposal).findings).toEqual(expect.arrayContaining([
             expect.objectContaining({ category: 'contractual', code: 'break-location-not-allowed' }),
         ]));
+    });
+
+    it.each([
+        { point: 'Downtown Hub', routes: { first: '10', next: '11' }, allowed: true },
+        { point: 'Park Place', routes: { first: '2', next: '400' }, allowed: true },
+        { point: 'B.A.T.T.', routes: { first: '7', next: '12' }, allowed: true },
+        { point: 'Georgian College', routes: { first: '7', next: '12' }, allowed: false },
+        // A listed pair keeps its own rule: 8A/8B on weekdays only after 8:00 PM.
+        { point: 'Downtown Hub', routes: { first: '8A', next: '8B' }, allowed: false },
+    ])('route change $routes.first to $routes.next at $point: allowed $allowed', ({ point, routes, allowed }) => {
+        const { input, proposal } = hubMeal(routes, point);
+        input.operationsMatrix = createDefaultBarrieOperationsMatrix();
+        const codes = assessOperationsPlanningProposal(input, proposal).findings.map(item => item.code);
+        expect(codes.includes('route-transition-not-allowed')).toBe(!allowed);
     });
 });
 
@@ -182,6 +233,46 @@ describe('driving and continuous-work accounting', () => {
         const { input, proposal } = fixture([first, second, continuing, arriving, third], [piece(first), piece(second), piece(third)]);
         expect(assessOperationsPlanningProposal(input, proposal).findings).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'split-continuous-driving-exceeded', category: 'contractual' }),
+        ]));
+    });
+});
+
+describe('relief cars', () => {
+    // Two buses relieved at the Hub; the operator drives the middle of one, lunches at the Hub, then takes the other.
+    const lunchRun = () => {
+        const hub = 'Downtown Hub';
+        const xPrev = trip('x-prev', 300, 360, { vehicleBlockKey: 'bus-x', endStop: hub });
+        const xA = trip('x-a', 365, 460, { vehicleBlockKey: 'bus-x', startStop: hub, endStop: hub });
+        const xNext = trip('x-next', 465, 525, { vehicleBlockKey: 'bus-x', startStop: hub });
+        const yPrev = trip('y-prev', 450, 520, { vehicleBlockKey: 'bus-y', endStop: hub });
+        const yB = trip('y-b', 520, 580, { vehicleBlockKey: 'bus-y', startStop: hub, endStop: hub });
+        const yNext = trip('y-next', 585, 640, { vehicleBlockKey: 'bus-y', startStop: hub });
+        return fixture([xPrev, xA, xNext, yPrev, yB, yNext], [piece(xA), piece(yB)]);
+    };
+
+    it('uses a car only at the start and end of the run, not around a lunch at the relief point', () => {
+        const { input, run, tripById } = lunchRun();
+        expect(calculateReliefCarTrips(input, run, tripById)).toEqual([
+            expect.objectContaining({ direction: 'to-relief', start: 345, end: 360 }),
+            expect.objectContaining({ direction: 'to-garage', start: 580, end: 595 }),
+        ]);
+    });
+
+    it('shares one car between operators leaving the same place together', () => {
+        const { input } = lunchRun();
+        const leg = (start: number, reliefPoint = 'Downtown Hub') => ({ runId: `r${start}`, dayType: 'Weekday' as const, direction: 'to-garage' as const, reliefPoint, start, end: start + 15 });
+        expect(peakReliefCarsOnRoad(input.ruleProfile, [leg(600), leg(603)])).toBe(1);
+        expect(peakReliefCarsOnRoad(input.ruleProfile, [leg(600), leg(610)])).toBe(2);
+        expect(peakReliefCarsOnRoad(input.ruleProfile, [leg(600), leg(603, 'B.A.T.T.')])).toBe(2);
+    });
+
+    it('reports when more cars are needed than the fleet has', () => {
+        const { input, proposal } = lunchRun();
+        expect(input.ruleProfile.reliefCabCapacity).toBe(7);
+        expect(assessOperationsPlanningProposal(input, proposal).findings.map(item => item.code)).not.toContain('relief-cab-capacity-exceeded');
+        input.ruleProfile.reliefCabCapacity = 0;
+        expect(assessOperationsPlanningProposal(input, proposal).findings).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'relief-cab-capacity-exceeded', message: 'Weekday needs 1 relief cars on the road at once; only 0 are available.' }),
         ]));
     });
 });

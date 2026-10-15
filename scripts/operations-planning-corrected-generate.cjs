@@ -7,8 +7,9 @@ const { buildOperationsPlanningInput } = require('../utils/run-cutting/masterAda
 const { projectOperationsPlanningInput, restoreOperationsPlanningProposal } = require('../utils/run-cutting/interiorRelief.ts');
 const { calculateDailyRunMetrics } = require('../utils/run-cutting/metrics.ts');
 const { calculatePieceTransition, resolvePieceBoardingTime } = require('../utils/run-cutting/dutyTransitions.ts');
-const { findReliefPoint, getTravelMinutes } = require('../utils/run-cutting/rules.ts');
+const { findOperationsMatrixEntry, findReliefPoint, getTravelMinutes } = require('../utils/run-cutting/rules.ts');
 const { assessOperationsPlanningProposal } = require('../utils/run-cutting/validation.ts');
+const { calculateReliefCarTrips } = require('../utils/run-cutting/reliefCars.ts');
 // --folder <dir> holds outputs; --input <file> uses an app-exported bundle instead of the
 // folder's master-source-snapshot.json. Defaults reproduce the September 21 run.
 const arg = name => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
@@ -26,12 +27,10 @@ const blockMap = new Map(unitInput.blockAudits.map(b => [b.vehicleBlockKey, b]))
 const same = (a,b) => (findReliefPoint(rules,a)?.id || a.toLowerCase()) === (findReliefPoint(rules,b)?.id || b.toLowerCase());
 const slim = pieces => { const blocks = [...new Set(pieces.map(p=>p.blockId))].map(id=>blockMap.get(id));return {...unitInput,blockAudits:blocks,trips:blocks.flatMap(b=>b.tripIds.map(id=>map.get(id)))}; };
 const metricsFor = pieces => calculateDailyRunMetrics(slim(pieces), { id:'candidate',runNumber:'candidate',dayType:map.get(pieces[0].tripIds[0]).dayType,pieces });
-const cabsFor = pieces => pieces.flatMap(piece => {
-  const b=blockMap.get(piece.blockId),first=map.get(piece.tripIds[0]),last=map.get(piece.tripIds.at(-1)), intervals=[];
-  if(b.tripIds[0]!==first.id){const travel=getTravelMinutes(rules,'Garage',piece.startReliefPoint);if(travel>0)intervals.push({start:first.startTime-travel,end:first.startTime});}
-  if(b.tripIds.at(-1)!==last.id){const travel=getTravelMinutes(rules,piece.endReliefPoint,'Garage');if(travel>0)intervals.push({start:last.arrivalTime,end:last.arrivalTime+travel});}
-  return intervals;
-});
+// Relief-car trips per utils/run-cutting/reliefCars.ts (run start/end and Garage breaks only).
+// The solver's cumulative constraint cannot share cars between candidates, so it is slightly conservative.
+const cabsFor = pieces => calculateReliefCarTrips(slim(pieces), { id: 'candidate', runNumber: 'candidate', dayType: map.get(pieces[0].tripIds[0]).dayType, pieces }, map)
+  .map(trip => ({ start: trip.start, end: trip.end }));
 // --extended widens the bounded search (short meal pieces, cross-route pairs, three-piece
 // duties) and keeps only candidates without a run-level contractual or integrity finding
 // from the app validator. Rule values are never relaxed.
@@ -56,7 +55,10 @@ const runBlockers = (ps, id) => {
 const routeOk = (left, right) => {
   const from = left.piece.routeNumber, to = right.piece.routeNumber, day = left.dayType;
   if (from === to) return true;
-  const entry = unitInput.operationsMatrix.entries.find(e => e.fromRoute === from && e.toRoute === to && e.dayTypes.includes(day));
+  const entry = findOperationsMatrixEntry(rules, unitInput.operationsMatrix, {
+    fromRoute: from, toRoute: to, dayType: day,
+    fromReliefPoint: left.piece.endReliefPoint, toReliefPoint: right.piece.startReliefPoint,
+  });
   const rule = rules.interlining.find(r => r.routes.includes(from) && r.routes.includes(to) && r.dayTypes.includes(day));
   return Boolean(entry?.allowed) && right.start - left.end >= entry.minimumTransitionMinutes && (rule?.startMinute === undefined || right.start >= rule.startMinute);
 };
@@ -213,7 +215,7 @@ function finalize(){
       'Vehicle trips and block order unchanged. Operator coverage uses pinned interior relief events.',
       '7.5-hour no-meal driving cap; 90-minute whole-gap split threshold. Meals exclude movement and preparation.',
       extended?'Candidate search is bounded, not a proof of optimality. Standard meals only; cross-route transfers only where the app validator allows them; three-piece duties only for otherwise uncovered work.':'Candidate search is bounded, not a proof of optimality. Standard meals and same-route transfers only.',
-      'Relief-cab capacity uses the existing conservative per-operator approximation; no cab dispatch or pooling allocation is claimed.',
+      'Relief-car capacity counts cars on the road between the Garage and relief points at run starts, run ends and Garage breaks (paddles, September 2026); the solver does not share cars between candidates, so it is slightly conservative.',
       ...(pool.withheldBlocks?.length?[`INCOMPLETE: ${pool.withheldBlocks.length} source-invalid vehicle blocks withheld in full. Their service is not assigned; this is a diagnostic draft, not an operational cut.`]:[]),
     ]};
   const proposal=restoreOperationsPlanningProposal(input,draft);
