@@ -23,7 +23,7 @@ describe('Ridership Trends backend access', () => {
 
     it('keeps the compact Storage view behind its dedicated permission', () => {
         expect(storageRules).toMatch(
-            /match \/teams\/\{teamId\}\/performanceViews\/ridership-trends\/\{generation\} \{[\s\S]*?generation[.]matches\('\^\[0-9\]\+\[.]json\$'\)[\s\S]*?canAccessWorkspace\(teamId, 'analyticsRidershipTrend'\)[\s\S]*?canSupportReadTeamData\(teamId\)[\s\S]*?allow write:[\s\S]*?isTeamManager\(teamId\)[\s\S]*?canSupportWriteTeamData\(teamId\)/,
+            /match \/teams\/\{teamId\}\/performanceViews\/ridership-trends\/\{generation\} \{[\s\S]*?generation[.]matches\('\^\[0-9\]\+[^']*\[.]json\$'\)[\s\S]*?canAccessWorkspace\(teamId, 'analyticsRidershipTrend'\)[\s\S]*?canSupportReadTeamData\(teamId\)[\s\S]*?allow write:[\s\S]*?isTeamManager\(teamId\)[\s\S]*?canSupportWriteTeamData\(teamId\)/,
         );
         expect(storageRules).not.toMatch(
             /performanceViews\/ridership-trends[\s\S]{0,300}workspaceOperations/,

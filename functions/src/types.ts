@@ -1,6 +1,8 @@
 // Performance Data Types — server-side copy for Cloud Functions
 // Mirrors utils/performanceDataTypes.ts (source of truth is client-side)
 
+import type { DwellHistoryDay } from '../../utils/performanceDwellHistory';
+
 export type DayType = 'weekday' | 'saturday' | 'sunday';
 
 export function parseDayType(raw: string): DayType {
@@ -613,6 +615,8 @@ export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];
   metadata: PerformanceMetadata;
   schemaVersion: number;
+  /** Report snapshots only: per-day dwell totals for every retained day, for weekly ranking. */
+  dwellHistory?: DwellHistoryDay[];
 }
 
 export const LOAD_PROFILE_VIEW_SCHEMA_VERSION = 1;

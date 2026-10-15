@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 import time
 
+from ortools.linear_solver import pywraplp
 from ortools.sat.python import cp_model
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -78,6 +79,10 @@ def solve_daily(data, seconds, seed, excluded=()):
         raise ValueError("Duplicate unit IDs")
     if len({c["id"] for c in candidates}) != len(candidates):
         raise ValueError("Duplicate candidate IDs")
+    for candidate in candidates:
+        # Compact pools from --extended store unit indexes instead of IDs.
+        if "unitIds" not in candidate:
+            candidate["unitIds"] = [data["units"][i]["id"] for i in candidate["unitIndexes"]]
     for i, candidate in enumerate(candidates):
         if not candidate["unitIds"] or len(set(candidate["unitIds"])) != len(candidate["unitIds"]):
             raise ValueError("Empty or duplicate candidate unit membership")
@@ -125,6 +130,69 @@ def solve_daily(data, seconds, seed, excluded=()):
     result = {"status": solver.status_name(status), "wallSeconds": solver.wall_time, "bestBound": solver.best_objective_bound}
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         result.update(selectedCandidateIds=[c["id"] for c, x in zip(candidates, selected) if solver.value(x)], objective=solver.objective_value, aggregateCrews=solver.value(crews))
+    return result
+
+
+def solve_daily_mip(data, seconds, seed, excluded=()):
+    """Same daily model as solve_daily, as a MIP. The LP relaxation of set
+    partitioning is tight, which suits large candidate pools."""
+    rules = data["rules"]
+    weekly = rules["weekly"]
+    candidates = data["candidates"]
+    for candidate in candidates:
+        if "unitIds" not in candidate:
+            candidate["unitIds"] = [data["units"][i]["id"] for i in candidate["unitIndexes"]]
+    unit_days = {u["id"]: u["dayType"] for u in data["units"]}
+    by_unit = {u["id"]: [] for u in data["units"]}
+    for i, candidate in enumerate(candidates):
+        for unit in candidate["unitIds"]:
+            if unit not in by_unit or unit_days[unit] != candidate["dayType"]:
+                raise ValueError("Unknown or wrong-day candidate unit")
+            by_unit[unit].append(i)
+    uncovered = [unit for unit, choices in by_unit.items() if not choices]
+    if uncovered:
+        return {"status": "INFEASIBLE", "reason": "Units have no candidate", "uncoveredUnitIds": uncovered}
+    solver = pywraplp.Solver.CreateSolver("HIGHS")
+    solver.SetTimeLimit(int(seconds * 1000))
+    selected = [solver.BoolVar(c["id"]) for c in candidates]
+    for choices in by_unit.values():
+        solver.Add(sum(selected[i] for i in choices) == 1)
+    for day_type in set(DAY_TYPES):
+        indexes = [i for i, c in enumerate(candidates) if c["dayType"] == day_type]
+        share = rules["longSpreadMinutes"]["maximumShare"]
+        solver.Add(sum(selected[i] for i in indexes if candidates[i]["spreadMinutes"] > rules["longSpreadMinutes"]["threshold"])
+                   <= share * sum(selected[i] for i in indexes))
+        # Cumulative cab capacity: checking each interval start is sufficient.
+        intervals = [(interval["start"], interval["end"], i) for i in indexes
+                     for interval in candidates[i].get("cabIntervals", []) if interval["end"] > interval["start"]]
+        if any(end < start for start, end, _ in intervals):
+            raise ValueError("Negative cab interval")
+        intervals.sort()
+        for start, _, _ in {(start, 0, 0) for start, _, _ in intervals}:
+            active = [selected[i] for s, e, i in intervals if s <= start < e]
+            if len(active) > rules["reliefCabCapacity"]:
+                solver.Add(sum(active) <= rules["reliefCabCapacity"])
+    weights = [5 if c["dayType"] == "Weekday" else 1 for c in candidates]
+    crews = solver.IntVar(0, rules["workforce"]["fixedCrews"], "aggregate-crews")
+    four_day = solver.IntVar(0, weekly["fourDayRosterMaximumCount"], "aggregate-four-day")
+    solver.Add(four_day <= crews)
+    solver.Add(sum(w * x for w, x in zip(weights, selected)) == 5 * crews - four_day)
+    total_paid = sum(w * c["paidMinutes"] * x for w, c, x in zip(weights, candidates, selected))
+    solver.Add(total_paid >= weekly["minimumPaidMinutes"] * crews)
+    solver.Add(total_paid <= weekly["maximumCombinedMinutes"] * crews)
+    solver.Add(sum(w * c["platformMinutes"] * x for w, c, x in zip(weights, candidates, selected)) <= weekly["maximumPlatformMinutes"] * crews)
+    lookup = {c["id"]: i for i, c in enumerate(candidates)}
+    for prior in excluded:
+        solver.Add(sum(selected[lookup[key]] for key in prior) <= len(prior) - 1)
+    solver.Minimize(sum(round(c.get("cost", c["paidMinutes"])) * w * x for c, w, x in zip(candidates, weights, selected)))
+    started = time.monotonic()
+    status = solver.Solve()
+    names = {pywraplp.Solver.OPTIMAL: "OPTIMAL", pywraplp.Solver.FEASIBLE: "FEASIBLE", pywraplp.Solver.INFEASIBLE: "INFEASIBLE"}
+    result = {"status": names.get(status, "UNKNOWN"), "engine": "highs-mip", "wallSeconds": time.monotonic() - started,
+              "bestBound": solver.Objective().BestBound()}
+    if status in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+        result.update(selectedCandidateIds=[c["id"] for c, x in zip(candidates, selected) if x.solution_value() > 0.5],
+                      objective=solver.Objective().Value(), aggregateCrews=round(crews.solution_value()))
     return result
 
 
@@ -212,6 +280,7 @@ def main():
     parser.add_argument("--weekly-seconds", type=float, default=180)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--seed", type=int, default=21)
+    parser.add_argument("--daily-engine", choices=["cp-sat", "mip"], default="cp-sat")
     args = parser.parse_args()
     raw = Path(args.input).read_bytes()
     data = json.loads(raw)
@@ -225,7 +294,7 @@ def main():
                 raise ValueError("Daily selection belongs to a different candidate input")
             daily = previous["daily"]
         else:
-            daily = solve_daily(data, args.daily_seconds, args.seed + iteration, excluded)
+            daily = (solve_daily_mip if args.daily_engine == "mip" else solve_daily)(data, args.daily_seconds, args.seed + iteration, excluded)
         result["daily"] = daily
         if daily["status"] not in ("FEASIBLE", "OPTIMAL"):
             result["status"] = daily["status"] if not excluded else "UNKNOWN"

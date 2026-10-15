@@ -1,0 +1,16 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+const errors = [];
+page.on('pageerror', e => errors.push(e.message));
+await page.goto('http://127.0.0.1:5199/output/playwright/load-section-harness.html', { waitUntil: 'domcontentloaded' });
+await page.getByText('Load Along the Route').waitFor({ timeout: 90000 });
+await page.getByText('Method diagnostics').click();
+await page.waitForTimeout(400);
+await page.locator('[data-testid="ridership-load-diagnostics"]').screenshot({ path: 'output/playwright/load-section/05-diagnostics.png' });
+await page.setViewportSize({ width: 390, height: 844 });
+await page.waitForTimeout(600);
+const overflow = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, vw: innerWidth }));
+await page.screenshot({ path: 'output/playwright/load-section/06-mobile.png' });
+console.log(JSON.stringify({ errors, overflow }));
+await browser.close();

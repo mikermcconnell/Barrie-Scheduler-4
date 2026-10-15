@@ -118,6 +118,7 @@ const applyRecoveryTimesToTrip = (
   let previousBaseDeparture: number | null = null;
   let cumulativeDelta = 0;
   let firstDeparture: number | null = null;
+  let firstStopRecovery = 0;
   let lastDeparture: number | null = null;
 
   table.stops.forEach(stop => {
@@ -140,7 +141,10 @@ const applyRecoveryTimesToTrip = (
     nextStops[stop] = TimeUtils.fromMinutes(departure);
     nextStopMinutes[stop] = departure;
 
-    if (firstDeparture === null) firstDeparture = departure;
+    if (firstDeparture === null) {
+      firstDeparture = departure;
+      firstStopRecovery = newRecovery;
+    }
     lastDeparture = departure;
 
     previousBaseDeparture = normalizeSequentialMinute(existingDepartureRaw, baseArrival) ?? baseArrival + oldRecovery;
@@ -160,7 +164,8 @@ const applyRecoveryTimesToTrip = (
     recoveryTime: totalRecovery,
     startTime: firstDeparture ?? nextTrip.startTime,
     endTime: lastDeparture ?? nextTrip.endTime,
-    travelTime: Math.max(0, (lastDeparture ?? nextTrip.endTime) - (firstDeparture ?? nextTrip.startTime) - totalRecovery),
+    // First-stop recovery precedes firstDeparture, so it is not inside the span.
+    travelTime: Math.max(0, (lastDeparture ?? nextTrip.endTime) - (firstDeparture ?? nextTrip.startTime) - (totalRecovery - firstStopRecovery)),
     cycleTime: Math.max(0, (lastDeparture ?? nextTrip.endTime) - (firstDeparture ?? nextTrip.startTime)),
     endTimeIncludesRecovery: true,
   };
