@@ -1,6 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Loader2, Activity, AlertTriangle, CheckCircle2, RefreshCw, ShieldAlert } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
+import { SimulatorLinkBanner } from './SimulatorLink';
 import { useAuth } from '../contexts/AuthContext';
 import { TeamManagement } from '../TeamManagement';
 import {
@@ -338,6 +339,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
+                    {!isSpecializedTransit && <SimulatorLinkBanner />}
                     {workspaceData ? (
                         <Suspense fallback={<DashboardLoadingState label="Loading dashboard..." />}>
                             <PerformanceWorkspace

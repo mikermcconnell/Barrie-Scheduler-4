@@ -40,6 +40,7 @@ export const FEATURE_DEFINITIONS = {
 
     operationsPerformanceDashboard: { defaultEnabled: true, hideInDemoMode: false },
     operationsPerfReports: { defaultEnabled: true, hideInDemoMode: false },
+    operationsSimulatorLink: { defaultEnabled: true, hideInDemoMode: true },
     operationsImportHealth: { defaultEnabled: true, hideInDemoMode: true },
     operationsLoadProfiles: { defaultEnabled: true, hideInDemoMode: true },
     operationsOperatorDwell: { defaultEnabled: true, hideInDemoMode: true },
