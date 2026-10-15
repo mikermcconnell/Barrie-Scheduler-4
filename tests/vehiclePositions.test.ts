@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { compactDay, transit_realtime, decodePings, secondsOfService, serviceDateOf, serviceMidnight, type RawFile } from '../functions/src/vehiclePositions';
+import { compactDay, mergeToday, transit_realtime, decodePings, secondsOfService, serviceDateOf, serviceMidnight, type RawFile } from '../functions/src/vehiclePositions';
 
 type Entity = { id: string; vehicle?: Record<string, unknown> };
 
@@ -107,5 +107,30 @@ describe('compactDay', () => {
     const again = compactDay('2026-10-14', [{ fetches: [1, 2], rows: [row(100, 'a'), row(130, 'a')] }], first);
     expect(again.pings).toHaveLength(2);
     expect(again.fetches).toEqual([1, 2]);
+  });
+});
+
+describe('mergeToday', () => {
+  const raw = (t: number, vehicle = 'v1'): Pick<RawFile, 'fetches' | 'rows'> => ({
+    fetches: [t],
+    rows: [['2026-10-14', t, vehicle, 'trip', '2B', 44.39, -79.69, 90]],
+  });
+
+  it('adds new raw objects and remembers their names', () => {
+    const first = mergeToday('2026-10-14', null, [{ name: '110000.json', file: raw(39600) }]);
+    const second = mergeToday('2026-10-14', first, [
+      { name: '110000.json', file: raw(39600, 'again') },
+      { name: '110100.json', file: raw(39660) },
+    ]);
+    expect(second.merged).toEqual(['110000.json', '110100.json']);
+    // The already-merged object is skipped, even if its content differs.
+    expect(second.pings.map((p) => [p[0], p[1]])).toEqual([[39600, 'v1'], [39660, 'v1']]);
+    expect(second.fetches).toEqual([39600, 39660]);
+  });
+
+  it('keeps names after midnight, which sort before morning ones', () => {
+    const day = mergeToday('2026-10-14', null, [{ name: '235900.json', file: raw(86340) }, { name: '000100.json', file: raw(86460) }]);
+    expect(day.merged).toEqual(['000100.json', '235900.json']);
+    expect(day.pings).toHaveLength(2);
   });
 });

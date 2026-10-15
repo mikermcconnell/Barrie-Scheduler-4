@@ -42,6 +42,15 @@ export interface GpsDayFile {
   pings: GpsPing[];
 }
 
+/**
+ * Today so far (vehiclePositions/today/<date>.json.gz): the day file of the raw objects merged so
+ * far, plus their object names, so a reader adds only the raw objects written since.
+ */
+export interface TodayFile extends GpsDayFile {
+  /** Raw object names (HHMMSS.json) already merged. Clock names wrap at midnight, so not "merged through". */
+  merged: string[];
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /**
@@ -155,4 +164,12 @@ export function compactDay(serviceDate: string, files: Pick<RawFile, 'fetches' |
   }
   pings.sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : a[0] - b[0]));
   return { schema: GPS_DAY_SCHEMA, serviceDate, feedUrl: FEED_URL, fetches: [...fetches].sort((a, b) => a - b), pings };
+}
+
+/** Adds raw objects (by name) to today's snapshot; objects already merged are skipped. */
+export function mergeToday(serviceDate: string, existing: TodayFile | null, raws: { name: string; file: Pick<RawFile, 'fetches' | 'rows'> }[]): TodayFile {
+  const merged = new Set(existing?.merged ?? []);
+  const fresh = raws.filter((r) => !merged.has(r.name));
+  for (const r of fresh) merged.add(r.name);
+  return { ...compactDay(serviceDate, fresh.map((r) => r.file), existing), merged: [...merged].sort() };
 }
