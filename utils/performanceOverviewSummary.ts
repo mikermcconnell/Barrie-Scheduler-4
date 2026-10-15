@@ -1,5 +1,6 @@
 import type { DailySummary, PerformanceDataSummary } from './performanceDataTypes';
 import { compareDateStrings } from './performanceDateUtils';
+import { buildDwellHistory } from './performanceDwellHistory';
 
 const DEFAULT_OVERVIEW_DAY_COUNT = 7;
 const DEFAULT_REPORT_DAY_COUNT = 56;
@@ -123,6 +124,7 @@ export function buildPerformanceReportSummary(
   return {
     ...summary,
     dailySummaries: reportDays,
+    dwellHistory: buildDwellHistory(sortedDays),
     metadata: {
       ...summary.metadata,
       dateRange: reportDates.length > 0
