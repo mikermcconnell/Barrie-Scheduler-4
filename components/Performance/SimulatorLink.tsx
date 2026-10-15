@@ -26,10 +26,10 @@ function useOpenSimulator(view?: SimulatorView) {
     return { busy, error, open };
 }
 
-/** Strip above the Operations Dashboard: Schedule adherence in the Barrie Simulator (demo). */
+/** Strip above the Operations Dashboard: Bus Monitoring and Replay in the Barrie Simulator (demo). */
 export const SimulatorLinkBanner: React.FC = () => {
     const canOpen = useCanOpenSimulator();
-    const { busy, error, open } = useOpenSimulator('punctuality');
+    const { busy, error, open } = useOpenSimulator();
     if (!canOpen) return null;
     return (
         <div className="mb-4 flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -37,11 +37,11 @@ export const SimulatorLinkBanner: React.FC = () => {
                 <Map size={18} className="shrink-0 text-amber-600" aria-hidden="true" />
                 <div>
                     <div className="text-sm font-bold text-gray-900">
-                        Schedule adherence on the map{' '}
+                        Bus Monitoring and Replay{' '}
                         <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Demo</span>
                     </div>
                     <p className="text-xs text-gray-600">
-                        Try the Barrie Simulator: on-time performance by route and timepoint, drawn on the map. Results are not validated yet.
+                        Try the Barrie Simulator: every bus live on the map, or replay a past day trip by trip. Results are not validated yet.
                     </p>
                     {error && <p className="mt-1 text-xs font-semibold text-rose-700">{error}</p>}
                 </div>
@@ -62,7 +62,7 @@ export const SimulatorLinkBanner: React.FC = () => {
 /** Home-page quick link with the same target. */
 export const SimulatorQuickLink: React.FC = () => {
     const canOpen = useCanOpenSimulator();
-    const { busy, error, open } = useOpenSimulator('punctuality');
+    const { busy, error, open } = useOpenSimulator();
     if (!canOpen) return null;
     return (
         <button
@@ -76,7 +76,7 @@ export const SimulatorQuickLink: React.FC = () => {
                 {busy ? <Loader2 size={20} className="animate-spin" aria-hidden="true" /> : <Map size={20} aria-hidden="true" />}
             </span>
             <span className="min-w-0">
-                <span className="block text-sm font-extrabold text-gray-900">Schedule adherence</span>
+                <span className="block text-sm font-extrabold text-gray-900">Bus Monitoring and Replay</span>
                 <span className="mt-0.5 block text-xs font-semibold text-gray-500">{error ?? 'Barrie Simulator (demo)'}</span>
             </span>
             <ArrowRight size={16} aria-hidden="true" className="ml-auto shrink-0 text-gray-300 transition-colors group-hover:text-amber-600" />
