@@ -25,10 +25,13 @@ describe('guided step gate', () => {
         expect(resolveGuidedStep(2, { hasReview: true, approvalState: 'unapproved' })).toBe(2);
     });
 
-    it('does not enter steps that are not delivered yet, even when approved', () => {
+    it('opens Set the stage and Build once approved, and Package only with current schedules', () => {
         const gate = { hasReview: true, approvalState: 'approved' as const };
-        expect(GUIDED_STEPS.find(step => step.step === 3)?.available).toBe(false);
-        expect(resolveGuidedStep(3, gate)).toBe(2);
-        expect(canEnterGuidedStep(5, gate)).toBe(false);
+        expect(GUIDED_STEPS.every(step => step.available)).toBe(true);
+        expect(resolveGuidedStep(3, gate)).toBe(3);
+        expect(resolveGuidedStep(4, gate)).toBe(4);
+        expect(resolveGuidedStep(5, gate)).toBe(4);
+        expect(canEnterGuidedStep(5, { ...gate, hasCurrentSchedules: true })).toBe(true);
+        expect(resolveGuidedStep(5, { hasReview: true, approvalState: 'stale', hasCurrentSchedules: true })).toBe(2);
     });
 });

@@ -2,7 +2,7 @@
 
 Feature contract for the guided, five-step fixed-route scheduling process. Load after `AGENTS.md` and `docs/CONTEXT_INDEX.md`. Read `docs/rules/LOCKED_LOGIC.md` before changing generation, timing, routing, blocking, or schedule-editor behavior; this contract never overrides it.
 
-Status: **in development** (decisions recorded 2026-10-16). Phase 1 — the shell, Step 1, and Step 2 with explicit approval — is behind a feature flag. Step 1 already offers all day types for one route, and Step 2 reviews and approves each day type separately (the in-memory part of Phase 4). Projects are not yet saved or resumable; save/resume arrives with schedule sets (Phase 4). The legacy New Schedule wizard in `components/NewSchedule/` remains the shipped path until the guided workspace reaches parity. Verify delivery status from current code and tests.
+Status: **in development** (decisions recorded 2026-10-16). All five steps are built behind a feature flag. Step 1 offers all day types for one route. Step 2 reviews and approves each day type separately. Step 3 sets each day type's blocks and cycle. Step 4 runs Generate → Connections → Manual tweaks with the reset rule. Step 5 publishes each day type through the draft editor, then opens the brochure and run cutting. Projects are not yet saved or resumable: closing the workspace loses the in-progress set (drafts and published versions are saved by the existing services). Save/resume arrives with schedule-set persistence (Phase 4). The legacy New Schedule wizard in `components/NewSchedule/` remains the shipped path until the guided workspace reaches parity. Verify delivery status from current code and tests.
 
 Design references: `docs/mockups/guided-scheduling-mockup.html` (all five steps) and `docs/mockups/step4-recommended-mockup.html` (Step 4 detail). Mockups use sample data and are not behavior contracts.
 
@@ -25,7 +25,7 @@ Turn the existing scheduling capabilities into one ordered process that walks th
 - **Scope.** Step 1 shows every route with STREETS data as a button, with nothing selected. Picking a route selects Weekday, Saturday, and Sunday; the planner can untick any day type. No route data loads until the planner chooses a time frame (a quick range, all data, or a custom range); then only the months in that window load. Each chip shows that day type's stop-level data. Selected day types without usable data are skipped with a notice. The guided workflow uses STREETS data only; CSV and GTFS stay in the legacy wizard.
 - **Schedule set.** "All day types" creates one single-day-type project per day type, linked by a shared schedule-set identifier. Each day type keeps its own approval contract, fingerprints, Step 3 configuration, and generated schedule. The planner may drop a day type (for example, no Sunday service or no Sunday data); the brochure then covers only the remaining days.
 - **Explicit Step 2 approval.** Approval is a deliberate planner action. Continue stays disabled until the current review is approved, and warnings must be acknowledged before approval. This supersedes the legacy auto-approve-on-continue behavior described in `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`. Blocked reviews still cannot be approved (LOCKED_LOGIC rule 7).
-- **Step 2 views.** Show the 30-minute buckets and the A–E band each bucket falls into. Display only; banding logic is unchanged.
+- **Step 2 views.** Show the 30-minute buckets coloured by the A–E band each falls into, a band summary, and the bucket evidence table with Exclude / Restore. The legacy review panel stays available under "Full detail". Display only; banding logic and the restore-eligibility rule are unchanged.
 - **Step 3 model.** Keep the per-block list: span is the block start and end times, and the vehicle count is the number of blocks. Step 3 is setup only; generation moves to Step 4.
 - **Step 4 order.** Generate (read-only result) → Connections → Manual tweaks.
   - Running the optimizer stores a snapshot of the schedule as it was just before the run. Reset restores that snapshot, so manual edits are never discarded by a connections reset.
@@ -67,7 +67,10 @@ The guided workflow is a new shell that reuses the existing engine.
 - Shell: `components/GuidedSchedule/GuidedScheduleWorkspace.tsx`, mounted as the `guided-schedule` view in `components/workspaces/FixedRouteWorkspace.tsx` behind the `fixedGuidedSchedule` flag in `utils/features.ts` (off by default; enable with `VITE_FEATURE_FIXED_GUIDED_SCHEDULE=true`). While the flag is off, only the primary developer (scheduler-admin claim plus the primary developer email, `components/GuidedSchedule/guidedScheduleAccess.ts`) sees the workspace. This hides UI only; data access still goes through existing rules. Hidden from planner and external-planner access levels, like New Schedule.
 - Step gate: `components/GuidedSchedule/guidedSteps.ts`. Step 2 needs a review computed for the current Step 1 selection; Step 3 and later need a current approved contract; undelivered steps cannot be entered.
 - Step 1: `components/GuidedSchedule/GuidedStep1.tsx` and `components/GuidedSchedule/guidedSelection.ts` (selection state and per-day-type readiness). Step 2 holds one review per selected day type, shown as tabs; Step 3 needs every reviewed day type approved.
-- Runtime review: `components/GuidedSchedule/runtimeReview/`. It calls the same pure Step 2 functions as the legacy wizard (review builder, approval, invalidation, fingerprints, stop order, runtime computation, banding) instead of sharing the legacy wizard's inline glue. The route chosen in Step 1 is the route identity for the whole review, so canonical stops cannot be dropped by a later route-number change. Changing the Step 1 selection after analysis requires re-analysis.
+- Runtime review: `components/GuidedSchedule/runtimeReview/`. It calls the same pure Step 2 functions as the legacy wizard (review builder, approval, invalidation, fingerprints, stop order, runtime computation, banding) instead of sharing the legacy wizard's inline glue. The route chosen in Step 1 is the route identity for the whole review, so canonical stops cannot be dropped by a later route-number change. Changing the Step 1 selection after analysis requires re-analysis. The Step 2 view is `GuidedStep2Review.tsx` with display helpers in `runtimeReview/guidedBandView.ts`.
+- Step 3 mounts the existing `Step3Build` per day type with that day type's approved contract.
+- Step 4: `components/GuidedSchedule/build/`. `generateGuidedSchedule.ts` mirrors the legacy generate step (strict approved-runtime mode, segments map from the approved day type's runtime rows, optional master recovery copy, block sync, generated-input fingerprint). `guidedBuildState.ts` holds the per-day-type schedule, the generated baseline, and the optimizer snapshot that the reset restores. Connections mount `Step5Connections`; Manual tweaks mount `Step4Schedule`. A schedule is current only while its fingerprint matches the approved contract and Step 3 settings; Step 5 needs every day type current.
+- Step 5: `components/GuidedSchedule/package/`. "Open in draft editor" opens `ScheduleEditorWorkspace` over the guided workspace, so publishing keeps the editor's protections (ready for review, publish note, team owner/admin). A day type counts as published only when Master's `publishedFromDraft` equals the draft opened from the current Step 4 schedule. Exports unlock when every day type is published: the Timetable Publisher (`PublicTimetable`, preselected route) and Run Cutting (`RunCuttingWorkspace`, optional `initialSelection` preselecting the route's published day types).
 - Reused engine: Step 2 utilities in `components/NewSchedule/utils/`, `utils/ai/runtimeAnalysis.ts`, `utils/schedule/scheduleGenerator.ts`, `utils/blocks/blockAssignmentCore.ts`, `utils/connections/`, `utils/services/newScheduleProjectService.ts`, `utils/services/publishService.ts`, `components/Reports/PublicTimetable.tsx`, and `components/workspaces/RunCuttingWorkspace.tsx`.
 - Persistence: the existing `users/{uid}/newScheduleProjects` records, extended with an optional schedule-set field. Legacy projects open as a one-day-type set. Update `docs/SCHEMA.md` when the field ships.
 
@@ -81,13 +84,15 @@ Each phase is one verified commit.
 |---|---|---|
 | 0 | This contract and doc alignment | Docs |
 | 1 | Guided shell, step frame, and Step 1–2 with explicit approval (delivered behind flag) | Frontend |
-| 2 | Step 3 setup and Step 4 Generate → Connections → Tweaks with the reset rule | Frontend |
-| 3 | Step 4 guided table mode and inspector | Frontend |
+| 2 | Step 3 setup and Step 4 Generate → Connections → Tweaks with the reset rule (delivered behind flag) | Frontend |
+| 3 | Step 4 guided table mode and inspector (not started; Generate shows a read-only summary and block lanes) | Frontend |
 | 4 | Schedule sets (scope choice, day-type tabs, drop day type) | Frontend + persistence shape |
-| 5 | Package: per-day-type publish checklist and version confirmation | Frontend |
-| 6 | Export package: pinned brochure and guided run cutting | Frontend |
+| 5 | Package: per-day-type publish checklist and version confirmation (delivered behind flag) | Frontend |
+| 6 | Export package: pinned brochure and guided run cutting (opened from Step 5 behind flag; version pinning not yet enforced) | Frontend |
 
 ## Open questions
+
+- Version pinning: the brochure and run cutting open on the published route but do not yet refuse a newer Master version than the one published from this set.
 
 - Should "layover" be a distinct user-facing label for terminal recovery?
 - Recovery-share and minimum-layover targets for issue flags (mockups use placeholder 10–30% and 3 minutes; the existing table flags above 25% and below 10%).

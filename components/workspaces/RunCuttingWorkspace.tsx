@@ -139,7 +139,13 @@ const SummaryCard: React.FC<{
     );
 };
 
-export const RunCuttingWorkspace: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+export interface RunCuttingInitialSelection {
+    masterIds: string[];
+    dayTypes: DayType[];
+    scenarioName: string;
+}
+
+export const RunCuttingWorkspace: React.FC<{ onClose: () => void; initialSelection?: RunCuttingInitialSelection }> = ({ onClose, initialSelection }) => {
     const { user } = useAuth();
     const { team, canManageTeam, developerPreview } = useTeam();
     const toast = useToast();
@@ -151,9 +157,9 @@ export const RunCuttingWorkspace: React.FC<{ onClose: () => void }> = ({ onClose
     const [payload, setPayload] = useState<OperationsPlanningRevisionPayload | null>(null);
     const [planningInput, setPlanningInput] = useState<OperationsPlanningInputV1 | null>(null);
     const [assessment, setAssessment] = useState<ProposalAssessment | null>(null);
-    const [selectedMasterIds, setSelectedMasterIds] = useState<Set<string>>(new Set());
-    const [selectedDayTypes, setSelectedDayTypes] = useState<Set<DayType>>(new Set(['Sunday']));
-    const [scenarioName, setScenarioName] = useState('Sunday service run cut');
+    const [selectedMasterIds, setSelectedMasterIds] = useState<Set<string>>(() => new Set(initialSelection?.masterIds ?? []));
+    const [selectedDayTypes, setSelectedDayTypes] = useState<Set<DayType>>(() => new Set(initialSelection?.dayTypes ?? ['Sunday']));
+    const [scenarioName, setScenarioName] = useState(initialSelection?.scenarioName ?? 'Sunday service run cut');
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [sourceIsStale, setSourceIsStale] = useState(false);

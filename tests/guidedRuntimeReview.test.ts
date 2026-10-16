@@ -13,6 +13,8 @@ import {
     getApprovalBlocker,
     getApprovalWarnings,
 } from '../components/GuidedSchedule/runtimeReview/guidedApproval';
+import { generateGuidedSchedule } from '../components/GuidedSchedule/build/generateGuidedSchedule';
+import { createGuidedBuildState, isGeneratedCurrent, applyGenerated } from '../components/GuidedSchedule/build/guidedBuildState';
 import type { PreparedRuntimeReview } from '../components/GuidedSchedule/runtimeReview/prepareRuntimeReview';
 
 const DATES = ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-08', '2026-09-09'];
@@ -164,5 +166,43 @@ describe('guided runtime review', () => {
         const args = { reviewInput, reviewResult: blocked, approvalState: 'unapproved' as const, warningsAcknowledged: true };
         expect(getApprovalBlocker(args)).toBe('blocked');
         expect(approveGuidedReview(args)).toBeNull();
+    });
+
+    it('generates a schedule from the approved contract with the unchanged generator', async () => {
+        const { model, prep, build } = setup();
+        const reviewInput = build();
+        const reviewResult = buildStep2ReviewResult(reviewInput!);
+        const contract = approveGuidedReview({ reviewInput, reviewResult, approvalState: 'unapproved', warningsAcknowledged: true });
+        expect(contract).not.toBeNull();
+
+        const state = createGuidedBuildState('8A');
+        const config = { ...state.config, blocks: [{ id: '8A-1', startTime: '06:00', endTime: '07:45' }] };
+        const result = await generateGuidedSchedule({
+            contract: contract!,
+            config,
+            parsedData: model.parsedData,
+            fallbackCanonicalStops: prep.canonicalDirectionStops,
+            autofillFromMaster: false,
+        });
+        if (result.ok === false) throw new Error(`${result.title}: ${result.message}`);
+        expect(result.tables.length).toBeGreaterThan(0);
+        expect(result.tables.reduce((sum, table) => sum + table.trips.length, 0)).toBeGreaterThan(0);
+
+        const generated = applyGenerated({ ...state, config, autofillFromMaster: false }, result.tables, result.config, result.fingerprint);
+        expect(isGeneratedCurrent(generated, contract)).toBe(true);
+    });
+
+    it('reports invalid Step 3 settings instead of generating', async () => {
+        const { model, build } = setup();
+        const reviewInput = build();
+        const contract = approveGuidedReview({ reviewInput, reviewResult: buildStep2ReviewResult(reviewInput!), approvalState: 'unapproved', warningsAcknowledged: true });
+        const state = createGuidedBuildState('8A');
+        const result = await generateGuidedSchedule({
+            contract: contract!,
+            config: { ...state.config, blocks: [] },
+            parsedData: model.parsedData,
+            autofillFromMaster: false,
+        });
+        expect(result.ok).toBe(false);
     });
 });
