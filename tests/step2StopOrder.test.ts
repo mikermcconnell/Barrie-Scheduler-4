@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildStep2StopOrderHealth,
+    checkMasterStopsAgainstObserved,
     extractStopOrderDirectionStops,
+    isMasterChainConfirmed,
+    selectPlanningStopChain,
 } from '../components/NewSchedule/utils/step2StopOrder';
 
 describe('step2StopOrder', () => {
@@ -151,7 +154,7 @@ describe('step2StopOrder', () => {
         expect(health).toMatchObject({
             usedForPlanning: false,
             sourceUsed: 'master-fallback',
-            summary: 'Dynamic stop order returned review, so Step 2 kept the master stop chain for planning.',
+            summary: 'Step 2 plans on the master timepoints. Dynamic stop order returned review.',
         });
         expect(health?.warnings).toEqual([
             'Dynamic stop order is review (medium confidence).',
@@ -176,5 +179,43 @@ describe('step2StopOrder', () => {
             'Dynamic stop order is blocked (low confidence).',
             'One direction is missing entirely.',
         ]);
+    });
+
+    describe('planning stop chain', () => {
+        const master = { North: ['Park Place', 'Downtown Hub'], South: ['Downtown Hub', 'Park Place'] };
+        const observed = {
+            North: ['Park Place', 'Mapleview at Bryne', 'Dunlop at High Street', 'Downtown Hub'],
+            South: ['Downtown Hub', 'Dunlop at Parkside', 'Park Place'],
+        };
+
+        it('plans on master timepoints even when the observed every-stop order is accepted', () => {
+            const chain = selectPlanningStopChain(master, observed, observed);
+            expect(chain).toEqual({ canonicalStops: master, sourceUsed: 'master-fallback', checkWarnings: [] });
+        });
+
+        it('falls back to an accepted observed order without a master, and to nothing otherwise', () => {
+            expect(selectPlanningStopChain(undefined, observed, observed).sourceUsed).toBe('runtime-derived');
+            expect(selectPlanningStopChain(undefined, undefined, observed)).toEqual({ canonicalStops: undefined, sourceUsed: 'none', checkWarnings: [] });
+        });
+
+        it('warns when observed trips do not pass a master timepoint in order', () => {
+            expect(checkMasterStopsAgainstObserved(master, observed)).toEqual([]);
+            const warnings = checkMasterStopsAgainstObserved({ North: ['Park Place', 'Georgian College', 'Downtown Hub'] }, observed);
+            expect(warnings).toHaveLength(1);
+            expect(warnings[0]).toContain('Georgian College');
+            expect(checkMasterStopsAgainstObserved({ North: ['Downtown Hub', 'Park Place'] }, observed)[0]).toContain('Park Place');
+        });
+
+        it('needs no acknowledgement when the accepted observed order confirms the master', () => {
+            const resolution = { decision: 'accept', confidence: 'high', warnings: [], resolvedDirections: {} } as any;
+            const confirmed = buildStep2StopOrderHealth(resolution, 'master-fallback', []);
+            expect(confirmed?.warnings).toEqual([]);
+            expect(confirmed?.summary).toContain('confirms');
+            expect(isMasterChainConfirmed(confirmed!)).toBe(true);
+
+            const mismatched = buildStep2StopOrderHealth(resolution, 'master-fallback', ['Observed North trips do not pass master timepoint "X" in order.']);
+            expect(mismatched?.warnings).toContain('Observed North trips do not pass master timepoint "X" in order.');
+            expect(isMasterChainConfirmed(mismatched!)).toBe(false);
+        });
     });
 });

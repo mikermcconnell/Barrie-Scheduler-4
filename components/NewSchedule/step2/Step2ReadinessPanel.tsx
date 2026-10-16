@@ -197,14 +197,14 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                                         {healthReport.stopOrder.decision}
                                     </span>
                                     <span className="text-sm font-semibold text-gray-900">
-                                        {healthReport.stopOrder.usedForPlanning ? 'Driving Step 2' : 'Fallback in use'}
+                                        {healthReport.stopOrder.usedForPlanning ? 'Driving Step 2' : healthReport.stopOrder.sourceUsed === 'master-fallback' ? 'Master timepoints in use' : 'Fallback in use'}
                                     </span>
                                 </div>
                                 <div className="mt-1 text-xs text-gray-600">
                                     {healthReport.stopOrder.sourceUsed === 'runtime-derived'
                                         ? `Observed trips • ${healthReport.stopOrder.confidence} confidence`
                                         : healthReport.stopOrder.sourceUsed === 'master-fallback'
-                                            ? `Master fallback • ${healthReport.stopOrder.confidence} confidence`
+                                            ? `Master timepoints • observed order ${healthReport.stopOrder.confidence} confidence`
                                             : `No fallback • ${healthReport.stopOrder.confidence} confidence`}
                                 </div>
                             </div>

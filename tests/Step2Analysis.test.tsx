@@ -210,7 +210,7 @@ describe('Step2Analysis', () => {
         expect(container.textContent).toContain('Runtime source');
         expect(container.textContent).toContain('Generation basis');
         expect(container.textContent).toContain('Stop-order decision');
-        expect(container.textContent).toContain('Fallback in use');
+        expect(container.textContent).toContain('Master timepoints in use');
 
         const matrixToggle = container.querySelector('[data-testid="step2-view-segment-matrix"]') as HTMLButtonElement | null;
         expect(matrixToggle).toBeTruthy();

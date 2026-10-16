@@ -32,8 +32,9 @@ The solution must therefore be:
 - `utils/newSchedule/stopOrderResolver.ts` builds route-and-direction candidates from trip stop-segment observations, groups identical stop-ID patterns, scores them, and returns `accept`, `review`, or `blocked` with confidence and diagnostics.
 - Base-route selections can include direction variants; an explicit direction variant remains exact-match.
 - Normal service patterns are preferred. Detour patterns are used only when the caller explicitly requests detour fallback and no normal candidate exists.
-- `components/NewSchedule/NewScheduleWizard.tsx` uses an accepted runtime-derived chain for planning. A review/blocked result keeps a valid master chain when one is available.
-- `components/NewSchedule/utils/step2StopOrder.ts` records whether runtime-derived or master-fallback order was used in Step 2 health and the schema-v2 approval snapshot.
+- Planning chain rule (`selectPlanningStopChain` in `components/NewSchedule/utils/step2StopOrder.ts`, used by the New Schedule wizard and the guided workspace): a usable published master timepoint chain is the planning chain, and the observed stop order checks it. A master timepoint the observed trips do not pass in order becomes a planner warning. Without a usable master, an accepted runtime-derived chain is used; otherwise there is no chain and Step 2 is blocked. Reason (decided 2026-10-16): an accepted observed order lists every stop, many stop-to-stop hops round to zero minutes, and zero-minute segments make every bucket ineligible.
+- `components/NewSchedule/utils/step2StopOrder.ts` records which source was used in Step 2 health and the schema-v2 approval snapshot. The persisted value `master-fallback` means the master timepoint chain, whether or not the observed order was accepted.
+- When matching trips to the chain by stop name, a stop renamed inside the window uses its newest name in both the resolver and the runtime computer.
 - Current limits: planner-authored overrides and comparison with a previously approved chain are not implemented in the resolver. The proposal sections below preserve those future directions.
 
 ---

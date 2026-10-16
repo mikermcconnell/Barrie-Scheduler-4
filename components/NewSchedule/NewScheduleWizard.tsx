@@ -79,6 +79,7 @@ import { resolveWizardStepWithStep2Gate } from './utils/step2NavigationGate';
 import {
     buildStep2StopOrderHealth,
     extractStopOrderDirectionStops,
+    selectPlanningStopChain,
     type Step2StopOrderHealth,
 } from './utils/step2StopOrder';
 import type {
@@ -1809,13 +1810,16 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         patternAnchorStops: masterCanonicalStops,
                         runtimePatternStrategy: 'detour-fallback',
                     });
-                    const resolvedCanonicalStops = stopOrderResolution.decision === 'accept'
-                        ? getUsableCanonicalDirectionStops(
-                            selectedRouteNumber,
-                            extractStopOrderDirectionStops(stopOrderResolution)
-                        )
-                        : undefined;
-                    const selectedCanonicalStops = resolvedCanonicalStops ?? masterCanonicalStops;
+                    const observedCanonicalStops = getUsableCanonicalDirectionStops(
+                        selectedRouteNumber,
+                        extractStopOrderDirectionStops(stopOrderResolution)
+                    );
+                    const planningChain = selectPlanningStopChain(
+                        masterCanonicalStops,
+                        stopOrderResolution.decision === 'accept' ? observedCanonicalStops : undefined,
+                        observedCanonicalStops
+                    );
+                    const selectedCanonicalStops = planningChain.canonicalStops;
                     const selectedCanonicalColumns = selectedCanonicalStops
                         ? buildCanonicalSegmentColumnsFromMasterStops(
                             selectedRouteNumber,
@@ -1823,17 +1827,17 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             selectedCanonicalStops.South ?? []
                         )
                         : [];
-                    const selectedCanonicalRouteSource: Step2CanonicalRouteSource | undefined = resolvedCanonicalStops
+                    const selectedCanonicalRouteSource: Step2CanonicalRouteSource | undefined = planningChain.sourceUsed === 'master-fallback'
                         ? {
-                            type: 'runtime-derived',
+                            type: 'master',
                             routeIdentity: selectedRouteIdentity,
-                            versionHint: `stop-order-${stopOrderResolution.decision}`,
+                            versionHint: 'master-schedule',
                         }
-                        : masterCanonicalStops
+                        : planningChain.sourceUsed === 'runtime-derived'
                             ? {
-                                type: 'master',
+                                type: 'runtime-derived',
                                 routeIdentity: selectedRouteIdentity,
-                                versionHint: 'master-schedule',
+                                versionHint: `stop-order-${stopOrderResolution.decision}`,
                             }
                             : undefined;
 
@@ -1843,11 +1847,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     setCanonicalRouteSource(selectedCanonicalStops ? selectedCanonicalRouteSource : undefined);
                     setStep2StopOrderHealth(buildStep2StopOrderHealth(
                         stopOrderResolution,
-                        resolvedCanonicalStops
-                            ? 'runtime-derived'
-                            : masterCanonicalStops
-                                ? 'master-fallback'
-                                : 'none'
+                        planningChain.sourceUsed,
+                        planningChain.checkWarnings
                     ));
 
                     const results = computeRuntimesFromPerformance(cleanStep2PerfData.dailySummaries, {
@@ -1855,7 +1856,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         dayType: normalizedDayType,
                         dateRange: performanceConfig.dateRange || undefined,
                         canonicalDirectionStops: selectedCanonicalStops,
-                        patternAnchorStops: resolvedCanonicalStops ?? masterCanonicalStops,
+                        patternAnchorStops: selectedCanonicalStops,
                         fullPatternOnly: true,
                         runtimePatternStrategy: 'detour-fallback',
                     });
@@ -1866,7 +1867,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             routeId: performanceConfig.routeId,
                             dayType: normalizedDayType,
                             dateRange: performanceConfig.dateRange || undefined,
-                            patternAnchorStops: resolvedCanonicalStops ?? masterCanonicalStops,
+                            patternAnchorStops: selectedCanonicalStops,
                             fullPatternOnly: true,
                             runtimePatternStrategy: 'detour-fallback',
                         })

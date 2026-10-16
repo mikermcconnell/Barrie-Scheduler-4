@@ -11,6 +11,7 @@ import {
 import {
     buildStep2StopOrderHealth,
     extractStopOrderDirectionStops,
+    selectPlanningStopChain,
     type Step2StopOrderHealth,
 } from '../../NewSchedule/utils/step2StopOrder';
 import type { Step2CanonicalRouteSource } from '../../NewSchedule/utils/step2ReviewTypes';
@@ -47,6 +48,7 @@ export interface PreparedRuntimeReview {
  * Computes Step 2 runtime inputs from clean STREETS history for one route and
  * day type. Mirrors the legacy wizard's Step 1 performance path, except that
  * the route chosen in Step 1 is the route identity for the whole review.
+ * The planning chain follows selectPlanningStopChain: master timepoints first.
  */
 export const prepareRuntimeReview = async (
     input: PrepareRuntimeReviewInput
@@ -73,10 +75,13 @@ export const prepareRuntimeReview = async (
         patternAnchorStops: masterCanonicalStops,
         runtimePatternStrategy: 'detour-fallback',
     });
-    const resolvedCanonicalStops = stopOrderResolution.decision === 'accept'
-        ? getUsableCanonicalDirectionStops(routeNumber, extractStopOrderDirectionStops(stopOrderResolution))
-        : undefined;
-    const canonicalDirectionStops = resolvedCanonicalStops ?? masterCanonicalStops;
+    const observedStops = getUsableCanonicalDirectionStops(routeNumber, extractStopOrderDirectionStops(stopOrderResolution));
+    const chain = selectPlanningStopChain(
+        masterCanonicalStops,
+        stopOrderResolution.decision === 'accept' ? observedStops : undefined,
+        observedStops
+    );
+    const canonicalDirectionStops = chain.canonicalStops;
     const canonicalColumns = canonicalDirectionStops
         ? buildCanonicalSegmentColumnsFromMasterStops(
             routeNumber,
@@ -84,17 +89,14 @@ export const prepareRuntimeReview = async (
             canonicalDirectionStops.South ?? []
         )
         : [];
-    const canonicalRouteSource: Step2CanonicalRouteSource | undefined = resolvedCanonicalStops
-        ? { type: 'runtime-derived', routeIdentity, versionHint: `stop-order-${stopOrderResolution.decision}` }
-        : masterCanonicalStops
-            ? { type: 'master', routeIdentity, versionHint: 'master-schedule' }
+    const canonicalRouteSource: Step2CanonicalRouteSource | undefined = chain.sourceUsed === 'master-fallback'
+        ? { type: 'master', routeIdentity, versionHint: 'master-schedule' }
+        : chain.sourceUsed === 'runtime-derived'
+            ? { type: 'runtime-derived', routeIdentity, versionHint: `stop-order-${stopOrderResolution.decision}` }
             : undefined;
-    const stopOrderHealth = buildStep2StopOrderHealth(
-        stopOrderResolution,
-        resolvedCanonicalStops ? 'runtime-derived' : masterCanonicalStops ? 'master-fallback' : 'none'
-    );
+    const stopOrderHealth = buildStep2StopOrderHealth(stopOrderResolution, chain.sourceUsed, chain.checkWarnings);
 
-    const anchorStops = resolvedCanonicalStops ?? masterCanonicalStops;
+    const anchorStops = canonicalDirectionStops;
     const results = computeRuntimesFromPerformance(input.dailySummaries, {
         routeId: routeNumber,
         dayType: perfDayType,

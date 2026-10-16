@@ -88,7 +88,7 @@ describe('Step2ReadinessPanel', () => {
         expect(container?.textContent).toContain('Logic v7');
         expect(container?.textContent).toContain('Clean history');
         expect(container?.textContent).toContain('Stop order');
-        expect(container?.textContent).toContain('Fallback in use');
+        expect(container?.textContent).toContain('Master timepoints in use');
         expect(container?.textContent).toContain('Stop-order decision');
         expect(container?.textContent).toContain('Dynamic stop order returned review, so Step 2 kept the master stop chain for planning.');
         expect(container?.textContent).toContain('North: 4 trips, 1 day');

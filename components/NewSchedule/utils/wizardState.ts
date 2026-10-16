@@ -21,7 +21,7 @@ import {
     normalizeSegmentStopKey,
     resolveCanonicalSegmentName,
 } from '../../../utils/runtimeSegmentMatching';
-import type { Step2StopOrderHealth } from './step2StopOrder';
+import { isMasterChainConfirmed, type Step2StopOrderHealth } from './step2StopOrder';
 
 export interface WizardProgressLike {
     step: 1 | 2 | 3 | 4 | 5;
@@ -822,7 +822,7 @@ export const buildStep2DataHealthReport = (params: {
     if (stopOrder) {
         if (stopOrder.sourceUsed === 'none') {
             blockers.push(stopOrder.summary);
-        } else if (!stopOrder.usedForPlanning) {
+        } else if (!stopOrder.usedForPlanning && !isMasterChainConfirmed(stopOrder)) {
             warnings.push(stopOrder.summary);
         }
         warnings.push(...stopOrder.warnings);
