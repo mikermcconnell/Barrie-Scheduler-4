@@ -39,7 +39,8 @@ describeWithEmulator('Team workspace access Firestore rules', () => {
     });
 
     const ownerDb = () => environment.authenticatedContext('owner-a').firestore();
-    const adminDb = () => environment.authenticatedContext('scheduler-admin', { schedulerAdmin: true }).firestore();
+    const adminDb = () => environment.authenticatedContext('scheduler-admin', { schedulerAdmin: true, email: 'mike.mcconnell@barrie.ca' }).firestore();
+    const otherAdminDb = () => environment.authenticatedContext('other-admin', { schedulerAdmin: true, email: 'codex.dev@example.com' }).firestore();
 
     it('blocks a team owner from changing member workspace access, including their own', async () => {
         await assertFails(updateDoc(doc(ownerDb(), 'teams/team-a/members/owner-a'), { accessLevel: 'internal' }));
@@ -62,6 +63,30 @@ describeWithEmulator('Team workspace access Firestore rules', () => {
     it('blocks a team owner from adding a member with workspace access', async () => {
         await assertFails(setDoc(doc(ownerDb(), 'teams/team-a/members/added'), { role: 'member', accessLevel: 'internal' }));
         await assertSucceeds(setDoc(doc(ownerDb(), 'teams/team-a/members/added'), { role: 'member', accessLevel: 'none' }));
+    });
+
+    it('blocks other scheduler admins from changing access or editing through a support session', async () => {
+        await environment.withSecurityRulesDisabled(async (context) => {
+            const db = context.firestore();
+            await setDoc(doc(db, 'teams/team-a/members/other-admin'), { role: 'owner', accessLevel: 'internal' });
+            await setDoc(doc(db, 'developerSupportSessions/other-admin'), {
+                teamId: 'team-a', mode: 'edit', reason: 'Developer edit', expiresAt: new Date(Date.now() + 30 * 60_000),
+            });
+        });
+        await assertFails(updateDoc(doc(otherAdminDb(), 'teams/team-a/members/member-a'), { accessLevel: 'planner' }));
+        await assertFails(updateDoc(doc(otherAdminDb(), 'teams/team-a'), { defaultMemberAccessLevel: 'planner' }));
+        await assertSucceeds(updateDoc(doc(otherAdminDb(), 'teams/team-a'), { name: 'Renamed by co-owner' }));
+    });
+
+    it('lets the primary developer edit another team through a support session', async () => {
+        await environment.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'developerSupportSessions/primary-dev'), {
+                teamId: 'team-a', mode: 'edit', reason: 'Developer edit', expiresAt: new Date(Date.now() + 30 * 60_000),
+            });
+        });
+        const primaryDb = environment.authenticatedContext('primary-dev', { schedulerAdmin: true, email: 'mike.mcconnell@barrie.ca' }).firestore();
+        await assertSucceeds(updateDoc(doc(primaryDb, 'teams/team-a/members/member-a'), { accessLevel: 'planner' }));
+        await assertSucceeds(updateDoc(doc(primaryDb, 'teams/team-a'), { name: 'Renamed in edit session' }));
     });
 
     it('lets a scheduler admin change member access and the team package', async () => {

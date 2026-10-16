@@ -13,6 +13,7 @@ interface MembersPanelProps {
     currentUserId?: string;
     canManage: boolean;
     isGlobalAdmin: boolean;
+    canEditAccess: boolean;
     canLeave: boolean;
     leaving: boolean;
     onSetException: (member: TeamMember) => void;
@@ -35,6 +36,7 @@ export const MembersPanel: React.FC<MembersPanelProps> = ({
     currentUserId,
     canManage,
     isGlobalAdmin,
+    canEditAccess,
     canLeave,
     leaving,
     onSetException,
@@ -96,7 +98,7 @@ export const MembersPanel: React.FC<MembersPanelProps> = ({
                                             <button onClick={() => onViewFiles(member)} className={rowButton}>Files</button>
                                         </>
                                     )}
-                                    {canManage && isGlobalAdmin && (
+                                    {canManage && canEditAccess && (
                                         <button onClick={() => onSetException(member)} className={rowButton}>
                                             {isException ? 'Edit exception' : 'Set exception…'}
                                         </button>

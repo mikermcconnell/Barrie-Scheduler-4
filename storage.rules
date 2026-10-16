@@ -30,6 +30,11 @@ service firebase.storage {
         request.auth.token.get('schedulerAdmin', false) == true;
     }
 
+    function isPrimaryDeveloper() {
+      return isSchedulerAdmin() &&
+        request.auth.token.get('email', '') == 'mike.mcconnell@barrie.ca';
+    }
+
     function supportSession() {
       return firestore.get(/databases/(default)/documents/developerSupportSessions/$(request.auth.uid));
     }
@@ -48,7 +53,7 @@ service firebase.storage {
     }
 
     function canSupportWriteTeamData(teamId) {
-      return hasActiveSupportSession(teamId) && supportSession().data.mode == 'edit';
+      return isPrimaryDeveloper() && hasActiveSupportSession(teamId) && supportSession().data.mode == 'edit';
     }
 
     function memberAccessLevel(teamId) {

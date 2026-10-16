@@ -93,11 +93,7 @@ export async function createDeveloperSupportSession(
     if (input.mode !== 'inspect' && input.mode !== 'edit') {
         throw new Error('Invalid developer support mode.');
     }
-    const requestedReason = input.reason?.trim() || '';
-    if (input.mode === 'edit' && !requestedReason) {
-        throw new Error('A reason is required for developer edit access.');
-    }
-    const reason = requestedReason || 'Team inspection';
+    const reason = input.reason?.trim() || (input.mode === 'edit' ? 'Developer edit' : 'Team inspection');
     if (reason.length > 500) throw new Error('Support session reason must be 500 characters or fewer.');
 
     const durationMinutes = normalizeDeveloperSupportDuration(input.durationMinutes);

@@ -92,17 +92,17 @@ service cloud.firestore {
     // by code for user permission management.
     // Team creation remains authenticated; updates/deletes are available to
     // team owners/admins and workspace permission managers.
-    // Workspace access is granted only by scheduler admins: team owners/admins
+    // Workspace access is granted only by the primary developer: team owners/admins
     // manage membership and roles but cannot raise their team's access.
     match /teams/{teamId} {
       allow get: if isTeamMember(teamId) || isWorkspacePermissionManager() || canReadTeamForInviteJoin(teamId);
       allow list: if isWorkspacePermissionManager();
       allow create: if request.auth != null &&
-                      (isSchedulerAdmin() || hasNoTeamAccessDefaults(request.resource.data));
+                      (isPrimaryDeveloper() || hasNoTeamAccessDefaults(request.resource.data));
       allow update: if request.auth != null &&
                       ((isTeamOwnerOrAdmin(teamId) &&
                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['dataSourceTeamIds']) &&
-                        (isSchedulerAdmin() || !changesKeys(['defaultMemberAccessLevel', 'defaultMemberWorkspaceOverrides']))) ||
+                        (isPrimaryDeveloper() || !changesKeys(['defaultMemberAccessLevel', 'defaultMemberWorkspaceOverrides']))) ||
                        canSupportWriteTeamData(teamId));
       allow delete: if request.auth != null &&
                       (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId));
@@ -119,10 +119,10 @@ service cloud.firestore {
                          (canCreateSelfFromInvite(teamId, memberId) ||
                           canCreateInitialOwner(teamId, memberId) ||
                           (isTeamOwnerOrAdmin(teamId) &&
-                           (isSchedulerAdmin() || hasNoWorkspaceAccess(request.resource.data))) ||
+                           (isPrimaryDeveloper() || hasNoWorkspaceAccess(request.resource.data))) ||
                           canSupportWriteTeamData(teamId));
         allow update: if (isTeamOwnerOrAdmin(teamId) &&
-                          (isSchedulerAdmin() || !changesKeys(['accessLevel', 'workspaceOverrides']))) ||
+                          (isPrimaryDeveloper() || !changesKeys(['accessLevel', 'workspaceOverrides']))) ||
                          (canSupportWriteTeamData(teamId) &&
                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessLevel', 'workspaceOverrides']));
         allow delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
@@ -444,7 +444,7 @@ service cloud.firestore {
                               (isTeamOwnerOrAdmin(request.resource.data.teamId) ||
                                canSupportWriteTeamData(request.resource.data.teamId) ||
                                canCreateInviteForNewTeam(request.resource.data.teamId)) &&
-                              (isSchedulerAdmin() || inviteMatchesTeamDefaults(request.resource.data.teamId));
+                              (isPrimaryDeveloper() || inviteMatchesTeamDefaults(request.resource.data.teamId));
       allow delete: if request.auth != null &&
                        resource.data.teamId is string &&
                        (isTeamOwnerOrAdmin(resource.data.teamId) || canSupportWriteTeamData(resource.data.teamId));
@@ -571,7 +571,7 @@ service cloud.firestore {
     function canCreateInitialOwner(teamId, memberId) {
       return request.auth.uid == memberId &&
              request.resource.data.role == 'owner' &&
-             (isSchedulerAdmin() || hasNoWorkspaceAccess(request.resource.data)) &&
+             (isPrimaryDeveloper() || hasNoWorkspaceAccess(request.resource.data)) &&
              !exists(/databases/$(database)/documents/teams/$(teamId)) &&
              getAfter(/databases/$(database)/documents/teams/$(teamId)).data.createdBy == request.auth.uid;
     }
@@ -1108,6 +1108,13 @@ service cloud.firestore {
              request.auth.token.get('schedulerAdmin', false) == true;
     }
 
+    // Only the primary developer account may change workspace access or write
+    // through a developer edit session. Other scheduler admins are read-only.
+    function isPrimaryDeveloper() {
+      return isSchedulerAdmin() &&
+             request.auth.token.get('email', '') == 'mike.mcconnell@barrie.ca';
+    }
+
     function isValidUploadedFileCreate(userId) {
       let data = request.resource.data;
       let hasTeamId = data.keys().hasAny(['teamIdAtUpload']);
@@ -1157,7 +1164,7 @@ service cloud.firestore {
     }
 
     function canSupportWriteTeamData(teamId) {
-      return hasActiveSupportSession(teamId) && supportSession().data.mode == 'edit';
+      return isPrimaryDeveloper() && hasActiveSupportSession(teamId) && supportSession().data.mode == 'edit';
     }
 
     function isWorkspacePermissionManager() {

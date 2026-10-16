@@ -9,6 +9,7 @@ export { sendMonthlyRidershipReport, testMonthlyRidershipReport } from './monthl
 export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
 export { developerSupportAccess } from './developerSupportAccess';
+import { isPrimaryDeveloperEmail } from './developerSupportAccess';
 export { archiveGtfsFeeds } from './gtfsArchiveJob';
 export { compactVehiclePositions, recordVehiclePositions, snapshotVehiclePositions } from './vehiclePositionsJob';
 export { publishSimulatorDays } from './simulatorDayJob';
@@ -100,7 +101,7 @@ async function resolvePerformanceIngestActor(
     if (memberSnap.exists && (role === 'owner' || role === 'admin')) {
       return { id: decoded.uid, mode: 'interactive' };
     }
-    if (decoded.schedulerAdmin === true) {
+    if (decoded.schedulerAdmin === true && isPrimaryDeveloperEmail(decoded.email)) {
       const supportSnap = await getDb().doc(`developerSupportSessions/${decoded.uid}`).get();
       const support = supportSnap.data();
       const expiresAtMs = support?.expiresAt?.toMillis?.();

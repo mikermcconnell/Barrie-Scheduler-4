@@ -8,6 +8,13 @@ import type {
 
 export type DeveloperSupportMode = 'inspect' | 'edit';
 
+/** The only account allowed to change workspace access or start developer edit sessions. */
+export const PRIMARY_DEVELOPER_EMAIL = 'mike.mcconnell@barrie.ca';
+
+export function isPrimaryDeveloperEmail(email: string | null | undefined): boolean {
+    return typeof email === 'string' && email.trim().toLowerCase() === PRIMARY_DEVELOPER_EMAIL;
+}
+
 export interface DeveloperPreviewInput {
     team: Team;
     mode: DeveloperSupportMode;
@@ -18,7 +25,7 @@ export interface DeveloperPreviewInput {
     email?: string;
     sourceLabel: string;
     userId?: string;
-    /** Required for edit sessions and recorded in the support-session document. */
+    /** Recorded in the support-session document; a default is used when omitted. */
     reason?: string;
     /** Defaults to 30 minutes and is capped at 60 minutes. */
     durationMinutes?: number;
@@ -67,11 +74,7 @@ export function createDeveloperPreviewSession(
     timing: DeveloperPreviewTiming,
 ): DeveloperPreviewSession {
     const isEdit = input.mode === 'edit';
-    const requestedReason = input.reason?.trim() || '';
-    if (isEdit && !requestedReason) {
-        throw new Error('A reason is required for developer edit access.');
-    }
-    const reason = requestedReason || 'Team inspection';
+    const reason = input.reason?.trim() || (isEdit ? 'Developer edit' : 'Team inspection');
 
     return {
         team: input.team,

@@ -29,6 +29,7 @@ import {
     type WorkspaceAccessGrant,
 } from '../utils/workspaceAccess';
 import { getWorkspaceAccessPackage } from '../utils/workspaceAccessPackages';
+import { isPrimaryDeveloperEmail } from '../utils/developerPreview';
 import { AccessOverviewPanel } from './teamManagement/AccessOverviewPanel';
 import { AccessPanel } from './teamManagement/AccessPanel';
 import { DataSourceCard } from './teamManagement/DataSourceCard';
@@ -100,6 +101,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
         developerPreview.team.id === activeTeamId
     );
     const canManage = (isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin) || hasActiveEditSession;
+    // Only the primary developer account changes workspace access or edits other teams.
+    const isPrimaryDeveloper = isGlobalAdmin && isPrimaryDeveloperEmail(user?.email);
+    const canEditAccess = canManage && isPrimaryDeveloper;
 
     const tabs = useMemo<TeamManagementTab[]>(() => {
         const visible: TeamManagementTab[] = ['members'];
@@ -404,12 +408,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     });
 
     const handleStartEdit = async (): Promise<void> => {
-        if (!activeTeamDetails || !user || !isGlobalAdmin) return;
+        if (!activeTeamDetails || !user || !isPrimaryDeveloper) return;
 
-        const reason = window.prompt(
-            `Why do you need developer edit access to ${activeTeamDetails.name}? This will be recorded in the audit log.`
-        )?.trim();
-        if (!reason) return;
         if (!window.confirm(
             `Start a 30-minute developer edit session for ${activeTeamDetails.name}? Changes will affect the live team data.`
         )) return;
@@ -424,12 +424,11 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                 email: user.email || undefined,
                 sourceLabel: 'developer administrator',
                 userId: user.uid,
-                reason,
             });
             toast?.success(`Developer edit access started for ${activeTeamDetails.name}`);
         } catch (error) {
             console.error('Unable to start developer edit session:', error);
-            toast?.error('Unable to start developer edit access. Confirm your scheduler administrator claim.');
+            toast?.error('Unable to start developer edit access. Only the primary developer account can edit other teams.');
         }
     };
 
@@ -573,6 +572,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                             {isGlobalAdmin && (
                                 <SupportMenu
                                     hasEditSession={hasActiveEditSession}
+                                    canStartEdit={isPrimaryDeveloper}
                                     onInspectTeam={() => void handleInspectTeamDefault()}
                                     onInspectMember={() => setActiveTab('members')}
                                     onStartEdit={() => void handleStartEdit()}
@@ -615,6 +615,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                             currentUserId={user?.uid}
                             canManage={canManage}
                             isGlobalAdmin={isGlobalAdmin}
+                            canEditAccess={canEditAccess}
                             canLeave={isViewingCurrentTeam}
                             leaving={leaving}
                             onSetException={setExceptionMember}
@@ -629,7 +630,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                         <div className="space-y-5">
                             <AccessPanel
                                 team={activeTeamDetails}
-                                canEdit={canManage}
+                                canEdit={canEditAccess}
                                 canPreview={isGlobalAdmin}
                                 onPreview={(grant) => void handlePreviewGrant(grant)}
                                 onSaved={() => syncAfterChange()}
@@ -638,7 +639,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                                 <DataSourceCard
                                     team={activeTeamDetails}
                                     teamOptions={availableTeams}
-                                    canEdit={canManage}
+                                    canEdit={canEditAccess}
                                     onSaved={() => syncAfterChange()}
                                 />
                             )}

@@ -3,6 +3,7 @@ import { ChevronDown, Edit2, Eye, LifeBuoy } from 'lucide-react';
 
 interface SupportMenuProps {
     hasEditSession: boolean;
+    canStartEdit: boolean;
     onInspectTeam: () => void;
     onInspectMember: () => void;
     onStartEdit: () => void;
@@ -13,6 +14,7 @@ const itemClass = 'flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left 
 
 export const SupportMenu: React.FC<SupportMenuProps> = ({
     hasEditSession,
+    canStartEdit,
     onInspectTeam,
     onInspectMember,
     onStartEdit,
@@ -72,12 +74,12 @@ export const SupportMenu: React.FC<SupportMenuProps> = ({
                                 <span className="block text-xs font-normal text-gray-500">Return to read-only</span>
                             </span>
                         </button>
-                    ) : (
+                    ) : canStartEdit && (
                         <button role="menuitem" onClick={choose(onStartEdit)} className={`${itemClass} text-red-700`}>
                             <Edit2 size={16} className="mt-0.5" />
                             <span>
                                 Start edit session
-                                <span className="block text-xs font-normal text-gray-500">Audited. Expires after 30 minutes.</span>
+                                <span className="block text-xs font-normal text-gray-500">Logged. Expires after 30 minutes.</span>
                             </span>
                         </button>
                     )}

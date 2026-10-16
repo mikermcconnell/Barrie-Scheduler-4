@@ -107,6 +107,8 @@ describe('TeamManagement', () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     authState.isGlobalAdmin = false;
+    authState.user.email = 'owner@example.com';
+    teamState.startDeveloperPreview.mockClear();
     teamState.team = { id: 'barrie', name: 'Barrie Transit' };
     teamState.actualTeam = { id: 'barrie', name: 'Barrie Transit' };
     teamState.developerPreview = null;
@@ -142,6 +144,7 @@ describe('TeamManagement', () => {
 
   it('saves a new team package and reports how many members followed', async () => {
     authState.isGlobalAdmin = true;
+    authState.user.email = 'mike.mcconnell@barrie.ca';
     await render();
     await click(button('Access'));
 
@@ -170,6 +173,7 @@ describe('TeamManagement', () => {
 
   it('sets a member exception to a package without touching the team default', async () => {
     authState.isGlobalAdmin = true;
+    authState.user.email = 'mike.mcconnell@barrie.ca';
     await render();
 
     // owner row is first, analyst second; the clerk already has an exception
@@ -201,6 +205,36 @@ describe('TeamManagement', () => {
     expect(container.textContent).toContain('Lane Transit');
     expect(labels).not.toContain('Developer Tools');
     expect(labels).not.toContain('Data Sources');
+  });
+
+  it('keeps other scheduler admins read-only for access and edit sessions', async () => {
+    authState.isGlobalAdmin = true;
+    await render();
+
+    expect(button('Set exception…')).toBeUndefined();
+    await click(button('Access'));
+    expect((container.querySelector('#team-access-package') as HTMLSelectElement).disabled).toBe(true);
+
+    await click(button('Support'));
+    expect(container.textContent).toContain('Inspect');
+    expect(container.textContent).not.toContain('Start edit session');
+  });
+
+  it('starts an edit session for the primary developer without asking for a reason', async () => {
+    authState.isGlobalAdmin = true;
+    authState.user.email = 'mike.mcconnell@barrie.ca';
+    const promptSpy = vi.spyOn(window, 'prompt');
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await render();
+
+    await click(button('Support'));
+    await click(Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Start edit session')));
+
+    expect(promptSpy).not.toHaveBeenCalled();
+    expect(teamState.startDeveloperPreview).toHaveBeenCalledWith(expect.objectContaining({ mode: 'edit' }));
+    expect(teamState.startDeveloperPreview.mock.calls[0][0]).not.toHaveProperty('reason');
+    promptSpy.mockRestore();
+    confirmSpy.mockRestore();
   });
 
   it('hides the access overview from team owners', async () => {

@@ -2,6 +2,12 @@ import * as admin from 'firebase-admin';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 const DEFAULT_DURATION_MINUTES = 30;
+/** The only account allowed to start developer edit sessions. */
+export const PRIMARY_DEVELOPER_EMAIL = 'mike.mcconnell@barrie.ca';
+
+export function isPrimaryDeveloperEmail(email: unknown): boolean {
+  return typeof email === 'string' && email.trim().toLowerCase() === PRIMARY_DEVELOPER_EMAIL;
+}
 const MAX_DURATION_MINUTES = 60;
 
 type SupportMode = 'inspect' | 'edit';
@@ -64,10 +70,7 @@ export function validateSupportAccessInput(
     throw new HttpsError('invalid-argument', 'Support mode must be inspect or edit.');
   }
   const requestedReason = typeof data.reason === 'string' ? data.reason.trim() : '';
-  if (data.mode === 'edit' && !requestedReason) {
-    throw new HttpsError('invalid-argument', 'A reason is required for developer edit access.');
-  }
-  const reason = requestedReason || 'Team inspection';
+  const reason = requestedReason || (data.mode === 'edit' ? 'Developer edit' : 'Team inspection');
   if (reason.length > 500) {
     throw new HttpsError('invalid-argument', 'Support session reason must be 500 characters or fewer.');
   }
@@ -110,6 +113,9 @@ export const developerSupportAccess = onCall(async (request) => {
   }
 
   const input = validateSupportAccessInput(request.data, uid);
+  if (input.action === 'start' && input.mode === 'edit' && !isPrimaryDeveloperEmail(request.auth?.token.email)) {
+    throw new HttpsError('permission-denied', 'Developer edit access is limited to the primary developer account.');
+  }
   const db = admin.firestore();
   const sessionRef = db.doc(`developerSupportSessions/${uid}`);
 
