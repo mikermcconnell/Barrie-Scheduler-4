@@ -33,6 +33,7 @@
     "dist",
     "functions",
     "tmp",
+    "site",
     "components/Analytics/TransitApp*.tsx",
     "utils/transitApp*.ts"
   ]

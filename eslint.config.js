@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   // Ignore build output and dependencies
-  { ignores: ['dist/**', '.vercel/**', 'node_modules/**', '.claude/**', '.codex-temp/**', '.tmp/**', '.worktrees/**', 'android/**/build/**', 'android/**/assets/**', 'api/**', 'functions/lib/**', 'output/**', 'outputs/**', 'docs/artifacts/**'] },
+  { ignores: ['dist/**', '.vercel/**', 'node_modules/**', '.claude/**', '.codex-temp/**', '.tmp/**', '.worktrees/**', 'android/**/build/**', 'android/**/assets/**', 'api/**', 'functions/lib/**', 'output/**', 'outputs/**', 'docs/artifacts/**', 'site/**'] },
 
   // Base JS recommended rules
   js.configs.recommended,

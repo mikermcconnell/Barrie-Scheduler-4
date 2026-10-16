@@ -1,0 +1,30 @@
+{
+  "name": "transit-monthly-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Offline monthly management dashboard for Barrie Transit, fed from an Excel workbook.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/public-sans": "^5.2.5",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "^27.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.6",
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "^4.1.3"
+  }
+}
