@@ -53,6 +53,9 @@ export const Header: React.FC<HeaderProps> = ({
         canUseViewAs = false,
         viewAsAccessLevel = null,
         setViewAsAccessLevel = () => { },
+        viewAsMember = null,
+        setViewAsMember = () => { },
+        viewAsCandidates = [],
         availableTeams = [],
         switchTeam: switchActiveTeam = async () => { },
     } = useTeam();
@@ -62,6 +65,22 @@ export const Header: React.FC<HeaderProps> = ({
     const [teamSwitchError, setTeamSwitchError] = useState<string | null>(null);
     const username = user?.displayName || user?.email?.split('@')[0] || 'Signed in';
     const accessLabel = WORKSPACE_ACCESS_LEVEL_LABELS[accessLevel];
+    const viewAsValue = viewAsMember
+        ? `member:${viewAsMember.userId}`
+        : viewAsAccessLevel ? `level:${viewAsAccessLevel}` : '';
+    const viewAsLabel = viewAsMember
+        ? `${viewAsMember.displayName} (${WORKSPACE_ACCESS_LEVEL_LABELS[viewAsMember.accessLevel]}${viewAsMember.workspaceOverrides && Object.keys(viewAsMember.workspaceOverrides).length > 0 ? ' + custom' : ''})`
+        : viewAsAccessLevel ? WORKSPACE_ACCESS_LEVEL_LABELS[viewAsAccessLevel] : null;
+    const handleViewAsChange = (value: string) => {
+        if (value.startsWith('member:')) {
+            const userId = value.slice('member:'.length);
+            setViewAsMember(viewAsCandidates.find(member => member.userId === userId) ?? null);
+        } else {
+            const level = value.slice('level:'.length);
+            setViewAsAccessLevel(isWorkspaceAccessLevel(level) ? level : null);
+        }
+        onNavigate('home');
+    };
     const supportExpiresAt = developerPreview
         ? new Intl.DateTimeFormat('en-CA', { hour: 'numeric', minute: '2-digit' }).format(new Date(developerPreview.expiresAt))
         : null;
@@ -123,13 +142,13 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                 </div>
             )}
-            {viewAsAccessLevel && !isDeveloperPreview && (
+            {viewAsLabel && (
                 <div className="border-b border-purple-200 bg-purple-50 px-6 py-2">
                     <div className={`mx-auto flex flex-col gap-2 text-xs font-bold text-purple-900 sm:flex-row sm:items-center sm:justify-between ${currentView === 'home' ? 'max-w-7xl' : 'max-w-[1920px]'}`}>
                         <div className="flex items-center gap-2">
                             <Eye size={15} />
                             <span>
-                                Viewing as {WORKSPACE_ACCESS_LEVEL_LABELS[viewAsAccessLevel]} · UI only, your real permissions still apply to data
+                                Viewing as {viewAsLabel} · UI only, your real permissions still apply to data
                             </span>
                         </div>
                         <button
@@ -161,25 +180,32 @@ export const Header: React.FC<HeaderProps> = ({
                 {/* Right Actions */}
                 <div className="flex items-center gap-4">
 
-                    {user && canUseViewAs && !isDeveloperPreview && (
+                    {user && canUseViewAs && (
                         <label className="flex items-center gap-2 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5">
                             <Eye size={16} className="shrink-0 text-purple-600" />
                             <span className="min-w-0">
                                 <span className="block text-[10px] font-semibold uppercase tracking-wide text-purple-700">View as</span>
                                 <select
-                                    aria-label="View app as access level"
-                                    value={viewAsAccessLevel ?? ''}
-                                    onChange={(event) => {
-                                        const next = event.target.value;
-                                        setViewAsAccessLevel(isWorkspaceAccessLevel(next) ? next : null);
-                                        onNavigate('home');
-                                    }}
+                                    aria-label="View app as a person or access level"
+                                    value={viewAsValue}
+                                    onChange={(event) => handleViewAsChange(event.target.value)}
                                     className="block max-w-40 cursor-pointer bg-transparent text-sm font-bold leading-tight text-gray-800 focus:outline-none"
                                 >
-                                    <option value="">Myself</option>
-                                    {WORKSPACE_ACCESS_LEVELS.map((level) => (
-                                        <option key={level} value={level}>{WORKSPACE_ACCESS_LEVEL_LABELS[level]}</option>
-                                    ))}
+                                    <option value="">{isDeveloperPreview ? 'Preview default' : 'Myself'}</option>
+                                    {viewAsCandidates.length > 0 && (
+                                        <optgroup label={`People on ${team?.name ?? 'this team'}`}>
+                                            {viewAsCandidates.map((member) => (
+                                                <option key={member.userId} value={`member:${member.userId}`}>
+                                                    {member.displayName || member.email}
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                    <optgroup label="Access levels">
+                                        {WORKSPACE_ACCESS_LEVELS.map((level) => (
+                                            <option key={level} value={`level:${level}`}>{WORKSPACE_ACCESS_LEVEL_LABELS[level]}</option>
+                                        ))}
+                                    </optgroup>
                                 </select>
                             </span>
                         </label>

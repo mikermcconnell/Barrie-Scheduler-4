@@ -16,6 +16,7 @@ const {
   createDeveloperSupportSessionMock,
   deleteDeveloperSupportSessionMock,
   getActiveDeveloperSupportSessionMock,
+  getTeamWithMembersMock,
 } = vi.hoisted(() => ({
   authState: {
     user: {
@@ -36,6 +37,7 @@ const {
   createDeveloperSupportSessionMock: vi.fn(),
   deleteDeveloperSupportSessionMock: vi.fn(),
   getActiveDeveloperSupportSessionMock: vi.fn(),
+  getTeamWithMembersMock: vi.fn(),
 }));
 
 vi.mock('../components/contexts/AuthContext', () => ({
@@ -49,7 +51,7 @@ vi.mock('../utils/services/teamService', () => ({
   joinTeamByInviteCode: joinTeamByInviteCodeMock,
   getTeamMember: getTeamMemberMock,
   switchUserTeam: switchUserTeamMock,
-  getTeamWithMembers: vi.fn(),
+  getTeamWithMembers: getTeamWithMembersMock,
 }));
 
 vi.mock('../utils/services/developerSupportSessionService', () => ({
@@ -88,6 +90,16 @@ function TeamProbe() {
   );
 }
 
+function ViewAsProbe() {
+  const { accessLevel, viewAsCandidates, viewAsMember, setViewAsMember, setViewAsAccessLevel } = useTeam();
+  return (
+    <div data-access={accessLevel} data-view-as={viewAsMember?.displayName ?? 'none'}>
+      <button type="button" onClick={() => setViewAsMember(viewAsCandidates[0] ?? null)}>View as first member</button>
+      <button type="button" onClick={() => setViewAsAccessLevel(null)}>Exit view as</button>
+    </div>
+  );
+}
+
 describe('TeamContext invite links', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -104,6 +116,7 @@ describe('TeamContext invite links', () => {
     createDeveloperSupportSessionMock.mockReset();
     deleteDeveloperSupportSessionMock.mockReset();
     getActiveDeveloperSupportSessionMock.mockReset();
+    getTeamWithMembersMock.mockReset().mockResolvedValue(null);
     authState.isGlobalAdmin = false;
     getActiveDeveloperSupportSessionMock.mockResolvedValue(null);
     deleteDeveloperSupportSessionMock.mockResolvedValue(undefined);
@@ -243,10 +256,12 @@ describe('TeamContext invite links', () => {
     expect(container.firstElementChild?.getAttribute('data-access')).toBe('none');
   });
 
-  it('loads every team for a global admin and inspects a non-member team without changing membership', async () => {
+  it('loads every team for a global admin and inspects a non-member team with its default access', async () => {
     authState.isGlobalAdmin = true;
     const barrieTeam = { id: 'barrie-transit', name: 'Barrie Transit', inviteCode: 'BARRIE' };
-    const developerTeam = { id: 'developer', name: 'Developer', inviteCode: 'DEV123' };
+    const developerTeam = {
+      id: 'developer', name: 'Developer', inviteCode: 'DEV123', defaultMemberAccessLevel: 'parking',
+    };
     getPendingInviteCodeMock.mockReturnValue(null);
     getUserTeamMock.mockResolvedValue(barrieTeam);
     getTeamsForPermissionManagementMock.mockResolvedValue([barrieTeam, developerTeam]);
@@ -285,7 +300,7 @@ describe('TeamContext invite links', () => {
     }));
     expect(switchUserTeamMock).not.toHaveBeenCalled();
     expect(container.firstElementChild?.getAttribute('data-team')).toBe('developer');
-    expect(container.firstElementChild?.getAttribute('data-access')).toBe('internal');
+    expect(container.firstElementChild?.getAttribute('data-access')).toBe('parking');
     expect(container.firstElementChild?.getAttribute('data-preview')).toBe('true');
 
     await act(async () => {
@@ -297,5 +312,45 @@ describe('TeamContext invite links', () => {
     expect(switchUserTeamMock).not.toHaveBeenCalled();
     expect(container.firstElementChild?.getAttribute('data-team')).toBe('barrie-transit');
     expect(container.firstElementChild?.getAttribute('data-preview')).toBe('false');
+  });
+
+  it('lets an admin view the app as an individual team member', async () => {
+    window.sessionStorage.clear();
+    const barrieTeam = { id: 'barrie-transit', name: 'Barrie Transit', inviteCode: 'BARRIE' };
+    getPendingInviteCodeMock.mockReturnValue(null);
+    getUserTeamMock.mockResolvedValue(barrieTeam);
+    getUserTeamsMock.mockResolvedValue([barrieTeam]);
+    getTeamMemberMock.mockResolvedValue({
+      id: 'user-1', userId: 'user-1', role: 'owner', accessLevel: 'internal',
+      joinedAt: new Date(), displayName: 'Lane User', email: 'lane.user@example.com',
+    });
+    getTeamWithMembersMock.mockResolvedValue({
+      ...barrieTeam,
+      memberCount: 1,
+      members: [{
+        id: 'dylan', userId: 'dylan', role: 'member', accessLevel: 'none',
+        workspaceOverrides: { workspaceParking: true },
+        joinedAt: new Date(), displayName: 'Dylan', email: 'dylan@example.com',
+      }],
+    });
+
+    await act(async () => {
+      root.render(<TeamProvider><ViewAsProbe /></TeamProvider>);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(container.firstElementChild?.getAttribute('data-access')).toBe('internal');
+
+    await act(async () => {
+      container.querySelectorAll<HTMLButtonElement>('button')[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(getTeamWithMembersMock).toHaveBeenCalledWith('barrie-transit');
+    expect(container.firstElementChild?.getAttribute('data-view-as')).toBe('Dylan');
+    expect(container.firstElementChild?.getAttribute('data-access')).toBe('none');
+
+    await act(async () => {
+      container.querySelectorAll<HTMLButtonElement>('button')[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.firstElementChild?.getAttribute('data-view-as')).toBe('none');
+    expect(container.firstElementChild?.getAttribute('data-access')).toBe('internal');
   });
 });
