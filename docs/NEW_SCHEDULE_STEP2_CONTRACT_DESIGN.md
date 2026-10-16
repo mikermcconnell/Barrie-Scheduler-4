@@ -15,7 +15,7 @@ This document records the concrete Step 2 contract design and the rationale that
 
 The design assumes the core analytic outcome of Step 2 is to let the planner review the **median travel time for each route segment by 30-minute time bucket**, then save the resulting planning contract for later steps.
 
-Internal workflow note: Step 2 should not force a separate approval decision gate. The app may create or replace the approved contract automatically when the user continues from a non-blocked review.
+Internal workflow note: in the legacy wizard, Step 2 does not force a separate approval decision gate; the app creates or replaces the approved contract automatically when the user continues from a non-blocked review. The guided scheduling workflow requires an explicit planner approval instead (`docs/GUIDED_SCHEDULING.md`). The contract shape is the same in both.
 
 It answers three practical questions:
 

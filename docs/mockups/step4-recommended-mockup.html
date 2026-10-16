@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 4 · Build the schedule – recommended design</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --ink: #111827; --ink2: #374151; --mute: #6b7280; --faint: #9ca3af; --line: #e5e7eb; --line2: #f1f5f9; --panel: #f8fafc;
+    --green: #16a34a; --green-bg: #ecfdf3; --blue: #1d4ed8; --blue-bg: #eff6ff;
+    --amber: #92400e; --amber-bg: #fffbeb; --amber-line: #fcd34d; --red: #b91c1c; --red-bg: #fef2f2; --red-line: #fca5a5;
+    --nb: #3b82f6; --sb: #f97316;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: #4b5563; display: flex; flex-direction: column; }
+  button, select, input { font: inherit; color: inherit; }
+
+  /* page chrome (not part of the design) */
+  .viewbar { display: flex; gap: 10px; align-items: center; padding: 8px 16px; background: #111827; color: #e5e7eb; flex: none; }
+  .viewbar b { color: #fff; }
+  .viewbar .sp { flex: 1; }
+  .viewbar a, .viewbar label { color: #d1d5db; font-size: 12px; text-decoration: none; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .viewbar a:hover { color: #fff; }
+  .stage { flex: 1; min-height: 0; padding: 14px 16px 16px; display: flex; justify-content: center; }
+
+  /* app frame: fills the window so the table gets the screen (rec 1) */
+  .app { position: relative; width: 100%; max-width: 1560px; background: #fff; border-radius: 14px; box-shadow: 0 20px 50px rgba(0,0,0,.35); display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  .topbar { display: flex; align-items: center; gap: 14px; padding: 8px 14px; border-bottom: 1px solid var(--line); flex: none; }
+  .route { font-weight: 700; font-size: 14px; white-space: nowrap; }
+  .route small { font-weight: 500; color: var(--mute); margin-left: 4px; }
+  .mini { display: flex; gap: 2px; align-items: center; }
+  .mini span { font-size: 11px; color: var(--mute); padding: 3px 7px; border-radius: 999px; white-space: nowrap; }
+  .mini span.done { color: var(--green); }
+  .mini span.cur { background: #111827; color: #fff; font-weight: 700; }
+  .mini i { color: #d1d5db; font-style: normal; }
+  .vsep { width: 1px; align-self: stretch; background: var(--line); }
+  .dts { display: flex; gap: 4px; }
+  .dt { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; gap: 5px; align-items: center; }
+  .dt.on { background: #111827; border-color: #111827; color: #fff; }
+  .dt .st { font-size: 10px; }
+  .dt.off { color: var(--faint); text-decoration: line-through; cursor: default; }
+  .sp { flex: 1; }
+  .btn { border: 1px solid #d1d5db; background: #fff; padding: 5px 11px; border-radius: 7px; font-weight: 600; cursor: pointer; font-size: 12px; white-space: nowrap; }
+  .btn:hover:not([disabled]) { background: var(--panel); }
+  .btn[disabled] { opacity: .4; cursor: not-allowed; }
+  .btn.pri { background: var(--green); border-color: var(--green); color: #fff; }
+  .btn.dark { background: #111827; border-color: #111827; color: #fff; }
+
+  /* toolbar: stages as a control with status (rec 2) */
+  .toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; background: #fff; }
+  .seg button { border: 0; background: transparent; padding: 5px 11px; cursor: pointer; border-right: 1px solid #e5e7eb; font-size: 12px; font-weight: 600; color: var(--ink2); white-space: nowrap; }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: #111827; color: #fff; }
+  .seg button .s { font-weight: 500; opacity: .75; margin-left: 4px; }
+  .tlabel { font-size: 11px; color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
+  .chk { display: flex; gap: 5px; align-items: center; font-size: 12px; color: var(--ink2); cursor: pointer; white-space: nowrap; }
+  .issues { position: relative; }
+  .ipill { border: 1px solid var(--amber-line); background: var(--amber-bg); color: var(--amber); border-radius: 999px; padding: 4px 10px; font-weight: 700; font-size: 12px; cursor: pointer; }
+  .ipill.clear { border-color: #bbf7d0; background: var(--green-bg); color: #166534; }
+  .imenu { position: absolute; top: 30px; left: 0; z-index: 30; width: 330px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.15); padding: 6px; display: none; }
+  .imenu.open { display: block; }
+  .imenu button { display: flex; width: 100%; gap: 8px; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .imenu button:hover { background: var(--panel); }
+  .imenu .k { font-weight: 700; min-width: 52px; }
+  .summary { font-size: 12px; color: var(--mute); white-space: nowrap; }
+  .summary b { color: var(--ink2); font-weight: 600; }
+
+  /* content */
+  .content { position: relative; flex: 1; min-height: 0; display: flex; }
+  .tt-wrap { flex: 1; min-width: 0; overflow: auto; position: relative; }
+  .topbar, .toolbar, .footer { min-width: 0; }
+  table.tt { border-collapse: separate; border-spacing: 0; white-space: nowrap; width: 100%; font-variant-numeric: tabular-nums; }
+  .tt th, .tt td { padding: 5px 8px; text-align: center; border-bottom: 1px solid var(--line2); }
+  .tt thead th { position: sticky; top: 0; z-index: 5; background: var(--panel); color: var(--ink2); font-size: 11px; font-weight: 600; white-space: normal; line-height: 1.2; }
+  .tt thead tr.h2 th { font-size: 10px; letter-spacing: .06em; color: var(--faint); border-bottom: 1px solid var(--line); }
+  .tt th.g-nb { box-shadow: inset 0 3px 0 var(--nb); }
+  .tt th.g-sb { box-shadow: inset 0 3px 0 var(--sb); }
+  .tt th .dir { display: block; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--mute); }
+  .tt th .code { display: block; font-size: 10px; font-weight: 400; color: var(--faint); }
+  .tt th.go { position: relative; }
+  .tt th .gotag { display: inline-block; margin-top: 2px; font-size: 9px; font-weight: 700; color: var(--blue); background: var(--blue-bg); border-radius: 4px; padding: 0 4px; }
+  .tt td { color: var(--ink); font-size: 12.5px; }
+  .tt td.gl { border-left: 1px solid var(--line); }
+  .tt td.blk, .tt th.blk { position: sticky; left: 0; z-index: 4; background: #fff; text-align: left; font-weight: 700; border-right: 1px solid var(--line); }
+  .tt th.blk { z-index: 6; background: var(--panel); }
+  .tt td.blk .bar { display: inline-block; width: 4px; height: 14px; border-radius: 2px; vertical-align: -2px; margin-right: 7px; }
+  .tt td.meta { color: var(--ink2); }
+  .tt td.meta.first { border-left: 1px solid var(--line); }
+  .bandl { font-size: 10px; font-weight: 700; color: var(--faint); margin-left: 4px; }
+  .pct { font-size: 11px; color: var(--mute); margin-left: 3px; }
+  /* exceptions only (rec 4) */
+  .tt td.f-red { background: var(--red-bg); color: var(--red); font-weight: 700; }
+  .tt td.f-amber { background: var(--amber-bg); color: var(--amber); font-weight: 700; }
+  .tt td.f-amber .pct, .tt td.f-red .pct { color: inherit; }
+  .tt td.edited { box-shadow: inset 0 0 0 2px #f59e0b; }
+  .tt td.ed { cursor: pointer; }
+  .tt td.ed:hover { background: #f3f4f6; }
+  .tt td.active { box-shadow: inset 0 0 0 2px #111827 !important; background: #fff !important; }
+  .tt td.endc { color: var(--faint); font-size: 11px; }
+  .old { display: block; font-size: 10px; color: var(--faint); text-decoration: line-through; line-height: 1; }
+  .tt tr.row { cursor: pointer; }
+  .tt tr.row:hover td { background-color: #f9fafb; }
+  .tt tr.same td { background-color: #eef2ff !important; }
+  .tt tr.sel td { background-color: #ecfdf3 !important; }
+  .tt tr.dim td { opacity: .45; }
+  /* hour separators (rec 9) */
+  .tt tr.hour td { position: sticky; left: 0; background: #fff; text-align: left; font-size: 10px; font-weight: 800; letter-spacing: .08em; color: var(--faint); padding: 8px 8px 3px; border-bottom: 1px solid var(--line); }
+  /* connection markers (rec 7) */
+  .cx { display: inline-block; font-size: 10px; font-weight: 700; border-radius: 4px; padding: 0 5px; margin-left: 4px; }
+  .cx.ok { background: #dcfce7; color: #166534; } .cx.miss { background: #fee2e2; color: var(--red); }
+  .shift { display: inline-block; font-size: 10px; font-weight: 700; border-radius: 4px; padding: 0 4px; background: var(--blue-bg); color: var(--blue); margin-left: 4px; }
+
+  /* edit popover (rec 10) */
+  .pop { position: absolute; z-index: 20; background: #111827; color: #fff; border-radius: 10px; padding: 8px; box-shadow: 0 10px 25px rgba(0,0,0,.3); display: none; }
+  .pop.open { display: block; }
+  .pop .row1 { display: flex; gap: 4px; }
+  .pop button { min-width: 36px; height: 30px; border: 0; border-radius: 6px; background: #374151; color: #fff; font-weight: 700; cursor: pointer; }
+  .pop button:hover { background: #4b5563; }
+  .pop .hint { font-size: 10px; color: #d1d5db; margin-top: 6px; text-align: center; }
+  .pop .what { font-size: 11px; font-weight: 700; margin-bottom: 6px; }
+
+  /* drawer (rec 5) */
+  .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; background: #fff; border-left: 1px solid var(--line); box-shadow: -12px 0 30px rgba(0,0,0,.12); transform: translateX(100%); transition: transform .18s ease; z-index: 25; display: flex; flex-direction: column; }
+  .drawer.open { transform: translateX(0); }
+  .dh { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .dh h3 { margin: 0; font-size: 15px; } .dh p { margin: 2px 0 0; color: var(--mute); font-size: 12px; }
+  .x { border: 0; background: none; font-size: 20px; color: var(--faint); cursor: pointer; line-height: 1; }
+  .db { padding: 12px 14px; overflow: auto; flex: 1; }
+  .db h4 { margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); }
+  .db h4:first-child { margin-top: 0; }
+  .strip { display: flex; height: 22px; border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+  .strip div { font-size: 9px; color: #fff; display: grid; place-items: center; overflow: hidden; }
+  .strip .n { background: #60a5fa; } .strip .s { background: #fb923c; } .strip .r { background: #fde68a; color: var(--amber); } .strip .l { background: #fcd34d; color: var(--amber); }
+  dl.kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin: 0; }
+  dl.kv dt { color: var(--mute); } dl.kv dd { margin: 0; font-weight: 600; text-align: right; }
+  .segs div { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed var(--line2); }
+  .segs .rr { color: var(--amber); font-weight: 700; }
+  .nav2 { display: flex; gap: 6px; margin-top: 12px; }
+  .nav2 .btn { flex: 1; }
+
+  /* blocks view (rec 3) */
+  .bv { flex: 1; min-width: 0; overflow: auto; display: none; }
+  .bv.on { display: block; }
+  .lanes { position: relative; padding: 8px 0 16px; }
+  .lane { display: flex; align-items: center; border-bottom: 1px solid var(--line2); height: 54px; }
+  .lane .lab { position: sticky; left: 0; z-index: 3; width: 190px; flex: none; background: #fff; padding: 0 12px; border-right: 1px solid var(--line); height: 100%; display: flex; flex-direction: column; justify-content: center; }
+  .lane .lab b { font-size: 13px; } .lane .lab small { color: var(--mute); font-size: 11px; }
+  .track { position: relative; height: 30px; flex: none; }
+  .tb { position: absolute; top: 0; height: 30px; border-radius: 5px; font-size: 10px; color: #fff; display: grid; place-items: center; cursor: pointer; overflow: hidden; }
+  .tb.n { background: #3b82f6; } .tb.s { background: #f97316; }
+  .tb.sel { outline: 3px solid #111827; outline-offset: 1px; }
+  .gap { position: absolute; top: 6px; height: 18px; border-radius: 4px; background: repeating-linear-gradient(45deg, #fde68a, #fde68a 3px, #fef3c7 3px, #fef3c7 6px); }
+  .gap.bad { background: #fecaca; outline: 1px solid var(--red); }
+  .axis { position: sticky; top: 0; z-index: 4; display: flex; height: 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .axis .lab { position: sticky; left: 0; width: 190px; flex: none; background: var(--panel); border-right: 1px solid var(--line); font-size: 11px; color: var(--mute); padding: 4px 12px; }
+  .axis .ticks { position: relative; flex: none; }
+  .axis .ticks span { position: absolute; top: 5px; font-size: 10px; color: var(--mute); transform: translateX(-50%); }
+
+  .footer { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--panel); flex: none; gap: 12px; }
+  .footer .msg { font-size: 12px; color: var(--mute); }
+
+  /* recommendation markers (mockup aid) */
+  .ann { display: none; width: 18px; height: 18px; border-radius: 50%; background: #db2777; color: #fff; font-size: 10px; font-weight: 800; place-items: center; flex: none; box-shadow: 0 0 0 2px #fff; vertical-align: middle; margin: 0 2px; }
+  body.show-ann .ann { display: inline-grid; }
+  .legend { position: fixed; right: 24px; bottom: 70px; z-index: 50; width: 340px; background: #fff; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.3); padding: 8px 12px; display: none; font-size: 12px; max-height: 65vh; overflow: auto; border: 2px solid #db2777; }
+  body.show-ann .legend { display: block; }
+  .legend h4 { margin: 0; font-size: 12px; cursor: pointer; display: flex; justify-content: space-between; color: #9d174d; }
+  .legend .items { margin-top: 6px; }
+  .legend.collapsed .items { display: none; }
+  .legend .items > div { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; }
+  .legend .ann { display: inline-grid; }
+</style>
+</head>
+<body class="show-ann">
+<div class="viewbar">
+  <b>Step 4 · Build the schedule</b><span style="font-size:12px;opacity:.7">recommended design · sample data</span>
+  <span class="sp"></span>
+  <label><input type="checkbox" id="annToggle" checked> Show recommendation numbers</label>
+  <a href="guided-scheduling-mockup.html">← Original 5-step mockup</a>
+</div>
+
+<div class="stage">
+<div class="app">
+  <!-- rec 1: one compact top row instead of header + stepper + tabs + title -->
+  <div class="topbar">
+    <span class="ann">1</span>
+    <div class="route">Route 8A<small>Fall 2026 set</small></div>
+    <div class="mini">
+      <span class="done">✓ Data</span><i>›</i><span class="done">✓ Bands</span><i>›</i><span class="done">✓ Stage</span><i>›</i><span class="cur">4 Build</span><i>›</i><span>5 Package</span>
+    </div>
+    <div class="vsep"></div>
+    <div class="dts">
+      <button class="dt on">Weekday <span class="st">✓</span></button>
+      <button class="dt">Saturday <span class="st" style="color:#b45309">●</span></button>
+      <button class="dt off" title="Dropped from set">Sunday</button>
+    </div>
+    <span class="sp"></span>
+    <button class="btn" id="undo" disabled title="Ctrl+Z">↶ Undo</button>
+    <button class="btn" id="redo" disabled title="Ctrl+Y">↷ Redo</button>
+  </div>
+
+  <!-- rec 2, 3, 6, 8 -->
+  <div class="toolbar">
+    <span class="ann">2</span>
+    <div class="seg" id="stageSeg">
+      <button data-stage="gen">Generate<span class="s">✓</span></button>
+      <button data-stage="conn">Connections<span class="s" id="connStat"></span></button>
+      <button data-stage="tweak" class="on">Tweaks<span class="s" id="editStat"></span></button>
+    </div>
+    <span class="ann">3</span>
+    <span class="tlabel">View</span>
+    <div class="seg" id="viewSeg"><button data-view="trips" class="on">Trips</button><button data-view="blocks">Blocks</button></div>
+    <span class="ann">8</span>
+    <label class="chk"><input type="checkbox" id="showChanges"> Show changes</label>
+    <span class="ann">6</span>
+    <div class="issues"><button class="ipill" id="ipill"></button><div class="imenu" id="imenu"></div></div>
+    <span class="sp"></span>
+    <div class="summary" id="summary"></div>
+  </div>
+
+  <div class="content">
+    <div class="tt-wrap" id="ttwrap">
+      <table class="tt" id="tt"></table>
+      <div class="pop" id="pop">
+        <div class="what" id="popWhat"></div>
+        <div class="row1"><button data-d="-5">−5</button><button data-d="-1">−1</button><button data-d="1">+1</button><button data-d="5">+5</button></div>
+        <div class="hint">↑ / ↓ ±1 min · Shift ±5 · Esc to close</div>
+      </div>
+    </div>
+    <div class="bv" id="bv"><div class="lanes" id="lanes"></div></div>
+
+    <!-- rec 5 -->
+    <aside class="drawer" id="drawer">
+      <div class="dh"><div><h3 id="dTitle"></h3><p id="dSub"></p></div><button class="x" id="dClose" title="Close">×</button></div>
+      <div class="db" id="dBody"></div>
+    </aside>
+  </div>
+
+  <div class="footer">
+    <button class="btn">← Set the stage</button>
+    <span class="msg" id="fmsg">Saturday still needs Steps 2–4 before Package.</span>
+    <button class="btn pri">Continue to Package →</button>
+  </div>
+</div>
+</div>
+
+<div class="legend" id="legend">
+  <h4 id="legendHead"><span>11 recommendations shown</span><span id="legendCaret">▾ hide</span></h4><div class="items">
+  <div><span class="ann">1</span><span><b>Table gets the screen.</b> One compact top row; the table fills the window with a fixed header and Block column.</span></div>
+  <div><span class="ann">2</span><span><b>Stages as a control</b> with live status (✓, connections met, edit count), not a second stepper.</span></div>
+  <div><span class="ann">3</span><span><b>Blocks visible.</b> Hover a row to light up its whole block (coloured bar). Switch View → Blocks for one lane per bus.</span></div>
+  <div><span class="ann">4</span><span><b>Colour for exceptions only.</b> Normal values are plain; red = short layover, amber = recovery % or headway off target, outline = your edit.</span></div>
+  <div><span class="ann">5</span><span><b>Inspector drawer.</b> Click a row; details slide in over the table.</span></div>
+  <div><span class="ann">6</span><span><b>Issues pill.</b> Click to list issues and jump to the row.</span></div>
+  <div><span class="ann">7</span><span><b>Connection markers where they matter.</b> Full ✓/✕ in Connections; elsewhere only misses.</span></div>
+  <div><span class="ann">8</span><span><b>Show changes</b> against the generated schedule (old value struck through).</span></div>
+  <div><span class="ann">9</span><span><b>Hour separators</b> for scanning a long day.</span></div>
+  <div><span class="ann">10</span><span><b>Bigger edit targets</b> with a keyboard hint. Click a DEP or R cell in Tweaks.</span></div>
+  <div><span class="ann">11</span><span><b>Editor parity.</b> Trip times and recovery are editable here; add/remove trip and block swap would come from the existing editor.</span></div>
+  <p style="margin:8px 0 0;color:var(--mute)">Recovery target 10–30% and the 3-min minimum layover are placeholders until you confirm the real targets.</p></div>
+</div>
+<script>
+(() => {
+  /* ---------- sample data model ---------- */
+  const NB = [['Downtown Terminal', '1'], ['Allandale GO', '9005'], ['Bayfield & Livingstone', '412'], ['Georgian College', '330']];
+  const SB = [['Georgian College', '330'], ['Duckworth & Grove', '518'], ['Downtown Terminal', '1']];
+  const TRAVEL = { A: 25, B: 24, C: 23, D: 22, E: 21 };
+  const N_SPLIT = [0.36, 0.32, 0.32], S_SPLIT = [0.5, 0.5];
+  const CYCLE = 60, BASE_REC = 3, HEADWAY = 20, MIN_LAY = 3, REC_LO = 10, REC_HI = 30;
+  const BLOCKS = [
+    { id: '8A-1', start: 345, end: 1360, color: '#6366f1' },
+    { id: '8A-2', start: 365, end: 1380, color: '#0d9488' },
+    { id: '8A-3', start: 385, end: 1150, color: '#c026d3' },
+  ];
+  const color = Object.fromEntries(BLOCKS.map(b => [b.id, b.color]));
+
+  const st = { rec: {}, dep: {}, conn: {} };   // manual recovery, manual trip shift, optimizer shift
+  let history = [], future = [], preOpt = null;
+  let stage = 'tweak', view = 'trips', showChanges = false, selected = null, active = null, hoverBlock = null;
+
+  const bandAt = m => { const h = m / 60; return h < 6.5 ? 'E' : h < 7 ? 'D' : h < 9 ? 'A' : h < 9.5 ? 'B' : h < 14 ? 'C' : h < 15 ? 'B' : h < 18 ? 'A' : h < 20 ? 'C' : 'E'; };
+  const segs = (total, split) => split.map(p => Math.round(total * p)); // round each segment, then sum
+  const fmt = m => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const sum = a => a.reduce((x, y) => x + y, 0);
+
+  function build(s) {
+    const rows = [];
+    BLOCKS.forEach(b => {
+      for (let t = b.start, k = 0; t + CYCLE <= b.end + 25; t += CYCLE, k++) {
+        const id = `${b.id}#${k}`;
+        const shift = (s.dep[id] || 0) + (s.conn[id] || 0);
+        const n0 = t + shift, bandN = bandAt(n0), nSeg = segs(TRAVEL[bandN], N_SPLIT);
+        const nT = [n0]; nSeg.forEach(x => nT.push(nT[nT.length - 1] + x));
+        const rec = BASE_REC + (s.rec[id] || 0);
+        const s0 = nT[3] + rec, bandS = bandAt(s0), sSeg = segs(TRAVEL[bandS], S_SPLIT);
+        const sT = [s0]; sSeg.forEach(x => sT.push(sT[sT.length - 1] + x));
+        const isEnd = t + 2 * CYCLE > b.end + 25;
+        const layover = isEnd ? null : t + CYCLE - sT[2];
+        const run = sum(nSeg) + sum(sSeg), recTotal = rec + (layover ?? 0);
+        rows.push({ id, block: b.id, k, nT, sT, nSeg, sSeg, rec, layover, isEnd, bandN, bandS, run, recTotal,
+          pct: Math.round(100 * recTotal / run), cycle: isEnd ? sT[2] - n0 : CYCLE, shift, connShift: s.conn[id] || 0 });
+      }
+    });
+    rows.sort((a, b) => a.nT[0] - b.nT[0]);
+    rows.forEach((r, i) => { r.headway = i ? r.nT[0] - rows[i - 1].nT[0] : null; r.conn = connFor(r); });
+    return rows;
+  }
+  // Sample GO trains arrive Allandale at :41 hourly; bus should leave 3–12 min later.
+  function connFor(r) {
+    const at = r.nT[1];
+    for (let tr = 401; tr <= 1301; tr += 60) { const g = at - tr; if (g >= -2 && g <= 20) return { ok: g >= 3 && g <= 12, wait: g }; }
+    return null;
+  }
+  function issuesOf(rows) {
+    const out = [];
+    rows.forEach(r => {
+      if (!r.isEnd && r.layover < MIN_LAY) out.push({ r, k: 'Layover', t: `${r.layover} min at Downtown (min ${MIN_LAY})`, sev: 'red' });
+      if (!r.isEnd && (r.pct < REC_LO || r.pct > REC_HI)) out.push({ r, k: 'Recovery', t: `${r.pct}% (target ${REC_LO}–${REC_HI}%)`, sev: 'amber' });
+      if (r.headway != null && Math.abs(r.headway - HEADWAY) > 2) out.push({ r, k: 'Headway', t: `${r.headway} min (target ${HEADWAY})`, sev: 'amber' });
+    });
+    return out;
+  }
+
+  /* ---------- trips table ---------- */
+  const $ = id => document.getElementById(id);
+  function cellOld(now, then, f = x => x) { return showChanges && then !== undefined && now !== then ? `<span class="old">${f(then)}</span>` : ''; }
+
+  function renderTable(rows, base) {
+    const byId = Object.fromEntries(base.map(r => [r.id, r]));
+    let h = '<thead><tr><th class="blk" rowspan="2">Block</th>';
+    NB.forEach(([n, c], i) => {
+      const go = i === 1;
+      h += `<th class="g-nb${go ? ' go' : ''}"${i === 3 ? ' colspan="2"' : ''}>${i === 0 ? '<span class="dir">Northbound</span>' : ''}${i === 3 ? 'Arrive ' : ''}${n}<span class="code">#${c}</span>${go ? `<span class="gotag">GO 3–12 min</span> <span class="ann">7</span>` : ''}</th>`;
+    });
+    SB.forEach(([n, c], i) => {
+      h += `<th class="g-sb"${i === 2 ? ' colspan="2"' : ''}>${i === 0 ? '<span class="dir">Southbound</span>Depart ' : ''}${n}<span class="code">#${c}</span></th>`;
+    });
+    h += '<th rowspan="2">Run<span class="code">band</span></th><th rowspan="2">Recovery <span class="ann">4</span><span class="code">min · %</span></th><th rowspan="2">Headway</th><th rowspan="2">Cycle</th></tr>';
+    h += '<tr class="h2"><th>DEP <span class="ann">10</span><span class="ann">11</span></th><th>DEP</th><th>DEP</th><th>ARR</th><th title="Recovery at Georgian College">R</th><th>DEP</th><th>DEP</th><th>ARR</th><th title="Layover at Downtown before this bus\'s next trip">LAY</th></tr></thead><tbody>';
+
+    let lastHour = -1, firstHour = true;
+    const tweak = stage === 'tweak';
+    rows.forEach(r => {
+      const hr = Math.floor(r.nT[0] / 60);
+      if (hr !== lastHour) {
+        h += `<tr class="hour"><td colspan="14">${String(hr).padStart(2, '0')}:00${firstHour ? ' <span class="ann">9</span>' : ''}</td></tr>`;
+        lastHour = hr; firstHour = false;
+      }
+      const b = byId[r.id] || r;
+      const cls = ['row', r.id === selected ? 'sel' : '', hoverBlock && r.block === hoverBlock && r.id !== selected ? 'same' : ''].join(' ');
+      h += `<tr class="${cls}" data-row="${r.id}" data-block="${r.block}">`;
+      h += `<td class="blk"><span class="bar" style="background:${color[r.block]}"></span>${r.block}</td>`;
+      const depEdited = st.dep[r.id];
+      const shiftTag = r.connShift ? `<span class="shift">↻ ${r.connShift > 0 ? '+' : ''}${r.connShift}</span>` : '';
+      h += `<td class="gl${tweak ? ' ed' : ''}${depEdited ? ' edited' : ''}${active?.id === r.id && active.kind === 'dep' ? ' active' : ''}" data-edit="dep">${cellOld(r.nT[0], b.nT[0], fmt)}${fmt(r.nT[0])}${shiftTag}</td>`;
+      let cx = '';
+      if (r.conn && (stage === 'conn' || !r.conn.ok)) cx = `<span class="cx ${r.conn.ok ? 'ok' : 'miss'}">${r.conn.ok ? '✓' : '✕'} wait ${r.conn.wait}</span>`;
+      h += `<td>${fmt(r.nT[1])}${cx}</td><td>${fmt(r.nT[2])}</td><td>${fmt(r.nT[3])}</td>`;
+      h += `<td class="${tweak ? 'ed' : ''}${st.rec[r.id] ? ' edited' : ''}${active?.id === r.id && active.kind === 'rec' ? ' active' : ''}" data-edit="rec">${cellOld(r.rec, b.rec)}${r.rec}</td>`;
+      h += `<td class="gl">${cellOld(r.sT[0], b.sT[0], fmt)}${fmt(r.sT[0])}</td><td>${fmt(r.sT[1])}</td><td>${fmt(r.sT[2])}</td>`;
+      if (r.isEnd) h += '<td class="endc">block end</td>';
+      else h += `<td class="${r.layover < MIN_LAY ? 'f-red' : ''}">${cellOld(r.layover, b.layover)}${r.layover}</td>`;
+      h += `<td class="meta first">${r.run}<span class="bandl">${r.bandN}</span></td>`;
+      const recOff = !r.isEnd && (r.pct < REC_LO || r.pct > REC_HI);
+      h += `<td class="meta${recOff ? ' f-amber' : ''}">${r.recTotal}<span class="pct">${r.pct}%</span></td>`;
+      const hwOff = r.headway != null && Math.abs(r.headway - HEADWAY) > 2;
+      h += `<td class="meta${hwOff ? ' f-amber' : ''}">${r.headway ?? '—'}</td><td class="meta">${r.cycle}</td></tr>`;
+    });
+    $('tt').innerHTML = h + '</tbody>';
+    const top = $('tt').querySelector('thead tr').offsetHeight;
+    $('tt').querySelectorAll('thead tr.h2 th').forEach(th => { th.style.top = `${top}px`; });
+  }
+
+  /* ---------- blocks view ---------- */
+  const PX = 2.2, T0 = 300, T1 = 1440;
+  function renderBlocks(rows) {
+    const W = (T1 - T0) * PX;
+    let h = `<div class="axis"><div class="lab">Block · pull-out → pull-in</div><div class="ticks" style="width:${W}px">`;
+    for (let m = T0; m <= T1; m += 60) h += `<span style="left:${(m - T0) * PX}px">${fmt(m)}</span>`;
+    h += '</div></div>';
+    BLOCKS.forEach(b => {
+      const br = rows.filter(r => r.block === b.id).sort((x, y) => x.nT[0] - y.nT[0]);
+      const out = br[0].nT[0], pin = br[br.length - 1].sT[2];
+      h += `<div class="lane"><div class="lab"><b><span style="display:inline-block;width:4px;height:12px;border-radius:2px;background:${b.color};margin-right:6px"></span>${b.id}</b><small>${fmt(out)} → ${fmt(pin)} · ${((pin - out) / 60).toFixed(1)} h · ${br.length * 2} trips</small></div><div class="track" style="width:${W}px">`;
+      br.forEach(r => {
+        const x = m => (m - T0) * PX;
+        const sel = r.id === selected ? ' sel' : '';
+        h += `<div class="tb n${sel}" data-row="${r.id}" style="left:${x(r.nT[0])}px;width:${(r.nT[3] - r.nT[0]) * PX}px" title="N ${fmt(r.nT[0])}–${fmt(r.nT[3])}">N</div>`;
+        h += `<div class="gap" style="left:${x(r.nT[3])}px;width:${r.rec * PX}px" title="Recovery ${r.rec} min"></div>`;
+        h += `<div class="tb s${sel}" data-row="${r.id}" style="left:${x(r.sT[0])}px;width:${(r.sT[2] - r.sT[0]) * PX}px" title="S ${fmt(r.sT[0])}–${fmt(r.sT[2])}">S</div>`;
+        if (!r.isEnd) h += `<div class="gap${r.layover < MIN_LAY ? ' bad' : ''}" style="left:${x(r.sT[2])}px;width:${Math.max(r.layover, 1) * PX}px" title="Layover ${r.layover} min"></div>`;
+      });
+      h += '</div></div>';
+    });
+    $('lanes').innerHTML = h;
+  }
+
+  /* ---------- drawer ---------- */
+  function renderDrawer(rows) {
+    const r = rows.find(x => x.id === selected);
+    $('drawer').classList.toggle('open', !!r);
+    if (!r) return;
+    $('legend').classList.add('collapsed'); $('legendCaret').textContent = '▸ show';
+    const br = rows.filter(x => x.block === r.block).sort((a, b) => a.nT[0] - b.nT[0]);
+    const i = br.indexOf(r);
+    $('dTitle').textContent = `${r.block} · ${fmt(r.nT[0])} round trip`;
+    $('dSub').textContent = `Trip ${i + 1} of ${br.length} on this block · bands N ${r.bandN} / S ${r.bandS}`;
+    const tot = r.sT[2] - r.nT[0] + (r.layover ?? 0);
+    const w = m => `${(100 * m / tot).toFixed(1)}%`;
+    const conn = r.conn ? `<h4>GO connection</h4><div>${r.conn.ok ? '✓ Met' : '✕ Missed'} · bus leaves Allandale ${r.conn.wait} min after the train${r.connShift ? ` · optimizer shifted ${r.connShift > 0 ? '+' : ''}${r.connShift} min` : ''}</div>` : '';
+    $('dBody').innerHTML = `
+      <h4>Round trip</h4>
+      <div class="strip"><div class="n" style="width:${w(r.nT[3] - r.nT[0])}">N ${r.nT[3] - r.nT[0]}</div><div class="r" style="width:${w(r.rec)}">${r.rec}</div><div class="s" style="width:${w(r.sT[2] - r.sT[0])}">S ${r.sT[2] - r.sT[0]}</div>${r.isEnd ? '' : `<div class="l" style="width:${w(Math.max(r.layover, 0))}">${r.layover}</div>`}</div>
+      <h4>Summary</h4>
+      <dl class="kv"><dt>Travel</dt><dd>${r.run} min</dd><dt>Recovery at Georgian</dt><dd>${r.rec} min</dd><dt>Layover at Downtown</dt><dd>${r.isEnd ? 'block end' : r.layover + ' min'}</dd><dt>Recovery share</dt><dd>${r.pct}%</dd><dt>Cycle</dt><dd>${r.cycle} min</dd><dt>Headway</dt><dd>${r.headway ?? '—'} min</dd></dl>
+      <h4>Timepoints</h4>
+      <div class="segs">
+        <div><span>${fmt(r.nT[0])} Downtown → Allandale GO</span><span>${r.nSeg[0]}</span></div>
+        <div><span>${fmt(r.nT[1])} Allandale GO → Bayfield</span><span>${r.nSeg[1]}</span></div>
+        <div><span>${fmt(r.nT[2])} Bayfield → Georgian</span><span>${r.nSeg[2]}</span></div>
+        <div class="rr"><span>${fmt(r.nT[3])} Recovery · Georgian</span><span>${r.rec}</span></div>
+        <div><span>${fmt(r.sT[0])} Georgian → Duckworth</span><span>${r.sSeg[0]}</span></div>
+        <div><span>${fmt(r.sT[1])} Duckworth → Downtown</span><span>${r.sSeg[1]}</span></div>
+        <div class="rr"><span>${fmt(r.sT[2])} Layover · Downtown</span><span>${r.isEnd ? '—' : r.layover}</span></div>
+      </div>${conn}
+      <div class="nav2"><button class="btn" data-goto="${br[i - 1]?.id || ''}" ${i ? '' : 'disabled'}>← Previous on block</button><button class="btn" data-goto="${br[i + 1]?.id || ''}" ${br[i + 1] ? '' : 'disabled'}>Next on block →</button></div>`;
+  }
+
+  /* ---------- render all ---------- */
+  function render() {
+    const rows = build(st), base = build({ rec: {}, dep: {}, conn: {} });
+    document.querySelectorAll('#stageSeg button').forEach(b => b.classList.toggle('on', b.dataset.stage === stage));
+    document.querySelectorAll('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+    $('ttwrap').style.display = view === 'trips' ? '' : 'none';
+    $('bv').classList.toggle('on', view === 'blocks');
+    if (view === 'trips') renderTable(rows, base); else renderBlocks(rows);
+    renderDrawer(rows);
+
+    const c = rows.filter(r => r.conn), met = c.filter(r => r.conn.ok).length;
+    $('connStat').textContent = `${met}/${c.length}`;
+    const nEdits = Object.values(st.rec).filter(Boolean).length + Object.values(st.dep).filter(Boolean).length;
+    $('editStat').textContent = nEdits ? `· ${nEdits} edit${nEdits > 1 ? 's' : ''}` : '';
+    const runSum = sum(rows.map(r => r.run)), recSum = sum(rows.map(r => r.recTotal));
+    $('summary').innerHTML = `<b>${rows.length * 2}</b> trips · <b>3</b> blocks · <b>60</b> min cycle · <b>20</b> min headway · <b>${Math.round(100 * recSum / runSum)}%</b> recovery <span style="color:var(--faint)">(target ${REC_LO}–${REC_HI}%)</span>`;
+
+    const iss = issuesOf(rows);
+    $('ipill').className = `ipill${iss.length ? '' : ' clear'}`;
+    $('ipill').textContent = iss.length ? `⚠ ${iss.length} issue${iss.length > 1 ? 's' : ''} ▾` : '✓ No issues';
+    $('imenu').innerHTML = iss.map(x => `<button data-goto="${x.r.id}"><span class="k" style="color:${x.sev === 'red' ? 'var(--red)' : 'var(--amber)'}">${x.k}</span><span>${x.r.block} · ${fmt(x.r.nT[0])} — ${x.t}</span></button>`).join('')
+      || '<div style="padding:8px;color:var(--mute)">Nothing to review.</div>';
+
+    $('undo').disabled = !history.length; $('redo').disabled = !future.length;
+    $('fmsg').textContent = stage === 'conn'
+      ? 'Optimizer changes are reversible. Reset keeps your manual tweaks.'
+      : stage === 'gen' ? 'Generated from the approved Weekday runtimes. Read-only.' : 'Saturday still needs Steps 2–4 before Package.';
+    placePop();
+  }
+
+  /* ---------- edit popover ---------- */
+  function placePop() {
+    const pop = $('pop');
+    if (!active || stage !== 'tweak' || view !== 'trips') { pop.classList.remove('open'); return; }
+    const td = document.querySelector(`tr[data-row="${active.id}"] td[data-edit="${active.kind}"]`);
+    if (!td) { pop.classList.remove('open'); return; }
+    const wrap = $('ttwrap'), a = td.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+    pop.style.left = `${a.left - w.left + wrap.scrollLeft - 40}px`;
+    pop.style.top = `${a.bottom - w.top + wrap.scrollTop + 4}px`;
+    $('popWhat').textContent = active.kind === 'rec' ? `Recovery at Georgian · ${active.id.replace('#', ' trip ')}` : `Departure time · ${active.id.replace('#', ' trip ')}`;
+    pop.classList.add('open');
+  }
+  const snap = () => JSON.stringify(st);
+  const restore = s => { const o = JSON.parse(s); st.rec = o.rec; st.dep = o.dep; st.conn = o.conn; };
+  const commit = fn => { history.push(snap()); future = []; fn(); render(); };
+  function nudge(d) {
+    if (!active) return;
+    commit(() => {
+      const bag = active.kind === 'rec' ? st.rec : st.dep;
+      bag[active.id] = (bag[active.id] || 0) + d;
+      if (active.kind === 'rec' && BASE_REC + bag[active.id] < 0) bag[active.id] = -BASE_REC;
+      if (!bag[active.id]) delete bag[active.id];
+    });
+  }
+
+  /* ---------- events ---------- */
+  document.addEventListener('click', e => {
+    const t = e.target;
+    if (t.closest('#pop button')) { nudge(+t.closest('button').dataset.d); return; }
+    if (t.closest('#stageSeg button')) {
+      stage = t.closest('button').dataset.stage; active = null; render(); return;
+    }
+    if (t.closest('#viewSeg button')) { view = t.closest('button').dataset.view; active = null; render(); return; }
+    if (t.id === 'ipill') { $('imenu').classList.toggle('open'); return; }
+    const go = t.closest('[data-goto]');
+    if (go && go.dataset.goto) {
+      selected = go.dataset.goto; $('imenu').classList.remove('open'); view = 'trips'; render();
+      document.querySelector(`tr[data-row="${selected}"]`)?.scrollIntoView({ block: 'center' });
+      return;
+    }
+    if (!t.closest('.issues')) $('imenu').classList.remove('open');
+    if (t.id === 'dClose') { selected = null; active = null; render(); return; }
+    if (t.id === 'undo' && history.length) { future.push(snap()); restore(history.pop()); render(); return; }
+    if (t.id === 'redo' && future.length) { history.push(snap()); restore(future.pop()); render(); return; }
+    const edit = t.closest('td.ed');
+    if (edit) { const id = edit.closest('tr').dataset.row; active = { id, kind: edit.dataset.edit }; selected = id; render(); return; }
+    const row = t.closest('[data-row]');
+    if (row) { selected = row.dataset.row; active = null; render(); return; }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { active = null; render(); return; }
+    if (active && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); nudge((e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 5 : 1)); }
+  });
+  $('tt').addEventListener('mouseover', e => {
+    const tr = e.target.closest('tr[data-block]');
+    const b = tr ? tr.dataset.block : null;
+    if (b !== hoverBlock) { hoverBlock = b; document.querySelectorAll('#tt tr[data-block]').forEach(x => x.classList.toggle('same', !!b && x.dataset.block === b && !x.classList.contains('sel'))); }
+  });
+  $('tt').addEventListener('mouseleave', () => { hoverBlock = null; document.querySelectorAll('#tt tr.same').forEach(x => x.classList.remove('same')); });
+  $('showChanges').addEventListener('change', e => { showChanges = e.target.checked; render(); });
+  $('legendHead').addEventListener('click', () => { const l = $('legend'); l.classList.toggle('collapsed'); $('legendCaret').textContent = l.classList.contains('collapsed') ? '▸ show' : '▾ hide'; });
+  $('annToggle').addEventListener('change', e => document.body.classList.toggle('show-ann', e.target.checked));
+  $('ttwrap').addEventListener('scroll', () => placePop());
+
+  /* Connections stage: optimizer controls live in the toolbar status; add buttons to footer when active */
+  const footerBtn = document.createElement('div');
+  footerBtn.style.display = 'flex'; footerBtn.style.gap = '6px';
+  footerBtn.innerHTML = '<button class="btn dark" id="opt">Run optimizer</button><button class="btn" id="optReset">Reset optimization</button>';
+  document.querySelector('.footer').insertBefore(footerBtn, document.querySelector('.footer .msg'));
+  footerBtn.addEventListener('click', e => {
+    if (e.target.id === 'opt') commit(() => {
+      preOpt = JSON.stringify(st.conn);
+      build(st).forEach(r => { if (r.conn && !r.conn.ok) st.conn[r.id] = (st.conn[r.id] || 0) + (r.conn.wait < 3 ? 3 - r.conn.wait : 12 - r.conn.wait); });
+    });
+    if (e.target.id === 'optReset') commit(() => { st.conn = preOpt ? JSON.parse(preOpt) : {}; preOpt = null; });
+  });
+  const origRender = render;
+  render = function () {
+    origRender();
+    footerBtn.style.display = stage === 'conn' ? 'flex' : 'none';
+    $('optReset').disabled = !Object.keys(st.conn).length;
+  };
+  render();
+})();
+</script>
+</body>
+</html>

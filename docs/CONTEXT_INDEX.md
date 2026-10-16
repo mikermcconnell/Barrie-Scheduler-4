@@ -52,6 +52,7 @@ Load feature docs only when the task directly touches that feature.
 ### Fixed-route scheduling and operations
 
 - Operations Planning / run cutting: `docs/OPERATIONS_PLANNING.md`; add `docs/rules/LOCKED_LOGIC.md`, `docs/SCHEMA.md`, and `docs/ARCHITECTURE.md` when changing its source binding, validation, persistence, or workspace wiring
+- Guided scheduling workflow (five-step process from observed data to export package): `docs/GUIDED_SCHEDULING.md`; add `docs/rules/LOCKED_LOGIC.md` before changing generation, timing, blocking, or editor behavior
 - New Schedule Step 2: start with `docs/new-schedule-step2/README.md`, then load only the routed contract for the task
 - Connections: `docs/CONNECTIONS_FEATURE.md`
 - Read-only GO connection grid in Master Schedule: `docs/REGIONAL_TRANSIT_CONNECTIONS.md`

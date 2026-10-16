@@ -97,6 +97,8 @@ Upload CSV → Analyze runtimes → Configure cycle/headway → Generate trips �
 ```
 **5-step wizard**: Upload → Analysis → Build → Schedule → Connections
 
+**Guided scheduling workflow (in development)**: Select data → Review time bands → Set the stage → Build the schedule → Package. It reorganizes the same engine into one ordered process that ends with draft review, publish, a public brochure, and a run-cut workbook. The planner approves the runtime contract explicitly and owns every publish decision. See `docs/GUIDED_SCHEDULING.md`.
+
 ### 2. Import from GTFS (Secondary)
 ```
 Fetch GTFS feed → Map routes/directions → Chain trips to blocks → Create draft → Edit → Submit for review → Ready for review → Publish

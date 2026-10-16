@@ -14,7 +14,7 @@ This document defines the clean-slate rebuild of **Step 2: Runtime Review** in t
 
 The goal is to replace the current Step 2 with a contract-first workflow that produces one trusted runtime model for downstream schedule building and generation.
 
-Internal workflow note: Step 2 should not force a separate human decision gate. It may auto-approve the current review when the user continues, while still saving the same durable runtime contract for Step 3 and Step 4.
+Internal workflow note (superseded 2026-10-16): the legacy wizard auto-approves the current review when the user continues. The guided scheduling workflow replaces this with an explicit planner approval that requires warnings to be acknowledged; see `docs/GUIDED_SCHEDULING.md`. The durable runtime contract itself is unchanged. Until the legacy wizard is retired, it still auto-approves on continue.
 
 The rebuild described here is implemented. Sections written in future tense preserve the original design contract and rationale; they are not a current delivery-status checklist. Use the implementation snapshot below, current code, and focused tests for as-built facts.
 
@@ -57,7 +57,7 @@ The rebuilt Step 2 must:
 2. Let the planner inspect that data in route order using the approved planning chain.
 3. Let the planner switch to P80 without changing median-based band membership.
 4. Produce a **single approved runtime contract** for later steps.
-5. Allow internal auto-approval on continue instead of requiring a separate decision gate.
+5. Record approval of the runtime contract. (Originally auto-approval on continue; the guided workflow requires an explicit planner approval — see `docs/GUIDED_SCHEDULING.md`.)
 6. Separate **planning truth** from **diagnostic/troubleshooting views**.
 7. Use readiness rules to stop only genuinely blocked data from continuing.
 8. Keep locked schedule logic intact.
@@ -133,7 +133,7 @@ That means all of the following are true:
    - blocked
    - warning
    - ready
-7. The current runtime model is approved automatically as part of continuing when it is not blocked.
+7. The current runtime model is approved when it is not blocked: automatically on continue in the legacy wizard, and by an explicit planner action in the guided workflow.
 8. Step 3 and Step 4 consume only the approved runtime model, not ad hoc re-derived substitutes.
 
 Short version:
@@ -617,6 +617,8 @@ Recommended footer actions:
 The Continue action should create or replace the approved runtime contract when the current review is ready or warning, and should remain disabled only when the review is blocked or missing.
 The in-page Step 2 approval strip is not required for this internal tool; warnings should be communicated through Data Health / review content instead of a duplicate acknowledgement banner.
 
+Superseded for the guided workflow (2026-10-16): approval is a separate, explicit action that requires warnings to be acknowledged, and Continue stays disabled until the review is approved. See `docs/GUIDED_SCHEDULING.md`. The two paragraphs above describe the legacy wizard.
+
 ---
 
 ## 22. Testing Requirements
@@ -653,7 +655,7 @@ Minimum test layers:
 This checklist records the original acceptance contract. Delivery status must be verified from the current implementation and tests rather than inferred from unchecked historical boxes:
 
 - [ ] Step 2 has an explicit runtime review state model
-- [ ] Step 2 auto-approves the current contract on continue for this internal workflow
+- [ ] Step 2 auto-approves the current contract on continue for this internal workflow (superseded for the guided workflow by explicit approval; see `docs/GUIDED_SCHEDULING.md`)
 - [ ] `blocked` truly prevents progress
 - [ ] `warning` remains continuable while warning reasons stay visible and persisted in the contract snapshot
 - [ ] Step 3 depends on the approved contract only

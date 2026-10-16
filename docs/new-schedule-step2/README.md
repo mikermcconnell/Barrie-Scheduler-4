@@ -12,6 +12,7 @@ Use this page after `AGENTS.md`, `docs/CONTEXT_INDEX.md`, and, for any behavior 
 | Current code ownership or wizard data flow | `docs/ARCHITECTURE.md`, then verify the relevant code and tests |
 | Runtime calculation, parsing, banding, schedule generation, or other locked behavior | `docs/rules/LOCKED_LOGIC.md`, the applicable document above, and the relevant danger-zone skill |
 | Current delivery status | Start with the implementation snapshots in the three Step 2 documents, then verify current code and focused tests |
+| Step 2 inside the guided scheduling workflow (explicit approval, bucket and band views) | `docs/GUIDED_SCHEDULING.md`, then the applicable Step 2 contract above |
 
 ## Combined changes
 

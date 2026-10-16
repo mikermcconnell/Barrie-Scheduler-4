@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Guided scheduling – 5-step mockup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --green: #16a34a; --green-bg: #ecfdf3;
+    --ink: #111827; --mute: #6b7280; --line: #e5e7eb; --panel: #f9fafb;
+    --blue: #1d4ed8; --blue-bg: #eff6ff; --amber: #92400e; --amber-bg: #fffbeb; --amber-line: #fde68a;
+    --red-bg: #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: #4b5563; }
+  button, select, input { font: inherit; }
+  /* page chrome (not part of the design) */
+  .viewbar { position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 16px; background: #111827; color: #fff; }
+  .viewbar span { font-size: 12px; opacity: .7; margin-right: 6px; }
+  .viewbar button { border: 1px solid #374151; background: #1f2937; color: #e5e7eb; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  .viewbar button.on { background: var(--green); border-color: var(--green); color: #fff; font-weight: 700; }
+  .stage { padding: 24px; display: flex; justify-content: center; }
+  .wrap { width: 100%; max-width: 1400px; }
+  .callout { background: #fef9c3; border: 1px solid #fde047; color: #713f12; border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 14px; }
+  /* app frame */
+  .app { background: #fff; border-radius: 16px; box-shadow: 0 20px 50px rgba(0,0,0,.35); overflow: hidden; }
+  .app-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px; border-bottom: 1px solid var(--line); }
+  .app-head h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  .app-head p { margin: 0; color: var(--mute); font-size: 13px; }
+  .saved { font-size: 12px; color: var(--green); font-weight: 600; }
+  .stepper { display: flex; padding: 14px 24px; gap: 6px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .st { flex: 1; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 10px; border: 1px solid transparent; cursor: pointer; }
+  .st .n { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; background: #e5e7eb; color: #374151; flex: none; }
+  .st b { display: block; font-size: 13px; } .st small { color: var(--mute); font-size: 11px; }
+  .st.done .n { background: var(--green); color: #fff; }
+  .st.cur { background: #fff; border-color: #86efac; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .st.cur .n { background: #111827; color: #fff; }
+  .st.lock { opacity: .5; cursor: not-allowed; }
+  .daytabs { display: flex; gap: 8px; padding: 12px 24px 0; align-items: center; }
+  .daytabs > span { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); margin-right: 4px; }
+  .dt { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; cursor: pointer; display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 13px; }
+  .dt.on { border-color: #111827; background: #111827; color: #fff; }
+  .chip { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px; text-transform: uppercase; letter-spacing: .04em; }
+  .chip.ok { background: var(--green-bg); color: #166534; } .chip.wait { background: var(--amber-bg); color: var(--amber); }
+  .chip.off { background: #f3f4f6; color: var(--mute); text-decoration: line-through; } .chip.blue { background: var(--blue-bg); color: var(--blue); }
+  main { padding: 20px 24px 24px; min-height: 560px; }
+  h2 { margin: 0 0 4px; font-size: 20px; } .sub { margin: 0 0 18px; color: var(--mute); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: #fff; }
+  .card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--mute); }
+  label.f { display: block; font-size: 12px; color: var(--mute); margin: 10px 0 4px; }
+  .in { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; }
+  .seg { display: inline-flex; border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: #fff; padding: 7px 12px; cursor: pointer; border-right: 1px solid #d1d5db; } .seg button:last-child { border-right: 0; }
+  .seg button.on { background: #111827; color: #fff; font-weight: 600; }
+  .radio { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+  .radio.on { border-color: var(--green); background: var(--green-bg); }
+  .radio .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #9ca3af; margin-top: 2px; flex: none; }
+  .radio.on .dot { border-color: var(--green); background: radial-gradient(var(--green) 45%, transparent 50%); }
+  .radio small { display: block; color: var(--mute); } .radio.dis { opacity: .5; cursor: default; }
+  .routes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .rc { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; cursor: pointer; } .rc.on { border-color: var(--green); background: var(--green-bg); }
+  .rc b { font-size: 16px; } .rc small { display: block; color: var(--mute); font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--mute); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 6px 8px; border-bottom: 1px solid #f3f4f6; font-variant-numeric: tabular-nums; }
+  tr.ex td { color: #9ca3af; text-decoration: line-through; }
+  .band { display: inline-block; width: 22px; text-align: center; border-radius: 6px; font-weight: 700; font-size: 12px; color: #fff; }
+  .bA { background: #7f1d1d; } .bB { background: #c2410c; } .bC { background: #ca8a04; } .bD { background: #65a30d; } .bE { background: #15803d; }
+  .link { color: var(--blue); cursor: pointer; font-size: 12px; font-weight: 600; background: none; border: 0; padding: 0; }
+  .bars { display: flex; align-items: flex-end; gap: 3px; height: 150px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .bars div { flex: 1; border-radius: 3px 3px 0 0; } .bars div.x { opacity: .25; }
+  .axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--mute); margin-top: 4px; }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--mute); margin-top: 10px; flex-wrap: wrap; }
+  .bandsum { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 12px; }
+  .bandsum div { border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+  .bandsum b { display: block; font-size: 18px; } .bandsum small { color: var(--mute); font-size: 11px; }
+  .footer { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px; border-top: 1px solid var(--line); background: var(--panel); gap: 12px; }
+  .btn { border: 1px solid #d1d5db; background: #fff; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+  .btn.pri { background: var(--green); border-color: var(--green); color: #fff; } .btn.dark { background: #111827; border-color: #111827; color: #fff; }
+  .btn[disabled] { opacity: .45; cursor: not-allowed; }
+  .warn { background: var(--amber-bg); border: 1px solid var(--amber-line); color: var(--amber); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .warn label { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-weight: 600; cursor: pointer; }
+  .ok-box { background: var(--green-bg); border: 1px solid #bbf7d0; color: #166534; border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .err-box { background: var(--red-bg); border: 1px solid #fecaca; color: #7f1d1d; border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .substeps { display: flex; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .ss { flex: 1; padding: 10px 14px; cursor: pointer; border-right: 1px solid var(--line); background: #fff; } .ss:last-child { border-right: 0; }
+  .ss b { display: block; font-size: 13px; } .ss small { color: var(--mute); font-size: 11px; }
+  .ss.on { background: #111827; color: #fff; } .ss.on small { color: #d1d5db; }
+  .blocks td input { width: 76px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
+  .metric { font-size: 22px; font-weight: 800; } .metric small { font-size: 12px; font-weight: 500; color: var(--mute); }
+  .timeline { border: 1px solid var(--line); border-radius: 10px; padding: 10px 10px 6px 70px; }
+  .trow { position: relative; height: 26px; margin-bottom: 6px; }
+  .trow > span { position: absolute; left: -62px; top: 4px; font-size: 12px; font-weight: 600; color: var(--mute); }
+  .trip { position: absolute; top: 2px; height: 22px; border-radius: 5px; font-size: 10px; color: #fff; display: grid; place-items: center; }
+  .trip.n { background: #2563eb; } .trip.s { background: #7c3aed; }
+  .rec { position: absolute; top: 2px; height: 22px; border-radius: 5px; background: repeating-linear-gradient(45deg, #fde68a, #fde68a 4px, #fef3c7 4px, #fef3c7 8px); }
+  .rec.edit { outline: 2px solid var(--amber); }
+  .checklist { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .cl { display: grid; grid-template-columns: 110px 1fr 1fr 1fr 160px; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .cl:last-child { border-bottom: 0; }
+  .cl.h { background: var(--panel); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--mute); padding: 8px 14px; }
+  .p { display: inline-block; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; border: 1px solid var(--line); }
+  .p.ok { background: var(--green-bg); border-color: #bbf7d0; color: #166534; } .p.now { background: var(--blue-bg); border-color: #bfdbfe; color: var(--blue); }
+  .codex { counter-reset: s; list-style: none; padding: 0; margin: 0; }
+  .codex li { counter-increment: s; display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+  .codex li::before { content: counter(s); width: 22px; height: 22px; border-radius: 50%; background: #e5e7eb; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+  .codex li.ok::before { content: "✓"; background: var(--green); color: #fff; } .codex li.now::before { background: var(--blue); color: #fff; }
+  .codex li span { flex: 1; }
+  .file { display: flex; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 8px; opacity: .5; }
+  .file .ic { width: 34px; height: 40px; border-radius: 6px; display: grid; place-items: center; font-size: 10px; font-weight: 800; color: #fff; }
+  .file .pdf { background: #dc2626; } .file .xls { background: #16a34a; }
+  .file div { flex: 1; } .file small { display: block; color: var(--mute); }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #f3f4f6; color: #374151; font-weight: 600; }
+  .pill.on { background: #111827; color: #fff; }
+  .fine { font-size: 12px; color: var(--mute); }
+  .hidden { display: none; }
+  /* Step 4 round-trip grid (mirrors components/schedule/RoundTripTableView.tsx) */
+  .s4layout { display: flex; flex-direction: column; gap: 14px; }
+  .grid-card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; min-width: 0; }
+  .tbar { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  .stats { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+  .stats span { background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; color: #374151; }
+  .stats span.amber { border-color: var(--amber-line); background: var(--amber-bg); color: var(--amber); font-weight: 600; }
+  .tt-wrap { max-height: 520px; overflow: auto; }
+  table.tt { border-collapse: separate; border-spacing: 0; font-size: 12px; white-space: nowrap; width: max-content; min-width: 100%; }
+  .tt th, .tt td { padding: 4px 7px; border-bottom: 1px solid #f1f5f9; text-align: center; font-variant-numeric: tabular-nums; }
+  .tt thead th { position: sticky; top: 0; z-index: 3; font-size: 11px; white-space: normal; max-width: 120px; line-height: 1.2; }
+  .tt thead tr.h2 th { top: 47px; font-size: 10px; letter-spacing: .05em; color: var(--mute); background: #f8fafc; }
+  .tt th.nb { background: #eff6ff; color: #1e40af; border-top: 2px solid #60a5fa; border-left: 1px solid #dbeafe; text-transform: uppercase; }
+  .tt th.sb { background: #fff7ed; color: #9a3412; border-top: 2px solid #fb923c; border-left: 1px solid #fed7aa; text-transform: uppercase; }
+  .tt th.meta, .tt th.blk { background: #f1f5f9; color: #334155; text-transform: uppercase; }
+  .tt th .dir { display: block; font-size: 9px; font-weight: 900; letter-spacing: .1em; }
+  .tt th .code { display: block; font-size: 10px; font-weight: 400; opacity: .7; }
+  .tt td.blk, .tt th.blk { position: sticky; left: 0; z-index: 2; background: #fff; border-right: 1px solid var(--line); font-weight: 700; text-align: left; }
+  .tt th.blk { z-index: 4; background: #f1f5f9; }
+  .tt td.nbc { background: #fbfdff; } .tt td.sbc { background: #fffdfb; }
+  .tt td.first { border-left: 1px solid #e2e8f0; }
+  .tt td.rec { background: #fffbeb; color: #92400e; font-weight: 700; position: relative; }
+  .tt td.lay { background: #fef3c7; color: #78350f; font-weight: 700; }
+  .tt td.lay.end { background: #f3f4f6; color: var(--mute); font-weight: 500; font-size: 10px; }
+  .tt td.lay.bad { background: #fee2e2; color: #b91c1c; }
+  .tt td.metac { background: #f8fafc; border-left: 1px solid #e2e8f0; }
+  .tt td.edited { box-shadow: inset 0 0 0 2px #f59e0b; }
+  .tt td.editable { cursor: pointer; }
+  .tt td.editable:hover { background: #fde68a; }
+  .tt td .arrows { display: none; position: absolute; right: 1px; top: 1px; flex-direction: column; gap: 1px; }
+  .tt td.active .arrows { display: flex; }
+  .tt td.active { box-shadow: inset 0 0 0 2px #111827; }
+  .arrows button { border: 0; background: #111827; color: #fff; font-size: 8px; line-height: 1; padding: 2px 3px; border-radius: 3px; cursor: pointer; }
+  .tt tr:hover td { background-color: #f9fafb; }
+  .tt tr.sel td { background-color: #ecfdf3 !important; }
+  .tt tr.blockstart td { border-top: 2px solid #e2e8f0; }
+  .tt td.connhl { background: #f0f9ff; }
+  .cx { display: inline-block; font-size: 9px; font-weight: 800; border-radius: 4px; padding: 0 4px; margin-left: 3px; }
+  .cx.ok { background: #dcfce7; color: #166534; } .cx.miss { background: #fee2e2; color: #b91c1c; }
+  .shift { display: inline-block; font-size: 9px; font-weight: 800; border-radius: 4px; padding: 0 4px; background: #dbeafe; color: #1d4ed8; margin-left: 3px; }
+  .bdg { display: inline-block; min-width: 16px; border-radius: 4px; color: #fff; font-weight: 800; font-size: 10px; margin-left: 4px; }
+  .ratio { font-size: 10px; color: var(--mute); margin-left: 4px; }
+  .ratio.amber { color: var(--amber); font-weight: 700; }
+  .tfoot4 { display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 10px; border-top: 1px solid var(--line); font-size: 11px; color: var(--mute); background: var(--panel); }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 4px; }
+  .side4 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  .target { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+  .target small { display: block; color: var(--mute); margin: 2px 0 6px; }
+  .edits div { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  .insp dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 12px; }
+  .insp dt { color: var(--mute); } .insp dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .insp .seglist { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 12px; }
+  .insp .seglist div { display: flex; justify-content: space-between; padding: 2px 0; }
+  .insp .seglist .r { color: var(--amber); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="viewbar">
+  <span>Mockup view:</span>
+  <button data-go="1" class="on">1 · Select data</button>
+  <button data-go="2">2 · Review time bands</button>
+  <button data-go="3">3 · Set the stage</button>
+  <button data-go="4">4 · Build the schedule</button>
+  <button data-go="5">5 · Package</button>
+</div>
+
+<div class="stage"><div class="wrap">
+  <div class="callout" id="note"></div>
+  <div class="app">
+    <div class="app-head">
+      <div>
+        <h1>New Schedule · Route 8A · Fall 2026 set</h1>
+        <p>Schedule set: one route, all day types · STREETS data Sep 1 – Oct 10, 2026 (sample data)</p>
+      </div>
+      <div class="saved">● Saved to project</div>
+    </div>
+    <div class="stepper" id="stepper"></div>
+    <div class="daytabs" id="daytabs">
+      <span>Day type</span>
+      <button class="dt on" data-dt="Weekday">Weekday <span class="chip ok">approved</span></button>
+      <button class="dt" data-dt="Saturday">Saturday <span class="chip wait">needs review</span></button>
+      <button class="dt" data-dt="Sunday">Sunday <span class="chip off">dropped</span></button>
+      <button class="link" style="margin-left:auto">Drop / restore a day type</button>
+    </div>
+
+    <main id="s1">
+      <h2>Select data</h2>
+      <p class="sub">Choose the route, the scope of the schedule, and the window of observed STREETS data.</p>
+      <div class="grid2">
+        <div class="card">
+          <h3>Data source</h3>
+          <div class="seg"><button class="on">STREETS observed data</button><button>CSV upload</button><button>GTFS import</button></div>
+          <label class="f">Route</label>
+          <div class="routes">
+            <div class="rc"><b>2A</b><small>38 days · 4,120 obs</small></div>
+            <div class="rc"><b>7A</b><small>40 days · 3,880 obs</small></div>
+            <div class="rc on"><b>8A</b><small>40 days · 4,560 obs</small></div>
+            <div class="rc"><b>10</b><small>39 days · 5,010 obs</small></div>
+          </div>
+          <label class="f">Date range</label>
+          <div style="display:flex;gap:8px"><input class="in" value="2026-09-01"><input class="in" value="2026-10-10"></div>
+          <div class="legend"><span class="pill">Past week</span><span class="pill">Past month</span><span class="pill on">Custom</span><span class="pill">Use all data</span></div>
+        </div>
+        <div class="card">
+          <h3>Schedule scope</h3>
+          <div class="radio on"><div class="dot"></div><div><b>One route, all day types</b> <span class="chip blue">default</span><small>Builds Weekday, Saturday and Sunday as one set. You can drop a day type later.</small></div></div>
+          <div class="radio"><div class="dot"></div><div><b>One route, one day type</b><small>Builds a single schedule for the day type you pick.</small></div></div>
+          <div class="radio dis"><div class="dot"></div><div><b>CSV or GTFS source</b><small>Always one day type. "All day types" is only offered for STREETS data.</small></div></div>
+          <label class="f">Data readiness</label>
+          <table>
+            <tr><th>Day type</th><th>Clean days</th><th>Stop-level days</th><th></th></tr>
+            <tr><td>Weekday</td><td>28</td><td>28</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Saturday</td><td>6</td><td>6</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Sunday</td><td>0</td><td>0</td><td><span class="chip wait">no data · can drop</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </main>
+    <main id="s2" class="hidden">
+      <h2>Review time bands · <span class="dtname">Weekday</span></h2>
+      <p class="sub">Each bar is a 30-minute bucket of observed runtime. Its colour shows which A–E band it falls in. Exclude buckets you don't trust, then approve.</p>
+      <div class="grid2" style="grid-template-columns:1.4fr 1fr">
+        <div class="card">
+          <h3>30-minute buckets → A–E bands</h3>
+          <div class="seg" style="margin-bottom:8px"><button class="on">North-start</button><button>South-start</button></div>
+          <div class="bars" id="bars"></div>
+          <div class="axis"><span>06:00</span><span>09:00</span><span>12:00</span><span>15:00</span><span>18:00</span><span>21:30</span></div>
+          <div class="legend"><span><span class="band bA">A</span> slowest</span><span><span class="band bB">B</span></span><span><span class="band bC">C</span></span><span><span class="band bD">D</span></span><span><span class="band bE">E</span> fastest</span><span>faded = excluded</span></div>
+          <div class="bandsum">
+            <div><span class="band bA">A</span><b>58</b><small>min · 6 buckets</small></div>
+            <div><span class="band bB">B</span><b>55</b><small>min · 6 buckets</small></div>
+            <div><span class="band bC">C</span><b>52</b><small>min · 6 buckets</small></div>
+            <div><span class="band bD">D</span><b>49</b><small>min · 6 buckets</small></div>
+            <div><span class="band bE">E</span><b>46</b><small>min · 7 buckets</small></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Bucket evidence</h3>
+          <table>
+            <tr><th>Bucket</th><th>Days</th><th>Min</th><th>Band</th><th></th></tr>
+            <tr><td>07:00–07:29</td><td>27</td><td>53</td><td><span class="band bC">C</span></td><td><button class="link">Exclude</button></td></tr>
+            <tr><td>07:30–07:59</td><td>28</td><td>56</td><td><span class="band bB">B</span></td><td><button class="link">Exclude</button></td></tr>
+            <tr class="ex"><td>08:00–08:29</td><td>3</td><td>71</td><td>—</td><td><button class="link">Restore</button></td></tr>
+            <tr><td>15:00–15:29</td><td>26</td><td>59</td><td><span class="band bA">A</span></td><td><button class="link">Exclude</button></td></tr>
+            <tr><td>15:30–15:59</td><td>27</td><td>58</td><td><span class="band bA">A</span></td><td><button class="link">Exclude</button></td></tr>
+            <tr><td>21:00–21:29</td><td>12</td><td>45</td><td><span class="band bE">E</span></td><td><button class="link">Exclude</button></td></tr>
+          </table>
+          <p class="fine">An approved bucket needs at least 5 days with a complete same-day paired cycle (locked rule 7).</p>
+        </div>
+      </div>
+      <div class="warn" style="margin-top:16px">
+        <b>2 warnings need your decision before you can approve.</b> 08:00–08:29 has only 3 days of evidence and is excluded. 21:00–21:29 uses a stop-order fallback for 1 trip.
+        <label><input type="checkbox" id="ack"> I have reviewed these warnings</label>
+      </div>
+    </main>
+    <main id="s3" class="hidden">
+      <h2>Set the stage · <span class="dtname">Weekday</span></h2>
+      <p class="sub">Define the span of service and the vehicles. Each block is one vehicle with its own start and end time.</p>
+      <div class="grid2" style="grid-template-columns:1.5fr 1fr">
+        <div class="card">
+          <h3>Blocks (vehicles)</h3>
+          <table class="blocks">
+            <tr><th>Block</th><th>Start</th><th>End</th><th>Start direction</th><th>Start stop</th></tr>
+            <tr><td>8A-1</td><td><input value="05:45"></td><td><input value="22:40"></td><td>North</td><td>Downtown Terminal</td></tr>
+            <tr><td>8A-2</td><td><input value="06:05"></td><td><input value="23:00"></td><td>North</td><td>Downtown Terminal</td></tr>
+            <tr><td>8A-3</td><td><input value="06:25"></td><td><input value="19:10"></td><td>South</td><td>Georgian College</td></tr>
+          </table>
+          <button class="link" style="margin-top:8px">+ Add block</button>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13px"><input type="checkbox" checked> Autofill from published Master (shows differences)</label>
+        </div>
+        <div class="card">
+          <h3>Service summary</h3>
+          <div class="grid2" style="gap:10px">
+            <div class="metric">3 <small>vehicles</small></div>
+            <div class="metric">05:45–23:00 <small>span</small></div>
+            <div class="metric">60 <small>min cycle</small></div>
+            <div class="metric">20 <small>min headway</small></div>
+          </div>
+          <label class="f">Cycle mode</label>
+          <div class="seg"><button class="on">Strict</button><button>Floating</button></div>
+          <label class="f">Recovery</label>
+          <div style="display:flex;gap:8px"><input class="in" value="15%"><select class="in"><option>At end of trip</option><option>Proportional</option></select></div>
+          <p class="fine" style="margin-top:12px">Headway = cycle ÷ vehicles. If you change anything here, the schedule must be generated again in Step 4.</p>
+        </div>
+      </div>
+    </main>
+    <main id="s4" class="hidden">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:12px">
+        <div>
+          <h2>Build the schedule · <span class="dtname">Weekday</span></h2>
+          <p class="sub" style="margin:0">Every trip, timepoint, recovery and layover, shown in the same round-trip table as the Schedule Editor.</p>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn" id="undo4" disabled>↶ Undo</button>
+          <button class="btn" id="redo4" disabled>↷ Redo</button>
+        </div>
+      </div>
+      <div class="substeps">
+        <div class="ss" data-sub="a"><b>4a · Generate</b><small>Read-only result from approved runtimes</small></div>
+        <div class="ss" data-sub="b"><b>4b · Connections</b><small>GO trains at Allandale</small></div>
+        <div class="ss" data-sub="c"><b>4c · Manual tweaks</b><small>Recovery, trip times, blocks</small></div>
+      </div>
+
+      <div class="s4layout">
+        <div class="grid-card">
+          <div class="tbar">
+            <select class="in" style="width:auto;padding:5px 8px"><option>Sort: Block Flow (Downtown)</option><option>Sort: Block #</option><option>Sort: Departure time</option></select>
+            <div class="stats" id="stats4"></div>
+          </div>
+          <div class="tt-wrap"><table class="tt" id="tt4"></table></div>
+          <div class="tfoot4" id="legend4"></div>
+        </div>
+
+        <div class="side4">
+          <div id="sub-a" class="card">
+            <h3>Generated</h3>
+            <div class="ok-box" style="margin-bottom:8px">Built from the approved Weekday runtime contract and the 3 blocks from Step 3.</div>
+            <p class="fine" style="margin:0">Each trip's runtime comes from the approved bucket for its departure time (Run / Band column). Segments are rounded before summing. This view is read-only. Move to Connections or Manual tweaks to change it.</p>
+            <button class="btn" style="margin-top:10px;width:100%">Regenerate (discards changes)</button>
+          </div>
+
+          <div id="sub-b" class="card">
+            <h3>Connection targets</h3>
+            <div class="target"><b>GO train → bus</b><small>Allandale Waterfront GO · trains arrive :41 hourly (sample) · bus should leave 3–12 min after the train</small><div class="metric" id="connMet" style="font-size:18px"></div></div>
+            <button class="btn dark" id="runOpt" style="width:100%;margin-top:10px">Run optimizer</button>
+            <button class="btn" id="resetOpt" style="width:100%;margin-top:6px" disabled>Reset optimization</button>
+            <p class="fine" style="margin-bottom:0">Reset returns to the schedule as it was just before the optimizer ran, <b>including your manual tweaks</b>. Shifted trips are tagged <span class="shift">↻ +2</span> in the table.</p>
+          </div>
+
+          <div id="sub-c" class="card">
+            <h3>Manual tweaks</h3>
+            <p class="fine" style="margin-top:0">Click a <b>R</b> recovery cell, then use ▲ ▼ (or the arrow keys in the real editor) to add or remove minutes. With a strict 60-minute cycle, extra recovery at Georgian College comes out of the layover at Downtown.</p>
+            <div class="edits" id="edits4"></div>
+          </div>
+
+          <div class="card" id="insp4"></div>
+        </div>
+      </div>
+    </main>
+
+    <main id="s5" class="hidden">
+      <h2>Package</h2>
+      <p class="sub">Each day type goes through the normal draft review and publish. The exports unlock only when every day type left in the set is published.</p>
+      <div class="checklist">
+        <div class="cl h"><div>Day type</div><div>Draft</div><div>Review</div><div>Published</div><div></div></div>
+        <div class="cl"><b>Weekday</b><div><span class="p ok">Draft saved</span></div><div><span class="p ok">Ready for review</span></div><div><span class="p ok">v14 · Oct 15</span></div><div><span class="chip ok">done</span></div></div>
+        <div class="cl"><b>Saturday</b><div><span class="p ok">Draft saved</span></div><div><span class="p now">In review</span></div><div><span class="p">—</span></div><div><button class="btn">Open draft editor</button></div></div>
+        <div class="cl" style="opacity:.55"><b>Sunday</b><div>Dropped from set</div><div></div><div></div><div><span class="chip off">dropped</span></div></div>
+      </div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card">
+          <h3>Public brochure</h3>
+          <div class="err-box">Locked until Saturday is published.</div>
+          <div class="file"><div class="ic pdf">PDF</div><div><b>timetable_8A.pdf</b><small>Pinned to Weekday v14 + Saturday (pending) · Sunday left out</small></div><button class="btn" disabled>Open publisher</button></div>
+        </div>
+        <div class="card">
+          <h3>Run-cut workbook</h3>
+          <ol class="codex">
+            <li class="ok"><span>Pin published versions</span><small>Weekday v14 · Saturday pending</small></li>
+            <li class="now"><span>Export Codex input (JSON)</span><button class="btn" disabled>Export</button></li>
+            <li><span>Run the operations-planning skill outside the app</span></li>
+            <li><span>Import the proposal · validate · edit</span></li>
+            <li><span>Submit → approve (owner/admin)</span></li>
+          </ol>
+          <div class="file"><div class="ic xls">XLSX</div><div><b>8A_fall2026_runcut.xlsx</b><small>Summary, Block Audit, Daily Runs, Rosters, Findings</small></div><button class="btn" disabled>Download</button></div>
+        </div>
+      </div>
+      <p class="fine" style="margin-top:10px">If someone publishes a newer Master version after this, both exports stop and ask you to re-pin. Nothing switches versions silently.</p>
+    </main>
+
+    <div class="footer">
+      <button class="btn" id="back">← Back</button>
+      <div id="footmsg" class="fine"></div>
+      <button class="btn pri" id="next">Continue →</button>
+    </div>
+  </div>
+</div></div>
+<script>
+  const steps = [
+    { n: 1, t: 'Select data', s: 'Route, scope, dates' },
+    { n: 2, t: 'Review time bands', s: 'Buckets → A–E' },
+    { n: 3, t: 'Set the stage', s: 'Span + vehicles' },
+    { n: 4, t: 'Build the schedule', s: 'Generate · connect · tweak' },
+    { n: 5, t: 'Package', s: 'Publish → exports' },
+  ];
+  const notes = {
+    1: '<b>Phase 4.</b> Step 1 gets a scope choice. "One route, all day types" is the default and creates a schedule set: one project per day type, sharing an id. CSV and GTFS stay single day type.',
+    2: '<b>Phases 1–2.</b> Buckets and their A–E bands are shown together (display only; the banding logic is unchanged). <b>Approval is an explicit action:</b> Continue stays disabled until you approve, and warnings must be acknowledged first. No more silent auto-approve.',
+    3: '<b>Phase 3.</b> Step 3 is setup only and keeps the existing per-block model. The Generate button moves to Step 4. The day-type tabs (Phase 4) switch between sibling projects.',
+    4: '<b>Phase 3.</b> Step 4 reuses the existing round-trip table (<code>RoundTripTableView</code>): every trip and timepoint, ARR / R at Georgian College, layover at Downtown, and the Run/Band, Recovery %, Headway and Cycle columns. Stages: Generate (read-only) → Connections (GO markers + optimizer) → Manual tweaks (click an R cell, use ▲▼). Reset keeps manual edits. The generator and block assignment are unchanged.',
+    5: '<b>Phases 5–6.</b> Each day type uses the existing draft → review → publish path. The brochure and the run-cut workbook (Codex round-trip kept) unlock only when every remaining day type has a confirmed published version, and they pin those versions.',
+  };
+  let cur = 1, approved = false, sub = 'c';
+
+  function render() {
+    document.getElementById('stepper').innerHTML = steps.map(st => {
+      const cls = st.n < cur ? 'done' : st.n === cur ? 'cur' : (st.n > 2 && !approved ? 'lock' : '');
+      return `<div class="st ${cls}" data-go="${st.n}"><div class="n">${st.n < cur ? '✓' : st.n}</div><div><b>${st.t}</b><small>${st.s}</small></div></div>`;
+    }).join('');
+    for (let i = 1; i <= 5; i++) document.getElementById('s' + i).classList.toggle('hidden', i !== cur);
+    document.querySelectorAll('.viewbar button').forEach(b => b.classList.toggle('on', +b.dataset.go === cur));
+    document.getElementById('daytabs').classList.toggle('hidden', cur === 1 || cur === 5);
+    document.getElementById('note').innerHTML = notes[cur];
+    document.getElementById('back').disabled = cur === 1;
+    const next = document.getElementById('next'), msg = document.getElementById('footmsg');
+    msg.textContent = ''; next.disabled = false; next.className = 'btn pri';
+    if (cur === 1) next.textContent = 'Create schedule set →';
+    if (cur === 2) {
+      const ack = document.getElementById('ack').checked;
+      if (!approved) {
+        next.textContent = 'Approve Weekday runtimes'; next.className = 'btn dark';
+        next.disabled = !ack;
+        msg.textContent = ack ? 'Approving saves the runtime contract for this day type.' : 'Acknowledge the warnings to enable approval.';
+      } else { next.textContent = 'Continue to Set the stage →'; msg.textContent = '✓ Weekday approved.'; }
+    }
+    if (cur === 3) next.textContent = 'Continue to Build →';
+    if (cur === 4) { next.textContent = 'Continue to Package →'; msg.textContent = 'Saturday still needs Steps 2–4.'; }
+    if (cur === 5) { next.textContent = 'Done'; next.disabled = true; msg.textContent = '1 of 2 day types published.'; }
+    ['a', 'b', 'c'].forEach(k => {
+      document.getElementById('sub-' + k).classList.toggle('hidden', k !== sub);
+      document.querySelector(`.ss[data-sub="${k}"]`).classList.toggle('on', k === sub);
+    });
+  }
+
+  const bandOf = ['E','D','C','B','B','C','C','D','D','D','E','E','D','C','C','B','A','A','A','B','C','D','D','E','E','E','E','E','D','E','E','E'];
+  const h = { A: 95, B: 82, C: 70, D: 58, E: 46 };
+  document.getElementById('bars').innerHTML = bandOf.map((b, i) =>
+    `<div class="b${b}${i === 4 ? ' x' : ''}" style="height:${h[b] - (i % 3) * 3}%"></div>`).join('');
+
+  document.addEventListener('click', e => {
+    const go = e.target.closest('[data-go]');
+    if (go) { cur = +go.dataset.go; if (cur > 2) approved = true; render(); return; }
+    const dt = e.target.closest('.dt');
+    if (dt) {
+      document.querySelectorAll('.dt').forEach(x => x.classList.toggle('on', x === dt));
+      document.querySelectorAll('.dtname').forEach(x => { x.textContent = dt.dataset.dt; });
+      return;
+    }
+    const ss = e.target.closest('.ss');
+    if (ss) { sub = ss.dataset.sub; render(); return; }
+    const radio = e.target.closest('.radio:not(.dis)');
+    if (radio) radio.parentElement.querySelectorAll('.radio').forEach(r => r.classList.toggle('on', r === radio));
+  });
+  document.getElementById('ack').addEventListener('change', render);
+  document.getElementById('next').addEventListener('click', () => {
+    if (cur === 2 && !approved) { approved = true; render(); return; }
+    if (cur < 5) { cur++; render(); }
+  });
+  document.getElementById('back').addEventListener('click', () => { if (cur > 1) { cur--; render(); } });
+  render();
+</script>
+<script>
+/* Step 4 round-trip grid – sample data only */
+(() => {
+  const NB = [['Downtown Terminal', '1'], ['Allandale GO', '9005'], ['Bayfield & Livingstone', '412'], ['Georgian College', '330']];
+  const SB = [['Georgian College', '330'], ['Duckworth & Grove', '518'], ['Downtown Terminal', '1']];
+  const TRAVEL = { A: 25, B: 24, C: 23, D: 22, E: 21 };
+  const BAND_BG = { A: '#7f1d1d', B: '#c2410c', C: '#ca8a04', D: '#65a30d', E: '#15803d' };
+  const N_SPLIT = [0.36, 0.32, 0.32], S_SPLIT = [0.5, 0.5];
+  const CYCLE = 60, BASE_REC = 3;
+  const BLOCKS = [{ id: '8A-1', start: 345, end: 1360 }, { id: '8A-2', start: 365, end: 1380 }, { id: '8A-3', start: 385, end: 1150 }];
+
+  const recEdits = {};      // rowId -> extra recovery minutes at Georgian College
+  const connShift = {};     // rowId -> optimizer shift (minutes)
+  let history = [], future = [], selected = null, active = null;
+
+  const bandAt = m => { const h = m / 60; return h < 6.5 ? 'E' : h < 7 ? 'D' : h < 9 ? 'A' : h < 9.5 ? 'B' : h < 14 ? 'C' : h < 15 ? 'B' : h < 18 ? 'A' : h < 20 ? 'C' : 'E'; };
+  const segs = (total, split) => split.map(p => Math.round(total * p)); // round each segment, then sum
+  const fmt = m => { const h = Math.floor(m / 60) % 24, mm = m % 60; return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; };
+  const sum = a => a.reduce((x, y) => x + y, 0);
+
+  function buildRows() {
+    const rows = [];
+    BLOCKS.forEach(b => {
+      for (let t = b.start, k = 0; t + CYCLE <= b.end + 25; t += CYCLE, k++) {
+        const id = `${b.id}#${k}`;
+        const shift = connShift[id] || 0;
+        const nDep = t + shift;
+        const bandN = bandAt(nDep), nSeg = segs(TRAVEL[bandN], N_SPLIT);
+        const nTimes = [nDep]; nSeg.forEach(s => nTimes.push(nTimes[nTimes.length - 1] + s));
+        const rec = BASE_REC + (recEdits[id] || 0);
+        const sDep = nTimes[3] + rec;
+        const bandS = bandAt(sDep), sSeg = segs(TRAVEL[bandS], S_SPLIT);
+        const sTimes = [sDep]; sSeg.forEach(s => sTimes.push(sTimes[sTimes.length - 1] + s));
+        const isEnd = t + 2 * CYCLE > b.end + 25;
+        const layover = isEnd ? null : t + CYCLE - sTimes[2];
+        const run = sum(nSeg) + sum(sSeg);
+        const recTotal = rec + (layover ?? 0);
+        rows.push({ id, block: b.id, k, nDep, nTimes, nSeg, sTimes, sSeg, rec, layover, isEnd, bandN, bandS, run, recTotal,
+          cycle: isEnd ? sTimes[2] - nDep : CYCLE, shift });
+      }
+    });
+    rows.sort((a, b) => a.nDep - b.nDep);
+    rows.forEach((r, i) => { r.headway = i ? r.nDep - rows[i - 1].nDep : null; });
+    return rows;
+  }
+
+  // GO trains arrive at :41 every hour 06:41–21:41; bus should leave Allandale 3–12 min later.
+  function connFor(r) {
+    const at = r.nTimes[1];
+    for (let tr = 401; tr <= 1301; tr += 60) {
+      const gap = at - tr;
+      if (gap >= -2 && gap <= 20) return { ok: gap >= 3 && gap <= 12, gap, train: tr };
+    }
+    return null;
+  }
+
+  function optimize(rows) {
+    rows.forEach(r => {
+      const c = connFor(r);
+      if (c && !c.ok) connShift[r.id] = (connShift[r.id] || 0) + (c.gap < 3 ? 3 - c.gap : 12 - c.gap);
+    });
+  }
+
+  const sub = () => document.querySelector('.ss.on')?.dataset.sub || 'c';
+
+  function render4() {
+    const mode = sub(), rows = buildRows();
+    const tt = document.getElementById('tt4');
+    if (!tt) return;
+    const hlConn = mode === 'b';
+    let h = '<thead><tr><th class="blk" rowspan="2">Block</th>';
+    NB.forEach(([n, c], i) => {
+      const span = i === 3 ? 2 : 1;
+      h += `<th class="nb" colspan="${span}">${i === 0 ? '<span class="dir">Northbound</span>' : ''}${i === 3 ? 'Arrive ' : ''}${n}<span class="code">#${c}</span></th>`;
+    });
+    SB.forEach(([n, c], i) => {
+      const span = i === 2 ? 2 : 1;
+      h += `<th class="sb" colspan="${span}">${i === 0 ? '<span class="dir">Southbound</span>Depart ' : ''}${n}<span class="code">#${c}</span></th>`;
+    });
+    h += '<th class="meta" rowspan="2">Run<span class="code">Band</span></th><th class="meta" rowspan="2">Recovery<span class="code">min · %</span></th><th class="meta" rowspan="2">Headway</th><th class="meta" rowspan="2">Cycle</th></tr>';
+    h += '<tr class="h2"><th class="nb">DEP</th><th class="nb">DEP</th><th class="nb">DEP</th><th class="nb">ARR</th><th class="nb" title="Recovery at Georgian College">R</th>';
+    h += '<th class="sb">DEP</th><th class="sb">DEP</th><th class="sb">ARR</th><th class="sb" title="Layover at Downtown Terminal before this bus\'s next trip">LAY</th></tr></thead><tbody>';
+
+    let met = 0, total = 0, lastBlock = null;
+    rows.forEach(r => {
+      const c = connFor(r); if (c) { total++; if (c.ok) met++; }
+      const ratio = Math.round(100 * r.recTotal / r.run);
+      const cls = [r.id === selected ? 'sel' : '', r.block !== lastBlock && r.k === 0 ? 'blockstart' : ''].join(' ');
+      lastBlock = r.block;
+      const shiftTag = r.shift ? `<span class="shift">↻ ${r.shift > 0 ? '+' : ''}${r.shift}</span>` : '';
+      h += `<tr class="${cls}" data-row="${r.id}"><td class="blk">${r.block}</td>`;
+      h += `<td class="nbc first">${fmt(r.nTimes[0])}${shiftTag}</td>`;
+      h += `<td class="nbc${hlConn ? ' connhl' : ''}">${fmt(r.nTimes[1])}${c ? `<span class="cx ${c.ok ? 'ok' : 'miss'}">${c.ok ? '✓' : '✕'} ${c.gap}m</span>` : ''}</td>`;
+      h += `<td class="nbc">${fmt(r.nTimes[2])}</td><td class="nbc">${fmt(r.nTimes[3])}</td>`;
+      const editable = mode === 'c';
+      const recCls = ['rec', editable ? 'editable' : '', recEdits[r.id] ? 'edited' : '', active === r.id ? 'active' : ''].join(' ');
+      h += `<td class="${recCls}" data-rec="${r.id}">${r.rec}${editable ? '<span class="arrows"><button data-d="1">▲</button><button data-d="-1">▼</button></span>' : ''}</td>`;
+      h += `<td class="sbc first">${fmt(r.sTimes[0])}</td><td class="sbc">${fmt(r.sTimes[1])}</td><td class="sbc">${fmt(r.sTimes[2])}</td>`;
+      if (r.isEnd) h += '<td class="lay end">block end</td>';
+      else h += `<td class="lay${r.layover < 3 ? ' bad' : ''}${recEdits[r.id] ? ' edited' : ''}">${r.layover}</td>`;
+      h += `<td class="metac">${r.run}<span class="bdg" style="background:${BAND_BG[r.bandN]}">${r.bandN}</span></td>`;
+      h += `<td class="metac">${r.recTotal}<span class="ratio${ratio > 25 ? ' amber' : ''}">${ratio}%</span></td>`;
+      h += `<td class="metac">${r.headway ?? '—'}</td><td class="metac">${r.cycle}</td></tr>`;
+    });
+    tt.innerHTML = h + '</tbody>';
+    const headTop = tt.querySelector('thead tr').offsetHeight;
+    tt.querySelectorAll('thead tr.h2 th').forEach(th => { th.style.top = `${headTop}px`; });
+
+    const runSum = sum(rows.map(r => r.run)), recSum = sum(rows.map(r => r.recTotal));
+    const ratioAll = Math.round(100 * recSum / runSum);
+    const shortLay = rows.filter(r => !r.isEnd && r.layover < 3).length;
+    document.getElementById('stats4').innerHTML =
+      `<span>${rows.length * 2} trips · ${BLOCKS.length} blocks</span><span>60 min typical cycle</span><span>20 min headway</span>` +
+      `<span class="${ratioAll > 25 ? 'amber' : ''}">${ratioAll}% recovery</span>` +
+      `<span>${((runSum + recSum) / 60).toFixed(1)}h cycle allocation (${(runSum / 60).toFixed(1)}h travel + ${(recSum / 60).toFixed(1)}h recovery)</span>` +
+      (shortLay ? `<span class="amber">${shortLay} layover${shortLay > 1 ? 's' : ''} under 3 min</span>` : '');
+    document.getElementById('legend4').innerHTML =
+      '<span><span class="sw" style="background:#fffbeb;border:1px solid #fde68a"></span>R = recovery at Georgian College</span>' +
+      '<span><span class="sw" style="background:#fef3c7"></span>LAY = layover at Downtown before the next trip</span>' +
+      '<span><span class="sw" style="box-shadow:inset 0 0 0 2px #f59e0b"></span>edited by you</span>' +
+      '<span><span class="shift">↻ +2</span> shifted by optimizer</span><span>Band = runtime band of the departure bucket</span><span>Click a row to inspect</span>';
+    document.getElementById('connMet').textContent = `${met} of ${total} met`;
+    document.getElementById('resetOpt').disabled = !Object.keys(connShift).length;
+    document.getElementById('undo4').disabled = !history.length;
+    document.getElementById('redo4').disabled = !future.length;
+
+    const edits = Object.entries(recEdits).filter(([, v]) => v);
+    document.getElementById('edits4').innerHTML = edits.length
+      ? edits.map(([id, v]) => `<div><span>${id.replace('#', ' · trip ')}</span><b>R ${v > 0 ? '+' : ''}${v} min</b></div>`).join('')
+      : '<span class="fine">No manual edits yet.</span>';
+
+    const r = rows.find(x => x.id === selected) || rows[0];
+    const lay = r.isEnd ? 'block end (pull-in)' : `${r.layover} min`;
+    document.getElementById('insp4').innerHTML = `<div class="insp"><h3>Trip inspector · ${r.block} · ${fmt(r.nDep)}</h3>
+      <dl><dt>Bands</dt><dd>N ${r.bandN} · S ${r.bandS}</dd><dt>Travel</dt><dd>${r.run} min</dd>
+      <dt>Recovery at Georgian</dt><dd>${r.rec} min</dd><dt>Layover at Downtown</dt><dd>${lay}</dd>
+      <dt>Cycle</dt><dd>${r.cycle} min</dd><dt>Headway</dt><dd>${r.headway ?? '—'} min</dd></dl>
+      <div class="seglist">
+        <div><span>Downtown → Allandale GO</span><span>${r.nSeg[0]}</span></div>
+        <div><span>Allandale GO → Bayfield</span><span>${r.nSeg[1]}</span></div>
+        <div><span>Bayfield → Georgian</span><span>${r.nSeg[2]}</span></div>
+        <div class="r"><span>Recovery · Georgian</span><span>${r.rec}</span></div>
+        <div><span>Georgian → Duckworth</span><span>${r.sSeg[0]}</span></div>
+        <div><span>Duckworth → Downtown</span><span>${r.sSeg[1]}</span></div>
+        <div class="r"><span>Layover · Downtown</span><span>${r.isEnd ? '—' : r.layover}</span></div>
+      </div></div>`;
+  }
+
+  const snapshot = () => JSON.stringify({ recEdits, connShift });
+  const restore = s => { const o = JSON.parse(s); [recEdits, connShift].forEach(x => Object.keys(x).forEach(k => delete x[k])); Object.assign(recEdits, o.recEdits); Object.assign(connShift, o.connShift); };
+  const commit = fn => { history.push(snapshot()); future = []; fn(); render4(); };
+  let preOpt = null;
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#s4')) return;
+    const arrow = e.target.closest('.arrows button');
+    if (arrow) {
+      const id = arrow.closest('td').dataset.rec, d = +arrow.dataset.d;
+      commit(() => { recEdits[id] = (recEdits[id] || 0) + d; if (BASE_REC + recEdits[id] < 0) recEdits[id] = -BASE_REC; });
+      return;
+    }
+    const recCell = e.target.closest('td.editable');
+    if (recCell) { active = recCell.dataset.rec; selected = active; render4(); return; }
+    const row = e.target.closest('tr[data-row]');
+    if (row) { selected = row.dataset.row; active = null; render4(); return; }
+    if (e.target.id === 'runOpt') { commit(() => { preOpt = snapshot(); optimize(buildRows()); }); return; }
+    if (e.target.id === 'resetOpt') { commit(() => { if (preOpt) { const keep = { ...recEdits }; restore(preOpt); Object.assign(recEdits, keep); } else Object.keys(connShift).forEach(k => delete connShift[k]); }); return; }
+    if (e.target.id === 'undo4') { future.push(snapshot()); restore(history.pop()); render4(); return; }
+    if (e.target.id === 'redo4') { history.push(snapshot()); restore(future.pop()); render4(); return; }
+    if (e.target.closest('.ss')) setTimeout(render4, 0);
+  });
+  window.render4 = render4;
+  render4();
+})();
+</script>
+</body>
+</html>
