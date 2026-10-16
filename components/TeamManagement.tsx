@@ -29,6 +29,7 @@ import {
     type WorkspaceAccessGrant,
 } from '../utils/workspaceAccess';
 import { getWorkspaceAccessPackage } from '../utils/workspaceAccessPackages';
+import { AccessOverviewPanel } from './teamManagement/AccessOverviewPanel';
 import { AccessPanel } from './teamManagement/AccessPanel';
 import { DataSourceCard } from './teamManagement/DataSourceCard';
 import { ExceptionDialog, type ExceptionChoice } from './teamManagement/ExceptionDialog';
@@ -83,6 +84,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     const [exceptionMember, setExceptionMember] = useState<TeamMember | null>(null);
     const [savingException, setSavingException] = useState(false);
     const [newTeamOpen, setNewTeamOpen] = useState(false);
+    const [showOverview, setShowOverview] = useState(false);
 
     const currentTeamMember = homeTeamDetails?.members.find(member => member.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
@@ -188,6 +190,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
             }
             setManagedTeamDetails(details);
             setIsEditingName(false);
+            setShowOverview(false);
         } catch (error) {
             console.error('Error loading selected team:', error);
             toast?.error('Failed to load team');
@@ -199,12 +202,14 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
     const handleBackToHome = (): void => {
         setManagedTeamDetails(null);
         setIsEditingName(false);
+        setShowOverview(false);
     };
 
     const handleTeamCreated = async (teamId: string): Promise<void> => {
         await loadDirectory();
         const details = await getTeamWithMembers(teamId);
         if (details) setManagedTeamDetails(details);
+        setShowOverview(false);
     };
 
     const handleRename = async (): Promise<void> => {
@@ -481,10 +486,18 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                         onSelect={(selected) => void handleSelectTeam(selected)}
                         onBackToHome={handleBackToHome}
                         onNewTeam={() => setNewTeamOpen(true)}
+                        overviewActive={showOverview}
+                        onOpenOverview={() => setShowOverview(true)}
                     />
                 )}
 
                 <main className="min-w-0 overflow-y-auto p-4 sm:p-6">
+                    {isGlobalAdmin && showOverview ? (
+                        <AccessOverviewPanel
+                            teams={availableTeams}
+                            onOpenTeam={(selected) => void handleSelectTeam(selected)}
+                        />
+                    ) : (<>
                     {hasActiveEditSession && (
                         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-900">
                             <span>Edit session: changes affect live data for {activeTeamDetails.name}.</span>
@@ -639,6 +652,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
                             initialSearch={filesSearch}
                         />
                     )}
+                    </>)}
                 </main>
             </div>
 

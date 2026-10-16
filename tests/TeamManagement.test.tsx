@@ -203,6 +203,37 @@ describe('TeamManagement', () => {
     expect(labels).not.toContain('Data Sources');
   });
 
+  it('hides the access overview from team owners', async () => {
+    await render();
+
+    expect(button('Access overview')).toBeUndefined();
+  });
+
+  it('gives global admins an access overview of every team that can open a team', async () => {
+    authState.isGlobalAdmin = true;
+    getTeamsMock.mockResolvedValue([
+      { id: 'barrie', name: 'Barrie Transit', inviteCode: 'BARRIE' },
+      { id: 'lane', name: 'Lane Transit', inviteCode: 'JGKEM9' },
+    ]);
+    getTeamWithMembersMock.mockImplementation(async (teamId: string) => teamId === 'lane'
+      ? buildTeam({ id: 'lane', name: 'Lane Transit', inviteCode: 'JGKEM9', defaultMemberAccessLevel: 'external-planner', members: [], memberCount: 0 })
+      : buildTeam());
+    await render();
+
+    await click(button('Access overview'));
+
+    expect(container.textContent).toContain('Who sees what');
+    expect(container.textContent).toContain('Lane Transit');
+    expect(container.textContent).toContain('1 team has no members');
+    expect(container.textContent).toContain('User clerk');
+
+    const openButtons = Array.from(container.querySelectorAll('button')).filter(b => b.textContent?.trim() === 'Open');
+    await click(openButtons[1]);
+
+    expect(container.textContent).not.toContain('Who sees what');
+    expect(container.querySelector('h2')?.textContent).toBe('Lane Transit');
+  });
+
   it('renders every assignable workspace with a label in the unlock list', async () => {
     authState.isGlobalAdmin = true;
     getTeamWithMembersMock.mockResolvedValue(buildTeam({ defaultMemberAccessLevel: 'internal' }));

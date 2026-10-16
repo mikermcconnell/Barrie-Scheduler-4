@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PlusCircle, Search } from 'lucide-react';
+import { LayoutGrid, PlusCircle, Search } from 'lucide-react';
 import type { Team } from '../../utils/masterScheduleTypes';
 
 interface TeamDirectoryProps {
@@ -11,6 +11,8 @@ interface TeamDirectoryProps {
     onSelect: (team: Team) => void;
     onBackToHome: () => void;
     onNewTeam: () => void;
+    overviewActive: boolean;
+    onOpenOverview: () => void;
 }
 
 export const TeamDirectory: React.FC<TeamDirectoryProps> = ({
@@ -22,6 +24,8 @@ export const TeamDirectory: React.FC<TeamDirectoryProps> = ({
     onSelect,
     onBackToHome,
     onNewTeam,
+    overviewActive,
+    onOpenOverview,
 }) => {
     const [filter, setFilter] = useState('');
 
@@ -38,6 +42,19 @@ export const TeamDirectory: React.FC<TeamDirectoryProps> = ({
             >
                 <PlusCircle size={16} />
                 New team
+            </button>
+
+            <button
+                onClick={onOpenOverview}
+                className={`mb-4 flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${
+                    overviewActive
+                        ? 'border-brand-green bg-brand-green text-white'
+                        : 'border-gray-300 bg-white text-gray-800 hover:bg-gray-100'
+                }`}
+                aria-pressed={overviewActive}
+            >
+                <LayoutGrid size={16} />
+                Access overview
             </button>
 
             <label className="text-xs font-bold uppercase tracking-wide text-gray-500" htmlFor="team-directory-filter">
@@ -75,7 +92,7 @@ export const TeamDirectory: React.FC<TeamDirectoryProps> = ({
                         onClick={() => onSelect(team)}
                         disabled={switching}
                         className={`flex w-full items-center justify-between gap-3 border-b border-gray-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-green-50 disabled:opacity-50 ${
-                            team.id === activeTeamId ? 'bg-green-50 text-green-900' : 'text-gray-700'
+                            team.id === activeTeamId && !overviewActive ? 'bg-green-50 text-green-900' : 'text-gray-700'
                         }`}
                     >
                         <span className="truncate font-semibold">{team.name}</span>

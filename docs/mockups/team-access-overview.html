@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Team Access Overview – Scheduler admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --green: #16a34a; --green-bg: #ecfdf3; --green-line: #bbf7d0;
+    --ink: #111827; --mute: #6b7280; --line: #e5e7eb; --panel: #f9fafb;
+    --blue: #1d4ed8; --blue-bg: #eff6ff;
+    --amber: #92400e; --amber-bg: #fffbeb; --amber-line: #fde68a;
+    --red: #b91c1c; --red-bg: #fef2f2; --red-line: #fecaca;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--panel); }
+  a { color: var(--blue); }
+  header.top { background: #fff; border-bottom: 1px solid var(--line); padding: 18px 28px 0; position: sticky; top: 0; z-index: 5; }
+  header.top h1 { margin: 0; font-size: 20px; }
+  header.top .sub { color: var(--mute); font-size: 13px; margin-top: 2px; }
+  nav { display: flex; gap: 4px; margin-top: 12px; overflow-x: auto; }
+  nav a { padding: 8px 12px; font-weight: 600; font-size: 13px; color: var(--mute); text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav a:hover { color: var(--ink); }
+  nav a.on { color: var(--green); border-color: var(--green); }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 28px 64px; }
+  section { margin-bottom: 36px; scroll-margin-top: 110px; }
+  h2 { font-size: 17px; margin: 0 0 4px; }
+  .lead { color: var(--mute); margin: 0 0 14px; max-width: 780px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+
+  .banner { display: flex; gap: 12px; align-items: flex-start; background: var(--amber-bg); border: 1px solid var(--amber-line); color: var(--amber); border-radius: 12px; padding: 12px 16px; margin-bottom: 24px; }
+  .banner b { color: #78350f; }
+
+  /* attention list */
+  .todo { display: grid; gap: 10px; }
+  .todo .item { display: grid; grid-template-columns: 92px 1fr; gap: 14px; align-items: start; background: #fff; border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; padding: 12px 16px; }
+  .todo .item.high { border-left-color: var(--red); }
+  .todo .item.med { border-left-color: #f59e0b; }
+  .todo .item.low { border-left-color: #9ca3af; }
+  .sev { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px; text-align: center; }
+  .high .sev { background: var(--red-bg); color: var(--red); }
+  .med .sev { background: var(--amber-bg); color: var(--amber); }
+  .low .sev { background: #f3f4f6; color: #4b5563; }
+  .todo .what { font-weight: 700; }
+  .todo .why { color: var(--mute); font-size: 13px; margin-top: 2px; }
+  .todo .do { font-size: 13px; margin-top: 4px; }
+  .todo .do::before { content: "Do: "; font-weight: 700; color: var(--green); }
+
+  /* matrix */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .toolbar label { font-size: 13px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .toolbar input[type=search] { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 220px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--mute); margin-left: auto; }
+  .legend span { display: inline-flex; gap: 6px; align-items: center; }
+  .scroll { overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: 14px; }
+  table.matrix { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
+  .matrix th, .matrix td { border-bottom: 1px solid var(--line); }
+  .matrix thead th { position: sticky; top: 0; background: #fff; z-index: 2; }
+  .matrix th.group { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--mute); padding: 8px 4px 2px; text-align: center; border-bottom: none; }
+  .matrix th.group + th.group, .matrix .gstart { border-left: 1px solid var(--line); }
+  .matrix th.ws { height: 150px; vertical-align: bottom; padding: 0 0 8px; width: 34px; min-width: 34px; }
+  .matrix th.ws div { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; font-weight: 600; font-size: 12px; margin: 0 auto; }
+  .matrix th.name, .matrix td.name { position: sticky; left: 0; background: #fff; z-index: 1; text-align: left; padding: 8px 12px; min-width: 300px; border-right: 1px solid var(--line); }
+  .matrix thead th.name { z-index: 3; vertical-align: bottom; }
+  .matrix td.cell { text-align: center; padding: 0; height: 36px; }
+  .matrix tr.team td { background: #f8fafc; }
+  .matrix tr.team td.name { background: #f1f5f9; font-weight: 700; cursor: pointer; }
+  .matrix tr.member td.name { padding-left: 34px; }
+  .matrix tr:hover td { background: #f0fdf4; }
+  .matrix tr.hidden { display: none; }
+  .caret { display: inline-block; width: 14px; color: var(--mute); }
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: #374151; background: #fff; margin-left: 6px; vertical-align: 1px; }
+  .pill.role-owner { border-color: #c7d2fe; background: #eef2ff; color: #3730a3; }
+  .pill.lvl-internal { border-color: var(--red-line); background: var(--red-bg); color: var(--red); }
+  .pill.custom { border-color: var(--amber-line); background: var(--amber-bg); color: var(--amber); }
+  .pill.flag { border-color: var(--red-line); background: var(--red-bg); color: var(--red); }
+  .meta { color: var(--mute); font-weight: 400; font-size: 12px; display: block; }
+  .mk { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
+  .mk.lvl { background: var(--green); }
+  .mk.on { border: 3px solid var(--blue); background: #fff; }
+  .mk.off { width: 14px; height: 14px; border-radius: 0; background: none; position: relative; }
+  .mk.off::before, .mk.off::after { content: ""; position: absolute; left: 6px; top: -1px; width: 2px; height: 16px; background: var(--red); }
+  .mk.off::before { transform: rotate(45deg); } .mk.off::after { transform: rotate(-45deg); }
+  .mk.none { width: 5px; height: 5px; background: #d1d5db; }
+
+  /* grids */
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .two { grid-template-columns: 1fr; } .todo .item { grid-template-columns: 1fr; } }
+  table.plain { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .plain th, .plain td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .plain th { font-size: 12px; color: var(--mute); text-transform: uppercase; letter-spacing: .04em; }
+  .plain td.c { text-align: center; }
+  .yes { color: var(--green); font-weight: 800; }
+  .no { color: #9ca3af; }
+  .new { font-size: 10px; font-weight: 800; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-line); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+
+  /* flow */
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; }
+  .step { flex: 1 1 170px; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; position: relative; margin-right: 26px; }
+  .step:last-child { margin-right: 0; }
+  .step:not(:last-child)::after { content: "→"; position: absolute; right: -21px; top: 50%; transform: translateY(-50%); color: var(--mute); font-size: 18px; }
+  .step .n { font-size: 11px; font-weight: 800; color: var(--green); text-transform: uppercase; letter-spacing: .05em; }
+  .step .t { font-weight: 700; margin: 2px 0 4px; }
+  .step .d { font-size: 13px; color: var(--mute); }
+  code { font-size: 12px; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: var(--green-bg); border: 1px solid var(--green-line); color: #166534; }
+  .chip.off { background: var(--red-bg); border-color: var(--red-line); color: var(--red); text-decoration: line-through; }
+  .chip.empty { background: #f3f4f6; border-color: var(--line); color: var(--mute); }
+  footer { color: var(--mute); font-size: 12px; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Team Access Overview</h1>
+  <div class="sub">For the scheduler admin · Live Firestore snapshot taken 2026-10-16 · Rules as committed on <code>fix/team-access-admin-only</code></div>
+  <nav id="nav">
+    <a href="#attention" class="on">Needs attention</a>
+    <a href="#matrix">Who sees what</a>
+    <a href="#powers">Who can change what</a>
+    <a href="#decide">How access is decided</a>
+    <a href="#packages">Packages</a>
+    <a href="#join">How people join</a>
+    <a href="#support">Your support tools</a>
+  </nav>
+</header>
+
+<main>
+  <div class="banner">
+    <div>⚠️</div>
+    <div><b>The new rules are not deployed.</b> Until <code>firestore.rules</code> and the app are deployed, a team owner can still change their own team's access. The grid below shows the stored access, which is what people see today.</div>
+  </div>
+
+  <section id="attention">
+    <h2>Needs attention</h2>
+    <p class="lead">Items found in the live data. The most important items are first.</p>
+    <div class="todo" id="todo"></div>
+  </section>
+
+  <section id="matrix">
+    <h2>Who sees what</h2>
+    <p class="lead">Each row is a team, followed by its members. Each column is a workspace. Select a team row to show or hide its members. A global feature flag can still hide a workspace from everyone.</p>
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Filter by team, person or email">
+      <label><input type="checkbox" id="showMembers" checked> Show members</label>
+      <label><input type="checkbox" id="hideEmpty"> Hide archived and preview teams</label>
+      <div class="legend">
+        <span><i class="mk lvl"></i> From access level</span>
+        <span><i class="mk on"></i> Added by override</span>
+        <span><i class="mk off"></i> Removed by override</span>
+        <span><i class="mk none"></i> No access</span>
+      </div>
+    </div>
+    <div class="scroll"><table class="matrix" id="grid"></table></div>
+  </section>
+
+  <section id="powers">
+    <h2>Who can change what</h2>
+    <p class="lead">A team <b>role</b> (owner, admin, member) controls management. It does not control workspace access. Only you set workspace access. <span class="new">NEW</span> marks rows changed by this fix.</p>
+    <div class="card">
+      <table class="plain">
+        <thead><tr><th>Action</th><th>Team member</th><th>Team owner / admin</th><th>Scheduler admin (you)</th></tr></thead>
+        <tbody>
+          <tr><td>See the team's members</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓ any team</td></tr>
+          <tr><td>Rename or delete the team, change the invite code</td><td class="c no">—</td><td class="c yes">✓</td><td class="c yes">✓</td></tr>
+          <tr><td>Remove members, change roles</td><td class="c no">—</td><td class="c yes">✓</td><td class="c yes">✓</td></tr>
+          <tr><td>Change a member's workspace access (their own too)<span class="new">NEW</span></td><td class="c no">—</td><td class="c no">✗</td><td class="c yes">✓</td></tr>
+          <tr><td>Change the team package or the invite's access<span class="new">NEW</span></td><td class="c no">—</td><td class="c no">✗</td><td class="c yes">✓</td></tr>
+          <tr><td>Create a team with any access other than <code>none</code><span class="new">NEW</span></td><td class="c no">✗</td><td class="c no">✗</td><td class="c yes">✓</td></tr>
+          <tr><td>Point a team at another team's data</td><td class="c no">—</td><td class="c no">✗</td><td class="c yes">✓ edit session</td></tr>
+          <tr><td>See the Access tab and "Set exception…"<span class="new">NEW</span></td><td class="c no">—</td><td class="c no">✗</td><td class="c yes">✓</td></tr>
+          <tr><td>Team directory, Support menu, Files tab</td><td class="c no">—</td><td class="c no">—</td><td class="c yes">✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="decide">
+    <h2>How access is decided</h2>
+    <p class="lead">The same logic runs in four places: the app, <code>firestore.rules</code>, <code>storage.rules</code> and Cloud Functions. The rules protect the data. The app only hides the menus.</p>
+    <div class="flow">
+      <div class="step"><div class="n">Step 1</div><div class="t">Active team</div><div class="d"><code>users/{uid}.teamId</code> selects the team. A person can be on more than one team and switch in the header.</div></div>
+      <div class="step"><div class="n">Step 2</div><div class="t">Member record</div><div class="d"><code>teams/{team}/members/{uid}</code> holds the role, <code>accessLevel</code> and <code>workspaceOverrides</code>.</div></div>
+      <div class="step"><div class="n">Step 3</div><div class="t">Level gives a base set</div><div class="d">For example, <code>planner</code> gives 11 workspaces. A missing level counts as <code>internal</code> for owners and admins, and as <code>planner</code> for members.</div></div>
+      <div class="step"><div class="n">Step 4</div><div class="t">Overrides change single workspaces</div><div class="d"><code>true</code> adds a workspace. <code>false</code> removes it. Overrides always win over the level.</div></div>
+      <div class="step"><div class="n">Step 5</div><div class="t">Result</div><div class="d">The workspaces the person can open, plus the team data that the rules let them read.</div></div>
+    </div>
+    <div class="two" style="margin-top:16px">
+      <div class="card">
+        <b>Team package and exceptions</b>
+        <p style="margin:6px 0 0;color:var(--mute);font-size:13px">The team package (<code>defaultMemberAccessLevel</code> + overrides) is what a new member gets when they join with the invite. When you change the package, members who matched the old package move to the new one. Members with different access are <b>exceptions</b>: they keep their own access and show a <span class="pill custom">Custom</span> badge.</p>
+      </div>
+      <div class="card">
+        <b>Data from another team</b>
+        <p style="margin:6px 0 0;color:var(--mute);font-size:13px"><code>dataSourceTeamIds</code> lets a partner team read another team's Transit App, STREETS, Fleet Plan, Master Schedule or Strategic Plan data. For example, WATT can read Barrie's Transit App data. Only you can set this, and only in an edit session.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="packages">
+    <h2>Packages</h2>
+    <p class="lead">The choices in the Access tab. Each package is an access level plus optional overrides.</p>
+    <div class="card"><table class="plain" id="pkgs"></table></div>
+  </section>
+
+  <section id="join">
+    <h2>How people join</h2>
+    <div class="flow">
+      <div class="step"><div class="n">Path A</div><div class="t">They create their own team</div><div class="d">They become <b>owner</b> with <code>none</code>. They see only Team Management until you grant access. Shaw's team was created before this protection.</div></div>
+      <div class="step"><div class="n">Path B</div><div class="t">You create a partner team</div><div class="d">Team Management → New team. Choose a package and send the invite link (<code>?invite=CODE</code>). Members join as <b>member</b> with the package.</div></div>
+      <div class="step"><div class="n">Path C</div><div class="t">They enter an invite code</div><div class="d">Same result as Path B. The rules refuse any access other than the team package or <code>none</code>.</div></div>
+    </div>
+  </section>
+
+  <section id="support">
+    <h2>Your support tools</h2>
+    <div class="two">
+      <div class="card">
+        <b>Inspect as (read-only)</b>
+        <p style="margin:6px 0 0;color:var(--mute);font-size:13px">Members tab → <b>Inspect as</b> shows the app exactly as that member sees it, or Support → Inspect team default. Use this to check what a team really sees.</p>
+        <p style="margin:8px 0 0;font-size:13px;color:var(--red)"><b>Caution:</b> if you choose a team from the <b>header team menu</b>, the inspect session uses <code>internal</code>, so every workspace shows. That view does not show the team's real access.</p>
+      </div>
+      <div class="card">
+        <b>Edit session (up to 60 minutes)</b>
+        <p style="margin:6px 0 0;color:var(--mute);font-size:13px">Support → Start edit. You must give a reason, which goes into the audit log. You get owner-level writes on that team. You need it to change a team you are not a member of, or to set data sources.</p>
+        <p style="margin:8px 0 0;color:var(--mute);font-size:13px"><b>Your own team:</b> you always get <code>internal</code>, whatever your member record says.</p>
+      </div>
+    </div>
+  </section>
+</main>
+<footer>Snapshot data is embedded in this file. It does not update itself. Workspace sets copy <code>utils/workspaceAccess.ts</code> and <code>utils/workspaceAccessPackages.ts</code>.</footer>
+
+<script>
+const WS = [
+  ['Top-level', [['workspaceFixedRoute','Scheduled Transit'],['workspaceOperations','Operations'],['workspaceOndemand','On Demand'],['workspaceParking','Parking'],['operationsOperatorDwell','Dwell Incident Review']]],
+  ['Planning Data', [['analyticsTransitApp','Transit App Data'],['analyticsStrategicPlan','2027–2032 Strategic Plan'],['analyticsStudentPass','Student Pass'],['analyticsFleetPlan','Fleet Plan'],['analyticsResidentialGrowth','Residential Growth'],['analyticsRoutePlanner2','Route Planner'],['analyticsFarePrograms','Fare Programs'],['analyticsRidershipTrend','Ridership Trends'],['analyticsOdMatrix','OD Matrix'],['analyticsCorridorSpeed','Corridor Performance'],['analyticsCorridorHeadway','Corridor Headway'],['analyticsNetworkConnections','Network Connections'],['analyticsRouteConceptPlanner','Route Concept Planner'],['analyticsStreetDesignStudio','Street Design Studio'],['analyticsShuttlePlanner','Shuttle Planner']]],
+];
+const ALL = WS.flatMap(g => g[1].map(w => w[0]));
+const LABEL = Object.fromEntries(WS.flatMap(g => g[1]));
+
+const PRODUCTION = ['workspaceFixedRoute','workspaceOperations'];
+const PLANNER = [...PRODUCTION,'workspaceOndemand','analyticsTransitApp','analyticsStudentPass','analyticsFleetPlan','analyticsResidentialGrowth','analyticsRoutePlanner2','analyticsFarePrograms','analyticsStrategicPlan','analyticsRidershipTrend'];
+const LEVELS = {
+  none: [], production: PRODUCTION, planner: PLANNER,
+  'external-planner': ['analyticsTransitApp'], 'transit-app-only': ['analyticsTransitApp'],
+  parking: ['workspaceParking'],
+  admin: [...PLANNER,'workspaceParking','analyticsOdMatrix','operationsOperatorDwell'],
+  internal: ALL,
+};
+
+function resolve(role, level, ov = {}) {
+  const lvl = level || (role === 'owner' || role === 'admin' ? 'internal' : 'planner');
+  const base = new Set(LEVELS[lvl]);
+  const out = {};
+  for (const w of ALL) {
+    if (ov[w] === true) out[w] = base.has(w) ? 'lvl' : 'on';
+    else if (ov[w] === false) out[w] = base.has(w) ? 'off' : 'none';
+    else out[w] = base.has(w) ? 'lvl' : 'none';
+  }
+  return { lvl, implicit: !level, cells: out };
+}
+const sameAccess = (a, b) => ALL.every(w => (a.cells[w] === 'lvl' || a.cells[w] === 'on') === (b.cells[w] === 'lvl' || b.cells[w] === 'on'));
+
+// Live snapshot, 2026-10-16 (after Shaw was set to external-planner).
+const TEAMS = [
+  { name: 'Barrie Transit', id: 'PHICwXGlvDen0RGt7fCG', level: 'production', members: [
+    ['mike.mcconnell','mike.mcconnell@barrie.ca','owner','internal'],
+    ['michaelryanmcconnell','michaelryanmcconnell@gmail.com','member','internal'],
+    ['jason.zimmerman','jason.zimmerman@barrie.ca','member','planner', {}, 'uid 2dpM…'],
+    ['jason.zimmerman','jason.zimmerman@barrie.ca','member','planner', {}, 'uid hHa4…'],
+    ['sierra.young','sierra.young@barrie.ca','member','planner'],
+    ['evan.chen','evan.chen@barrie.ca','member','planner'],
+    ['julie.macdonald','julie.macdonald@barrie.ca','member','planner'],
+    ['robin.mennie','robin.mennie@barrie.ca','member','planner'],
+  ]},
+  { name: 'Parking', id: 'qx5rgBibRmPzvjbBdAMA', level: 'parking', partner: true, members: [
+    ['mike.mcconnell','mike.mcconnell@barrie.ca','member','parking'],
+    ['madison.shortt','madison.shortt@barrie.ca','member','parking'],
+    ['scott.fraser','scott.fraser@barrie.ca','member','parking'],
+  ]},
+  { name: 'Dillon', id: 'RWraIPI33Bn0jD7zBiO6', level: 'none', ov: { analyticsStrategicPlan: true }, partner: true, members: [
+    ['tpacy','tpacy@dillon.ca','member','none', { analyticsStrategicPlan: true }],
+  ]},
+  { name: 'Shaw', id: 'VieLReKaKrIfaSh44kEj', level: 'external-planner', members: [
+    ['shaw.dungate','shaw.dungate@gmail.com','owner','external-planner'],
+  ]},
+  { name: 'Lane Transit', id: 'gPwiDKGp890n5yOHhIzZ', level: 'external-planner', ov: { analyticsTransitApp: true, analyticsOdMatrix: false }, partner: true, members: [] },
+  { name: 'WATT', id: 'OhCUeOD8FBJMsRLDnCCS', level: 'transit-app-only', ov: { workspaceOperations: true, workspaceFixedRoute: true }, partner: true, members: [] },
+  { name: 'Developer', id: 'JVmkxFy5otOrIJogb1SJ', level: 'internal', partner: true, members: [
+    ['mike.mcconnell','mike.mcconnell@barrie.ca','member','internal'],
+  ]},
+  { name: 'Preview Lane 03 Internal Team', id: 'preview_lane03_20260608', level: null, stale: true, members: [
+    ['lane03.preview.20260608','lane03.preview.20260608@example.com','owner','internal'],
+  ]},
+  { name: 'Lane 03 Preview Team', id: 'preview-lane03-19teGHS6…', level: null, stale: true, members: [] },
+  { name: 'Lane 03 Preview Internal Access', id: 'previewLane03Team20260615', level: null, stale: true, members: [] },
+  { name: 'Archived duplicate Barrie Transit – 4WT6V5', id: 'CGNiy4McBIhV8GJgjhJf', level: 'none', stale: true, members: [
+    ['Codex Dev Reviewer','codex.dev.1773337749574@example.com','member', null],
+  ]},
+  { name: 'Archived duplicate Barrie Transit – 5HUESJ', id: 'cN9xXkx6GDgWHQ14hsBa', level: 'none', stale: true, members: [
+    ['Codex Dev Reviewer','codex.dev.1773337749574@example.com','member','internal'],
+  ]},
+];
+
+const TODO = [
+  ['high', 'Deploy the new rules and app', 'Until you deploy, any team owner (Shaw included) can raise their own access in the Access tab.', 'Run firebase deploy --only firestore:rules, then deploy the app.'],
+  ['high', 'Test accounts with full (internal) access', 'lane03.preview.20260608 is owner + internal on "Preview Lane 03 Internal Team". Codex Dev Reviewer is internal on an archived team.', 'Set these to none, or delete the preview and archived teams.'],
+  ['med', 'Barrie Transit package is "Production only", but no member uses it', 'All 8 Barrie members are planner or internal, so each one is an exception. A new Barrie invite gives Scheduled Transit and Operations only.', 'If new Barrie staff should be planners, change the Barrie package to "Barrie planner".'],
+  ['med', 'jason.zimmerman is on Barrie Transit twice', 'Two member records with the same email and different sign-in IDs (2dpM… and hHa4…). He probably signed in two ways.', 'Ask which sign-in he uses and remove the other record.'],
+  ['med', 'WATT uses a combination that no package describes', 'Transit App only + Operations + Scheduled Transit. The "Transit App + STREETS" package does not include Scheduled Transit.', 'Confirm WATT should see Scheduled Transit. If not, apply the "Transit App + STREETS" package.'],
+  ['low', 'Header team menu shows full access when you inspect a team', 'When you choose a team you are not a member of from the header, the inspect session uses internal. That is why Shaw looked like he had every workspace.', 'Use Members → Inspect as to check what a team really sees.'],
+  ['low', 'Lane Transit and WATT have no members', 'The packages are set, but no one has joined yet.', 'No action needed unless you expect members.'],
+];
+
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+// attention
+const todo = document.getElementById('todo');
+for (const [sev, what, why, act] of TODO) {
+  const item = el('div', 'item ' + sev);
+  item.append(el('div', 'sev', { high: 'Act now', med: 'Review', low: 'Note' }[sev]));
+  const body = el('div');
+  body.append(el('div', 'what', esc(what)), el('div', 'why', esc(why)), el('div', 'do', esc(act)));
+  item.append(body);
+  todo.append(item);
+}
+
+// matrix
+const grid = document.getElementById('grid');
+const thead = el('thead');
+const r1 = el('tr'); r1.append(el('th', 'name', ''));
+for (const [g, list] of WS) { const th = el('th', 'group', g); th.colSpan = list.length; r1.append(th); }
+const r2 = el('tr'); r2.append(el('th', 'name', '<span class="meta">Team · person</span>'));
+WS.forEach(([, list], gi) => list.forEach(([, label], i) => {
+  const th = el('th', 'ws' + (i === 0 && gi > 0 ? ' gstart' : ''), '<div>' + esc(label) + '</div>');
+  th.title = label; r2.append(th);
+}));
+thead.append(r1, r2); grid.append(thead);
+const tbody = el('tbody'); grid.append(tbody);
+
+const groupStart = new Set(WS.slice(1).map(g => g[1][0][0]));
+function cells(tr, res) {
+  for (const w of ALL) {
+    const v = res.cells[w];
+    const td = el('td', 'cell' + (groupStart.has(w) ? ' gstart' : ''), '<i class="mk ' + v + '"></i>');
+    td.title = LABEL[w] + ': ' + ({ lvl: 'from access level', on: 'added by override', off: 'removed by override', none: 'no access' }[v]);
+    tr.append(td);
+  }
+}
+const pill = (cls, txt) => '<span class="pill ' + cls + '">' + esc(txt) + '</span>';
+
+TEAMS.forEach((t, ti) => {
+  const tres = resolve('member', t.level || 'none', t.ov || {});
+  const tr = el('tr', 'team'); tr.dataset.team = ti; tr.dataset.stale = t.stale ? '1' : '';
+  tr.dataset.text = (t.name + ' ' + t.members.map(m => m[0] + ' ' + m[1]).join(' ')).toLowerCase();
+  const pkg = t.level ? t.level + (t.ov && Object.keys(t.ov).length ? ' + overrides' : '') : 'not set → none';
+  tr.append(el('td', 'name',
+    '<span class="caret">' + (t.members.length ? '▾' : '') + '</span>' + esc(t.name) +
+    (t.partner ? pill('', 'partner') : '') +
+    '<span class="meta" style="padding-left:14px">Team package: ' + esc(pkg) + ' · ' + t.members.length + ' member' + (t.members.length === 1 ? '' : 's') + '</span>'));
+  cells(tr, tres);
+  tbody.append(tr);
+  tr.querySelector('td.name').addEventListener('click', () => {
+    const open = tr.dataset.closed !== '1';
+    tr.dataset.closed = open ? '1' : '';
+    tr.querySelector('.caret').textContent = t.members.length ? (open ? '▸' : '▾') : '';
+    apply();
+  });
+
+  for (const [name, email, role, level, ov = {}, note] of t.members) {
+    const res = resolve(role, level, ov);
+    const m = el('tr', 'member'); m.dataset.parent = ti;
+    m.dataset.text = (t.name + ' ' + name + ' ' + email).toLowerCase();
+    const custom = !sameAccess(res, tres);
+    m.append(el('td', 'name',
+      esc(name) + (role !== 'member' ? pill('role-' + role, role) : '') +
+      pill(res.lvl === 'internal' ? 'lvl-internal' : '', res.lvl + (res.implicit ? ' (not stored)' : '')) +
+      (custom ? pill('custom', 'Custom') : '') +
+      '<span class="meta">' + esc(email) + (note ? ' · ' + esc(note) : '') + '</span>'));
+    cells(m, res);
+    tbody.append(m);
+  }
+});
+
+const q = document.getElementById('q'), showMembers = document.getElementById('showMembers'), hideEmpty = document.getElementById('hideEmpty');
+function apply() {
+  const s = q.value.trim().toLowerCase();
+  const teamRows = [...tbody.querySelectorAll('tr.team')];
+  for (const tr of teamRows) {
+    const ti = tr.dataset.team;
+    const hiddenTeam = (hideEmpty.checked && tr.dataset.stale) || (s && !tr.dataset.text.includes(s));
+    tr.classList.toggle('hidden', !!hiddenTeam);
+    for (const m of tbody.querySelectorAll('tr.member[data-parent="' + ti + '"]')) {
+      const hide = hiddenTeam || !showMembers.checked || tr.dataset.closed === '1' || (s && !m.dataset.text.includes(s) && !TEAMS[ti].name.toLowerCase().includes(s));
+      m.classList.toggle('hidden', !!hide);
+    }
+  }
+}
+[q, showMembers, hideEmpty].forEach(i => i.addEventListener('input', apply));
+
+// packages
+const PACKAGES = [
+  ['No access', 'none', {}, 'Team Management only until you grant access.'],
+  ['Barrie planner', 'planner', {}, 'Standard internal planner tools.'],
+  ['Production only', 'production', {}, 'Scheduled transit and operations.'],
+  ['Planner + admin tools', 'admin', {}, 'Planner plus parking, OD matrix and dwell review.'],
+  ['Operations dashboards', 'none', { workspaceOperations: true }, 'STREETS performance review without schedule editing.'],
+  ['2027–2032 Strategic Plan only', 'none', { analyticsStrategicPlan: true }, 'Strategic Plan cards with shared evidence.'],
+  ['Transit App Data only', 'transit-app-only', {}, 'External partner: Transit App Data only.'],
+  ['Transit App + STREETS Dashboard', 'transit-app-only', { workspaceOperations: true }, 'External partner: Transit App Data and Operations.'],
+  ['Parking only', 'parking', {}, 'Parking workspace only.'],
+  ['Internal developer', 'internal', {}, 'Everything. Use only for you or trusted development accounts.'],
+];
+const pk = document.getElementById('pkgs');
+pk.innerHTML = '<thead><tr><th style="width:220px">Package</th><th style="width:150px">Stored as</th><th>Workspaces</th></tr></thead>';
+const pb = el('tbody');
+for (const [label, level, ov, desc] of PACKAGES) {
+  const res = resolve('member', level, ov);
+  const on = ALL.filter(w => res.cells[w] === 'lvl' || res.cells[w] === 'on');
+  const chips = on.length ? on.map(w => '<span class="chip">' + esc(LABEL[w]) + '</span>').join('') : '<span class="chip empty">Team Management only</span>';
+  const tr = el('tr');
+  tr.innerHTML = '<td><b>' + esc(label) + '</b><span class="meta">' + esc(desc) + '</span></td><td><code>' + esc(level) + '</code>' +
+    (Object.keys(ov).length ? '<span class="meta">+ ' + Object.keys(ov).map(k => esc(LABEL[k])).join(', ') + '</span>' : '') +
+    '</td><td><div class="chips">' + chips + '</div></td>';
+  pb.append(tr);
+}
+pk.append(pb);
+
+// nav highlight
+const links = [...document.querySelectorAll('#nav a')];
+const obs = new IntersectionObserver(entries => {
+  for (const e of entries) if (e.isIntersecting) links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id));
+}, { rootMargin: '-120px 0px -60% 0px' });
+document.querySelectorAll('main section').forEach(s => obs.observe(s));
+</script>
+</body>
+</html>
