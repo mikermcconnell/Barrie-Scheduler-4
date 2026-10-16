@@ -46,6 +46,7 @@ import {
 } from '../../utils/workspaces/analyticsWorkspaceRouting';
 import { consumeNetworkConnectionEditorHandoff } from '../../utils/network-connections/networkConnectionHandoff';
 import { isFeatureEnabled } from '../../utils/features';
+import { canAccessGuidedSchedule } from '../GuidedSchedule/guidedScheduleAccess';
 import { canAccessDetourPublisher } from '../../utils/detours/detourAccess';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
@@ -115,15 +116,21 @@ const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<t
     'guided-schedule': 'fixedGuidedSchedule',
 };
 
-const isFixedRouteViewEnabled = (viewMode: FixedRouteViewMode): boolean => {
+interface FixedRouteViewAccess {
+    /** Developer-only access to the guided workspace while its flag is off. */
+    guidedSchedule?: boolean;
+}
+
+const isFixedRouteViewEnabled = (viewMode: FixedRouteViewMode, access: FixedRouteViewAccess = {}): boolean => {
+    if (viewMode === 'guided-schedule' && access.guidedSchedule) return true;
     const feature = FIXED_ROUTE_VIEW_FEATURES[viewMode];
     return feature ? isFeatureEnabled(feature) : true;
 };
 
-function parseHashViewMode(): FixedRouteViewMode {
+function parseHashViewMode(access: FixedRouteViewAccess = {}): FixedRouteViewMode {
     const hash = window.location.hash.slice(1);
     const parts = hash.split('/');
-    if (parts[0] === 'fixed' && parts[1] && isFixedRouteViewEnabled(parts[1] as FixedRouteViewMode)) {
+    if (parts[0] === 'fixed' && parts[1] && isFixedRouteViewEnabled(parts[1] as FixedRouteViewMode, access)) {
         return parts[1] as FixedRouteViewMode;
     }
     return 'dashboard';
@@ -194,18 +201,23 @@ export const FixedRouteWorkspace: React.FC = () => {
         parseAnalyticsWorkspaceViewFromHash(window.location.hash, 'fixed/analytics')
     );
     const canAccessDetours = canAccessDetourPublisher({ team, accessLevel, isGlobalAdmin });
+    const canSeeGuidedSchedule = canAccessGuidedSchedule({
+        flagEnabled: isFeatureEnabled('fixedGuidedSchedule'),
+        isGlobalAdmin,
+        email: user?.email,
+    });
 
     // Wrap navigation to sync URL hash
     const setViewMode = useCallback((mode: FixedRouteViewMode) => {
-        const safeMode = isFixedRouteViewEnabled(mode) ? mode : 'dashboard';
+        const safeMode = isFixedRouteViewEnabled(mode, { guidedSchedule: canSeeGuidedSchedule }) ? mode : 'dashboard';
         setViewModeState(safeMode);
         window.location.hash = safeMode === 'dashboard' ? 'fixed' : `fixed/${safeMode}`;
-    }, []);
+    }, [canSeeGuidedSchedule]);
 
     // Handle browser back/forward
     useEffect(() => {
         const handler = () => {
-            const nextMode = parseHashViewMode();
+            const nextMode = parseHashViewMode({ guidedSchedule: canSeeGuidedSchedule });
             setViewModeState(nextMode);
             if (nextMode === 'dashboard' && window.location.hash && window.location.hash !== '#fixed') {
                 window.location.hash = 'fixed';
@@ -214,13 +226,13 @@ export const FixedRouteWorkspace: React.FC = () => {
         handler();
         window.addEventListener('hashchange', handler);
         return () => window.removeEventListener('hashchange', handler);
-    }, []);
+    }, [canSeeGuidedSchedule]);
 
     useEffect(() => {
-        if (viewMode !== 'dashboard' && !isFixedRouteViewEnabled(viewMode)) {
+        if (viewMode !== 'dashboard' && !isFixedRouteViewEnabled(viewMode, { guidedSchedule: canSeeGuidedSchedule })) {
             setViewMode('dashboard');
         }
-    }, [setViewMode, viewMode]);
+    }, [canSeeGuidedSchedule, setViewMode, viewMode]);
 
     useEffect(() => {
         if (viewMode === 'detours' && !canAccessDetours) {
@@ -726,7 +738,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
                     )}
 
-                    {isFeatureEnabled('fixedGuidedSchedule') && accessLevel !== 'planner' && accessLevel !== 'external-planner' && (
+                    {canSeeGuidedSchedule && accessLevel !== 'planner' && accessLevel !== 'external-planner' && (
                         <DashboardCard onClick={() => setViewMode('guided-schedule')} icon={<CalendarPlus size={20} />} color="emerald"
                             title="Guided Schedule (beta)" description="Step-by-step: observed data, time bands, span and vehicles, build, and package." />
                     )}
