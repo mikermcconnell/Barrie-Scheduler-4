@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Check, Loader2 } from 'lucide-react';
+import { getContrastingTextColor, getRouteColor } from '../../utils/config/routeColors';
 import { GUIDED_DAY_TYPES, type DayTypeReadiness } from './guidedSelection';
 import type { GuidedPerformanceSource } from './useGuidedPerformanceSource';
 import type { GuidedDateRange } from './runtimeReview/guidedRuntimeReviewTypes';
@@ -62,18 +63,24 @@ export const GuidedStep1: React.FC<GuidedStep1Props> = ({ source }) => {
                 <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8" role="group" aria-label="Routes">
                     {source.routeIds.map(routeId => {
                         const selected = selection.routeId === routeId;
+                        const dimmed = !!selection.routeId && !selected;
+                        const color = getRouteColor(routeId);
                         return (
                             <button
                                 key={routeId}
                                 type="button"
                                 aria-pressed={selected}
                                 onClick={() => source.selectRoute(routeId)}
-                                className={`rounded-lg border px-2 py-2.5 text-base font-bold transition-colors ${
-                                    selected
-                                        ? 'border-emerald-600 bg-emerald-50 text-emerald-800 shadow-sm'
-                                        : 'border-gray-200 bg-white text-gray-800 hover:border-gray-300 hover:bg-gray-50'
-                                }`}
+                                style={{
+                                    backgroundColor: color,
+                                    color: getContrastingTextColor(color),
+                                    boxShadow: selected ? `0 0 0 2px #fff, 0 0 0 4px ${color}` : undefined,
+                                }}
+                                className={`flex items-center justify-center gap-1 rounded-lg px-2 py-2.5 text-base font-bold transition hover:brightness-110 ${
+                                    dimmed ? 'opacity-50 hover:opacity-90' : ''
+                                } ${selected ? 'shadow-md' : ''}`}
                             >
+                                {selected && <Check size={14} strokeWidth={3} />}
                                 {routeId}
                             </button>
                         );

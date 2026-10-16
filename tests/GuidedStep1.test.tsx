@@ -64,6 +64,14 @@ describe('GuidedStep1', () => {
         expect(container?.querySelector('[aria-label="Day types"]')).toBeNull();
     });
 
+    it('colours each route button with its route colour', () => {
+        renderStep1(makeSource());
+        const byLabel = Object.fromEntries(buttons('Routes').map(button => [button.textContent, button.style.backgroundColor]));
+        expect(byLabel['2']).toBe('rgb(0, 104, 56)');
+        expect(byLabel['7']).toBe('rgb(245, 130, 32)');
+        expect(byLabel['10']).toBe('rgb(104, 23, 87)');
+    });
+
     it('selects a route when its button is clicked', () => {
         const source = makeSource();
         renderStep1(source);
