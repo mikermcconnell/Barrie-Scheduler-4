@@ -272,10 +272,15 @@ describe('teamService security-sensitive flows', () => {
       commit: batchCommitMock,
     });
 
-    getDocMock.mockResolvedValueOnce({
-      exists: () => true,
-      data: () => ({ inviteCode: 'ABC123' }),
-    });
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ inviteCode: 'ABC123' }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ teamId: 'team-1' }),
+      });
     getDocsMock.mockResolvedValue({ docs: [] });
 
     await deleteTeam('team-1');
@@ -283,6 +288,32 @@ describe('teamService security-sensitive flows', () => {
     expect(batchDeleteMock).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teamInvites/ABC123' })
     );
+  });
+
+  it.each([
+    ['is missing', { exists: (): boolean => false }],
+    ['belongs to another team', { exists: (): boolean => true, data: () => ({ teamId: 'team-2' }) }],
+  ])('still deletes the team when its invite lookup %s', async (_label, inviteSnapshot) => {
+    const batchDeleteMock = vi.fn();
+    const batchCommitMock = vi.fn().mockResolvedValue(undefined);
+    writeBatchMock.mockReturnValue({
+      delete: batchDeleteMock,
+      commit: batchCommitMock,
+    });
+
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ inviteCode: 'LANE03' }),
+      })
+      .mockResolvedValueOnce(inviteSnapshot);
+    getDocsMock.mockResolvedValue({ docs: [] });
+
+    await deleteTeam('team-1');
+
+    expect(batchDeleteMock).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1' }));
+    expect(batchDeleteMock).not.toHaveBeenCalledWith(expect.objectContaining({ path: 'teamInvites/LANE03' }));
+    expect(batchCommitMock).toHaveBeenCalled();
   });
 
   it('gives newly joined members no workspace access when the team has no default', async () => {

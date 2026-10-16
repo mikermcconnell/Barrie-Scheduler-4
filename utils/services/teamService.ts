@@ -495,8 +495,14 @@ export async function deleteTeam(teamId: string): Promise<void> {
 
     // Delete team
     batch.delete(teamRef);
+    // Only delete an invite lookup this team owns. Rules refuse deleting a missing
+    // invite or another team's (older teams can share or lack one), failing the batch.
     if (inviteCode) {
-        batch.delete(doc(db, 'teamInvites', inviteCode));
+        const inviteRef = doc(db, 'teamInvites', inviteCode);
+        const inviteSnap = await getDoc(inviteRef);
+        if (inviteSnap.exists() && inviteSnap.data().teamId === teamId) {
+            batch.delete(inviteRef);
+        }
     }
 
     await batch.commit();

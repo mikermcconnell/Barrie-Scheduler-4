@@ -89,6 +89,46 @@ describeWithEmulator('Team workspace access Firestore rules', () => {
         await assertSucceeds(updateDoc(doc(primaryDb, 'teams/team-a'), { name: 'Renamed in edit session' }));
     });
 
+    describe('deleting a team in a primary developer edit session', () => {
+        const primaryDb = () => environment.authenticatedContext('primary-dev', { schedulerAdmin: true, email: 'mike.mcconnell@barrie.ca' }).firestore();
+        beforeEach(async () => {
+            await environment.withSecurityRulesDisabled(async (context) => {
+                const db = context.firestore();
+                await setDoc(doc(db, 'teams/team-b'), { name: 'Team B', createdBy: 'owner-b', inviteCode: 'GONE00' });
+                await setDoc(doc(db, 'teams/team-b/members/owner-b'), { role: 'owner', accessLevel: 'none' });
+                await setDoc(doc(db, 'developerSupportSessions/primary-dev'), {
+                    teamId: 'team-b', mode: 'edit', reason: 'Developer edit', expiresAt: new Date(Date.now() + 30 * 60_000),
+                });
+            });
+        });
+
+        it('fails when the batch also deletes an invite record that does not exist', async () => {
+            const db = primaryDb();
+            const batch = writeBatch(db);
+            batch.delete(doc(db, 'teams/team-b/members/owner-b'));
+            batch.delete(doc(db, 'teams/team-b'));
+            batch.delete(doc(db, 'teamInvites/GONE00'));
+            await assertFails(batch.commit());
+        });
+
+        it('fails when the batch deletes an invite record that belongs to another team', async () => {
+            const db = primaryDb();
+            const batch = writeBatch(db);
+            batch.delete(doc(db, 'teams/team-b/members/owner-b'));
+            batch.delete(doc(db, 'teams/team-b'));
+            batch.delete(doc(db, 'teamInvites/ABC123'));
+            await assertFails(batch.commit());
+        });
+
+        it('succeeds when only the team and its members are deleted', async () => {
+            const db = primaryDb();
+            const batch = writeBatch(db);
+            batch.delete(doc(db, 'teams/team-b/members/owner-b'));
+            batch.delete(doc(db, 'teams/team-b'));
+            await assertSucceeds(batch.commit());
+        });
+    });
+
     it('lets a scheduler admin change member access and the team package', async () => {
         await assertSucceeds(updateDoc(doc(adminDb(), 'teams/team-a/members/member-a'), { accessLevel: 'planner', workspaceOverrides: {} }));
         await assertSucceeds(updateDoc(doc(adminDb(), 'teams/team-a'), { defaultMemberAccessLevel: 'planner', defaultMemberWorkspaceOverrides: {} }));
