@@ -147,7 +147,7 @@ function readTeamData(docId: string, data: Record<string, any>): Team {
         inviteCode: data.inviteCode,
         defaultMemberAccessLevel: isWorkspaceAccessLevel(data.defaultMemberAccessLevel)
             ? data.defaultMemberAccessLevel
-            : getDefaultWorkspaceAccessLevelForRole('member'),
+            : NEW_TEAM_DEFAULT_ACCESS_LEVEL,
         defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(data.defaultMemberWorkspaceOverrides),
         dataSourceTeamIds: dataSourceTeamIds && Object.keys(dataSourceTeamIds).length > 0 ? dataSourceTeamIds : undefined,
         partnerTeam: data.partnerTeam === true
@@ -452,7 +452,7 @@ export async function renameTeam(teamId: string, newName: string): Promise<void>
                 createdBy: teamSnap.data().createdBy,
                 defaultMemberAccessLevel: isWorkspaceAccessLevel(teamSnap.data().defaultMemberAccessLevel)
                     ? teamSnap.data().defaultMemberAccessLevel
-                    : getDefaultWorkspaceAccessLevelForRole('member'),
+                    : NEW_TEAM_DEFAULT_ACCESS_LEVEL,
                 defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides) ?? {},
                 updatedAt: serverTimestamp()
             }, { merge: true });
@@ -802,7 +802,7 @@ export async function regenerateInviteCode(teamId: string): Promise<string> {
         createdBy: teamSnap.data().createdBy,
         defaultMemberAccessLevel: isWorkspaceAccessLevel(teamSnap.data().defaultMemberAccessLevel)
             ? teamSnap.data().defaultMemberAccessLevel
-            : getDefaultWorkspaceAccessLevelForRole('member'),
+            : NEW_TEAM_DEFAULT_ACCESS_LEVEL,
         defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides) ?? {},
         updatedAt: serverTimestamp()
     });
@@ -833,7 +833,7 @@ export async function setInviteCode(teamId: string, inviteCode: string): Promise
         createdBy: teamSnap.data().createdBy,
         defaultMemberAccessLevel: isWorkspaceAccessLevel(teamSnap.data().defaultMemberAccessLevel)
             ? teamSnap.data().defaultMemberAccessLevel
-            : getDefaultWorkspaceAccessLevelForRole('member'),
+            : NEW_TEAM_DEFAULT_ACCESS_LEVEL,
         defaultMemberWorkspaceOverrides: sanitizeWorkspaceOverrides(teamSnap.data().defaultMemberWorkspaceOverrides) ?? {},
         updatedAt: serverTimestamp()
     });

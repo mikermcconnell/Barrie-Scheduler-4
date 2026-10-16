@@ -101,10 +101,10 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose, fullScr
 
     const tabs = useMemo<TeamManagementTab[]>(() => {
         const visible: TeamManagementTab[] = ['members'];
-        if (canManage || isGlobalAdmin) visible.push('access');
-        if (isGlobalAdmin) visible.push('files');
+        // Workspace access is granted by scheduler administrators only.
+        if (isGlobalAdmin) visible.push('access', 'files');
         return visible;
-    }, [canManage, isGlobalAdmin]);
+    }, [isGlobalAdmin]);
 
     useEffect(() => {
         if (!tabs.includes(activeTab)) setActiveTab('members');

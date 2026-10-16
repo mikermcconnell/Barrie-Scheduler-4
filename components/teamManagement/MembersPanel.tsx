@@ -96,7 +96,7 @@ export const MembersPanel: React.FC<MembersPanelProps> = ({
                                             <button onClick={() => onViewFiles(member)} className={rowButton}>Files</button>
                                         </>
                                     )}
-                                    {canManage && (
+                                    {canManage && isGlobalAdmin && (
                                         <button onClick={() => onSetException(member)} className={rowButton}>
                                             {isException ? 'Edit exception' : 'Set exception…'}
                                         </button>

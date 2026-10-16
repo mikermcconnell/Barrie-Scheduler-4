@@ -92,13 +92,17 @@ service cloud.firestore {
     // by code for user permission management.
     // Team creation remains authenticated; updates/deletes are available to
     // team owners/admins and workspace permission managers.
+    // Workspace access is granted only by scheduler admins: team owners/admins
+    // manage membership and roles but cannot raise their team's access.
     match /teams/{teamId} {
       allow get: if isTeamMember(teamId) || isWorkspacePermissionManager() || canReadTeamForInviteJoin(teamId);
       allow list: if isWorkspacePermissionManager();
-      allow create: if request.auth != null;
+      allow create: if request.auth != null &&
+                      (isSchedulerAdmin() || hasNoTeamAccessDefaults(request.resource.data));
       allow update: if request.auth != null &&
                       ((isTeamOwnerOrAdmin(teamId) &&
-                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['dataSourceTeamIds'])) ||
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['dataSourceTeamIds']) &&
+                        (isSchedulerAdmin() || !changesKeys(['defaultMemberAccessLevel', 'defaultMemberWorkspaceOverrides']))) ||
                        canSupportWriteTeamData(teamId));
       allow delete: if request.auth != null &&
                       (isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId));
@@ -114,9 +118,11 @@ service cloud.firestore {
         allow create: if request.auth != null &&
                          (canCreateSelfFromInvite(teamId, memberId) ||
                           canCreateInitialOwner(teamId, memberId) ||
-                          isTeamOwnerOrAdmin(teamId) ||
+                          (isTeamOwnerOrAdmin(teamId) &&
+                           (isSchedulerAdmin() || hasNoWorkspaceAccess(request.resource.data))) ||
                           canSupportWriteTeamData(teamId));
-        allow update: if isTeamOwnerOrAdmin(teamId) ||
+        allow update: if (isTeamOwnerOrAdmin(teamId) &&
+                          (isSchedulerAdmin() || !changesKeys(['accessLevel', 'workspaceOverrides']))) ||
                          (canSupportWriteTeamData(teamId) &&
                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessLevel', 'workspaceOverrides']));
         allow delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
@@ -437,7 +443,8 @@ service cloud.firestore {
                               request.resource.data.teamId is string &&
                               (isTeamOwnerOrAdmin(request.resource.data.teamId) ||
                                canSupportWriteTeamData(request.resource.data.teamId) ||
-                               canCreateInviteForNewTeam(request.resource.data.teamId));
+                               canCreateInviteForNewTeam(request.resource.data.teamId)) &&
+                              (isSchedulerAdmin() || inviteMatchesTeamDefaults(request.resource.data.teamId));
       allow delete: if request.auth != null &&
                        resource.data.teamId is string &&
                        (isTeamOwnerOrAdmin(resource.data.teamId) || canSupportWriteTeamData(resource.data.teamId));
@@ -536,9 +543,35 @@ service cloud.firestore {
               overrides == team.get('defaultMemberWorkspaceOverrides', null));
     }
 
+    function changesKeys(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(keys);
+    }
+
+    function hasNoWorkspaceAccess(data) {
+      return data.get('accessLevel', null) == 'none' &&
+             data.get('workspaceOverrides', {}) == {};
+    }
+
+    function hasNoTeamAccessDefaults(data) {
+      return data.get('defaultMemberAccessLevel', 'none') == 'none' &&
+             data.get('defaultMemberWorkspaceOverrides', {}) == {} &&
+             !data.keys().hasAny(['dataSourceTeamIds']);
+    }
+
+    // Invite lookups copy the team's access package; only scheduler admins may
+    // write a package that differs from the team document.
+    function inviteMatchesTeamDefaults(teamId) {
+      let team = getAfter(/databases/$(database)/documents/teams/$(teamId)).data;
+      let teamLevel = team.get('defaultMemberAccessLevel', 'none');
+      let teamOverrides = team.get('defaultMemberWorkspaceOverrides', {});
+      return request.resource.data.get('defaultMemberAccessLevel', teamLevel) == teamLevel &&
+             request.resource.data.get('defaultMemberWorkspaceOverrides', teamOverrides) == teamOverrides;
+    }
+
     function canCreateInitialOwner(teamId, memberId) {
       return request.auth.uid == memberId &&
              request.resource.data.role == 'owner' &&
+             (isSchedulerAdmin() || hasNoWorkspaceAccess(request.resource.data)) &&
              !exists(/databases/$(database)/documents/teams/$(teamId)) &&
              getAfter(/databases/$(database)/documents/teams/$(teamId)).data.createdBy == request.auth.uid;
     }

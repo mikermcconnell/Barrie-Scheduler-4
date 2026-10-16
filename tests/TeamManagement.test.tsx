@@ -126,12 +126,12 @@ describe('TeamManagement', () => {
     container.remove();
   });
 
-  it('shows team owners only Members and Access, with exceptions labelled', async () => {
+  it('shows team owners members but no workspace access controls, with exceptions labelled', async () => {
     await render();
 
     const tabLabels = Array.from(container.querySelectorAll('button')).map(b => b.textContent?.trim());
-    expect(tabLabels).toContain('Members');
-    expect(tabLabels).toContain('Access');
+    expect(tabLabels).not.toContain('Access');
+    expect(tabLabels).not.toContain('Set exception…');
     expect(tabLabels).not.toContain('Files');
     expect(tabLabels).not.toContain('Developer Tools');
     expect(container.textContent).not.toContain('Support');
@@ -141,6 +141,7 @@ describe('TeamManagement', () => {
   });
 
   it('saves a new team package and reports how many members followed', async () => {
+    authState.isGlobalAdmin = true;
     await render();
     await click(button('Access'));
 
@@ -168,6 +169,7 @@ describe('TeamManagement', () => {
   });
 
   it('sets a member exception to a package without touching the team default', async () => {
+    authState.isGlobalAdmin = true;
     await render();
 
     // owner row is first, analyst second; the clerk already has an exception
@@ -202,6 +204,7 @@ describe('TeamManagement', () => {
   });
 
   it('renders every assignable workspace with a label in the unlock list', async () => {
+    authState.isGlobalAdmin = true;
     getTeamWithMembersMock.mockResolvedValue(buildTeam({ defaultMemberAccessLevel: 'internal' }));
     await render();
     await click(button('Access'));
