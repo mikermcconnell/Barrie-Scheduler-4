@@ -738,15 +738,17 @@ function buildStopNameLookupByDirection(
   stopEntriesByDay: Map<string, Map<RouteDirection, DailyStopSegmentRuntimeEntry[]>>
 ): StopNameLookupByDirection {
   const lookup = new Map<RouteDirection, Map<string, string>>();
+  // A stop renamed inside the window keeps its newest name, matching the stop-order resolver.
+  const datesInOrder = [...stopEntriesByDay.keys()].sort();
 
-  for (const directionMap of stopEntriesByDay.values()) {
-    for (const [direction, entries] of directionMap) {
+  for (const date of datesInOrder) {
+    for (const [direction, entries] of stopEntriesByDay.get(date)!) {
       const directionLookup = lookup.get(direction) || new Map<string, string>();
       entries.forEach((entry) => {
-        if (entry.fromStopId && entry.fromStopName && !directionLookup.has(entry.fromStopId)) {
+        if (entry.fromStopId && entry.fromStopName) {
           directionLookup.set(entry.fromStopId, entry.fromStopName);
         }
-        if (entry.toStopId && entry.toStopName && !directionLookup.has(entry.toStopId)) {
+        if (entry.toStopId && entry.toStopName) {
           directionLookup.set(entry.toStopId, entry.toStopName);
         }
       });

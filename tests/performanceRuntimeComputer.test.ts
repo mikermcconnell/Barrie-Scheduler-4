@@ -67,6 +67,49 @@ function makeSummary(params: {
 }
 
 describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
+    it('uses the newest name for a stop renamed inside the window, so complete trips still match the chain', () => {
+        // STREETS renamed stop "m" between the two days (Route 2, 2026: "Dunlop at Eccles" -> "Dunlop at Parkside").
+        const summaries = ['2026-01-06', '2026-01-07'].map((date, index) => {
+            const middle = index === 0 ? 'Dunlop at Eccles' : 'Dunlop at Parkside';
+            const stopEntry = (direction: string, from: [string, string], to: [string, string], fromIndex: number, minutes: number): DailyStopSegmentRuntimeEntry => ({
+                routeId: '7', direction, fromStopId: from[0], toStopId: to[0], fromStopName: from[1], toStopName: to[1],
+                fromRouteStopIndex: fromIndex, toRouteStopIndex: fromIndex + 10, segmentName: `${from[1]} to ${to[1]}`,
+                observations: [{ timeBucket: '06:00', runtimeMinutes: minutes }],
+            } as DailyStopSegmentRuntimeEntry);
+            const leg = (from: string, to: string, fromIndex: number, minutes: number) => ({
+                fromStopId: from, toStopId: to, fromRouteStopIndex: fromIndex, toRouteStopIndex: fromIndex + 10, runtimeMinutes: minutes, timeBucket: '06:00',
+            });
+            return makeSummary({
+                date,
+                dayType: 'weekday',
+                routeNames: { '7': 'Route Seven' },
+                stopEntries: [
+                    stopEntry('N', ['a', 'Start'], ['m', middle], 10, 5),
+                    stopEntry('N', ['m', middle], ['b', 'End'], 20, 7),
+                    stopEntry('S', ['b', 'End'], ['m', middle], 10, 6),
+                    stopEntry('S', ['m', middle], ['a', 'Start'], 20, 4),
+                ],
+                tripEntries: [
+                    { tripId: `n-${date}`, tripName: '7 - 06:00', routeId: '7', direction: 'N', terminalDepartureTime: '06:00', segments: [leg('a', 'm', 10, 5), leg('m', 'b', 20, 7)] },
+                    { tripId: `s-${date}`, tripName: '7 - 06:15', routeId: '7', direction: 'S', terminalDepartureTime: '06:15', segments: [leg('b', 'm', 10, 6), leg('m', 'a', 20, 4)] },
+                ] as DailyTripStopSegmentRuntimeEntry[],
+            });
+        });
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: {
+                North: ['Start', 'Dunlop at Parkside', 'End'],
+                South: ['End', 'Dunlop at Parkside', 'Start'],
+            },
+            fullPatternOnly: true,
+        });
+
+        expect(result).toHaveLength(2);
+        expect(result[0].segments.map(segment => segment.segmentName)).toEqual(['Start to Dunlop at Parkside', 'Dunlop at Parkside to End']);
+    });
+
     it('computes p50/p80 from dayType + dateRange filtered segment observations', () => {
         const segment = 'A Stop to B Stop';
         const summaries: DailySummary[] = [

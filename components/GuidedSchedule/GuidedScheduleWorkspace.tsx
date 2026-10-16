@@ -582,8 +582,9 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
                         );
                     })}
                     {skippedDayTypes.map(entry => (
-                        <span key={entry.dayType} title={entry.reason} className="rounded-full border border-dashed border-gray-300 px-3 py-1 text-sm text-gray-400 line-through">
-                            {entry.dayType}
+                        <span key={entry.dayType} title={entry.reason} className="rounded-full border border-dashed border-gray-300 px-3 py-1 text-sm text-gray-400">
+                            <span className="line-through">{entry.dayType}</span>
+                            <span className="ml-1.5 text-[11px]">skipped: {entry.reason}</span>
                         </span>
                     ))}
                 </div>
