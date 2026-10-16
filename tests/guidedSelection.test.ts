@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
     buildDayTypeReadiness,
     EMPTY_GUIDED_SELECTION,
+    getAvailableHistoryRange,
     guidedSelectionKey,
+    setGuidedTimeFrame,
     selectGuidedRoute,
     toggleGuidedDayType,
 } from '../components/GuidedSchedule/guidedSelection';
@@ -10,7 +12,7 @@ import { buildPresetRange } from '../components/GuidedSchedule/GuidedStep1';
 
 describe('guided Step 1 selection', () => {
     it('starts with nothing selected', () => {
-        expect(EMPTY_GUIDED_SELECTION).toEqual({ routeId: null, dayTypes: [], dateRange: null });
+        expect(EMPTY_GUIDED_SELECTION).toEqual({ routeId: null, dayTypes: [], dateRange: null, timeFrameSet: false });
     });
 
     it('selects Weekday, Saturday and Sunday when a route is picked', () => {
@@ -38,6 +40,23 @@ describe('guided Step 1 selection', () => {
         expect(guidedSelectionKey(toggleGuidedDayType(base, 'Sunday'))).not.toBe(key);
         expect(guidedSelectionKey({ ...base, dateRange: { start: '2026-09-01', end: '2026-09-30' } })).not.toBe(key);
         expect(guidedSelectionKey(selectGuidedRoute(base, '11'))).not.toBe(key);
+    });
+
+    it('records the chosen time frame, with null meaning all data', () => {
+        const picked = selectGuidedRoute(EMPTY_GUIDED_SELECTION, '10');
+        expect(picked.timeFrameSet).toBe(false);
+        expect(setGuidedTimeFrame(picked, null)).toMatchObject({ timeFrameSet: true, dateRange: null });
+        const week = setGuidedTimeFrame(picked, { start: '2026-10-04', end: '2026-10-10' });
+        expect(week).toMatchObject({ timeFrameSet: true, dateRange: { start: '2026-10-04', end: '2026-10-10' } });
+        expect(selectGuidedRoute(week, '8A').dateRange).toEqual({ start: '2026-10-04', end: '2026-10-10' });
+    });
+
+    it('limits the available range to clean history using metadata alone', () => {
+        expect(getAvailableHistoryRange({ dateRange: { start: '2026-06-01', end: '2026-10-10' }, cleanHistoryStartDate: '2026-08-15' }))
+            .toEqual({ start: '2026-08-15', end: '2026-10-10' });
+        expect(getAvailableHistoryRange({ dateRange: { start: '2026-06-01', end: '2026-10-10' } }))
+            .toEqual({ start: '2026-06-01', end: '2026-10-10' });
+        expect(getAvailableHistoryRange(null)).toBeUndefined();
     });
 
     it('reports no data for every day type before a route is loaded', () => {

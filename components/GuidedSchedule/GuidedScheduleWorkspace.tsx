@@ -176,11 +176,15 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
         ? {
             message: reviewIsCurrent
                 ? 'A review exists for this selection. Re-analyze to start over.'
-                : source.dataLoading
-                    ? `Loading Route ${selection.routeId} data…`
-                    : analyzedKey ? 'Your selection changed. Re-analyze to update the review.' : 'Pick a route to begin.',
+                : !selection.routeId
+                    ? 'Pick a route to begin.'
+                    : !selection.timeFrameSet
+                        ? `Choose a time frame to load Route ${selection.routeId} data.`
+                        : source.dataLoading
+                            ? `Loading Route ${selection.routeId} data…`
+                            : analyzedKey ? 'Your selection changed. Re-analyze to update the review.' : 'Ready to analyze.',
             label: 'Analyze runtimes',
-            disabled: isAnalyzing || !selection.routeId || selection.dayTypes.length === 0 || source.dataLoading,
+            disabled: isAnalyzing || !source.dataLoaded || selection.dayTypes.length === 0,
             onClick: () => { void handleAnalyze(); },
         }
         : {
@@ -204,7 +208,9 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
             ) : visibleStep === 1 && source.dataLoading && (
                 <GuidedLoadingModal
                     title={`Loading Route ${selection.routeId} data`}
-                    message="Fetching STREETS history so the day types and Analyze runtimes become available."
+                    message={selection.dateRange
+                        ? `Fetching STREETS history for ${selection.dateRange.start} to ${selection.dateRange.end}.`
+                        : 'Fetching all available STREETS history.'}
                     progress={source.dataLoadProgress}
                 />
             )}

@@ -7,10 +7,30 @@ export const GUIDED_DAY_TYPES: GuidedDayType[] = ['Weekday', 'Saturday', 'Sunday
 export interface GuidedSelection {
     routeId: string | null;
     dayTypes: GuidedDayType[];
+    /** null means all available history (only meaningful once timeFrameSet is true). */
     dateRange: GuidedDateRange | null;
+    /** Data loads only after the planner chooses a time frame. */
+    timeFrameSet: boolean;
 }
 
-export const EMPTY_GUIDED_SELECTION: GuidedSelection = { routeId: null, dayTypes: [], dateRange: null };
+export const EMPTY_GUIDED_SELECTION: GuidedSelection = { routeId: null, dayTypes: [], dateRange: null, timeFrameSet: false };
+
+export const setGuidedTimeFrame = (selection: GuidedSelection, dateRange: GuidedDateRange | null): GuidedSelection => ({
+    ...selection,
+    dateRange,
+    timeFrameSet: true,
+});
+
+/** History Step 2 may use, known from metadata before any route data loads. */
+export const getAvailableHistoryRange = (
+    metadata: { dateRange?: GuidedDateRange; cleanHistoryStartDate?: string } | null | undefined
+): GuidedDateRange | undefined => {
+    const range = metadata?.dateRange;
+    if (!range?.start || !range?.end) return undefined;
+    const cleanStart = metadata?.cleanHistoryStartDate;
+    const start = cleanStart && cleanStart > range.start ? cleanStart : range.start;
+    return start <= range.end ? { start, end: range.end } : undefined;
+};
 
 /** Picking a route selects all three day types; the planner can untick any of them. */
 export const selectGuidedRoute = (selection: GuidedSelection, routeId: string): GuidedSelection => ({
@@ -29,6 +49,7 @@ export const toggleGuidedDayType = (selection: GuidedSelection, dayType: GuidedD
 /** Stable key for "has this exact selection been analyzed?". */
 export const guidedSelectionKey = (selection: GuidedSelection): string => JSON.stringify([
     selection.routeId?.trim() ?? null,
+    selection.timeFrameSet,
     GUIDED_DAY_TYPES.filter(dayType => selection.dayTypes.includes(dayType)),
     selection.dateRange?.start ?? null,
     selection.dateRange?.end ?? null,

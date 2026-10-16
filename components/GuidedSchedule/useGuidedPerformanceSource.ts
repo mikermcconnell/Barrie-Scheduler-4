@@ -11,7 +11,9 @@ import { buildFullPerformanceLoadRouteIds } from '../NewSchedule/utils/performan
 import {
     buildDayTypeReadiness,
     EMPTY_GUIDED_SELECTION,
+    getAvailableHistoryRange,
     selectGuidedRoute,
+    setGuidedTimeFrame,
     toggleGuidedDayType,
     type GuidedSelection,
 } from './guidedSelection';
@@ -33,13 +35,17 @@ export const useGuidedPerformanceSource = (teamId: string | undefined) => {
         return ids.length > 0 ? buildFullPerformanceLoadRouteIds(ids) : [];
     }, [metadataQuery.data?.routeMonthlyStoragePaths, metadataQuery.data?.routeStoragePaths]);
 
+    // Load only after a route and a time frame are chosen, and only the months in that window.
+    const canLoad = !!selection.routeId && selection.timeFrameSet;
     const dataQuery = usePerformanceDataQuery(
         teamId,
-        !!selection.routeId && !metadataQuery.isLoading,
+        canLoad && !metadataQuery.isLoading,
         metadataQuery.data,
-        selection.routeId
+        selection.routeId,
+        undefined,
+        selection.dateRange ? { dateRange: selection.dateRange } : undefined
     );
-    const perfData = selection.routeId ? dataQuery.data : undefined;
+    const perfData = canLoad ? dataQuery.data : undefined;
     const cleanData = useMemo(() => getStep2CleanPerformanceSummary(perfData), [perfData]);
 
     const historyStatus = useMemo(() => {
@@ -76,18 +82,19 @@ export const useGuidedPerformanceSource = (teamId: string | undefined) => {
         selection,
         selectRoute: (routeId: string) => setSelection(current => selectGuidedRoute(current, routeId)),
         toggleDayType: (dayType: GuidedDayType) => setSelection(current => toggleGuidedDayType(current, dayType)),
-        setDateRange: (dateRange: GuidedDateRange | null) => setSelection(current => ({ ...current, dateRange })),
+        setTimeFrame: (dateRange: GuidedDateRange | null) => setSelection(current => setGuidedTimeFrame(current, dateRange)),
         routeIds,
         cleanData,
         historyStatus,
         readiness,
-        availableDateRange: cleanData?.metadata?.dateRange as GuidedDateRange | undefined,
+        availableDateRange: getAvailableHistoryRange(metadataQuery.data),
         diagnosticsFor,
-        dataLoading: !!selection.routeId && dataQuery.isLoading,
+        dataLoading: canLoad && dataQuery.isLoading,
+        dataLoaded: canLoad && !!perfData,
         /** Download/processing progress while the selected route's history loads. */
-        dataLoadProgress: selection.routeId && dataQuery.isLoading ? dataQuery.loadProgress : null,
+        dataLoadProgress: canLoad && dataQuery.isLoading ? dataQuery.loadProgress : null,
         metadataLoading: metadataQuery.isLoading,
-        dataError: selection.routeId ? errorMessage(dataQuery.error, 'Unknown data loading error.') : null,
+        dataError: canLoad ? errorMessage(dataQuery.error, 'Unknown data loading error.') : null,
         metadataError: errorMessage(metadataQuery.error, 'Unknown route-list error.'),
         retryData: () => { void dataQuery.refetch(); },
         retryMetadata: () => { void metadataQuery.refetch(); },

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Check, Loader2 } from 'lucide-react';
 import { getContrastingTextColor, getRouteColor } from '../../utils/config/routeColors';
 import { GUIDED_DAY_TYPES, type DayTypeReadiness } from './guidedSelection';
@@ -23,6 +23,10 @@ export const buildPresetRange = (available: GuidedDateRange, days: number): Guid
     return { start: start < available.start ? available.start : start, end: available.end };
 };
 
+const pillClass = (active: boolean): string => (
+    `rounded-full border px-3 py-1 text-xs font-semibold ${active ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`
+);
+
 const readinessLabel = (entry: DayTypeReadiness): string => {
     if (entry.status === 'no-data') return 'No data';
     if (entry.status === 'coarse-only') return 'Re-import needed';
@@ -38,12 +42,18 @@ export const GuidedStep1: React.FC<GuidedStep1Props> = ({ source }) => {
     const range = selection.dateRange;
     const isPreset = (days: number) => !!range && !!availableDateRange
         && JSON.stringify(range) === JSON.stringify(buildPresetRange(availableDateRange, days));
+    const [customRange, setCustomRange] = useState<GuidedDateRange>({ start: '', end: '' });
+    useEffect(() => {
+        if (availableDateRange && !customRange.start && !customRange.end) setCustomRange(availableDateRange);
+    }, [availableDateRange, customRange.end, customRange.start]);
+    const customRangeValid = !!customRange.start && !!customRange.end && customRange.start <= customRange.end;
+    const isCustomApplied = !!range && range.start === customRange.start && range.end === customRange.end;
 
     return (
         <div className="mx-auto max-w-5xl space-y-5">
             <div>
                 <h2 className="text-lg font-bold text-gray-900">Select data</h2>
-                <p className="text-sm text-gray-500">Pick a route, choose which day types to build, and set the window of observed STREETS data.</p>
+                <p className="text-sm text-gray-500">Pick a route, choose the window of observed STREETS data, then choose which day types to build.</p>
             </div>
 
             <section aria-labelledby="guided-route-heading">
@@ -89,6 +99,74 @@ export const GuidedStep1: React.FC<GuidedStep1Props> = ({ source }) => {
             </section>
 
             {selection.routeId && (
+                <section aria-labelledby="guided-range-heading">
+                    <h3 id="guided-range-heading" className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">Time frame</h3>
+                    {!selection.timeFrameSet && (
+                        <p className="mb-2 text-xs text-gray-500">Choose a time frame. Only the data for that window is loaded.</p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Time frame">
+                        {availableDateRange && PRESETS.map(preset => (
+                            <button
+                                key={preset.label}
+                                type="button"
+                                aria-pressed={isPreset(preset.days)}
+                                onClick={() => source.setTimeFrame(buildPresetRange(availableDateRange, preset.days))}
+                                className={pillClass(isPreset(preset.days))}
+                            >
+                                {preset.label}
+                            </button>
+                        ))}
+                        <button
+                            type="button"
+                            aria-pressed={selection.timeFrameSet && !range}
+                            onClick={() => source.setTimeFrame(null)}
+                            className={pillClass(selection.timeFrameSet && !range)}
+                        >
+                            All data
+                        </button>
+                        {availableDateRange && (
+                            <span className="flex flex-wrap items-center gap-1 text-xs text-gray-600">
+                                <span className="ml-1">or</span>
+                                <input
+                                    type="date"
+                                    aria-label="Start date"
+                                    className="rounded border border-gray-300 px-2 py-1"
+                                    min={availableDateRange.start}
+                                    max={availableDateRange.end}
+                                    value={customRange.start}
+                                    onChange={event => setCustomRange(current => ({ ...current, start: event.target.value }))}
+                                />
+                                to
+                                <input
+                                    type="date"
+                                    aria-label="End date"
+                                    className="rounded border border-gray-300 px-2 py-1"
+                                    min={availableDateRange.start}
+                                    max={availableDateRange.end}
+                                    value={customRange.end}
+                                    onChange={event => setCustomRange(current => ({ ...current, end: event.target.value }))}
+                                />
+                                <button
+                                    type="button"
+                                    disabled={!customRangeValid || isCustomApplied}
+                                    onClick={() => source.setTimeFrame({ ...customRange })}
+                                    className="rounded-full border border-gray-900 px-3 py-1 font-semibold text-gray-900 hover:bg-gray-50 disabled:cursor-not-allowed disabled:border-gray-300 disabled:text-gray-400"
+                                >
+                                    Apply
+                                </button>
+                            </span>
+                        )}
+                    </div>
+                    {availableDateRange && (
+                        <p className="mt-2 text-xs text-gray-500">
+                            Clean history available {availableDateRange.start} to {availableDateRange.end}.
+                            {source.historyStatus ? ` Loaded ${source.historyStatus.cleanDays} clean day${source.historyStatus.cleanDays === 1 ? '' : 's'}.` : ''}
+                        </p>
+                    )}
+                </section>
+            )}
+
+            {selection.routeId && selection.timeFrameSet && (
                 <section aria-labelledby="guided-daytype-heading">
                     <h3 id="guided-daytype-heading" className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                         Day types · Route {selection.routeId}
@@ -135,62 +213,6 @@ export const GuidedStep1: React.FC<GuidedStep1Props> = ({ source }) => {
                 </section>
             )}
 
-            {selection.routeId && (
-                <section aria-labelledby="guided-range-heading">
-                    <h3 id="guided-range-heading" className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">Date range</h3>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button
-                            type="button"
-                            aria-pressed={!range}
-                            onClick={() => source.setDateRange(null)}
-                            className={`rounded-full border px-3 py-1 text-xs font-semibold ${!range ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 bg-white text-gray-700'}`}
-                        >
-                            All data
-                        </button>
-                        {availableDateRange && PRESETS.map(preset => (
-                            <button
-                                key={preset.label}
-                                type="button"
-                                aria-pressed={isPreset(preset.days)}
-                                onClick={() => source.setDateRange(buildPresetRange(availableDateRange, preset.days))}
-                                className={`rounded-full border px-3 py-1 text-xs font-semibold ${isPreset(preset.days) ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 bg-white text-gray-700'}`}
-                            >
-                                {preset.label}
-                            </button>
-                        ))}
-                        {availableDateRange && (
-                            <span className="flex items-center gap-1 text-xs text-gray-600">
-                                <input
-                                    type="date"
-                                    aria-label="Start date"
-                                    className="rounded border border-gray-300 px-2 py-1"
-                                    min={availableDateRange.start}
-                                    max={availableDateRange.end}
-                                    value={range?.start ?? availableDateRange.start}
-                                    onChange={event => source.setDateRange({ start: event.target.value, end: range?.end ?? availableDateRange.end })}
-                                />
-                                to
-                                <input
-                                    type="date"
-                                    aria-label="End date"
-                                    className="rounded border border-gray-300 px-2 py-1"
-                                    min={availableDateRange.start}
-                                    max={availableDateRange.end}
-                                    value={range?.end ?? availableDateRange.end}
-                                    onChange={event => source.setDateRange({ start: range?.start ?? availableDateRange.start, end: event.target.value })}
-                                />
-                            </span>
-                        )}
-                    </div>
-                    {source.historyStatus && (
-                        <p className="mt-2 text-xs text-gray-500">
-                            {source.historyStatus.cleanDays} clean day{source.historyStatus.cleanDays === 1 ? '' : 's'} of history
-                            {availableDateRange ? ` (${availableDateRange.start} to ${availableDateRange.end})` : ''}
-                            {source.historyStatus.excludedLegacyDayCount > 0 ? ` · ${source.historyStatus.excludedLegacyDayCount} older day(s) excluded` : ''}
-                        </p>
-                    )}
-                </section>
-            )}
         </div>
     );
 };

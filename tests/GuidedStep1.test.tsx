@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { GuidedStep1 } from '../components/GuidedSchedule/GuidedStep1';
-import { EMPTY_GUIDED_SELECTION, selectGuidedRoute, type DayTypeReadiness } from '../components/GuidedSchedule/guidedSelection';
+import { EMPTY_GUIDED_SELECTION, selectGuidedRoute, setGuidedTimeFrame, type DayTypeReadiness } from '../components/GuidedSchedule/guidedSelection';
 import type { GuidedPerformanceSource } from '../components/GuidedSchedule/useGuidedPerformanceSource';
 
 const readiness = (status: DayTypeReadiness['status'][]): DayTypeReadiness[] => (
@@ -19,7 +19,7 @@ const makeSource = (overrides: Partial<GuidedPerformanceSource> = {}): GuidedPer
     selection: EMPTY_GUIDED_SELECTION,
     selectRoute: vi.fn(),
     toggleDayType: vi.fn(),
-    setDateRange: vi.fn(),
+    setTimeFrame: vi.fn(),
     routeIds: ['2', '7', '8A', '10'],
     cleanData: null,
     historyStatus: null,
@@ -27,6 +27,7 @@ const makeSource = (overrides: Partial<GuidedPerformanceSource> = {}): GuidedPer
     availableDateRange: undefined,
     diagnosticsFor: () => null,
     dataLoading: false,
+    dataLoaded: false,
     dataLoadProgress: null,
     metadataLoading: false,
     dataError: null,
@@ -79,9 +80,24 @@ describe('GuidedStep1', () => {
         expect(source.selectRoute).toHaveBeenCalledWith('10');
     });
 
-    it('shows all three day types selected for the chosen route, and lets the planner untick one', () => {
+    it('asks for a time frame before showing day types, and loads nothing until one is chosen', () => {
         const source = makeSource({
             selection: selectGuidedRoute(EMPTY_GUIDED_SELECTION, '10'),
+            availableDateRange: { start: '2026-09-01', end: '2026-10-10' },
+        });
+        renderStep1(source);
+        expect(container?.querySelector('[aria-label="Day types"]')).toBeNull();
+        expect(container?.textContent).toContain('Only the data for that window is loaded');
+        flushSync(() => buttons('Time frame').find(button => button.textContent === 'Past week')?.click());
+        expect(source.setTimeFrame).toHaveBeenCalledWith({ start: '2026-10-04', end: '2026-10-10' });
+        flushSync(() => buttons('Time frame').find(button => button.textContent === 'All data')?.click());
+        expect(source.setTimeFrame).toHaveBeenCalledWith(null);
+    });
+
+    it('shows all three day types selected for the chosen route, and lets the planner untick one', () => {
+        const source = makeSource({
+            selection: setGuidedTimeFrame(selectGuidedRoute(EMPTY_GUIDED_SELECTION, '10'), null),
+            dataLoaded: true,
             readiness: readiness(['ready', 'ready', 'no-data']),
         });
         renderStep1(source);
