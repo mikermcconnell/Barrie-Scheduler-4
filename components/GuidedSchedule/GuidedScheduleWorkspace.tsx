@@ -7,6 +7,7 @@ import { Step2Analysis } from '../NewSchedule/steps/Step2Analysis';
 import { GuidedApprovalBar } from './GuidedApprovalBar';
 import { GuidedLoadingModal } from './GuidedLoadingModal';
 import { GuidedStep1 } from './GuidedStep1';
+import { GuidedStep2Review } from './GuidedStep2Review';
 import { GUIDED_STEPS, canEnterGuidedStep, resolveGuidedStep, type GuidedGateState, type GuidedStep } from './guidedSteps';
 import { GUIDED_DAY_TYPES, guidedSelectionKey } from './guidedSelection';
 import { useGuidedPerformanceSource } from './useGuidedPerformanceSource';
@@ -291,53 +292,40 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
                                 The runtime rows identify route <b>{active.model.detectedRouteNumber}</b>, but you selected route <b>{active.loaded.prepared.routeNumber}</b>. The review uses your selection; check that this is the right route before approving.
                             </div>
                         )}
-                        {active.cycleAnalysis && (
-                            <section className="flex flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50/70 p-4 sm:flex-row sm:items-center sm:justify-between" aria-label="Cycle start orientation review">
-                                <div>
-                                    <h2 className="text-sm font-bold text-blue-950">Review both cycle start orientations</h2>
-                                    <p className="mt-1 text-xs text-blue-800">North-start and South-start evidence are approved independently. Excluding a time in one view does not change the other.</p>
-                                </div>
-                                <div className="inline-flex rounded-lg border border-blue-200 bg-white p-1" role="tablist" aria-label="Cycle start orientation">
-                                    {(['North', 'South'] as const).map(direction => {
-                                        const count = active.cycleAnalysis?.[direction]?.length ?? 0;
-                                        return (
-                                            <button
-                                                key={direction}
-                                                type="button"
-                                                role="tab"
-                                                aria-selected={active.selectedDirection === direction}
-                                                disabled={count === 0}
-                                                onClick={() => active.setSelectedDirection(direction)}
-                                                className={`rounded-md px-3 py-1.5 text-xs font-bold ${
-                                                    active.selectedDirection === direction ? 'bg-brand-blue text-white shadow-sm' : 'text-blue-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40'
-                                                }`}
-                                            >
-                                                {direction}-start ({count})
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </section>
-                        )}
-                        <Step2Analysis
+                        <GuidedStep2Review
                             key={activeDay}
                             dayType={active.loaded.dayType}
-                            routeNumber={active.loaded.prepared.routeNumber}
                             analysis={active.orientationView.analysis}
                             bands={active.orientationView.bands}
-                            setAnalysis={active.updateAnalysis}
-                            segmentsMap={active.model.segmentsMap}
-                            matrixAnalysis={active.model.matrixAnalysis}
-                            matrixSegmentsMap={active.model.matrixSegmentsMap}
-                            canonicalSegmentColumns={active.loaded.prepared.canonicalSegmentColumns}
-                            canonicalDirectionStops={active.loaded.prepared.canonicalDirectionStops}
-                            healthReport={health}
-                            approvedRuntimeModel={active.approvedModel}
-                            approvalState={active.approvalState}
-                            approvedRuntimeContract={active.contract}
-                            warningAcknowledged={active.warningsAcknowledged}
-                            onWarningAcknowledgedChange={active.setWarningsAcknowledged}
-                            troubleshootingPatternWarning={active.model.troubleshootingPatternWarning}
+                            onAnalysisChange={active.updateAnalysis}
+                            orientationCounts={{
+                                North: active.cycleAnalysis?.North?.length ?? 0,
+                                South: active.cycleAnalysis?.South?.length ?? 0,
+                            }}
+                            selectedDirection={active.selectedDirection}
+                            onDirectionChange={active.setSelectedDirection}
+                            detail={(
+                                <Step2Analysis
+                                    key={activeDay}
+                                    dayType={active.loaded.dayType}
+                                    routeNumber={active.loaded.prepared.routeNumber}
+                                    analysis={active.orientationView.analysis}
+                                    bands={active.orientationView.bands}
+                                    setAnalysis={active.updateAnalysis}
+                                    segmentsMap={active.model.segmentsMap}
+                                    matrixAnalysis={active.model.matrixAnalysis}
+                                    matrixSegmentsMap={active.model.matrixSegmentsMap}
+                                    canonicalSegmentColumns={active.loaded.prepared.canonicalSegmentColumns}
+                                    canonicalDirectionStops={active.loaded.prepared.canonicalDirectionStops}
+                                    healthReport={health}
+                                    approvedRuntimeModel={active.approvedModel}
+                                    approvalState={active.approvalState}
+                                    approvedRuntimeContract={active.contract}
+                                    warningAcknowledged={active.warningsAcknowledged}
+                                    onWarningAcknowledgedChange={active.setWarningsAcknowledged}
+                                    troubleshootingPatternWarning={active.model.troubleshootingPatternWarning}
+                                />
+                            )}
                         />
                     </div>
                 )}
