@@ -1,44 +1,45 @@
 import { useCallback, useMemo, useState } from 'react';
 import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import {
-    getAvailableRuntimeRoutes,
     getStep2CleanHistoryWindow,
     getStep2CleanPerformanceSummary,
     inspectPerformanceRuntimeAvailability,
+    type PerformanceRuntimeDiagnostics,
 } from '../../utils/performanceRuntimeComputer';
 import type { DayType as PerfDayType } from '../../utils/performanceDataTypes';
 import { buildFullPerformanceLoadRouteIds } from '../NewSchedule/utils/performanceRouteLoadOptions';
-import type { PerformanceConfig } from '../NewSchedule/steps/Step1Upload';
-import type { GuidedDayType } from './runtimeReview/guidedRuntimeReviewTypes';
+import {
+    buildDayTypeReadiness,
+    EMPTY_GUIDED_SELECTION,
+    selectGuidedRoute,
+    toggleGuidedDayType,
+    type GuidedSelection,
+} from './guidedSelection';
+import type { GuidedDateRange, GuidedDayType } from './runtimeReview/guidedRuntimeReviewTypes';
 
 /**
- * STREETS performance data for Step 1. Loads one route's history at a time
- * (the selected route, or the first available) and exposes the clean
- * post-fix history that Step 2 is allowed to use.
+ * STREETS performance data for Step 1. Nothing is selected or loaded until
+ * the planner picks a route; then that route's clean post-fix history loads.
  */
 export const useGuidedPerformanceSource = (teamId: string | undefined) => {
-    const [dayType, setDayType] = useState<GuidedDayType>('Weekday');
-    const [performanceConfig, setPerformanceConfig] = useState<PerformanceConfig>({ routeId: '', dateRange: null });
-    const [loadRouteSelection, setLoadRouteSelection] = useState<string | null>(null);
+    const [selection, setSelection] = useState<GuidedSelection>(EMPTY_GUIDED_SELECTION);
 
     const metadataQuery = usePerformanceMetadataQuery(teamId);
-    const loadRouteIds = useMemo(() => {
-        const routeIds = [
+    const routeIds = useMemo(() => {
+        const ids = [
             ...Object.keys(metadataQuery.data?.routeStoragePaths || {}),
             ...Object.keys(metadataQuery.data?.routeMonthlyStoragePaths || {}),
         ];
-        return routeIds.length > 0 ? buildFullPerformanceLoadRouteIds(routeIds) : [];
+        return ids.length > 0 ? buildFullPerformanceLoadRouteIds(ids) : [];
     }, [metadataQuery.data?.routeMonthlyStoragePaths, metadataQuery.data?.routeStoragePaths]);
 
-    const loadRouteId = useMemo(() => {
-        if (loadRouteSelection) return loadRouteSelection;
-        const configured = performanceConfig.routeId.trim();
-        if (configured && loadRouteIds.includes(configured)) return configured;
-        return loadRouteIds[0] ?? 'all';
-    }, [loadRouteIds, loadRouteSelection, performanceConfig.routeId]);
-
-    const dataQuery = usePerformanceDataQuery(teamId, !metadataQuery.isLoading, metadataQuery.data, loadRouteId);
-    const perfData = dataQuery.data;
+    const dataQuery = usePerformanceDataQuery(
+        teamId,
+        !!selection.routeId && !metadataQuery.isLoading,
+        metadataQuery.data,
+        selection.routeId
+    );
+    const perfData = selection.routeId ? dataQuery.data : undefined;
     const cleanData = useMemo(() => getStep2CleanPerformanceSummary(perfData), [perfData]);
 
     const historyStatus = useMemo(() => {
@@ -47,60 +48,44 @@ export const useGuidedPerformanceSource = (teamId: string | undefined) => {
         return {
             totalDays: perfData.dailySummaries?.length ?? 0,
             cleanDays: cleanWindow.dailySummaries.length,
-            runtimeLogicVersion: perfData.metadata?.runtimeLogicVersion,
             cleanHistoryStartDate: cleanWindow.cleanHistoryStartDate,
             excludedLegacyDayCount: cleanWindow.excludedLegacyDayCount,
-            usesCleanHistoryCutoff: cleanWindow.usesCleanHistoryCutoff,
         };
     }, [perfData]);
 
-    const availableRoutes = useMemo(() => (
-        cleanData?.dailySummaries
-            ? getAvailableRuntimeRoutes(
-                cleanData.dailySummaries,
-                dayType.toLowerCase() as PerfDayType,
-                performanceConfig.dateRange || undefined
-            )
-            : []
-    ), [cleanData?.dailySummaries, dayType, performanceConfig.dateRange]);
+    const readiness = useMemo(
+        () => buildDayTypeReadiness(cleanData?.dailySummaries, selection.routeId, selection.dateRange),
+        [cleanData?.dailySummaries, selection.dateRange, selection.routeId]
+    );
 
-    const availableDateRange = cleanData?.metadata?.dateRange;
-
-    const diagnostics = useMemo(() => {
-        if (!perfData?.dailySummaries || !performanceConfig.routeId) return null;
+    const diagnosticsFor = useCallback((dayType: GuidedDayType): PerformanceRuntimeDiagnostics | null => {
+        if (!perfData?.dailySummaries || !selection.routeId) return null;
         return inspectPerformanceRuntimeAvailability(perfData.dailySummaries, {
-            routeId: performanceConfig.routeId,
+            routeId: selection.routeId,
             dayType: dayType.toLowerCase() as PerfDayType,
-            dateRange: performanceConfig.dateRange || undefined,
+            dateRange: selection.dateRange ?? undefined,
             metadata: perfData.metadata,
         });
-    }, [dayType, perfData?.dailySummaries, perfData?.metadata, performanceConfig.dateRange, performanceConfig.routeId]);
-
-    const changeLoadRoute = useCallback((routeId: string) => {
-        setLoadRouteSelection(routeId);
-        if (routeId !== 'all') setPerformanceConfig(prev => ({ ...prev, routeId }));
-    }, []);
+    }, [perfData?.dailySummaries, perfData?.metadata, selection.dateRange, selection.routeId]);
 
     const errorMessage = (error: unknown, fallback: string): string | null => (
         error instanceof Error ? error.message : error ? fallback : null
     );
 
     return {
-        dayType,
-        setDayType,
-        performanceConfig,
-        setPerformanceConfig,
-        loadRouteId,
-        loadRouteIds,
-        changeLoadRoute,
+        selection,
+        selectRoute: (routeId: string) => setSelection(current => selectGuidedRoute(current, routeId)),
+        toggleDayType: (dayType: GuidedDayType) => setSelection(current => toggleGuidedDayType(current, dayType)),
+        setDateRange: (dateRange: GuidedDateRange | null) => setSelection(current => ({ ...current, dateRange })),
+        routeIds,
         cleanData,
         historyStatus,
-        availableRoutes,
-        availableDateRange,
-        diagnostics,
-        dataLoading: dataQuery.isLoading,
+        readiness,
+        availableDateRange: cleanData?.metadata?.dateRange as GuidedDateRange | undefined,
+        diagnosticsFor,
+        dataLoading: !!selection.routeId && dataQuery.isLoading,
         metadataLoading: metadataQuery.isLoading,
-        dataError: errorMessage(dataQuery.error, 'Unknown data loading error.'),
+        dataError: selection.routeId ? errorMessage(dataQuery.error, 'Unknown data loading error.') : null,
         metadataError: errorMessage(metadataQuery.error, 'Unknown route-list error.'),
         retryData: () => { void dataQuery.refetch(); },
         retryMetadata: () => { void metadataQuery.refetch(); },

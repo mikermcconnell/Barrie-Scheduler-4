@@ -46,11 +46,7 @@ interface Step1Props {
         excludedLegacyDayCount: number;
         usesCleanHistoryCutoff: boolean;
     } | null;
-    /** Source modes the planner may choose. With one mode, the intro and mode selector are hidden. */
-    availableImportModes?: ImportMode[];
 }
-
-const ALL_IMPORT_MODES: ImportMode[] = ['csv', 'performance', 'gtfs'];
 
 type DurationPreset = 'day' | 'week' | 'month' | 'three-months';
 
@@ -114,9 +110,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
     performanceDateRange,
     performanceDiagnostics,
     performanceHistoryStatus,
-    availableImportModes = ALL_IMPORT_MODES,
 }) => {
-    const showModeSelector = availableImportModes.length > 1;
     const onDrop = useCallback((acceptedFiles: File[]) => {
         // Limit to 2 files max (North/South or Single Loop)
         const newFiles = [...files, ...acceptedFiles].slice(0, 2);
@@ -169,17 +163,13 @@ export const Step1Upload: React.FC<Step1Props> = ({
 
     return (
         <div className="space-y-4 animate-in fade-in duration-500">
-            {showModeSelector && (
             <div className="text-center space-y-1">
                 <h2 className="text-xl font-bold text-gray-900 sm:text-2xl">Let's Get Started</h2>
                 <p className="text-xs text-gray-500 sm:text-sm">Choose how you want to create your schedule.</p>
             </div>
-            )}
 
             {/* Import Mode Selector */}
-            {showModeSelector && (
             <div className="mx-auto grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-3">
-                {availableImportModes.includes('csv') && (
                 <button
                     onClick={() => setImportMode('csv')}
                     className={`flex min-h-[64px] flex-col items-center justify-center rounded-xl border-2 p-2.5 text-center transition-all duration-200 md:min-h-[116px] md:p-3 lg:min-h-[132px] lg:p-4 ${
@@ -192,8 +182,6 @@ export const Step1Upload: React.FC<Step1Props> = ({
                     <span className="text-sm font-bold leading-tight lg:text-base">Runtime CSV</span>
                     <span className="mt-1 hidden text-xs leading-snug text-gray-500 lg:block">Build a new optimized schedule</span>
                 </button>
-                )}
-                {availableImportModes.includes('performance') && (
                 <button
                     onClick={() => setImportMode('performance')}
                     className={`flex min-h-[64px] flex-col items-center justify-center rounded-xl border-2 p-2.5 text-center transition-all duration-200 md:min-h-[116px] md:p-3 lg:min-h-[132px] lg:p-4 ${
@@ -206,8 +194,6 @@ export const Step1Upload: React.FC<Step1Props> = ({
                     <span className="text-sm font-bold leading-tight lg:text-base">Performance Data</span>
                     <span className="mt-1 hidden text-xs leading-snug text-gray-500 lg:block">Use imported STREETS runtimes</span>
                 </button>
-                )}
-                {availableImportModes.includes('gtfs') && (
                 <button
                     onClick={() => setImportMode('gtfs')}
                     className={`flex min-h-[64px] flex-col items-center justify-center rounded-xl border-2 p-2.5 text-center transition-all duration-200 md:min-h-[116px] md:p-3 lg:min-h-[132px] lg:p-4 ${
@@ -220,9 +206,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
                     <span className="text-sm font-bold leading-tight lg:text-base">GTFS Import</span>
                     <span className="mt-1 hidden text-xs leading-snug text-gray-500 lg:block">Import an existing schedule</span>
                 </button>
-                )}
             </div>
-            )}
 
             {/* CSV Upload Mode */}
             {importMode === 'csv' && (

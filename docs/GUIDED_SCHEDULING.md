@@ -2,7 +2,7 @@
 
 Feature contract for the guided, five-step fixed-route scheduling process. Load after `AGENTS.md` and `docs/CONTEXT_INDEX.md`. Read `docs/rules/LOCKED_LOGIC.md` before changing generation, timing, routing, blocking, or schedule-editor behavior; this contract never overrides it.
 
-Status: **in development** (decisions recorded 2026-10-16). Phase 1 — the shell, Step 1 (STREETS data, one route and one day type), and Step 2 with explicit approval — is behind a feature flag. Projects are not yet saved or resumable; save/resume arrives with schedule sets (Phase 4). The legacy New Schedule wizard in `components/NewSchedule/` remains the shipped path until the guided workspace reaches parity. Verify delivery status from current code and tests.
+Status: **in development** (decisions recorded 2026-10-16). Phase 1 — the shell, Step 1, and Step 2 with explicit approval — is behind a feature flag. Step 1 already offers all day types for one route, and Step 2 reviews and approves each day type separately (the in-memory part of Phase 4). Projects are not yet saved or resumable; save/resume arrives with schedule sets (Phase 4). The legacy New Schedule wizard in `components/NewSchedule/` remains the shipped path until the guided workspace reaches parity. Verify delivery status from current code and tests.
 
 Design references: `docs/mockups/guided-scheduling-mockup.html` (all five steps) and `docs/mockups/step4-recommended-mockup.html` (Step 4 detail). Mockups use sample data and are not behavior contracts.
 
@@ -14,7 +14,7 @@ Turn the existing scheduling capabilities into one ordered process that walks th
 
 | Step | Name | Planner outcome | Reused engine |
 |---|---|---|---|
-| 1 | Select data | Route, schedule scope, STREETS date range | Performance runtime import (`computeRuntimesFromPerformance`) |
+| 1 | Select data | Route (buttons, none preselected), day types, STREETS date range | Performance runtime import (`computeRuntimesFromPerformance`) |
 | 2 | Review time bands | Reviewed 30-minute buckets and their A–E bands; explicit approval | Step 2 review builder and v2 approved runtime contract |
 | 3 | Set the stage | Span of service and vehicles as a per-block list, cycle, recovery | `ScheduleConfig` from the existing Step 3 |
 | 4 | Build the schedule | Generate → Connections → Manual tweaks | `generateSchedule`, connection optimizer, Schedule Editor and `RoundTripTableView` |
@@ -22,7 +22,7 @@ Turn the existing scheduling capabilities into one ordered process that walks th
 
 ## Decisions
 
-- **Scope.** Step 1 offers *one route, all day types* (default) or *one route, one day type*. "All day types" is offered only for STREETS performance data; CSV and GTFS sources stay single day type.
+- **Scope.** Step 1 shows every route with STREETS data as a button, with nothing selected. Picking a route selects Weekday, Saturday, and Sunday; the planner can untick any day type. Each chip shows that day type's stop-level data. Selected day types without usable data are skipped with a notice. The guided workflow uses STREETS data only; CSV and GTFS stay in the legacy wizard.
 - **Schedule set.** "All day types" creates one single-day-type project per day type, linked by a shared schedule-set identifier. Each day type keeps its own approval contract, fingerprints, Step 3 configuration, and generated schedule. The planner may drop a day type (for example, no Sunday service or no Sunday data); the brochure then covers only the remaining days.
 - **Explicit Step 2 approval.** Approval is a deliberate planner action. Continue stays disabled until the current review is approved, and warnings must be acknowledged before approval. This supersedes the legacy auto-approve-on-continue behavior described in `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`. Blocked reviews still cannot be approved (LOCKED_LOGIC rule 7).
 - **Step 2 views.** Show the 30-minute buckets and the A–E band each bucket falls into. Display only; banding logic is unchanged.
@@ -66,6 +66,7 @@ The guided workflow is a new shell that reuses the existing engine.
 
 - Shell: `components/GuidedSchedule/GuidedScheduleWorkspace.tsx`, mounted as the `guided-schedule` view in `components/workspaces/FixedRouteWorkspace.tsx` behind the `fixedGuidedSchedule` flag in `utils/features.ts` (off by default; enable with `VITE_FEATURE_FIXED_GUIDED_SCHEDULE=true`). While the flag is off, only the primary developer (scheduler-admin claim plus the primary developer email, `components/GuidedSchedule/guidedScheduleAccess.ts`) sees the workspace. This hides UI only; data access still goes through existing rules. Hidden from planner and external-planner access levels, like New Schedule.
 - Step gate: `components/GuidedSchedule/guidedSteps.ts`. Step 2 needs a review computed for the current Step 1 selection; Step 3 and later need a current approved contract; undelivered steps cannot be entered.
+- Step 1: `components/GuidedSchedule/GuidedStep1.tsx` and `components/GuidedSchedule/guidedSelection.ts` (selection state and per-day-type readiness). Step 2 holds one review per selected day type, shown as tabs; Step 3 needs every reviewed day type approved.
 - Runtime review: `components/GuidedSchedule/runtimeReview/`. It calls the same pure Step 2 functions as the legacy wizard (review builder, approval, invalidation, fingerprints, stop order, runtime computation, banding) instead of sharing the legacy wizard's inline glue. The route chosen in Step 1 is the route identity for the whole review, so canonical stops cannot be dropped by a later route-number change. Changing the Step 1 selection after analysis requires re-analysis.
 - Reused engine: Step 2 utilities in `components/NewSchedule/utils/`, `utils/ai/runtimeAnalysis.ts`, `utils/schedule/scheduleGenerator.ts`, `utils/blocks/blockAssignmentCore.ts`, `utils/connections/`, `utils/services/newScheduleProjectService.ts`, `utils/services/publishService.ts`, `components/Reports/PublicTimetable.tsx`, and `components/workspaces/RunCuttingWorkspace.tsx`.
 - Persistence: the existing `users/{uid}/newScheduleProjects` records, extended with an optional schedule-set field. Legacy projects open as a one-day-type set. Update `docs/SCHEMA.md` when the field ships.
