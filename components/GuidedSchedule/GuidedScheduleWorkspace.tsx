@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Loader2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, X } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 import { getMasterSchedule } from '../../utils/services/masterScheduleService';
 import { Step2Analysis } from '../NewSchedule/steps/Step2Analysis';
 import { GuidedApprovalBar } from './GuidedApprovalBar';
+import { GuidedLoadingModal } from './GuidedLoadingModal';
 import { GuidedStep1 } from './GuidedStep1';
 import { GUIDED_STEPS, canEnterGuidedStep, resolveGuidedStep, type GuidedGateState, type GuidedStep } from './guidedSteps';
 import { GUIDED_DAY_TYPES, guidedSelectionKey } from './guidedSelection';
@@ -175,7 +176,9 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
         ? {
             message: reviewIsCurrent
                 ? 'A review exists for this selection. Re-analyze to start over.'
-                : analyzedKey ? 'Your selection changed. Re-analyze to update the review.' : 'Pick a route to begin.',
+                : source.dataLoading
+                    ? `Loading Route ${selection.routeId} data…`
+                    : analyzedKey ? 'Your selection changed. Re-analyze to update the review.' : 'Pick a route to begin.',
             label: 'Analyze runtimes',
             disabled: isAnalyzing || !selection.routeId || selection.dayTypes.length === 0 || source.dataLoading,
             onClick: () => { void handleAnalyze(); },
@@ -193,14 +196,17 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-white">
-            {isAnalyzing && (
-                <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" role="dialog" aria-modal="true" aria-busy="true">
-                    <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
-                        <Loader2 size={28} className="mx-auto animate-spin text-brand-blue" />
-                        <h3 className="mt-3 text-lg font-bold text-gray-900">Analyzing performance runtimes</h3>
-                        <p className="mt-1 text-sm text-gray-500">One review per day type. This can take a few seconds.</p>
-                    </div>
-                </div>
+            {isAnalyzing ? (
+                <GuidedLoadingModal
+                    title="Analyzing performance runtimes"
+                    message="One review per day type. This can take a few seconds."
+                />
+            ) : visibleStep === 1 && source.dataLoading && (
+                <GuidedLoadingModal
+                    title={`Loading Route ${selection.routeId} data`}
+                    message="Fetching STREETS history so the day types and Analyze runtimes become available."
+                    progress={source.dataLoadProgress}
+                />
             )}
 
             {/* Compact top bar: the content gets the screen. */}

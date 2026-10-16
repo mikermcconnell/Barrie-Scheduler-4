@@ -84,6 +84,8 @@ export const useGuidedPerformanceSource = (teamId: string | undefined) => {
         availableDateRange: cleanData?.metadata?.dateRange as GuidedDateRange | undefined,
         diagnosticsFor,
         dataLoading: !!selection.routeId && dataQuery.isLoading,
+        /** Download/processing progress while the selected route's history loads. */
+        dataLoadProgress: selection.routeId && dataQuery.isLoading ? dataQuery.loadProgress : null,
         metadataLoading: metadataQuery.isLoading,
         dataError: selection.routeId ? errorMessage(dataQuery.error, 'Unknown data loading error.') : null,
         metadataError: errorMessage(metadataQuery.error, 'Unknown route-list error.'),

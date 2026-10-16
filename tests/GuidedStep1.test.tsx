@@ -27,6 +27,7 @@ const makeSource = (overrides: Partial<GuidedPerformanceSource> = {}): GuidedPer
     availableDateRange: undefined,
     diagnosticsFor: () => null,
     dataLoading: false,
+    dataLoadProgress: null,
     metadataLoading: false,
     dataError: null,
     metadataError: null,
