@@ -83,7 +83,7 @@ This is the most mature and operationally critical part of the repo.
 
 Main areas:
 - New Schedule wizard → `components/NewSchedule/`
-- Guided scheduling workflow (in development) → a new shell that reuses the New Schedule engine, Schedule Editor, publish, Timetable Publisher, and Operations Planning; contract and proposed locations in `docs/GUIDED_SCHEDULING.md`
+- Guided scheduling workflow (in development, flag `fixedGuidedSchedule`) → `components/GuidedSchedule/`; a new shell that reuses the New Schedule engine, Schedule Editor, publish, Timetable Publisher, and Operations Planning. Contract in `docs/GUIDED_SCHEDULING.md`
 - Schedule editing → `components/ScheduleEditor.tsx`
 - Round-trip schedule display → `components/schedule/`
 - Operations Planning → `components/workspaces/RunCuttingWorkspace.tsx`, `utils/run-cutting/`, `utils/services/operationsPlanningService.ts`; source-pinned block audit, run cutting, and anonymous weekly rostering that never mutates Master Schedule content

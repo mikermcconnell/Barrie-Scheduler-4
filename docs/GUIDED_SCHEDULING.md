@@ -2,7 +2,7 @@
 
 Feature contract for the guided, five-step fixed-route scheduling process. Load after `AGENTS.md` and `docs/CONTEXT_INDEX.md`. Read `docs/rules/LOCKED_LOGIC.md` before changing generation, timing, routing, blocking, or schedule-editor behavior; this contract never overrides it.
 
-Status: **in development** (decisions recorded 2026-10-16). The legacy New Schedule wizard in `components/NewSchedule/` remains the shipped path until the guided workspace reaches parity. Verify delivery status from current code and tests.
+Status: **in development** (decisions recorded 2026-10-16). Phase 1 — the shell, Step 1 (STREETS data, one route and one day type), and Step 2 with explicit approval — is behind a feature flag. Projects are not yet saved or resumable; save/resume arrives with schedule sets (Phase 4). The legacy New Schedule wizard in `components/NewSchedule/` remains the shipped path until the guided workspace reaches parity. Verify delivery status from current code and tests.
 
 Design references: `docs/mockups/guided-scheduling-mockup.html` (all five steps) and `docs/mockups/step4-recommended-mockup.html` (Step 4 detail). Mockups use sample data and are not behavior contracts.
 
@@ -62,11 +62,11 @@ From the approved Step 4 mockup:
 
 ## Architecture
 
-The guided workflow is a new shell that reuses the existing engine. Proposed locations:
+The guided workflow is a new shell that reuses the existing engine.
 
-<!-- docs:allow-missing-paths-begin -->
-- Shell: `components/GuidedSchedule/`, behind a feature flag in `utils/features.ts`.
-<!-- docs:allow-missing-paths-end -->
+- Shell: `components/GuidedSchedule/GuidedScheduleWorkspace.tsx`, mounted as the `guided-schedule` view in `components/workspaces/FixedRouteWorkspace.tsx` behind the `fixedGuidedSchedule` flag in `utils/features.ts` (off by default; enable with `VITE_FEATURE_FIXED_GUIDED_SCHEDULE=true`). Hidden from planner and external-planner access levels, like New Schedule.
+- Step gate: `components/GuidedSchedule/guidedSteps.ts`. Step 2 needs a review computed for the current Step 1 selection; Step 3 and later need a current approved contract; undelivered steps cannot be entered.
+- Runtime review: `components/GuidedSchedule/runtimeReview/`. It calls the same pure Step 2 functions as the legacy wizard (review builder, approval, invalidation, fingerprints, stop order, runtime computation, banding) instead of sharing the legacy wizard's inline glue. The route chosen in Step 1 is the route identity for the whole review, so canonical stops cannot be dropped by a later route-number change. Changing the Step 1 selection after analysis requires re-analysis.
 - Reused engine: Step 2 utilities in `components/NewSchedule/utils/`, `utils/ai/runtimeAnalysis.ts`, `utils/schedule/scheduleGenerator.ts`, `utils/blocks/blockAssignmentCore.ts`, `utils/connections/`, `utils/services/newScheduleProjectService.ts`, `utils/services/publishService.ts`, `components/Reports/PublicTimetable.tsx`, and `components/workspaces/RunCuttingWorkspace.tsx`.
 - Persistence: the existing `users/{uid}/newScheduleProjects` records, extended with an optional schedule-set field. Legacy projects open as a one-day-type set. Update `docs/SCHEMA.md` when the field ships.
 
@@ -79,7 +79,7 @@ Each phase is one verified commit.
 | Phase | Scope | Layer |
 |---|---|---|
 | 0 | This contract and doc alignment | Docs |
-| 1 | Guided shell, step frame, and Step 1–2 with explicit approval | Frontend |
+| 1 | Guided shell, step frame, and Step 1–2 with explicit approval (delivered behind flag) | Frontend |
 | 2 | Step 3 setup and Step 4 Generate → Connections → Tweaks with the reset rule | Frontend |
 | 3 | Step 4 guided table mode and inspector | Frontend |
 | 4 | Schedule sets (scope choice, day-type tabs, drop day type) | Frontend + persistence shape |

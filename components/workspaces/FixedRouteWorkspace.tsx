@@ -57,6 +57,10 @@ const NewScheduleWizard = lazyWithRetry(
     () => import('../NewSchedule/NewScheduleWizard').then(module => ({ default: module.NewScheduleWizard })),
     'fixed-new-schedule-wizard'
 );
+const GuidedScheduleWorkspace = lazyWithRetry(
+    () => import('../GuidedSchedule/GuidedScheduleWorkspace').then(module => ({ default: module.GuidedScheduleWorkspace })),
+    'fixed-guided-schedule'
+);
 const MasterScheduleBrowser = lazyWithRetry(
     () => import('../MasterScheduleBrowser').then(module => ({ default: module.MasterScheduleBrowser })),
     'fixed-master-schedule-browser'
@@ -94,7 +98,7 @@ const RunCuttingWorkspace = lazyWithRetry(
     'fixed-run-cutting-workspace'
 );
 
-type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import' | 'detours' | 'run-cutting';
+type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import' | 'detours' | 'run-cutting' | 'guided-schedule';
 type AnalyticsLaunchView = AnalyticsWorkspaceView;
 
 const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<typeof isFeatureEnabled>[0]>> = {
@@ -108,6 +112,7 @@ const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<t
     'performance-import': 'fixedPerformanceImport',
     detours: 'fixedDetours',
     'run-cutting': 'fixedRunCutting',
+    'guided-schedule': 'fixedGuidedSchedule',
 };
 
 const isFixedRouteViewEnabled = (viewMode: FixedRouteViewMode): boolean => {
@@ -136,6 +141,7 @@ const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     'performance-import': 'Re-import STREETS Data',
     detours: 'Detour Publisher',
     'run-cutting': 'Run Cutting & Rostering',
+    'guided-schedule': 'Guided Schedule',
 };
 
 interface DashboardCardProps {
@@ -277,6 +283,8 @@ export const FixedRouteWorkspace: React.FC = () => {
                     return 'Scheduled Transit · Detour Publisher';
                 case 'run-cutting':
                     return 'Scheduled Transit · Run Cutting & Rostering';
+                case 'guided-schedule':
+                    return 'Scheduled Transit · Guided Schedule';
                 default:
                     return 'Scheduled Transit';
             }
@@ -718,6 +726,11 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
                     )}
 
+                    {isFeatureEnabled('fixedGuidedSchedule') && accessLevel !== 'planner' && accessLevel !== 'external-planner' && (
+                        <DashboardCard onClick={() => setViewMode('guided-schedule')} icon={<CalendarPlus size={20} />} color="emerald"
+                            title="Guided Schedule (beta)" description="Step-by-step: observed data, time bands, span and vehicles, build, and package." />
+                    )}
+
                     {isFeatureEnabled('fixedGtfsImport') && (
                         <DashboardCard onClick={() => user ? setShowGTFSImport(true) : toast.warning('Sign In Required', 'Please sign in to import from GTFS')}
                             icon={<Database size={20} />} color="indigo"
@@ -826,7 +839,7 @@ export const FixedRouteWorkspace: React.FC = () => {
     return (
         <div className="flex flex-col h-full">
             {/* Navigation Header - hidden for new-schedule since wizard has its own */}
-            {viewMode !== 'new-schedule' && (
+            {viewMode !== 'new-schedule' && viewMode !== 'guided-schedule' && (
                 <div className="flex items-center gap-2 mb-3 px-4">
                     <button
                         onClick={() => setViewMode('dashboard')}
@@ -856,6 +869,12 @@ export const FixedRouteWorkspace: React.FC = () => {
                                     openEditorWorkspace(buildResult.content, { type: 'generated' });
                                 }}
                             />
+                        </Suspense>
+                    )}
+
+                    {viewMode === 'guided-schedule' && (
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading Guided Schedule..." />}>
+                            <GuidedScheduleWorkspace onClose={() => setViewMode('dashboard')} />
                         </Suspense>
                     )}
 
