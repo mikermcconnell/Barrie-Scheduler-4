@@ -78,6 +78,16 @@ The Operations Dashboard owns one `Sum` / `Daily average` selection beside its s
 
 Passenger Flow by Stop uses one combined chart: boarding and alighting bars share the stop sequence with the estimated onboard-load line. Separate view controls are not used; dual axes keep passenger movement and onboard load readable together.
 
+### Suspected missed-trip matching
+
+`computeMissedTripsForDay` in `utils/gtfs/gtfsScheduleIndex.ts` (mirrored in `functions/src/gtfsScheduleIndex.ts`) compares GTFS scheduled trips with STREETS `byTrip` departures by route and terminal departure time.
+
+- **Service type:** Ontario statutory holidays (New Year's Day, Family Day, Good Friday, Victoria Day, Canada Day, Civic Holiday, Labour Day, Thanksgiving, Christmas, Boxing Day) use Sunday service unless the GTFS feed adds its own service for that date (`calendar_dates` type 1). `SERVICE_TYPE_OVERRIDES` covers one-off dates. Holidays falling on a weekend are not shifted to an observed weekday.
+- **Matching:** a bus departing within 15 minutes of schedule satisfies one scheduled trip. Matching maximises matched trips and credits each bus to its closest scheduled trip first.
+- **Direction:** each route+headsign's STREETS direction code (N/S, CW/CCW, E/W) is learned per day from unambiguous departures. Same-direction buses match first, then any leftover bus may match either direction. When both directions of a route run at the same minute (Route 400, 8A/8B), the miss is therefore charged to the direction that had no bus. These changes alter which trip is reported, not normally how many.
+- **Late:** an unmatched trip with an unused bus 16–60 minutes after schedule is `late_over_15`; otherwise it is `not_performed`.
+- Stored days are not recalculated automatically. Correcting earlier history (for example Aug 3, 2026, stored as weekday service) requires a separately approved recompute.
+
 ### Passenger counting versus operational evidence (schema v15)
 
 - New aggregation includes all source boarding/alighting movements, including nonzero `InBetween` updates, in system, route, hour, stop, route-stop/hour breakdowns, and ridership heatmap cells. Zero-activity intermediate updates do not create additional passenger-flow opportunities.

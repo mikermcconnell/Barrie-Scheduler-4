@@ -72,13 +72,68 @@ interface GtfsTrip {
 }
 
 // ─── Ontario Statutory Holidays ─────────────────────────────────────
-// Maps known holidays to the service type Barrie Transit actually runs.
-// Feed calendar_dates usually cover holidays already; this list is for ones they miss.
-// Update when a new year begins.
+// Barrie Transit runs Sunday service on Ontario statutory holidays. Feeds often only
+// remove regular service on these dates (Canada Day, Thanksgiving, Christmas) without
+// adding the replacement, so holidays are computed by rule. A feed that adds its own
+// service for the date (calendar_dates type 1, e.g. Labour Day 2026) is trusted instead.
 
-const ONTARIO_HOLIDAYS: Record<string, DayType> = {
-    '2026-07-01': 'sunday',   // Canada Day
-};
+/** One-off dates the holiday rules do not cover (e.g. a declared extra holiday). */
+const SERVICE_TYPE_OVERRIDES: Record<string, DayType> = {};
+
+function nthMondayOfMonth(year: number, monthIndex: number, n: number): number {
+    const firstDow = new Date(Date.UTC(year, monthIndex, 1)).getUTCDay();
+    return 1 + ((8 - firstDow) % 7) + (n - 1) * 7;
+}
+
+/** Gregorian Easter Sunday (anonymous algorithm). */
+function easterSunday(year: number): { month: number; day: number } {
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31);
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    return { month, day };
+}
+
+/** Name of the Ontario statutory holiday on this YYYY-MM-DD date, or null. */
+export function getOntarioHolidayName(dateStr: string): string | null {
+    const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+
+    if (month === 1 && day === 1) return "New Year's Day";
+    if (month === 2 && day === nthMondayOfMonth(year, 1, 3)) return 'Family Day';
+    const easter = new Date(Date.UTC(year, easterSunday(year).month - 1, easterSunday(year).day));
+    const goodFriday = new Date(easter.getTime() - 2 * 86_400_000);
+    if (month === goodFriday.getUTCMonth() + 1 && day === goodFriday.getUTCDate()) return 'Good Friday';
+    if (month === 5) {
+        const may24Dow = new Date(Date.UTC(year, 4, 24)).getUTCDay();
+        const victoriaDay = 24 - ((may24Dow + 6) % 7);
+        if (day === victoriaDay) return 'Victoria Day';
+    }
+    if (month === 7 && day === 1) return 'Canada Day';
+    if (month === 8 && day === nthMondayOfMonth(year, 7, 1)) return 'Civic Holiday';
+    if (month === 9 && day === nthMondayOfMonth(year, 8, 1)) return 'Labour Day';
+    if (month === 10 && day === nthMondayOfMonth(year, 9, 2)) return 'Thanksgiving';
+    if (month === 12 && day === 25) return 'Christmas Day';
+    if (month === 12 && day === 26) return 'Boxing Day';
+    return null;
+}
+
+function feedAddsServiceOn(dateStr: string): boolean {
+    return (calendarDatesByDate.get(toGtfsDate(dateStr)) || []).some(ex => ex.exceptionType === 1);
+}
 
 // ─── Schedule data ──────────────────────────────────────────────────
 // One or more GTFS feeds, stitched in time order (see utils/gtfs/gtfsScheduleBundle.ts).
@@ -197,15 +252,19 @@ export function hasGtfsCoverage(dateStr: string): boolean {
 
 /**
  * Resolve the effective service type for a date.
- * Priority: (1) Ontario holiday calendar → (2) STREETS dayType as-is.
+ * Priority: (1) manual override → (2) Ontario statutory holiday runs Sunday service,
+ * unless the feed adds its own service that day → (3) STREETS dayType as-is.
  */
 export function resolveServiceType(dateStr: string, streetsDayType: DayType): DayType {
-    return ONTARIO_HOLIDAYS[dateStr] ?? streetsDayType;
+    const override = SERVICE_TYPE_OVERRIDES[dateStr];
+    if (override) return override;
+    if (getOntarioHolidayName(dateStr) && !feedAddsServiceOn(dateStr)) return 'sunday';
+    return streetsDayType;
 }
 
 /**
  * Returns all scheduled trips for a given date + day type.
- * Applies holiday override from ONTARIO_HOLIDAYS if applicable.
+ * Applies the holiday service type from resolveServiceType.
  */
 export function getScheduledTrips(dateStr: string, dayType: DayType): ScheduledTrip[] {
     const effectiveDayType = resolveServiceType(dateStr, dayType);
@@ -215,7 +274,7 @@ export function getScheduledTrips(dateStr: string, dayType: DayType): ScheduledT
 /**
  * Best-fit service matching: tries all 3 service types and returns the one
  * whose trip IDs best match the observed set. Used as fallback when the
- * primary match rate is too low (holiday not in ONTARIO_HOLIDAYS, snow day, etc.).
+ * primary match rate is too low (unlisted holiday, snow day, etc.).
  *
  * Returns { trips, dayType, matchCount } for the best-fitting service,
  * or null if no service achieves any matches.
@@ -278,16 +337,24 @@ function circularSignedDelta(fromMinute: number, toMinute: number): number {
 interface ObservedDepartureEntry {
     minute: number;
     used: boolean;
+    /** AVL direction code (N/S, CW/CCW, E/W); null when not reported. */
+    direction: string | null;
 }
 
-function buildObservedByRoute(trips: { routeId: string; terminalDepartureTime: string }[]): Map<string, ObservedDepartureEntry[]> {
+interface ObservedTripInput {
+    routeId: string;
+    terminalDepartureTime: string;
+    direction?: string | null;
+}
+
+function buildObservedByRoute(trips: ObservedTripInput[]): Map<string, ObservedDepartureEntry[]> {
     const byRoute = new Map<string, ObservedDepartureEntry[]>();
     for (const t of trips) {
         const mins = parseTimeToMinutes(t.terminalDepartureTime);
         if (mins === null) continue;
         const route = t.routeId;
         const arr = byRoute.get(route) || [];
-        arr.push({ minute: minuteOfDay(mins), used: false });
+        arr.push({ minute: minuteOfDay(mins), used: false, direction: t.direction?.trim() || null });
         byRoute.set(route, arr);
     }
     for (const arr of byRoute.values()) {
@@ -301,16 +368,144 @@ function findBestObserved(
     scheduledMinute: number,
     predicate: (delta: number) => boolean,
     score: (delta: number) => number,
+    direction: string | null = null,
 ): { index: number; delta: number } | null {
     let best: { index: number; delta: number; score: number } | null = null;
     for (let i = 0; i < entries.length; i++) {
         if (entries[i].used) continue;
+        if (direction && entries[i].direction && entries[i].direction !== direction) continue;
         const delta = circularSignedDelta(scheduledMinute, entries[i].minute);
         if (!predicate(delta)) continue;
         const s = score(delta);
         if (!best || s < best.score) best = { index: i, delta, score: s };
     }
     return best ? { index: best.index, delta: best.delta } : null;
+}
+
+const DIRECTION_LEARN_WINDOW_MINS = 2;
+const DIRECTION_MIN_AGREEMENT = 0.8;
+
+function headsignKey(routeId: string, headsign: string): string {
+    return `${routeId}|${headsign}`;
+}
+
+/**
+ * AVL trips carry a direction code; GTFS trips only carry a headsign. Learn each
+ * route+headsign's code from departures where only one headsign is scheduled nearby
+ * and exactly one bus left at that minute. A route with two headsigns and two codes
+ * gives the unlearned headsign the remaining code (Route 400 runs both directions at
+ * the same minute all day, so one side is never seen alone).
+ */
+function learnHeadsignDirections(
+    scheduled: ScheduledTrip[],
+    observedByRoute: Map<string, ObservedDepartureEntry[]>,
+): Map<string, string> {
+    const votes = new Map<string, Map<string, number>>();
+    const headsignsByRoute = new Map<string, { headsign: string; minute: number }[]>();
+    for (const s of scheduled) {
+        const mins = parseTimeToMinutes(s.departure);
+        if (mins === null) continue;
+        const arr = headsignsByRoute.get(s.routeId) || [];
+        arr.push({ headsign: s.headsign, minute: minuteOfDay(mins) });
+        headsignsByRoute.set(s.routeId, arr);
+    }
+
+    for (const [routeId, trips] of headsignsByRoute) {
+        const entries = observedByRoute.get(routeId) || [];
+        for (const t of trips) {
+            const otherHeadsignNearby = trips.some(o =>
+                o.headsign !== t.headsign && Math.abs(circularSignedDelta(t.minute, o.minute)) <= MATCH_TOLERANCE_MINS);
+            if (otherHeadsignNearby) continue;
+            const near = entries.filter(e => Math.abs(circularSignedDelta(t.minute, e.minute)) <= DIRECTION_LEARN_WINDOW_MINS);
+            if (near.length !== 1 || !near[0].direction) continue;
+            const key = headsignKey(routeId, t.headsign);
+            const tally = votes.get(key) || new Map<string, number>();
+            tally.set(near[0].direction, (tally.get(near[0].direction) || 0) + 1);
+            votes.set(key, tally);
+        }
+    }
+
+    const learned = new Map<string, string>();
+    for (const [key, tally] of votes) {
+        let total = 0;
+        let top: [string, number] | null = null;
+        for (const entry of tally) {
+            total += entry[1];
+            if (!top || entry[1] > top[1]) top = entry;
+        }
+        if (top && top[1] / total >= DIRECTION_MIN_AGREEMENT) learned.set(key, top[0]);
+    }
+
+    for (const [routeId, trips] of headsignsByRoute) {
+        const headsigns = [...new Set(trips.map(t => t.headsign))];
+        const codes = [...new Set((observedByRoute.get(routeId) || []).map(e => e.direction).filter((d): d is string => !!d))];
+        if (headsigns.length !== 2 || codes.length !== 2) continue;
+        const keys = headsigns.map(h => headsignKey(routeId, h));
+        const known = keys.filter(k => learned.has(k));
+        if (known.length !== 1) continue;
+        const remaining = codes.find(c => c !== learned.get(known[0]));
+        const unknown = keys.find(k => !learned.has(k));
+        if (remaining && unknown) learned.set(unknown, remaining);
+    }
+
+    return learned;
+}
+
+interface PendingScheduledTrip {
+    s: ScheduledTrip;
+    depMin: number;
+}
+
+/**
+ * Pair scheduled trips with observed departures within the match tolerance, one bus
+ * per trip. Uses augmenting paths, so it matches as many trips as possible, and tries
+ * each trip's closest bus first, so a bus that left on the minute is credited to that
+ * trip rather than to an earlier trip that happened to be checked first.
+ * Returns the trips left without a bus.
+ */
+function matchClosestFirst(
+    trips: PendingScheduledTrip[],
+    observedByRoute: Map<string, ObservedDepartureEntry[]>,
+    directionFor: (s: ScheduledTrip) => string | null,
+): PendingScheduledTrip[] {
+    const candidates = trips.map(({ s, depMin }) => {
+        const entries = observedByRoute.get(s.routeId) || [];
+        const direction = directionFor(s);
+        const options: { entry: ObservedDepartureEntry; distance: number }[] = [];
+        for (const entry of entries) {
+            if (entry.used) continue;
+            if (direction && entry.direction && entry.direction !== direction) continue;
+            const distance = Math.abs(circularSignedDelta(depMin, entry.minute));
+            if (distance <= MATCH_TOLERANCE_MINS) options.push({ entry, distance });
+        }
+        return options.sort((a, b) => a.distance - b.distance || a.entry.minute - b.entry.minute);
+    });
+
+    const owner = new Map<ObservedDepartureEntry, number>();
+    const tryAssign = (tripIndex: number, visited: Set<ObservedDepartureEntry>): boolean => {
+        for (const { entry } of candidates[tripIndex]) {
+            if (visited.has(entry)) continue;
+            visited.add(entry);
+            const current = owner.get(entry);
+            if (current === undefined || tryAssign(current, visited)) {
+                owner.set(entry, tripIndex);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const order = trips
+        .map((_, i) => i)
+        .sort((a, b) => (candidates[a][0]?.distance ?? Infinity) - (candidates[b][0]?.distance ?? Infinity) || a - b);
+    for (const i of order) tryAssign(i, new Set());
+
+    const matched = new Set<number>();
+    for (const [entry, tripIndex] of owner) {
+        entry.used = true;
+        matched.add(tripIndex);
+    }
+    return trips.filter((_, i) => !matched.has(i));
 }
 
 /** Build route|time keys from observed trips for O(1) matching */
@@ -412,7 +607,7 @@ export interface MissedTripsSummary {
 export function computeMissedTripsForDay(
     date: string,
     dayType: DayType,
-    observedTrips: { routeId: string; terminalDepartureTime: string }[],
+    observedTrips: ObservedTripInput[],
 ): MissedTripsSummary | null {
     if (!hasGtfsCoverage(date)) return null;
 
@@ -454,29 +649,23 @@ export function computeMissedTripsForDay(
         return minuteOfDay(aMin) - minuteOfDay(bMin);
     });
 
-    let matchedCount = 0;
+    // Match same-direction buses first so a miss is charged to the direction that had
+    // no bus; then let any leftover bus match regardless of its direction code.
+    const directionByHeadsign = learnHeadsignDirections(reliableScheduled, observedByRoute);
+    const expectedDirection = (s: ScheduledTrip) => directionByHeadsign.get(headsignKey(s.routeId, s.headsign)) ?? null;
+
     const unmatched: { s: ScheduledTrip; depMin: number | null }[] = [];
+    const timed: PendingScheduledTrip[] = [];
     for (const s of scheduledOrdered) {
         const depRaw = parseTimeToMinutes(s.departure);
         const depMin = depRaw === null ? null : minuteOfDay(depRaw);
-        if (depMin === null) {
-            unmatched.push({ s, depMin });
-            continue;
-        }
-        const entries = observedByRoute.get(s.routeId) || [];
-        const exact = findBestObserved(
-            entries,
-            depMin,
-            (delta) => Math.abs(delta) <= MATCH_TOLERANCE_MINS,
-            (delta) => Math.abs(delta),
-        );
-        if (exact) {
-            entries[exact.index].used = true;
-            matchedCount++;
-            continue;
-        }
-        unmatched.push({ s, depMin });
+        if (depMin === null) unmatched.push({ s, depMin });
+        else timed.push({ s, depMin });
     }
+    const sameDirectionLeftover = matchClosestFirst(timed, observedByRoute, expectedDirection);
+    const leftover = matchClosestFirst(sameDirectionLeftover, observedByRoute, () => null);
+    const matchedCount = timed.length - leftover.length;
+    unmatched.push(...leftover);
 
     const missedTrips: MissedTripRow[] = [];
     let notPerformedCount = 0;
@@ -484,14 +673,11 @@ export function computeMissedTripsForDay(
     const missedByRoute = new Map<string, { routeId: string; count: number; earliestDep: string }>();
     for (const { s, depMin } of unmatched) {
         const entries = observedByRoute.get(s.routeId) || [];
+        const isLate = (delta: number) => delta > MATCH_TOLERANCE_MINS && delta <= LATE_CLASSIFICATION_WINDOW_MINS;
         const late = depMin === null
             ? null
-            : findBestObserved(
-                entries,
-                depMin,
-                (delta) => delta > MATCH_TOLERANCE_MINS && delta <= LATE_CLASSIFICATION_WINDOW_MINS,
-                (delta) => delta,
-            );
+            : findBestObserved(entries, depMin, isLate, (delta) => delta, expectedDirection(s))
+                ?? findBestObserved(entries, depMin, isLate, (delta) => delta);
 
         if (late) {
             entries[late.index].used = true;

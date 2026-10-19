@@ -5,6 +5,9 @@ import {
     hasGtfsCoverage,
     computeMissedTripsForDay,
     getTripsForDayType,
+    getScheduledTrips,
+    getOntarioHolidayName,
+    resolveServiceType,
     isBetterServiceCandidate,
     type ServiceCandidate,
 } from '../utils/gtfs/gtfsScheduleIndex';
@@ -120,5 +123,84 @@ describe('gtfsScheduleIndex', () => {
         expect(result).not.toBeNull();
         expect(result!.lateOver15Count).toBeGreaterThan(0);
         expect(result!.trips.some(t => t.missType === 'late_over_15')).toBe(true);
+    });
+
+    it('computes Ontario statutory holidays by rule', () => {
+        expect(getOntarioHolidayName('2026-01-01')).toBe("New Year's Day");
+        expect(getOntarioHolidayName('2026-02-16')).toBe('Family Day');
+        expect(getOntarioHolidayName('2026-04-03')).toBe('Good Friday');
+        expect(getOntarioHolidayName('2027-03-26')).toBe('Good Friday');
+        expect(getOntarioHolidayName('2026-05-18')).toBe('Victoria Day');
+        expect(getOntarioHolidayName('2027-05-24')).toBe('Victoria Day');
+        expect(getOntarioHolidayName('2026-08-03')).toBe('Civic Holiday');
+        expect(getOntarioHolidayName('2026-09-07')).toBe('Labour Day');
+        expect(getOntarioHolidayName('2026-10-12')).toBe('Thanksgiving');
+        expect(getOntarioHolidayName('2026-12-26')).toBe('Boxing Day');
+        expect(getOntarioHolidayName('2026-08-04')).toBeNull();
+    });
+
+    it('runs Sunday service on holidays the feed does not cover', () => {
+        // Civic Holiday: the feed has no exception, so STREETS reports a weekday.
+        expect(resolveServiceType('2026-08-03', 'weekday')).toBe('sunday');
+        // Thanksgiving: the feed removes weekday service and adds nothing.
+        expect(resolveServiceType('2026-10-12', 'weekday')).toBe('sunday');
+        expect(getScheduledTrips('2026-10-12', 'weekday').length).toBeGreaterThan(0);
+    });
+
+    it('trusts the feed when it adds its own holiday service', () => {
+        // Labour Day 2026: the feed swaps weekday service for a holiday service.
+        expect(resolveServiceType('2026-09-07', 'weekday')).toBe('weekday');
+        const labourDay = getScheduledTrips('2026-09-07', 'weekday').length;
+        expect(labourDay).toBeGreaterThan(0);
+        expect(labourDay).toBeLessThan(getTripsForDayType('2026-09-08', 'weekday').length);
+    });
+
+    it('charges a miss to the direction that had no bus when both directions share a minute', () => {
+        const date = '2026-09-05';
+        const route400 = getTripsForDayType(date, 'saturday').filter(t => t.routeId === '400');
+        const directionOf = (headsign: string) => (headsign.includes('Park Place') ? 'S' : 'N');
+        const pairedRvh = route400.find(t =>
+            !t.headsign.includes('Park Place')
+            && route400.some(o => o.headsign.includes('Park Place') && o.departure === t.departure));
+        expect(pairedRvh).toBeDefined();
+
+        const observed = route400
+            .filter(t => t.tripId !== pairedRvh!.tripId)
+            .map(t => ({ routeId: t.routeId, terminalDepartureTime: t.departure, direction: directionOf(t.headsign) }));
+
+        const result = computeMissedTripsForDay(date, 'saturday', observed);
+        expect(result).not.toBeNull();
+        expect(result!.trips.map(t => t.tripId)).toEqual([pairedRvh!.tripId]);
+    });
+
+    it('credits an on-the-minute bus to its own trip, not an earlier trip checked first', () => {
+        const date = '2026-09-08';
+        const weekday = getTripsForDayType(date, 'weekday');
+        const toMinutes = (hhmm: string) => {
+            const [h, m] = hhmm.split(':').map(Number);
+            return (h * 60) + m;
+        };
+        let pair: [typeof weekday[number], typeof weekday[number]] | null = null;
+        for (const routeId of new Set(weekday.map(t => t.routeId))) {
+            const trips = weekday.filter(t => t.routeId === routeId).sort((a, b) => toMinutes(a.departure) - toMinutes(b.departure));
+            for (let i = 1; i < trips.length - 1 && !pair; i++) {
+                const gap = toMinutes(trips[i].departure) - toMinutes(trips[i - 1].departure);
+                const isolatedBefore = i < 2 || toMinutes(trips[i - 1].departure) - toMinutes(trips[i - 2].departure) > 15;
+                const isolatedAfter = toMinutes(trips[i + 1].departure) - toMinutes(trips[i].departure) > 15;
+                if (gap > 0 && gap <= 10 && isolatedBefore && isolatedAfter) pair = [trips[i - 1], trips[i]];
+            }
+            if (pair) break;
+        }
+        expect(pair).not.toBeNull();
+        const [earlier, later] = pair!;
+
+        const observed = weekday
+            .filter(t => t.routeId === earlier.routeId && t.tripId !== earlier.tripId)
+            .map(t => ({ routeId: t.routeId, terminalDepartureTime: t.departure }));
+
+        const result = computeMissedTripsForDay(date, 'weekday', observed);
+        expect(result).not.toBeNull();
+        expect(result!.trips.map(t => t.tripId)).toEqual([earlier.tripId]);
+        expect(result!.trips.map(t => t.tripId)).not.toContain(later.tripId);
     });
 });
