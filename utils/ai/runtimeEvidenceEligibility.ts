@@ -55,7 +55,7 @@ export const evaluateRuntimeBucketEligibility = (
     const evidence = bucket.evidence;
     const observedSegmentCount = bucket.observedSegmentCount ?? bucket.details?.length ?? 0;
     const expectedSegmentCount = bucket.expectedSegmentCount ?? options.fallbackExpectedSegmentCount ?? 0;
-    const bandingTotal = bucket.observedCycleP50 ?? bucket.totalP50;
+    const bandingTotal = bucket.totalP50;
 
     if (!Number.isFinite(bandingTotal) || bandingTotal <= 0) {
         addReason(reasons, 'No positive runtime total');

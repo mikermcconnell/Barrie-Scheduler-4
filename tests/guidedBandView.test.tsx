@@ -4,10 +4,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import type { TimeBand, TripBucketAnalysis } from '../utils/ai/runtimeAnalysis';
 import {
+    buildBandedRuntimeSpread,
     buildGuidedBandSummary,
     buildGuidedBucketRows,
+    findInferredSource,
     toggleGuidedBucket,
 } from '../components/GuidedSchedule/runtimeReview/guidedBandView';
+import { excludeLowDayBuckets } from '../components/GuidedSchedule/runtimeReview/buildRuntimeReviewModel';
 import { GuidedStep2Review } from '../components/GuidedSchedule/GuidedStep2Review';
 
 const bucket = (timeBucket: string, total: number, overrides: Partial<TripBucketAnalysis> = {}): TripBucketAnalysis => ({
@@ -46,8 +49,26 @@ describe('guided band view', () => {
 
     it('summarises each band; empty bands show no runtime', () => {
         const summary = buildGuidedBandSummary(bands);
-        expect(summary[0]).toEqual({ id: 'A', color: '#ef4444', minutes: 58, bucketCount: 2 });
+        expect(summary[0]).toEqual({ id: 'A', color: '#ef4444', minutes: 58, minMinutes: 58, maxMinutes: 59, bucketCount: 2 });
         expect(summary[1].minutes).toBeNull();
+    });
+
+    it('shows P80 and the real cycle median beside the P50 the schedule uses', () => {
+        const [row] = buildGuidedBucketRows([
+            bucket('16:30 - 16:59', 50, { totalP80: 60, observedCycleP80: 57, observedCycleP50: 54 }),
+        ], bands);
+        expect(row).toMatchObject({ minutes: 50, p80Minutes: 57, observedCycleMinutes: 54 });
+        expect(buildGuidedBucketRows([bucket('07:00 - 07:29', 50)], bands)[0].observedCycleMinutes).toBeNull();
+    });
+
+    it('measures the P50 spread across banded buckets only', () => {
+        const rows = buildGuidedBucketRows([
+            bucket('07:00 - 07:29', 52, { assignedBand: 'A' }),
+            bucket('07:30 - 07:59', 50, { assignedBand: 'E' }),
+            bucket('08:00 - 08:29', 90, { ignored: true, assignedBand: undefined }),
+        ], bands);
+        expect(buildBandedRuntimeSpread(rows)).toBe(2);
+        expect(buildBandedRuntimeSpread([])).toBeNull();
     });
 
     it('excludes and restores eligible buckets but never restores weak evidence', () => {
@@ -62,6 +83,36 @@ describe('guided band view', () => {
         })];
         expect(toggleGuidedBucket(weak, '21:00 - 21:29')[0].ignored).toBe(true);
         expect(buildGuidedBucketRows(weak, bands)[0].canRestore).toBe(false);
+    });
+
+    it('shows the banded bucket an excluded bucket borrows from, earlier bucket on a tie', () => {
+        const rows = buildGuidedBucketRows([
+            bucket('19:00 - 19:29', 67, { assignedBand: 'E' }),
+            bucket('19:30 - 19:59', 69, { ignored: true, assignedBand: undefined }),
+            bucket('20:00 - 20:29', 58, { assignedBand: 'A' }),
+        ], bands);
+        expect(rows[0].inferredFrom).toBeNull();
+        expect(rows[1].inferredFrom).toEqual({ timeBucket: '19:00 - 19:29', label: '19:00–19:29', minutes: 67, band: 'E', color: '#22c55e' });
+    });
+
+    it('borrows across midnight and skips other unbanded buckets', () => {
+        expect(findInferredSource('23:30', [
+            { timeBucket: '00:00', band: 'C' },
+            { timeBucket: '23:00', band: null },
+            { timeBucket: '21:00', band: 'A' },
+        ])?.timeBucket).toBe('00:00');
+        expect(findInferredSource('19:30', [{ timeBucket: '19:30', band: null }])).toBeNull();
+    });
+});
+
+describe('excludeLowDayBuckets', () => {
+    it('starts paired-cycle buckets under 5 days excluded and leaves the rest', () => {
+        const result = excludeLowDayBuckets([
+            bucket('19:30 - 19:59', 69, { assignedBand: undefined, evidence: { kind: 'paired-cycle', qualifyingCount: 2, requiredCount: 5, planningEligible: false, exclusionReasons: [] } }),
+            bucket('20:00 - 20:29', 67, { evidence: { kind: 'paired-cycle', qualifyingCount: 5, requiredCount: 5, planningEligible: true, exclusionReasons: [] } }),
+            bucket('21:00 - 21:29', 63, { evidence: { kind: 'uploaded-percentiles', qualifyingCount: 2, requiredCount: 10, planningEligible: false, exclusionReasons: [] } }),
+        ]);
+        expect(result.map(entry => entry.ignored)).toEqual([true, false, false]);
     });
 });
 
@@ -102,5 +153,28 @@ describe('GuidedStep2Review', () => {
         const south = Array.from(container.querySelectorAll('[role="tab"]')).find(tab => tab.textContent === 'South-start') as HTMLButtonElement;
         flushSync(() => south.click());
         expect(onDirectionChange).toHaveBeenCalledWith('South');
+    });
+
+    it('notes which bucket an excluded bucket will use', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+        flushSync(() => root?.render(
+            <GuidedStep2Review
+                dayType="Weekday"
+                analysis={[
+                    bucket('19:00 - 19:29', 67, { assignedBand: 'E' }),
+                    bucket('19:30 - 19:59', 69, { ignored: true, assignedBand: undefined }),
+                ]}
+                bands={bands}
+                onAnalysisChange={vi.fn()}
+                selectedDirection="North"
+                onDirectionChange={vi.fn()}
+            />
+        ));
+        const table = container.querySelector('[aria-label="Bucket evidence"]');
+        expect(table?.textContent).toContain('uses 19:00–19:29 · 67 min');
+        expect(container.querySelector('[aria-label^="19:30–19:59"]')?.getAttribute('aria-label'))
+            .toContain('trips starting here use 19:00–19:29 (67 min, band E)');
     });
 });

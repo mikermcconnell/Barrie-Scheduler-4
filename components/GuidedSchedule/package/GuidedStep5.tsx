@@ -16,6 +16,8 @@ interface GuidedStep5Props {
     busyDayType: GuidedDayType | null;
     onOpenEditor: (dayType: GuidedDayType) => void;
     onCheckPublished: (dayType: GuidedDayType) => void;
+    /** Drops a day type from the set; omitted when only one day type is left. */
+    onDropDayType?: (dayType: GuidedDayType) => void;
     onOpenBrochure: () => void;
     onOpenRunCutting: () => void;
 }
@@ -38,6 +40,7 @@ export const GuidedStep5: React.FC<GuidedStep5Props> = ({
     busyDayType,
     onOpenEditor,
     onCheckPublished,
+    onDropDayType,
     onOpenBrochure,
     onOpenRunCutting,
 }) => {
@@ -91,6 +94,16 @@ export const GuidedStep5: React.FC<GuidedStep5Props> = ({
                                         <ExternalLink size={12} />
                                         {row.status === 'draft' || row.status === 'published' ? 'Open draft' : 'Open in draft editor'}
                                     </button>
+                                    {onDropDayType && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onDropDayType(row.dayType)}
+                                            disabled={busy}
+                                            className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+                                        >
+                                            Drop from set
+                                        </button>
+                                    )}
                                 </div>
                             </li>
                         );

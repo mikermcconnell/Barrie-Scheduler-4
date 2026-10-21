@@ -83,6 +83,8 @@ export const useGuidedPerformanceSource = (teamId: string | undefined) => {
         selectRoute: (routeId: string) => setSelection(current => selectGuidedRoute(current, routeId)),
         toggleDayType: (dayType: GuidedDayType) => setSelection(current => toggleGuidedDayType(current, dayType)),
         setTimeFrame: (dateRange: GuidedDateRange | null) => setSelection(current => setGuidedTimeFrame(current, dateRange)),
+        /** Replaces the whole selection, for reopening a saved set or dropping a day type. */
+        replaceSelection: setSelection,
         routeIds,
         cleanData,
         historyStatus,

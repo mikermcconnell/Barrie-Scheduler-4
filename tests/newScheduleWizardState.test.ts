@@ -721,8 +721,8 @@ describe('newSchedule wizard state helpers', () => {
         expect(model.usableBandCount).toBe(1);
         expect(model.directions).toEqual(['North', 'South']);
         expect(model.bandPreviews).toEqual([
-            { direction: 'North', bandId: 'B', avgTotal: 98, timeSlotCount: 1, segmentCount: 2 },
-            { direction: 'South', bandId: 'B', avgTotal: 98, timeSlotCount: 1, segmentCount: 2 },
+            { direction: 'North', bandId: 'B', avgTotal: 96, timeSlotCount: 1, segmentCount: 2 },
+            { direction: 'South', bandId: 'B', avgTotal: 96, timeSlotCount: 1, segmentCount: 2 },
         ]);
     });
 

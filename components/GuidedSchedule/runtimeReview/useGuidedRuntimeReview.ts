@@ -46,6 +46,23 @@ export const useGuidedRuntimeReview = () => {
         setWarningsAcknowledged(false);
     }, []);
 
+    /** Reopens a saved review with the planner's exclusions and approval. */
+    const restore = useCallback((saved: {
+        loaded: LoadedRuntimeReview;
+        model: RuntimeReviewModel;
+        cycleExclusions: Partial<Record<CycleStartDirection, string[]>>;
+        selectedDirection: CycleStartDirection;
+        contract: ApprovedRuntimeContract | null;
+    }) => {
+        setLoaded(saved.loaded);
+        setModel(saved.model);
+        setCycleExclusions(saved.cycleExclusions);
+        setSelectedDirection(saved.selectedDirection);
+        setContract(saved.contract);
+        // Kept only while the restored approval still holds; the effect below clears it otherwise.
+        setWarningsAcknowledged(!!saved.contract);
+    }, []);
+
     const reset = useCallback(() => {
         setLoaded(null);
         setModel(null);
@@ -125,6 +142,7 @@ export const useGuidedRuntimeReview = () => {
         contract,
         currentContract,
         approvedModel,
+        cycleExclusions,
         cycleAnalysis,
         orientationView,
         selectedDirection,
@@ -136,6 +154,7 @@ export const useGuidedRuntimeReview = () => {
         approvalBlocker,
         approve,
         load,
+        restore,
         reset,
     };
 };

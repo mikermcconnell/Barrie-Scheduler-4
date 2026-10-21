@@ -297,6 +297,74 @@ describe('newScheduleProjectService', () => {
         expect(deletedPaths[0]).not.toBe(oldPath);
     });
 
+    it('saves a guided day: set fields in Firestore, the guided snapshot in Storage, createdAt on first save', async () => {
+        getDocMock.mockResolvedValue(snapshot(null));
+        let committedData: Record<string, unknown> | undefined;
+        runTransactionMock.mockImplementation(async (_db, callback) => callback({
+            get: async () => snapshot(null),
+            set: (_ref: unknown, data: Record<string, unknown>) => { committedData = data; },
+        }));
+        const guidedSet = {
+            selection: { routeId: '8', dayTypes: ['Weekday'], dateRange: null as null, timeFrameSet: true },
+            skippedDayTypes: [] as never[],
+        };
+        const guidedDay = { version: 1, review: { cycleExclusions: { South: ['06:00 - 06:29'] } } };
+
+        const { saveProject } = await import('../utils/services/newScheduleProjectService');
+        await saveProject('user-1', {
+            id: 'guided-set-1_Weekday',
+            name: 'Route 8 Weekday (guided)',
+            dayType: 'Weekday',
+            isGenerated: false,
+            scheduleSetId: 'guided-set-1',
+            guidedSet: guidedSet as never,
+            guidedDay: guidedDay as never,
+        }, { expectedRevision: 0 });
+
+        expect(committedData).toMatchObject({
+            scheduleSetId: 'guided-set-1',
+            guidedSet,
+            projectRevision: 1,
+            createdAt: 'SERVER_TIMESTAMP',
+        });
+        expect(committedData).not.toHaveProperty('guidedDay');
+        const uploaded = JSON.parse(new TextDecoder().decode(uploadBytesMock.mock.calls[0][1]));
+        expect(uploaded.guidedDay).toEqual(guidedDay);
+    });
+
+    it('does not reset createdAt when updating an existing project', async () => {
+        getDocMock.mockResolvedValue(snapshot({ projectRevision: 2 }));
+        let committedData: Record<string, unknown> | undefined;
+        runTransactionMock.mockImplementation(async (_db, callback) => callback({
+            get: async () => snapshot({ projectRevision: 2 }),
+            set: (_ref: unknown, data: Record<string, unknown>) => { committedData = data; },
+        }));
+
+        const { saveProject } = await import('../utils/services/newScheduleProjectService');
+        await saveProject('user-1', { id: 'project-1', name: 'Project 1', dayType: 'Weekday', isGenerated: false });
+
+        expect(committedData).not.toHaveProperty('createdAt');
+        expect(committedData).not.toHaveProperty('scheduleSetId');
+    });
+
+    it('reads the guided snapshot and set fields back', async () => {
+        const guidedSet = { selection: { routeId: '8' }, skippedDayTypes: [] as never[] };
+        getDocMock.mockResolvedValue(snapshot({
+            name: 'Route 8 Weekday (guided)', dayType: 'Weekday', importMode: 'performance', isGenerated: false,
+            storagePath: 'users/user-1/newScheduleProjects/guided.json',
+            scheduleSetId: 'guided-set-1',
+            guidedSet,
+        }, 'guided-set-1_Weekday'));
+        getDownloadURLMock.mockResolvedValue('https://example.com/guided.json');
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ json: async () => ({ guidedDay: { version: 1 } }) }));
+
+        const { getProject } = await import('../utils/services/newScheduleProjectService');
+        const project = await getProject('user-1', 'guided-set-1_Weekday');
+        expect(project?.scheduleSetId).toBe('guided-set-1');
+        expect(project?.guidedSet).toEqual(guidedSet);
+        expect(project?.guidedDay).toEqual({ version: 1 });
+    });
+
     it('returns null when a stored blob cannot be loaded', async () => {
         getDocMock.mockResolvedValue(snapshot({
             name: 'Project 1', dayType: 'Weekday', importMode: 'csv', isGenerated: true,

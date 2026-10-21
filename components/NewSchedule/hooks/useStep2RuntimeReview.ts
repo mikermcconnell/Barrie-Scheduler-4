@@ -339,7 +339,7 @@ export const useStep2RuntimeReview = ({
     const approvedAtLabel = formatImportedAt(approvedRuntimeContract?.approvedAt);
 
     const chartBasisLabel = sampleCountMode === 'days'
-        ? 'For performance data, the chart uses full observed cycle totals for each time bucket.'
+        ? 'For performance data, the chart P50 is the sum of segment medians the schedule uses for each time bucket; P80 uses full observed cycle totals.'
         : 'For CSV imports, the chart uses the uploaded bucket percentile totals.';
     const sampleConfidenceLabel = sampleCountMode === 'days'
         ? `Performance imports use a ${confidenceThreshold}-day confidence floor.`

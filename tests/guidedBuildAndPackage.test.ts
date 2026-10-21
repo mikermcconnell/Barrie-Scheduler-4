@@ -6,9 +6,12 @@ import {
     applyGenerated,
     applyManualEdit,
     applyOptimization,
+    canAutoGenerate,
     createGuidedBuildState,
     isGeneratedCurrent,
     resetOptimization,
+    resolveBuildStage,
+    setHeadwayTargets,
 } from '../components/GuidedSchedule/build/guidedBuildState';
 import { syncBlocksWithTables } from '../components/GuidedSchedule/build/generateGuidedSchedule';
 import { buildBlockLanes } from '../components/GuidedSchedule/build/GuidedBuildSummary';
@@ -99,7 +102,31 @@ describe('guided build state', () => {
         const regenerated = applyGenerated(optimized, [table([trip('10-1', 360, 390)])], optimized.config, 'fp');
         expect(regenerated.preOptimization).toBeNull();
         expect(regenerated.editCount).toBe(0);
-        expect(regenerated.stage).toBe('generate');
+        expect(regenerated.stage).toBe('tweaks');
+    });
+
+    it('keeps typed target headways through edits, and clears them when generating again', () => {
+        const withTargets = setHeadwayTargets(generatedState(), { 'row-a': 45 });
+        expect(withTargets.editCount).toBe(0);
+        const edited = applyManualEdit(withTargets, [table([trip('10-1', 362, 392)])]);
+        expect(edited.headwayTargets).toEqual({ 'row-a': 45 });
+        const regenerated = applyGenerated(edited, [table([trip('10-1', 360, 390)])], edited.config, 'fp');
+        expect(regenerated.headwayTargets).toEqual({});
+    });
+});
+
+describe('guided Step 4 order', () => {
+    it('opens new and old saved builds on Manual tweaks', () => {
+        expect(createGuidedBuildState('10').stage).toBe('tweaks');
+        expect(resolveBuildStage('generate')).toBe('tweaks');
+        expect(resolveBuildStage('connections')).toBe('connections');
+    });
+
+    it('auto-builds only when no planner work would be lost', () => {
+        expect(canAutoGenerate(createGuidedBuildState('10'))).toBe(true);
+        expect(canAutoGenerate(generatedState())).toBe(true);
+        expect(canAutoGenerate(applyManualEdit(generatedState(), [table([trip('10-1', 365, 395)])]))).toBe(false);
+        expect(canAutoGenerate(applyOptimization(generatedState(), [table([trip('10-1', 365, 395)])]))).toBe(false);
     });
 });
 

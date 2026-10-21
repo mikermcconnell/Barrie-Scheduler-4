@@ -344,7 +344,13 @@ export function getConnectionsForStop(
             // meetsConnection if we remain in the preferred direction
             const meetsConnection = gapMinutes >= 0;
             const qualitySettings = target.qualityWindowSettings || libraryQualitySettings;
-            const quality = classifyConnectionQuality(gapMinutes, qualitySettings);
+            // Ranked (Guided) connections carry their own wait window: inside it is excellent,
+            // too tight or too long is good (amber), late is bad.
+            const quality: ConnectionQuality = routeConnection?.maxWaitMinutes !== undefined
+                ? (gapMinutes < 0
+                    ? 'bad'
+                    : gapMinutes >= routeConnection.bufferMinutes && gapMinutes <= routeConnection.maxWaitMinutes ? 'excellent' : 'good')
+                : classifyConnectionQuality(gapMinutes, qualitySettings);
 
             matches.push({
                 connectionId: routeConnection?.id,

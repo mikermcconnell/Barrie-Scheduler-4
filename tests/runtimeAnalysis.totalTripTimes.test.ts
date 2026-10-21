@@ -128,7 +128,7 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
         expect(analysis[0].observedCycleP80).toBe(9.8);
     });
 
-    it('prefers full observed cycle totals for displayed and banded values when performance day totals exist', () => {
+    it('bands and shows P50 by the segment sum the generator uses; P80 by observed cycles', () => {
         const data: RuntimeData[] = [{
             segments: [
                 {
@@ -188,8 +188,8 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
         expect(analysis[0].totalP50).toBe(30);
         expect(analysis[0].observedCycleP50).toBe(50);
         expect(analysis[0].observedCycleP80).toBe(50);
-        expect(getBucketBandingTotal(analysis[0])).toBe(50);
-        expect(getBucketDisplayedTotal(analysis[0], 'p50')).toBe(50);
+        expect(getBucketBandingTotal(analysis[0])).toBe(30);
+        expect(getBucketDisplayedTotal(analysis[0], 'p50')).toBe(30);
         expect(getBucketDisplayedTotal(analysis[0], 'p80')).toBe(50);
     });
 
@@ -310,7 +310,7 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
         expect(bands.find(band => band.id === 'A')?.avg).toBe(30);
     });
 
-    it('bands performance buckets by full observed cycle totals when available', () => {
+    it('bands performance buckets by segment sums, not observed cycle totals', () => {
         const { buckets, bands } = calculateBands([
             {
                 timeBucket: '06:00 - 06:29',
@@ -350,9 +350,9 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
             },
         ]);
 
-        expect(buckets.find(bucket => bucket.timeBucket === '06:30 - 06:59')?.assignedBand).toBe('A');
-        expect(buckets.find(bucket => bucket.timeBucket === '06:00 - 06:29')?.assignedBand).toBe('B');
-        expect(bands.find(band => band.id === 'A')?.avg).toBe(55);
+        expect(buckets.find(bucket => bucket.timeBucket === '06:00 - 06:29')?.assignedBand).toBe('A');
+        expect(buckets.find(bucket => bucket.timeBucket === '06:30 - 06:59')?.assignedBand).toBe('B');
+        expect(bands.find(band => band.id === 'A')?.avg).toBe(60);
     });
 
     it('maps observed labels onto canonical segments and weights averages by observation count', () => {
@@ -486,7 +486,7 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
             'p50'
         );
 
-        expect(getAverageBandTotal(breakdown.A)).toBe(120);
+        expect(getAverageBandTotal(breakdown.A)).toBe(100);
         expect(sumDisplayedSegmentTotals(['A to B', 'B to C'], breakdown.A.segmentTotals)).toBe(2);
     });
 

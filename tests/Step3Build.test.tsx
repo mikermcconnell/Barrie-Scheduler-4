@@ -317,6 +317,73 @@ describe('Step3Build', () => {
         expect(container.textContent).not.toContain('9 active bucket');
     });
 
+    it('loads the master once when the parent passes a new setConfig on every render', async () => {
+        const masterTrip = (id: string, blockId: string, startTime: number, endTime: number) => ({
+            id,
+            blockId,
+            direction: 'North',
+            tripNumber: 1,
+            rowId: 1,
+            startTime,
+            endTime,
+            recoveryTime: 5,
+            travelTime: 40,
+            cycleTime: 45,
+            stops: {},
+            assignedBand: 'A',
+        });
+        vi.mocked(getMasterSchedule).mockResolvedValue({
+            entry: {} as any,
+            content: {
+                northTable: {
+                    routeName: '2 (Sunday) (North)',
+                    stops: ['A', 'B'],
+                    stopIds: {},
+                    trips: [masterTrip('n1', '2-1', 506, 1328), masterTrip('n2', '2-2', 520, 1342)],
+                },
+                southTable: { routeName: '2 (Sunday) (South)', stops: ['B', 'A'], stopIds: {}, trips: [] },
+                metadata: { routeNumber: '2', dayType: 'Sunday', uploadedAt: '2026-03-31T12:00:00.000Z', cycleMode: 'Floating' },
+            },
+        } as any);
+
+        let latestConfig: ScheduleConfig | null = null;
+        const Harness: React.FC = () => {
+            const [config, setConfigState] = React.useState<ScheduleConfig>({
+                routeNumber: '2',
+                cycleMode: 'Floating',
+                cycleTime: 90,
+                recoveryRatio: 15,
+                blocks: [],
+            });
+            latestConfig = config;
+            return (
+                <Step3Build
+                    dayType="Sunday"
+                    bands={[]}
+                    config={config}
+                    setConfig={next => setConfigState(next)}
+                    teamId="team-1"
+                    stopSuggestions={[]}
+                    autofillFromMaster={true}
+                    onAutofillFromMasterChange={() => {}}
+                />
+            );
+        };
+
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+        flushSync(() => root?.render(<Harness />));
+
+        for (let tick = 0; tick < 10; tick += 1) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        expect(getMasterSchedule).toHaveBeenCalledTimes(1);
+        expect(container.textContent).not.toContain('Loading current Master');
+        expect(latestConfig!.blocks.map(block => block.startTime)).toEqual(['08:26', '08:40']);
+    });
+
     it('autofills cycle mode from saved master metadata when available', async () => {
         vi.mocked(getMasterSchedule).mockResolvedValue({
             entry: {} as any,

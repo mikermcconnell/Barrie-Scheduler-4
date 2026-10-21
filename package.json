@@ -21,7 +21,7 @@
     "docs:check": "node scripts/checkDocumentationContext.mjs",
     "fare-programs:generate": "node scripts/generateFareProgramsSnapshot.mjs --write",
     "fare-programs:check": "node scripts/generateFareProgramsSnapshot.mjs --check",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsconfig.tsbuildinfo",
     "lint": "eslint .",
     "preview": "vite preview",
     "prepare": "husky",

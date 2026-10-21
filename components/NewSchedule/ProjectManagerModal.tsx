@@ -72,7 +72,8 @@ export const ProjectManagerModal: React.FC<Props> = ({
         if (!userId) return;
         setLoading(true);
         try {
-            const data = await getAllProjects(userId);
+            // Guided schedule sets are managed in the guided workspace, not one day type at a time here.
+            const data = (await getAllProjects(userId)).filter(project => !project.scheduleSetId);
             setProjects(data);
             setFilteredProjects(data);
         } catch (e) {

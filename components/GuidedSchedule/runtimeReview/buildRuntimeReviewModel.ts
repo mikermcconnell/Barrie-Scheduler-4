@@ -6,12 +6,30 @@ import {
     type TripBucketAnalysis,
     type TimeBand,
 } from '../../../utils/ai/runtimeAnalysis';
+import { MIN_RELIABLE_DAYS } from '../../../utils/ai/runtimeEvidenceEligibility';
 import type { RuntimeData, SegmentRawData } from '../../NewSchedule/utils/csvParser';
 import { buildSegmentsMapFromParsedData, getOrderedSegmentNames } from '../../NewSchedule/utils/wizardState';
 import { resolveAutoRouteNumber } from '../../NewSchedule/utils/routeInference';
 import type { RuntimeReviewModel } from './guidedRuntimeReviewTypes';
 
-/** Same runtime pipeline as the legacy wizard: totals → coverage hardening → outliers → A–E bands. */
+/**
+ * Starts paired-cycle buckets with fewer than five qualifying days as excluded.
+ * They could never be banded or approved, so this only makes that visible.
+ */
+export const excludeLowDayBuckets = (analysis: TripBucketAnalysis[]): TripBucketAnalysis[] => (
+    analysis.map(bucket => (
+        !bucket.ignored
+            && bucket.evidence?.kind === 'paired-cycle'
+            && bucket.evidence.qualifyingCount < MIN_RELIABLE_DAYS
+            ? { ...bucket, ignored: true }
+            : bucket
+    ))
+);
+
+/**
+ * Same runtime pipeline as the legacy wizard (totals → coverage hardening →
+ * outliers → A–E bands), plus low-day buckets starting excluded.
+ */
 export const buildRuntimeAnalysis = (
     results: RuntimeData[]
 ): { buckets: TripBucketAnalysis[]; bands: TimeBand[]; segmentsMap: Record<string, SegmentRawData[]> } => {
@@ -19,7 +37,7 @@ export const buildRuntimeAnalysis = (
     const orderedSegmentNames = getOrderedSegmentNames(segmentsMap);
     const rawAnalysis = calculateTotalTripTimes(results);
     const hardenedAnalysis = hardenRuntimeAnalysisBuckets(rawAnalysis, orderedSegmentNames);
-    const withOutliers = detectOutliers(hardenedAnalysis);
+    const withOutliers = excludeLowDayBuckets(detectOutliers(hardenedAnalysis));
     const { buckets, bands } = calculateBands(withOutliers);
     return { buckets, bands, segmentsMap };
 };

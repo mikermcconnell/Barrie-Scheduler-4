@@ -1,10 +1,11 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Loader2, X } from 'lucide-react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, Cloud, Loader2, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 import { getAllStopsWithCodes, getMasterSchedule, getMasterScheduleEntry } from '../../utils/services/masterScheduleService';
 import { getDraft } from '../../utils/services/draftService';
+import { deleteProject, getAllProjects, getProject } from '../../utils/services/newScheduleProjectService';
 import { buildMasterContentFromTables } from '../../utils/schedule/scheduleDraftAdapter';
 import { buildStopNameToIdMap } from '../../utils/gtfs/gtfsStopLookup';
 import { buildRouteIdentity, type MasterScheduleContent } from '../../utils/masterScheduleTypes';
@@ -20,7 +21,7 @@ import { GuidedStep2Review } from './GuidedStep2Review';
 import { GuidedStep4 } from './build/GuidedStep4';
 import { GuidedStep5, type GuidedPackageRow } from './package/GuidedStep5';
 import { GUIDED_STEPS, canEnterGuidedStep, resolveGuidedStep, type GuidedGateState, type GuidedStep } from './guidedSteps';
-import { GUIDED_DAY_TYPES, guidedSelectionKey } from './guidedSelection';
+import { GUIDED_DAY_TYPES, guidedSelectionKey, toggleGuidedDayType, type GuidedSelection } from './guidedSelection';
 import { useGuidedPerformanceSource } from './useGuidedPerformanceSource';
 import { useGuidedRuntimeReview, type GuidedRuntimeReview } from './runtimeReview/useGuidedRuntimeReview';
 import { prepareRuntimeReview } from './runtimeReview/prepareRuntimeReview';
@@ -29,6 +30,7 @@ import type { GuidedDayType } from './runtimeReview/guidedRuntimeReviewTypes';
 import { describeStrictCycleCheck, generateGuidedSchedule } from './build/generateGuidedSchedule';
 import {
     applyGenerated,
+    canAutoGenerate,
     countTrips,
     createGuidedBuildState,
     isGeneratedCurrent,
@@ -41,6 +43,18 @@ import {
     getPackageStatus,
     type GuidedPackageEntry,
 } from './package/guidedPackageState';
+import {
+    createScheduleSetId,
+    guidedDayProjectId,
+    restoreGuidedDay,
+    summarizeGuidedSets,
+    type GuidedDaySaveInput,
+    type GuidedSetSummary,
+    type RestoredGuidedDay,
+} from './persistence/guidedSetPersistence';
+import type { GuidedSetMetadata, GuidedSkippedDayType } from './persistence/guidedSetTypes';
+import { GuidedSavedSets } from './persistence/GuidedSavedSets';
+import { useGuidedAutosave, type GuidedSaveStatus } from './persistence/useGuidedAutosave';
 
 const ScheduleEditorWorkspace = lazyWithRetry(
     () => import('../workspaces/ScheduleEditorWorkspace').then(module => ({ default: module.ScheduleEditorWorkspace })),
@@ -59,10 +73,7 @@ interface GuidedScheduleWorkspaceProps {
     onClose: () => void;
 }
 
-interface SkippedDayType {
-    dayType: GuidedDayType;
-    reason: string;
-}
+type SkippedDayType = GuidedSkippedDayType;
 
 type GuidedOverlay =
     | {
@@ -94,6 +105,14 @@ const buildChip = (build: GuidedBuildState | null, current: boolean): { label: s
     if (!build || build.schedules.length === 0) return { label: 'not generated', className: 'bg-gray-100 text-gray-600' };
     if (!current) return { label: 'generate again', className: 'bg-amber-100 text-amber-800' };
     return { label: `${countTrips(build.schedules)} trips`, className: 'bg-emerald-100 text-emerald-800' };
+};
+
+const SAVE_STATUS_LABEL: Record<GuidedSaveStatus, string> = {
+    idle: 'Not saved yet',
+    saving: 'Saving…',
+    saved: 'Saved',
+    conflict: 'Saved elsewhere · reopen this set',
+    error: 'Save failed · retrying on next change',
 };
 
 const buildStopSuggestions = (segmentNames: string[]): string[] => {
@@ -143,6 +162,12 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
     const gtfsStopLookup = useMemo(() => buildStopNameToIdMap(), []);
     const packagesRef = useRef(packages);
     packagesRef.current = packages;
+    // The saved set: one project per day type, linked by this id.
+    const [scheduleSetId, setScheduleSetId] = useState<string | null>(null);
+    const [analyzedSelection, setAnalyzedSelection] = useState<GuidedSelection | null>(null);
+    const [savedSets, setSavedSets] = useState<GuidedSetSummary[]>([]);
+    const [savedSetsLoading, setSavedSetsLoading] = useState(false);
+    const [busySetId, setBusySetId] = useState<string | null>(null);
 
     useEffect(() => {
         if (!team?.id) return;
@@ -169,6 +194,47 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
     };
     const visibleStep = resolveGuidedStep(step, gate);
     const approvedCount = reviewed.filter(review => review.approvalState === 'approved').length;
+
+    const setMetadata = useMemo<GuidedSetMetadata | null>(() => (
+        analyzedSelection ? { selection: analyzedSelection, skippedDayTypes } : null
+    ), [analyzedSelection, skippedDayTypes]);
+    const saveInputs: Partial<DayRecord<GuidedDaySaveInput>> = {};
+    if (scheduleSetId && setMetadata) {
+        reviewedDayTypes.forEach(dayType => {
+            const review = reviews[dayType];
+            if (!review.loaded || !review.model) return;
+            saveInputs[dayType] = {
+                scheduleSetId,
+                dayType,
+                step: visibleStep,
+                set: setMetadata,
+                loaded: review.loaded,
+                model: review.model,
+                cycleExclusions: review.cycleExclusions,
+                selectedDirection: review.selectedDirection,
+                contract: review.contract,
+                build: builds[dayType],
+                pkg: packages[dayType],
+            };
+        });
+    }
+    const autosave = useGuidedAutosave({ userId: user?.uid, inputs: saveInputs });
+
+    const refreshSavedSets = useCallback(async () => {
+        if (!user?.uid) return;
+        setSavedSetsLoading(true);
+        try {
+            setSavedSets(summarizeGuidedSets(await getAllProjects(user.uid)));
+        } catch (error) {
+            console.error('Failed to load saved guided sets:', error);
+        } finally {
+            setSavedSetsLoading(false);
+        }
+    }, [user?.uid]);
+
+    useEffect(() => {
+        if (visibleStep === 1) void refreshSavedSets();
+    }, [refreshSavedSets, visibleStep]);
     const generatedCount = reviewedDayTypes.filter(buildIsCurrent).length;
 
     const active = reviewedDayTypes.includes(activeDayType) ? reviews[activeDayType] : reviewed[0];
@@ -287,6 +353,18 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
             if (skipped.length > 0) {
                 toast.warning('Some Day Types Skipped', skipped.map(entry => `${entry.dayType}: ${entry.reason}`).join(' · '));
             }
+            // Re-analyzing the same route keeps the set; a new route starts a new one.
+            const keepSet = !!scheduleSetId && analyzedSelection?.routeId === routeId;
+            const setId = keepSet && scheduleSetId ? scheduleSetId : createScheduleSetId();
+            if (keepSet) {
+                reviewedDayTypes.filter(dayType => !loaded.includes(dayType)).forEach(dayType => {
+                    autosave.forgetDay(dayType);
+                    void removeDayProject(setId, dayType);
+                });
+            }
+            autosave.startSet(keepSet ? { adopt: false } : { adopt: false, revisions: {} });
+            setScheduleSetId(setId);
+            setAnalyzedSelection(selection);
             setAnalyzedKey(currentKey);
             setActiveDayType(loaded[0]);
             setStep(2);
@@ -296,6 +374,149 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
         } finally {
             setIsAnalyzing(false);
         }
+    };
+
+    const removeDayProject = async (setId: string, dayType: GuidedDayType) => {
+        if (!user?.uid) return;
+        // Let any queued save finish first so it cannot recreate the project.
+        await autosave.flush();
+        try {
+            await deleteProject(user.uid, guidedDayProjectId(setId, dayType));
+        } catch (error) {
+            console.error(`Failed to delete the saved ${dayType} project:`, error);
+        }
+    };
+
+    const resetWorkspace = () => {
+        GUIDED_DAY_TYPES.forEach(dayType => reviews[dayType].reset());
+        setReviewedDayTypes([]);
+        setSkippedDayTypes([]);
+        setBuilds(EMPTY_BUILDS);
+        setPackages(EMPTY_PACKAGES);
+        setAnalyzedKey(null);
+        setAnalyzedSelection(null);
+        setScheduleSetId(null);
+        setStep(1);
+    };
+
+    /** Re-reads publish status, so a saved "published" mark never unlocks exports by itself. */
+    const refreshPublished = async (route: string, days: RestoredGuidedDay[]) => {
+        const teamId = team?.id;
+        if (!teamId) return;
+        await Promise.all(days.filter(day => day.pkg.draftId).map(async day => {
+            try {
+                const entry = await getMasterScheduleEntry(teamId, buildRouteIdentity(route, day.dayType));
+                const published = confirmPublishedVersion(entry, day.pkg.draftId);
+                setPackages(current => (
+                    current[day.dayType].draftId === day.pkg.draftId
+                        ? { ...current, [day.dayType]: { ...current[day.dayType], published } }
+                        : current
+                ));
+            } catch (error) {
+                console.error(`Could not check ${day.dayType} publish status:`, error);
+            }
+        }));
+    };
+
+    const openSavedSet = async (summary: GuidedSetSummary) => {
+        if (!user?.uid) return;
+        const uid = user.uid;
+        setBusySetId(summary.scheduleSetId);
+        try {
+            await autosave.flush();
+            const projects = await Promise.all(summary.projectIds.map(id => getProject(uid, id)));
+            const restored = projects
+                .map(project => (project ? restoreGuidedDay(project) : null))
+                .filter((day): day is RestoredGuidedDay => !!day);
+            if (restored.length === 0) {
+                toast.error('Cannot Open Set', 'The saved data for this set could not be read.');
+                return;
+            }
+            const byDay = new Map(restored.map(day => [day.dayType, day]));
+            const days = GUIDED_DAY_TYPES.filter(dayType => byDay.has(dayType));
+            const metadata = restored.find(day => day.set)?.set ?? null;
+            const restoredSelection: GuidedSelection = metadata?.selection ?? {
+                routeId: summary.routeNumber,
+                dayTypes: days,
+                dateRange: summary.dateRange,
+                timeFrameSet: true,
+            };
+
+            GUIDED_DAY_TYPES.forEach(dayType => {
+                const day = byDay.get(dayType);
+                if (day) reviews[dayType].restore(day.review);
+                else reviews[dayType].reset();
+            });
+            setBuilds({ ...EMPTY_BUILDS, ...Object.fromEntries(restored.map(day => [day.dayType, day.build])) });
+            setPackages({
+                ...EMPTY_PACKAGES,
+                ...Object.fromEntries(restored.map(day => [day.dayType, { ...day.pkg, published: null } as GuidedPackageEntry])),
+            });
+            setReviewedDayTypes(days);
+            setSkippedDayTypes(metadata?.skippedDayTypes ?? []);
+            source.replaceSelection(restoredSelection);
+            setAnalyzedSelection(restoredSelection);
+            setAnalyzedKey(guidedSelectionKey(restoredSelection));
+            setScheduleSetId(summary.scheduleSetId);
+            setActiveDayType(days[0]);
+            setStep(Math.max(...restored.map(day => day.step)) as GuidedStep);
+            autosave.startSet({ adopt: true, revisions: Object.fromEntries(restored.map(day => [day.dayType, day.revision])) });
+
+            if (restored.length < summary.projectIds.length) {
+                toast.warning('Some Day Types Not Restored', 'Their saved data could not be read. Re-analyze to rebuild them.');
+            } else {
+                toast.success('Set Opened', `Route ${restoredSelection.routeId} · ${days.join(', ')}`);
+            }
+            void refreshPublished(restoredSelection.routeId ?? summary.routeNumber, restored);
+        } catch (error) {
+            console.error(error);
+            toast.error('Cannot Open Set', 'Could not load the saved set.');
+        } finally {
+            setBusySetId(null);
+        }
+    };
+
+    const deleteSavedSet = async (summary: GuidedSetSummary) => {
+        if (!user?.uid) return;
+        const uid = user.uid;
+        if (!window.confirm(`Delete the saved Route ${summary.routeNumber} set (${summary.dayTypes.join(', ')})? This cannot be undone.`)) return;
+        setBusySetId(summary.scheduleSetId);
+        try {
+            if (summary.scheduleSetId === scheduleSetId) {
+                GUIDED_DAY_TYPES.forEach(dayType => autosave.forgetDay(dayType));
+                await autosave.flush();
+                resetWorkspace();
+            }
+            await Promise.all(summary.projectIds.map(id => deleteProject(uid, id)));
+            setSavedSets(current => current.filter(set => set.scheduleSetId !== summary.scheduleSetId));
+        } catch (error) {
+            console.error(error);
+            toast.error('Delete Failed', 'Could not delete the saved set.');
+        } finally {
+            setBusySetId(null);
+        }
+    };
+
+    const dropDayType = (dayType: GuidedDayType) => {
+        const remaining = reviewedDayTypes.filter(entry => entry !== dayType);
+        if (remaining.length === 0) {
+            toast.warning('Last Day Type', 'A set needs at least one day type.');
+            return;
+        }
+        if (!window.confirm(`Drop ${dayType} from this set? Its review, schedule, and saved data are deleted.`)) return;
+        autosave.forgetDay(dayType);
+        const base = analyzedSelection ?? selection;
+        const nextSelection = base.dayTypes.includes(dayType) ? toggleGuidedDayType(base, dayType) : base;
+        source.replaceSelection(nextSelection);
+        setAnalyzedSelection(nextSelection);
+        setAnalyzedKey(guidedSelectionKey(nextSelection));
+        reviews[dayType].reset();
+        setReviewedDayTypes(remaining);
+        setBuilds(current => ({ ...current, [dayType]: null }));
+        setPackages(current => ({ ...current, [dayType]: EMPTY_PACKAGE_ENTRY }));
+        if (activeDayType === dayType) setActiveDayType(remaining[0]);
+        if (scheduleSetId) void removeDayProject(scheduleSetId, dayType);
+        toast.info('Day Type Dropped', `${dayType} was removed from the set.`);
     };
 
     const handleApprove = () => {
@@ -344,6 +565,22 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
             setGeneratingDay(null);
         }
     };
+
+    // Step 4 opens on Manual tweaks with the schedule already built. Build the
+    // day on view when it has no current schedule and nothing of the planner's
+    // would be lost. The key stops a failed build from retrying in a loop;
+    // "Continue to Build" clears it so the planner can retry.
+    const autoGenerateKeyRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (visibleStep !== 4 || !activeDay || generatingDay) return;
+        const build = builds[activeDay];
+        const contract = reviews[activeDay].currentContract;
+        if (!build || !contract || isGeneratedCurrent(build, contract) || !canAutoGenerate(build)) return;
+        const key = `${activeDay}|${contract.inputFingerprint}|${build.autofillFromMaster}|${JSON.stringify(build.config)}`;
+        if (autoGenerateKeyRef.current === key) return;
+        autoGenerateKeyRef.current = key;
+        void handleGenerate(activeDay);
+    });
 
     const checkPublished = async (dayType: GuidedDayType, quiet = false) => {
         const draftId = packagesRef.current[dayType].draftId;
@@ -436,10 +673,13 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
         }
         if (visibleStep === 3) {
             return {
-                message: 'Set the span of service and the blocks for each day type. Generation happens in the next step.',
+                message: 'Set the span of service and the blocks for each day type. Continue to Build generates the schedule and opens Manual tweaks.',
                 label: 'Continue to Build',
                 disabled: false,
-                onClick: () => goToStep(4),
+                onClick: () => {
+                    autoGenerateKeyRef.current = null;
+                    goToStep(4);
+                },
             };
         }
         if (visibleStep === 4) {
@@ -478,6 +718,9 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
                         : 'Fetching all available STREETS history.'}
                     progress={source.dataLoadProgress}
                 />
+            )}
+            {busySetId && (
+                <GuidedLoadingModal title="Opening saved set" message="Loading the saved review and schedule for each day type." />
             )}
             {generatingDay && (
                 <GuidedLoadingModal title={`Generating ${generatingDay} schedule`} message="Building trips from the approved runtimes." />
@@ -531,6 +774,24 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
                     Guided Schedule <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800">beta</span>
                 </div>
                 {routeLabel && <div className="whitespace-nowrap text-xs font-semibold text-gray-500">{routeLabel}</div>}
+                {scheduleSetId && (
+                    <div
+                        role="status"
+                        className={`flex items-center gap-1 whitespace-nowrap text-xs ${
+                            autosave.status === 'conflict' || autosave.status === 'error' ? 'font-semibold text-red-700' : 'text-gray-500'
+                        }`}
+                    >
+                        {autosave.status === 'saving'
+                            ? <Loader2 size={12} className="animate-spin" />
+                            : autosave.status === 'conflict' || autosave.status === 'error'
+                                ? <AlertTriangle size={12} />
+                                : <Cloud size={12} />}
+                        {SAVE_STATUS_LABEL[autosave.status]}
+                        {autosave.status === 'saved' && autosave.lastSavedAt
+                            ? ` ${autosave.lastSavedAt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+                            : ''}
+                    </div>
+                )}
                 <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" aria-label="Guided steps">
                     {GUIDED_STEPS.map((definition, index) => {
                         const isCurrent = definition.step === visibleStep;
@@ -587,11 +848,32 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
                             <span className="ml-1.5 text-[11px]">skipped: {entry.reason}</span>
                         </span>
                     ))}
+                    {reviewedDayTypes.length > 1 && activeDay && (
+                        <button
+                            type="button"
+                            onClick={() => dropDayType(activeDay)}
+                            className="ml-auto rounded-lg px-2.5 py-1 text-xs font-semibold text-gray-500 hover:bg-red-50 hover:text-red-700"
+                        >
+                            Drop {activeDay} from set
+                        </button>
+                    )}
                 </div>
             )}
 
             <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6">
-                {visibleStep === 1 && <GuidedStep1 source={source} />}
+                {visibleStep === 1 && (
+                    <>
+                        <GuidedSavedSets
+                            sets={savedSets}
+                            loading={savedSetsLoading}
+                            openSetId={scheduleSetId}
+                            busySetId={busySetId}
+                            onOpen={set => { void openSavedSet(set); }}
+                            onDelete={set => { void deleteSavedSet(set); }}
+                        />
+                        <GuidedStep1 source={source} />
+                    </>
+                )}
 
                 {visibleStep === 2 && active?.model && active.loaded && active.orientationView && (
                     <div className="space-y-4">
@@ -678,9 +960,9 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
                         masterStopCodes={masterStopCodes}
                         connectionLibrary={connectionLibrary}
                         setConnectionLibrary={setConnectionLibrary}
-                        onConnectionsOptimized={result => toast.success(
+                        onConnectionsOptimized={summary => toast.success(
                             'Connections Optimized',
-                            `${result.summary.connectionsMet} of ${result.summary.totalConnections} configured connections are met.`
+                            `${summary.movedTrips} ${summary.movedTrips === 1 ? 'trip' : 'trips'} moved. ${summary.met} of ${summary.total} connections are met.`
                         )}
                     />
                 )}
@@ -692,6 +974,7 @@ export const GuidedScheduleWorkspace: React.FC<GuidedScheduleWorkspaceProps> = (
                         busyDayType={packageBusyDay}
                         onOpenEditor={dayType => { void openEditor(dayType); }}
                         onCheckPublished={dayType => { void checkPublished(dayType); }}
+                        onDropDayType={reviewedDayTypes.length > 1 ? dropDayType : undefined}
                         onOpenBrochure={() => setOverlay({ kind: 'brochure' })}
                         onOpenRunCutting={() => setOverlay({ kind: 'run-cutting' })}
                     />

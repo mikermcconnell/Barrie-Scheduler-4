@@ -39,7 +39,7 @@ export const Step2ApprovedRuntimeModelPanel: React.FC<Step2ApprovedRuntimeModelP
                     <div className="flex items-start justify-between gap-4">
                         <div>
                             <p className="mt-0 text-sm text-gray-700">
-                                These are the runtimes Step 3 and later schedule work will use: {model.usableBucketCount} active bucket{model.usableBucketCount === 1 ? '' : 's'} across {model.usableBandCount} active band{model.usableBandCount === 1 ? '' : 's'}, built from {model.chartBasis === 'observed-cycle' ? 'full observed cycle totals' : 'uploaded bucket percentiles'} and direction-specific segment summaries.
+                                These are the runtimes Step 3 and later schedule work will use: {model.usableBucketCount} active bucket{model.usableBucketCount === 1 ? '' : 's'} across {model.usableBandCount} active band{model.usableBandCount === 1 ? '' : 's'}, built from {model.chartBasis === 'observed-cycle' ? 'segment medians from full observed cycles' : 'uploaded bucket percentiles'} and direction-specific segment summaries.
                             </p>
                         </div>
                         <div className="text-right text-xs text-gray-600">

@@ -295,6 +295,8 @@ export const getRoundTripLastDepartureTime = (
 type HeadwayAnchor = {
     key: string;
     minute: number;
+    arrivalMinute: number;
+    isTripEnd: boolean;
     displayOrder: number;
 };
 
@@ -322,6 +324,45 @@ const getTripTimepointMinute = (
     return arrival ? TimeUtils.toMinutes(arrival) : null;
 };
 
+// Arrival minute on the same service-day scale as the departure minute.
+const getTripTimepointArrivalMinute = (
+    trip: MasterTrip | undefined,
+    stopName: string,
+    departureMinute: number
+): number => {
+    if (!trip) return departureMinute;
+    const arrival = getArrivalDisplayTime(trip, stopName);
+    const departure = getDepartureDisplayTime(trip, stopName);
+    const arrivalClock = arrival ? TimeUtils.toMinutes(arrival) : null;
+    const departureClock = departure ? TimeUtils.toMinutes(departure) : null;
+    if (arrivalClock === null || departureClock === null) return departureMinute;
+    const dwell = ((departureClock - arrivalClock) % 1440 + 1440) % 1440;
+    return departureMinute - dwell;
+};
+
+const pushTripAnchors = (
+    anchors: HeadwayAnchor[],
+    trip: MasterTrip | undefined,
+    stops: string[],
+    direction: 'North' | 'South',
+    displayOffset: number
+): void => {
+    const tripAnchors: HeadwayAnchor[] = [];
+    stops.forEach((stopName, index) => {
+        const minute = getTripTimepointMinute(trip, stopName);
+        if (minute === null) return;
+        tripAnchors.push({
+            key: `${direction}:${normalizeHeadwayStopKey(stopName)}`,
+            minute,
+            arrivalMinute: getTripTimepointArrivalMinute(trip, stopName, minute),
+            isTripEnd: false,
+            displayOrder: displayOffset + index,
+        });
+    });
+    if (tripAnchors.length > 0) tripAnchors[tripAnchors.length - 1].isTripEnd = true;
+    anchors.push(...tripAnchors);
+};
+
 const getRowHeadwayAnchors = (
     row: RoundTripRow,
     combined: Pick<RoundTripTable, 'northStops' | 'southStops'>
@@ -329,27 +370,9 @@ const getRowHeadwayAnchors = (
     const anchors: HeadwayAnchor[] = [];
     const northTrip = row.trips.find(t => t.direction === 'North');
     const southTrip = row.trips.find(t => t.direction === 'South');
-    const southOffset = combined.northStops.length;
 
-    combined.northStops.forEach((stopName, index) => {
-        const minute = getTripTimepointMinute(northTrip, stopName);
-        if (minute === null) return;
-        anchors.push({
-            key: `North:${normalizeHeadwayStopKey(stopName)}`,
-            minute,
-            displayOrder: index,
-        });
-    });
-
-    combined.southStops.forEach((stopName, index) => {
-        const minute = getTripTimepointMinute(southTrip, stopName);
-        if (minute === null) return;
-        anchors.push({
-            key: `South:${normalizeHeadwayStopKey(stopName)}`,
-            minute,
-            displayOrder: southOffset + index,
-        });
-    });
+    pushTripAnchors(anchors, northTrip, combined.northStops, 'North', 0);
+    pushTripAnchors(anchors, southTrip, combined.southStops, 'South', combined.northStops.length);
 
     return anchors;
 };
@@ -374,7 +397,13 @@ const getSharedHeadwayMinutes = (
     const bestSharedAnchor = sharedAnchors[0];
     if (!bestSharedAnchor) return null;
 
-    return getOperationalSortTime(bestSharedAnchor.current.minute) - getOperationalSortTime(bestSharedAnchor.previous.minute);
+    const { current, previous } = bestSharedAnchor;
+    // A trip that ends at the shared stop has no real departure there, so
+    // compare arrivals; otherwise one trip's recovery skews the headway.
+    if (current.isTripEnd || previous.isTripEnd) {
+        return getOperationalSortTime(current.arrivalMinute) - getOperationalSortTime(previous.arrivalMinute);
+    }
+    return getOperationalSortTime(current.minute) - getOperationalSortTime(previous.minute);
 };
 
 /**

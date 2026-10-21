@@ -974,6 +974,15 @@ interface NewScheduleProject {
   parsedData?: RuntimeData[];      // Raw data for regeneration
 
   isGenerated: boolean;
+
+  // Guided scheduling (one project per day type of a schedule set)
+  scheduleSetId?: string;          // Firestore; project id is `${scheduleSetId}_${dayType}`
+  guidedSet?: {                    // Firestore; same on every day type of the set
+    selection: { routeId: string | null; dayTypes: DayType[]; dateRange: { start: string; end: string } | null; timeFrameSet: boolean };
+    skippedDayTypes: { dayType: DayType; reason: string }[];
+  };
+  guidedDay?: GuidedDaySnapshot;   // Storage only; see components/GuidedSchedule/persistence/guidedSetTypes.ts
+
   storagePath?: string;
   projectRevision: number; // incremented by every committed save/reset
   runtimeTrustSchemaVersion?: 2;
@@ -985,6 +994,8 @@ interface NewScheduleProject {
 ```
 
 The schema v2 contract separates visible `reviewBuckets` from trusted `approvedBuckets`. Its optional `plannerOverrides` snapshot reconstructs independent North-start and South-start bucket exclusions after resume. Normal v2 saves write `runtimeTrustSchemaVersion: 2` and `runtimeTrustMigrationVersion: 2`, but readers still validate the contract itself; a marker alone never makes old Storage content trusted. Save payloads retain any completed Step 3 configuration and Step 4 schedules already loaded in memory even when the current screen is temporarily gated at Step 2. `generatedScheduleInputFingerprint` is required for restored output to reopen Steps 4 or 5; older or drifted output remains saved but is routed to Step 3 for regeneration. Old analysis, bands, approvals, parsed runtime results, and generated schedule artifacts can be cleared by `functions/scripts/migrate-new-schedule-runtime-v2.mjs`. The script is dry-run by default, requires matching `--project` and `--confirm-project` values for `--apply`, uses update-time checks, and keeps a 30-day backup under `migration-backups/new-schedule-runtime-v2/` before replacing an active Storage object. `cleanupNewScheduleRuntimeMigrationBackups` runs daily and deletes only expired objects under that exact migration prefix. Project identity, performance selection, and planner configuration are preserved. The app uses the same upload-verify-commit-cleanup order when it durably resets a legacy project on load.
+
+Guided scheduling projects (`scheduleSetId` set) store the guided workspace state for one day type. `parsedData`, `analysis`, `bands`, `approvedRuntimeContract`, `config`, and the generated-schedule fields keep their usual meaning (`wizardStep` is the guided step). `guidedDay` (version 1) adds the prepared review inputs (display runtimes, canonical stops and columns, stop-order health, diagnostics), the cycle exclusions for both orientations, the optimizer reset snapshot, and the package draft id. Reference links that cannot survive JSON are stored as flags (`lastOptimizedIsCurrent`, `draftSourceIsCurrent`). The guided workspace saves with `expectedRevision` and never trusts a saved published mark: it re-reads Master on resume. The legacy project list hides guided projects.
 
 ### TimeBand
 

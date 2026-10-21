@@ -115,6 +115,12 @@ export const Step3Build: React.FC<Step3Props> = ({
     const configRef = React.useRef(config);
     const lastRouteDefaultsKeyRef = React.useRef<string | null>(null);
     React.useEffect(() => { configRef.current = config; }, [config]);
+    // Parents may pass a new setConfig on every render (the guided workspace
+    // does). The Master fetch must not restart on that, or each fetch's
+    // setConfig re-renders the parent and starts the next fetch: an endless
+    // "Loading current Master" loop.
+    const setConfigRef = React.useRef(setConfig);
+    React.useEffect(() => { setConfigRef.current = setConfig; }, [setConfig]);
 
     // Keep display state in sync when autofill loads new data
     React.useEffect(() => {
@@ -360,7 +366,7 @@ export const Step3Build: React.FC<Step3Props> = ({
                 if (!result) {
                     setMasterEntry(null);
                     setMasterBaselineBlocks([]);
-                    setConfig({
+                    setConfigRef.current({
                         ...configRef.current,
                         blocks: [],
                         bandRecoveryDefaults: undefined
@@ -472,7 +478,7 @@ export const Step3Build: React.FC<Step3Props> = ({
                 if (blocks.length > 0 && !cancelled) {
                     setMasterEntry(entry);
                     setMasterBaselineBlocks(blocks);
-                    setConfig({
+                    setConfigRef.current({
                         ...configRef.current,
                         blocks,
                         cycleMode: cycleModeDetection.cycleMode,
@@ -498,7 +504,7 @@ export const Step3Build: React.FC<Step3Props> = ({
 
         fetchBlocks();
         return () => { cancelled = true; };
-    }, [autofillFromMaster, teamId, config.routeNumber, dayType, masterReloadRequest, setConfig]);
+    }, [autofillFromMaster, teamId, config.routeNumber, dayType, masterReloadRequest]);
 
     // Helper to add minutes to HH:MM time string
     const addMinutes = (timeStr: string, minutes: number): string => {

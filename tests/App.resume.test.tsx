@@ -129,32 +129,6 @@ describe('App resume entry', () => {
     window.location.hash = '';
   });
 
-  it('shows a resume button on the home dashboard and reopens the last fixed-route location', () => {
-    localStorage.setItem('scheduler4:fixed-route-resume:user-1', JSON.stringify({
-      hash: '#fixed/drafts',
-      label: 'Scheduled Transit · My Drafts',
-      updatedAt: '2026-04-10T12:00:00.000Z',
-    }));
-
-    flushSync(() => {
-      root.render(<App />);
-    });
-
-    expect(container.textContent).toContain('Where you left off');
-    expect(container.textContent).toContain('Scheduled Transit · My Drafts');
-
-    const resumeButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Resume'),
-    ) as HTMLButtonElement | undefined;
-
-    flushSync(() => {
-      resumeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-    });
-
-    expect(window.location.hash).toBe('#fixed/drafts');
-  });
-
   it('opens Operations Dashboard Ridership from the home quick link', () => {
     flushSync(() => {
       root.render(<App />);
@@ -183,10 +157,10 @@ describe('App resume entry', () => {
     expect(container.textContent).not.toContain('Operations Dashboard');
   });
 
-  it('reopens Route Planner directly from a planning resume hash', () => {
+  it('does not show a resume card on the home dashboard', () => {
     localStorage.setItem('scheduler4:fixed-route-resume:user-1', JSON.stringify({
-      hash: '#planning/route-planner-2',
-      label: 'Planning Data · Route Planner',
+      hash: '#fixed/drafts',
+      label: 'Scheduled Transit · My Drafts',
       updatedAt: '2026-04-10T12:00:00.000Z',
     }));
 
@@ -194,20 +168,11 @@ describe('App resume entry', () => {
       root.render(<App />);
     });
 
-    const resumeButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Resume'),
-    ) as HTMLButtonElement | undefined;
-
-    flushSync(() => {
-      resumeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-    });
-
-    expect(window.location.hash).toBe('#planning/route-planner-2');
-    expect(container.textContent).toContain('Mock Planning Data Workspace: route-planner-2');
+    expect(container.textContent).not.toContain('Where you left off');
+    expect(container.textContent).not.toContain('Scheduled Transit · My Drafts');
   });
 
-  it('does not show another user resume card when signed out', () => {
+  it('clears the legacy resume entry when signed out', () => {
     authState.user = null;
     localStorage.setItem('scheduler4:fixed-route-resume', JSON.stringify({
       hash: '#fixed/drafts',

@@ -4,10 +4,10 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Trash2, Plus, MapPinOff, MapPin, Copy, ChevronRight, Pencil } from 'lucide-react';
+import { Trash2, Plus, MapPinOff, MapPin, Copy, ChevronRight, Pencil, Clock3 } from 'lucide-react';
 
 export interface TripContextMenuAction {
-    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'deleteRoundTrip' | 'addTripBefore' | 'addTripAfter' | 'duplicateTrip' | 'extendTrip' | 'editTrip';
+    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'deleteRoundTrip' | 'addTripBefore' | 'addTripAfter' | 'duplicateTrip' | 'extendTrip' | 'editTrip' | 'alignHeadway';
     tripId: string;
     tripIds?: string[];
     stopName?: string;
@@ -32,6 +32,8 @@ interface TripContextMenuProps {
     deleteLabel?: string;
     hideTripSpecificActions?: boolean;
     quickAddActionsOnly?: boolean;
+    /** Shows "Space N min after previous trip" when set. */
+    alignHeadwayMinutes?: number;
     onAction: (action: TripContextMenuAction) => void;
     onClose: () => void;
 }
@@ -54,6 +56,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
     deleteLabel,
     hideTripSpecificActions = false,
     quickAddActionsOnly = false,
+    alignHeadwayMinutes,
     onAction,
     onClose
 }) => {
@@ -247,6 +250,19 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
         );
     };
 
+    const renderAlignHeadwayAction = () => (
+        alignHeadwayMinutes ? (
+            <button
+                onClick={() => handleAction('alignHeadway')}
+                title={`Move block ${blockId} so this trip runs ${alignHeadwayMinutes} min after the trip before it`}
+                className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+            >
+                <Clock3 size={14} className="text-emerald-600" />
+                <span>Space {alignHeadwayMinutes} min after previous trip</span>
+            </button>
+        ) : null
+    );
+
     return (
         // z-[10000] ensures context menu appears above fullscreen container (z-[9999])
         <div
@@ -267,6 +283,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                     <>
                         {renderExtendAction()}
                         {renderEditAction()}
+                        {renderAlignHeadwayAction()}
                         <button
                             onClick={() => handleAction('addTripBefore')}
                             className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
@@ -384,6 +401,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
 
                 {renderEditAction()}
                 {renderExtendAction()}
+                {renderAlignHeadwayAction()}
 
                 {/* Duplicate Trip */}
                 {!hideTripSpecificActions && (

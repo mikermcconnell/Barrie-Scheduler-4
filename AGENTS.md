@@ -25,6 +25,7 @@ When docs and implementation disagree, verify current code, tests, and persisted
 - Respect locked logic before changing generation, parsing, timing, routing, block assignment, or schedule-editor behavior.
 - Keep the planner in control. AI may suggest or analyze, but must not silently override operational rules.
 - Never use `--no-verify` to bypass failed checks. Fix the failure or investigate and report the blocker.
+- `npm run typecheck` (about 70 s cold, about 12 s cached) and `npm run build` (about 55 s) are slow. During a task, run focused tests such as `npx vitest run <file>` instead. Run typecheck and build once, after the last edit, and again only if a later edit could change their result. Use `npm run typecheck`, not `npx tsc`, so the incremental cache is used.
 - Preserve unrelated user changes in a dirty working tree.
 
 ## Orchestrator mode

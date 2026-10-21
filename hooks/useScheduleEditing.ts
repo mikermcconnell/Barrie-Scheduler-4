@@ -44,7 +44,7 @@ export interface UseScheduleEditingResult {
     handleDirectionChange: (tableRouteName: string, direction: 'North' | 'South') => void;
 }
 
-const shiftTripTimes = (trip: MasterTrip, table: MasterRouteTable, deltaMinutes: number) => {
+export const shiftTripTimes = (trip: MasterTrip, table: MasterRouteTable, deltaMinutes: number) => {
     if (deltaMinutes === 0) return;
 
     table.stops.forEach(stopName => {
@@ -62,7 +62,7 @@ const shiftTripTimes = (trip: MasterTrip, table: MasterRouteTable, deltaMinutes:
     recalculateTrip(trip, table.stops);
 };
 
-const compareBlockTripOrder = (
+export const compareBlockTripOrder = (
     a: { trip: MasterTrip; table: MasterRouteTable },
     b: { trip: MasterTrip; table: MasterRouteTable }
 ): number => {
@@ -75,7 +75,7 @@ const compareBlockTripOrder = (
     return a.trip.id.localeCompare(b.trip.id);
 };
 
-const getTrueBaseRoute = (routeName: string): string => {
+export const getTrueBaseRoute = (routeName: string): string => {
     const stripped = routeName
         .replace(/\s*\((North|South)\)/gi, '')
         .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
@@ -86,7 +86,7 @@ const getTrueBaseRoute = (routeName: string): string => {
 
 const MIDNIGHT_ROLLOVER_THRESHOLD = 240; // 4:00 AM operational day boundary
 
-const getServiceDay = (routeName: string): string | null =>
+export const getServiceDay = (routeName: string): string | null =>
     routeName.match(/\((Weekday|Saturday|Sunday)\)/i)?.[1]?.toLowerCase() ?? null;
 
 const getClockDelta = (fromMinutes: number, toMinutes: number): number => {
@@ -123,12 +123,12 @@ const resolveTripStopKey = <T,>(record: Record<string, T> | undefined, stopName:
     return null;
 };
 
-const getTripStopValue = <T,>(record: Record<string, T> | undefined, stopName: string): T | undefined => {
+export const getTripStopValue = <T,>(record: Record<string, T> | undefined, stopName: string): T | undefined => {
     const resolvedKey = resolveTripStopKey(record, stopName);
     return resolvedKey ? record?.[resolvedKey] : undefined;
 };
 
-const setTripStopValue = <T,>(record: Record<string, T> | undefined, stopName: string, value: T): Record<string, T> => {
+export const setTripStopValue = <T,>(record: Record<string, T> | undefined, stopName: string, value: T): Record<string, T> => {
     const target = record ?? {};
     const resolvedKey = resolveTripStopKey(target, stopName) ?? stopName;
     target[resolvedKey] = value;
@@ -156,7 +156,7 @@ const getDisplayedDepartureAtStop = (trip: MasterTrip, stopName: string): string
     return '';
 };
 
-const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
+export const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
     let start: number | null = null;
     let end: number | null = null;
     let offset = 0;
