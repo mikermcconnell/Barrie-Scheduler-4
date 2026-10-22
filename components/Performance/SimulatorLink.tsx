@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, ExternalLink, Loader2, Map, Play } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { isFeatureEnabled } from '../../utils/features';
-import { canOpenSimulator, openSimulator, type SimulatorView } from '../../utils/simulatorLink';
+import { canOpenSimulator, openSimulator, SIMULATOR_LIMITED_TABS, type SimulatorView } from '../../utils/simulatorLink';
 
 /** True when this user may follow a link into the Barrie Simulator. */
 export function useCanOpenSimulator(): boolean {
@@ -118,6 +118,8 @@ const ReplayMap: React.FC = () => {
 /** Home-page workspace card that opens the Barrie Simulator. */
 export const SimulatorWorkspaceCard: React.FC = () => {
     const canOpen = useCanOpenSimulator();
+    const { accessLevel } = useTeam();
+    const limitedTabs = SIMULATOR_LIMITED_TABS[accessLevel];
     const { busy, error, open } = useOpenSimulator();
     if (!canOpen) return null;
     return (
@@ -137,7 +139,7 @@ export const SimulatorWorkspaceCard: React.FC = () => {
                     <div className="min-w-0">
                         <h3 className="text-xl font-extrabold leading-tight text-white">Barrie Transit Simulator</h3>
                         <div className="mt-1 flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-indigo-300">Bus Replay</span>
+                            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-indigo-300">{limitedTabs ? limitedTabs.join(' · ') : 'Bus Replay'}</span>
                             <span className="inline-flex items-center gap-1 rounded-full border border-green-300/35 bg-green-500/15 px-2 py-px text-[10px] font-extrabold uppercase tracking-[0.12em] text-green-300">
                                 <span className="h-1.5 w-1.5 rounded-full bg-green-500 motion-safe:animate-pulse" aria-hidden="true" />
                                 New · Demo
@@ -149,7 +151,9 @@ export const SimulatorWorkspaceCard: React.FC = () => {
                     <p className="mb-4 line-clamp-3 text-sm font-bold text-rose-300">{error}</p>
                 ) : (
                     <p className="mb-4 line-clamp-3 text-sm font-bold text-slate-300">
-                        See every bus on the map, or replay a past day trip by trip.
+                        {limitedTabs
+                            ? 'Parking lots and curb rules, plus planning layers, on the city map.'
+                            : 'See every bus on the map, or replay a past day trip by trip.'}
                     </p>
                 )}
                 <div className="mt-auto flex items-center gap-2 whitespace-nowrap text-sm font-extrabold uppercase tracking-wide text-indigo-300" title="Opens the Barrie Simulator">

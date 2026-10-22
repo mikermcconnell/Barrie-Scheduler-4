@@ -16,7 +16,8 @@ describe('simulator link', () => {
         expect(canOpenSimulator('planner')).toBe(true);
         expect(canOpenSimulator('internal')).toBe(true);
         expect(canOpenSimulator('admin')).toBe(true);
-        for (const level of ['none', 'production', 'external-planner', 'transit-app-only', 'parking'] as const) {
+        expect(canOpenSimulator('parking')).toBe(true);
+        for (const level of ['none', 'production', 'external-planner', 'transit-app-only'] as const) {
             expect(canOpenSimulator(level)).toBe(false);
         }
     });
