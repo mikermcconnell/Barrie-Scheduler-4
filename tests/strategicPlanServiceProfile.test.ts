@@ -55,9 +55,9 @@ describe('2027–2032 Strategic Plan service profile', () => {
             feedInfo: gtfsPath('feed_info.txt'),
         });
 
-        expect(profile.feedVersion).toBe('20260503b');
-        expect(profile.feedStartDate).toBe('2026-05-27');
-        expect(profile.feedEndDate).toBe('2026-08-29');
+        expect(profile.feedVersion).toBe('20260920v1');
+        expect(profile.feedStartDate).toBe('2026-10-10');
+        expect(profile.feedEndDate).toBe('2026-12-26');
         expect(profile.rowsByDayType.Weekday).toHaveLength(10);
         expect(profile.rowsByDayType.Saturday).toHaveLength(10);
         expect(profile.rowsByDayType.Sunday).toHaveLength(10);
@@ -84,7 +84,7 @@ describe('2027–2032 Strategic Plan service profile', () => {
                 '2': [30, '5:45 AM–7:45 PM', 60, '7:45 PM–11:00 PM'],
                 '7': [30, '5:30 AM–7:30 PM', 60, '7:30 PM–10:30 PM'],
                 '8A': [30, '5:00 AM–6:15 PM', 60, '6:15 PM–11:45 PM'],
-                '8B': [30, '5:45 AM–6:00 PM', 60, '5:15 AM–5:45 AM; 6:00 PM–12:30 AM (+1)'],
+                '8B': [30, '5:45 AM–7:00 PM', 60, '5:15 AM–5:45 AM; 7:00 PM–12:30 AM (+1)'],
                 '10': [30, '5:45 AM–9:15 PM', 60, '9:45 PM–11:45 PM'],
                 '11': [30, '6:00 AM–10:00 PM', 60, '10:00 PM–11:00 PM'],
                 '12': [35, '5:15 AM–9:00 PM', 50, '9:00 PM–11:30 PM'],
@@ -96,7 +96,7 @@ describe('2027–2032 Strategic Plan service profile', () => {
                 '2': [30, '6:45 AM–7:45 PM', 60, '7:45 PM–11:00 PM'],
                 '7': [30, '6:30 AM–7:30 PM', 60, '7:30 PM–10:30 PM'],
                 '8A': [30, '7:15 AM–6:15 PM', 60, '6:15 PM–11:45 PM'],
-                '8B': [30, '6:45 AM–6:00 PM', 60, '6:00 PM–12:30 AM (+1)'],
+                '8B': [30, '6:45 AM–7:00 PM', 60, '7:00 PM–12:30 AM (+1)'],
                 '10': [30, '7:15 AM–9:15 PM', 60, '9:45 PM–11:45 PM'],
                 '11': [30, '7:30 AM–10:00 PM', 60, '10:00 PM–11:00 PM'],
                 '12': [30, '6:15 AM–9:00 PM', 50, '9:00 PM–11:30 PM'],
