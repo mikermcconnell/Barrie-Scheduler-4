@@ -2,12 +2,14 @@ import type { TodRidershipProjectionV1 } from './tod';
 import type {
     RidershipTrendBaselineV1,
     RidershipTrendProjectionV1,
-    RidershipTrendSource,
 } from './types';
 
-export const MONTHLY_RIDERSHIP_REPORT_SCHEMA_VERSION = 1 as const;
+export const MONTHLY_RIDERSHIP_REPORT_SCHEMA_VERSION = 2 as const;
 
-export type MonthlyRidershipDayType = 'weekday' | 'saturday' | 'sunday';
+export const MONTHLY_RIDERSHIP_SERVICE_KEYS = ['conventional', 'onDemand', 'specialized'] as const;
+export type MonthlyRidershipServiceKey = typeof MONTHLY_RIDERSHIP_SERVICE_KEYS[number];
+
+export const MONTHLY_RIDERSHIP_TREND_MONTHS = 13;
 
 export interface MonthlyRidershipSourceCoverage {
     observedDays: number;
@@ -18,44 +20,43 @@ export interface MonthlyRidershipSourceCoverage {
     complete: boolean;
 }
 
-export interface MonthlyRidershipSourceMetric {
+/** A current value, the same value one year earlier, and the change as a fraction (0.064 = +6.4%). */
+export interface MonthlyRidershipComparison {
+    current: number | null;
+    priorYear: number | null;
+    change: number | null;
+}
+
+export interface MonthlyRidershipTrendPoint {
+    month: string;
     total: number | null;
-    coverage: MonthlyRidershipSourceCoverage;
 }
 
-export interface MonthlyRidershipDayTypeMetric {
-    total: number | null;
-    observedDays: number;
-    average: number | null;
-    priorYearAverage: number | null;
-    priorYearObservedDays: number;
-    priorYearShare: number | null;
-    yearOverYearChange: number | null;
+export interface MonthlyRidershipServiceSummary {
+    key: MonthlyRidershipServiceKey;
+    label: string;
+    description: string;
+    /** Riders this month. `coverage` is null for monthly sources (Specialized). */
+    month: MonthlyRidershipComparison & {
+        complete: boolean;
+        coverage: MonthlyRidershipSourceCoverage | null;
+        /** True when the prior-year change comes from the source report's own percentage. */
+        changeFromSourceReport: boolean;
+    };
+    yearToDate: MonthlyRidershipComparison;
+    trend: MonthlyRidershipTrendPoint[];
+    weekdayAverage: MonthlyRidershipComparison & { supported: boolean; observedDays: number };
+    serviceHours: { current: number | null; priorYear: number | null };
+    ridersPerServiceHour: MonthlyRidershipComparison;
 }
 
-export interface MonthlyRidershipYearToDateMetric {
-    total: number | null;
-    complete: boolean;
-    priorYearTotal: number | null;
-    yearOverYearChange: number | null;
-}
+/** Official monthly service hours entered by staff, keyed by service. */
+export type MonthlyServiceHours = Partial<Record<MonthlyRidershipServiceKey, number>>;
 
-export interface MonthlyRidershipAnnualProjection {
-    total: number | null;
-    priorYearTotal: number | null;
-    yearOverYearChange: number | null;
-}
-
-export interface MonthlyRidershipChartPoint {
-    month: number;
-    cumulativeTotal: number | null;
-    partial: boolean;
-}
-
-export interface MonthlyRidershipChartSeries {
-    year: number;
-    source: RidershipTrendSource;
-    points: MonthlyRidershipChartPoint[];
+export interface SpecializedMonthlyRidership {
+    reportedTrips: number;
+    /** Ridership as a percentage of the same month last year, as printed on the source report. */
+    priorYearPercent: number | null;
 }
 
 export interface MonthlyRidershipReportModel {
@@ -64,29 +65,38 @@ export interface MonthlyRidershipReportModel {
     reportYear: number;
     month: number;
     generatedAt: string;
-    scheduledRoutes: MonthlyRidershipSourceMetric;
-    onDemand: MonthlyRidershipSourceMetric;
-    allTransit: {
-        total: number | null;
-        complete: boolean;
-        completeDates: string[];
+    services: MonthlyRidershipServiceSummary[];
+    /** Riders across every service that reported. The change covers `comparedServices` only. */
+    total: MonthlyRidershipComparison & {
+        reportedServices: MonthlyRidershipServiceKey[];
+        comparedServices: MonthlyRidershipServiceKey[];
     };
-    dayTypes: Record<MonthlyRidershipDayType, MonthlyRidershipDayTypeMetric>;
-    priorYearDayTypeCoverage: MonthlyRidershipSourceCoverage;
-    priorYearScheduledTotal: number | null;
-    priorYearShare: number | null;
-    yearToDateScheduledRoutes: MonthlyRidershipYearToDateMetric;
-    projectedAnnualScheduledRoutes: MonthlyRidershipAnnualProjection;
-    chart: {
-        months: number[];
-        series: MonthlyRidershipChartSeries[];
+    totalYearToDate: MonthlyRidershipComparison & { comparedServices: MonthlyRidershipServiceKey[] };
+    totalRidersPerServiceHour: MonthlyRidershipComparison;
+    /** Daily-source coverage for the report month. */
+    coverage: {
+        scheduledRoutes: MonthlyRidershipSourceCoverage;
+        onDemand: MonthlyRidershipSourceCoverage;
+        complete: boolean;
+    };
+    /** Conventional riders for the last 13 months and the same months one year earlier. */
+    trend: {
+        months: string[];
+        current: Array<number | null>;
+        priorYear: Array<number | null>;
     };
 }
 
+const SERVICE_LABELS: Record<MonthlyRidershipServiceKey, { label: string; description: string }> = {
+    conventional: { label: 'Conventional', description: 'Scheduled bus routes' },
+    onDemand: { label: 'Transit ON Demand', description: 'On-demand zones' },
+    specialized: { label: 'Specialized', description: 'Accessible door-to-door' },
+};
+
 interface ResolvedMonth {
     total: number | null;
-    coverage: MonthlyRidershipSourceCoverage;
-    source: RidershipTrendSource;
+    complete: boolean;
+    coverage: MonthlyRidershipSourceCoverage | null;
 }
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
@@ -104,6 +114,11 @@ function parseMonthKey(value: string): { year: number; month: number } {
 
 function monthKey(year: number, month: number): string {
     return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+function shiftMonth(year: number, month: number, offset: number): { year: number; month: number } {
+    const date = new Date(Date.UTC(year, month - 1 + offset, 1));
+    return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 };
 }
 
 function daysInMonth(year: number, month: number): number {
@@ -131,208 +146,84 @@ function coverageForDates(expectedDates: readonly string[], observedDates: reado
     };
 }
 
-function completeWorkbookCoverage(year: number, month: number): MonthlyRidershipSourceCoverage {
-    const dates = enumerateMonthDates(year, month);
-    return coverageForDates(dates, dates);
+function sumDaily(dates: readonly string[], valueFor: (date: string) => number | undefined): ResolvedMonth & { observedDates: string[] } {
+    const observedDates = dates.filter(date => valueFor(date) !== undefined);
+    const coverage = coverageForDates(dates, observedDates);
+    return {
+        total: observedDates.length === 0 ? null : observedDates.reduce((sum, date) => sum + (valueFor(date) ?? 0), 0),
+        complete: coverage.complete,
+        coverage,
+        observedDates,
+    };
 }
 
-function resolveScheduledMonth(
+function resolveConventionalMonth(
     baseline: RidershipTrendBaselineV1,
     projection: RidershipTrendProjectionV1 | null | undefined,
     year: number,
     month: number,
 ): ResolvedMonth {
-    const key = monthKey(year, month);
-    const baselineTotal = baseline.monthlyTotals[key];
+    const baselineTotal = baseline.monthlyTotals[monthKey(year, month)];
     if (typeof baselineTotal === 'number') {
-        return {
-            total: baselineTotal,
-            coverage: completeWorkbookCoverage(year, month),
-            source: 'workbook',
-        };
+        const dates = enumerateMonthDates(year, month);
+        return { total: baselineTotal, complete: true, coverage: coverageForDates(dates, dates) };
     }
-
-    const expectedDates = enumerateMonthDates(year, month);
-    const observedDates = expectedDates.filter(date => projection?.dailyTotals[date] !== undefined);
-    const coverage = coverageForDates(expectedDates, observedDates);
-    const total = observedDates.length === 0
-        ? null
-        : observedDates.reduce((sum, date) => sum + (projection?.dailyTotals[date]?.boardings ?? 0), 0);
-    return { total, coverage, source: 'live' };
+    return sumDaily(enumerateMonthDates(year, month), date => projection?.dailyTotals[date]?.boardings);
 }
 
-function resolveTodMonth(
+function resolveOnDemandMonth(
     projection: TodRidershipProjectionV1 | null | undefined,
     year: number,
     month: number,
-): MonthlyRidershipSourceMetric {
-    const expectedDates = enumerateMonthDates(year, month);
-    const observedDates = expectedDates.filter(date => projection?.dailyTotals[date] !== undefined);
-    return {
-        total: observedDates.length === 0
-            ? null
-            : observedDates.reduce((sum, date) => sum + (projection?.dailyTotals[date] ?? 0), 0),
-        coverage: coverageForDates(expectedDates, observedDates),
-    };
+): ResolvedMonth {
+    return sumDaily(enumerateMonthDates(year, month), date => projection?.dailyTotals[date]);
 }
 
-function dayTypeForDate(date: string): MonthlyRidershipDayType {
-    const day = new Date(`${date}T12:00:00Z`).getUTCDay();
-    if (day === 0) return 'sunday';
-    if (day === 6) return 'saturday';
-    return 'weekday';
-}
-
-function buildDayTypeMetrics(
-    fixedProjection: RidershipTrendProjectionV1 | null | undefined,
-    todProjection: TodRidershipProjectionV1 | null | undefined,
-    dates: readonly string[],
-    priorYearDates: readonly string[],
-    priorYearFixedDailyTotals: Readonly<Record<string, number>> | null | undefined,
-    currentSourcesComplete: boolean,
-): {
-    completeDates: string[];
-    dayTypes: Record<MonthlyRidershipDayType, MonthlyRidershipDayTypeMetric>;
-    priorYearCoverage: MonthlyRidershipSourceCoverage;
-} {
-    const completeDates = dates.filter(date => (
-        fixedProjection?.dailyTotals[date] !== undefined
-        && todProjection?.dailyTotals[date] !== undefined
-    ));
-    const grouped: Record<MonthlyRidershipDayType, number[]> = {
-        weekday: [],
-        saturday: [],
-        sunday: [],
-    };
-    const priorYearGrouped: Record<MonthlyRidershipDayType, number[]> = {
-        weekday: [],
-        saturday: [],
-        sunday: [],
-    };
-
-    for (const date of completeDates) {
-        grouped[dayTypeForDate(date)].push(
-            (fixedProjection?.dailyTotals[date]?.boardings ?? 0)
-            + (todProjection?.dailyTotals[date] ?? 0),
-        );
-    }
-
-    const priorYearObservedDates = priorYearDates.filter(date => (
-        priorYearFixedDailyTotals?.[date] !== undefined
-        || fixedProjection?.dailyTotals[date]?.boardings !== undefined
-    ));
-    for (const date of priorYearObservedDates) {
-        priorYearGrouped[dayTypeForDate(date)].push(
-            priorYearFixedDailyTotals?.[date]
-            ?? fixedProjection?.dailyTotals[date]?.boardings
-            ?? 0,
-        );
-    }
-    const priorYearCoverage = coverageForDates(priorYearDates, priorYearObservedDates);
-
-    return {
-        completeDates,
-        dayTypes: Object.fromEntries(
-            (Object.entries(grouped) as Array<[MonthlyRidershipDayType, number[]]>).map(([dayType, values]) => {
-                const total = values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0);
-                const priorYearValues = priorYearGrouped[dayType];
-                const priorYearTotal = priorYearValues.length === 0
-                    ? null
-                    : priorYearValues.reduce((sum, value) => sum + value, 0);
-                const average = total === null ? null : total / values.length;
-                const priorYearAverage = priorYearTotal === null ? null : priorYearTotal / priorYearValues.length;
-                const priorYearShare = currentSourcesComplete
-                    && priorYearCoverage.complete
-                    && average !== null
-                    && priorYearAverage !== null
-                    && priorYearAverage > 0
-                    ? average / priorYearAverage
-                    : null;
-                return [dayType, {
-                    total,
-                    observedDays: values.length,
-                    average,
-                    priorYearAverage,
-                    priorYearObservedDays: priorYearValues.length,
-                    priorYearShare,
-                    yearOverYearChange: priorYearShare === null ? null : priorYearShare - 1,
-                }];
-            }),
-        ) as Record<MonthlyRidershipDayType, MonthlyRidershipDayTypeMetric>,
-        priorYearCoverage,
-    };
-}
-
-function resolveScheduledPeriod(
-    baseline: RidershipTrendBaselineV1,
-    projection: RidershipTrendProjectionV1 | null | undefined,
+function resolveSpecializedMonth(
+    months: Readonly<Record<string, SpecializedMonthlyRidership>> | null | undefined,
     year: number,
-    finalMonth: number,
-): { total: number | null; complete: boolean } {
-    const months = Array.from({ length: finalMonth }, (_, index) => index + 1)
-        .map(month => resolveScheduledMonth(baseline, projection, year, month));
-    const available = months.filter(month => month.total !== null);
+    month: number,
+): ResolvedMonth & { priorYearPercent: number | null } {
+    const entry = months?.[monthKey(year, month)];
+    return entry
+        ? { total: entry.reportedTrips, complete: true, coverage: null, priorYearPercent: entry.priorYearPercent }
+        : { total: null, complete: false, coverage: null, priorYearPercent: null };
+}
+
+function ratioChange(current: number | null, priorYear: number | null): number | null {
+    return current !== null && priorYear !== null && priorYear > 0 ? (current / priorYear) - 1 : null;
+}
+
+function comparison(current: number | null, priorYear: number | null, comparable: boolean): MonthlyRidershipComparison {
+    return { current, priorYear, change: comparable ? ratioChange(current, priorYear) : null };
+}
+
+function isWeekday(date: string): boolean {
+    const day = new Date(`${date}T12:00:00Z`).getUTCDay();
+    return day !== 0 && day !== 6;
+}
+
+function weekdayAverage(dates: readonly string[], valueFor: (date: string) => number | undefined): {
+    average: number | null;
+    observedDays: number;
+    complete: boolean;
+} {
+    const weekdays = dates.filter(isWeekday);
+    const observed = weekdays.filter(date => valueFor(date) !== undefined);
     return {
-        total: available.length === 0
-            ? null
-            : available.reduce((sum, month) => sum + (month.total ?? 0), 0),
-        complete: months.length > 0 && months.every(month => month.coverage.complete && month.total !== null),
+        average: observed.length === 0 ? null : observed.reduce((sum, date) => sum + (valueFor(date) ?? 0), 0) / observed.length,
+        observedDays: observed.length,
+        complete: weekdays.length > 0 && observed.length === weekdays.length,
     };
 }
 
-function mergeSource(current: RidershipTrendSource, next: RidershipTrendSource): RidershipTrendSource {
-    if (current === next) return current;
-    return 'mixed';
+function positiveHours(value: number | undefined): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function buildChartSeries(
-    baseline: RidershipTrendBaselineV1,
-    projection: RidershipTrendProjectionV1 | null | undefined,
-    reportYear: number,
-    reportMonth: number,
-): { months: number[]; series: MonthlyRidershipChartSeries[] } {
-    const firstDisplayedMonth = Math.max(1, reportMonth - 5);
-    const months = Array.from(
-        { length: reportMonth - firstDisplayedMonth + 1 },
-        (_, index) => firstDisplayedMonth + index,
-    );
-    const years = Array.from({ length: 5 }, (_, index) => reportYear - 4 + index);
-
-    return {
-        months,
-        series: years.map(year => {
-            let cumulativeTotal = 0;
-            let hasGap = false;
-            let source: RidershipTrendSource | null = null;
-            const pointsByMonth = new Map<number, MonthlyRidershipChartPoint>();
-
-            for (let month = 1; month <= reportMonth; month += 1) {
-                const resolved = resolveScheduledMonth(baseline, projection, year, month);
-                source = source === null ? resolved.source : mergeSource(source, resolved.source);
-                if (resolved.total === null || hasGap) {
-                    hasGap = true;
-                    pointsByMonth.set(month, { month, cumulativeTotal: null, partial: true });
-                    continue;
-                }
-                cumulativeTotal += resolved.total;
-                pointsByMonth.set(month, {
-                    month,
-                    cumulativeTotal,
-                    partial: !resolved.coverage.complete,
-                });
-            }
-
-            return {
-                year,
-                source: source ?? 'workbook',
-                points: months.map(month => pointsByMonth.get(month) ?? {
-                    month,
-                    cumulativeTotal: null,
-                    partial: true,
-                }),
-            };
-        }),
-    };
+function sumKnown(values: Array<number | null>): number | null {
+    const known = values.filter((value): value is number => value !== null);
+    return known.length === 0 ? null : known.reduce((sum, value) => sum + value, 0);
 }
 
 export function getPreviousReportMonth(now: Date, timeZone = 'America/Toronto'): string {
@@ -346,8 +237,8 @@ export function getPreviousReportMonth(now: Date, timeZone = 'America/Toronto'):
     if (!Number.isInteger(year) || !Number.isInteger(month)) {
         throw new Error('Could not resolve the report month.');
     }
-    const previous = new Date(Date.UTC(year, month - 2, 1));
-    return monthKey(previous.getUTCFullYear(), previous.getUTCMonth() + 1);
+    const previous = shiftMonth(year, month, -1);
+    return monthKey(previous.year, previous.month);
 }
 
 export function buildMonthlyRidershipReportModel(input: {
@@ -355,54 +246,109 @@ export function buildMonthlyRidershipReportModel(input: {
     fixedProjection?: RidershipTrendProjectionV1 | null;
     todProjection?: TodRidershipProjectionV1 | null;
     priorYearFixedDailyTotals?: Readonly<Record<string, number>> | null;
+    specializedMonths?: Readonly<Record<string, SpecializedMonthlyRidership>> | null;
+    serviceHours?: Readonly<Record<string, MonthlyServiceHours>> | null;
     reportMonth: string;
     generatedAt: string;
 }): MonthlyRidershipReportModel {
     const { year, month } = parseMonthKey(input.reportMonth);
-    const expectedDates = enumerateMonthDates(year, month);
-    const priorYearExpectedDates = enumerateMonthDates(year - 1, month);
-    const scheduledRoutes = resolveScheduledMonth(input.baseline, input.fixedProjection, year, month);
-    const onDemand = resolveTodMonth(input.todProjection, year, month);
-    const allTransitComplete = scheduledRoutes.coverage.complete && onDemand.coverage.complete;
-    const { completeDates, dayTypes, priorYearCoverage } = buildDayTypeMetrics(
-        input.fixedProjection,
-        input.todProjection,
-        expectedDates,
-        priorYearExpectedDates,
-        input.priorYearFixedDailyTotals,
-        allTransitComplete,
-    );
-    const allTransitTotal = scheduledRoutes.total === null && onDemand.total === null
-        ? null
-        : (scheduledRoutes.total ?? 0) + (onDemand.total ?? 0);
-    const priorYearScheduled = resolveScheduledMonth(
-        input.baseline,
-        input.fixedProjection,
-        year - 1,
-        month,
-    );
-    const priorYearShare = allTransitComplete
-        && priorYearScheduled.coverage.complete
-        && allTransitTotal !== null
-        && priorYearScheduled.total !== null
-        && priorYearScheduled.total > 0
-        ? allTransitTotal / priorYearScheduled.total
+    const priorYear = year - 1;
+    const resolvers: Record<MonthlyRidershipServiceKey, (y: number, m: number) => ResolvedMonth> = {
+        conventional: (y, m) => resolveConventionalMonth(input.baseline, input.fixedProjection, y, m),
+        onDemand: (y, m) => resolveOnDemandMonth(input.todProjection, y, m),
+        specialized: (y, m) => resolveSpecializedMonth(input.specializedMonths, y, m),
+    };
+    const trendMonths = Array.from({ length: MONTHLY_RIDERSHIP_TREND_MONTHS }, (_, index) => (
+        shiftMonth(year, month, index - (MONTHLY_RIDERSHIP_TREND_MONTHS - 1))
+    ));
+    const reportDates = enumerateMonthDates(year, month);
+    const priorYearDates = enumerateMonthDates(priorYear, month);
+    const fixedDaily = (date: string): number | undefined => input.fixedProjection?.dailyTotals[date]?.boardings;
+    const priorFixedDaily = (date: string): number | undefined => input.priorYearFixedDailyTotals?.[date] ?? fixedDaily(date);
+    const todDaily = (date: string): number | undefined => input.todProjection?.dailyTotals[date];
+
+    const services = MONTHLY_RIDERSHIP_SERVICE_KEYS.map((key): MonthlyRidershipServiceSummary => {
+        const resolve = resolvers[key];
+        const current = resolve(year, month);
+        const prior = resolve(priorYear, month);
+        let monthComparison = comparison(current.total, prior.total, current.complete && prior.complete);
+        let changeFromSourceReport = false;
+        if (key === 'specialized' && monthComparison.change === null && current.total !== null) {
+            const percent = resolveSpecializedMonth(input.specializedMonths, year, month).priorYearPercent;
+            if (percent !== null && percent > 0) {
+                monthComparison = { current: current.total, priorYear: null, change: (percent / 100) - 1 };
+                changeFromSourceReport = true;
+            }
+        }
+
+        const ytdMonths = Array.from({ length: month }, (_, index) => index + 1);
+        const ytdCurrent = ytdMonths.map(m => resolve(year, m));
+        const ytdPrior = ytdMonths.map(m => resolve(priorYear, m));
+        const ytdComplete = (months: ResolvedMonth[]) => months.every(m => m.complete && m.total !== null);
+        const yearToDate = comparison(
+            ytdComplete(ytdCurrent) ? sumKnown(ytdCurrent.map(m => m.total)) : null,
+            ytdComplete(ytdPrior) ? sumKnown(ytdPrior.map(m => m.total)) : null,
+            true,
+        );
+
+        const trend = trendMonths.map(({ year: y, month: m }) => {
+            const resolved = resolve(y, m);
+            return { month: monthKey(y, m), total: resolved.complete ? resolved.total : null };
+        });
+
+        let weekday: MonthlyRidershipServiceSummary['weekdayAverage'] = {
+            current: null, priorYear: null, change: null, supported: false, observedDays: 0,
+        };
+        if (key !== 'specialized') {
+            const currentDaily = key === 'conventional' ? fixedDaily : todDaily;
+            const priorDaily = key === 'conventional' ? priorFixedDaily : todDaily;
+            const currentAverage = weekdayAverage(reportDates, currentDaily);
+            const priorAverage = weekdayAverage(priorYearDates, priorDaily);
+            weekday = {
+                ...comparison(currentAverage.average, priorAverage.average, currentAverage.complete && priorAverage.complete),
+                supported: true,
+                observedDays: currentAverage.observedDays,
+            };
+        }
+
+        const hoursNow = positiveHours(input.serviceHours?.[input.reportMonth]?.[key]);
+        const hoursPrior = positiveHours(input.serviceHours?.[monthKey(priorYear, month)]?.[key]);
+        const rphNow = hoursNow !== null && current.complete && current.total !== null ? current.total / hoursNow : null;
+        const rphPrior = hoursPrior !== null && prior.complete && prior.total !== null ? prior.total / hoursPrior : null;
+
+        return {
+            key,
+            ...SERVICE_LABELS[key],
+            month: { ...monthComparison, complete: current.complete, coverage: current.coverage, changeFromSourceReport },
+            yearToDate,
+            trend,
+            weekdayAverage: weekday,
+            serviceHours: { current: hoursNow, priorYear: hoursPrior },
+            ridersPerServiceHour: comparison(rphNow, rphPrior, true),
+        };
+    });
+
+    const reported = services.filter(service => service.month.current !== null);
+    const compared = services.filter(service => service.month.change !== null && service.month.current !== null);
+    const comparedPriorTotal = sumKnown(compared.map(service => (
+        service.month.priorYear ?? (service.month.current ?? 0) / (1 + (service.month.change ?? 0))
+    )));
+    const comparedCurrentTotal = sumKnown(compared.map(service => service.month.current));
+    const ytdCompared = services.filter(service => service.yearToDate.change !== null);
+
+    const allHoursNow = reported.length > 0 && reported.every(service => service.serviceHours.current !== null && service.month.complete);
+    const priorReported = services.filter(service => service.month.priorYear !== null);
+    const allHoursPrior = priorReported.length > 0 && priorReported.every(service => service.serviceHours.priorYear !== null);
+    const totalRphNow = allHoursNow
+        ? (sumKnown(reported.map(s => s.month.current)) ?? 0) / (sumKnown(reported.map(s => s.serviceHours.current)) ?? 1)
         : null;
-    const yearToDateScheduled = resolveScheduledPeriod(input.baseline, input.fixedProjection, year, month);
-    const priorYearToDateScheduled = resolveScheduledPeriod(input.baseline, input.fixedProjection, year - 1, month);
-    const priorYearAnnualScheduled = resolveScheduledPeriod(input.baseline, input.fixedProjection, year - 1, 12);
-    const yearToDateShare = yearToDateScheduled.complete
-        && priorYearToDateScheduled.complete
-        && yearToDateScheduled.total !== null
-        && priorYearToDateScheduled.total !== null
-        && priorYearToDateScheduled.total > 0
-        ? yearToDateScheduled.total / priorYearToDateScheduled.total
+    const totalRphPrior = allHoursPrior
+        ? (sumKnown(priorReported.map(s => s.month.priorYear)) ?? 0) / (sumKnown(priorReported.map(s => s.serviceHours.priorYear)) ?? 1)
         : null;
-    const projectedAnnualTotal = yearToDateShare !== null
-        && priorYearAnnualScheduled.complete
-        && priorYearAnnualScheduled.total !== null
-        ? yearToDateShare * priorYearAnnualScheduled.total
-        : null;
+
+    const scheduledCoverage = services[0].month.coverage ?? coverageForDates(reportDates, []);
+    const onDemandCoverage = services[1].month.coverage ?? coverageForDates(reportDates, []);
+    const conventional = services[0];
 
     return {
         schemaVersion: MONTHLY_RIDERSHIP_REPORT_SCHEMA_VERSION,
@@ -410,35 +356,37 @@ export function buildMonthlyRidershipReportModel(input: {
         reportYear: year,
         month,
         generatedAt: input.generatedAt,
-        scheduledRoutes: {
-            total: scheduledRoutes.total,
-            coverage: scheduledRoutes.coverage,
-        },
-        onDemand,
-        allTransit: {
-            total: allTransitTotal,
-            complete: allTransitComplete,
-            completeDates,
-        },
-        dayTypes,
-        priorYearDayTypeCoverage: priorYearCoverage,
-        priorYearScheduledTotal: priorYearScheduled.total,
-        priorYearShare,
-        yearToDateScheduledRoutes: {
-            total: yearToDateScheduled.total,
-            complete: yearToDateScheduled.complete,
-            priorYearTotal: priorYearToDateScheduled.total,
-            yearOverYearChange: yearToDateShare === null ? null : yearToDateShare - 1,
-        },
-        projectedAnnualScheduledRoutes: {
-            total: projectedAnnualTotal,
-            priorYearTotal: priorYearAnnualScheduled.total,
-            yearOverYearChange: projectedAnnualTotal !== null
-                && priorYearAnnualScheduled.total !== null
-                && priorYearAnnualScheduled.total > 0
-                ? (projectedAnnualTotal / priorYearAnnualScheduled.total) - 1
+        services,
+        total: {
+            current: sumKnown(reported.map(service => service.month.current)),
+            priorYear: comparedPriorTotal === null ? null : Math.round(comparedPriorTotal),
+            change: comparedCurrentTotal !== null && comparedPriorTotal !== null && comparedPriorTotal > 0
+                ? (comparedCurrentTotal / comparedPriorTotal) - 1
                 : null,
+            reportedServices: reported.map(service => service.key),
+            comparedServices: compared.map(service => service.key),
         },
-        chart: buildChartSeries(input.baseline, input.fixedProjection, year, month),
+        totalYearToDate: {
+            ...comparison(
+                sumKnown(ytdCompared.map(service => service.yearToDate.current)),
+                sumKnown(ytdCompared.map(service => service.yearToDate.priorYear)),
+                ytdCompared.length > 0,
+            ),
+            comparedServices: ytdCompared.map(service => service.key),
+        },
+        totalRidersPerServiceHour: comparison(totalRphNow, totalRphPrior, true),
+        coverage: {
+            scheduledRoutes: scheduledCoverage,
+            onDemand: onDemandCoverage,
+            complete: scheduledCoverage.complete && onDemandCoverage.complete,
+        },
+        trend: {
+            months: conventional.trend.map(point => point.month),
+            current: conventional.trend.map(point => point.total),
+            priorYear: trendMonths.map(({ year: y, month: m }) => {
+                const resolved = resolvers.conventional(y - 1, m);
+                return resolved.complete ? resolved.total : null;
+            }),
+        },
     };
 }

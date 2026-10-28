@@ -4,12 +4,16 @@ import { buildMonthlyRidershipReportModel } from '../utils/ridership-trends/mont
 import type { TodRidershipProjectionV1 } from '../utils/ridership-trends/tod';
 import type { RidershipTrendProjectionV1 } from '../utils/ridership-trends/types';
 import {
-  buildMonthlyRidershipChartSvg,
+  buildMonthlyRidershipChangeChartSvg,
   buildMonthlyRidershipReportHtml,
   buildMonthlyRidershipReportText,
-  MONTHLY_RIDERSHIP_CHART_CID,
+  buildMonthlyRidershipSparklineSvg,
+  buildMonthlyRidershipTrendChartSvg,
+  MONTHLY_RIDERSHIP_CHANGE_CHART_CID,
   MONTHLY_RIDERSHIP_LOGO_CID,
-  renderMonthlyRidershipChartPng,
+  MONTHLY_RIDERSHIP_TREND_CHART_CID,
+  monthlyRidershipSparklineCid,
+  renderMonthlyRidershipCharts,
 } from '../functions/src/monthlyRidershipReportHtml';
 
 const dates = Array.from({ length: 31 }, (_, index) => `2026-08-${String(index + 1).padStart(2, '0')}`);
@@ -29,77 +33,96 @@ const todProjection: TodRidershipProjectionV1 = {
   latestServiceDate: '2026-08-31',
   updatedAt: '2026-09-01T14:00:00.000Z',
 };
-const priorYearFixedDailyTotals = Object.fromEntries(Array.from({ length: 31 }, (_, index) => [
-  `2025-08-${String(index + 1).padStart(2, '0')}`,
-  8_000,
-]));
 
-function completeModel() {
+function model(overrides: Partial<Parameters<typeof buildMonthlyRidershipReportModel>[0]> = {}) {
   return buildMonthlyRidershipReportModel({
     baseline: RIDERSHIP_TREND_BASELINE,
     fixedProjection,
     todProjection,
-    priorYearFixedDailyTotals,
+    specializedMonths: { '2026-08': { reportedTrips: 7_350, priorYearPercent: 96 } },
+    serviceHours: { '2026-08': { conventional: 15_800 } },
     reportMonth: '2026-08',
     generatedAt: '2026-09-01T14:00:00.000Z',
+    ...overrides,
   });
 }
 
 describe('monthly ridership report rendering', () => {
-  it('renders the Barrie-blue email, logo, coverage, and inline chart', () => {
-    const model = completeModel();
-    const html = buildMonthlyRidershipReportHtml({ model, brandLogoCid: MONTHLY_RIDERSHIP_LOGO_CID });
+  it('renders the approved executive layout with every section and inline image', () => {
+    const html = buildMonthlyRidershipReportHtml({ model: model(), brandLogoCid: MONTHLY_RIDERSHIP_LOGO_CID });
 
     expect(html).toContain('Barrie Transit Monthly Ridership - August 2026');
     expect(html).toContain('#044C7C');
     expect(html).toContain('Total August Ridership');
-    expect(html).toContain('Scheduled Bus Service');
-    expect(html).toContain('On Demand Service');
-    expect(html).not.toContain('Monthly coverage complete');
-    expect(html).toContain('Ridership So Far This Year');
-    expect(html).toContain('End-of-Year Pace (Estimated)');
-    expect(html).toContain('18% lower');
-    expect(html).toContain('Compared with August 2025');
-    expect(html).toContain('day-type-cell');
-    expect(html).not.toContain('Change from August 2025');
-    expect(html).not.toContain('text-transform:uppercase');
+    expect(html).toContain('227,450');
+    for (const heading of ['Ridership by Service', 'Change From Last Year', '13-Month Trend', 'Service Efficiency', 'Detailed Numbers']) {
+      expect(html).toContain(heading);
+    }
+    expect(html).toContain('Transit ON Demand');
+    expect(html).toContain('Specialized');
+    expect(html).toContain('Change from the August source report');
     expect(html).toContain(`src="cid:${MONTHLY_RIDERSHIP_LOGO_CID}"`);
-    expect(html).toContain(`src="cid:${MONTHLY_RIDERSHIP_CHART_CID}"`);
-    expect(html).toContain('Five-Year View');
-    expect(html).not.toContain('Sources and Limits');
-    expect(html).not.toContain('About the Numbers');
-    expect(html).not.toContain('Generated automatically');
-    expect(html).not.toContain('Specialized Ridership Chart');
+    expect(html).toContain(`src="cid:${MONTHLY_RIDERSHIP_CHANGE_CHART_CID}"`);
+    expect(html).toContain(`src="cid:${MONTHLY_RIDERSHIP_TREND_CHART_CID}"`);
+    expect(html).toContain(`src="cid:${monthlyRidershipSparklineCid('conventional')}"`);
+    expect(html).not.toContain('End-of-Year Pace');
+    expect(html).not.toContain('Five-Year View');
+    expect(html).not.toContain('Context Notes');
+    expect(html).not.toContain('text-transform:uppercase');
+  });
+
+  it('shows not-yet-available states instead of zeros or invented comparisons', () => {
+    const html = buildMonthlyRidershipReportHtml({
+      model: model({ specializedMonths: null, serviceHours: null }),
+      sparklineServices: ['conventional'],
+    });
+
+    expect(html).toContain('Not yet reported');
+    expect(html).toContain('Official service hours not yet entered');
+    expect(html).toContain('Official hours not yet entered');
+    expect(html).toContain('Not available from the monthly source report');
+    expect(html).toContain('No comparison yet');
+    expect(html).toContain('Trend builds as months are added');
+    expect(html).toContain('Change covers Conventional only');
+    expect(html).toContain('Specialized has not reported August yet.');
   });
 
   it('renders an explicit partial-evidence warning and withholds the comparison', () => {
-    const model = buildMonthlyRidershipReportModel({
-      baseline: RIDERSHIP_TREND_BASELINE,
+    const partial = model({
       fixedProjection: { ...fixedProjection, dailyTotals: {} },
       todProjection: { ...todProjection, dailyTotals: {} },
-      reportMonth: '2026-08',
-      generatedAt: '2026-09-01T14:00:00.000Z',
+      specializedMonths: null,
     });
-    const html = buildMonthlyRidershipReportHtml({ model });
+    const html = buildMonthlyRidershipReportHtml({ model: partial });
 
     expect(html).toContain('Some Days Are Missing');
-    expect(html).toContain('Missing days are excluded from the totals; they are not counted as zero');
-    expect(html).toContain('August 2025 comparison not available');
-    expect(html).toContain('No scheduled bus days reported');
+    expect(html).toContain('Conventional: no days reported');
+    expect(partial.total.change).toBeNull();
   });
 
-  it('builds a real PNG and a useful plain-text fallback', async () => {
-    const model = completeModel();
-    const svg = buildMonthlyRidershipChartSvg(model);
-    const png = await renderMonthlyRidershipChartPng(model);
-    const text = buildMonthlyRidershipReportText(model);
-
-    expect(svg).toContain('<svg');
-    expect(svg).toContain('Year-to-Date Ridership by Year');
-    expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    expect(png.length).toBeLessThan(600_000);
-    expect(text).toContain('Total ridership: 220,100');
-    expect(text).toContain('End-of-year pace (estimated):');
-    expect(text).toContain('Ridership counts trips taken, not unique people');
+  it('draws charts that label missing comparisons and skips sparklines without history', () => {
+    const current = model();
+    expect(buildMonthlyRidershipChangeChartSvg(current)).toContain('No comparison yet');
+    expect(buildMonthlyRidershipChangeChartSvg(current)).toContain('All Services');
+    expect(buildMonthlyRidershipTrendChartSvg(current)).toContain('This Year');
+    expect(buildMonthlyRidershipSparklineSvg(current.services[0])).toContain('<polyline');
+    expect(buildMonthlyRidershipSparklineSvg(current.services[1])).toBeNull();
   });
+
+  it('builds real PNG charts and a useful plain-text fallback', async () => {
+    const current = model();
+    const charts = await renderMonthlyRidershipCharts(current);
+    const text = buildMonthlyRidershipReportText(current);
+
+    expect(charts.map(chart => chart.cid)).toEqual([
+      MONTHLY_RIDERSHIP_CHANGE_CHART_CID,
+      MONTHLY_RIDERSHIP_TREND_CHART_CID,
+      monthlyRidershipSparklineCid('conventional'),
+    ]);
+    for (const chart of charts) expect(chart.png.subarray(0, 4)).toEqual(Buffer.from([137, 80, 78, 71]));
+    expect(text).toContain('Total ridership: 227,450');
+    expect(text).toContain('Conventional: 217,000');
+    expect(text).toContain('Transit ON Demand: 3,100 (no comparison yet)');
+    expect(text).toContain('Specialized: 7,350 (-4.0% vs August 2025)');
+  }, 30_000);
 });

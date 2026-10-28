@@ -3,23 +3,26 @@ import { RIDERSHIP_TREND_BASELINE } from '../utils/ridership-trends/baseline';
 import {
   buildMonthlyRidershipReportModel,
   getPreviousReportMonth,
+  type MonthlyRidershipReportModel,
+  type MonthlyRidershipServiceKey,
 } from '../utils/ridership-trends/monthlyReport';
 import type { TodRidershipProjectionV1 } from '../utils/ridership-trends/tod';
 import type { RidershipTrendProjectionV1 } from '../utils/ridership-trends/types';
 
 const GENERATED_AT = '2026-09-01T14:00:00.000Z';
+const BASELINE = RIDERSHIP_TREND_BASELINE.monthlyTotals;
 
-function augustDates(): string[] {
-  return Array.from({ length: 31 }, (_, index) => `2026-08-${String(index + 1).padStart(2, '0')}`);
+function augustDates(year = 2026): string[] {
+  return Array.from({ length: 31 }, (_, index) => `${year}-08-${String(index + 1).padStart(2, '0')}`);
+}
+
+function isWeekend(date: string): boolean {
+  const day = new Date(`${date}T12:00:00Z`).getUTCDay();
+  return day === 0 || day === 6;
 }
 
 function priorYearFixedDailyTotals(): Record<string, number> {
-  return Object.fromEntries(Array.from({ length: 31 }, (_, index) => {
-    const date = `2025-08-${String(index + 1).padStart(2, '0')}`;
-    const day = new Date(`${date}T12:00:00Z`).getUTCDay();
-    const boardings = day === 0 ? 500 : day === 6 ? 800 : 1_200;
-    return [date, boardings];
-  }));
+  return Object.fromEntries(augustDates(2025).map(date => [date, isWeekend(date) ? 600 : 1_200]));
 }
 
 function fixedProjection(excludedDates: string[] = []): RidershipTrendProjectionV1 {
@@ -50,135 +53,157 @@ function todProjection(excludedDates: string[] = []): TodRidershipProjectionV1 {
   };
 }
 
+function service(model: MonthlyRidershipReportModel, key: MonthlyRidershipServiceKey) {
+  const found = model.services.find(entry => entry.key === key);
+  if (!found) throw new Error(`Missing ${key}`);
+  return found;
+}
+
+function completeModel(extra: Partial<Parameters<typeof buildMonthlyRidershipReportModel>[0]> = {}) {
+  return buildMonthlyRidershipReportModel({
+    baseline: RIDERSHIP_TREND_BASELINE,
+    fixedProjection: fixedProjection(),
+    todProjection: todProjection(),
+    priorYearFixedDailyTotals: priorYearFixedDailyTotals(),
+    reportMonth: '2026-08',
+    generatedAt: GENERATED_AT,
+    ...extra,
+  });
+}
+
 describe('monthly ridership report model', () => {
-  it('combines complete scheduled-route and On Demand evidence without double-counting trips', () => {
-    const model = buildMonthlyRidershipReportModel({
-      baseline: RIDERSHIP_TREND_BASELINE,
-      fixedProjection: fixedProjection(),
-      todProjection: todProjection(),
-      priorYearFixedDailyTotals: priorYearFixedDailyTotals(),
-      reportMonth: '2026-08',
-      generatedAt: GENERATED_AT,
-    });
+  it('reports each service and compares only the services with a prior-year month', () => {
+    const model = completeModel();
+    const conventional = service(model, 'conventional');
+    const onDemand = service(model, 'onDemand');
 
-    expect(model.scheduledRoutes.total).toBe(31_000);
-    expect(model.onDemand.total).toBe(310);
-    expect(model.allTransit).toEqual({
-      total: 31_310,
-      complete: true,
-      completeDates: augustDates(),
-    });
-    expect(model.priorYearScheduledTotal).toBe(269_090);
-    expect(model.priorYearShare).toBeCloseTo(31_310 / 269_090);
-    expect(model.dayTypes.weekday).toEqual({
-      total: 21_210,
-      observedDays: 21,
-      average: 1_010,
-      priorYearAverage: 1_200,
-      priorYearObservedDays: 21,
-      priorYearShare: 1_010 / 1_200,
-      yearOverYearChange: (1_010 / 1_200) - 1,
-    });
-    expect(model.dayTypes.saturday).toMatchObject({
-      total: 5_050,
-      observedDays: 5,
-      average: 1_010,
-      priorYearAverage: 800,
-      priorYearObservedDays: 5,
-    });
-    expect(model.dayTypes.saturday.yearOverYearChange).toBeCloseTo((1_010 / 800) - 1);
-    expect(model.dayTypes.sunday).toMatchObject({
-      total: 5_050,
-      observedDays: 5,
-      average: 1_010,
-      priorYearAverage: 500,
-      priorYearObservedDays: 5,
-    });
-    expect(model.yearToDateScheduledRoutes).toMatchObject({
-      total: 1_663_133,
-      complete: true,
-      priorYearTotal: 2_348_346,
-    });
-    expect(model.projectedAnnualScheduledRoutes.total).toBeCloseTo(
-      (1_663_133 / 2_348_346) * 3_362_338,
-    );
+    expect(model.services.map(entry => entry.key)).toEqual(['conventional', 'onDemand', 'specialized']);
+    expect(conventional.month.current).toBe(31_000);
+    expect(conventional.month.priorYear).toBe(BASELINE['2025-08']);
+    expect(conventional.month.change).toBeCloseTo((31_000 / BASELINE['2025-08']) - 1, 10);
+    expect(onDemand.month.current).toBe(310);
+    expect(onDemand.month.change).toBeNull();
+    expect(service(model, 'specialized').month.current).toBeNull();
+
+    expect(model.total.current).toBe(31_310);
+    expect(model.total.reportedServices).toEqual(['conventional', 'onDemand']);
+    expect(model.total.comparedServices).toEqual(['conventional']);
+    expect(model.total.change).toBeCloseTo(conventional.month.change ?? NaN, 10);
+    expect(model.coverage.complete).toBe(true);
   });
 
-  it('keeps partial totals, excludes mismatched dates from averages, and suppresses comparison', () => {
-    const model = buildMonthlyRidershipReportModel({
-      baseline: RIDERSHIP_TREND_BASELINE,
-      fixedProjection: fixedProjection(['2026-08-10']),
-      todProjection: todProjection(['2026-08-11']),
-      priorYearFixedDailyTotals: priorYearFixedDailyTotals(),
-      reportMonth: '2026-08',
-      generatedAt: GENERATED_AT,
+  it('uses a stored prior-year Specialized month, or else the percentage printed on the source report', () => {
+    const withPriorMonth = completeModel({
+      specializedMonths: {
+        '2026-08': { reportedTrips: 7_350, priorYearPercent: 97 },
+        '2025-08': { reportedTrips: 7_000, priorYearPercent: null },
+      },
     });
+    expect(service(withPriorMonth, 'specialized').month).toMatchObject({
+      current: 7_350,
+      priorYear: 7_000,
+      changeFromSourceReport: false,
+    });
+    expect(service(withPriorMonth, 'specialized').month.change).toBeCloseTo(0.05, 10);
 
-    expect(model.scheduledRoutes.total).toBe(30_000);
-    expect(model.onDemand.total).toBe(300);
-    expect(model.allTransit.total).toBe(30_300);
-    expect(model.allTransit.complete).toBe(false);
-    expect(model.allTransit.completeDates).toHaveLength(29);
-    expect(model.scheduledRoutes.coverage.missingDates).toEqual(['2026-08-10']);
-    expect(model.onDemand.coverage.missingDates).toEqual(['2026-08-11']);
-    expect(model.dayTypes.weekday).toMatchObject({
-      total: 19_190,
-      observedDays: 19,
-      average: 1_010,
-      priorYearAverage: 1_200,
-      priorYearObservedDays: 21,
-      priorYearShare: null,
-      yearOverYearChange: null,
-    });
-    expect(model.priorYearShare).toBeNull();
-    expect(model.projectedAnnualScheduledRoutes.total).toBeNull();
-    expect(model.chart.series.at(-1)?.points.at(-1)?.partial).toBe(true);
+    const fromReport = completeModel({ specializedMonths: { '2026-08': { reportedTrips: 7_350, priorYearPercent: 95 } } });
+    const specialized = service(fromReport, 'specialized');
+    expect(specialized.month.priorYear).toBeNull();
+    expect(specialized.month.change).toBeCloseTo(-0.05, 10);
+    expect(specialized.month.changeFromSourceReport).toBe(true);
+    expect(fromReport.total.comparedServices).toEqual(['conventional', 'specialized']);
+    // Prior Specialized riders are derived from the printed percentage for the grand-total change.
+    expect(fromReport.total.priorYear).toBe(Math.round(BASELINE['2025-08'] + (7_350 / 0.95)));
   });
 
-  it('uses the supplied monthly history for a comparable five-year cumulative chart', () => {
-    const model = buildMonthlyRidershipReportModel({
-      baseline: RIDERSHIP_TREND_BASELINE,
-      fixedProjection: fixedProjection(),
-      todProjection: todProjection(),
-      reportMonth: '2026-08',
-      generatedAt: GENERATED_AT,
-    });
+  it('keeps partial totals visible but withholds comparisons until every day is reported', () => {
+    const model = completeModel({ fixedProjection: fixedProjection(['2026-08-14']) });
+    const conventional = service(model, 'conventional');
 
-    expect(model.chart.months).toEqual([3, 4, 5, 6, 7, 8]);
-    expect(model.chart.series.map(series => series.year)).toEqual([2022, 2023, 2024, 2025, 2026]);
-    expect(model.chart.series.find(series => series.year === 2025)?.points.at(-1)?.cumulativeTotal).toBe(2_348_346);
-    expect(model.chart.series.find(series => series.year === 2026)?.points.at(-1)).toEqual({
-      month: 8,
-      cumulativeTotal: 1_663_133,
-      partial: false,
-    });
+    expect(conventional.month.current).toBe(30_000);
+    expect(conventional.month.complete).toBe(false);
+    expect(conventional.month.change).toBeNull();
+    expect(conventional.weekdayAverage.change).toBeNull();
+    expect(model.coverage.scheduledRoutes.missingDates).toEqual(['2026-08-14']);
+    expect(model.coverage.complete).toBe(false);
+    expect(model.total.current).toBe(30_310);
+    expect(model.total.change).toBeNull();
   });
 
-  it('uses a single January chart point and resolves the previous Toronto month across year boundaries', () => {
-    const model = buildMonthlyRidershipReportModel({
-      baseline: RIDERSHIP_TREND_BASELINE,
-      reportMonth: '2026-01',
-      generatedAt: GENERATED_AT,
-    });
+  it('compares Conventional weekday averages with retained prior-year daily evidence', () => {
+    const model = completeModel();
+    const weekday = service(model, 'conventional').weekdayAverage;
 
-    expect(model.chart.months).toEqual([1]);
-    expect(getPreviousReportMonth(new Date('2027-01-01T15:00:00.000Z'))).toBe('2026-12');
-    expect(getPreviousReportMonth(new Date('2027-01-01T02:00:00.000Z'))).toBe('2026-11');
+    expect(weekday.supported).toBe(true);
+    expect(weekday.current).toBe(1_000);
+    expect(weekday.priorYear).toBe(1_200);
+    expect(weekday.change).toBeCloseTo(-1 / 6, 10);
+    expect(service(model, 'onDemand').weekdayAverage).toMatchObject({ current: 10, priorYear: null, change: null });
+    expect(service(model, 'specialized').weekdayAverage.supported).toBe(false);
+  });
+
+  it('calculates riders per service hour only from entered official hours', () => {
+    const withoutHours = completeModel();
+    expect(service(withoutHours, 'conventional').ridersPerServiceHour.current).toBeNull();
+    expect(withoutHours.totalRidersPerServiceHour.current).toBeNull();
+
+    const partialHours = completeModel({ serviceHours: { '2026-08': { conventional: 1_000 } } });
+    expect(service(partialHours, 'conventional').ridersPerServiceHour.current).toBe(31);
+    expect(partialHours.totalRidersPerServiceHour.current).toBeNull();
+
+    const allHours = completeModel({
+      serviceHours: {
+        '2026-08': { conventional: 1_000, onDemand: 31 },
+        '2025-08': { conventional: 1_000 },
+      },
+    });
+    expect(allHours.totalRidersPerServiceHour.current).toBeCloseTo(31_310 / 1_031, 10);
+    expect(service(allHours, 'conventional').ridersPerServiceHour.priorYear).toBe(BASELINE['2025-08'] / 1_000);
+    expect(service(allHours, 'conventional').ridersPerServiceHour.change).toBeCloseTo((31 / (BASELINE['2025-08'] / 1_000)) - 1, 10);
+  });
+
+  it('builds a 13-month Conventional trend aligned with the same months one year earlier', () => {
+    const model = completeModel();
+
+    expect(model.trend.months).toHaveLength(13);
+    expect(model.trend.months[0]).toBe('2025-08');
+    expect(model.trend.months.at(-1)).toBe('2026-08');
+    expect(model.trend.current[0]).toBe(BASELINE['2025-08']);
+    expect(model.trend.current.at(-1)).toBe(31_000);
+    expect(model.trend.priorYear[0]).toBe(BASELINE['2024-08']);
+    expect(model.trend.priorYear.at(-1)).toBe(BASELINE['2025-08']);
+    expect(service(model, 'onDemand').trend.filter(point => point.total !== null)).toEqual([{ month: '2026-08', total: 310 }]);
+  });
+
+  it('compares year to date only when every month in both years is complete', () => {
+    const model = completeModel();
+    const conventional = service(model, 'conventional');
+    const months = ['01', '02', '03', '04', '05', '06', '07'];
+    const current = months.reduce((sum, month) => sum + BASELINE[`2026-${month}`], 31_000);
+    const prior = [...months, '08'].reduce((sum, month) => sum + BASELINE[`2025-${month}`], 0);
+
+    expect(conventional.yearToDate.current).toBe(current);
+    expect(conventional.yearToDate.priorYear).toBe(prior);
+    expect(service(model, 'onDemand').yearToDate.current).toBeNull();
+    expect(model.totalYearToDate.comparedServices).toEqual(['conventional']);
+    expect(model.totalYearToDate.current).toBe(current);
   });
 
   it('does not convert a completely unavailable source into zero', () => {
     const model = buildMonthlyRidershipReportModel({
       baseline: RIDERSHIP_TREND_BASELINE,
-      fixedProjection: fixedProjection(),
-      todProjection: null,
       reportMonth: '2026-08',
       generatedAt: GENERATED_AT,
     });
 
-    expect(model.onDemand.total).toBeNull();
-    expect(model.allTransit.total).toBe(31_000);
-    expect(model.allTransit.complete).toBe(false);
-    expect(model.dayTypes.weekday.average).toBeNull();
-    expect(model.priorYearShare).toBeNull();
+    expect(service(model, 'conventional').month.current).toBeNull();
+    expect(model.total.current).toBeNull();
+    expect(model.total.change).toBeNull();
+    expect(model.coverage.scheduledRoutes.observedDays).toBe(0);
+  });
+
+  it('resolves the previous Toronto month across year boundaries', () => {
+    expect(getPreviousReportMonth(new Date('2027-01-01T15:00:00.000Z'))).toBe('2026-12');
+    expect(getPreviousReportMonth(new Date('2026-09-01T14:00:00.000Z'))).toBe('2026-08');
   });
 });
