@@ -39,19 +39,22 @@ The workspace uses the Friendly Design Theme: a soft-gray workspace, strong titl
 
 ## Monthly email contract
 
-The automated monthly email replaces the manually assembled monthly ridership PDF for the metrics supported by Scheduler 4. It uses a Barrie-blue, email-safe Friendly Design layout and does not generate or attach a PDF.
+The automated monthly email replaces the manually assembled monthly ridership PDF for the metrics supported by Scheduler 4. It uses a Barrie-blue, email-safe layout and does not generate or attach a PDF. Template version 2 (October 2026) follows the approved executive mockup.
 
-- The primary audience is executive management. Headings use consistent title case, labels use plain language instead of internal abbreviations, and short source notes preserve the metric boundaries without requiring transit-data expertise.
-- Total monthly ridership is the single headline card, labelled with the report month (for example, `Total August Ridership`). Scheduled Bus Service and On Demand Service appear as compact supporting lines directly below it rather than competing headline cards.
+Two templates are deployed. Template 1 is the original scheduled-bus and On Demand email (`utils/ridership-trends/monthlyReportV1.ts`, `functions/src/monthlyRidershipReportHtmlV1.ts`). Template 2 is the three-service executive email described below. The scheduled send reads `templateVersion` (1 or 2) from `teams/{teamId}/monthlyRidershipReportConfig/active` each run and uses template 1 when the document or field is missing. Switching templates needs no redeploy. The test endpoint accepts `?template=1|2` and otherwise uses the configured template. Remove template 1 once template 2 is the confirmed default.
+
+- The primary audience is executive management. Every heading uses title case, labels use plain language, and the layout is built to be read at a glance.
 - `sendMonthlyRidershipReport` runs at 10:00 Toronto time on the first calendar day and reports the previous month to the existing `REPORT_RECIPIENTS` list.
-- The headline All Transit total is scheduled-route boardings plus completed On Demand pickups. Scheduled-route and On Demand totals retain separate report-day coverage.
-- Weekday, Saturday, and Sunday averages use only service dates present in both daily projections. Each denominator is disclosed. Their signed percentage changes compare with the same month in the prior year's retained daily STREETS evidence and are withheld when either period is incomplete; the comparison label states that the prior-year baseline is scheduled-route-only.
-- The PDF-style prior-year percentage is shown only when both current sources and the prior-year scheduled-route month are complete. Its label states that the comparison baseline is scheduled-route ridership.
-- The summary adds scheduled-route year-to-date actuals and an `End-of-Year Pace (Estimated)` card. The pace scales the prior year's remaining monthly pattern by the current-versus-prior YTD factor and is withheld until every scheduled-route month through the report month is complete. It remains a planning estimate, not a target.
-- The five-year comparison remains scheduled-route-only for comparability. It uses horizontal bars for the January-through-report-month total in each year instead of overlapping cumulative lines, preserving the same evidence in a more legible email and mobile view.
-- Missing reports remain missing evidence. The fixed-date email still sends with partial totals, missing-date disclosure, and a suppressed prior-year comparison; it is not automatically resent when late files arrive.
-- Complete reports do not show a redundant coverage-success banner. Partial reports retain an amber evidence warning above the summary cards.
-- Specialized Transit is intentionally outside this automated report until an authoritative source is connected.
+- Three services are reported: Conventional (scheduled-route STREETS boardings), Transit ON Demand (completed trips), and Specialized (the `reportedTrips` total from the uploaded monthly Specialized Transit report).
+- Sections, in order: header; hero box (total riders, year to date, riders per service hour, and a generated one-line summary); Ridership by Service cards (riders, change badge, 13-month sparkline, YTD change); Change From Last Year bar chart; 13-Month Trend (Conventional, with the same months one year earlier dashed); Service Efficiency (riders per service hour and average weekday riders, each with this-year and last-year bars); Detailed Numbers table with subtotals and the All Services grand total; source footer.
+- Charts are PNG images attached inline by `cid`. Sparklines are attached only for services with at least two complete months in the last 13.
+- A month-over-year change is shown only when both months are complete. Daily sources need every day reported. When a stored prior-year Specialized month is missing, the change uses the percentage printed on the source report and the card says so.
+- The All Services change covers only the services that have a change, and the email names them (for example, `Change covers Conventional only`). All Services year to date covers only services with complete year-to-date evidence in both years.
+- Missing evidence is shown as `Not yet reported`, `No comparison yet`, `Not yet available`, or `Official service hours not yet entered`. It is never shown as zero.
+- Riders per service hour uses official monthly service hours entered by staff in `teams/{teamId}/monthlyServiceHours/{YYYY-MM}` (numeric `conventional`, `onDemand`, `specialized` fields). STREETS in-service trip time is not used. The All Services rate is shown only when every reported service has hours.
+- Average weekday riders come from daily evidence. Specialized has no weekday figure because its source is monthly. Conventional weekday comparisons need the prior-year month in retained daily STREETS detail.
+- End-of-Year Pace, Saturday and Sunday averages, and the five-year year-to-date chart were removed in template version 2.
+- Missing reports remain missing evidence. The fixed-date email still sends with partial totals and an amber `Some Days Are Missing` warning; it is not automatically resent when late files arrive.
 - Production queueing writes `teams/{teamId}/monthlyRidershipReports/{YYYY-MM}` and its deterministic `mail` document in one transaction so scheduler retries cannot duplicate the month. The API-key-protected test endpoint sends only to its explicit `to` address and does not write the production audit.
 
 ## Persistence and update contract

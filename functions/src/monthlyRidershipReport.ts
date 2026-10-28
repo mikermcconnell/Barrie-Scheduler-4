@@ -8,8 +8,15 @@ import { RIDERSHIP_TREND_BASELINE } from '../../utils/ridership-trends/baseline'
 import {
   buildMonthlyRidershipReportModel,
   getPreviousReportMonth,
+  MONTHLY_RIDERSHIP_SERVICE_KEYS,
   type MonthlyRidershipReportModel,
+  type MonthlyServiceHours,
+  type SpecializedMonthlyRidership,
 } from '../../utils/ridership-trends/monthlyReport';
+import {
+  buildMonthlyRidershipReportModel as buildMonthlyRidershipReportModelV1,
+  type MonthlyRidershipReportModel as MonthlyRidershipReportModelV1,
+} from '../../utils/ridership-trends/monthlyReportV1';
 import { isRidershipTrendStoragePath, parseRidershipTrendProjection } from '../../utils/ridership-trends/model';
 import {
   createTodRidershipProjection,
@@ -19,14 +26,25 @@ import {
 import type { RidershipTrendProjectionV1 } from '../../utils/ridership-trends/types';
 import { performanceGenerationFilePattern } from '../../utils/performanceGeneration';
 import type { TodPickupSummary } from '../../utils/todPickupTypes';
+import {
+  isSpecializedTransitStoragePath,
+  parseSpecializedTransitDataset,
+} from '../../utils/specialized-transit/validation';
 import type { PerformanceDataSummary } from './types';
 import {
   buildMonthlyRidershipReportHtml,
   buildMonthlyRidershipReportText,
-  MONTHLY_RIDERSHIP_CHART_CID,
   MONTHLY_RIDERSHIP_LOGO_CID,
-  renderMonthlyRidershipChartPng,
+  monthlyRidershipSparklineCid,
+  renderMonthlyRidershipCharts,
+  type MonthlyRidershipChartImage,
 } from './monthlyRidershipReportHtml';
+import {
+  buildMonthlyRidershipReportHtml as buildMonthlyRidershipReportHtmlV1,
+  buildMonthlyRidershipReportText as buildMonthlyRidershipReportTextV1,
+  MONTHLY_RIDERSHIP_CHART_CID as MONTHLY_RIDERSHIP_CHART_CID_V1,
+  renderMonthlyRidershipChartPng as renderMonthlyRidershipChartPngV1,
+} from './monthlyRidershipReportHtmlV1';
 import { hasValidApiKey } from './requestAuth';
 
 const REPORT_RECIPIENTS = defineSecret('REPORT_RECIPIENTS');
@@ -34,7 +52,6 @@ const REPORT_TEST_API_KEY = defineSecret('REPORT_TEST_API_KEY');
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
 const TEAM_NAME = 'Barrie Transit';
 const REPORT_TIME_ZONE = 'America/Toronto';
-const MONTHLY_REPORT_TEMPLATE_VERSION = 1;
 type StorageBucket = ReturnType<ReturnType<typeof admin.storage>['bucket']>;
 
 interface MonthlyRidershipMailAttachment {
@@ -55,13 +72,40 @@ interface MonthlyRidershipMailDocument {
   };
 }
 
+/**
+ * Template 1 is the original scheduled-bus and On Demand email. Template 2 is the
+ * three-service executive email. The scheduled send uses the template stored in
+ * `teams/{teamId}/monthlyRidershipReportConfig/active` and falls back to template 1.
+ */
+export type MonthlyRidershipTemplateVersion = 1 | 2;
+export const DEFAULT_MONTHLY_RIDERSHIP_TEMPLATE_VERSION: MonthlyRidershipTemplateVersion = 1;
+
+export type MonthlyRidershipReport =
+  | { templateVersion: 1; model: MonthlyRidershipReportModelV1; charts: MonthlyRidershipChartImage[] }
+  | { templateVersion: 2; model: MonthlyRidershipReportModel; charts: MonthlyRidershipChartImage[] };
+
 interface QueueMonthlyRidershipMailInput {
   db: admin.firestore.Firestore;
   teamId: string;
   reportMonth: string;
   recipients: string[];
-  model: MonthlyRidershipReportModel;
+  report: MonthlyRidershipReport;
   mailDocument: MonthlyRidershipMailDocument;
+}
+
+export function monthlyRidershipTemplateConfigPath(teamId: string): string {
+  return `teams/${teamId}/monthlyRidershipReportConfig/active`;
+}
+
+export function parseMonthlyRidershipTemplateVersion(value: unknown): MonthlyRidershipTemplateVersion | null {
+  if (value === 1 || value === '1') return 1;
+  if (value === 2 || value === '2') return 2;
+  return null;
+}
+
+async function loadConfiguredTemplateVersion(db: admin.firestore.Firestore, teamId: string): Promise<MonthlyRidershipTemplateVersion> {
+  const snapshot = await db.doc(monthlyRidershipTemplateConfigPath(teamId)).get();
+  return parseMonthlyRidershipTemplateVersion(snapshot.data()?.templateVersion) ?? DEFAULT_MONTHLY_RIDERSHIP_TEMPLATE_VERSION;
 }
 
 function parseRecipients(csv: string | undefined): string[] {
@@ -198,6 +242,52 @@ async function loadTodProjection(params: {
   return parseTodRidershipProjection(createTodRidershipProjection(summary));
 }
 
+async function loadSpecializedMonths(params: {
+  db: admin.firestore.Firestore;
+  bucket: StorageBucket;
+  teamId: string;
+}): Promise<Record<string, SpecializedMonthlyRidership> | null> {
+  const metadataSnap = await params.db.doc(`teams/${params.teamId}/specializedTransitData/metadata`).get();
+  if (!metadataSnap.exists) return null;
+  const path = metadataSnap.data()?.storagePath;
+  if (typeof path !== 'string' || !path.trim()) return null;
+  if (!isSpecializedTransitStoragePath(params.teamId, path)) {
+    throw new Error('Stored ridership source path is invalid.');
+  }
+  const dataset = parseSpecializedTransitDataset(await readStorageJson(params.bucket, path));
+  return Object.fromEntries(Object.entries(dataset.months).map(([month, value]) => [month, {
+    reportedTrips: value.reportedTrips,
+    priorYearPercent: value.priorYearPercent,
+  }]));
+}
+
+export function monthlyServiceHoursPath(teamId: string, month: string): string {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Report month must use YYYY-MM format.');
+  return `teams/${teamId}/monthlyServiceHours/${month}`;
+}
+
+export function parseMonthlyServiceHours(value: unknown): MonthlyServiceHours {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const hours: MonthlyServiceHours = {};
+  for (const key of MONTHLY_RIDERSHIP_SERVICE_KEYS) {
+    const hoursValue = record[key];
+    if (typeof hoursValue === 'number' && Number.isFinite(hoursValue) && hoursValue > 0) hours[key] = hoursValue;
+  }
+  return hours;
+}
+
+async function loadServiceHours(params: {
+  db: admin.firestore.Firestore;
+  teamId: string;
+  reportMonth: string;
+}): Promise<Record<string, MonthlyServiceHours>> {
+  const months = [params.reportMonth, priorYearMonth(params.reportMonth)];
+  const snapshots = await Promise.all(months.map(month => params.db.doc(monthlyServiceHoursPath(params.teamId, month)).get()));
+  return Object.fromEntries(snapshots.flatMap((snapshot, index) => (
+    snapshot.exists ? [[months[index], parseMonthlyServiceHours(snapshot.data())]] : []
+  )));
+}
+
 export function monthlyRidershipDocumentPaths(teamId: string, reportMonth: string): {
   auditPath: string;
   mailPath: string;
@@ -209,11 +299,34 @@ export function monthlyRidershipDocumentPaths(teamId: string, reportMonth: strin
   };
 }
 
+function buildMailBody(report: MonthlyRidershipReport): { text: string; html: string } {
+  if (report.templateVersion === 1) {
+    return {
+      text: buildMonthlyRidershipReportTextV1(report.model),
+      html: buildMonthlyRidershipReportHtmlV1({
+        model: report.model,
+        chartCid: MONTHLY_RIDERSHIP_CHART_CID_V1,
+        brandLogoCid: MONTHLY_RIDERSHIP_LOGO_CID,
+      }),
+    };
+  }
+  const chartCids = new Set(report.charts.map(chart => chart.cid));
+  return {
+    text: buildMonthlyRidershipReportText(report.model),
+    html: buildMonthlyRidershipReportHtml({
+      model: report.model,
+      brandLogoCid: MONTHLY_RIDERSHIP_LOGO_CID,
+      sparklineServices: report.model.services
+        .filter(service => chartCids.has(monthlyRidershipSparklineCid(service.key)))
+        .map(service => service.key),
+    }),
+  };
+}
+
 export function buildMonthlyRidershipMailDocument(input: {
   recipients: string[];
   reportMonth: string;
-  model: MonthlyRidershipReportModel;
-  chartPng: Buffer;
+  report: MonthlyRidershipReport;
   logoPng?: Buffer;
   test?: boolean;
 }): MonthlyRidershipMailDocument {
@@ -222,20 +335,15 @@ export function buildMonthlyRidershipMailDocument(input: {
     to: input.recipients,
     message: {
       subject: reportSubject(input.reportMonth, input.test),
-      text: buildMonthlyRidershipReportText(input.model),
-      html: buildMonthlyRidershipReportHtml({
-        model: input.model,
-        chartCid: MONTHLY_RIDERSHIP_CHART_CID,
-        brandLogoCid: MONTHLY_RIDERSHIP_LOGO_CID,
-      }),
+      ...buildMailBody(input.report),
       attachments: [
-        {
-          filename: `barrie-transit-monthly-ridership-${input.reportMonth}.png`,
-          content: input.chartPng.toString('base64'),
-          encoding: 'base64',
-          cid: MONTHLY_RIDERSHIP_CHART_CID,
-          contentDisposition: 'inline',
-        },
+        ...input.report.charts.map(chart => ({
+          filename: chart.filename,
+          content: chart.png.toString('base64'),
+          encoding: 'base64' as const,
+          cid: chart.cid,
+          contentDisposition: 'inline' as const,
+        })),
         {
           filename: 'barrie-transit-logo.png',
           content: logoPng.toString('base64'),
@@ -244,6 +352,53 @@ export function buildMonthlyRidershipMailDocument(input: {
           contentDisposition: 'inline',
         },
       ],
+    },
+  };
+}
+
+function auditContent(report: MonthlyRidershipReport): Record<string, unknown> {
+  if (report.templateVersion === 1) {
+    const { model } = report;
+    return {
+      sourceCoverage: {
+        scheduledRoutes: model.scheduledRoutes.coverage,
+        onDemand: model.onDemand.coverage,
+      },
+      metrics: {
+        allTransitTotal: model.allTransit.total,
+        scheduledRoutesTotal: model.scheduledRoutes.total,
+        onDemandTotal: model.onDemand.total,
+        priorYearScheduledTotal: model.priorYearScheduledTotal,
+        priorYearShare: model.priorYearShare,
+        dayTypes: model.dayTypes,
+        priorYearDayTypeCoverage: model.priorYearDayTypeCoverage,
+        yearToDateScheduledRoutes: model.yearToDateScheduledRoutes,
+        projectedAnnualScheduledRoutes: model.projectedAnnualScheduledRoutes,
+      },
+    };
+  }
+  const { model } = report;
+  return {
+    sourceCoverage: {
+      scheduledRoutes: model.coverage.scheduledRoutes,
+      onDemand: model.coverage.onDemand,
+    },
+    metrics: {
+      total: model.total,
+      totalYearToDate: model.totalYearToDate,
+      totalRidersPerServiceHour: model.totalRidersPerServiceHour,
+      services: Object.fromEntries(model.services.map(service => [service.key, {
+        month: {
+          current: service.month.current,
+          priorYear: service.month.priorYear,
+          change: service.month.change,
+          changeFromSourceReport: service.month.changeFromSourceReport,
+        },
+        yearToDate: service.yearToDate,
+        weekdayAverage: service.weekdayAverage,
+        serviceHours: service.serviceHours,
+        ridersPerServiceHour: service.ridersPerServiceHour,
+      }])),
     },
   };
 }
@@ -259,27 +414,13 @@ export async function queueMonthlyRidershipMail(input: QueueMonthlyRidershipMail
 
     transaction.create(auditRef, {
       schemaVersion: 1,
-      templateVersion: MONTHLY_REPORT_TEMPLATE_VERSION,
+      templateVersion: input.report.templateVersion,
       reportMonth: input.reportMonth,
       status: 'queued',
       queuedAt: admin.firestore.FieldValue.serverTimestamp(),
       mailDocumentId: mailRef.id,
       recipientCount: input.recipients.length,
-      sourceCoverage: {
-        scheduledRoutes: input.model.scheduledRoutes.coverage,
-        onDemand: input.model.onDemand.coverage,
-      },
-      metrics: {
-        allTransitTotal: input.model.allTransit.total,
-        scheduledRoutesTotal: input.model.scheduledRoutes.total,
-        onDemandTotal: input.model.onDemand.total,
-        priorYearScheduledTotal: input.model.priorYearScheduledTotal,
-        priorYearShare: input.model.priorYearShare,
-        dayTypes: input.model.dayTypes,
-        priorYearDayTypeCoverage: input.model.priorYearDayTypeCoverage,
-        yearToDateScheduledRoutes: input.model.yearToDateScheduledRoutes,
-        projectedAnnualScheduledRoutes: input.model.projectedAnnualScheduledRoutes,
-      },
+      ...auditContent(input.report),
     });
     transaction.create(mailRef, input.mailDocument);
     return true;
@@ -291,24 +432,59 @@ async function buildReport(params: {
   bucket: StorageBucket;
   teamId: string;
   reportMonth: string;
-}): Promise<{ model: MonthlyRidershipReportModel; chartPng: Buffer }> {
-  const [fixedProjection, todProjection, priorYearFixedDailyTotals] = await Promise.all([
+  templateVersion: MonthlyRidershipTemplateVersion;
+}): Promise<MonthlyRidershipReport> {
+  if (params.templateVersion === 1) {
+    const [fixedProjection, todProjection, priorYearFixedDailyTotals] = await Promise.all([
+      loadFixedProjection(params),
+      loadTodProjection(params),
+      loadPriorYearFixedDailyTotals(params),
+    ]);
+    const model = buildMonthlyRidershipReportModelV1({
+      baseline: RIDERSHIP_TREND_BASELINE,
+      fixedProjection,
+      todProjection,
+      priorYearFixedDailyTotals,
+      reportMonth: params.reportMonth,
+      generatedAt: new Date().toISOString(),
+    });
+    return {
+      templateVersion: 1,
+      model,
+      charts: [{
+        cid: MONTHLY_RIDERSHIP_CHART_CID_V1,
+        filename: `barrie-transit-monthly-ridership-${params.reportMonth}.png`,
+        png: await renderMonthlyRidershipChartPngV1(model),
+      }],
+    };
+  }
+
+  const [fixedProjection, todProjection, priorYearFixedDailyTotals, specializedMonths, serviceHours] = await Promise.all([
     loadFixedProjection(params),
     loadTodProjection(params),
     loadPriorYearFixedDailyTotals(params),
+    loadSpecializedMonths(params),
+    loadServiceHours(params),
   ]);
   const model = buildMonthlyRidershipReportModel({
     baseline: RIDERSHIP_TREND_BASELINE,
     fixedProjection,
     todProjection,
     priorYearFixedDailyTotals,
+    specializedMonths,
+    serviceHours,
     reportMonth: params.reportMonth,
     generatedAt: new Date().toISOString(),
   });
   return {
+    templateVersion: 2,
     model,
-    chartPng: await renderMonthlyRidershipChartPng(model),
+    charts: await renderMonthlyRidershipCharts(model),
   };
+}
+
+function reportCoverageComplete(report: MonthlyRidershipReport): boolean {
+  return report.templateVersion === 1 ? report.model.allTransit.complete : report.model.coverage.complete;
 }
 
 async function runScheduledMonthlyReport(reportMonth: string): Promise<void> {
@@ -320,31 +496,32 @@ async function runScheduledMonthlyReport(reportMonth: string): Promise<void> {
 
   const db = admin.firestore();
   const bucket = admin.storage().bucket();
-  const { model, chartPng } = await buildReport({
+  const templateVersion = await loadConfiguredTemplateVersion(db, DEFAULT_TEAM_ID);
+  const report = await buildReport({
     db,
     bucket,
     teamId: DEFAULT_TEAM_ID,
     reportMonth,
+    templateVersion,
   });
   const mailDocument = buildMonthlyRidershipMailDocument({
     recipients,
     reportMonth,
-    model,
-    chartPng,
+    report,
   });
   const queued = await queueMonthlyRidershipMail({
     db,
     teamId: DEFAULT_TEAM_ID,
     reportMonth,
     recipients,
-    model,
+    report,
     mailDocument,
   });
   if (!queued) {
     console.log(`Monthly ridership report already queued for ${reportMonth}; skipping duplicate send.`);
     return;
   }
-  console.log(`Monthly ridership report queued for ${recipients.length} recipient(s): ${reportMonth}`);
+  console.log(`Monthly ridership report (template ${templateVersion}) queued for ${recipients.length} recipient(s): ${reportMonth}`);
 }
 
 export const sendMonthlyRidershipReport = onSchedule(
@@ -388,21 +565,30 @@ export const testMonthlyRidershipReport = onRequest(
       return;
     }
 
+    const requestedTemplate = req.query.template === undefined ? null : parseMonthlyRidershipTemplateVersion(req.query.template);
+    if (req.query.template !== undefined && requestedTemplate === null) {
+      res.status(400).json({ error: 'Pass template as 1 or 2' });
+      return;
+    }
+
     const db = admin.firestore();
     const bucket = admin.storage().bucket();
-    const { model, chartPng } = await buildReport({
+    const templateVersion = requestedTemplate ?? await loadConfiguredTemplateVersion(db, DEFAULT_TEAM_ID);
+    const report = await buildReport({
       db,
       bucket,
       teamId: DEFAULT_TEAM_ID,
       reportMonth,
+      templateVersion,
     });
     if (req.query.debug === '1') {
       res.json({
         success: true,
         debug: true,
         reportMonth,
-        model,
-        chartBytes: chartPng.length,
+        templateVersion,
+        model: report.model,
+        chartBytes: report.charts.reduce((sum, chart) => sum + chart.png.length, 0),
       });
       return;
     }
@@ -410,8 +596,7 @@ export const testMonthlyRidershipReport = onRequest(
     const mailDocument = buildMonthlyRidershipMailDocument({
       recipients: [to],
       reportMonth,
-      model,
-      chartPng,
+      report,
       test: true,
     });
     const mailRef = await db.collection('mail').add(mailDocument);
@@ -421,7 +606,8 @@ export const testMonthlyRidershipReport = onRequest(
       reportMonth,
       subject: mailDocument.message.subject,
       mailDocumentId: mailRef.id,
-      coverageComplete: model.allTransit.complete,
+      templateVersion,
+      coverageComplete: reportCoverageComplete(report),
     });
   },
 );
