@@ -2,12 +2,18 @@ import type { DailySummary, DayType } from './performanceDataTypes';
 import { addDaysToISODate, compareDateStrings } from './performanceDateUtils';
 
 export const RIDERSHIP_BENCHMARK_WEEKS = 8;
+/** Days under this share of the day-type median boardings are treated as atypical (e.g. a holiday stored as a weekday). */
+export const ATYPICAL_RIDERSHIP_SHARE = 0.6;
+/** Days under this share of the day-type median record count are treated as partial imports. */
+export const PARTIAL_IMPORT_RECORD_SHARE = 0.75;
 
 export interface DayTypeBenchmark {
     /** Mean daily boardings for this day type over the benchmark window. */
     typical: number;
     /** Days that contributed to the mean. */
     sampleDays: number;
+    /** Days left out as atypical service or partial imports. */
+    excludedDays: number;
 }
 
 export type RidershipBenchmarks = Partial<Record<DayType, DayTypeBenchmark>>;
@@ -33,9 +39,17 @@ function pctChange(value: number, base: number | null): number | null {
     return ((value - base) / base) * 100;
 }
 
+function median(values: number[]): number {
+    const sorted = [...values].sort((x, y) => x - y);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 /**
  * Builds a typical-day benchmark per day type from the weeks before the
- * selected window. Days with no boardings are treated as missing data.
+ * selected window. Days with no boardings are missing data. Days far below the
+ * day-type median, in boardings or in imported records, are left out so a
+ * holiday or a partial import does not drag the typical day down.
  */
 export function buildRidershipBenchmarks(
     currentDays: DailySummary[],
@@ -47,7 +61,7 @@ export function buildRidershipBenchmarks(
     const historyStart = addDaysToISODate(windowStart, -weeks * 7);
     if (!historyStart) return {};
 
-    const totals = new Map<DayType, { sum: number; count: number }>();
+    const candidates = new Map<DayType, Array<{ ridership: number; records: number }>>();
     const seen = new Set<string>();
     for (const day of historyDays) {
         if (seen.has(day.date)) continue;
@@ -55,15 +69,24 @@ export function buildRidershipBenchmarks(
         const ridership = day.system.totalRidership;
         if (!(ridership > 0)) continue;
         seen.add(day.date);
-        const entry = totals.get(day.dayType) ?? { sum: 0, count: 0 };
-        entry.sum += ridership;
-        entry.count += 1;
-        totals.set(day.dayType, entry);
+        const list = candidates.get(day.dayType) ?? [];
+        list.push({ ridership, records: day.dataQuality?.totalRecords ?? 0 });
+        candidates.set(day.dayType, list);
     }
 
     const benchmarks: RidershipBenchmarks = {};
-    for (const [dayType, { sum, count }] of totals) {
-        benchmarks[dayType] = { typical: sum / count, sampleDays: count };
+    for (const [dayType, list] of candidates) {
+        const medianRidership = median(list.map(item => item.ridership));
+        const recordCounts = list.map(item => item.records).filter(records => records > 0);
+        const medianRecords = recordCounts.length > 0 ? median(recordCounts) : 0;
+        const kept = list.filter(item => item.ridership >= medianRidership * ATYPICAL_RIDERSHIP_SHARE
+            && !(medianRecords > 0 && item.records > 0 && item.records < medianRecords * PARTIAL_IMPORT_RECORD_SHARE));
+        if (kept.length === 0) continue;
+        benchmarks[dayType] = {
+            typical: kept.reduce((sum, item) => sum + item.ridership, 0) / kept.length,
+            sampleDays: kept.length,
+            excludedDays: list.length - kept.length,
+        };
     }
     return benchmarks;
 }

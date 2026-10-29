@@ -32,8 +32,8 @@ describe('ridership typical-day benchmark', () => {
             day('2026-10-22', 'weekday', 5000), // current window: excluded from its own benchmark
         ];
         const benchmarks = buildRidershipBenchmarks(current, history);
-        expect(benchmarks.weekday).toEqual({ typical: 1000, sampleDays: 2 });
-        expect(benchmarks.saturday).toEqual({ typical: 500, sampleDays: 1 });
+        expect(benchmarks.weekday).toEqual({ typical: 1000, sampleDays: 2, excludedDays: 0 });
+        expect(benchmarks.saturday).toEqual({ typical: 500, sampleDays: 1, excludedDays: 0 });
         expect(benchmarks.sunday).toBeUndefined();
     });
 
@@ -42,7 +42,21 @@ describe('ridership typical-day benchmark', () => {
             day('2026-10-15', 'weekday', 0),
             day('2026-10-14', 'weekday', 1000),
         ]);
-        expect(benchmarks.weekday).toEqual({ typical: 1000, sampleDays: 1 });
+        expect(benchmarks.weekday).toEqual({ typical: 1000, sampleDays: 1, excludedDays: 0 });
+    });
+
+    it('leaves out holidays stored as weekdays and partial imports', () => {
+        // Mirrors Labour Day 2026 (Sunday service stored as a weekday) and the
+        // partially imported 2026-10-13.
+        const withRecords = (d: DailySummary, records: number) => ({ ...d, dataQuality: { totalRecords: records } } as DailySummary);
+        const history = [
+            withRecords(day('2026-09-08', 'weekday', 9200), 37000),
+            withRecords(day('2026-09-09', 'weekday', 8800), 37000),
+            withRecords(day('2026-09-10', 'weekday', 9000), 38000),
+            withRecords(day('2026-09-07', 'weekday', 2643), 16441),
+            withRecords(day('2026-10-13', 'weekday', 6584), 24468),
+        ];
+        expect(buildRidershipBenchmarks(current, history).weekday).toEqual({ typical: 9000, sampleDays: 3, excludedDays: 2 });
     });
 
     it('builds per-day rows with typical, prior-week and service-hour comparisons', () => {

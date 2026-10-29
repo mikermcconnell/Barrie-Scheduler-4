@@ -71,33 +71,43 @@ interface BarShapeProps {
     showLabel: boolean;
 }
 
-/** Bar with its day-type benchmark drawn across it and the % difference above. */
+/**
+ * Bar with its boardings count inside, its day-type benchmark drawn across it,
+ * and the % difference above.
+ */
 const BenchmarkBar: React.FC<BarShapeProps> = ({ x = 0, y = 0, width = 0, height = 0, payload, showLabel }) => {
     if (!payload || height <= 0 || payload.ridership <= 0) return null;
     const radius = Math.min(4, width / 2, height);
     const baseline = y + height;
-    const bar = (
-        <path
-            d={`M${x},${baseline} V${y + radius} Q${x},${y} ${x + radius},${y} H${x + width - radius} Q${x + width},${y} ${x + width},${y + radius} V${baseline} Z`}
-            fill={BAR_COLOR}
-        />
-    );
-    if (payload.typical === null) return <g>{bar}</g>;
-    const benchmarkY = baseline - (payload.typical / payload.ridership) * height;
+    const benchmarkY = payload.typical !== null ? baseline - (payload.typical / payload.ridership) * height : null;
     const overhang = Math.min(6, width * 0.15);
+    // Keep the count clear of the dashed benchmark when it crosses the top of the bar.
+    let countY = y + 16;
+    if (benchmarkY !== null && Math.abs(benchmarkY - (countY - 4)) < 10) countY = benchmarkY + 16;
+    const showCount = showLabel && width >= 30 && countY + 4 < baseline;
     return (
         <g>
-            {bar}
-            <line
-                x1={x - overhang}
-                x2={x + width + overhang}
-                y1={benchmarkY}
-                y2={benchmarkY}
-                stroke={BENCHMARK_COLOR}
-                strokeWidth={2}
-                strokeDasharray="5 4"
+            <path
+                d={`M${x},${baseline} V${y + radius} Q${x},${y} ${x + radius},${y} H${x + width - radius} Q${x + width},${y} ${x + width},${y + radius} V${baseline} Z`}
+                fill={BAR_COLOR}
             />
-            {showLabel && payload.vsTypicalPct !== null && (
+            {showCount && (
+                <text x={x + width / 2} y={countY} textAnchor="middle" fontSize={11} fontWeight={700} fill="#FFFFFF">
+                    {formatCount(payload.ridership)}
+                </text>
+            )}
+            {benchmarkY !== null && (
+                <line
+                    x1={x - overhang}
+                    x2={x + width + overhang}
+                    y1={benchmarkY}
+                    y2={benchmarkY}
+                    stroke={BENCHMARK_COLOR}
+                    strokeWidth={2}
+                    strokeDasharray="5 4"
+                />
+            )}
+            {showLabel && benchmarkY !== null && payload.vsTypicalPct !== null && (
                 <text
                     x={x + width / 2}
                     y={Math.min(y, benchmarkY) - 7}
@@ -130,7 +140,7 @@ const DailyRidershipTooltip: React.FC<{ active?: boolean; payload?: Array<{ payl
             </div>
             {item('Boardings', <b>{formatCount(row.ridership)}</b>)}
             {row.typical !== null && row.vsTypicalPct !== null
-                ? item(`vs typical ${dayType} (${formatCount(row.typical)})`, formatPct(row.vsTypicalPct))
+                ? item(`vs typical ${dayType} (${formatCount(row.typical)}, ${row.typicalSampleDays} days)`, formatPct(row.vsTypicalPct))
                 : item(`vs typical ${dayType}`, 'No history')}
             {item('vs same day last week', row.vsPriorWeekPct !== null ? formatPct(row.vsPriorWeekPct) : 'Not loaded')}
             {row.boardingsPerServiceHour !== null && item('Boardings / service hr', row.boardingsPerServiceHour.toFixed(1))}
@@ -163,6 +173,7 @@ export const DailyRidershipChart: React.FC<DailyRidershipChartProps> = ({ days, 
         ? rows.filter(row => row.dayType !== 'weekday').map(row => row.label)
         : [];
     const hasBenchmark = rows.some(row => row.typical !== null);
+    const excludedDays = Object.values(benchmarks).reduce((sum, benchmark) => sum + (benchmark?.excludedDays ?? 0), 0);
 
     if (rows.length === 0) {
         return <p className="py-10 text-center text-sm text-gray-400">No ridership data for the selected period.</p>;
@@ -229,7 +240,8 @@ export const DailyRidershipChart: React.FC<DailyRidershipChartProps> = ({ days, 
                 {hasBenchmark && (
                     <span className="inline-flex items-center gap-1.5">
                         <span className="inline-block w-[18px] border-t-2 border-dashed" style={{ borderColor: BENCHMARK_COLOR }} />
-                        Typical for day type ({RIDERSHIP_BENCHMARK_WEEKS}-week average before this period)
+                        Typical for day type ({RIDERSHIP_BENCHMARK_WEEKS}-week average before this period
+                        {excludedDays > 0 && `; ${excludedDays} holiday or partial-data day${excludedDays === 1 ? '' : 's'} left out`})
                     </span>
                 )}
                 {weekendLabels.length > 0 && (
