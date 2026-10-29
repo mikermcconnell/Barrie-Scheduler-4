@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Ridership – Option B: Period comparison</title>
+<style>
+  :root {
+    --surface: #ffffff; --page: #f6f7f9; --border: #e5e7eb;
+    --ink: #111827; --ink-2: #4b5563; --ink-3: #6b7280; --grid: #eef0f3;
+    --cur: #0e8fb0; --cmp: #c7ced6; --above: #2a78d6; --below: #eb6834;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: var(--page); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+  .note { max-width: 1200px; margin: 0 auto 16px; color: var(--ink-2); }
+  .note b { color: var(--ink); }
+  .card { max-width: 1200px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 24px; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  h2 { margin: 0; font-size: 17px; }
+  .sub { color: var(--ink-3); font-size: 12.5px; margin-top: 2px; }
+  .headline { margin: 14px 0 4px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .headline .big { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .headline .chg { font-size: 14px; font-weight: 600; }
+  .headline .ctx { color: var(--ink-3); font-size: 12.5px; }
+  .ctrl { display: flex; gap: 10px; align-items: center; font-size: 12.5px; color: var(--ink-3); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: #fff; padding: 6px 11px; font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer; border-left: 1px solid var(--border); }
+  .seg button:first-child { border-left: 0; }
+  .seg button.on { background: var(--ink); color: #fff; }
+  .legend { display: flex; gap: 18px; font-size: 12px; color: var(--ink-2); margin: 8px 0 0; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  svg text { font-family: inherit; }
+  .tip { position: fixed; pointer-events: none; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 10px 12px; font-size: 12.5px; min-width: 240px; opacity: 0; }
+  .tip h4 { margin: 0 0 6px; font-size: 13px; }
+  .tip .row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+  .tip .row span:first-child { color: var(--ink-3); display: inline-flex; align-items: center; gap: 6px; }
+  .tip .bars { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+  .tip .bars .row span:first-child { min-width: 70px; }
+  .mini { height: 6px; background: var(--cur); border-radius: 3px; }
+</style>
+</head>
+<body>
+<p class="note"><b>Option B — Period comparison.</b> A headline number leads. Grey "ghost" bars show the comparison period behind each day.
+A change row under the axis shows the gap in one glance. The planner picks what to compare against: last week, the same week last year, or a 4-week average.
+The tooltip splits the day into service periods (AM peak, midday, PM peak, evening).</p>
+
+<div class="card">
+  <div class="head">
+    <div>
+      <h2>Daily Ridership</h2>
+      <div class="sub">Thu Oct 22 – Wed Oct 28, 2026 · 7 of 7 days with data</div>
+    </div>
+    <div class="ctrl">Compare to
+      <div class="seg" id="cmp">
+        <button class="on" data-c="lw">Last week</button>
+        <button data-c="ly">Same week 2025</button>
+        <button data-c="avg">4-week avg</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="headline">
+    <span class="big">56,340</span><span class="chg" id="hchg"></span>
+    <span class="ctx" id="hctx"></span>
+  </div>
+
+  <div id="chart"></div>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--cur)"></i>This week</span>
+    <span><i class="sw" style="background:var(--cmp)"></i><span id="lcmp">Last week (same weekday)</span></span>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const DAYS = [
+  { d:'Thu', date:'10/22', long:'Thursday, Oct 22', b:10120, lw:9880, ly:9610, avg:9540, p:[2890,3050,2980,1200] },
+  { d:'Fri', date:'10/23', long:'Friday, Oct 23',   b:9530,  lw:9700, ly:9300, avg:9480, p:[2650,2900,2860,1120] },
+  { d:'Sat', date:'10/24', long:'Saturday, Oct 24', b:5690,  lw:5410, ly:5500, avg:5900, p:[900,2350,1700,740] },
+  { d:'Sun', date:'10/25', long:'Sunday, Oct 25',   b:4140,  lw:3980, ly:3870, avg:4050, p:[620,1810,1250,460] },
+  { d:'Mon', date:'10/26', long:'Monday, Oct 26',   b:8640,  lw:9320, ly:8890, avg:9310, p:[2520,2600,2560,960] },
+  { d:'Tue', date:'10/27', long:'Tuesday, Oct 27',  b:9160,  lw:9450, ly:8980, avg:9390, p:[2700,2780,2690,990] },
+  { d:'Wed', date:'10/28', long:'Wednesday, Oct 28',b:9060,  lw:9380, ly:8770, avg:9420, p:[2660,2750,2660,990] },
+];
+const PERIODS = ['AM peak (6–9)', 'Midday (9–15)', 'PM peak (15–18)', 'Evening (18+)'];
+const LABEL = { lw: 'Last week (same weekday)', ly: 'Same week 2025 (same weekday)', avg: '4-week average (same weekday)' };
+const SHORT = { lw: 'last week', ly: 'same week 2025', avg: '4-week avg' };
+let cmp = 'lw';
+const fmt = n => Math.round(n).toLocaleString();
+const pct = (a, b) => (a - b) / b * 100;
+const sign = n => (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+
+function draw() {
+  const total = DAYS.reduce((s, r) => s + r.b, 0), ctot = DAYS.reduce((s, r) => s + r[cmp], 0), dp = pct(total, ctot);
+  const hc = document.getElementById('hchg');
+  hc.textContent = (dp >= 0 ? '▲ ' : '▼ ') + sign(dp) + ' vs ' + SHORT[cmp];
+  hc.style.color = dp >= 0 ? 'var(--above)' : 'var(--below)';
+  document.getElementById('hctx').textContent = `boardings this week · ${fmt(ctot)} in comparison period · ${(total - ctot >= 0 ? '+' : '') + fmt(total - ctot)} riders`;
+  document.getElementById('lcmp').textContent = LABEL[cmp];
+
+  const W = document.getElementById('chart').clientWidth, H = 330, m = { t: 14, r: 12, b: 80, l: 52 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, max = 12000;
+  const y = v => m.t + ih - v / max * ih, band = iw / DAYS.length, bw = Math.min(band * 0.3, 44);
+  let s = `<svg width="${W}" height="${H}">`;
+  [0, 3000, 6000, 9000, 12000].forEach(t => s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--ink-3)">${t / 1000}k</text>`);
+  const bar = (x, v, fill, cls = '') => { const top = y(v); return `<path class="${cls}" d="M${x},${m.t + ih} V${top + 4} q0,-4 4,-4 H${x + bw - 4} q4,0 4,4 V${m.t + ih} Z" fill="${fill}"/>`; };
+  DAYS.forEach((r, i) => {
+    const cx = m.l + i * band + band / 2, d = pct(r.b, r[cmp]);
+    s += `<g class="g" data-i="${i}"><rect class="hl" x="${m.l + i * band + 4}" y="${m.t}" width="${band - 8}" height="${ih}" rx="6" fill="#f3f4f6" opacity="0"/>`;
+    s += bar(cx - bw - 1, r[cmp], 'var(--cmp)') + bar(cx + 1, r.b, 'var(--cur)');
+    s += `<text x="${cx}" y="${m.t + ih + 18}" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">${r.d} <tspan fill="var(--ink-3)" font-weight="400">${r.date}</tspan></text>`;
+    // change chip
+    const col = d >= 0 ? 'var(--above)' : 'var(--below)';
+    s += `<rect x="${cx - 34}" y="${m.t + ih + 32}" width="68" height="22" rx="11" fill="#fff" stroke="${col}"/>
+          <text x="${cx}" y="${m.t + ih + 47}" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}%</text>`;
+    s += `<rect x="${m.l + i * band}" y="${m.t}" width="${band}" height="${H - m.t}" fill="transparent"/></g>`;
+  });
+  s += `<line x1="${m.l}" x2="${W - m.r}" y1="${m.t + ih}" y2="${m.t + ih}" stroke="#9ca3af"/>
+        <text x="${m.l - 8}" y="${m.t + ih + 47}" text-anchor="end" font-size="10.5" fill="var(--ink-3)">change</text></svg>`;
+  const el = document.getElementById('chart'); el.innerHTML = s;
+  el.querySelectorAll('.g').forEach(g => {
+    g.onmousemove = e => tipShow(e, DAYS[+g.dataset.i], g);
+    g.onmouseleave = () => { tip.style.opacity = 0; g.querySelector('.hl').setAttribute('opacity', 0); };
+  });
+}
+
+const tip = document.getElementById('tip');
+function tipShow(e, r, g) {
+  g.querySelector('.hl').setAttribute('opacity', 1);
+  const mx = Math.max(...r.p);
+  tip.innerHTML = `<h4>${r.long}, 2026</h4>
+    <div class="row"><span><i class="sw" style="background:var(--cur)"></i>This week</span><b>${fmt(r.b)}</b></div>
+    <div class="row"><span><i class="sw" style="background:var(--cmp)"></i>${SHORT[cmp]}</span><span>${fmt(r[cmp])}</span></div>
+    <div class="row"><span>Change</span><span>${(r.b - r[cmp] >= 0 ? '+' : '') + fmt(r.b - r[cmp])} (${sign(pct(r.b, r[cmp]))})</span></div>
+    <div class="bars">${r.p.map((v, k) => `<div class="row"><span>${PERIODS[k]}</span><span style="flex:1;margin:0 8px;align-self:center"><div class="mini" style="width:${v / mx * 100}%"></div></span><span>${fmt(v)}</span></div>`).join('')}</div>`;
+  tip.style.opacity = 1;
+  tip.style.left = Math.min(e.clientX + 16, innerWidth - 300) + 'px'; tip.style.top = (e.clientY - 30) + 'px';
+}
+
+document.querySelectorAll('#cmp button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#cmp button').forEach(x => x.classList.remove('on')); b.classList.add('on'); cmp = b.dataset.c; draw();
+});
+addEventListener('resize', draw); draw();
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@ import {
     LineChart, Line, Legend,
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
+import { DailyRidershipChart } from './DailyRidershipChart';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import { StopActivityMap } from './StopActivityMap';
 import { TodDailyKpiSection } from './TodDailyKpiSection';
@@ -24,9 +25,12 @@ interface RidershipModuleProps {
     data: PerformanceDataSummary;
     dayTypeFilter?: PerformanceDayTypeFilter;
     comparisonDays?: DailySummary[];
+    /** All loaded days for the route scope, used for the typical-day benchmark. */
+    historyDays?: DailySummary[];
     comparisonRange?: { start: string; end: string } | null;
 }
 
+const EMPTY_DAYS: DailySummary[] = [];
 const ROUTE_COLORS = ['#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#22c55e', '#ec4899', '#3b82f6', '#14b8a6', '#f97316', '#6366f1', '#a855f7', '#84cc16'];
 const RIDERSHIP_ROUTE_GROUPS: Record<string, string> = {
     '2A': '2A/2B',
@@ -90,6 +94,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     dayTypeFilter = 'all',
     comparisonDays = [],
     comparisonRange = null,
+    historyDays = EMPTY_DAYS,
 }) => {
     const { team, accessLevel, canManageTeam } = useTeam();
     const { user } = useAuth();
@@ -100,18 +105,6 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
     const formatCount = (value: number) => (value / divisor).toLocaleString(undefined, { maximumFractionDigits: 1 });
     const [routeSortKey, setRouteSortKey] = useState<RouteSortKey>('ridership');
     const [routeSortDir, setRouteSortDir] = useState<SortDir>('desc');
-
-    // Daily ridership trend
-    const dailyTrend = useMemo(() =>
-        filtered.map(d => ({
-            date: shortDateLabel(d.date),
-            weekdayDate: shortWeekdayDateLabel(d.date),
-            fullDate: d.date,
-            ridership: d.system.totalRidership,
-            boardings: d.system.totalBoardings,
-        })).sort((a, b) => compareDateStrings(a.fullDate, b.fullDate)),
-        [filtered]
-    );
 
     // Route ridership ranking
     const routeRanking = useMemo(() => {
@@ -291,40 +284,8 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({
             />
 
             {/* Daily Ridership Trend */}
-            <ChartCard title="Daily Ridership" subtitle="Total boardings per day">
-                {dailyTrend.length > 1 ? (
-                    <ResponsiveContainer width="100%" height={250}>
-                        <BarChart data={dailyTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                            <XAxis dataKey="weekdayDate" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
-                            <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <Tooltip
-                                labelFormatter={(_, payload) => {
-                                    const row = payload?.[0]?.payload as { fullDate?: string; weekdayDate?: string } | undefined;
-                                    return row?.fullDate ? longWeekdayDateLabel(row.fullDate) : (row?.weekdayDate || '');
-                                }}
-                                formatter={(v: number) => [v.toLocaleString(), 'Boardings']}
-                            />
-                            <Bar dataKey="ridership" fill="#06b6d4" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                    </ResponsiveContainer>
-                ) : (
-                    <ResponsiveContainer width="100%" height={250}>
-                        <BarChart data={dailyTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                            <XAxis dataKey="weekdayDate" tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <Tooltip
-                                labelFormatter={(_, payload) => {
-                                    const row = payload?.[0]?.payload as { fullDate?: string; weekdayDate?: string } | undefined;
-                                    return row?.fullDate ? longWeekdayDateLabel(row.fullDate) : (row?.weekdayDate || '');
-                                }}
-                                formatter={(v: number) => [v.toLocaleString(), 'Boardings']}
-                            />
-                            <Bar dataKey="ridership" fill="#06b6d4" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                    </ResponsiveContainer>
-                )}
+            <ChartCard title="Daily Ridership" subtitle="Boardings per day vs. the typical day of the same type">
+                <DailyRidershipChart days={filtered} historyDays={historyDays} comparisonDays={comparisonDays} />
             </ChartCard>
 
             {canViewLoad && <RidershipLoadSection analysisForPeriod={routeLoadAnalysisForPeriod} />}
