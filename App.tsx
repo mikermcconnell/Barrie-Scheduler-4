@@ -19,6 +19,7 @@ import { getPendingInviteCode } from './utils/inviteLinks';
 import { ANALYTICS_WORKSPACE_FEATURES } from './utils/workspaceAccess';
 import { parseAnalyticsWorkspaceViewFromHash } from './utils/workspaces/analyticsWorkspaceRouting';
 import { SimulatorWorkspaceCard } from './components/Performance/SimulatorLink';
+import { SIMULATOR_TEAM_TABS } from './utils/simulatorLink';
 
 const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
@@ -54,7 +55,7 @@ function parseHashView(): View {
 
 const AppContent: React.FC = () => {
   const { user, loading, signOut, isGlobalAdmin } = useAuth();
-  const { hasTeam, actualTeam, availableTeams = [] } = useTeam();
+  const { hasTeam, actualTeam, team, availableTeams = [] } = useTeam();
   const { canAccess, loading: accessLoading } = useWorkspaceAccess();
   const [currentView, setCurrentViewState] = useState<View>(parseHashView);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -265,7 +266,8 @@ const AppContent: React.FC = () => {
 
               <div className="grid min-w-0 flex-1 grid-cols-1 gap-6 md:grid-cols-2 xl:min-h-0 xl:grid-cols-3 xl:grid-rows-2">
                 {/* Barrie Transit Simulator Card */}
-                {(isViewAvailable('operations') || isViewAvailable('parking')) && <SimulatorWorkspaceCard />}
+                {/* Partner teams the simulator lets in (Ontario Northland) need neither workspace. */}
+                {(isViewAvailable('operations') || isViewAvailable('parking') || (!!team && team.id in SIMULATOR_TEAM_TABS)) && <SimulatorWorkspaceCard />}
 
                 {/* On Demand Card */}
                 {isViewAvailable('ondemand') && (
