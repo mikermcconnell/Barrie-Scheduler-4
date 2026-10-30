@@ -2,12 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, ExternalLink, Loader2, Map, Play } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { isFeatureEnabled } from '../../utils/features';
-import { canOpenSimulator, openSimulator, SIMULATOR_LIMITED_TABS, type SimulatorView } from '../../utils/simulatorLink';
+import { canOpenSimulator, openSimulator, simulatorLimitedTabs, type SimulatorView } from '../../utils/simulatorLink';
 
 /** True when this user may follow a link into the Barrie Simulator. */
 export function useCanOpenSimulator(): boolean {
-    const { accessLevel } = useTeam();
-    return isFeatureEnabled('operationsSimulatorLink') && canOpenSimulator(accessLevel);
+    const { accessLevel, team } = useTeam();
+    return isFeatureEnabled('operationsSimulatorLink') && canOpenSimulator(accessLevel, team?.id);
 }
 
 function useOpenSimulator(view?: SimulatorView) {
@@ -118,8 +118,8 @@ const ReplayMap: React.FC = () => {
 /** Home-page workspace card that opens the Barrie Simulator. */
 export const SimulatorWorkspaceCard: React.FC = () => {
     const canOpen = useCanOpenSimulator();
-    const { accessLevel } = useTeam();
-    const limitedTabs = SIMULATOR_LIMITED_TABS[accessLevel];
+    const { accessLevel, team } = useTeam();
+    const limitedTabs = simulatorLimitedTabs(accessLevel, team?.id);
     const { busy, error, open } = useOpenSimulator();
     if (!canOpen) return null;
     return (
@@ -151,9 +151,11 @@ export const SimulatorWorkspaceCard: React.FC = () => {
                     <p className="mb-4 line-clamp-3 text-sm font-bold text-rose-300">{error}</p>
                 ) : (
                     <p className="mb-4 line-clamp-3 text-sm font-bold text-slate-300">
-                        {limitedTabs
-                            ? 'Parking lots and curb rules, plus planning layers, on the city map.'
-                            : 'See every bus on the map, or replay a past day trip by trip.'}
+                        {!limitedTabs
+                            ? 'See every bus on the map, or replay a past day trip by trip.'
+                            : limitedTabs.includes('Service Desk')
+                              ? 'Live departures at Allandale and Downtown, plus planning and parking layers, on the city map.'
+                              : 'Parking lots and curb rules, plus planning layers, on the city map.'}
                     </p>
                 )}
                 <div className="mt-auto flex items-center gap-2 whitespace-nowrap text-sm font-extrabold uppercase tracking-wide text-indigo-300" title="Opens the Barrie Simulator">

@@ -16,11 +16,22 @@ export const SIMULATOR_ACCESS_LEVELS: readonly WorkspaceAccessLevel[] = ['planne
  */
 export const SIMULATOR_LIMITED_TABS: Partial<Record<WorkspaceAccessLevel, readonly string[]>> = { parking: ['Parking', 'Planning'] };
 
+/**
+ * Teams the simulator signs in to some tabs only, whatever the member's level here (its ONTARIO_NORTHLAND_TEAM):
+ * the Ontario Northland team sees the tabs built on public data, and no operations, rider or internal City data.
+ */
+export const SIMULATOR_TEAM_TABS: Record<string, readonly string[]> = { VieLReKaKrIfaSh44kEj: ['Service Desk', 'Planning', 'Parking'] };
+
+/** The only simulator tabs this user gets, or undefined when they get every deployed tab. */
+export function simulatorLimitedTabs(accessLevel: WorkspaceAccessLevel, teamId?: string | null): readonly string[] | undefined {
+    return SIMULATOR_LIMITED_TABS[accessLevel] ?? (teamId ? SIMULATOR_TEAM_TABS[teamId] : undefined);
+}
+
 /** Operations views the simulator opens from a link. Leave out for Buses (live and replay). */
 export type SimulatorView = 'punctuality';
 
-export function canOpenSimulator(accessLevel: WorkspaceAccessLevel): boolean {
-    return SIMULATOR_ACCESS_LEVELS.includes(accessLevel) || accessLevel in SIMULATOR_LIMITED_TABS;
+export function canOpenSimulator(accessLevel: WorkspaceAccessLevel, teamId?: string | null): boolean {
+    return SIMULATOR_ACCESS_LEVELS.includes(accessLevel) || !!simulatorLimitedTabs(accessLevel, teamId);
 }
 
 export function simulatorUrl(idToken: string, view?: SimulatorView, origin = SIMULATOR_ORIGIN): string {
