@@ -1,7 +1,7 @@
 import { isPrimaryDeveloperEmail } from '../../utils/developerPreview';
 
 export interface GuidedScheduleAccessInput {
-    /** The `fixedGuidedSchedule` feature flag (off by default). */
+    /** The `fixedGuidedSchedule` feature flag (on by default). */
     flagEnabled: boolean;
     /** Scheduler-admin custom claim. */
     isGlobalAdmin: boolean;

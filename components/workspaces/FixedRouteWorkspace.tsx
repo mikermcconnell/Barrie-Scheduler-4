@@ -138,7 +138,7 @@ function parseHashViewMode(access: FixedRouteViewAccess = {}): FixedRouteViewMod
 
 const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     dashboard: '',
-    'new-schedule': 'New Schedule',
+    'new-schedule': 'Legacy Schedule Wizard',
     master: 'Master Schedule',
     reports: 'Timetable Publisher',
     analytics: 'Planning Data',
@@ -148,7 +148,7 @@ const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     'performance-import': 'Re-import STREETS Data',
     detours: 'Detour Publisher',
     'run-cutting': 'Run Cutting & Rostering',
-    'guided-schedule': 'Guided Schedule',
+    'guided-schedule': 'New Schedule',
 };
 
 interface DashboardCardProps {
@@ -206,6 +206,7 @@ export const FixedRouteWorkspace: React.FC = () => {
         isGlobalAdmin,
         email: user?.email,
     });
+    const canCreateSchedules = accessLevel !== 'planner' && accessLevel !== 'external-planner';
 
     // Wrap navigation to sync URL hash
     const setViewMode = useCallback((mode: FixedRouteViewMode) => {
@@ -278,7 +279,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                         ? `Scheduled Transit · ${activeSystemDraft.name}`
                         : 'Scheduled Transit · System Draft Editor';
                 case 'new-schedule':
-                    return 'Scheduled Transit · New Schedule';
+                    return 'Scheduled Transit · Legacy Schedule Wizard';
                 case 'master':
                     return 'Scheduled Transit · Master Schedule';
                 case 'drafts':
@@ -296,7 +297,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                 case 'run-cutting':
                     return 'Scheduled Transit · Run Cutting & Rostering';
                 case 'guided-schedule':
-                    return 'Scheduled Transit · Guided Schedule';
+                    return 'Scheduled Transit · New Schedule';
                 default:
                     return 'Scheduled Transit';
             }
@@ -711,15 +712,27 @@ export const FixedRouteWorkspace: React.FC = () => {
                         <p className="text-gray-500">Select a tool to manage schedules or analyze performance.</p>
                     </div>
 
-                    {isFeatureEnabled('fixedPerformanceImport') && (
-                        <button
-                            onClick={() => setViewMode('performance-import')}
-                            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors self-start"
-                        >
-                            <RefreshCw size={14} />
-                            Re-import Data
-                        </button>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1 self-start">
+                        {canCreateSchedules && canSeeGuidedSchedule && isFeatureEnabled('fixedNewSchedule') && (
+                            <button
+                                onClick={handleOpenNewSchedule}
+                                title="Runtime CSV, GTFS import, and saved projects"
+                                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                <CalendarPlus size={14} />
+                                Legacy schedule wizard
+                            </button>
+                        )}
+                        {isFeatureEnabled('fixedPerformanceImport') && (
+                            <button
+                                onClick={() => setViewMode('performance-import')}
+                                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                <RefreshCw size={14} />
+                                Re-import Data
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-4">
@@ -733,14 +746,14 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="Schedule Editor" description="Edit drafts and publish to Master Schedule. The main workflow for schedule changes." />
                     )}
 
-                    {isFeatureEnabled('fixedNewSchedule') && accessLevel !== 'planner' && accessLevel !== 'external-planner' && (
-                        <DashboardCard onClick={handleOpenNewSchedule} icon={<CalendarPlus size={20} />} color="emerald"
-                            title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
+                    {canCreateSchedules && canSeeGuidedSchedule && (
+                        <DashboardCard onClick={() => setViewMode('guided-schedule')} icon={<CalendarPlus size={20} />} color="emerald"
+                            title="New Schedule" description="Step-by-step: observed data, time bands, span and vehicles, build, and package." />
                     )}
 
-                    {canSeeGuidedSchedule && accessLevel !== 'planner' && accessLevel !== 'external-planner' && (
-                        <DashboardCard onClick={() => setViewMode('guided-schedule')} icon={<CalendarPlus size={20} />} color="emerald"
-                            title="Guided Schedule (beta)" description="Step-by-step: observed data, time bands, span and vehicles, build, and package." />
+                    {canCreateSchedules && !canSeeGuidedSchedule && isFeatureEnabled('fixedNewSchedule') && (
+                        <DashboardCard onClick={handleOpenNewSchedule} icon={<CalendarPlus size={20} />} color="emerald"
+                            title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
                     )}
 
                     {isFeatureEnabled('fixedGtfsImport') && (

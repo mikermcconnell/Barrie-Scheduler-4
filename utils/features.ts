@@ -21,7 +21,7 @@ export const FEATURE_DEFINITIONS = {
     fixedLocalAiReview: { defaultEnabled: false, hideInDemoMode: false },
     fixedDetours: { defaultEnabled: true, hideInDemoMode: false },
     fixedRunCutting: { defaultEnabled: true, hideInDemoMode: false },
-    fixedGuidedSchedule: { defaultEnabled: false, hideInDemoMode: true },
+    fixedGuidedSchedule: { defaultEnabled: true, hideInDemoMode: true },
 
     analyticsTransitApp: { defaultEnabled: true, hideInDemoMode: false },
     analyticsOdMatrix: { defaultEnabled: true, hideInDemoMode: true },
