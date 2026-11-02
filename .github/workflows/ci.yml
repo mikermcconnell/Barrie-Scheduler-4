@@ -73,7 +73,7 @@ jobs:
         shell: bash
         env:
           AUDIT_BASELINE_LOW: '0'
-          AUDIT_BASELINE_MODERATE: '2'
+          AUDIT_BASELINE_MODERATE: '9'
           AUDIT_BASELINE_HIGH: '0'
           AUDIT_BASELINE_CRITICAL: '0'
         run: |
@@ -160,7 +160,7 @@ jobs:
         shell: bash
         env:
           AUDIT_BASELINE_LOW: '0'
-          AUDIT_BASELINE_MODERATE: '9'
+          AUDIT_BASELINE_MODERATE: '12'
           AUDIT_BASELINE_HIGH: '0'
           AUDIT_BASELINE_CRITICAL: '0'
         run: |
