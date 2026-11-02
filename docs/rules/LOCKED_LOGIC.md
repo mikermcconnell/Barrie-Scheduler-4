@@ -80,6 +80,9 @@ paths, AI suggests and planners decide.
 New Schedule generation uses an eligible approved 30-minute bucket.
 
 - Performance buckets require at least 5 distinct days with a complete same-day paired cycle.
+- A bucket's runtime is the sum of its rounded segment medians (P50). Step 2 shows, bands, and approves that same number, because it is what the generator builds. The median of real same-day cycle totals is shown beside it as a check, not used for generation.
+- Paired cycles pair the outbound leg with the nearest return leg that departs from 5 minutes before to 60 minutes after the outbound arrival.
+- Performance (paired-cycle) buckets are not tested for outliers against other times of day; a slow peak half-hour is real evidence. Inside each bucket, a day whose full cycle total has a modified z-score above 3.5 (median/MAD) is dropped from every segment of that bucket. The remaining days must still meet the 5-day rule. The mean ± 2σ cross-bucket outlier test applies to uploaded CSV buckets only.
 - Performance cycles are validated independently by start orientation. A North-start bucket covers its North/South pair; a South-start bucket covers its South/North pair. Each approved orientation bucket requires its own five-day complete-cycle evidence.
 - A block uses the exact approved bucket for its starting orientation when available, reused for both paired legs. When the exact half-hour is unavailable, use the nearest eligible approved bucket from that same orientation. Measure distance around the 24-hour clock and prefer the earlier bucket when two buckets are equally near.
 - Uploaded CSV buckets require an explicit count of at least 10 observations for every canonical segment. Percentiles without counts are review-only.

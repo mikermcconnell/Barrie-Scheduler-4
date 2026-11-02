@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Ridership – Option C: Variance and notes</title>
+<style>
+  :root {
+    --surface: #ffffff; --page: #f6f7f9; --border: #e5e7eb;
+    --ink: #111827; --ink-2: #4b5563; --ink-3: #6b7280; --grid: #eef0f3;
+    --above: #2a78d6; --below: #eb6834; --bar: #0e8fb0; --mid: #9ca3af;
+    --warn-bg: #fff7e6; --warn-ink: #8a5a00;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: var(--page); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+  .note { max-width: 1200px; margin: 0 auto 16px; color: var(--ink-2); }
+  .note b { color: var(--ink); }
+  .card { max-width: 1200px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 24px; }
+  h2 { margin: 0; font-size: 17px; }
+  .sub { color: var(--ink-3); font-size: 12.5px; margin-top: 2px; }
+  .grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; margin-top: 14px; }
+  .lbl { font-size: 11.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .03em; margin: 4px 0; }
+  .side { border-left: 1px solid var(--border); padding-left: 18px; }
+  .summary { background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }
+  .summary b { color: var(--ink); }
+  .ev { display: flex; gap: 10px; padding: 8px 6px; border-radius: 8px; cursor: default; }
+  .ev:hover, .ev.on { background: #f3f4f6; }
+  .ev .day { font-weight: 650; width: 54px; flex: none; }
+  .ev .t { font-size: 12.5px; color: var(--ink-2); }
+  .ev .tag { display: inline-block; font-size: 10.5px; padding: 1px 6px; border-radius: 99px; border: 1px solid var(--border); margin-right: 4px; color: var(--ink-2); }
+  .ev .tag.data { background: var(--warn-bg); color: var(--warn-ink); border-color: #f5d79e; }
+  .add { margin-top: 8px; font-size: 12.5px; color: var(--above); background: none; border: 1px dashed #bcd3f0; border-radius: 8px; padding: 6px 10px; width: 100%; cursor: pointer; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin-top: 6px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  svg text { font-family: inherit; }
+  .tip { position: fixed; pointer-events: none; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 10px 12px; font-size: 12.5px; min-width: 230px; opacity: 0; }
+  .tip h4 { margin: 0 0 6px; font-size: 13px; }
+  .tip .row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+  .tip .row span:first-child { color: var(--ink-3); }
+</style>
+</head>
+<body>
+<p class="note"><b>Option C — Variance and notes (operations view).</b> The main chart shows how far each day is above or below what we expected for that day type.
+Zero means "a normal day." Small bars above give the raw totals. A data-coverage strip warns when the APC (automatic passenger counter) fleet coverage was low, so a dip is not mistaken for lost riders.
+A notes panel explains the unusual days, and hovering a note highlights its day.</p>
+
+<div class="card">
+  <h2>Daily Ridership</h2>
+  <div class="sub">Thu Oct 22 – Wed Oct 28, 2026 · expected = 8-week average for the same day type (Weekday / Saturday / Sunday)</div>
+
+  <div class="grid">
+    <div>
+      <div class="lbl">Boardings</div>
+      <div id="totals"></div>
+      <div class="lbl" style="margin-top:10px">Difference from expected</div>
+      <div id="chart"></div>
+      <div class="lbl" style="margin-top:6px">APC data coverage</div>
+      <div id="cov"></div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--above)"></i>Above expected</span>
+        <span><i class="sw" style="background:var(--below)"></i>Below expected</span>
+        <span><i class="sw" style="background:var(--warn-bg);border:1px solid #f5d79e"></i>Coverage under 95% — read with care</span>
+      </div>
+    </div>
+    <div class="side">
+      <div class="summary"><b>Week in one line:</b> 56,340 boardings, 0.6% under expected. Weekdays ran 1.0% low, mostly Mon–Wed. Monday's dip is partly a data gap (APC coverage 91%).</div>
+      <div class="lbl">Notes</div>
+      <div id="events"></div>
+      <button class="add">+ Add note for a day</button>
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const DAYS = [
+  { d:'Thu', date:'10/22', type:'Weekday',  b:10120, exp:9400, cov:99, ev:[{tag:'Event', t:'Georgian College open house — Rt 8 and 100 loads up'}] },
+  { d:'Fri', date:'10/23', type:'Weekday',  b:9530,  exp:9400, cov:98 },
+  { d:'Sat', date:'10/24', type:'Saturday', b:5690,  exp:5900, cov:97, ev:[{tag:'Service', t:'2 missed trips on Rt 1 (operator shortage)'}] },
+  { d:'Sun', date:'10/25', type:'Sunday',   b:4140,  exp:4050, cov:98 },
+  { d:'Mon', date:'10/26', type:'Weekday',  b:8640,  exp:9400, cov:91, ev:[{tag:'Detour', t:'Rt 8 Bayfield detour, AM'}, {tag:'Data', data:true, t:'APC coverage 91% — 6 buses not reporting'}] },
+  { d:'Tue', date:'10/27', type:'Weekday',  b:9160,  exp:9400, cov:97, ev:[{tag:'Weather', t:'Heavy rain after 3 pm'}] },
+  { d:'Wed', date:'10/28', type:'Weekday',  b:9060,  exp:9400, cov:98 },
+];
+const fmt = n => Math.round(n).toLocaleString();
+const pct = r => (r.b - r.exp) / r.exp * 100;
+let active = -1;
+
+function geom(id, H) {
+  const W = document.getElementById(id).clientWidth, l = 52, r = 12;
+  const band = (W - l - r) / DAYS.length;
+  return { W, H, l, r, band, cx: i => l + i * band + band / 2 };
+}
+
+function draw() {
+  // totals strip
+  let g = geom('totals', 70), s = `<svg width="${g.W}" height="70">`, max = 11000, bw = Math.min(g.band * .5, 70);
+  DAYS.forEach((r, i) => {
+    const h = r.b / max * 46, x = g.cx(i) - bw / 2;
+    s += `<rect x="${x}" y="${52 - h}" width="${bw}" height="${h}" rx="3" fill="var(--bar)" opacity="${active < 0 || active === i ? 1 : .35}"/>
+          <text x="${g.cx(i)}" y="66" text-anchor="middle" font-size="11" fill="var(--ink-2)">${fmt(r.b)}</text>`;
+  });
+  document.getElementById('totals').innerHTML = s + '</svg>';
+
+  // variance chart
+  g = geom('chart', 240); const t = 14, b = 44, ih = g.H - t - b, lim = 10;
+  const y = v => t + ih / 2 - v / lim * (ih / 2);
+  s = `<svg width="${g.W}" height="${g.H}">`;
+  [-10, -5, 0, 5, 10].forEach(v => s += `<line x1="${g.l}" x2="${g.W - g.r}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? 'var(--mid)' : 'var(--grid)'}" stroke-width="${v === 0 ? 1.5 : 1}"/><text x="${g.l - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--ink-3)">${v > 0 ? '+' : ''}${v}%</text>`);
+  s += `<text x="${g.W - g.r}" y="${y(0) - 6}" text-anchor="end" font-size="10.5" fill="var(--ink-3)">expected</text>`;
+  DAYS.forEach((r, i) => {
+    const p = pct(r), cx = g.cx(i), up = p >= 0, y0 = y(0), y1 = y(p), h = Math.abs(y1 - y0);
+    const col = up ? 'var(--above)' : 'var(--below)', op = active < 0 || active === i ? 1 : .35;
+    const top = up ? y1 : y0;
+    s += `<g class="d" data-i="${i}">`;
+    if (r.cov < 95) s += `<rect x="${cx - g.band / 2 + 3}" y="${t}" width="${g.band - 6}" height="${ih}" rx="6" fill="var(--warn-bg)"/>`;
+    s += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${Math.max(h, 1)}" rx="3" fill="${col}" opacity="${op}"/>`;
+    s += `<text x="${cx}" y="${up ? y1 - 7 : y1 + 15}" text-anchor="middle" font-size="12" font-weight="650" fill="var(--ink)" opacity="${op}">${up ? '+' : '−'}${Math.abs(p).toFixed(1)}%</text>`;
+    s += `<text x="${cx}" y="${g.H - 24}" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">${r.d} <tspan font-weight="400" fill="var(--ink-3)">${r.date}</tspan></text>`;
+    s += `<text x="${cx}" y="${g.H - 8}" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">${r.ev ? r.ev.map(e => '● ' + e.tag).join(' ') : r.type}</text>`;
+    s += `<rect x="${cx - g.band / 2}" y="0" width="${g.band}" height="${g.H}" fill="transparent"/></g>`;
+  });
+  const el = document.getElementById('chart'); el.innerHTML = s + '</svg>';
+  el.querySelectorAll('.d').forEach(n => { n.onmousemove = e => tipShow(e, +n.dataset.i); n.onmouseleave = () => { tip.style.opacity = 0; setActive(-1); }; });
+
+  // coverage strip
+  g = geom('cov', 26); s = `<svg width="${g.W}" height="26">`;
+  DAYS.forEach((r, i) => {
+    const low = r.cov < 95;
+    s += `<rect x="${g.cx(i) - 32}" y="3" width="64" height="20" rx="10" fill="${low ? 'var(--warn-bg)' : '#f3f4f6'}" stroke="${low ? '#f5d79e' : 'none'}"/>
+          <text x="${g.cx(i)}" y="17" text-anchor="middle" font-size="11" fill="${low ? 'var(--warn-ink)' : 'var(--ink-2)'}" font-weight="${low ? 650 : 400}">${low ? '⚠ ' : ''}${r.cov}%</text>`;
+  });
+  document.getElementById('cov').innerHTML = s + '</svg>';
+
+  // events list
+  document.getElementById('events').innerHTML = DAYS.map((r, i) => r.ev ? `<div class="ev ${active === i ? 'on' : ''}" data-i="${i}"><div class="day">${r.d} ${r.date}</div><div class="t">${r.ev.map(e => `<div><span class="tag ${e.data ? 'data' : ''}">${e.tag}</span>${e.t}</div>`).join('')}</div></div>` : '').join('');
+  document.querySelectorAll('.ev').forEach(n => { n.onmouseenter = () => setActive(+n.dataset.i); n.onmouseleave = () => setActive(-1); });
+}
+
+function setActive(i) { if (active !== i) { active = i; draw(); } }
+
+const tip = document.getElementById('tip');
+function tipShow(e, i) {
+  setActive(i);
+  const r = DAYS[i];
+  tip.innerHTML = `<h4>${r.d} ${r.date} · ${r.type}</h4>
+    <div class="row"><span>Boardings</span><b>${fmt(r.b)}</b></div>
+    <div class="row"><span>Expected</span><span>${fmt(r.exp)}</span></div>
+    <div class="row"><span>Difference</span><span>${(r.b - r.exp >= 0 ? '+' : '') + fmt(r.b - r.exp)} (${pct(r).toFixed(1)}%)</span></div>
+    <div class="row"><span>APC coverage</span><span>${r.cov}%${r.cov < 95 ? ' ⚠' : ''}</span></div>
+    ${r.cov < 95 ? `<div class="row"><span>Est. if fully covered</span><span>~${fmt(r.b / r.cov * 100)}</span></div>` : ''}`;
+  tip.style.opacity = 1;
+  tip.style.left = Math.min(e.clientX + 16, innerWidth - 270) + 'px'; tip.style.top = (e.clientY - 30) + 'px';
+}
+addEventListener('resize', draw); draw();
+</script>
+</body>
+</html>

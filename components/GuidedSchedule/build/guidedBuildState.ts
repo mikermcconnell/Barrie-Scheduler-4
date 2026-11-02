@@ -5,7 +5,13 @@ import { buildGeneratedScheduleInputFingerprint } from '../../NewSchedule/utils/
 import type { ApprovedRuntimeContract } from '../../NewSchedule/utils/step2ReviewTypes';
 import type { RouteConnectionConfig } from '../../../utils/connections/connectionTypes';
 
+/** 'generate' is no longer a stage; saved sets that still hold it open on Manual tweaks. */
 export type GuidedBuildStage = 'generate' | 'connections' | 'tweaks';
+
+/** Step 4 runs Manual tweaks → Connections. */
+export const resolveBuildStage = (stage: GuidedBuildStage): Exclude<GuidedBuildStage, 'generate'> => (
+    stage === 'generate' ? 'tweaks' : stage
+);
 
 export interface GuidedBuildState {
     config: ScheduleConfig;
@@ -24,6 +30,8 @@ export interface GuidedBuildState {
     editCount: number;
     stage: GuidedBuildStage;
     routeConnectionConfig: RouteConnectionConfig | null;
+    /** Step 4 target headways the planner typed, by round-trip row key. */
+    headwayTargets?: Record<string, number>;
 }
 
 export const createGuidedBuildState = (routeNumber: string): GuidedBuildState => ({
@@ -40,9 +48,17 @@ export const createGuidedBuildState = (routeNumber: string): GuidedBuildState =>
     lastOptimized: null,
     editorSessionKey: 0,
     editCount: 0,
-    stage: 'generate',
+    stage: 'tweaks',
     routeConnectionConfig: null,
 });
+
+/**
+ * Step 4 builds automatically only when nothing the planner made would be
+ * lost: no schedule yet, or a stale one with no manual edits or optimizer run.
+ */
+export const canAutoGenerate = (state: GuidedBuildState): boolean => (
+    state.schedules.length === 0 || (state.editCount === 0 && state.preOptimization === null)
+);
 
 /** Generated output is current only while the approved runtimes and Step 3 settings match what generated it. */
 export const isGeneratedCurrent = (state: GuidedBuildState, contract: ApprovedRuntimeContract | null): boolean => (
@@ -71,8 +87,10 @@ export const applyGenerated = (
     lastOptimized: null,
     editorSessionKey: state.editorSessionKey + 1,
     editCount: 0,
-    stage: 'generate',
-    routeConnectionConfig: null,
+    stage: 'tweaks',
+    // Connections name stops and services, not trips, so they survive a regenerate.
+    // Regenerated trips get new ids, so typed targets no longer match a row.
+    headwayTargets: {},
 });
 
 /**
@@ -107,6 +125,21 @@ export const resetOptimization = (state: GuidedBuildState): GuidedBuildState => 
 export const applyManualEdit = (state: GuidedBuildState, tables: MasterRouteTable[]): GuidedBuildState => (
     tables === state.schedules ? state : { ...state, schedules: tables, editCount: state.editCount + 1 }
 );
+
+/**
+ * Makes the planner's current schedule the "show changes" baseline. Edits
+ * stay counted so a stale build is still not regenerated over them.
+ */
+export const acceptAsGenerated = (state: GuidedBuildState, tables: MasterRouteTable[]): GuidedBuildState => ({
+    ...state,
+    schedules: tables,
+    generated: tables,
+});
+
+export const setHeadwayTargets = (state: GuidedBuildState, headwayTargets: Record<string, number>): GuidedBuildState => ({
+    ...state,
+    headwayTargets,
+});
 
 export const countTrips = (tables: MasterRouteTable[]): number => tables.reduce((sum, table) => sum + table.trips.length, 0);
 

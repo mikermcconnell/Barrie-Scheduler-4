@@ -107,4 +107,33 @@ describe('runtime evidence eligibility', () => {
 
         expect(result).toEqual({ eligible: true, reasons: [] });
     });
+
+    it('flags cross-bucket outliers for uploaded percentiles but keeps a slow paired-cycle peak', () => {
+        const uploaded = (timeBucket: string, total: number): TripBucketAnalysis => ({
+            timeBucket,
+            totalP50: total,
+            totalP80: total + 2,
+            ignored: false,
+            isOutlier: false,
+            details: [{ segmentName: 'A to B', p50: total, p80: total + 2, n: 10 }],
+            expectedSegmentCount: 1,
+            observedSegmentCount: 1,
+            sampleCountMode: 'observations',
+            evidence: { kind: 'uploaded-percentiles', qualifyingCount: 10, requiredCount: 10, planningEligible: true, exclusionReasons: [] },
+        });
+        const paired = (timeBucket: string, total: number): TripBucketAnalysis => ({
+            ...uploaded(timeBucket, total),
+            sampleCountMode: 'days',
+            contributingDays: ['01', '02', '03', '04', '05'].map(day => ({ date: `2026-09-${day}`, runtime: total })),
+            evidence: { kind: 'paired-cycle', qualifyingCount: 5, requiredCount: 5, planningEligible: true, exclusionReasons: [] },
+        });
+        const day = Array.from({ length: 10 }, (_, index) => `${String(6 + index).padStart(2, '0')}:00 - ${String(6 + index).padStart(2, '0')}:29`);
+
+        const uploadedResult = detectOutliers([...day.map(bucket => uploaded(bucket, 30)), uploaded('16:30 - 16:59', 60)]);
+        expect(uploadedResult[10].isOutlier).toBe(true);
+
+        const pairedResult = detectOutliers([...day.map(bucket => paired(bucket, 30)), paired('16:30 - 16:59', 60)]);
+        expect(pairedResult[10].isOutlier).toBe(false);
+        expect(pairedResult[10].ignored).toBe(false);
+    });
 });

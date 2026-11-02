@@ -361,3 +361,80 @@ export const previewScheduleHeadwayRegularization = (
     schedules: MasterRouteTable[],
     options: HeadwayRegularizationOptions
 ): HeadwayRegularizationSummary => regularizeScheduleHeadways(schedules, options).summary;
+
+export type AlignBlockToHeadwayResult =
+    | {
+        ok: true;
+        schedules: MasterRouteTable[];
+        blockId: string;
+        previousBlockId: string;
+        anchorStop: string;
+        shiftMinutes: number;
+        shiftedTripCount: number;
+    }
+    | { ok: false; message: string };
+
+/**
+ * Moves a whole block so the chosen trip runs `headwayMinutes` after the
+ * trip just before it. The headway is measured at the first stop the trip
+ * shares with an earlier trip in the same table, so a block that starts
+ * upstream of the others still lines up where they meet. Travel and recovery
+ * times stay unchanged; only `blockScope` tables are shifted.
+ */
+export const alignBlockToPreviousTripHeadway = (
+    schedules: MasterRouteTable[],
+    tripId: string,
+    headwayMinutes: number,
+    blockScope?: (table: MasterRouteTable) => boolean
+): AlignBlockToHeadwayResult => {
+    if (!Number.isFinite(headwayMinutes) || headwayMinutes <= 0) {
+        return { ok: false, message: 'Set a headway target first.' };
+    }
+    const table = schedules.find(candidate => candidate.trips.some(trip => trip.id === tripId));
+    const trip = table?.trips.find(candidate => candidate.id === tripId);
+    if (!table || !trip) return { ok: false, message: 'Trip not found.' };
+
+    for (const stop of getServedStops(trip, table.stops)) {
+        const tripMinute = getStopMinute(trip, stop, trip.stops);
+        if (tripMinute === null) continue;
+        const tripOperational = getOperationalSortTime(tripMinute);
+
+        let previous: { trip: MasterTrip; operational: number } | null = null;
+        for (const candidate of table.trips) {
+            if (candidate.blockId === trip.blockId || (candidate.direction || 'Loop') !== (trip.direction || 'Loop')) continue;
+            const minute = getStopMinute(candidate, stop, candidate.stops);
+            if (minute === null) continue;
+            const operational = getOperationalSortTime(minute);
+            if (operational > tripOperational) continue;
+            if (!previous || operational > previous.operational) previous = { trip: candidate, operational };
+        }
+        if (!previous) continue;
+
+        const shiftMinutes = Math.round(previous.operational + headwayMinutes - tripOperational);
+        const next = cloneSchedules(schedules);
+        let shiftedTripCount = 0;
+        next.forEach(nextTable => {
+            if (blockScope && !blockScope(nextTable)) return;
+            nextTable.trips.forEach(candidate => {
+                if (candidate.blockId !== trip.blockId) return;
+                shiftTrip(candidate, shiftMinutes);
+                shiftedTripCount += 1;
+            });
+        });
+        if (next.some(nextTable => nextTable.trips.some(candidate => candidate.blockId === trip.blockId && candidate.startTime < 0))) {
+            return { ok: false, message: `Block ${trip.blockId} would start before midnight.` };
+        }
+
+        return {
+            ok: true,
+            schedules: next,
+            blockId: trip.blockId,
+            previousBlockId: previous.trip.blockId,
+            anchorStop: stop,
+            shiftMinutes,
+            shiftedTripCount,
+        };
+    }
+
+    return { ok: false, message: `No earlier trip shares a stop with block ${trip.blockId}.` };
+};

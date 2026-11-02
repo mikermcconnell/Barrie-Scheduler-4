@@ -63,7 +63,7 @@ describe('prefetchOperationsRidership', () => {
             metadata,
             'all',
             'barrie',
-            { dateRange: { start: '2026-09-22', end: '2026-10-05' }, detailMode: 'ridership' },
+            { dateRange: { start: '2026-08-04', end: '2026-10-05' }, detailMode: 'ridership' },
         );
 
         const seen: Record<string, unknown> = {};

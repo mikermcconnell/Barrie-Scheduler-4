@@ -329,6 +329,74 @@ const renderCompareDeltaMarker = (
     );
 };
 
+export interface HeadwayTargetCell {
+    value: number;
+    typed: boolean;
+    estimate?: number;
+}
+
+const HeadwayTargetInput: React.FC<{
+    rowKey: string;
+    target: HeadwayTargetCell;
+    headway: number | undefined;
+    onChange: (rowKey: string, value: number | null) => void;
+}> = ({ rowKey, target, headway, onChange }) => {
+    const [draft, setDraft] = useState(String(target.value));
+
+    useEffect(() => {
+        setDraft(String(target.value));
+    }, [target.value]);
+
+    const commit = () => {
+        const next = Number.parseInt(draft, 10);
+        if (!Number.isFinite(next) || next <= 0) {
+            setDraft(String(target.value));
+            return;
+        }
+        if (next === target.value) return;
+        onChange(rowKey, next === target.estimate ? null : next);
+    };
+
+    return (
+        <div className="flex items-center justify-center gap-0.5">
+            <input
+                type="text"
+                inputMode="numeric"
+                aria-label="Target headway"
+                value={draft}
+                title={target.typed
+                    ? `You set ${target.value} min${target.estimate ? ` (estimate ${target.estimate})` : ''}`
+                    : `Estimate: now ${headway ?? '-'} → ${target.value}. Type to change.`}
+                onChange={(event) => setDraft(event.target.value.replace(/[^0-9]/g, ''))}
+                onBlur={commit}
+                onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                    if (event.key === 'Escape') {
+                        setDraft(String(target.value));
+                        (event.target as HTMLInputElement).blur();
+                    }
+                }}
+                className={`w-9 rounded border px-0.5 py-0.5 text-center text-xs tabular-nums outline-none focus:ring-1 focus:ring-emerald-400 ${target.typed
+                    ? 'border-emerald-500 bg-emerald-50 font-bold text-gray-900'
+                    : 'border-dashed border-gray-300 bg-white italic text-gray-500'
+                    }`}
+            />
+            {target.typed && (
+                <button
+                    type="button"
+                    aria-label="Use estimate"
+                    title={`Back to estimate${target.estimate ? ` (${target.estimate})` : ''}`}
+                    onClick={() => onChange(rowKey, null)}
+                    className="text-[11px] leading-none text-gray-400 hover:text-red-600"
+                >
+                    ×
+                </button>
+            )}
+        </div>
+    );
+};
+
 const RecoveryMinuteInput: React.FC<{
     value: number | string | undefined;
     disabled?: boolean;
@@ -511,6 +579,8 @@ export interface RoundTripTableViewProps {
     onRecoveryEdit?: (tripId: string, stopName: string, delta: number) => void;
     originalSchedules?: MasterRouteTable[];
     onResetOriginals?: () => void;
+    /** Makes the current schedule the new generated baseline. */
+    onAcceptChanges?: () => void;
     onDeleteTrip?: (tripIds: string[], options?: { treatAsRoundTrip?: boolean }) => void;
     onDuplicateTrip?: (tripId: string) => void;
     onAddTrip?: (tripId: string, placement?: AddTripPlacement) => void;
@@ -550,6 +620,7 @@ export interface RoundTripTableViewProps {
     connectionLibrary?: ConnectionLibrary | null;
     routeConnectionConfig?: RouteConnectionConfig | null;
     initialShowConnections?: boolean;
+    initialFocusMode?: boolean;
     dayType?: DayType;
     masterBaseline?: MasterRouteTable[] | null;
     compareBaselineLabel?: string;
@@ -560,6 +631,11 @@ export interface RoundTripTableViewProps {
     toolbarMode?: 'inline' | 'sidebar';
     reviewToolsSlot?: React.ReactNode;
     onInputError?: (message: string) => void;
+    /** Per-row target headways; shows the Target column when set. */
+    headwayTargets?: Record<string, HeadwayTargetCell>;
+    onHeadwayTargetChange?: (rowKey: string, value: number | null) => void;
+    /** Rows whose last recovery is below the minimum after Fix headways (rowKey → message). */
+    headwayFlags?: Record<string, string>;
 }
 
 // --- Component ---
@@ -614,6 +690,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     onRecoveryEdit,
     originalSchedules,
     onResetOriginals,
+    onAcceptChanges,
     onDeleteTrip,
     onDuplicateTrip: _onDuplicateTrip,
     onAddTrip,
@@ -627,6 +704,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     connectionLibrary,
     routeConnectionConfig,
     initialShowConnections = true,
+    initialFocusMode = true,
     dayType = 'Weekday',
     masterBaseline,
     compareBaselineLabel,
@@ -637,10 +715,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     toolbarMode = 'inline',
     reviewToolsSlot,
     onInputError,
+    headwayTargets,
+    onHeadwayTargetChange,
+    headwayFlags,
 }) => {
+    const showTargetCol = !!headwayTargets;
     // Sort state: 'blockFlow' (default), 'blockId', 'endTime', 'startTime' (first departure), or a stop name
     const [sortColumn, setSortColumn] = useState<string>('blockFlow');
-    const [focusMode, setFocusMode] = useState(true);
+    const [focusMode, setFocusMode] = useState(initialFocusMode);
     const [showDirectionLegend, setShowDirectionLegend] = useState(false);
     const [density, setDensity] = useState<DensityMode>('compact');
     const [timepointOnly, setTimepointOnly] = useState(initialTimepointOnly);
@@ -1393,6 +1475,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                     columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Run / Band' });
                     columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Recovery / Ratio' });
                     columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Headway' });
+                    if (showTargetCol) columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Target Headway' });
                     columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Cycle' });
                 }
 
@@ -1591,6 +1674,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
                                     >
                                         Reset to Generated
+                                    </button>
+                                )}
+                                {isGeneratedCompareMode && onAcceptChanges && (
+                                    <button
+                                        onClick={onAcceptChanges}
+                                        title="Make the current schedule the generated baseline. Changes are then measured from here."
+                                        className="mt-2 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+                                    >
+                                        Accept Changes as Baseline
                                     </button>
                                 )}
                             </div>
@@ -1861,6 +1953,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                     if (showMetaCols) cols.push(<col key="meta-run-band" style={{ width: '72px' }} />);
                                     if (showMetaCols) cols.push(<col key="meta-recovery" style={{ width: '64px' }} />);
                                     if (showMetaCols) cols.push(<col key="meta-headway" style={{ width: '56px' }} />);
+                                    if (showMetaCols && showTargetCol) cols.push(<col key="meta-target" style={{ width: '64px' }} />);
                                     if (showMetaCols) cols.push(<col key="meta-cycle" style={{ width: '56px' }} />);
                                     return cols;
                                 })()}</colgroup>
@@ -1946,18 +2039,24 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             );
                                         })}
                                         {showMetaCols && (
-                                            <th rowSpan={2} className={`sticky right-[176px] z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase shadow-[-2px_0_4px_rgba(15,23,42,0.08)]`} title="Run time and assigned time band">
+                                            <th rowSpan={2} className={`sticky ${showTargetCol ? 'right-[240px]' : 'right-[176px]'} z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase shadow-[-2px_0_4px_rgba(15,23,42,0.08)]`} title="Run time and assigned time band">
                                                 <div className="leading-tight text-gray-800">Run</div>
                                                 <div className="mt-0.5 text-[9px] font-bold text-gray-500">Band</div>
                                             </th>
                                         )}
                                         {showMetaCols && (
-                                            <th rowSpan={2} className={`sticky right-[112px] z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase`} title="Recovery minutes and recovery ratio">
+                                            <th rowSpan={2} className={`sticky ${showTargetCol ? 'right-[176px]' : 'right-[112px]'} z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase`} title="Recovery minutes and recovery ratio">
                                                 <div className="leading-tight text-gray-800">Recovery</div>
                                                 <div className="mt-0.5 text-[9px] font-bold text-gray-500">Minutes · %</div>
                                             </th>
                                         )}
-                                        {showMetaCols && <th rowSpan={2} className={`sticky right-[56px] z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase text-gray-700`} title="Headway">Hdwy</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`sticky ${showTargetCol ? 'right-[120px]' : 'right-[56px]'} z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase text-gray-700`} title="Headway">Hdwy</th>}
+                                        {showMetaCols && showTargetCol && (
+                                            <th rowSpan={2} className={`sticky right-[56px] z-50 border-b border-l border-gray-200 bg-emerald-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase text-emerald-800`} title="Target headway: grey is the system estimate, green is a value you typed">
+                                                <div className="leading-tight">Target</div>
+                                                <div className="mt-0.5 text-[9px] font-bold text-emerald-600">Hdwy</div>
+                                            </th>
+                                        )}
                                         {showMetaCols && <th rowSpan={2} className={`sticky right-0 z-50 border-b border-l border-gray-200 bg-slate-50 px-1 py-1 text-center align-middle ${densityClass.header} font-semibold uppercase text-gray-700`} title="Cycle Time">Cycle</th>}
                                     </tr>
                                     {/* Sub-headers Row */}
@@ -2126,6 +2225,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                         const headway = rowHeadways[stableRowKey]
                                             ?? (northTrip ? headways[northTrip.id] : (southTrip ? headways[southTrip.id] : '-'));
+                                        const rowTarget = headwayTargets?.[stableRowKey];
+                                        const rowTargetHeadway = showTargetCol ? rowTarget?.value : targetHeadway;
+                                        const recoveryFlag = headwayFlags?.[stableRowKey];
 
                                         const northIndex = northTrip ? northTripOrder.get(northTrip.id) : undefined;
                                         const southIndex = southTrip ? southTripOrder.get(southTrip.id) : undefined;
@@ -2969,7 +3071,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                                             return (
                                                                 <td
-                                                                    className="sticky right-[176px] z-30 border-l border-gray-200 p-1 text-center tabular-nums shadow-[-2px_0_4px_rgba(15,23,42,0.08)]"
+                                                                    className={`sticky ${showTargetCol ? 'right-[240px]' : 'right-[176px]'} z-30 border-l border-gray-200 p-1 text-center tabular-nums shadow-[-2px_0_4px_rgba(15,23,42,0.08)]`}
                                                                     style={{ backgroundColor: rowSurfaceColor }}
                                                                     title={columnMapping[dataColIdx++]?.letter + displayRowNum}
                                                                 >
@@ -2984,31 +3086,50 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             );
                                                         })()}
                                                         <td
-                                                            className="sticky right-[112px] z-30 border-l border-gray-200 p-1 text-center tabular-nums"
-                                                            style={{ backgroundColor: rowSurfaceColor }}
-                                                            title={columnMapping[dataColIdx++]?.letter + displayRowNum}
+                                                            className={`sticky ${showTargetCol ? 'right-[176px]' : 'right-[112px]'} z-30 border-l border-gray-200 p-1 text-center tabular-nums ${recoveryFlag ? 'ring-1 ring-inset ring-red-300' : ''}`}
+                                                            style={{ backgroundColor: recoveryFlag ? '#FEE2E2' : rowSurfaceColor }}
+                                                            title={(() => { const cellLabel = columnMapping[dataColIdx++]?.letter + displayRowNum; return recoveryFlag ?? cellLabel; })()}
+                                                            data-headway-flag={recoveryFlag ? 'true' : undefined}
                                                         >
-                                                            <div className="text-sm font-bold leading-tight text-gray-800">{totalRec}</div>
+                                                            <div className={`text-sm font-bold leading-tight ${recoveryFlag ? 'text-red-800' : 'text-gray-800'}`}>{totalRec}</div>
                                                             <div className={`mt-0.5 text-[10px] font-semibold ${ratio > 25 ? 'text-amber-700' : ratio < 10 ? 'text-red-700' : 'text-gray-500'}`}>
                                                                 {ratio.toFixed(0)}%
                                                             </div>
                                                         </td>
 
                                                         <td
-                                                            className={`sticky right-[56px] z-30 border-l border-gray-200 p-1 text-center text-sm tabular-nums ${targetHeadway && typeof headway === 'number' && headway !== targetHeadway
+                                                            className={`sticky ${showTargetCol ? 'right-[120px]' : 'right-[56px]'} z-30 border-l border-gray-200 p-1 text-center text-sm tabular-nums ${rowTargetHeadway && typeof headway === 'number' && headway !== rowTargetHeadway
                                                             ? 'text-amber-700 bg-amber-50 font-bold ring-1 ring-inset ring-amber-300'
                                                             : 'text-gray-700'
                                                             }`}
-                                                            style={{ backgroundColor: targetHeadway && typeof headway === 'number' && headway !== targetHeadway ? '#FFFBEB' : rowSurfaceColor }}
+                                                            style={{ backgroundColor: rowTargetHeadway && typeof headway === 'number' && headway !== rowTargetHeadway ? '#FFFBEB' : rowSurfaceColor }}
                                                             title={columnMapping[dataColIdx++]?.letter + displayRowNum}
                                                         >
                                                             <div className="leading-tight">
                                                                 <div>{headway}</div>
-                                                                {targetHeadway && typeof headway === 'number' && headway !== targetHeadway && (
-                                                                    <div className="text-[10px] font-semibold text-amber-600">({headway > targetHeadway ? '+' : ''}{headway - targetHeadway})</div>
+                                                                {rowTargetHeadway && typeof headway === 'number' && headway !== rowTargetHeadway && (
+                                                                    <div className="text-[10px] font-semibold text-amber-600">({headway > rowTargetHeadway ? '+' : ''}{headway - rowTargetHeadway})</div>
                                                                 )}
                                                             </div>
                                                         </td>
+                                                        {showTargetCol && (
+                                                            <td
+                                                                className="sticky right-[56px] z-30 border-l border-gray-200 p-1 text-center"
+                                                                style={{ backgroundColor: rowSurfaceColor }}
+                                                                title={columnMapping[dataColIdx++]?.letter + displayRowNum}
+                                                            >
+                                                                {rowTarget && onHeadwayTargetChange && !readOnly ? (
+                                                                    <HeadwayTargetInput
+                                                                        rowKey={stableRowKey}
+                                                                        target={rowTarget}
+                                                                        headway={typeof headway === 'number' ? headway : undefined}
+                                                                        onChange={onHeadwayTargetChange}
+                                                                    />
+                                                                ) : (
+                                                                    <span className="text-xs text-gray-400">{rowTarget?.value ?? '–'}</span>
+                                                                )}
+                                                            </td>
+                                                        )}
 
                                                         <td
                                                             className={`sticky right-0 z-30 border-l border-gray-200 p-1 text-center text-sm font-semibold tabular-nums ${targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime

@@ -39,7 +39,7 @@ vi.mock('recharts', () => {
     AreaChart: Chart, BarChart: Chart, LineChart: Chart, ScatterChart: Chart, ComposedChart: Chart,
     ResponsiveContainer: Pass, Area: Pass, Bar: Pass,
     XAxis: Empty, YAxis: Empty, CartesianGrid: Empty, Tooltip: Empty, Legend: Empty,
-    ReferenceLine: Empty, Line: Empty, Cell: Empty, Scatter: Empty, LabelList: Empty,
+    ReferenceLine: Empty, ReferenceArea: Empty, Line: Empty, Cell: Empty, Scatter: Empty, LabelList: Empty,
   };
 });
 

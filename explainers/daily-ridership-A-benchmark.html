@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Ridership – Option A: Typical-day benchmark</title>
+<style>
+  :root {
+    --surface: #ffffff; --page: #f6f7f9; --border: #e5e7eb;
+    --ink: #111827; --ink-2: #4b5563; --ink-3: #6b7280; --grid: #eef0f3;
+    --bar: #0e8fb0; --bar-hover: #0b7491; --bench: #111827;
+    --weekend-band: #f3f4f6; --above: #2a78d6; --below: #eb6834;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: var(--page); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+  .note { max-width: 1200px; margin: 0 auto 16px; color: var(--ink-2); }
+  .note b { color: var(--ink); }
+  .card { max-width: 1200px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 24px; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  h2 { margin: 0; font-size: 17px; }
+  .sub { color: var(--ink-3); font-size: 12.5px; margin-top: 2px; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc; margin-left: 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: #fff; padding: 6px 12px; font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+  .seg button.on { background: var(--ink); color: #fff; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 8px; }
+  .kpi { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .kpi .l { font-size: 11.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .03em; }
+  .kpi .v { font-size: 22px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .kpi .d { font-size: 12px; color: var(--ink-2); }
+  .up::before { content: "▲ "; color: var(--above); } .down::before { content: "▼ "; color: var(--below); }
+  .legend { display: flex; gap: 18px; font-size: 12px; color: var(--ink-2); margin: 10px 0 0; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .sw.line { height: 0; border-top: 2px dashed var(--bench); width: 18px; border-radius: 0; }
+  svg text { font-family: inherit; }
+  .tip { position: fixed; pointer-events: none; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 10px 12px; font-size: 12.5px; min-width: 230px; opacity: 0; transition: opacity .08s; }
+  .tip h4 { margin: 0 0 6px; font-size: 13px; }
+  .tip .row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+  .tip .row span:first-child { color: var(--ink-3); }
+  .tip .flag { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); color: var(--ink-2); }
+  details { margin-top: 12px; font-size: 12.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--ink-3); font-weight: 600; font-size: 11.5px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<p class="note"><b>Option A — Typical-day benchmark.</b> Same bar chart, but every day is judged against its own day type.
+A Sunday is never compared with a Thursday. Dashed lines show the 8-week typical for Weekday, Saturday and Sunday.
+KPIs sit above the chart. The tooltip answers "is this day normal, and why not?"</p>
+
+<div class="card">
+  <div class="head">
+    <div>
+      <h2>Daily Ridership <span class="pill">7 of 7 days with data</span></h2>
+      <div class="sub">Total boardings per day · Thu Oct 22 – Wed Oct 28, 2026 · benchmark = 8-week average for the same day type</div>
+    </div>
+    <div class="seg" id="metric">
+      <button class="on" data-m="boardings">Boardings</button>
+      <button data-m="bph">Boardings / service hr</button>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="l">Week total</div><div class="v">56,340</div><div class="d down">1.4% vs prior week (57,120)</div></div>
+    <div class="kpi"><div class="l">Avg weekday</div><div class="v">9,302</div><div class="d down">1.0% vs typical (9,400)</div></div>
+    <div class="kpi"><div class="l">Saturday</div><div class="v">5,690</div><div class="d down">3.6% vs typical (5,900)</div></div>
+    <div class="kpi"><div class="l">Sunday</div><div class="v">4,140</div><div class="d up">2.2% vs typical (4,050)</div></div>
+  </div>
+
+  <div id="chart"></div>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--bar)"></i>Boardings</span>
+    <span><i class="sw line"></i>Typical for day type (8-wk avg)</span>
+    <span><i class="sw" style="background:var(--weekend-band);border:1px solid #e5e7eb"></i>Weekend</span>
+    <span>⚑ Day has a note (event, detour, data gap)</span>
+  </div>
+
+  <details><summary>Show as table</summary><div id="tbl"></div></details>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const DAYS = [
+  { d:'Thu', date:'10/22', long:'Thursday, Oct 22, 2026', type:'Weekday', b:10120, prev:9880, hrs:1010, top:'Rt 8A/8B · 1,840', note:'Georgian College open house' },
+  { d:'Fri', date:'10/23', long:'Friday, Oct 23, 2026',   type:'Weekday', b:9530,  prev:9700, hrs:1010, top:'Rt 8A/8B · 1,710' },
+  { d:'Sat', date:'10/24', long:'Saturday, Oct 24, 2026', type:'Saturday', b:5690, prev:5410, hrs:720,  top:'Rt 1 · 960' },
+  { d:'Sun', date:'10/25', long:'Sunday, Oct 25, 2026',   type:'Sunday', b:4140,   prev:3980, hrs:540,  top:'Rt 1 · 720' },
+  { d:'Mon', date:'10/26', long:'Monday, Oct 26, 2026',   type:'Weekday', b:8640,  prev:9320, hrs:1010, top:'Rt 8A/8B · 1,590', note:'Rt 8 detour (Bayfield) · APC coverage 91%' },
+  { d:'Tue', date:'10/27', long:'Tuesday, Oct 27, 2026',  type:'Weekday', b:9160,  prev:9450, hrs:1010, top:'Rt 8A/8B · 1,650', note:'Heavy rain PM' },
+  { d:'Wed', date:'10/28', long:'Wednesday, Oct 28, 2026',type:'Weekday', b:9060,  prev:9380, hrs:1010, top:'Rt 8A/8B · 1,640' },
+];
+const TYPICAL = { Weekday: { b: 9400, bph: 9.3 }, Saturday: { b: 5900, bph: 8.2 }, Sunday: { b: 4050, bph: 7.5 } };
+let metric = 'boardings';
+const fmt = n => n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+const pct = (a, b) => ((a - b) / b * 100);
+const val = r => metric === 'boardings' ? r.b : r.b / r.hrs;
+const bench = r => metric === 'boardings' ? TYPICAL[r.type].b : TYPICAL[r.type].bph;
+
+function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); return Math.ceil(v / p * 2) / 2 * p; }
+
+function draw() {
+  const W = document.getElementById('chart').clientWidth, H = 300, m = { t: 22, r: 12, b: 44, l: 52 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const max = metric === "boardings" ? 12000 : 12;
+  const y = v => m.t + ih - v / max * ih;
+  const band = iw / DAYS.length, bw = Math.min(band * 0.56, 90);
+  const ticks = [0, .25, .5, .75, 1].map(f => max * f);
+  let s = `<svg width="${W}" height="${H}" role="img" aria-label="Daily boardings bar chart">`;
+  // weekend band
+  DAYS.forEach((r, i) => { if (r.type !== 'Weekday') s += `<rect x="${m.l + i * band}" y="${m.t}" width="${band}" height="${ih}" fill="var(--weekend-band)"/>`; });
+  ticks.forEach(t => s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--ink-3)">${metric === 'boardings' ? (t / 1000).toFixed(t % 1000 ? 1 : 0) + 'k' : t.toFixed(1)}</text>`);
+  const hi = Math.max(...DAYS.map(val)), lo = Math.min(...DAYS.filter(r => r.type === 'Weekday').map(val));
+  DAYS.forEach((r, i) => {
+    const cx = m.l + i * band + band / 2, v = val(r), b = bench(r);
+    const top = y(v), h = m.t + ih - top;
+    s += `<g class="bar" data-i="${i}">
+      <rect x="${m.l + i * band}" y="${m.t}" width="${band}" height="${ih}" fill="transparent"/>
+      <path d="M${cx - bw / 2},${m.t + ih} V${top + 4} q0,-4 4,-4 H${cx + bw / 2 - 4} q4,0 4,4 V${m.t + ih} Z" fill="var(--bar)" class="mark"/>
+      <line x1="${cx - bw / 2 - 8}" x2="${cx + bw / 2 + 8}" y1="${y(b)}" y2="${y(b)}" stroke="var(--bench)" stroke-width="2" stroke-dasharray="5 4"/>`;
+    const d = pct(v, b);
+    s += `<text x="${cx}" y="${Math.min(top, y(b)) - 8}" text-anchor="middle" font-size="11.5" fill="var(--ink-2)" font-weight="600">${d >= 0 ? '+' : ''}${d.toFixed(1)}%</text>`;
+    s += `<text x="${cx}" y="${H - 24}" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">${r.d}${r.note ? ' ⚑' : ''}</text>
+          <text x="${cx}" y="${H - 9}" text-anchor="middle" font-size="11" fill="var(--ink-3)">${r.date}</text></g>`;
+  });
+  s += `<line x1="${m.l}" x2="${W - m.r}" y1="${m.t + ih}" y2="${m.t + ih}" stroke="#9ca3af"/></svg>`;
+  const el = document.getElementById('chart'); el.innerHTML = s;
+  el.querySelectorAll('.bar').forEach(g => {
+    g.addEventListener('mousemove', e => showTip(e, DAYS[+g.dataset.i], g));
+    g.addEventListener('mouseleave', () => { tip.style.opacity = 0; g.querySelector('.mark').setAttribute('fill', 'var(--bar)'); });
+  });
+  table();
+}
+
+const tip = document.getElementById('tip');
+function showTip(e, r, g) {
+  g.querySelector('.mark').setAttribute('fill', 'var(--bar-hover)');
+  const t = TYPICAL[r.type];
+  tip.innerHTML = `<h4>${r.long} <span style="color:var(--ink-3);font-weight:400">· ${r.type}</span></h4>
+    <div class="row"><span>Boardings</span><b>${fmt(r.b)}</b></div>
+    <div class="row"><span>vs typical ${r.type} (${fmt(t.b)})</span><span>${pct(r.b, t.b) >= 0 ? '+' : ''}${pct(r.b, t.b).toFixed(1)}%</span></div>
+    <div class="row"><span>vs same day last week</span><span>${pct(r.b, r.prev) >= 0 ? '+' : ''}${pct(r.b, r.prev).toFixed(1)}%</span></div>
+    <div class="row"><span>Boardings / service hr</span><span>${(r.b / r.hrs).toFixed(1)}</span></div>
+    <div class="row"><span>Top route</span><span>${r.top}</span></div>
+    ${r.note ? `<div class="flag">⚑ ${r.note}</div>` : ''}`;
+  tip.style.opacity = 1;
+  const x = Math.min(e.clientX + 16, innerWidth - 270);
+  tip.style.left = x + 'px'; tip.style.top = (e.clientY - 20) + 'px';
+}
+
+function table() {
+  document.getElementById('tbl').innerHTML = `<table><tr><th>Day</th><th>Type</th><th>Boardings</th><th>Typical</th><th>vs typical</th><th>vs last wk</th><th>Bd/svc hr</th><th style="text-align:left">Note</th></tr>` +
+    DAYS.map(r => `<tr><td>${r.d} ${r.date}</td><td>${r.type}</td><td>${fmt(r.b)}</td><td>${fmt(TYPICAL[r.type].b)}</td><td>${pct(r.b, TYPICAL[r.type].b).toFixed(1)}%</td><td>${pct(r.b, r.prev).toFixed(1)}%</td><td>${(r.b / r.hrs).toFixed(1)}</td><td style="text-align:left">${r.note || ''}</td></tr>`).join('') + '</table>';
+}
+
+document.querySelectorAll('#metric button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#metric button').forEach(x => x.classList.remove('on')); b.classList.add('on'); metric = b.dataset.m; draw();
+});
+addEventListener('resize', draw); draw();
+</script>
+</body>
+</html>

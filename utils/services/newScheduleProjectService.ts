@@ -33,6 +33,7 @@ import type { TripBucketAnalysis, TimeBand } from '../ai/runtimeAnalysis';
 import type { ScheduleConfig } from '../../components/NewSchedule/steps/Step3Build';
 import type { ApprovedRuntimeModel } from '../../components/NewSchedule/utils/wizardState';
 import type { ApprovedRuntimeContract } from '../../components/NewSchedule/utils/step2ReviewTypes';
+import type { GuidedDaySnapshot, GuidedSetMetadata } from '../../components/GuidedSchedule/persistence/guidedSetTypes';
 import {
     RUNTIME_TRUST_SCHEMA_VERSION,
     isStructurallyValidRuntimeTrustContract,
@@ -144,6 +145,12 @@ export interface NewScheduleProject {
     parsedData?: RuntimeData[];
 
     isGenerated: boolean;
+    // Guided scheduling: one project per day type, linked by the set id
+    scheduleSetId?: string;
+    /** Set-level selection and skipped day types (Firestore). */
+    guidedSet?: GuidedSetMetadata;
+    /** Guided review, build, and package state for this day type (Storage only). */
+    guidedDay?: GuidedDaySnapshot;
     // Metadata
     storagePath?: string;
     projectRevision?: number;
@@ -170,7 +177,6 @@ export const saveProject = async (
 ): Promise<string> => {
     const projectsRef = collection(db, 'users', userId, 'newScheduleProjects');
 
-    const isUpdate = !!project.id;
     const docRef = project.id ? doc(projectsRef, project.id) : doc(projectsRef);
     const projectId = docRef.id;
     const existingSnapshot = await getDoc(docRef);
@@ -201,7 +207,8 @@ export const saveProject = async (
         (project.originalGeneratedSchedules && project.originalGeneratedSchedules.length > 0) ||
         (project.parsedData && project.parsedData.length > 0) ||
         (project.analysis && project.analysis.length > 0) ||
-        !!project.approvedRuntimeContract;
+        !!project.approvedRuntimeContract ||
+        !!project.guidedDay;
 
     if (hasHeavyData) {
         const content: Record<string, unknown> = stripUndefinedDeep({
@@ -213,6 +220,7 @@ export const saveProject = async (
             bands: project.bands,
             approvedRuntimeContract: project.approvedRuntimeContract,
             config: sanitizedConfig,
+            guidedDay: project.guidedDay,
             ...(validV2Contract ? { runtimeTrustSchemaVersion: RUNTIME_TRUST_SCHEMA_VERSION } : {}),
         });
 
@@ -246,6 +254,10 @@ export const saveProject = async (
         generatedSchedules: [],
         // parsedData is never stored in Firestore
         projectRevision: previousRevision + 1,
+        ...(project.scheduleSetId ? {
+            scheduleSetId: project.scheduleSetId,
+            guidedSet: stripUndefinedDeep(project.guidedSet) ?? null,
+        } : {}),
         ...(validV2Contract ? {
             runtimeTrustSchemaVersion: RUNTIME_TRUST_SCHEMA_VERSION,
             runtimeTrustMigrationVersion: RUNTIME_TRUST_SCHEMA_VERSION,
@@ -258,7 +270,8 @@ export const saveProject = async (
         docData.storagePath = storagePath;
     }
 
-    if (!isUpdate) {
+    // Guided projects use a caller-chosen id, so "new" means the document did not exist yet.
+    if (!existedAtStart) {
         docData.createdAt = serverTimestamp();
     }
 
@@ -439,6 +452,8 @@ export const getProject = async (
         projectRevision: getStoredRevision(data),
         runtimeTrustSchemaVersion: data.runtimeTrustSchemaVersion,
         runtimeTrustMigrationVersion: data.runtimeTrustMigrationVersion,
+        scheduleSetId: data.scheduleSetId || undefined,
+        guidedSet: data.guidedSet || undefined,
         createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
         updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date()
     };
@@ -463,7 +478,8 @@ export const getProject = async (
                 // itself never promotes old Storage content to a trusted contract.
                 approvedRuntimeContract: content.approvedRuntimeContract,
                 approvedRuntimeModel: content.approvedRuntimeModel,
-                config: content.config || fullData.config
+                config: content.config || fullData.config,
+                guidedDay: content.guidedDay
             };
             console.log('Loaded from Cloud Storage:', {
                 analysisCount: fullData.analysis?.length,
@@ -514,6 +530,8 @@ export const getAllProjects = async (userId: string): Promise<NewScheduleProject
             runtimeTrustSchemaVersion: data.runtimeTrustSchemaVersion,
             runtimeTrustMigrationVersion: data.runtimeTrustMigrationVersion,
             approvedRuntimeContract: undefined as ApprovedRuntimeContract | undefined,
+            scheduleSetId: (data.scheduleSetId as string | undefined) || undefined,
+            guidedSet: (data.guidedSet as GuidedSetMetadata | undefined) || undefined,
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
             updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date()
         };

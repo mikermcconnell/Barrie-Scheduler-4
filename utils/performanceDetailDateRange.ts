@@ -1,8 +1,28 @@
 import type { PerformanceDataLoadOptions, PerformanceMetadata } from './performanceDataTypes';
 import type { PerformanceDateWindow, TimeRange } from '../components/Performance/PerformanceFilterBar';
 import { addDaysToISODate } from './performanceDateUtils';
+import { RIDERSHIP_BENCHMARK_WEEKS } from './performanceRidershipBenchmark';
 
+/**
+ * Detail range for a dashboard view. With `includeComparisonPeriod` (the
+ * Ridership tab) the range also covers the prior comparison period and the
+ * weeks used for the typical-day benchmark.
+ */
 export function resolveDetailDateRange(
+    metadata: PerformanceMetadata | null | undefined,
+    timeRange: TimeRange,
+    selectedDate: string | null,
+    customDateRange: PerformanceDateWindow | null,
+    includeComparisonPeriod = false,
+): PerformanceDataLoadOptions['dateRange'] | undefined {
+    const range = resolveBaseDetailDateRange(metadata, timeRange, selectedDate, customDateRange, includeComparisonPeriod);
+    if (!range || !includeComparisonPeriod) return range;
+    const currentStart = resolveBaseDetailDateRange(metadata, timeRange, selectedDate, customDateRange, false)?.start;
+    const benchmarkStart = currentStart ? addDaysToISODate(currentStart, -RIDERSHIP_BENCHMARK_WEEKS * 7) : null;
+    return benchmarkStart && benchmarkStart < range.start ? { start: benchmarkStart, end: range.end } : range;
+}
+
+function resolveBaseDetailDateRange(
     metadata: PerformanceMetadata | null | undefined,
     timeRange: TimeRange,
     selectedDate: string | null,

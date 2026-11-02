@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Email — Icon Review</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', Arial, sans-serif; background: #f1f5f9; color: #0f172a; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 24px 60px; }
+  h1 { font-size: 24px; margin: 0 0 4px; color: #082b63; }
+  h2 { font-size: 17px; margin: 34px 0 6px; color: #082b63; }
+  .lead { color: #475569; font-size: 14px; margin: 0 0 18px; max-width: 760px; line-height: 1.5; }
+  .muted { color: #64748b; font-size: 13px; }
+  .note { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 12px 16px; font-size: 13px; line-height: 1.5; color: #7c2d12; margin: 14px 0; }
+  .note b { color: #9a3412; }
+  table.inv { border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; font-size: 13px; width: 100%; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  table.inv th, table.inv td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+  table.inv th { background: #f8fafc; color: #475569; font-size: 12px; font-weight: 600; }
+  .emoji { font-family: 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif; font-size: 20px; }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 99px; background: #fee2e2; color: #991b1b; font-weight: 600; }
+
+  .styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .style-card { background: #fff; border: 2px solid #e2e8f0; border-radius: 12px; padding: 14px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+  .style-card:hover { border-color: #93c5fd; }
+  .style-card.on { border-color: #2563eb; box-shadow: 0 0 0 3px #dbeafe; }
+  .style-card .name { font-weight: 700; font-size: 14px; color: #082b63; }
+  .style-card .desc { font-size: 12px; color: #64748b; margin: 4px 0 12px; line-height: 1.4; min-height: 50px; }
+  .style-card .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-height: 40px; }
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; display: inline-block; margin-top: 10px; }
+  .pill.good { background: #dcfce7; color: #166534; }
+  .pill.warn { background: #fef3c7; color: #92400e; }
+
+  .slots { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .slot { display: grid; grid-template-columns: 220px 1fr; gap: 16px; padding: 14px 16px; border-bottom: 1px solid #e2e8f0; align-items: center; }
+  .slot:last-child { border-bottom: 0; }
+  .slot .sname { font-weight: 700; font-size: 14px; }
+  .slot .swhere { font-size: 12px; color: #64748b; }
+  .opts { display: flex; gap: 10px; flex-wrap: wrap; }
+  .opt { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 10px; cursor: pointer; min-width: 92px; background: #fff; }
+  .opt:hover { border-color: #93c5fd; }
+  .opt.on { border-color: #2563eb; background: #eff6ff; }
+  .opt span { font-size: 12px; color: #334155; }
+
+  .preview-box { background: #e2e8f0; border-radius: 12px; padding: 20px; overflow-x: auto; }
+  .email { width: 760px; margin: 0 auto; background: #f8fafc; border-radius: 10px; overflow: hidden; box-shadow: 0 6px 20px rgba(15,23,42,.12); transform-origin: top center; }
+  .zoomed .email { transform: scale(1.4); margin-bottom: 150px; }
+  .ehead { background: #0b2e66; text-align: center; padding: 26px 20px 22px; color: #fff; border-bottom: 4px solid #2563eb; }
+  .ehead .t1 { font-size: 26px; font-weight: 800; margin-top: 4px; }
+  .ehead .t2 { font-size: 21px; font-weight: 800; }
+  .ehead .t3 { font-size: 15px; color: #60a5fa; font-weight: 700; margin-top: 6px; }
+  .toolbar { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; font-size: 13px; color: #334155; }
+
+  .summary { background: #0f172a; color: #e2e8f0; border-radius: 12px; padding: 16px 18px; font-family: Consolas, monospace; font-size: 13px; white-space: pre; line-height: 1.6; }
+  button { font: inherit; font-size: 13px; font-weight: 600; background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button:hover { background: #1d4ed8; }
+  .duo rect, .duo circle { fill: currentColor; fill-opacity: .18; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Daily email: icon review</h1>
+  <p class="lead">Pick one icon style, then pick a shape for each icon. The preview at the bottom shows the email header and KPI cards with your choices. Copy your picks at the end and send them to me.</p>
+
+  <h2>What we use today</h2>
+  <table class="inv">
+    <thead><tr><th>Icon</th><th>Where it shows</th><th>Today (emoji)</th><th>Problem</th></tr></thead>
+    <tbody id="inventory"></tbody>
+  </table>
+  <div class="note">
+    <b>How email shows icons.</b> Gmail and Outlook remove drawn (SVG) icons, so the drawn styles below would go out as small PNG images. We would host them on the app's Firebase site.
+    <br>• <b>Emoji</b> always shows, but each device draws it differently (Windows, iPhone, Android all differ). It can't take the card colour.
+    <br>• <b>PNG images</b> look the same everywhere and match the card colours. Outlook may hide them until the reader clicks "Download pictures". Each image gets alt text, so the card still reads well when images are hidden.
+  </div>
+
+  <h2>Step 1 — Pick a style</h2>
+  <p class="muted">Each card shows all 5 icons with the shapes picked in Step 2.</p>
+  <div class="styles" id="styles"></div>
+
+  <h2>Step 2 — Pick a shape for each icon</h2>
+  <p class="muted" id="shapeNote"></p>
+  <div class="slots" id="slots"></div>
+
+  <h2>Step 3 — Check the preview</h2>
+  <div class="toolbar">
+    <label><input type="checkbox" id="zoom"> Zoom in</label>
+    <span class="muted">Email width: 760px, the same as the real email.</span>
+  </div>
+  <div class="preview-box" id="previewBox"><div class="email" id="email"></div></div>
+
+  <h2>Your picks</h2>
+  <div class="summary" id="summary"></div>
+  <p><button id="copy">Copy picks</button> <span class="muted" id="copied"></span></p>
+</div>
+
+<script>
+const GLYPHS = {
+  busFront: { label: 'Bus (front)', svg: '<rect x="5" y="3" width="14" height="15" rx="3"/><path d="M5 11h14"/><path d="M9.5 6h5"/><circle cx="8.5" cy="14.5" r=".9"/><circle cx="15.5" cy="14.5" r=".9"/><path d="M7.5 18v2.5M16.5 18v2.5"/>' },
+  busSide: { label: 'Bus (side)', svg: '<rect x="2" y="5" width="20" height="11" rx="2"/><path d="M2 10.5h20"/><path d="M7.5 5v5.5M12.5 5v5.5M17.5 5v5.5"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>' },
+  clock: { label: 'Clock', svg: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>' },
+  gauge: { label: 'Gauge', svg: '<path d="M3.5 17.5a9 9 0 1 1 17 0"/><path d="M12 15l4-5"/><circle cx="12" cy="15.5" r="1.3"/><path d="M6.5 11.5l1 .6M12 6.5v1.2M17.5 11.5l-1 .6"/>' },
+  clockCheck: { label: 'Clock + tick', svg: '<path d="M20.4 11.4A8.5 8.5 0 1 0 11.4 20.4"/><path d="M12 7v5l3 1.8"/><path d="M14.5 18.5l2.2 2.2 4.3-4.3"/>' },
+  people: { label: 'Group', svg: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20.5a6.5 6.5 0 0 1 13 0"/><circle cx="17.2" cy="9" r="2.6"/><path d="M16.5 14.3a5 5 0 0 1 5.5 5"/>' },
+  person: { label: 'Person', svg: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>' },
+  fare: { label: 'Ticket', svg: '<path d="M3 7.5a1.5 1.5 0 0 1 1.5-1.5h15A1.5 1.5 0 0 1 21 7.5v2a2.5 2.5 0 0 0 0 5v2a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 16.5v-2a2.5 2.5 0 0 0 0-5z"/><path d="M14 6.5v1.5M14 11.2v1.6M14 16v1.5"/>' },
+  route: { label: 'Route', svg: '<circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H16a3.5 3.5 0 0 0 0-7H8a3.5 3.5 0 0 1 0-7h7.5"/>' },
+  calendarCheck: { label: 'Calendar + tick', svg: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M9 15.5l2 2 4-4"/>' },
+  stopwatch: { label: 'Stopwatch', svg: '<circle cx="12" cy="14" r="7.5"/><path d="M12 14v-3.5"/><path d="M10 2.5h4M12 2.5v4"/><path d="M18.3 7.2l1.5-1.5"/>' },
+  hourglass: { label: 'Hourglass', svg: '<path d="M6 3h12M6 21h12"/><path d="M7.5 3v3.2L12 12l-4.5 5.8V21M16.5 3v3.2L12 12l4.5 5.8V21"/>' },
+  busStop: { label: 'Bus stop', svg: '<rect x="6" y="2.5" width="12" height="8.5" rx="2"/><path d="M9.5 6.75h5"/><path d="M12 11v11M9 22h6"/>' },
+};
+
+const SLOTS = [
+  { id: 'header', name: 'Report header', where: 'Top of the email, on the navy band', color: '#ffffff', dark: true,
+    emoji: '&#128652;', options: ['busFront', 'busSide'], problem: 'Same emoji as Trips' },
+  { id: 'otp', name: 'On-time performance', where: 'KPI card 1', color: '#16a34a',
+    emoji: '&#128200;', options: ['clock', 'gauge', 'clockCheck'], problem: 'Rising chart reads as "growth", not "on time"' },
+  { id: 'ridership', name: 'Total ridership', where: 'KPI card 2', color: '#2563eb',
+    emoji: '&#128101;', options: ['people', 'person', 'fare'], problem: 'Grey silhouettes clash with blue card' },
+  { id: 'trips', name: 'Trips operated', where: 'KPI card 3', color: '#6d28d9',
+    emoji: '&#128652;', options: ['busFront', 'route', 'calendarCheck'], problem: 'Repeats the header bus' },
+  { id: 'dwell', name: 'Operator dwell', where: 'KPI card 4', color: '#0891b2',
+    emoji: '&#9201;', options: ['stopwatch', 'hourglass', 'busStop'], problem: 'Black outline; looks unlike the others' },
+];
+
+const STYLES = [
+  { id: 'emoji', name: 'Emoji (today)', desc: 'No change. Always shows, but looks different on each device and ignores card colours.', pill: ['warn', 'No images needed'] },
+  { id: 'outline', name: 'Outline', desc: 'Thin lines in the card colour on a pale badge. Light and clean.', pill: ['good', 'PNG images'] },
+  { id: 'duotone', name: 'Duotone', desc: 'Outline plus a soft tinted fill. A bit more weight and colour.', pill: ['good', 'PNG images'] },
+  { id: 'solid', name: 'Solid badge', desc: 'White icon on a filled circle in the card colour. Strongest, most "app-like".', pill: ['good', 'PNG images'] },
+  { id: 'none', name: 'No icons', desc: 'Remove icons. Cards get shorter and the numbers stand out more.', pill: ['good', 'Simplest'] },
+];
+
+const state = {
+  style: 'outline',
+  shape: { header: 'busFront', otp: 'clock', ridership: 'people', trips: 'route', dwell: 'stopwatch' },
+};
+
+function svg(glyph, size, stroke, duo) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${duo ? 'class="duo"' : ''} style="color:${stroke};display:block">${GLYPHS[glyph].svg}</svg>`;
+}
+
+function badge(inner, bg, border, size) {
+  const box = size + 14;
+  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${box}px;height:${box}px;border-radius:14px;background:${bg};border:1px solid ${border};">${inner}</span>`;
+}
+
+// Draws one slot's icon in a style. Drawn styles use the slot's picked shape unless one is given.
+function icon(style, slot, size, glyph) {
+  glyph = glyph || state.shape[slot.id];
+  const c = slot.color;
+  if (style === 'none') return '';
+  if (style === 'emoji') {
+    const bg = slot.dark ? '#0f3a76' : '#f8fafc';
+    return badge(`<span class="emoji" style="font-size:${size}px;line-height:1">${slot.emoji}</span>`, bg, slot.dark ? '#ffffff22' : c + '22', size);
+  }
+  if (style === 'solid') {
+    if (slot.dark) return badge(svg(glyph, size, '#0b2e66'), '#ffffff', '#ffffff', size);
+    return badge(svg(glyph, size, '#ffffff'), c, c, size);
+  }
+  const duo = style === 'duotone';
+  if (slot.dark) return badge(svg(glyph, size, '#ffffff', duo), '#0f3a76', '#ffffff33', size);
+  return badge(svg(glyph, size, c, duo), '#f8fafc', c + '33', size);
+}
+
+function renderInventory() {
+  document.getElementById('inventory').innerHTML = SLOTS.map(s => `
+    <tr><td><b>${s.name}</b></td><td>${s.where}</td><td class="emoji">${s.emoji}</td><td>${s.problem}</td></tr>`).join('') +
+    `<tr><td><b>alert, stable</b></td><td>Defined in code, not used</td><td class="emoji">&#9888; &#10003;</td><td><span class="tag">Remove</span></td></tr>`;
+}
+
+function renderStyles() {
+  document.getElementById('styles').innerHTML = STYLES.map(st => {
+    const row = st.id === 'none'
+      ? '<span class="muted">— no icons —</span>'
+      : SLOTS.map(s => s.dark
+          ? `<span style="background:#0b2e66;border-radius:12px;padding:3px;display:inline-flex">${icon(st.id, s, 18)}</span>`
+          : icon(st.id, s, 18)).join('');
+    return `<div class="style-card ${state.style === st.id ? 'on' : ''}" data-style="${st.id}">
+      <div class="name">${st.name}</div>
+      <div class="desc">${st.desc}</div>
+      <div class="row">${row}</div>
+      <span class="pill ${st.pill[0]}">${st.pill[1]}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderSlots() {
+  const drawStyle = (state.style === 'emoji' || state.style === 'none') ? 'outline' : state.style;
+  document.getElementById('shapeNote').textContent =
+    state.style === 'emoji' ? 'You picked emoji, so shapes don\'t apply. They are shown in Outline style in case you change your mind.'
+    : state.style === 'none' ? 'You picked no icons, so shapes don\'t apply. They are shown in Outline style in case you change your mind.'
+    : 'Shown in your picked style.';
+  document.getElementById('slots').innerHTML = SLOTS.map(s => `
+    <div class="slot">
+      <div><div class="sname">${s.name}</div><div class="swhere">${s.where}</div></div>
+      <div class="opts">${s.options.map(g => `
+        <div class="opt ${state.shape[s.id] === g ? 'on' : ''}" data-slot="${s.id}" data-glyph="${g}">
+          ${s.dark ? `<span style="background:#0b2e66;border-radius:14px;padding:4px;display:inline-flex">${icon(drawStyle, s, 24, g)}</span>` : icon(drawStyle, s, 24, g)}
+          <span>${GLYPHS[g].label}</span>
+        </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function kpiCard(slot, label, value, sub) {
+  const ic = icon(state.style, slot, 18);
+  return `<td style="width:25%;padding:6px;vertical-align:top;">
+    <div style="box-sizing:border-box;height:${state.style === 'none' ? 148 : 190}px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${slot.color};box-shadow:0 2px 8px rgba(15,23,42,.06);">
+      ${ic ? `<div style="line-height:1;margin-bottom:8px;">${ic}</div>` : ''}
+      <div style="font-size:13px;color:#1e3a5f;font-weight:700;">${label}</div>
+      <div style="font-size:28px;font-weight:800;color:${slot.color};margin:8px 0 4px;letter-spacing:-.5px;">${value}</div>
+      <div style="font-size:11px;color:#9ca3af;">${sub}</div>
+    </div></td>`;
+}
+
+function renderPreview() {
+  const [h, otp, rid, trips, dwell] = SLOTS;
+  const hi = icon(state.style, h, 24);
+  document.getElementById('email').innerHTML = `
+    <div class="ehead">
+      ${hi ? `<div style="line-height:1;margin-bottom:8px;display:flex;justify-content:center">${hi}</div>` : ''}
+      <div class="t1">Barrie Transit</div>
+      <div class="t2">Daily Performance Report</div>
+      <div class="t3">Wednesday, October 7, 2026</div>
+    </div>
+    <div style="padding:18px;">
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        ${kpiCard(otp, 'On-time performance', '88.4%', '3.1% early · 8.5% late')}
+        ${kpiCard(rid, 'Total ridership', '9,086', '9,083 alightings')}
+        ${kpiCard(trips, 'Trips operated', '582 <span style="font-size:12px">of 590</span>', '38 vehicles · 459.3 svc hrs')}
+        ${kpiCard(dwell, 'Operator Dwell', '80 <span style="font-size:12px;font-weight:700">min / 100 trips</span>',
+          'Weekday median:<br>73 min / 100 trips<div style="margin-top:8px">Today: 7.8 hrs total</div>')}
+      </tr></table>
+    </div>`;
+}
+
+function summaryText() {
+  const st = STYLES.find(s => s.id === state.style);
+  const lines = [`Icon style: ${st.name}`];
+  if (state.style !== 'emoji' && state.style !== 'none') {
+    for (const s of SLOTS) lines.push(`${s.name.padEnd(22)} ${GLYPHS[state.shape[s.id]].label}`);
+  }
+  lines.push('Remove unused: alert, stable');
+  return lines.join('\n');
+}
+
+function render() {
+  renderStyles();
+  renderSlots();
+  renderPreview();
+  document.getElementById('summary').textContent = summaryText();
+}
+
+document.getElementById('styles').addEventListener('click', e => {
+  const card = e.target.closest('[data-style]');
+  if (!card) return;
+  state.style = card.dataset.style;
+  render();
+});
+document.getElementById('slots').addEventListener('click', e => {
+  const opt = e.target.closest('[data-glyph]');
+  if (!opt) return;
+  state.shape[opt.dataset.slot] = opt.dataset.glyph;
+  render();
+});
+document.getElementById('zoom').addEventListener('change', e => {
+  document.getElementById('previewBox').classList.toggle('zoomed', e.target.checked);
+});
+document.getElementById('copy').addEventListener('click', async () => {
+  const msg = document.getElementById('copied');
+  try { await navigator.clipboard.writeText(summaryText()); msg.textContent = 'Copied.'; }
+  catch { msg.textContent = 'Copy failed. Select the text above instead.'; }
+});
+
+renderInventory();
+render();
+</script>
+</body>
+</html>

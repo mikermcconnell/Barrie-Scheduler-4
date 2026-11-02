@@ -52,7 +52,7 @@ export const computeSuggestedStrictCycle = (
             return {
                 minutes: Math.round(median(highConfidenceBuckets.map(bucket => getBucketBandingTotal(bucket))) ?? 0),
                 quality: 'high',
-                basisLabel: 'filtered observed cycle totals',
+                basisLabel: 'filtered segment runtime totals',
                 bucketCount: highConfidenceBuckets.length,
             };
         }
@@ -61,7 +61,7 @@ export const computeSuggestedStrictCycle = (
             return {
                 minutes: Math.round(median(representativeBuckets.map(bucket => getBucketBandingTotal(bucket))) ?? 0),
                 quality: 'mixed',
-                basisLabel: 'observed cycle totals',
+                basisLabel: 'segment runtime totals',
                 bucketCount: representativeBuckets.length,
             };
         }

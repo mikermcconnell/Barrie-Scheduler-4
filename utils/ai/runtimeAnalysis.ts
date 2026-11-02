@@ -107,18 +107,22 @@ const percentileInc = (sorted: number[], p: number): number => {
     return sorted[lower] + frac * (sorted[lower + 1] - sorted[lower]);
 };
 
+/**
+ * P50 is the sum of rounded segment medians: the exact travel time the
+ * generator builds from this bucket (round each segment, then sum). P80 is
+ * the observed cycle percentile when day-level data exists, because
+ * segment P80s do not add up to a cycle P80.
+ */
 export const getBucketDisplayedTotal = (
     bucket: TripBucketAnalysis,
     metric: 'p50' | 'p80'
 ): number => (
     metric === 'p50'
-        ? bucket.observedCycleP50 ?? bucket.totalP50
+        ? bucket.totalP50
         : bucket.observedCycleP80 ?? bucket.totalP80
 );
 
-export const getBucketBandingTotal = (bucket: TripBucketAnalysis): number => (
-    bucket.observedCycleP50 ?? bucket.totalP50
-);
+export const getBucketBandingTotal = (bucket: TripBucketAnalysis): number => bucket.totalP50;
 
 // Band summary with averaged segment times - used by schedule generator
 export interface BandSegmentAverage {
@@ -631,9 +635,16 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
 
 // 2. Outlier Detection (Mean +/- 2 StdDev)
 // To be called ONCE upon initial data load (or manual "Reset" action)
+// Paired-cycle buckets are not compared across the day: time-of-day change is
+// the signal being scheduled, so a slow peak half-hour is not an outlier.
+// Their bad days are removed inside each bucket by the performance runtime
+// computer instead.
 export const detectOutliers = (analysis: TripBucketAnalysis[]): TripBucketAnalysis[] => {
     const fallbackExpectedSegmentCount = getFallbackExpectedSegmentCount(analysis);
-    const validItems = analysis.filter(a => isBucketEligibleForBanding(a, fallbackExpectedSegmentCount));
+    const validItems = analysis.filter(a => (
+        a.evidence?.kind !== 'paired-cycle'
+        && isBucketEligibleForBanding(a, fallbackExpectedSegmentCount)
+    ));
     const eligibleItems = new Set(validItems);
     if (validItems.length === 0) return analysis;
 

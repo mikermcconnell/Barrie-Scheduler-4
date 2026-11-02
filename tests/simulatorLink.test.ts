@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canOpenSimulator, simulatorUrl } from '../utils/simulatorLink';
+import { canOpenSimulator, simulatorLimitedTabs, simulatorUrl } from '../utils/simulatorLink';
 
 describe('simulator link', () => {
     it('puts the token and view in the fragment, never the query', () => {
@@ -16,8 +16,18 @@ describe('simulator link', () => {
         expect(canOpenSimulator('planner')).toBe(true);
         expect(canOpenSimulator('internal')).toBe(true);
         expect(canOpenSimulator('admin')).toBe(true);
-        for (const level of ['none', 'production', 'external-planner', 'transit-app-only', 'parking'] as const) {
+        expect(canOpenSimulator('parking')).toBe(true);
+        for (const level of ['none', 'production', 'external-planner', 'transit-app-only'] as const) {
             expect(canOpenSimulator(level)).toBe(false);
         }
+    });
+
+    it('is offered to the Ontario Northland team, whatever its level, but not to other external planners', () => {
+        expect(canOpenSimulator('external-planner', 'VieLReKaKrIfaSh44kEj')).toBe(true);
+        expect(canOpenSimulator('transit-app-only', 'VieLReKaKrIfaSh44kEj')).toBe(true);
+        expect(simulatorLimitedTabs('external-planner', 'VieLReKaKrIfaSh44kEj')).toEqual(['Service Desk', 'Planning', 'Parking']);
+        expect(canOpenSimulator('external-planner', 'gPwiDKGp890n5yOHhIzZ')).toBe(false);
+        expect(simulatorLimitedTabs('planner', 'PHICwXGlvDen0RGt7fCG')).toBeUndefined();
+        expect(simulatorLimitedTabs('parking', 'qx5rgBibRmPzvjbBdAMA')).toEqual(['Parking', 'Planning']);
     });
 });

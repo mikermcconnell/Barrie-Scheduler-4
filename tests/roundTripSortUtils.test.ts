@@ -363,6 +363,43 @@ describe('getRoundTripDisplayedHeadways', () => {
         expect(headways[getRoundTripRowKey(shortTurnRow)]).toBe(30);
     });
 
+    it('compares arrivals when a trip ends at the shared timepoint so recovery does not skew the headway', () => {
+        const throughRow = {
+            ...makeRow([{
+                ...makeTrip('north-through', 'North', 1294, {
+                    'Park Place': '9:34 PM',
+                    'Sproule at Kraus': '9:55 PM',
+                    'Downtown Hub': '10:17 PM',
+                }),
+                arrivalTimes: { 'Downtown Hub': '10:07 PM' },
+                recoveryTimes: { 'Downtown Hub': 10 },
+            }]),
+            blockId: '2-1',
+        };
+        const endRow = {
+            ...makeRow([{
+                ...makeTrip('north-end', 'North', 1324, {
+                    'Park Place': '10:04 PM',
+                    'Sproule at Kraus': '10:25 PM',
+                    'Downtown Hub': '10:37 PM',
+                }),
+                arrivalTimes: { 'Downtown Hub': '10:37 PM' },
+                recoveryTimes: { 'Downtown Hub': 0 },
+            }]),
+            blockId: '2-2',
+        };
+
+        const combined = {
+            routeName: '2 (Weekday)',
+            northStops: ['Park Place', 'Sproule at Kraus', 'Downtown Hub'],
+            southStops: [] as string[],
+        };
+
+        const headways = getRoundTripDisplayedHeadways([throughRow, endRow], combined);
+
+        expect(headways[getRoundTripRowKey(endRow)]).toBe(30);
+    });
+
     it('walks back to the nearest row with a shared served timepoint', () => {
         const firstNorthRow = {
             ...makeRow([makeTrip('north-first', 'North', 480, { A: '8:00 AM', B: '8:20 AM' })]),

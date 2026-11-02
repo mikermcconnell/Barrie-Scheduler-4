@@ -2242,7 +2242,7 @@ export const ingestResidentialGrowthReport = onRequest(
  *   endDate   string   (optional, YYYY-MM-DD; defaults to today)
  *   days      number   (optional, trailing-day window when startDate not provided; default 30)
  *   apply     boolean  (optional, default false = dry run)
- *   deleteOld boolean  (optional, default false)
+ *   deleteOld boolean  (optional, default true; pass false to keep the previous generation)
  */
 export const rebuildPerformanceHistory = onRequest(
   {
@@ -2281,7 +2281,7 @@ export const rebuildPerformanceHistory = onRequest(
       req.query.days ?? body.days,
     );
     const apply = parseBooleanFlag(req.query.apply ?? body.apply, false);
-    const deleteOld = parseBooleanFlag(req.query.deleteOld ?? body.deleteOld, false);
+    const deleteOld = parseBooleanFlag(req.query.deleteOld ?? body.deleteOld, true);
     // Allocate this before checking active imports. Any import accepted after
     // the check receives a later revision and remains authoritative.
     const rebuildSourceRevision = buildPerformanceSourceRevision(Date.now(), '!history-rebuild');
@@ -2450,7 +2450,7 @@ export const rebuildPerformanceHistory = onRequest(
  *   teamId   string   (optional, default team)
  *   cap      number   (optional, default 65)
  *   apply    boolean  (optional, default false = dry run)
- *   deleteOld boolean (optional, default false)
+ *   deleteOld boolean (optional, default true; pass false to keep the previous generation)
  */
 export const backfillLoadSanitization = onRequest(
   {
@@ -2483,7 +2483,7 @@ export const backfillLoadSanitization = onRequest(
     const parsedCap = Number.parseInt(String(capRaw ?? '65'), 10);
     const cap = Number.isFinite(parsedCap) && parsedCap > 0 ? parsedCap : 65;
     const apply = parseBooleanFlag(req.query.apply ?? body.apply, false);
-    const deleteOld = parseBooleanFlag(req.query.deleteOld ?? body.deleteOld, false);
+    const deleteOld = parseBooleanFlag(req.query.deleteOld ?? body.deleteOld, true);
 
     try {
       const metadataRef = getDb().doc(`teams/${teamId}/performanceData/metadata`);

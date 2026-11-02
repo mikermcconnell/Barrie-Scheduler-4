@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Email — "Yesterday at a Glance" redesign</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', Arial, sans-serif; background: #e2e8f0; color: #0f172a; }
+  .page { max-width: 1240px; margin: 0 auto; padding: 26px 24px 60px; }
+  h1 { font-size: 23px; color: #082b63; margin: 0 0 4px; }
+  .lead { color: #475569; font-size: 14px; margin: 0 0 18px; max-width: 820px; line-height: 1.5; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab { font: inherit; font-size: 13px; font-weight: 600; border: 2px solid #cbd5e1; background: #fff; color: #334155; border-radius: 999px; padding: 7px 16px; cursor: pointer; }
+  .tab.on { border-color: #2563eb; background: #2563eb; color: #fff; }
+  .layout { display: grid; grid-template-columns: 760px 1fr; gap: 22px; align-items: start; }
+  .email { width: 760px; background: #f8fafc; border-radius: 10px; padding: 4px 18px 22px; box-shadow: 0 6px 20px rgba(15,23,42,.12); }
+  .notes { background: #fff; border-radius: 12px; padding: 16px 18px; font-size: 13px; line-height: 1.5; color: #334155; box-shadow: 0 1px 3px rgba(0,0,0,.06); position: sticky; top: 16px; }
+  .notes h3 { margin: 0 0 8px; font-size: 14px; color: #082b63; }
+  .notes ol { margin: 0; padding-left: 20px; }
+  .notes li { margin-bottom: 8px; }
+  .notes .src { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b; }
+  .view { display: none; }
+  .view.on { display: block; }
+  .n { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 99px; background: #fde68a; color: #92400e; font-size: 11px; font-weight: 800; margin-left: 4px; vertical-align: 1px; }
+  .show-markers .n { display: inline-flex; }
+  .hide-markers .n { display: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>"Yesterday at a Glance" — redesign mock-up</h1>
+  <p class="lead">Built from real data for Wednesday, October 7, 2026. "Usual" means the median of the last 20 weekdays. Switch between the views below. Yellow numbers link the email to the notes on the right.</p>
+
+  <div class="tabs">
+    <button class="tab" data-view="current">Current</button>
+    <button class="tab on" data-view="proposed">Proposed — Oct 7</button>
+    <button class="tab" data-view="quiet">Proposed — a quiet day (example)</button>
+    <label style="font-size:13px;color:#334155;align-self:center;margin-left:8px;"><input type="checkbox" id="markers" checked> Show note numbers</label>
+  </div>
+
+  <div class="layout">
+    <div class="email show-markers" id="email">
+
+      <!-- ═══ CURRENT ═══ -->
+      <div class="view" data-view="current">
+        <table width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td style="width:62%;padding:0 6px 0 0;vertical-align:top;">
+            <div style="margin:22px 0 10px;"><div style="font-size:18px;font-weight:800;color:#082b63;">Yesterday at a Glance</div></div>
+            <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;">
+              <div style="margin-bottom:10px;"><span style="display:inline-block;background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.3px;">REVIEW</span></div>
+              <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;"><span style="color:#2563eb;font-weight:700;margin-right:6px;">•</span>Service delivery was mostly stable on Wednesday, October 7, 2026, with a few items to review.</div>
+              <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;"><span style="color:#2563eb;font-weight:700;margin-right:6px;">•</span>System OTP was 88.4% with 9,086 riders.</div>
+              <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;"><span style="color:#2563eb;font-weight:700;margin-right:6px;">•</span>Missed-trip data unavailable.</div>
+              <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;"><span style="color:#2563eb;font-weight:700;margin-right:6px;">•</span>APC review flags were triggered on 3 routes (12B, 15A, 15B).</div>
+              <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;"><span style="color:#2563eb;font-weight:700;margin-right:6px;">•</span>Lowest route OTP was 12A GEORGIAN MALL at 77.8%.</div>
+            </div>
+          </td>
+          <td style="width:38%;padding:0 0 0 6px;vertical-align:top;">
+            <div style="margin:22px 0 10px;"><div style="font-size:18px;font-weight:800;color:#082b63;">Action Focus</div></div>
+            <div style="background:#eff6ff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;">
+              <div style="font-size:13px;color:#082b63;margin:9px 0;"><span style="display:inline-block;width:18px;height:18px;border:2px solid #60a5fa;border-radius:999px;text-align:center;line-height:15px;color:#2563eb;font-size:11px;font-weight:800;margin-right:8px;">✓</span>Check Route 15A APC gap</div>
+              <div style="font-size:13px;color:#082b63;margin:9px 0;"><span style="display:inline-block;width:18px;height:18px;border:2px solid #60a5fa;border-radius:999px;text-align:center;line-height:15px;color:#2563eb;font-size:11px;font-weight:800;margin-right:8px;">✓</span>Review Route 12A late trips</div>
+              <div style="font-size:13px;color:#082b63;margin:9px 0;"><span style="display:inline-block;width:18px;height:18px;border:2px solid #60a5fa;border-radius:999px;text-align:center;line-height:15px;color:#2563eb;font-size:11px;font-weight:800;margin-right:8px;">✓</span>Check Route 8A operator dwell</div>
+            </div>
+          </td>
+        </tr></table>
+      </div>
+
+      <!-- ═══ PROPOSED — OCT 7 ═══ -->
+      <div class="view on" data-view="proposed">
+        <table width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td style="width:60%;padding:0 6px 0 0;vertical-align:top;">
+            <div style="margin:22px 0 10px;"><div style="font-size:18px;font-weight:800;color:#082b63;">Yesterday at a Glance</div></div>
+            <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;">
+              <div style="font-size:15px;font-weight:700;color:#0f172a;line-height:1.4;">
+                <span style="display:inline-block;background:#fef3c7;color:#92400e;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.3px;vertical-align:2px;margin-right:6px;">REVIEW</span>A busy weekday with normal on-time. Three routes ran well below their usual.<span class="n">1</span>
+              </div>
+
+              <!-- vs usual -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 4px;border-top:1px solid #f1f5f9;">
+                <tr>
+                  <td style="padding:8px 0;font-size:12px;color:#64748b;width:30%;">On-time</td>
+                  <td style="padding:8px 0;font-size:13px;color:#0f172a;font-weight:700;width:22%;">88.4%</td>
+                  <td style="padding:8px 0;font-size:12px;color:#94a3b8;width:22%;">usual 88.9%</td>
+                  <td style="padding:8px 0;font-size:12px;color:#64748b;font-weight:600;text-align:right;">normal</td>
+                </tr>
+                <tr style="border-top:1px solid #f1f5f9;">
+                  <td style="padding:8px 0;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;">Riders</td>
+                  <td style="padding:8px 0;font-size:13px;color:#0f172a;font-weight:700;border-top:1px solid #f1f5f9;">9,086</td>
+                  <td style="padding:8px 0;font-size:12px;color:#94a3b8;border-top:1px solid #f1f5f9;">usual 8,447</td>
+                  <td style="padding:8px 0;font-size:12px;color:#16a34a;font-weight:700;text-align:right;border-top:1px solid #f1f5f9;">▲ 8% · 5th busiest of 21<span class="n">2</span></td>
+                </tr>
+              </table>
+
+              <!-- what stood out -->
+              <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.4px;text-transform:uppercase;margin:12px 0 6px;">What stood out<span class="n">3</span></div>
+              <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;"><span style="color:#dc2626;font-weight:800;margin-right:6px;">▼</span><b>Route 400</b> on-time 86.2%, usually 94.1%. Most late trips 12:50–15:20.</div>
+              <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;"><span style="color:#dc2626;font-weight:800;margin-right:6px;">▼</span><b>Route 101</b> on-time 85.6%, usually 92.0%. Late trips all in the morning, 7:05–10:05.</div>
+              <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;"><span style="color:#dc2626;font-weight:800;margin-right:6px;">▼</span><b>Route 15A</b> on-time 81.0%, usually 86.8%.</div>
+
+              <!-- ongoing -->
+              <div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border-radius:8px;">
+                <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:.4px;text-transform:uppercase;margin-bottom:4px;">Ongoing<span class="n">4</span></div>
+                <div style="font-size:12px;line-height:1.55;color:#64748b;">
+                  APC counts flagged: 15B on 46 of the last 68 days · 15A on 29 · 12B <span style="background:#dbeafe;color:#1d4ed8;font-weight:700;padding:0 5px;border-radius:4px;">new</span><br>
+                  Route 12A lowest again (77.8%). Normal for 12A: lowest on 6 of the last 20 weekdays.<span class="n">5</span><br>
+                  Missed-trip data: none received since Aug 29.
+                </div>
+              </div>
+            </div>
+          </td>
+          <td style="width:40%;padding:0 0 0 6px;vertical-align:top;">
+            <div style="margin:22px 0 10px;"><div style="font-size:18px;font-weight:800;color:#082b63;">Action Focus<span class="n">6</span></div></div>
+            <div style="background:#eff6ff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;">
+              <div style="background:#fff;border-left:4px solid #dc2626;border-radius:8px;padding:9px 11px;margin:4px 0 8px;">
+                <div style="font-size:13px;font-weight:700;color:#082b63;">1. Route 400 late trips</div>
+                <div style="font-size:12px;color:#475569;line-height:1.45;margin-top:2px;">8 of 47 trips late, 6 of them 12:50–15:20, both directions. Check for a detour or traffic issue.</div>
+                <div style="font-size:12px;margin-top:4px;"><a href="#" style="color:#2563eb;font-weight:600;text-decoration:none;">Open Route 400 →</a></div>
+              </div>
+              <div style="background:#fff;border-left:4px solid #d97706;border-radius:8px;padding:9px 11px;margin:0 0 8px;">
+                <div style="font-size:13px;font-weight:700;color:#082b63;">2. Route 101 morning trips</div>
+                <div style="font-size:12px;color:#475569;line-height:1.45;margin-top:2px;">7 of 37 trips late, all 7:05–10:05. Check AM running time.</div>
+                <div style="font-size:12px;margin-top:4px;"><a href="#" style="color:#2563eb;font-weight:600;text-decoration:none;">Open Route 101 →</a></div>
+              </div>
+              <div style="background:#fff;border-left:4px solid #94a3b8;border-radius:8px;padding:9px 11px;margin:0 0 4px;">
+                <div style="font-size:13px;font-weight:700;color:#082b63;">3. Missed-trip feed</div>
+                <div style="font-size:12px;color:#475569;line-height:1.45;margin-top:2px;">No missed-trip data since Aug 29 (39 days). Check the export.</div>
+              </div>
+            </div>
+          </td>
+        </tr></table>
+      </div>
+
+      <!-- ═══ PROPOSED — QUIET DAY ═══ -->
+      <div class="view" data-view="quiet">
+        <table width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td style="width:60%;padding:0 6px 0 0;vertical-align:top;">
+            <div style="margin:22px 0 10px;"><div style="font-size:18px;font-weight:800;color:#082b63;">Yesterday at a Glance</div></div>
+            <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;">
+              <div style="font-size:15px;font-weight:700;color:#0f172a;line-height:1.4;">
+                <span style="display:inline-block;background:#dcfce7;color:#166534;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.3px;vertical-align:2px;margin-right:6px;">STABLE</span>A normal weekday. No route ran well below its usual.<span class="n">7</span>
+              </div>
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 4px;border-top:1px solid #f1f5f9;">
+                <tr>
+                  <td style="padding:8px 0;font-size:12px;color:#64748b;width:30%;">On-time</td>
+                  <td style="padding:8px 0;font-size:13px;color:#0f172a;font-weight:700;width:22%;">89.6%</td>
+                  <td style="padding:8px 0;font-size:12px;color:#94a3b8;width:22%;">usual 88.9%</td>
+                  <td style="padding:8px 0;font-size:12px;color:#64748b;font-weight:600;text-align:right;">normal</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;">Riders</td>
+                  <td style="padding:8px 0;font-size:13px;color:#0f172a;font-weight:700;border-top:1px solid #f1f5f9;">8,512</td>
+                  <td style="padding:8px 0;font-size:12px;color:#94a3b8;border-top:1px solid #f1f5f9;">usual 8,447</td>
+                  <td style="padding:8px 0;font-size:12px;color:#64748b;font-weight:600;text-align:right;border-top:1px solid #f1f5f9;">normal</td>
+                </tr>
+              </table>
+              <div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border-radius:8px;">
+                <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:.4px;text-transform:uppercase;margin-bottom:4px;">Ongoing</div>
+                <div style="font-size:12px;line-height:1.55;color:#64748b;">
+                  APC counts flagged: 15B on 47 of the last 68 days · 15A on 30<br>
+                  Missed-trip data: none received since Aug 29.
+                </div>
+              </div>
+            </div>
+          </td>
+          <td style="width:40%;padding:0 0 0 6px;vertical-align:top;">
+            <div style="margin:22px 0 10px;"><div style="font-size:18px;font-weight:800;color:#082b63;">Action Focus</div></div>
+            <div style="background:#eff6ff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 14px;">
+              <div style="font-size:13px;color:#475569;line-height:1.5;">Nothing new to follow up today.</div>
+              <div style="font-size:12px;color:#94a3b8;line-height:1.5;margin-top:6px;">Ongoing items are listed on the left.</div>
+            </div>
+          </td>
+        </tr></table>
+      </div>
+
+    </div>
+
+    <aside class="notes">
+      <h3>What changed and why</h3>
+      <ol>
+        <li><b>One headline sentence</b> replaces the opening bullet. It says what kind of day it was. The date is already in the email header.</li>
+        <li><b>"Usual" comparison.</b> Each number shows the median of the last 20 weekdays (Saturdays and Sundays compare with their own). The KPI cards show the raw numbers; this section says if they were good or bad.</li>
+        <li><b>What stood out</b> lists only routes well below their own usual on-time (5+ points, with enough data). Yesterday that was 400, 101 and 15A. The current version mentions none of these on-time drops.</li>
+        <li><b>Ongoing</b> moves repeat issues into one grey box with how long they have lasted. A flag that is new today gets a "new" tag. Readers can skip this box on most days.</li>
+        <li><b>12A is no longer the headline.</b> It is often the lowest route, so "lowest route" repeated every day. Now it shows only if 12A drops below its own usual.</li>
+        <li><b>Action Focus</b> items are numbered, colour-coded by severity, give counts and times, and link to the route in the dashboard. No ✓ marks, which made items look done.</li>
+        <li><b>Quiet days stay short.</b> When nothing stands out, the section says so in one line. This example uses made-up numbers.</li>
+      </ol>
+      <div class="src">
+        <b>Data:</b> Oct 7 report data and 68 days of route history. "Usual" = median of Sep 9 – Oct 6 weekdays (20 days). Late trip = 25%+ of timepoints late. All numbers in the Oct 7 views are real.
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === tab));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.dataset.view === tab.dataset.view));
+}));
+document.getElementById('markers').addEventListener('change', e => {
+  const email = document.getElementById('email');
+  email.classList.toggle('show-markers', e.target.checked);
+  email.classList.toggle('hide-markers', !e.target.checked);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Connections — ranked optimization mockup</title>
+<style>
+  :root {
+    --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --bg:#f9fafb; --card:#fff;
+    --green:#059669; --green-bg:#ecfdf5; --amber:#d97706; --amber-bg:#fffbeb;
+    --red:#dc2626; --red-bg:#fef2f2; --blue:#2563eb; --blue-bg:#eff6ff; --violet:#7c3aed;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); background:#eef0f3; }
+  .frame { max-width:1320px; margin:18px auto; background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 4px 18px rgba(0,0,0,.06); }
+  .topbar { display:flex; align-items:center; gap:10px; padding:10px 18px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); }
+  .topbar b { color:var(--ink); font-size:14px; }
+  .step { padding:3px 9px; border-radius:999px; }
+  .step.on { background:var(--ink); color:#fff; font-weight:700; }
+  .head { display:flex; align-items:center; gap:12px; padding:14px 18px 6px; flex-wrap:wrap; }
+  .head h2 { margin:0; font-size:18px; }
+  .tabs { display:inline-flex; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:2px; }
+  .tabs span { padding:4px 12px; font-size:12px; font-weight:700; border-radius:6px; color:var(--muted); }
+  .tabs span.on { background:var(--ink); color:#fff; }
+  .score { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+  .chip.g { background:var(--green-bg); color:var(--green); }
+  .chip.a { background:var(--amber-bg); color:var(--amber); }
+  .chip.r { background:var(--red-bg); color:var(--red); }
+  .chip.b { background:var(--blue-bg); color:var(--blue); }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .btn { border:1px solid var(--line); background:#fff; border-radius:8px; padding:7px 12px; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn:hover { background:var(--bg); }
+  .btn.primary { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .btn.primary:hover { background:#374151; }
+  .btn.green { background:var(--green); color:#fff; border-color:var(--green); }
+  .btn.sm { padding:4px 9px; font-size:12px; }
+  .banner { margin:8px 18px 0; padding:10px 14px; border-radius:10px; background:var(--blue-bg); border:1px solid #bfdbfe; display:flex; gap:12px; align-items:center; }
+  .banner p { margin:0; flex:1; color:#1e3a8a; font-size:13px; }
+  .layout { display:grid; grid-template-columns:420px 1fr; gap:14px; padding:14px 18px 18px; }
+  .panel { border:1px solid var(--line); border-radius:12px; background:#fff; }
+  .panel > header { padding:10px 14px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; }
+  .panel > header h3 { margin:0; font-size:14px; }
+  .panel > header .sub { color:var(--muted); font-size:12px; }
+  .group { padding:8px 14px 2px; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); display:flex; gap:6px; align-items:center; }
+  .conn { margin:6px 10px; padding:10px 12px 10px 10px; border:1px solid var(--line); border-radius:10px; cursor:pointer; display:flex; gap:10px; }
+  .conn:hover { border-color:#c7cdd6; }
+  .conn.sel { border-color:var(--blue); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+  .conn.off { opacity:.55; }
+  .conn.suggested { border-style:dashed; background:#fcfcfd; }
+  .rank { display:flex; align-items:center; gap:4px; flex:none; }
+  .grip { color:#c0c5cd; font-size:14px; letter-spacing:-3px; cursor:grab; padding:0 2px; user-select:none; }
+  .conn:hover .grip { color:#6b7280; }
+  .rank .n { width:24px; height:24px; border-radius:50%; background:var(--ink); color:#fff; font-weight:800; font-size:12px; display:grid; place-items:center; }
+  .rank .n.s { background:#e5e7eb; color:#6b7280; }
+  .conn[draggable="true"] { cursor:grab; }
+  .conn.dragging { opacity:.35; }
+  .dropline { height:0; margin:0 10px; border-top:3px solid var(--blue); border-radius:3px; position:relative; }
+  .dropline::before { content:""; position:absolute; left:-4px; top:-6px; width:9px; height:9px; border-radius:50%; background:var(--blue); }
+  .dropzone-empty { margin:6px 10px; padding:14px; border:2px dashed var(--line); border-radius:10px; text-align:center; color:var(--muted); font-size:12px; }
+  .dragtip { font-size:11px; font-weight:600; text-transform:none; letter-spacing:0; color:#9ca3af; margin-left:auto; }
+  .body { flex:1; min-width:0; }
+  .row { display:flex; align-items:center; gap:8px; }
+  .name { font-weight:700; }
+  .meta { font-size:12px; color:var(--muted); }
+  .src { font-size:10px; font-weight:800; padding:2px 6px; border-radius:5px; background:#f3f4f6; color:#4b5563; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
+  .src.new { background:#ede9fe; color:var(--violet); }
+  .rule { margin-top:6px; font-size:12px; color:#374151; }
+  .rule input { font:inherit; font-size:12px; border:1px solid var(--line); border-radius:5px; padding:1px 4px; width:34px; background:#fff; }
+  .bar { height:6px; background:#f3f4f6; border-radius:4px; overflow:hidden; display:flex; margin-top:8px; }
+  .bar i { display:block; height:100%; }
+  .stat { font-size:12px; font-weight:700; margin-left:auto; white-space:nowrap; }
+  .stat .after { color:var(--green); }
+  .stat .after.down { color:var(--red); }
+  .toggle { width:34px; height:20px; border-radius:999px; background:#d1d5db; position:relative; flex:none; border:none; cursor:pointer; }
+  .toggle::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; transition:left .15s; }
+  .toggle.on { background:var(--green); }
+  .toggle.on::after { left:16px; }
+  .addrow { margin:8px 10px 12px; display:flex; gap:6px; }
+  .addrow .btn { flex:1; }
+  .timeline { padding:12px 14px 6px; }
+  .tl-legend { display:flex; gap:14px; font-size:12px; color:var(--muted); margin-bottom:6px; flex-wrap:wrap; align-items:center; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:auto; }
+  .seg button { border:none; background:#fff; padding:3px 10px; font-size:12px; font-weight:700; cursor:pointer; color:var(--muted); }
+  .seg button.on { background:var(--ink); color:#fff; }
+  .seg button:disabled { opacity:.4; cursor:not-allowed; }
+  svg { width:100%; display:block; }
+  .detail { margin:6px 14px 14px; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:var(--bg); min-height:64px; }
+  .detail h4 { margin:0 0 4px; font-size:13px; }
+  .detail p { margin:0; font-size:13px; color:#374151; }
+  .detail ul { margin:6px 0 0; padding-left:18px; font-size:13px; }
+  .opt { margin:0 14px 14px; padding:12px 14px; border-radius:10px; border:1px solid var(--line); }
+  .opt h4 { margin:0 0 2px; font-size:13px; }
+  .optgrid { display:flex; gap:18px; align-items:center; flex-wrap:wrap; font-size:13px; margin-top:8px; }
+  .optgrid label { display:flex; gap:6px; align-items:center; }
+  .result { margin-top:12px; border-top:1px solid var(--line); padding-top:10px; display:none; }
+  .result.show { display:block; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid #f1f2f4; vertical-align:top; }
+  th { color:var(--muted); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  .up { color:var(--green); font-weight:800; } .down { color:var(--red); font-weight:800; } .same { color:var(--muted); }
+  .why { margin-top:10px; }
+  .why h5 { margin:0 0 4px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .why li { font-size:12px; margin:3px 0; }
+  .notes { max-width:1320px; margin:0 auto 28px; display:grid; grid-template-columns:repeat(3,1fr); gap:12px; padding:0 2px; }
+  .note { background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px 14px; font-size:13px; }
+  .note b { display:block; margin-bottom:4px; }
+  .num { display:inline-grid; place-items:center; width:20px; height:20px; border-radius:50%; background:#fde68a; color:#92400e; font-size:11px; font-weight:800; margin-right:6px; }
+  .hidden { display:none; }
+  .modal-bg { position:fixed; inset:0; background:rgba(17,24,39,.45); display:flex; align-items:flex-start; justify-content:center; padding-top:60px; z-index:50; }
+  .modal-bg.hidden { display:none; }
+  .modal { width:720px; max-width:94vw; background:#fff; border-radius:14px; box-shadow:0 20px 50px rgba(0,0,0,.25); overflow:hidden; }
+  .modal header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; }
+  .modal header h3 { margin:0; font-size:16px; }
+  .modal .x { margin-left:auto; border:none; background:none; font-size:20px; cursor:pointer; color:var(--muted); }
+  .srcTabs { display:flex; gap:8px; padding:12px 18px 0; }
+  .srcTab { flex:1; border:1px solid var(--line); border-radius:10px; padding:10px; cursor:pointer; text-align:left; background:#fff; font:inherit; }
+  .srcTab b { display:block; font-size:13px; }
+  .srcTab span { font-size:11px; color:var(--muted); }
+  .srcTab.on { border-color:var(--blue); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+  .mbody { padding:14px 18px; font-size:13px; }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+  .field label { font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .field select, .field input, .field textarea { font:inherit; font-size:13px; border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+  .field textarea { min-height:70px; font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .feedline { display:block; padding:8px 10px; border-radius:8px; background:var(--green-bg); color:#065f46; font-size:12px; margin-bottom:10px; }
+  .feedline.warn { background:var(--amber-bg); color:#92400e; }
+  .times { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
+  .times span { font-size:11px; font-weight:700; padding:2px 7px; border-radius:6px; background:#f3f4f6; }
+  .mfoot { padding:12px 18px; border-top:1px solid var(--line); display:flex; gap:8px; align-items:center; }
+  .src.go { background:#dcfce7; color:#166534; }
+  .src.linx { background:#e0e7ff; color:#3730a3; }
+  .tabs span { cursor:pointer; }
+  .when { margin-top:6px; font-size:12px; color:#374151; display:flex; align-items:center; gap:6px; }
+  .when select { font:inherit; font-size:12px; border:1px solid var(--line); border-radius:5px; padding:1px 4px; background:#fff; }
+  .when .lim { font-size:10px; font-weight:800; padding:1px 6px; border-radius:5px; background:#e0f2fe; color:#0369a1; text-transform:uppercase; letter-spacing:.04em; }
+  .relbar { margin:8px 18px 0; padding:8px 14px; border-radius:10px; border:1px solid var(--line); display:flex; align-items:center; gap:10px; font-size:13px; }
+  .relbar.on { background:#f5f3ff; border-color:#ddd6fe; }
+  .chip.v { background:#f5f3ff; color:var(--violet); }
+  .risk { color:var(--violet); font-weight:800; }
+  .tw { padding:14px 18px 18px; }
+  .tw .scroll { max-height:560px; overflow:auto; border:1px solid var(--line); border-radius:12px; }
+  .tw table td, .tw table th { padding:6px 10px; }
+  .tw thead th { position:sticky; top:0; background:#f9fafb; z-index:1; }
+  .tw tr.moved td { background:#eff6ff; }
+  .badge { display:inline-flex; align-items:center; gap:3px; font-size:11px; font-weight:800; padding:2px 7px; border-radius:999px; margin:1px 3px 1px 0; white-space:nowrap; }
+  .badge.good { background:var(--green-bg); color:var(--green); }
+  .badge.tight { background:var(--amber-bg); color:var(--amber); }
+  .badge.bad { background:var(--red-bg); color:var(--red); }
+  .badge.risk { background:#f5f3ff; color:var(--violet); }
+  .nudge { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .nudge button { border:none; background:#fff; padding:2px 9px; cursor:pointer; font-weight:800; }
+  .nudge button:hover { background:var(--bg); }
+  .flash td { animation:flash 1s ease-out; }
+  @keyframes flash { from { background:#fef9c3; } to { background:transparent; } }
+</style>
+</head>
+<body>
+
+<div class="frame">
+  <div class="topbar">
+    <b>Guided Schedule</b> Route 2 · Saturday
+    <span style="margin-left:18px" class="step">✓ Select data</span>
+    <span class="step">✓ Review time bands</span>
+    <span class="step">✓ Set the stage</span>
+    <span class="step on">4 Build the schedule</span>
+    <span class="step">5 Package</span>
+  </div>
+
+  <div class="head">
+    <h2>Build the schedule · Saturday</h2>
+    <div class="tabs"><span id="tabTweaks" onclick="setTab('tweaks')">Manual tweaks</span><span id="tabConn" class="on" onclick="setTab('conn')">Connections</span></div>
+    <div class="score" id="score"></div>
+  </div>
+
+  <div class="banner" id="banner">
+    <span style="font-size:18px">✨</span>
+    <p><b>Started from Route 2 Weekday's saved connections</b> and found <b id="sugCount">2</b> more likely matches at stops Route 2 serves. Saturday times come from the Saturday masters.</p>
+    <button class="btn sm" onclick="acceptAll()">Use all suggestions</button>
+    <button class="btn sm" onclick="dismissBanner()">Dismiss</button>
+  </div>
+
+  <div class="relbar" id="relbar">
+    <button class="toggle" id="relToggle" onclick="toggleRel()"></button>
+    <div><b>Check with real running times</b> <span class="meta">&middot; Route 2 Saturday performance, Jul 22 &ndash; Oct 19 (13 Saturdays)</span><br>
+      <span class="meta" id="relText">Off: connections are judged on scheduled times only.</span></div>
+  </div>
+
+  <!-- MANUAL TWEAKS (simplified) with live connection badges -->
+  <div class="tw hidden" id="tweaksView">
+    <div class="row" style="margin-bottom:8px">
+      <b>Manual tweaks</b><span class="meta">&middot; simplified table. The real editor keeps all its columns; this shows the new <b>Connections</b> column.</span>
+      <label class="meta" style="margin-left:auto;display:flex;gap:6px;align-items:center"><input type="checkbox" checked onchange="showBadges=this.checked;renderTweaks()"> Show connections column</label>
+    </div>
+    <div class="scroll"><table id="twTable"></table></div>
+  </div>
+
+  <div class="layout" id="connView">
+    <!-- LEFT: ranked list -->
+    <div class="panel">
+      <header><h3>Connections</h3><span class="sub">Drag cards to rank them. #1 is protected first.</span></header>
+      <div id="list"></div>
+      <div class="addrow">
+        <button class="btn sm" onclick="openAdd('go')">+ Add connection</button>
+        <button class="btn sm" onclick="alert('Mockup: the saved-service library moves to team settings.')">Manage library…</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: timeline + optimizer -->
+    <div class="panel">
+      <header><h3 id="tlTitle">Timeline</h3><span class="sub" id="tlSub"></span></header>
+      <div class="timeline">
+        <div class="tl-legend">
+          <span><span class="dot" style="background:var(--green)"></span> Met</span>
+          <span><span class="dot" style="background:var(--amber)"></span> Tight / long wait</span>
+          <span><span class="dot" style="background:var(--red)"></span> Missed</span>
+          <span id="legRisk" class="hidden"><span class="dot" style="background:var(--violet)"></span> At risk (late buses)</span>
+          <span><span class="dot" style="background:#d1d5db"></span> Outside active hours</span>
+          <span>Top: Route 2 · Bottom: connecting service</span>
+          <span class="seg"><button id="vNow" class="on" onclick="setView('now')">Now</button><button id="vAfter" onclick="setView('after')" disabled>After optimizing</button></span>
+        </div>
+        <svg id="tl" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="detail" id="detail"></div>
+
+      <div class="opt">
+        <h4>Optimize by priority</h4>
+        <div class="meta">Fixes misses in rank order. A move is only made if it keeps every higher-ranked connection that is already met. Nothing changes until you apply.</div>
+        <div class="optgrid">
+          <label>Move a trip at most
+            <input type="range" id="maxMove" min="1" max="8" value="4" oninput="mm.textContent=this.value; clearResult()">
+            <b><span id="mm">4</span> min</b></label>
+          <label><input type="checkbox" checked> Keep recovery ≥ 10%</label>
+          <label id="planLateWrap" class="hidden"><input type="checkbox" id="planLate" checked onchange="clearResult()"> Plan for late buses (treat <span class="risk">at risk</span> as missed)</label>
+          <button class="btn primary" style="margin-left:auto" onclick="optimize()">Optimize by priority</button>
+        </div>
+        <div class="result" id="result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg hidden" id="addModal" onclick="if(event.target===this)closeAdd()">
+  <div class="modal">
+    <header><h3>Add a connection for Route 2 · Saturday</h3><button class="x" onclick="closeAdd()">&times;</button></header>
+    <div class="srcTabs">
+      <button class="srcTab" data-src="route" onclick="setSrc('route')"><b>🚌 Barrie Transit route</b><span>From the published masters</span></button>
+      <button class="srcTab" data-src="go" onclick="setSrc('go')"><b>🚆 GO Transit</b><span>Trains and GO buses, Metrolinx GTFS</span></button>
+      <button class="srcTab" data-src="linx" onclick="setSrc('linx')"><b>🚍 LINX</b><span>Simcoe County, paste or upload times</span></button>
+      <button class="srcTab" data-src="other" onclick="setSrc('other')"><b>🔔 Other</b><span>Bells, shifts, events</span></button>
+    </div>
+    <div class="mbody" id="mbody"></div>
+    <div class="mfoot">
+      <span class="meta" id="mPreview"></span>
+      <span style="margin-left:auto;display:flex;gap:8px"><button class="btn sm" onclick="closeAdd()">Cancel</button><button class="btn sm primary" onclick="addFromModal()">Add to the bottom of the ranking</button></span>
+    </div>
+  </div>
+</div>
+
+<div class="notes">
+  <div class="note"><b><span class="num">1</span>You set the ranking</b>Drag a card up or down. Drag a suggestion into the list to turn it on at that rank. The rank is saved with the route.</div>
+  <div class="note"><b><span class="num">2</span>Higher ranks are protected</b>The optimizer works from #1 down. It skips any move that would break a higher-ranked connection that is already met, and it tells you why.</div>
+  <div class="note"><b><span class="num">3</span>You stay in control</b>See the result per connection and on the timeline before you apply. Apply is one edit you can undo.</div>
+  <div class="note"><b><span class="num">4</span>Active hours</b>Each card has an "Active" setting: all day or a span such as a peak. Events outside it are greyed out and are not counted or optimized. Uses the existing timeFilterStart / timeFilterEnd fields.</div>
+  <div class="note"><b><span class="num">5</span>Badges in Manual tweaks</b>Each trip row shows its connections as met / tight / missed. Move a trip with &minus; / + and the badges and the header score update at once.</div>
+  <div class="note"><b><span class="num">6</span>Real running times</b>Turn it on to flag connections that are met on paper but that a late bus would miss (80th-percentile lateness from performance data). The optimizer can plan for it.</div>
+  <div class="note" style="grid-column:1/-1"><b><span class="num">7</span>GO and LINX times</b>"+ Add connection" picks the source first. <strong>GO</strong> reads trains and GO buses from the Metrolinx GTFS feed the app already downloads, for the right day and station, and flags when the feed updates. <strong>LINX</strong> takes pasted times or a CSV now, and its GTFS feed later if Simcoe County publishes one. Both become cards you can rank, limit to hours, and optimize like any route.</div>
+</div>
+
+<script>
+// ---------- Mock data: Route 2 Saturday-like ----------
+// Each Route 2 trip i reaches Downtown Hub at hub[i] and Park Place 40 min later.
+// Moving a trip moves BOTH times, so one move can help one connection and hurt another.
+const fmt = m => { m = ((Math.round(m) % 1440) + 1440) % 1440; let h = Math.floor(m/60), mi = m%60; const ap = h>=12?'PM':'AM'; h = h%12||12; return `${h}:${String(mi).padStart(2,'0')} ${ap}`; };
+const range = (s,e,step) => { const a=[]; for(let t=s;t<=e;t+=step) a.push(t); return a; };
+const jit = [0,2,-1,3,1,-2,4,0,-1,2,5,1,-3,2,0,3,-1,1,4,-2,0,2,1,-1,3,0,2,-2,1,0,3,1];
+const N = 32;
+// Other routes' times vary too (they run their own cycles), so clashes happen.
+const tj = (seed) => k => [0,3,-2,5,-4,1,-3,4,2,-5,0,3,-1,6,-2,1][(k*seed+seed)%16];
+const hub = Array.from({length:N}, (_,i) => 399 + 30*i + jit[i]);
+const blockOf = i => ['2-1','2-2','2-3'][i % 3];
+
+// stop: 'pp' = Park Place arrival (hub+40), 'hubArr' = Hub arrival, 'hubDep' = Hub departure (hub+8)
+const busTime = (stop, i, mv) => hub[i] + (mv[i]||0) + (stop==='pp' ? 40 : stop==='hubDep' ? 8 : 0);
+
+let conns = [
+  { id:'r12s', short:'12 SB', from:0, to:1440, name:'Route 12 southbound', at:'Park Place', stop:'pp',     kind:'meet', min:3, max:10, target:range(447, 1380, 30), src:'From Weekday setup', on:true },
+  { id:'r8a', short:'8A', from:0, to:1440, name:'Route 8A',            at:'Downtown Hub', stop:'hubArr', kind:'meet', min:2, max:6,  target:range(404, 1350, 30), src:'Suggested · same hub', on:false, suggested:true },
+  { id:'r12n', short:'12 NB', from:0, to:1440, name:'Route 12 northbound', at:'Park Place', stop:'pp',     kind:'meet', min:3, max:10, target:range(445, 1380, 30).map((t,k)=>t+tj(3)(k)), src:'From Weekday setup', on:true },
+  { id:'r7', short:'7', from:0, to:1440, name:'Route 7',             at:'Downtown Hub', stop:'hubDep', kind:'feed', min:2, max:6,  target:range(401, 1350, 30).map((t,k)=>t+tj(5)(k)), src:'Suggested · same hub', on:false, suggested:true },
+];
+let moves = {};          // applied moves: trip index -> minutes
+let pending = null;      // { moves, reasons, before, after }
+let view = 'now';
+let selId = 'r12s';
+let relOn = false, showBadges = true, tab = 'conn';
+// Mock 80th-percentile lateness for Route 2 (min): worse midday at Park Place, as performance data would show.
+const late80 = (stop, i, t) => stop === 'hubDep' ? 0 : (stop === 'pp' ? (t >= 690 && t < 1050 ? 4 : 2) : 1) + (i % 4 === 0 ? 2 : 0);
+const WINDOWS = [['All day',0,1440],['6–9 AM',360,540],['3–7 PM',900,1140],['7 AM–7 PM',420,1140],['After 7 PM',1140,1440]];
+
+// Pair each target event with the Route 2 trip that serves it (fixed at baseline, like a published block).
+function pairUp(c) {
+  c.pairs = c.target.map(t => {
+    let best = null, bestScore = 1e9;
+    for (let i = 0; i < N; i++) {
+      const b = busTime(c.stop, i, {});
+      const gap = c.kind==='meet' ? t - b : b - t;
+      if (gap < -6 || gap > 20) continue;
+      const s = Math.abs(gap - (c.min + c.max)/2);
+      if (s < bestScore) { bestScore = s; best = i; }
+    }
+    return best === null ? null : { t, i: best };
+  }).filter(Boolean);
+}
+conns.forEach(pairUp);
+
+const gapOf = (c, p, mv) => { const b = busTime(c.stop, p.i, mv); return c.kind==='meet' ? p.t - b : b - p.t; };
+const quality = (c, gap) => gap >= c.min && gap <= c.max ? 'good' : (gap >= c.min - 1 && gap <= c.max + 5 ? 'tight' : 'bad');
+const inHours = (c, p) => p.t >= c.from && p.t < c.to;
+const pairsOf = c => c.pairs.filter(p => inHours(c, p));
+// 'risk' = met on paper, but a bus at its 80th-percentile lateness would leave the rider under 1 min.
+const qOf = (c, p, mv) => {
+  const gap = gapOf(c, p, mv), q = quality(c, gap);
+  if (relOn && q === 'good' && c.kind === 'meet' && gap - late80(c.stop, p.i, p.t) < 1) return 'risk';
+  return q;
+};
+const planLate = () => relOn && document.getElementById('planLate').checked;
+const isOk = (c, p, mv) => { const q = qOf(c, p, mv); return q === 'good' || (q === 'risk' && !planLate()); };
+const evalConn = (c, mv) => c.pairs.map(p => ({ ...p, gap: gapOf(c, p, mv), q: inHours(c, p) ? qOf(c, p, mv) : 'off' }));
+const countOf = (c, mv) => { const e = evalConn(c, mv).filter(x => x.q !== 'off');
+  return { g:e.filter(x=>x.q==='good'||x.q==='risk').length, k:e.filter(x=>x.q==='risk').length, a:e.filter(x=>x.q==='tight').length, r:e.filter(x=>x.q==='bad').length, n:e.length }; };
+const ranked = () => conns.filter(c => c.on && !c.suggested);
+const activeMoves = () => view==='after' && pending ? pending.moves : moves;
+
+// ---------- Ranked optimizer (mock of the proposed rule) ----------
+function optimize(){
+  const max = +document.getElementById('maxMove').value;
+  const mv = { ...moves };
+  const order = ranked();
+  const reasons = [];
+  order.forEach((c, k) => {
+    const higher = order.slice(0, k);
+    pairsOf(c).forEach(p => {
+      if (isOk(c, p, mv)) return;
+      const gap = gapOf(c, p, mv);
+      const needed = gap < c.min ? c.min - gap : c.max - gap;      // change in gap needed
+      const tripShift = c.kind==='meet' ? -needed : needed;        // gap(meet) falls as trip moves later
+      const cur = mv[p.i] || 0;
+      // candidate total shifts for this trip, smallest change first
+      const cands = [];
+      for (let d = -max; d <= max; d++) cands.push(d);
+      cands.sort((a,b) => Math.abs(a-cur) - Math.abs(b-cur));
+      let blocker = null, done = false;
+      for (const d of cands) {
+        const trial = { ...mv, [p.i]: d };
+        if (!isOk(c, p, trial)) continue;
+        // protect higher-ranked connections that are met right now
+        const broken = [];
+        higher.forEach((h, hk) => pairsOf(h).forEach(hp => {
+          if (hp.i !== p.i) return;
+          if (isOk(h, hp, mv) && !isOk(h, hp, trial)) broken.push({ h, hk, hp });
+        }));
+        if (broken.length) { blocker = blocker || broken[0]; continue; }
+        mv[p.i] = d; done = true; break;
+      }
+      if (!done) {
+        reasons.push(blocker
+          ? `<b>#${k+1} ${c.name}</b> ${fmt(p.t)}: left as is. Moving block ${blockOf(p.i)} would break <b>#${blocker.hk+1} ${blocker.h.name}</b> at ${fmt(blocker.hp.t)}.`
+          : `<b>#${k+1} ${c.name}</b> ${fmt(p.t)}: needs ${Math.abs(tripShift)} min, more than your ${max} min limit.`);
+      }
+    });
+  });
+  const before = order.map(c => countOf(c, moves));
+  const after  = order.map(c => countOf(c, mv));
+  const changed = Object.keys(mv).filter(i => (mv[i]||0) !== (moves[i]||0)).length;
+  pending = { moves: mv, reasons, before, after, changed, order };
+  renderResult();
+  setView('after');
+}
+
+function renderResult(){
+  const el = document.getElementById('result');
+  if (!pending) { el.classList.remove('show'); return; }
+  const { before, after, reasons, changed, order } = pending;
+  const rows = order.map((c, k) => {
+    const d = after[k].g - before[k].g;
+    const riskCell = relOn ? `<td class="${after[k].k<before[k].k?'up':after[k].k>before[k].k?'down':'same'}">${before[k].k} → ${after[k].k}</td>` : '';
+    return `<tr><td><b>#${k+1}</b></td><td>${c.name}</td><td>${before[k].g}/${before[k].n}</td><td>${after[k].g}/${after[k].n}</td>
+      <td class="${d>0?'up':d<0?'down':'same'}">${d>0?'+'+d:d<0?d:'no change'}</td>${riskCell}</tr>`;
+  }).join('');
+  el.classList.add('show');
+  el.innerHTML = `
+    <div class="row" style="margin-bottom:6px"><b>${changed} trip${changed===1?'':'s'} would move</b>
+      <span style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn sm" onclick="clearResult()">Discard</button>
+        <button class="btn sm green" onclick="applyResult()" ${changed?'':'disabled'}>Apply</button>
+      </span></div>
+    <table><thead><tr><th>Rank</th><th>Connection</th><th>Met now</th><th>Met after</th><th>Change</th>${relOn?'<th>At risk</th>':''}</tr></thead><tbody>${rows}</tbody></table>
+    ${reasons.length ? `<div class="why"><h5>Not fixed, and why (${reasons.length})</h5><ul>${reasons.slice(0,6).map(r=>`<li>${r}</li>`).join('')}${reasons.length>6?`<li class="meta">+ ${reasons.length-6} more</li>`:''}</ul></div>` : ''}`;
+}
+function applyResult(){ moves = pending.moves; pending = null; setView('now'); renderAll(); alert('Mockup: applied as one undoable edit. The moved trips show as changed cells in Manual tweaks.'); }
+function clearResult(){ pending = null; setView('now'); }
+
+// ---------- Rendering ----------
+function renderScore(){
+  let g=0,a=0,r=0,rk=0;
+  ranked().forEach(c => { const k = countOf(c, moves); g+=k.g; a+=k.a; r+=k.r; rk+=k.k; });
+  document.getElementById('score').innerHTML = ranked().length===0
+    ? `<span class="chip a">No connections on yet</span>`
+    : `<span class="chip g"><span class="dot" style="background:var(--green)"></span>${g} met</span>
+       <span class="chip a"><span class="dot" style="background:var(--amber)"></span>${a} tight</span>
+       <span class="chip r"><span class="dot" style="background:var(--red)"></span>${r} missed</span>
+       ${relOn ? `<span class="chip v"><span class="dot" style="background:var(--violet)"></span>${rk} at risk</span>` : ''}`;
+}
+
+function renderList(){
+  const active = conns.filter(c => !c.suggested);
+  const sug = conns.filter(c => c.suggested);
+  let html = `<div class="group">In priority order <span class="dragtip">⠿ drag to reorder</span></div><div id="rankZone">`
+    + (active.length ? active.map((c, k) => card(c, k, active.length)).join('') : `<div class="dropzone-empty">Drag a suggestion here to rank it</div>`) + `</div>`;
+  if (sug.length) html += `<div class="group">Suggested for Route 2 · not ranked yet <span class="dragtip">drag up to add</span></div>` + sug.map(c => card(c, -1, 0)).join('');
+  document.getElementById('list').innerHTML = html;
+  document.getElementById('sugCount').textContent = sug.length;
+}
+
+function card(c, k, total){
+  const now = countOf(c, moves);
+  const aft = pending && c.on && !c.suggested ? countOf(c, pending.moves) : null;
+  const pct = x => now.n ? x/now.n*100 : 0;
+  const rule = c.kind==='meet'
+    ? `Route 2 arrives ${inp(c,'min')}–${inp(c,'max')} min before ${c.name} leaves`
+    : `Route 2 leaves ${inp(c,'min')}–${inp(c,'max')} min after ${c.name} arrives`;
+  const stat = aft && aft.g !== now.g
+    ? `${now.g} → <span class="after ${aft.g<now.g?'down':''}">${aft.g}</span>/${now.n} met`
+    : `${now.g}/${now.n} met`;
+  const statFull = stat + (relOn && now.k ? ` &middot; <span class="risk">${now.k} at risk</span>` : '');
+  const wIdx = WINDOWS.findIndex(w => w[1]===c.from && w[2]===c.to);
+  const when = `<div class="when">Active ${c.from!==0||c.to!==1440?'<span class="lim">limited</span>':''}
+    <select onclick="event.stopPropagation()" onchange="setWindow('${c.id}',this.value)">${WINDOWS.map((w,j)=>`<option value="${j}" ${j===wIdx?'selected':''}>${w[0]}</option>`).join('')}</select></div>`;
+  return `<div class="conn ${c.id===selId?'sel':''} ${c.on?'':'off'} ${c.suggested?'suggested':''}" draggable="true" data-id="${c.id}" onclick="select('${c.id}')">
+    <div class="rank"><span class="grip">⋮⋮</span>${k>=0 ? `<div class="n">${k+1}</div>` : `<div class="n s">–</div>`}</div>
+    <div class="body">
+      <div class="row">
+        <div style="min-width:0"><div class="name">${ICON[c.icon||'bus']} ${c.name}</div><div class="meta">at ${c.at}</div></div>
+        <span class="src ${c.suggested?'new':''} ${c.icon==='train'?'go':c.icon==='linx'?'linx':''}" style="margin-left:auto">${c.src}</span>
+        <button class="toggle ${c.on?'on':''}" onclick="event.stopPropagation();toggle('${c.id}')"></button>
+      </div>
+      <div class="rule">${rule}</div>
+      ${when}
+      <div class="row">
+        <div class="bar" style="flex:1"><i style="width:${pct(now.g-now.k)}%;background:var(--green)"></i><i style="width:${pct(now.k)}%;background:var(--violet)"></i><i style="width:${pct(now.a)}%;background:#f59e0b"></i><i style="width:${pct(now.r)}%;background:var(--red)"></i></div>
+        <span class="stat">${statFull}</span>
+      </div>
+    </div>
+  </div>`;
+}
+const inp = (c,k) => `<input value="${c[k]}" onclick="event.stopPropagation()" onchange="setRule('${c.id}','${k}',this.value)">`;
+
+function renderTimeline(){
+  const c = conns.find(x => x.id===selId);
+  const mv = activeMoves();
+  const ev = evalConn(c, mv);
+  document.getElementById('tlTitle').textContent = `${c.name} at ${c.at}`;
+  document.getElementById('tlSub').textContent = view==='after' ? 'Showing the result before you apply' : (c.on && !c.suggested ? '' : 'Off: shown for preview, not counted');
+  const x0=360, x1=1400, W=900, X = t => 30 + (t-x0)/(x1-x0)*(W-50);
+  const col = { good:'#059669', tight:'#d97706', bad:'#dc2626', risk:'#7c3aed', off:'#d1d5db' };
+  let s = '';
+  if (c.from > 0) s += `<rect x="30" y="20" width="${Math.max(0,X(c.from)-30)}" height="108" fill="#f3f4f6"/>`;
+  if (c.to < 1440) s += `<rect x="${X(c.to)}" y="20" width="${Math.max(0,W-20-X(c.to))}" height="108" fill="#f3f4f6"/>`;
+  for (let h=6; h<=23; h+=2) { const x=X(h*60); s+=`<line x1="${x}" y1="20" x2="${x}" y2="128" stroke="#f1f2f4"/><text x="${x}" y="144" font-size="10" fill="#9ca3af" text-anchor="middle">${fmt(h*60).replace(':00','')}</text>`; }
+  s += `<text x="4" y="42" font-size="10" fill="#6b7280">Rt 2</text><text x="4" y="112" font-size="10" fill="#6b7280">${c.short}</text>`;
+  ev.forEach((p, n) => {
+    const b = busTime(c.stop, p.i, mv);
+    const movedNow = (mv[p.i]||0) !== (moves[p.i]||0);
+    s += `<line x1="${X(b)}" y1="40" x2="${X(p.t)}" y2="105" stroke="${col[p.q]}" stroke-width="${p.q==='bad'?2:1.4}" opacity="${p.q==='off'?.5:.85}"/>`;
+    s += `<circle cx="${X(b)}" cy="38" r="${movedNow?7:5.5}" fill="${col[p.q]}" ${movedNow?'stroke="#2563eb" stroke-width="2.5"':''} style="cursor:pointer" onclick="showDetail(${n})"><title>${fmt(b)}</title></circle>`;
+    s += `<rect x="${X(p.t)-4.5}" y="103.5" width="9" height="9" rx="2" fill="${col[p.q]}" style="cursor:pointer" onclick="showDetail(${n})"/>`;
+  });
+  document.getElementById('tl').innerHTML = s;
+}
+
+function showDetail(n){
+  const c = conns.find(x => x.id===selId), mv = activeMoves();
+  const p = evalConn(c, mv)[n];
+  const b = busTime(c.stop, p.i, mv);
+  const lead = c.kind==='meet'
+    ? `Block ${blockOf(p.i)} arrives ${c.at} at <b>${fmt(b)}</b>. ${c.name} leaves at <b>${fmt(p.t)}</b>.`
+    : `${c.name} arrives at <b>${fmt(p.t)}</b>. Block ${blockOf(p.i)} leaves at <b>${fmt(b)}</b>.`;
+  const lt = late80(c.stop, p.i, p.t);
+  const verdict = p.q==='off' ? `Outside this connection's active hours. Not counted.` : p.q==='risk' ? `At risk. Met on paper (${p.gap} min), but when Route 2 runs late here (${lt} min, 80th percentile) ${p.gap-lt < 0 ? `the rider misses it by ${lt-p.gap} min` : p.gap-lt === 0 ? 'the rider has no time to transfer' : `the rider has ${p.gap-lt} min`}.` : p.q==='good' ? `Met. Wait ${p.gap} min.` : p.gap < c.min ? (p.gap < 0 ? `Missed by ${-p.gap} min.` : `Too tight: ${p.gap} min.`) : `Long wait: ${p.gap} min.`;
+  // the same trip serves other connections: show them so trade-offs are visible
+  const others = conns.filter(o => o.id!==c.id && o.on && !o.suggested).flatMap(o => pairsOf(o).filter(op => op.i===p.i).map(op => {
+    const g = gapOf(o, op, mv), q = qOf(o, op, mv);
+    const rk = ranked().indexOf(o) + 1;
+    return `<li>#${rk} ${o.name} at ${fmt(op.t)}: ${q==='good'?'<span class="up">met</span>':q==='risk'?'<span class="risk">at risk</span>':q==='tight'?'<span style="color:var(--amber);font-weight:800">tight</span>':'<span class="down">missed</span>'} (${g} min)</li>`;
+  }));
+  const moved = mv[p.i] ? ` <span class="chip b">moved ${mv[p.i]>0?'+':''}${mv[p.i]} min</span>` : '';
+  const relNote = relOn && p.q!=='off' && c.kind==='meet' ? `<p class="meta" style="margin-top:4px">Route 2 80th-percentile lateness here: ${lt} min (13 Saturdays).</p>` : '';
+  document.getElementById('detail').innerHTML = `<h4>${verdict}${moved}</h4><p>${lead}</p>${relNote}` +
+    (others.length ? `<p style="margin-top:6px"><b>This trip also serves:</b></p><ul>${others.join('')}</ul>` : '');
+}
+function blankDetail(){ document.getElementById('detail').innerHTML = '<h4>Click a dot on the timeline</h4><p>See the bus, the connecting service, the wait, and the other connections the same trip serves.</p>'; }
+
+function setView(v){
+  view = v;
+  document.getElementById('vNow').classList.toggle('on', v==='now');
+  document.getElementById('vAfter').classList.toggle('on', v==='after');
+  document.getElementById('vAfter').disabled = !pending;
+  renderAll(true);
+}
+function select(id){ selId = id; blankDetail(); renderAll(true); }
+// ---------- Drag to rank ----------
+// Drop a card anywhere in the ranked list to set its rank. Dropping a suggestion there turns it on at that rank.
+let dragId = null, dropIndex = null;
+const listEl = document.getElementById('list');
+listEl.addEventListener('dragstart', e => {
+  const el = e.target.closest('.conn'); if (!el) return;
+  if (e.target.closest('input,button')) { e.preventDefault(); return; }
+  dragId = el.dataset.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId);
+  requestAnimationFrame(() => el.classList.add('dragging'));
+});
+listEl.addEventListener('dragover', e => {
+  if (!dragId) return;
+  const zone = document.getElementById('rankZone');
+  const r = zone.getBoundingClientRect();
+  const dragged = conns.find(c => c.id===dragId);
+  // Ranked cards may only move inside the ranked zone; suggestions can be dropped into it.
+  if (e.clientY > r.bottom + 30 && dragged.suggested) { removeLine(); dropIndex = null; return; }
+  e.preventDefault();
+  const cards = [...zone.querySelectorAll('.conn')].filter(el => el.dataset.id !== dragId);
+  let idx = cards.length;
+  for (let k = 0; k < cards.length; k++) { const b = cards[k].getBoundingClientRect(); if (e.clientY < b.top + b.height/2) { idx = k; break; } }
+  dropIndex = idx;
+  removeLine();
+  const line = document.createElement('div'); line.className = 'dropline';
+  if (cards[idx]) zone.insertBefore(line, cards[idx]); else zone.appendChild(line);
+});
+listEl.addEventListener('drop', e => { e.preventDefault(); finishDrop(); });
+listEl.addEventListener('dragend', () => { dragId = null; dropIndex = null; removeLine(); renderList(); });
+function removeLine(){ document.querySelectorAll('.dropline').forEach(n => n.remove()); }
+function finishDrop(){
+  if (!dragId || dropIndex === null) return;
+  const c = conns.find(x => x.id===dragId);
+  const active = conns.filter(x => !x.suggested && x !== c);
+  if (c.suggested) { c.suggested = false; c.on = true; c.src = 'Added from suggestion'; }
+  active.splice(dropIndex, 0, c);
+  conns = [...active, ...conns.filter(x => x.suggested)];
+  dragId = null; dropIndex = null; removeLine(); clearResult();
+}
+// ---------- Add connection: Barrie routes, GO, LINX, other ----------
+const ICON = { bus:'🚌', train:'🚆', linx:'🚍', bell:'🔔' };
+// SAMPLE GO times (Barrie line, Saturday). The real app reads these from the Metrolinx GTFS feed.
+const GO_SAMPLE = {
+  'Downtown Hub (mockup stand-in)': { dep: range(380, 1340, 60), arr: range(365, 1325, 60) },
+};
+let src = 'go';
+function openAdd(s0){ document.getElementById('addModal').classList.remove('hidden'); setSrc(s0 || 'go'); }
+function closeAdd(){ document.getElementById('addModal').classList.add('hidden'); }
+function setSrc(v){
+  src = v;
+  document.querySelectorAll('.srcTab').forEach(b => b.classList.toggle('on', b.dataset.src === v));
+  const stopSel = `<select id="mStop"><option>Downtown Hub</option><option>Park Place</option></select>`;
+  let h = '';
+  if (v === 'go') {
+    h = `<div class="feedline">✓ GO GTFS (Metrolinx) · downloaded Oct 18, 2026 · Saturday service · <b>sample times in this mockup</b></div>
+      <div class="grid2">
+        <div class="field"><label>Station or stop</label><select id="mGoStation" onchange="goPreview()">
+          <option>Allandale Waterfront GO</option><option>Barrie South GO</option><option>Downtown Barrie (GO bus)</option></select></div>
+        <div class="field"><label>Connection</label><select id="mGoDir" onchange="goPreview()">
+          <option value="dep">Bus to the train · trains to Union (departures)</option>
+          <option value="arr">Train to the bus · trains from Union (arrivals)</option></select></div>
+      </div>
+      <div class="feedline warn">Route 2 does not stop at a GO station. In the real app, GO stations only appear for routes that stop there (for example 8A, 8B, 100, 101). <b>This mockup uses Downtown Hub as a stand-in</b> so you can see a GO card work.</div>
+      <div class="field"><label>Saturday trains</label><div class="times" id="mGoTimes"></div></div>`;
+  } else if (v === 'linx') {
+    h = `<div class="feedline warn">No LINX feed connected. Paste times or upload a CSV. If Simcoe County publishes a LINX GTFS feed, it can refresh these times like GO.</div>
+      <div class="grid2">
+        <div class="field"><label>LINX route</label><input id="mLinxName" value="LINX route (sample)"></div>
+        <div class="field"><label>Meets Route 2 at</label>${stopSel}</div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>These times are LINX…</label><select id="mLinxKind"><option value="dep">departures (bus to LINX)</option><option value="arr">arrivals (LINX to bus)</option></select></div>
+        <div class="field"><label>Days</label><select><option>Saturday</option><option>Weekday</option><option>Sunday</option></select></div>
+      </div>
+      <div class="field"><label>Times (paste from a timetable, any format)</label><textarea id="mLinxTimes" oninput="linxPreview()">7:15 AM  9:15 AM  11:15 AM  1:15 PM  3:15 PM  5:15 PM  7:15 PM</textarea>
+        <span class="meta"><a href="#" onclick="event.preventDefault();alert('Mockup: upload a CSV with a time column, or a GTFS zip.')">Upload CSV or GTFS instead</a></span>
+        <div class="times" id="mLinxParsed"></div></div>`;
+  } else if (v === 'route') {
+    h = `<div class="feedline">✓ Reads times from the published Saturday masters, so they stay current when a route is republished.</div>
+      <div class="grid2"><div class="field"><label>Route</label><select><option>Route 1</option><option>Route 3</option><option>Route 8B</option><option>Route 100 (loop)</option></select></div>
+      <div class="field"><label>Shared stop</label>${stopSel}</div></div>
+      <p class="meta">Mockup: the two suggested routes above already show how a route connection looks.</p>`;
+  } else {
+    h = `<div class="grid2"><div class="field"><label>Name</label><input value="Georgian College bells"></div><div class="field"><label>Stop</label>${stopSel}</div></div>
+      <div class="field"><label>Times</label><textarea>8:00 AM  10:00 AM  1:00 PM  3:00 PM</textarea></div>
+      <p class="meta">Mockup: works like LINX: pasted times, saved to the team library for reuse.</p>`;
+  }
+  document.getElementById('mbody').innerHTML = h;
+  if (v === 'go') goPreview(); else if (v === 'linx') linxPreview(); else document.getElementById('mPreview').textContent = '';
+}
+function goPreview(){
+  const d = document.getElementById('mGoDir').value, times = GO_SAMPLE['Downtown Hub (mockup stand-in)'][d];
+  document.getElementById('mGoTimes').innerHTML = times.map(t => `<span>${fmt(t)}</span>`).join('');
+  document.getElementById('mPreview').textContent = `${times.length} trains · default rule: ${d==='dep' ? 'bus arrives 5–15 min before the train leaves' : 'bus leaves 5–15 min after the train arrives'}`;
+}
+const parseTimes = txt => (txt.match(/\b(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/g) || []).map(x => {
+  const m = x.match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/); let h = +m[1]; const ap = (m[3]||'').toUpperCase();
+  if (ap === 'PM' && h !== 12) h += 12; if (ap === 'AM' && h === 12) h = 0; return h*60 + +m[2];
+}).sort((a,b)=>a-b);
+function linxPreview(){
+  const t = parseTimes(document.getElementById('mLinxTimes').value);
+  document.getElementById('mLinxParsed').innerHTML = t.length ? t.map(x => `<span>${fmt(x)}</span>`).join('') : '<span class="meta">No times found yet</span>';
+  document.getElementById('mPreview').textContent = `${t.length} LINX times read`;
+}
+function addFromModal(){
+  let c;
+  if (src === 'go') {
+    const d = document.getElementById('mGoDir').value, st = document.getElementById('mGoStation').value;
+    c = { id:'go'+Date.now(), icon:'train', short:'GO', name: d==='dep' ? 'GO train to Union' : 'GO train from Union', at: st + ' (shown at Downtown Hub)',
+      stop: d==='dep' ? 'hubArr' : 'hubDep', kind: d==='dep' ? 'meet' : 'feed', min:5, max:15,
+      target: GO_SAMPLE['Downtown Hub (mockup stand-in)'][d], src:'GO GTFS · Oct 18', on:true, from:0, to:1440 };
+  } else if (src === 'linx') {
+    const t = parseTimes(document.getElementById('mLinxTimes').value);
+    if (!t.length) { alert('Paste at least one time.'); return; }
+    const stop = document.getElementById('mStop').value, k = document.getElementById('mLinxKind').value;
+    c = { id:'lx'+Date.now(), icon:'linx', short:'LINX', name: document.getElementById('mLinxName').value || 'LINX', at: stop,
+      stop: stop==='Park Place' ? 'pp' : (k==='dep' ? 'hubArr' : 'hubDep'), kind: k==='dep' || stop==='Park Place' ? 'meet' : 'feed', min:3, max:12,
+      target: t, src:'LINX · pasted times', on:true, from:0, to:1440 };
+  } else { alert('Mockup: GO and LINX are wired up here. Barrie routes and Other work the same way.'); return; }
+  pairUp(c);
+  conns = [...conns.filter(x => !x.suggested), c, ...conns.filter(x => x.suggested)];
+  selId = c.id; closeAdd(); blankDetail(); clearResult();
+}
+function setWindow(id, j){ const c = conns.find(x=>x.id===id); c.from = WINDOWS[j][1]; c.to = WINDOWS[j][2]; clearResult(); }
+function toggleRel(){
+  relOn = !relOn;
+  document.getElementById('relToggle').classList.toggle('on', relOn);
+  document.getElementById('relbar').classList.toggle('on', relOn);
+  document.getElementById('planLateWrap').classList.toggle('hidden', !relOn);
+  document.getElementById('legRisk').classList.toggle('hidden', !relOn);
+  updateRelText();
+  clearResult();
+  if (tab==='tweaks') renderTweaks();
+}
+function updateRelText(){
+  let rk = 0; ranked().forEach(c => rk += countOf(c, moves).k);
+  document.getElementById('relText').innerHTML = relOn
+    ? `On: <span class="risk">${rk} connection${rk===1?'':'s'}</span> are met on paper but at risk when Route 2 runs late (80th percentile).`
+    : 'Off: connections are judged on scheduled times only.';
+}
+function setTab(t){
+  tab = t;
+  document.getElementById('tabTweaks').classList.toggle('on', t==='tweaks');
+  document.getElementById('tabConn').classList.toggle('on', t==='conn');
+  document.getElementById('tweaksView').classList.toggle('hidden', t!=='tweaks');
+  document.getElementById('connView').classList.toggle('hidden', t!=='conn');
+  document.getElementById('banner').classList.add('hidden');
+  if (t==='tweaks') renderTweaks(); else renderAll(true);
+}
+// Manual tweaks: every trip row shows its active connections. Moving a trip updates badges and the header score.
+function renderTweaks(flashRow){
+  const rows = [];
+  for (let i = 0; i < N; i++) {
+    const badges = ranked().flatMap(c => pairsOf(c).filter(p => p.i===i).map(p => {
+      const q = qOf(c, p, moves), g = gapOf(c, p, moves);
+      const sym = q==='good' ? '✓' : q==='risk' ? '⚠' : q==='tight' ? '~' : '✗';
+      return `<span class="badge ${q}" title="${c.name} at ${fmt(p.t)} &middot; ${g} min">${sym} ${c.short} ${g}m</span>`;
+    })).join('');
+    const mv = moves[i] || 0;
+    rows.push(`<tr class="${mv?'moved':''} ${flashRow===i?'flash':''}"><td><b>${blockOf(i)}</b></td><td>${fmt(busTime('hubArr', i, moves))}</td><td>${fmt(busTime('hubDep', i, moves))}</td><td>${fmt(busTime('pp', i, moves))}</td>
+      ${showBadges ? `<td>${badges || '<span class="meta">&mdash;</span>'}</td>` : ''}
+      <td><span class="nudge"><button title="1 min earlier" onclick="nudge(${i},-1)">&minus;</button><button title="1 min later" onclick="nudge(${i},1)">+</button></span> ${mv?`<span class="chip b">${mv>0?'+':''}${mv} min</span>`:''}</td></tr>`);
+  }
+  document.getElementById('twTable').innerHTML = `<thead><tr><th>Block</th><th>Arrive Downtown Hub</th><th>Depart Downtown Hub</th><th>Arrive Park Place</th>${showBadges?'<th>Connections</th>':''}<th>Move trip</th></tr></thead><tbody>${rows.join('')}</tbody>`;
+}
+function nudge(i, d){ moves = { ...moves, [i]: (moves[i]||0) + d }; pending = null; renderScore(); updateRelText(); renderTweaks(i); }
+function toggle(id){
+  const c = conns.find(x => x.id===id); c.on = !c.on;
+  if (c.on && c.suggested) { c.suggested = false; c.src = 'Added from suggestion'; conns = [...conns.filter(x=>!x.suggested && x!==c), c, ...conns.filter(x=>x.suggested)]; }
+  clearResult();
+}
+function setRule(id,k,v){ conns.find(x=>x.id===id)[k] = Math.max(0, parseInt(v)||0); clearResult(); }
+function acceptAll(){ conns.forEach(c => { if (c.suggested) { c.suggested=false; c.on=true; c.src='Added from suggestion'; } }); dismissBanner(); clearResult(); }
+function dismissBanner(){ document.getElementById('banner').classList.add('hidden'); }
+function renderAll(keepResult){ renderScore(); renderList(); renderTimeline(); if (!keepResult) renderResult(); else renderResult(); }
+blankDetail(); renderAll();
+</script>
+</body>
+</html>

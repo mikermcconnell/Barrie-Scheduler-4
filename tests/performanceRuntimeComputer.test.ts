@@ -1565,6 +1565,82 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(calculateTotalTripTimes(fourDayResults)[0].evidence?.planningEligible).toBe(false);
     });
 
+    it('drops a bad day from a paired-cycle bucket without dropping the bucket', () => {
+        const southRuntimes = [20, 21, 22, 21, 20, 80];
+        const summaries = southRuntimes.map((southRuntime, index) => makeSummary({
+            date: `2026-02-${String(index + 2).padStart(2, '0')}`,
+            dayType: 'weekday',
+            routeNames: { '7A': 'North', '7B': 'South' },
+            tripEntries: [
+                {
+                    tripId: `north-${index}`, tripName: '7A 05:00', routeId: '7A', direction: 'N', terminalDepartureTime: '05:00',
+                    segments: [{
+                        fromStopId: 'a', toStopId: 'b', fromRouteStopIndex: 0, toRouteStopIndex: 1,
+                        runtimeMinutes: 20, timeBucket: '05:00',
+                    }],
+                },
+                {
+                    tripId: `south-${index}`, tripName: '7B 05:25', routeId: '7B', direction: 'S', terminalDepartureTime: '05:25',
+                    segments: [{
+                        fromStopId: 'b', toStopId: 'a', fromRouteStopIndex: 0, toRouteStopIndex: 1,
+                        runtimeMinutes: southRuntime, timeBucket: '05:00',
+                    }],
+                },
+            ],
+        }));
+
+        const northStart = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['B', 'A'] },
+            fullPatternOnly: true,
+        }).filter(runtime => runtime.cycleStartDirection === 'North');
+        const south = northStart.find(runtime => runtime.detectedDirection === 'South')!;
+
+        expect(south.segments[0].timeBuckets['05:00'].n).toBe(5);
+        expect(south.segments[0].timeBuckets['05:00'].p80).toBeLessThan(23);
+        const [bucket] = calculateTotalTripTimes(northStart);
+        expect(bucket.contributingDays).toHaveLength(5);
+        expect(bucket.contributingDays?.some(day => day.date === '2026-02-07')).toBe(false);
+        expect(bucket.evidence?.planningEligible).toBe(true);
+    });
+
+    it('pairs a return trip after a 45-minute off-peak layover', () => {
+        const summaries = Array.from({ length: 5 }, (_, index) => makeSummary({
+            date: `2026-02-${String(index + 2).padStart(2, '0')}`,
+            dayType: 'weekday',
+            routeNames: { '7A': 'North', '7B': 'South' },
+            tripEntries: [
+                {
+                    tripId: `north-${index}`, tripName: '7A 20:00', routeId: '7A', direction: 'N', terminalDepartureTime: '20:00',
+                    segments: [{
+                        fromStopId: 'a', toStopId: 'b', fromRouteStopIndex: 0, toRouteStopIndex: 1,
+                        runtimeMinutes: 20, timeBucket: '20:00',
+                    }],
+                },
+                {
+                    tripId: `south-${index}`, tripName: '7B 21:05', routeId: '7B', direction: 'S', terminalDepartureTime: '21:05',
+                    segments: [{
+                        fromStopId: 'b', toStopId: 'a', fromRouteStopIndex: 0, toRouteStopIndex: 1,
+                        runtimeMinutes: 18, timeBucket: '21:00',
+                    }],
+                },
+            ],
+        }));
+
+        const northStart = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: { North: ['A', 'B'], South: ['B', 'A'] },
+            fullPatternOnly: true,
+        }).filter(runtime => runtime.cycleStartDirection === 'North');
+
+        const [bucket] = calculateTotalTripTimes(northStart);
+        expect(bucket.timeBucket).toBe('20:00');
+        expect(bucket.totalP50).toBe(38);
+        expect(bucket.evidence?.planningEligible).toBe(true);
+    });
+
     it('does not pair an opposite-direction trip that departs hours after the first trip arrives', () => {
         const summaries = [makeSummary({
             date: '2026-04-02',

@@ -20,6 +20,7 @@ const makeSource = (overrides: Partial<GuidedPerformanceSource> = {}): GuidedPer
     selectRoute: vi.fn(),
     toggleDayType: vi.fn(),
     setTimeFrame: vi.fn(),
+    replaceSelection: vi.fn(),
     routeIds: ['2', '7', '8A', '10'],
     cleanData: null,
     historyStatus: null,

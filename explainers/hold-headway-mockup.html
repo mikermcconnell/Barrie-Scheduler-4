@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mock-up: Hold headway (Step 4)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: #f1f5f9; color: #0f172a; font-size: 14px; }
+  header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 14px 24px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; color: #475569; font-size: 13px; }
+  .tag { display: inline-block; background: #fef3c7; color: #92400e; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+  .layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 16px 24px; align-items: start; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 15px; }
+  .muted { color: #64748b; font-size: 12px; }
+  .panel { background: #ecfdf5; border-color: #a7f3d0; position: sticky; top: 12px; }
+  .panel h2 { color: #064e3b; display: flex; align-items: center; gap: 6px; }
+  .panel .sub { color: #065f46; font-size: 12px; line-height: 1.5; margin: 0 0 10px; }
+  .section-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #047857; margin: 12px 0 6px; }
+  table.mini { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
+  table.mini th { font-size: 11px; color: #047857; text-align: left; padding: 6px; background: #f0fdf4; }
+  table.mini td { padding: 4px 6px; border-top: 1px solid #ecfdf5; }
+  input[type=time], input[type=number] { width: 100%; border: 1px solid #a7f3d0; border-radius: 6px; padding: 4px 6px; font: inherit; font-size: 13px; }
+  .row-actions { display: flex; gap: 6px; margin-top: 6px; }
+  .btn { border: 1px solid #a7f3d0; background: #fff; color: #065f46; font-weight: 700; font-size: 12px; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+  .btn:hover { background: #f0fdf4; }
+  .btn.primary { background: #059669; color: #fff; border-color: #059669; }
+  .btn.primary:hover { background: #047857; }
+  .btn.primary:disabled { background: #94a3b8; border-color: #94a3b8; cursor: not-allowed; }
+  .btn.x { padding: 2px 7px; color: #b91c1c; border-color: #fecaca; }
+  .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .chip { background: #fff; border-radius: 8px; padding: 6px 8px; }
+  .chip b { display: block; font-size: 16px; }
+  .chip span { font-size: 11px; color: #64748b; }
+  .chip.warn b { color: #b45309; }
+  .chip.bad b { color: #b91c1c; }
+  .note { font-size: 12px; background: #fff; border-radius: 8px; padding: 8px; margin-top: 8px; line-height: 1.45; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .tab { border: 1px solid #cbd5e1; background: #fff; padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 12px; color: #334155; }
+  .tab.on { background: #0f172a; color: #fff; border-color: #0f172a; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.grid th { text-align: left; font-size: 11px; text-transform: uppercase; color: #64748b; padding: 6px 8px; border-bottom: 1px solid #e2e8f0; position: sticky; top: 0; background: #fff; }
+  table.grid td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; }
+  table.grid tr.flag-bad td { background: #fef2f2; }
+  table.grid tr.flag-warn td { background: #fffbeb; }
+  table.grid tr.period-break td { border-top: 2px dashed #10b981; }
+  table.grid tr:hover td { background: #f8fafc; cursor: context-menu; }
+  .blk { font-weight: 800; }
+  .end { font-size: 10px; font-weight: 800; color: #dc2626; margin-left: 4px; }
+  .hw { display: inline-block; min-width: 34px; text-align: center; padding: 1px 6px; border-radius: 6px; font-weight: 800; }
+  .hw.ok { background: #dcfce7; color: #166534; }
+  .hw.off { background: #fef3c7; color: #92400e; }
+  .delta { font-size: 11px; font-weight: 700; margin-left: 4px; }
+  .delta.up { color: #047857; } .delta.down { color: #b91c1c; }
+  .flag { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 1px 6px; }
+  .flag.bad { background: #fee2e2; color: #991b1b; }
+  .flag.warn { background: #fef3c7; color: #92400e; }
+  .scroll { max-height: 520px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 8px; }
+  svg text { font-family: inherit; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: #475569; margin: 4px 0 8px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .menu { position: fixed; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 30px rgba(15,23,42,.18); padding: 6px; display: none; z-index: 10; min-width: 270px; }
+  .menu div.item { padding: 7px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .menu div.item:hover { background: #f1f5f9; }
+  .menu div.item.new { color: #047857; font-weight: 700; }
+  .menu div.item small { display: block; color: #64748b; font-weight: 400; }
+  .menu .hdr { font-size: 11px; color: #64748b; padding: 4px 10px; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(15,23,42,.4); display: none; align-items: center; justify-content: center; z-index: 20; }
+  .modal { background: #fff; border-radius: 14px; padding: 18px; width: 460px; }
+  .modal h3 { margin: 0 0 6px; }
+  .choice { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-top: 8px; cursor: pointer; }
+  .choice:hover { border-color: #10b981; background: #f0fdf4; }
+  .choice b { display: block; }
+  .choice span { font-size: 12px; color: #475569; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 13px; display: none; z-index: 30; }
+  .explain { margin: 0 24px 24px; }
+  .explain ol { margin: 6px 0 0 18px; padding: 0; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Step 4 · Route 2 Weekday <span class="tag">MOCK-UP · sample data</span></h1>
+  <p>Hold headway: set the headway for each time period. The tool sets each trip's last recovery so the next trip leaves on time. Right-click a row for the one-trip fix.</p>
+</header>
+
+<div class="layout">
+  <main>
+    <div class="card">
+      <h2>Headway through the day</h2>
+      <div class="legend"><span><i style="background:#10b981"></i>On target</span><span><i style="background:#f59e0b"></i>Off target</span><span><i style="background:#cbd5e1"></i>Target line</span><span>Faded bar = before · solid bar = after</span></div>
+      <svg id="chart" width="100%" height="170" viewBox="0 0 900 170" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="tabs">
+        <button class="tab" data-view="before">Before (current)</button>
+        <button class="tab on" data-view="after">After (preview)</button>
+      </div>
+      <div class="scroll">
+        <table class="grid">
+          <thead><tr><th>Block</th><th>Departs</th><th>Run time</th><th>Band</th><th>Last recovery</th><th>Next trip leaves</th><th>HDWY</th><th>Check</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin:8px 2px 0">Each row is one round trip. Run time comes from the runtime band. In this mock-up only the last recovery changes. Travel times stay the same.</p>
+    </div>
+  </main>
+
+  <aside class="card panel">
+    <h2>⏱ Hold headway</h2>
+    <p class="sub">Last recovery = cycle − run time. Cycle = blocks × headway.</p>
+
+    <div class="section-label">Headway periods</div>
+    <table class="mini">
+      <thead><tr><th>From</th><th>Headway</th><th>Blocks</th><th>Cycle</th><th></th></tr></thead>
+      <tbody id="periods"></tbody>
+    </table>
+    <div class="row-actions"><button class="btn" id="addPeriod">+ Add period</button></div>
+
+    <div class="section-label">Rules</div>
+    <table class="mini">
+      <tr><td>Minimum recovery</td><td style="width:90px"><input type="number" id="minRec" value="5" min="0"></td></tr>
+      <tr><td>Flag layover longer than</td><td><input type="number" id="maxRec" value="30" min="0"></td></tr>
+    </table>
+
+    <div class="section-label">Runtime bands (round trip, min)</div>
+    <table class="mini" id="bands"></table>
+    <p class="muted" style="margin:4px 0 0">Try a PM peak of 87 to see a trip that cannot fit.</p>
+
+    <div class="section-label">Preview</div>
+    <div class="chips" id="chips"></div>
+    <div class="note" id="transitionNote"></div>
+
+    <div class="row-actions" style="margin-top:10px">
+      <button class="btn primary" id="apply">Apply to schedule</button>
+      <button class="btn" id="reset">Reset</button>
+    </div>
+  </aside>
+</div>
+
+<div class="card explain">
+  <h2>How to read this mock-up</h2>
+  <ol>
+    <li><b>Before</b> shows a fixed recovery on every trip. When the band run time changes, departures drift off the 30 and the evening alternates 30/60, as in your screenshot.</li>
+    <li><b>After</b> sets each last recovery so each block comes back on its cycle. The HDWY column holds the target.</li>
+    <li><b>Red rows</b> cannot fit the minimum recovery. Click one to see the three choices. The tool never changes them without asking.</li>
+    <li><b>Amber rows</b> have a long layover. This is normal after a change to 60 minutes with 2 blocks (cycle 120).</li>
+    <li>At the period change, the tool ends the extra block that would get back last. The note in the panel names it.</li>
+  </ol>
+</div>
+
+<div class="menu" id="menu">
+  <div class="hdr" id="menuHdr"></div>
+  <div class="item">Edit trip</div>
+  <div class="item">Space 30 min after previous trip</div>
+  <div class="item new" id="menuHold">Set recovery to hold headway<small id="menuHoldSub"></small></div>
+  <div class="item">Delete trip</div>
+</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h3 id="modalTitle"></h3>
+    <p class="muted" id="modalBody"></p>
+    <div class="choice" data-c="accept"><b>Accept short recovery</b><span id="cAccept"></span></div>
+    <div class="choice" data-c="cycle"><b>Lengthen the cycle for this period</b><span id="cCycle"></span></div>
+    <div class="choice" data-c="block"><b>Add a block for this period</b><span id="cBlock"></span></div>
+    <div class="row-actions" style="justify-content:flex-end;margin-top:12px"><button class="btn" id="modalClose">Cancel</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const FIRST_DEP = 6 * 60 + 4;
+const LAST_DEP = 22 * 60 + 34;
+const FIXED_RECOVERY = 26; // what the generator produced: one value all day
+
+let state = {
+  view: 'after',
+  periods: [
+    { from: '06:00', headway: 30, blocks: 3 },
+    { from: '19:00', headway: 60, blocks: 2 },
+  ],
+  bands: [
+    { from: '06:00', label: 'Early', run: 62 },
+    { from: '09:00', label: 'Midday', run: 64 },
+    { from: '14:00', label: 'PM peak', run: 70 },
+    { from: '18:00', label: 'Evening', run: 66 },
+    { from: '21:00', label: 'Late', run: 62 },
+  ],
+  minRec: 5,
+  maxRec: 30,
+  applied: false,
+  accepted: new Set(),
+};
+
+const toMin = s => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
+const fmt = m => {
+  m = ((m % 1440) + 1440) % 1440;
+  let h = Math.floor(m / 60), mm = m % 60;
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${String(mm).padStart(2, '0')} ${ap}`;
+};
+const bandAt = t => { let b = state.bands[0]; state.bands.forEach(x => { if (t >= toMin(x.from)) b = x; }); return b; };
+const periodAt = t => { const ps = [...state.periods].sort((a, b) => toMin(a.from) - toMin(b.from)); let p = ps[0]; ps.forEach(x => { if (t >= toMin(x.from)) p = x; }); return p; };
+const blockName = i => `2-${i + 1}`;
+const maxBlocks = () => Math.max(...state.periods.map(p => p.blocks));
+
+// AFTER: ideal departure slots, then give each slot to the active block that arrives first.
+function buildAfter() {
+  const slots = [];
+  for (let t = FIRST_DEP; t <= LAST_DEP; t += periodAt(t).headway) slots.push(t);
+  const free = {}; // block -> arrival minute of its last trip
+  const retired = new Set();
+  const trips = [];
+  slots.forEach((t, si) => {
+    const p = periodAt(t);
+    const inService = Object.keys(free).filter(b => !retired.has(b));
+    const unused = Array.from({ length: maxBlocks() }, (_, i) => blockName(i))
+      .filter(b => free[b] === undefined && !retired.has(b));
+    // Pull out a new block until the period has enough; otherwise use the bus that is free first.
+    const b = inService.length < p.blocks && unused.length
+      ? unused[0]
+      : inService.reduce((a, c) => (free[c] < free[a] ? c : a));
+    // Fewer blocks in this period: end the extra blocks that would arrive last.
+    const rest = inService.filter(x => x !== b).sort((x, y) => free[y] - free[x]);
+    while (rest.length + 1 > p.blocks && rest.length) retired.add(rest.shift());
+    const run = bandAt(t).run;
+    trips.push({ block: b, start: t, run, band: bandAt(t).label, periodStart: si > 0 && periodAt(slots[si - 1]) !== p });
+    free[b] = t + run;
+  });
+  return finish(trips);
+}
+
+// BEFORE: same pullouts, then a fixed recovery after every trip.
+function buildBefore() {
+  const after = buildAfter();
+  const trips = [];
+  const n = maxBlocks();
+  const lastPeriod = [...state.periods].sort((a, b) => toMin(a.from) - toMin(b.from)).slice(-1)[0];
+  for (let i = 0; i < n; i++) {
+    const first = after.find(x => x.block === blockName(i));
+    if (!first) continue;
+    let t = first.start;
+    while (t <= LAST_DEP) {
+      if (i >= lastPeriod.blocks && t >= toMin(lastPeriod.from)) break;
+      const run = bandAt(t).run;
+      trips.push({ block: blockName(i), start: t, run, band: bandAt(t).label });
+      t = t + run + FIXED_RECOVERY;
+    }
+  }
+  trips.sort((a, b) => a.start - b.start);
+  return finish(trips);
+}
+
+function finish(trips) {
+  trips.forEach((tr, i) => {
+    const next = trips.slice(i + 1).find(x => x.block === tr.block);
+    tr.next = next ? next.start : null;
+    tr.rec = next ? next.start - (tr.start + tr.run) : 0;
+    tr.end = !next;
+    tr.hw = i > 0 ? tr.start - trips[i - 1].start : null;
+    // The gap into the first trip of a new period still belongs to the old period.
+    tr.target = periodAt(i > 0 ? trips[i - 1].start : tr.start).headway;
+    tr.key = `${tr.block}@${tr.start}`;
+  });
+  return trips;
+}
+
+function flagOf(tr) {
+  if (tr.end) return null;
+  if (tr.rec < state.minRec && !state.accepted.has(tr.key)) return tr.rec < 0 ? { cls: 'bad', text: 'Overlap' } : { cls: 'bad', text: `Below ${state.minRec} min` };
+  if (tr.rec > state.maxRec) return { cls: 'warn', text: 'Long layover' };
+  return null;
+}
+
+function render() {
+  const before = buildBefore();
+  const after = buildAfter();
+  const list = state.view === 'before' ? before : after;
+
+  // Matching "before" recovery by block + sequence, for the change column.
+  const seq = arr => { const c = {}; return arr.map(t => { c[t.block] = (c[t.block] || 0) + 1; return `${t.block}#${c[t.block]}`; }); };
+  const bSeq = seq(before), aSeq = seq(after);
+  const beforeRec = {}; before.forEach((t, i) => { beforeRec[bSeq[i]] = t; });
+
+  document.getElementById('rows').innerHTML = list.map((t, i) => {
+    const f = state.view === 'after' ? flagOf(t) : null;
+    const prev = state.view === 'after' ? beforeRec[aSeq[i]] : null;
+    let d = '';
+    if (prev && !t.end && !prev.end && prev.rec !== t.rec) {
+      const diff = t.rec - prev.rec;
+      d = `<span class="delta ${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '+' : ''}${diff} (was ${prev.rec})</span>`;
+    }
+    const hw = t.hw === null ? '' : `<span class="hw ${t.hw === t.target ? 'ok' : 'off'}">${t.hw}</span>`;
+    const cls = [f ? `flag-${f.cls}` : '', t.periodStart ? 'period-break' : ''].join(' ');
+    return `<tr class="${cls}" data-i="${i}">
+      <td class="blk">${t.block}${t.end ? '<span class="end">END</span>' : ''}</td>
+      <td>${fmt(t.start)}</td>
+      <td>${t.run}</td>
+      <td class="muted">${t.band}</td>
+      <td>${t.end ? '–' : `<b>${t.rec}</b>`}${d}</td>
+      <td>${t.next === null ? '–' : fmt(t.next)}</td>
+      <td>${hw}</td>
+      <td>${f ? `<span class="flag ${f.cls}">${f.text}</span>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  renderChart(before, after);
+  renderChips(before, after);
+  renderPanel();
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.view === state.view));
+  window._list = list;
+}
+
+function renderChart(before, after) {
+  const svg = document.getElementById('chart');
+  const W = 900, H = 170, top = 10, bottom = 150;
+  const x = t => 30 + (t - FIRST_DEP) / (LAST_DEP - FIRST_DEP) * (W - 50);
+  const y = hw => bottom - Math.min(hw, 75) / 75 * (bottom - top);
+  let s = '';
+  [30, 60].forEach(v => { s += `<line x1="30" x2="${W - 10}" y1="${y(v)}" y2="${y(v)}" stroke="#e2e8f0" stroke-dasharray="4 3"/><text x="2" y="${y(v) + 4}" font-size="11" fill="#94a3b8">${v}</text>`; });
+  const draw = (arr, dy, label) => {
+    arr.forEach(t => {
+      if (t.hw === null) return;
+      const ok = t.hw === t.target;
+      s += `<rect x="${x(t.start) - 3 + dy}" y="${y(t.hw)}" width="6" height="${bottom - y(t.hw)}" rx="1.5" fill="${ok ? '#10b981' : '#f59e0b'}" opacity="${label === 'before' ? .35 : 1}"/>`;
+    });
+  };
+  draw(before, -4, 'before');
+  draw(after, 4, 'after');
+  state.periods.forEach(p => { const px = x(toMin(p.from)); if (px > 30) s += `<line x1="${px}" x2="${px}" y1="${top}" y2="${bottom}" stroke="#10b981" stroke-dasharray="3 3"/><text x="${px + 4}" y="${top + 10}" font-size="11" fill="#047857">${p.headway} min from ${fmt(toMin(p.from))}</text>`; });
+  [6, 9, 12, 15, 18, 21].forEach(h => { s += `<text x="${x(h * 60) - 14}" y="${H - 4}" font-size="11" fill="#94a3b8">${fmt(h * 60).replace(':00', '')}</text>`; });
+  svg.innerHTML = s;
+}
+
+function renderChips(before, after) {
+  const off = arr => arr.filter(t => t.hw !== null && t.hw !== t.target).length;
+  const bad = after.filter(t => flagOf(t)?.cls === 'bad').length;
+  const warn = after.filter(t => flagOf(t)?.cls === 'warn').length;
+  const aRec = after.filter(t => !t.end);
+  document.getElementById('chips').innerHTML = `
+    <div class="chip"><b>${off(before)} → ${off(after)}</b><span>headways off target</span></div>
+    <div class="chip"><b>${aRec.length}</b><span>recoveries set</span></div>
+    <div class="chip ${bad ? 'bad' : ''}"><b>${bad}</b><span>need a decision</span></div>
+    <div class="chip ${warn ? 'warn' : ''}"><b>${warn}</b><span>long layovers</span></div>`;
+  const ap = document.getElementById('apply');
+  ap.disabled = bad > 0;
+  ap.textContent = state.applied ? 'Applied ✓' : bad > 0 ? `Resolve ${bad} trip${bad > 1 ? 's' : ''} first` : 'Apply to schedule';
+
+  const ps = [...state.periods].sort((a, b) => toMin(a.from) - toMin(b.from));
+  const notes = [];
+  for (let i = 1; i < ps.length; i++) {
+    const a = ps[i - 1], b = ps[i];
+    if (b.blocks < a.blocks) {
+      const ended = after.filter(t => t.end && t.start < toMin(b.from)).map(t => t.block).join(', ') || '(none)';
+      notes.push(`At <b>${fmt(toMin(b.from))}</b>: ${a.headway} → ${b.headway} min. Block <b>${ended}</b> ends after its last ${a.headway}-min trip.`);
+    } else if (b.blocks > a.blocks) {
+      notes.push(`At <b>${fmt(toMin(b.from))}</b>: ${b.blocks - a.blocks} block(s) pull out.`);
+    }
+  }
+  document.getElementById('transitionNote').innerHTML = notes.length ? '🔀 ' + notes.join('<br>🔀 ') : 'No block changes between periods.';
+}
+
+function renderPanel() {
+  const ps = state.periods;
+  document.getElementById('periods').innerHTML = ps.map((p, i) => `
+    <tr>
+      <td><input type="time" value="${p.from}" data-p="${i}" data-f="from"></td>
+      <td><input type="number" value="${p.headway}" min="5" data-p="${i}" data-f="headway"></td>
+      <td><input type="number" value="${p.blocks}" min="1" data-p="${i}" data-f="blocks"></td>
+      <td><b>${p.headway * p.blocks}</b></td>
+      <td>${ps.length > 1 ? `<button class="btn x" data-del="${i}">×</button>` : ''}</td>
+    </tr>`).join('');
+  document.getElementById('bands').innerHTML = state.bands.map((b, i) => `
+    <tr><td>${b.label} <span class="muted">from ${fmt(toMin(b.from))}</span></td>
+    <td style="width:90px"><input type="number" value="${b.run}" min="10" data-b="${i}"></td></tr>`).join('');
+}
+
+// Events
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => { state.view = b.dataset.view; render(); });
+document.getElementById('periods').addEventListener('change', e => {
+  const i = e.target.dataset.p; if (i === undefined) return;
+  const f = e.target.dataset.f;
+  state.periods[i][f] = f === 'from' ? e.target.value : Math.max(1, Number(e.target.value) || 1);
+  state.applied = false; render();
+});
+document.getElementById('periods').addEventListener('click', e => {
+  if (e.target.dataset.del === undefined) return;
+  state.periods.splice(Number(e.target.dataset.del), 1); state.applied = false; render();
+});
+document.getElementById('addPeriod').onclick = () => { state.periods.push({ from: '21:00', headway: 60, blocks: 2 }); render(); };
+document.getElementById('bands').addEventListener('change', e => {
+  const i = e.target.dataset.b; if (i === undefined) return;
+  state.bands[i].run = Math.max(10, Number(e.target.value) || 10); state.applied = false; render();
+});
+document.getElementById('minRec').onchange = e => { state.minRec = Number(e.target.value) || 0; render(); };
+document.getElementById('maxRec').onchange = e => { state.maxRec = Number(e.target.value) || 0; render(); };
+document.getElementById('apply').onclick = () => { state.applied = true; state.view = 'after'; render(); toast('Recoveries applied. Use "Show changes" to compare with the generated baseline.'); };
+document.getElementById('reset').onclick = () => location.reload();
+
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2800); }
+
+// Right-click menu (option 4: one-trip fix)
+const menu = document.getElementById('menu');
+document.getElementById('rows').addEventListener('contextmenu', e => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  e.preventDefault();
+  const t = window._list[Number(tr.dataset.i)];
+  document.getElementById('menuHdr').textContent = `Block ${t.block} · ${fmt(t.start)}`;
+  const want = t.target - (t.hw ?? t.target);
+  document.getElementById('menuHoldSub').textContent = t.end
+    ? 'Last trip of block: nothing to hold'
+    : `Sets recovery so this block's next trip keeps the ${t.target}-min headway`;
+  menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px'; menu.style.display = 'block';
+});
+document.addEventListener('click', () => menu.style.display = 'none');
+document.getElementById('menuHold').onclick = () => toast('Recovery updated for this trip only (mock-up).');
+
+// Click a red row: decision dialog (option 2)
+const modalBg = document.getElementById('modalBg');
+let modalTrip = null;
+document.getElementById('rows').addEventListener('click', e => {
+  const tr = e.target.closest('tr'); if (!tr || state.view !== 'after') return;
+  const t = window._list[Number(tr.dataset.i)];
+  const f = flagOf(t); if (!f || f.cls !== 'bad') return;
+  modalTrip = t;
+  const p = periodAt(t.start);
+  const short = state.minRec - t.rec;
+  document.getElementById('modalTitle').textContent = `Block ${t.block} at ${fmt(t.start)} cannot hold ${p.headway} min`;
+  document.getElementById('modalBody').textContent = `Run time is ${t.run} min (${t.band}). The cycle is ${p.blocks} × ${p.headway} = ${p.blocks * p.headway} min, which leaves ${t.rec} min of recovery. The minimum is ${state.minRec}.`;
+  document.getElementById('cAccept').textContent = `Keep ${t.rec} min recovery on this trip. Headway stays at ${p.headway}.`;
+  const newHw = Math.ceil((t.run + state.minRec) / p.blocks);
+  document.getElementById('cCycle').textContent = `Headway becomes about ${newHw} min for this period (cycle ${newHw * p.blocks}).`;
+  document.getElementById('cBlock').textContent = `${p.blocks + 1} blocks × ${p.headway} = cycle ${(p.blocks + 1) * p.headway}. Costs one more bus.`;
+  modalBg.style.display = 'flex';
+});
+document.getElementById('modalClose').onclick = () => modalBg.style.display = 'none';
+document.querySelectorAll('.choice').forEach(c => c.onclick = () => {
+  const p = periodAt(modalTrip.start);
+  if (c.dataset.c === 'accept') state.accepted.add(modalTrip.key);
+  if (c.dataset.c === 'cycle') p.headway = Math.ceil((modalTrip.run + state.minRec) / p.blocks);
+  if (c.dataset.c === 'block') p.blocks += 1;
+  modalBg.style.display = 'none'; state.applied = false; render();
+});
+
+render();
+</script>
+</body>
+</html>

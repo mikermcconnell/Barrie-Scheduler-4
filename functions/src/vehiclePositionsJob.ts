@@ -56,6 +56,8 @@ export const recordVehiclePositions = onSchedule(
     region: 'us-central1',
     timeoutSeconds: 60,
     memory: '256MiB',
+    // Most of each run is the 30 s sample gap; a fractional vCPU keeps that wait cheap.
+    cpu: 'gcf_gen1',
     retryCount: 0,
   },
   async () => {

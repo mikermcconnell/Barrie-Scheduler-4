@@ -16,7 +16,7 @@ Read `AGENTS.md` first for the repo's top-level agent contract.
 npm run dev          # Dev server on port 3008
 npm run typecheck    # TypeScript validation
 npm run build        # Production Vite bundle
-npx vitest run       # Run all tests
+npx vitest run       # Run all tests (slow: only when the user asks)
 npx vitest run tests/timeUtils.test.ts  # Time parsing tests (run before any time changes)
 ```
 
@@ -79,8 +79,12 @@ Do not duplicate feature status or dated roadmap claims in this tool-specific fi
 - Do not commit, deploy, or release unless the user explicitly asks. For
   multi-phase work, keep recoverable notes and verification evidence instead
   of creating unsolicited commits.
-- **Post-edit hooks** in `.claude/settings.json` provide early typecheck and
-  related-test feedback. They do not replace deliberate final verification.
+- **Do not run the full test suite** (`npx vitest run`, `npm test`,
+  `test:coverage`, `test:smoke`) unless the user asks for it. The suite is
+  large and slow. Run the test files for the code you changed (and any Danger
+  Zone command in section 8), then `npm run typecheck` once at the end.
+- **Post-edit hooks** in `.claude/settings.json` provide early related-test
+  feedback. They do not replace deliberate final verification.
 
 ---
 

@@ -342,6 +342,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
                         <RidershipModule
                             data={filteredData}
                             dayTypeFilter={dayTypeFilter}
+                            historyDays={workspaceData.dailySummaries}
                             comparisonDays={ridershipComparisonPeriod?.days ?? []}
                             comparisonRange={ridershipComparisonPeriod
                                 ? { start: ridershipComparisonPeriod.startDate, end: ridershipComparisonPeriod.endDate }

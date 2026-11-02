@@ -63,6 +63,8 @@ export interface ConnectionTarget {
     icon?: 'train' | 'clock' | 'bus';      // Icon identifier
     qualityWindowSettings?: ConnectionQualityWindowSettings; // Optional per-target override
     defaultEventType?: ConnectionEventType; // Default event type for times without explicit eventType
+    source?: 'go-gtfs' | 'linx-gtfs' | 'route-master' | 'pasted'; // Where the times came from (Guided Schedule)
+    sourceFetchedAt?: string;              // ISO timestamp of the feed download the times came from
 
     // Metadata
     createdAt: string;                     // ISO timestamp
@@ -125,6 +127,7 @@ export interface RouteConnection {
     targetId: string;                      // Reference to ConnectionTarget.id
     connectionType: ConnectionType;        // 'meet_departing' | 'feed_arriving'
     bufferMinutes: number;                 // e.g., 5 = arrive 5 min before target departs
+    maxWaitMinutes?: number;               // Longest wait that still counts as met (ranked connections); unset = default window
     stopCode: string;                      // Stop code (unique identifier) on THIS route to optimize
     stopName?: string;                     // Stop name for display (optional, can be derived from stopCode)
     priority: number;                      // 1 = highest (for conflict resolution)

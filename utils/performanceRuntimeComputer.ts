@@ -292,6 +292,52 @@ function buildBucketContributions(bucketData: AggregatedBucketData): BucketContr
     });
 }
 
+const BAD_CYCLE_DAY_MIN_DAYS = 5;
+const BAD_CYCLE_DAY_MODIFIED_Z = 3.5;
+
+/**
+ * Removes bad days from each paired-cycle bucket. A day is bad when its full
+ * cycle total sits far from that bucket's other days (modified z-score over
+ * 3.5, median/MAD based). The day is removed from every segment of the
+ * bucket so the remaining days still form complete cycles. Buckets are never
+ * compared with other times of day here.
+ */
+function excludeBadCycleDays(dirMap: Map<string, Map<string, AggregatedSegmentBucket>>): void {
+  const segments = Array.from(dirMap.values()).flatMap(segMap => Array.from(segMap.values()));
+  if (segments.length === 0) return;
+  const buckets = new Set(segments.flatMap(segment => Array.from(segment.bucketMap.keys())));
+
+  buckets.forEach((bucket) => {
+    const bucketData = segments.map(segment => segment.bucketMap.get(bucket));
+    if (bucketData.some(data => !data)) return;
+    const dates = Array.from(bucketData[0]!.dayTotals.keys()).filter(date => (
+      bucketData.every(data => data!.dayTotals.has(date))
+    ));
+    if (dates.length < BAD_CYCLE_DAY_MIN_DAYS) return;
+
+    const cycleTotals = dates.map(date => ({
+      date,
+      total: bucketData.reduce((sum, data) => sum + median(data!.dayTotals.get(date)!), 0),
+    }));
+    const center = median(cycleTotals.map(entry => entry.total));
+    const mad = median(cycleTotals.map(entry => Math.abs(entry.total - center)));
+    if (mad <= 0) return;
+
+    const badDates = new Set(cycleTotals
+      .filter(entry => Math.abs(0.6745 * (entry.total - center) / mad) > BAD_CYCLE_DAY_MODIFIED_Z)
+      .map(entry => entry.date));
+    if (badDates.size === 0) return;
+
+    bucketData.forEach((data) => {
+      badDates.forEach((date) => {
+        data!.dayTotals.delete(date);
+        data!.dates.delete(date);
+      });
+      data!.values = Array.from(data!.dayTotals.values()).flat();
+    });
+  });
+}
+
 interface PreferredTripPattern {
   segmentKeys: string[];
   segmentCount: number;
@@ -319,7 +365,9 @@ interface CycleTerminalIdentity {
 }
 
 const CYCLE_PAIRING_EARLY_TOLERANCE_MINUTES = 5;
-const MAX_CYCLE_PAIRING_GAP_MINUTES = 30;
+// Long enough for an off-peak layover on hourly service. The closest gap
+// still wins, so frequent service keeps its short pairings.
+const MAX_CYCLE_PAIRING_GAP_MINUTES = 60;
 
 function terminalIdentitiesMatch(
   arrival: CycleTerminalIdentity,
@@ -1521,6 +1569,8 @@ function buildTripBucketedRuntimesFromTrips(
 
   if (dirMap.size === 0 && southStartDirMap.size === 0) return null;
   if (bucketMode === 'cycleStart' && hasBidirectionalCanonicalModel) {
+    excludeBadCycleDays(dirMap);
+    excludeBadCycleDays(southStartDirMap);
     return [
       ...buildRuntimeDataFromDirectionBuckets(
         dirMap,

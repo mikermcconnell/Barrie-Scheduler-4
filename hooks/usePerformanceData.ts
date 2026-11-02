@@ -196,7 +196,8 @@ export function usePerformanceOverviewQuery(
 }
 
 // Warm the cache for the dashboard's default Ridership view (all routes, Past
-// Week plus its comparison week) so opening it later skips the download.
+// Week plus its comparison week and benchmark history) so opening it later
+// skips the download.
 // Keys come from the same builders the hooks use, so the dashboard finds them.
 export async function prefetchOperationsRidership(
     queryClient: QueryClient,

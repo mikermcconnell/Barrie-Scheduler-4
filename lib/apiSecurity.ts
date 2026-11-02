@@ -9,6 +9,7 @@ const DEFAULT_GTFS_HOSTS = [
     'www.myridebarrie.ca',
     'myridebarrie.ca',
     'assets.metrolinx.com',
+    'metrolinx.tmix.se',
 ];
 
 type UrlValidationResult =

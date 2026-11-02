@@ -133,6 +133,27 @@ describe('ProjectManagerModal', () => {
         expect(onLoadGeneratedSchedule).toHaveBeenCalledWith(fullProject);
     });
 
+    it('hides guided schedule-set projects', async () => {
+        const base = {
+            dayType: 'Weekday' as const,
+            routeNumber: '10',
+            isGenerated: false,
+            updatedAt: new Date('2026-03-18T12:00:00Z'),
+            createdAt: new Date('2026-03-18T11:00:00Z'),
+        };
+        getAllProjectsMock.mockResolvedValue([
+            { ...base, id: 'legacy', name: 'Legacy Project' },
+            { ...base, id: 'guided-set-1_Weekday', name: 'Route 10 Weekday (guided)', scheduleSetId: 'guided-set-1' },
+        ]);
+
+        renderModal();
+        await flushPromises();
+        flushSync(() => {});
+
+        expect(container?.textContent).toContain('Legacy Project');
+        expect(container?.textContent).not.toContain('Route 10 Weekday (guided)');
+    });
+
     it('keeps the current project open when the parent blocks starting a new project', async () => {
         getAllProjectsMock.mockResolvedValue([]);
         const onBeforeProjectSwitch = vi.fn().mockResolvedValue(false);

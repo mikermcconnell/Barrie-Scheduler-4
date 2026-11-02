@@ -274,124 +274,120 @@ describe('Step4Schedule', () => {
         expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toBeUndefined();
     });
 
-    it('lets the planner set a Step 4 target headway from the review tools modal', async () => {
+    // Two blocks, 30 min apart, with a fixed recovery that lets the headway drift.
+    const buildDriftingRoute = (): MasterRouteTable[] => {
+        const leg = (id: string, blockId: string, direction: 'North' | 'South', start: number, travel: number, recovery: number): MasterTrip => {
+            const [first, last] = direction === 'North' ? ['Park Place', 'Downtown'] : ['Downtown', 'Park Place'];
+            const toClock = (minutes: number) => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`;
+            return {
+                id,
+                blockId,
+                direction,
+                tripNumber: 1,
+                rowId: start,
+                startTime: start,
+                endTime: start + travel + recovery,
+                travelTime: travel,
+                recoveryTime: recovery,
+                cycleTime: travel + recovery,
+                stops: { [first]: toClock(start), [last]: toClock(start + travel + recovery) },
+                stopMinutes: { [first]: start, [last]: start + travel + recovery },
+                arrivalTimes: { [first]: toClock(start), [last]: toClock(start + travel) },
+                recoveryTimes: { [last]: recovery },
+            } as MasterTrip;
+        };
+        const north: MasterTrip[] = [];
+        const south: MasterTrip[] = [];
+        ['2-1', '2-2'].forEach((blockId, blockIndex) => {
+            let start = 360 + blockIndex * 30;
+            for (let n = 0; n < 4; n += 1) {
+                north.push(leg(`${blockId}-n${n}`, blockId, 'North', start, 25, 5));
+                const southTrip = leg(`${blockId}-s${n}`, blockId, 'South', start + 30, 25 + n * 2, 12);
+                south.push(southTrip);
+                start = southTrip.endTime;
+            }
+        });
+        return [
+            { routeName: '2 (Weekday) (North)', stops: ['Park Place', 'Downtown'], stopIds: {}, trips: north },
+            { routeName: '2 (Weekday) (South)', stops: ['Downtown', 'Park Place'], stopIds: {}, trips: south },
+        ];
+    };
+
+    it('passes estimated target headways to the editor and reports a typed target', () => {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
-
-        const currentTable = makeTable('10 (Weekday) (North)', [
-            makeTrip('draft-a', 'North', 365),
-            makeTrip('draft-b', 'North', 395, { blockId: '10-2' }),
-        ]);
+        const onHeadwayTargetsChange = vi.fn();
+        const schedules = buildDriftingRoute();
 
         flushSync(() => {
             root?.render(
                 <Step4Schedule
-                    initialSchedules={[currentTable]}
-                    originalSchedules={[currentTable]}
+                    initialSchedules={schedules}
+                    originalSchedules={schedules}
                     editorSessionKey={1}
                     bands={[]}
                     analysis={[]}
                     segmentNames={[]}
                     onUpdateSchedules={vi.fn()}
                     projectName="Test Project"
-                    teamId="team-1"
-                    routeIdentity="10-Weekday"
-                    routeLabel="Route 10 · Weekday"
                     approvedRuntimeContract={null}
                     approvedRuntimeModel={null}
+                    headwayTargets={{}}
+                    onHeadwayTargetsChange={onHeadwayTargetsChange}
                 />
             );
         });
 
-        expect(container.textContent).toContain('Set target');
-        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].targetHeadway).toBeUndefined();
+        const props = scheduleEditorSpy.mock.calls.at(-1)?.[0];
+        const cells = Object.entries(props.headwayTargets as Record<string, { value: number; typed: boolean }>);
+        expect(cells.length).toBeGreaterThan(0);
+        expect(cells.every(([, cell]) => !cell.typed && [10, 15, 30, 45, 60].includes(cell.value))).toBe(true);
 
-        const setTargetButton = Array.from(container.querySelectorAll('button')).find(button => (
-            button.textContent?.trim() === 'Set target'
-        )) as HTMLButtonElement | undefined;
-        expect(setTargetButton).toBeTruthy();
-
-        flushSync(() => {
-            setTargetButton?.click();
-        });
-
-        expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Set target headway');
-
-        const useTargetButton = Array.from(container.querySelectorAll('button')).find(button => (
-            button.textContent?.trim() === 'Use target'
-        )) as HTMLButtonElement | undefined;
-        expect(useTargetButton).toBeTruthy();
-
-        flushSync(() => {
-            useTargetButton?.click();
-        });
-        await flushAsyncUpdates();
-
-        expect(container.querySelector('[role="dialog"]')).toBeNull();
-        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].targetHeadway).toBe(30);
-        expect(container.textContent).toContain('30 min');
+        const [rowKey] = cells[0];
+        props.onHeadwayTargetChange(rowKey, 45);
+        expect(onHeadwayTargetsChange).toHaveBeenCalledWith({ [rowKey]: 45 });
     });
 
-    it('does not allow a headway preview with block overlaps to be applied', () => {
+    it('fixes headways in one schedule update and keeps trips and blocks', async () => {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
         const onUpdateSchedules = vi.fn();
-
-        const overlappingTable = makeTable('10 (Weekday)', [
-            makeTrip('north-a', 'North', 360, {
-                blockId: '10-1',
-                endTime: 390,
-                stopMinutes: { Terminal: 390 },
-                stops: { Terminal: '6:30 AM' },
-                arrivalTimes: { Terminal: '6:30 AM' },
-                isBlockEnd: false,
-            }),
-            makeTrip('south-a', 'South', 385, {
-                blockId: '10-1',
-                endTime: 415,
-                stopMinutes: { Terminal: 415 },
-                stops: { Terminal: '6:55 AM' },
-                arrivalTimes: { Terminal: '6:55 AM' },
-            }),
-            makeTrip('north-b', 'North', 410, {
-                blockId: '10-2',
-                endTime: 440,
-                stopMinutes: { Terminal: 440 },
-                stops: { Terminal: '7:20 AM' },
-                arrivalTimes: { Terminal: '7:20 AM' },
-            }),
-        ]);
+        const schedules = buildDriftingRoute();
 
         flushSync(() => {
             root?.render(
                 <Step4Schedule
-                    initialSchedules={[overlappingTable]}
-                    originalSchedules={[overlappingTable]}
+                    initialSchedules={schedules}
+                    originalSchedules={schedules}
                     editorSessionKey={1}
                     bands={[]}
                     analysis={[]}
                     segmentNames={[]}
                     onUpdateSchedules={onUpdateSchedules}
                     projectName="Test Project"
-                    targetHeadway={30}
                     approvedRuntimeContract={null}
                     approvedRuntimeModel={null}
                 />
             );
         });
 
-        expect(container.textContent).toContain('would overlap. Resolve the overlap before applying.');
-        const applyButton = Array.from(container.querySelectorAll('button')).find(button => (
-            button.textContent?.includes('Regularize to 30 min')
+        const fixButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.trim() === 'Fix headways'
         )) as HTMLButtonElement | undefined;
-        expect(applyButton?.disabled).toBe(true);
+        expect(fixButton).toBeTruthy();
 
         flushSync(() => {
-            applyButton?.click();
+            fixButton?.click();
         });
-        expect(onUpdateSchedules).not.toHaveBeenCalled();
+        await flushAsyncUpdates();
+
+        expect(onUpdateSchedules).toHaveBeenCalledTimes(1);
+        const fixed = onUpdateSchedules.mock.calls[0][0] as MasterRouteTable[];
+        const tripIds = (tables: MasterRouteTable[]) => tables.flatMap(table => table.trips.map(trip => `${trip.id}:${trip.blockId}`)).sort();
+        expect(tripIds(fixed)).toEqual(tripIds(schedules));
+        expect(container.querySelector('[role="status"]')?.textContent).toMatch(/^Set \d+ recover/);
     });
 
     it('keeps undo available when edited schedules sync back from the parent', async () => {
@@ -715,6 +711,36 @@ describe('Step4Schedule', () => {
         });
 
         expect(onUpdateSchedules).not.toHaveBeenCalled();
+    });
+
+    it('opens the editor comparing against the generated baseline when asked', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        const initialSchedules = [{ routeName: '10 (Weekday) (North)', stops: [], trips: [] }] as any[];
+
+        flushSync(() => {
+            root?.render(
+                <Step4Schedule
+                    initialSchedules={initialSchedules}
+                    originalSchedules={initialSchedules}
+                    editorSessionKey={1}
+                    bands={[]}
+                    analysis={[]}
+                    segmentNames={[]}
+                    onUpdateSchedules={vi.fn()}
+                    projectName="Test Project"
+                    approvedRuntimeContract={null}
+                    approvedRuntimeModel={null}
+                    compareGeneratedByDefault
+                />
+            );
+        });
+
+        const editorCall = scheduleEditorSpy.mock.calls.map(call => call[0]).filter(props => !props.readOnly).at(-1);
+        expect(editorCall?.initialShowDeltas).toBe(true);
+        expect(editorCall?.originalSchedules).toEqual(initialSchedules);
     });
 
 });

@@ -39,7 +39,7 @@ import {
     deepCloneSchedules,
     findTableAndTrip,
 } from '../utils/schedule/scheduleEditorUtils';
-import { RoundTripTableView } from './schedule/RoundTripTableView';
+import { RoundTripTableView, type HeadwayTargetCell } from './schedule/RoundTripTableView';
 import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import {
     getOperationalSortTime,
@@ -71,6 +71,7 @@ import {
     type ScheduleEditImpact,
 } from '../utils/schedule/scheduleEditImpact';
 import { isMergedRouteBase } from '../utils/schedule/mergedRouteContinuity';
+import { alignBlockToPreviousTripHeadway } from '../utils/schedule/headwayRegularization';
 // --- Main Editor Component ---
 
 const getRouteNameServiceDay = (routeName: string): string | null =>
@@ -172,6 +173,16 @@ export interface ScheduleEditorProps {
     originalSchedules?: MasterRouteTable[];
     initialShowDeltas?: boolean;
     onResetOriginals?: () => void;
+    onAcceptChanges?: () => void;
+    /** Starting state of the round-trip view's Connections and Focus toggles. */
+    initialShowConnections?: boolean;
+    /** Guided Schedule: connections being set up in the session, shown instead of the saved route config. */
+    connectionLibraryOverride?: ConnectionLibrary | null;
+    routeConnectionConfigOverride?: RouteConnectionConfig | null;
+    initialFocusMode?: boolean;
+    headwayTargets?: Record<string, HeadwayTargetCell>;
+    onHeadwayTargetChange?: (rowKey: string, value: number | null) => void;
+    headwayFlags?: Record<string, string>;
     draftName?: string;
     onRenameDraft?: (name: string) => void;
     autoSaveStatus?: AutoSaveStatus;
@@ -251,6 +262,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     originalSchedules,
     initialShowDeltas,
     onResetOriginals,
+    onAcceptChanges,
+    initialShowConnections,
+    connectionLibraryOverride,
+    routeConnectionConfigOverride,
+    initialFocusMode,
+    headwayTargets,
+    onHeadwayTargetChange,
+    headwayFlags,
     draftName = 'Schedule',
     onRenameDraft,
     autoSaveStatus,
@@ -821,6 +840,45 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             case 'duplicateTrip':
                 handleDuplicateTrip(action.tripId);
                 break;
+
+            case 'alignHeadway': {
+                if (!targetHeadway) break;
+                // A round-trip row can hold two trips; space the row's earliest one.
+                const rowTrips = (action.tripIds ?? [action.tripId])
+                    .map(id => findTableAndTrip(schedules, id))
+                    .filter((found): found is NonNullable<typeof found> => !!found)
+                    .sort((a, b) => getOperationalSortTime(a.trip.startTime) - getOperationalSortTime(b.trip.startTime));
+                const anchor = rowTrips[0];
+                if (!anchor) break;
+                const baseName = getTrueBaseRoute(anchor.table.routeName);
+                const serviceDay = getServiceDay(anchor.table.routeName);
+                const result = alignBlockToPreviousTripHeadway(
+                    schedules,
+                    anchor.trip.id,
+                    targetHeadway,
+                    table => getTrueBaseRoute(table.routeName) === baseName && getServiceDay(table.routeName) === serviceDay
+                );
+                if ('message' in result) {
+                    showSuccessToast(result.message);
+                    break;
+                }
+                if (result.shiftMinutes === 0) {
+                    showSuccessToast(`Block ${result.blockId} is already ${targetHeadway} min after block ${result.previousBlockId}`);
+                    break;
+                }
+                const direction = result.shiftMinutes < 0 ? 'earlier' : 'later';
+                logAction('edit', `Moved block ${result.blockId} ${Math.abs(result.shiftMinutes)} min ${direction} to run ${targetHeadway} min after block ${result.previousBlockId} at ${result.anchorStop}`, {
+                    tripId: anchor.trip.id,
+                    blockId: result.blockId,
+                    field: 'startTime',
+                    newValue: result.shiftMinutes
+                });
+                onSchedulesChange(result.schedules);
+                const impact = summarizeScheduleEditImpact(schedules, result.schedules);
+                if (impact.changedTripCount > 0) setEditImpact(impact);
+                showSuccessToast(`Block ${result.blockId} moved ${Math.abs(result.shiftMinutes)} min ${direction}`);
+                break;
+            }
 
             case 'extendTrip': {
                 const extendContext = buildExtendTripModalContext(schedules, action.tripId);
@@ -1928,6 +1986,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     deleteLabel={contextMenu.deleteLabel}
                     hideTripSpecificActions={contextMenu.hideTripSpecificActions}
                     quickAddActionsOnly={contextMenu.quickAddActionsOnly}
+                    alignHeadwayMinutes={targetHeadway}
                     onAction={handleContextMenuAction}
                     onClose={() => setContextMenu(null)}
                 />
@@ -2208,6 +2267,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     ))}
                                     initialShowDeltas={initialShowDeltas}
                                     onResetOriginals={onResetOriginals}
+                                    onAcceptChanges={onAcceptChanges}
+                                    initialShowConnections={initialShowConnections}
+                                    initialFocusMode={initialFocusMode}
+                                    headwayTargets={headwayTargets}
+                                    onHeadwayTargetChange={onHeadwayTargetChange}
+                                    headwayFlags={headwayFlags}
                                     onDeleteTrip={readOnly ? undefined : handleDeleteTrips}
                                     onDuplicateTrip={readOnly ? undefined : handleDuplicateTrip}
                                     onAddTrip={readOnly ? undefined : (tripId, placement) => openAddTripModal(tripId, { north: activeRoute.north, south: activeRoute.south }, placement)}
@@ -2219,8 +2284,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     targetCycleTime={targetCycleTime}
                                     targetHeadway={targetHeadway}
                                     readOnly={readOnly}
-                                    connectionLibrary={connectionLibrary}
-                                    routeConnectionConfig={activeRouteConnectionConfig}
+                                    connectionLibrary={connectionLibraryOverride ?? connectionLibrary}
+                                    routeConnectionConfig={routeConnectionConfigOverride ?? activeRouteConnectionConfig}
                                     dayType={resolvedActiveDay as DayType}
                                     masterBaseline={activeRouteMasterBaseline}
                                     compareBaselineLabel={compareBaselineLabel}

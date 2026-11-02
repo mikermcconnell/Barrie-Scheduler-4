@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Home page — simulator card + suggestions mockup</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Nunito", "Segoe UI", system-ui, sans-serif; background: #f3f4f6; color: #1f2937; display: flex; min-height: 100vh; }
+
+  /* Control panel */
+  .panel { width: 300px; flex-shrink: 0; background: #111827; color: #e5e7eb; padding: 18px 16px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  .panel h1 { font-size: 15px; margin: 0 0 4px; color: #fff; }
+  .panel .hint { font-size: 12px; color: #9ca3af; margin: 0 0 14px; line-height: 1.4; }
+  .panel .grp { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: #818cf8; font-weight: 800; margin: 14px 0 6px; }
+  .panel label { display: flex; gap: 9px; align-items: flex-start; padding: 8px 9px; border-radius: 8px; cursor: pointer; font-size: 13px; line-height: 1.35; }
+  .panel label:hover { background: #1f2937; }
+  .panel input { margin-top: 2px; accent-color: #6366f1; }
+  .panel label b { color: #fff; display: block; }
+  .panel label span { color: #9ca3af; font-size: 12px; }
+  .panel .row { display: flex; gap: 6px; margin-top: 14px; }
+  .panel .row button { flex: 1; background: #1f2937; color: #e5e7eb; border: 1px solid #374151; border-radius: 8px; padding: 7px; font-weight: 700; font-family: inherit; cursor: pointer; }
+
+  /* App frame */
+  .app { flex: 1; min-width: 0; }
+  .header { height: 64px; background: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; padding: 0 24px; gap: 10px; font-weight: 800; }
+  .logo { width: 32px; height: 32px; border-radius: 9px; background: #58CC02; color: #fff; display: flex; align-items: center; justify-content: center; }
+  .page { padding: 0 24px 60px; }
+  .wrap { max-width: 1152px; margin: 0 auto; }
+
+  /* Heading: before vs after (#4) */
+  .heading-old { text-align: center; margin: 32px 0 48px; }
+  .heading-old h2 { font-size: 36px; font-weight: 800; margin: 0; color: #1f2937; }
+  .heading-new { display: none; margin: 26px 0 22px; }
+  .heading-new h2 { font-size: 26px; font-weight: 800; margin: 0; color: #1f2937; }
+  .heading-new p { margin: 4px 0 0; color: #6b7280; font-weight: 700; font-size: 14px; }
+  .s4 .heading-old { display: none; } .s4 .heading-new { display: block; }
+
+  /* Resume banner */
+  .resume { width: 100%; border-radius: 16px; border: 1px solid #a7f3d0; background: #ecfdf5; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }
+  .resume .k { font-size: 11px; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; color: #059669; }
+  .resume .v { font-weight: 800; margin-top: 2px; }
+  .resume .go { color: #047857; font-weight: 800; font-size: 14px; }
+  .s4 .resume { margin-bottom: 20px; }
+
+  /* Quick links */
+  .ql h3 { margin: 0 0 10px; font-size: 12px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: #6b7280; }
+  .ql .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 32px; }
+  .qcard { display: flex; align-items: center; gap: 12px; min-height: 80px; border: 1px solid #e5e7eb; background: #fff; border-radius: 12px; padding: 12px 16px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .qcard .i { width: 40px; height: 40px; border-radius: 8px; background: #fef3c7; color: #d97706; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .qcard b { display: block; font-size: 14px; } .qcard small { display: block; font-size: 12px; font-weight: 700; color: #6b7280; margin-top: 2px; }
+  .qcard .arr { margin-left: auto; color: #d1d5db; }
+  .s5 .qcard.sim { display: none; }
+  .s4 .ql .row { margin-bottom: 24px; }
+
+  /* Workspace grid */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+  .s4 .grid { gap: 24px; }
+  @media (max-width: 1250px) { .grid { grid-template-columns: repeat(2, 1fr); } .ql .row { grid-template-columns: repeat(2, 1fr); } }
+
+  .card { position: relative; background: #fff; border-radius: 24px; border-bottom: 8px solid #e5e7eb; padding: 32px; overflow: hidden; cursor: pointer; transition: transform .2s, border-color .2s, box-shadow .2s; outline: none; }
+  .card:hover { transform: translateY(-4px); }
+  .card .ghost { position: absolute; top: 0; right: 0; padding: 32px; opacity: .1; transition: opacity .2s; }
+  .card:hover .ghost { opacity: .2; }
+  .card .ico { width: 64px; height: 64px; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin-bottom: 24px; transition: transform .2s; position: relative; }
+  .card:hover .ico { transform: scale(1.1); }
+  .card h3 { font-size: 24px; font-weight: 800; margin: 0 0 8px; color: #1f2937; position: relative; }
+  .card p { color: #6b7280; font-weight: 700; margin: 0 0 24px; line-height: 1.45; position: relative; }
+  .card .cta { display: flex; align-items: center; gap: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; font-size: 14px; position: relative; }
+  .s4 .card { padding: 28px; } .s4 .card .ico { margin-bottom: 18px; }
+
+  .blue { --c: #1CB0F6; --bg: #dbeafe; } .green { --c: #58CC02; --bg: #dcfce7; } .amber { --c: #d97706; --bg: #fef3c7; }
+  .emer { --c: #059669; --bg: #d1fae5; } .cyan { --c: #0891b2; --bg: #cffafe; }
+  .card.std .ico { background: var(--bg); color: var(--c); }
+  .card.std:hover { border-color: var(--c); }
+  .card.std:hover h3 { color: var(--c); }
+  .card.std .cta { color: var(--c); }
+
+  /* #1 align CTAs to the bottom */
+  .s1 .card { display: flex; flex-direction: column; }
+  .s1 .card .body { flex: 1; display: flex; flex-direction: column; }
+  .s1 .card .cta { margin-top: auto; }
+  .card .body { position: relative; }
+
+  /* #2 smaller, higher ghost icons */
+  .s2 .card.std .ghost { padding: 18px; opacity: .07; }
+  .s2 .card.std .ghost svg { width: 84px; height: 84px; }
+  .s2 .card.std:hover .ghost { opacity: .14; }
+
+  /* #3 on-demand icon match */
+  .od-new { display: none; } .s3 .od-old { display: none; } .s3 .od-new { display: inline; }
+
+  /* #8 focus ring */
+  .s8 .card:focus-visible, .s8 .card.fake-focus { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--c, #6366f1); }
+
+  /* Simulator card (option B) */
+  .card.sim { background: #0f172a; border-bottom-color: #6366f1; color: #fff; --c: #818cf8; }
+  .card.sim:hover { border-color: #a5b4fc; box-shadow: 0 18px 40px -16px rgba(99,102,241,.8); }
+  .card.sim .map { position: absolute; inset: 0; opacity: .9; }
+  .card.sim .map svg { width: 100%; height: 100%; }
+  .card.sim .shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(15,23,42,.35) 0%, rgba(15,23,42,.92) 62%); }
+  .card.sim .ico { background: rgba(99,102,241,.25); color: #c7d2fe; border: 1px solid rgba(165,180,252,.4); }
+  .card.sim h3 { color: #fff; }
+  .card.sim .sub { color: #a5b4fc; font-weight: 800; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; margin: -4px 0 10px; position: relative; }
+  .card.sim p { color: #cbd5e1; }
+  .card.sim .cta { color: #a5b4fc; }
+  .pill { position: absolute; top: 20px; right: 20px; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; background: rgba(34,197,94,.15); color: #86efac; border: 1px solid rgba(134,239,172,.35); z-index: 1; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,.6); } 70% { box-shadow: 0 0 0 8px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+  .s7 .live-dot { animation: none; }
+  .route { fill: none; stroke-width: 3; stroke-linecap: round; opacity: .55; }
+
+  /* #6 external hint */
+  .ext { display: none; position: relative; margin: -14px 0 18px; font-size: 12px; font-weight: 700; color: #94a3b8; align-items: center; gap: 5px; }
+  .s6 .ext { display: flex; }
+
+  .tag-new { display: inline-block; margin-left: 6px; font-size: 10px; background: #6366f1; color: #fff; border-radius: 4px; padding: 1px 5px; vertical-align: 1px; }
+</style>
+</head>
+<body class="s1 s2 s3 s5 s6 s7">
+
+<aside class="panel">
+  <h1>Home page mockup</h1>
+  <p class="hint">Simulator card (option B) is in the top-left slot. Tick a box to switch a suggestion on, untick it to see today's look.</p>
+
+  <div class="grp">Card layout</div>
+  <label><input type="checkbox" data-s="s1" checked><div><b>1 · Line up "Enter Workspace"</b><span>Links pinned to the bottom of each card.</span></div></label>
+  <label><input type="checkbox" data-s="s2" checked><div><b>2 · Smaller faded icons</b><span>Stop them running into the titles.</span></div></label>
+  <label><input type="checkbox" data-s="s3" checked><div><b>3 · Matching On-Demand icon</b><span>Faded icon matches the main icon.</span></div></label>
+  <label><input type="checkbox" data-s="s4"><div><b>4 · Shorter top of page</b><span>Greeting instead of the big heading. Second row moves up.</span></div></label>
+
+  <div class="grp">Simulator card</div>
+  <label><input type="checkbox" data-s="s5" checked><div><b>5 · Remove duplicate quick link</b><span>Simulator tile leaves "Quick links".</span></div></label>
+  <label><input type="checkbox" data-s="s6" checked><div><b>6 · "Opens Barrie Simulator ↗" hint</b><span>Shows it is a separate app.</span></div></label>
+  <label><input type="checkbox" data-s="s7" checked><div><b>7 · Reduce motion</b><span>Ticked = what a "reduce motion" user sees: still buses. Others still see them move.</span></div></label>
+
+  <div class="grp">Accessibility</div>
+  <label><input type="checkbox" data-s="s8"><div><b>8 · Keyboard focus ring</b><span>Shown on the Scheduled Transit card. Press Tab in the page to try it.</span></div></label>
+
+  <div class="row"><button id="all">All on</button><button id="none">All off (today)</button></div>
+</aside>
+
+<main class="app">
+  <div class="header"><div class="logo">B</div>Barrie Scheduler</div>
+  <div class="page"><div class="wrap">
+
+    <div class="heading-old"><h2>Select Workspace</h2></div>
+    <div class="heading-new"><h2>Good morning, Michael</h2><p>Pick a workspace to get started.</p></div>
+
+    <div class="resume"><div><div class="k">Where you left off</div><div class="v">Route 8A · Weekday · Draft Sept 2026</div></div><div class="go">Resume →</div></div>
+
+    <section class="ql">
+      <h3>Quick links</h3>
+      <div class="row">
+        <div class="qcard"><span class="i"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/></svg></span><span><b>Ridership</b><small>Operations Dashboard</small></span><span class="arr">→</span></div>
+        <div class="qcard sim"><span class="i"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/></svg></span><span><b>Barrie Transit Simulator</b><small>Bus Replay</small></span><span class="arr">→</span></div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <!-- Simulator: top left -->
+      <div class="card sim" tabindex="0">
+        <div class="map" data-map></div>
+        <div class="shade"></div>
+        <span class="pill"><span class="live-dot"></span>New · Demo</span>
+        <div class="body">
+          <div class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="6 3 20 12 6 21 6 3"/></svg></div>
+          <h3>Barrie Transit Simulator</h3>
+          <div class="sub">Bus Replay</div>
+          <p>Replay any service day on the map, and see schedule adherence at every timepoint.</p>
+          <div class="ext"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>Opens Barrie Simulator</div>
+          <div class="cta">Open Simulator →</div>
+        </div>
+      </div>
+
+      <div class="card std blue" tabindex="0">
+        <div class="ghost">
+          <svg class="od-old" width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/></svg>
+          <svg class="od-new" width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        </div>
+        <div class="body">
+          <div class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></div>
+          <h3>Transit On-Demand</h3>
+          <p>Manage driver shifts, analyze coverage gaps, and optimize 15-minute increments for dynamic demand.</p>
+          <div class="cta">Enter Workspace →</div>
+        </div>
+      </div>
+
+      <div class="card std green fake-focus" tabindex="0">
+        <div class="ghost"><svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6v6M15 6v6M2 12h19.6M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/></svg></div>
+        <div class="body">
+          <div class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6v6M15 6v6M2 12h19.6M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/></svg></div>
+          <h3>Scheduled Transit</h3>
+          <p>Plan and manage route schedules — from CSV import and runtime analysis to published timetables and public brochures.</p>
+          <div class="cta">Enter Workspace →</div>
+        </div>
+      </div>
+
+      <div class="card std amber" tabindex="0">
+        <div class="ghost"><svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
+        <div class="body">
+          <div class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
+          <h3>Dashboard &amp; Reporting</h3>
+          <p>OTP analysis, ridership dashboards, and STREETS reporting for scheduled transit operations.</p>
+          <div class="cta">Enter Workspace →</div>
+        </div>
+      </div>
+
+      <div class="card std emer" tabindex="0">
+        <div class="ghost"><svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg></div>
+        <div class="body">
+          <div class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg></div>
+          <h3>Parking</h3>
+          <p>Open Parking Lot Data, import revenue files, review department totals, and monitor plate-level patterns.</p>
+          <div class="cta">Enter Workspace →</div>
+        </div>
+      </div>
+
+      <div class="card std cyan" tabindex="0">
+        <div class="ghost"><svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
+        <div class="body">
+          <div class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
+          <h3>Planning Data</h3>
+          <p>Analyze rider demand, Transit App data, and other planning datasets allowed for your access profile.</p>
+          <div class="cta">Enter Workspace →</div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</main>
+
+<script>
+  const body = document.body;
+  const boxes = [...document.querySelectorAll('[data-s]')];
+  boxes.forEach(b => b.addEventListener('change', () => body.classList.toggle(b.dataset.s, b.checked)));
+  document.getElementById('all').onclick = () => boxes.forEach(b => { b.checked = true; body.classList.add(b.dataset.s); });
+  document.getElementById('none').onclick = () => boxes.forEach(b => { b.checked = false; body.classList.remove(b.dataset.s); });
+
+  const routes = [
+    { c: '#f43f5e', d: 'M-10 60 C 80 40, 140 120, 230 90 S 360 30, 460 70' },
+    { c: '#22c55e', d: 'M40 230 C 90 160, 170 170, 210 120 S 300 20, 380 -10' },
+    { c: '#38bdf8', d: 'M-10 170 C 100 190, 200 150, 290 190 S 420 210, 470 160' },
+    { c: '#f59e0b', d: 'M120 -10 C 140 70, 110 130, 170 200 S 260 250, 300 240' },
+    { c: '#a78bfa', d: 'M300 240 C 320 170, 280 120, 340 80 S 430 60, 470 20' }
+  ];
+  const NS = 'http://www.w3.org/2000/svg';
+  const buses = [];
+  document.querySelectorAll('[data-map]').forEach(host => {
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 460 240'); svg.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+    for (let x = 0; x <= 460; x += 30) { const l = document.createElementNS(NS, 'line'); l.setAttribute('x1', x); l.setAttribute('x2', x - 20); l.setAttribute('y1', 0); l.setAttribute('y2', 240); l.setAttribute('stroke', '#1e293b'); svg.appendChild(l); }
+    for (let y = 0; y <= 240; y += 30) { const l = document.createElementNS(NS, 'line'); l.setAttribute('x1', 0); l.setAttribute('x2', 460); l.setAttribute('y1', y); l.setAttribute('y2', y + 8); l.setAttribute('stroke', '#1e293b'); svg.appendChild(l); }
+    routes.forEach((r, i) => {
+      const p = document.createElementNS(NS, 'path'); p.setAttribute('d', r.d); p.setAttribute('class', 'route'); p.setAttribute('stroke', r.c); svg.appendChild(p);
+      for (let k = 0; k < 2; k++) {
+        const c = document.createElementNS(NS, 'circle'); c.setAttribute('r', 5); c.setAttribute('fill', r.c); c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', 2); svg.appendChild(c);
+        buses.push({ p, c, t: (i * 0.17 + k * 0.5) % 1, s: 0.0007 + i * 0.00012 });
+      }
+    });
+    host.appendChild(svg);
+  });
+  let last = performance.now();
+  function place() { buses.forEach(b => { const L = b.p.getTotalLength(); const pt = b.p.getPointAtLength(b.t * L); b.c.setAttribute('cx', pt.x); b.c.setAttribute('cy', pt.y); }); }
+  function tick(now) {
+    const dt = now - last; last = now;
+    if (!body.classList.contains('s7')) buses.forEach(b => b.t = (b.t + b.s * dt / 16) % 1);
+    place();
+    requestAnimationFrame(tick);
+  }
+  place(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>

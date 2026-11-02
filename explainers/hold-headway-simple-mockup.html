@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mock-up: Fix headways (simple)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: #f1f5f9; color: #0f172a; font-size: 14px; }
+  header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 14px 24px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; color: #475569; font-size: 13px; }
+  .tag { display: inline-block; background: #fef3c7; color: #92400e; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+  .wrap { padding: 16px 24px; max-width: 1150px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid #e2e8f0; }
+  .spacer { flex: 1; }
+  .btn { border: 1px solid #cbd5e1; background: #fff; color: #334155; font-weight: 700; font-size: 12px; padding: 7px 12px; border-radius: 8px; cursor: pointer; }
+  .btn:hover { background: #f8fafc; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.on { background: #0f172a; color: #fff; border-color: #0f172a; }
+  .btn.go { background: #059669; color: #fff; border-color: #059669; }
+  .btn.go:hover { background: #047857; }
+  .fix { display: flex; align-items: center; gap: 10px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; padding: 5px 6px 5px 10px; font-size: 12px; color: #065f46; }
+  .new { outline: 2px dashed #f59e0b; outline-offset: 3px; }
+  .scroll { max-height: 560px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; color: #64748b; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; position: sticky; top: 0; background: #fff; z-index: 1; }
+  th.newcol { background: #ecfdf5; color: #047857; }
+  td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; }
+  td.newcol { background: #f7fef9; }
+  .blk { font-weight: 800; }
+  .end { font-size: 10px; font-weight: 800; color: #dc2626; margin-left: 4px; }
+  .muted { color: #94a3b8; }
+  .rec { display: inline-block; min-width: 40px; padding: 2px 8px; border-radius: 6px; font-weight: 800; }
+  .rec.changed { background: #dbeafe; color: #1e40af; }
+  .rec.bad { background: #fee2e2; color: #991b1b; cursor: pointer; box-shadow: inset 0 0 0 1px #fca5a5; }
+  .rec .was { font-weight: 600; font-size: 11px; margin-left: 4px; opacity: .8; }
+  .hw { display: inline-block; min-width: 36px; text-align: center; padding: 2px 6px; border-radius: 6px; font-weight: 800; }
+  .hw.ok { background: #dcfce7; color: #166534; }
+  .hw.off { background: #fef3c7; color: #92400e; }
+  .tgt { display: inline-flex; align-items: center; gap: 4px; }
+  .tgt input { width: 48px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 3px 5px; font: inherit; font-size: 13px; text-align: center; }
+  .tgt input.est { color: #64748b; font-style: italic; border-style: dashed; background: #fff; }
+  .tgt input.typed { color: #0f172a; font-weight: 800; border-color: #059669; background: #ecfdf5; }
+  .tgt .why { font-size: 11px; color: #94a3b8; white-space: nowrap; }
+  .tgt .reset { border: none; background: none; color: #94a3b8; cursor: pointer; font-size: 13px; padding: 0 2px; }
+  .tgt .reset:hover { color: #dc2626; }
+  .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 13px; display: none; z-index: 30; }
+  .pop { position: absolute; background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; box-shadow: 0 12px 30px rgba(15,23,42,.18); padding: 12px; width: 330px; display: none; z-index: 20; }
+  .pop h4 { margin: 0 0 4px; font-size: 13px; }
+  .pop p { margin: 0 0 8px; font-size: 12px; color: #475569; }
+  .pop .opt { border: 1px solid #e2e8f0; border-radius: 8px; padding: 7px 9px; margin-top: 6px; cursor: pointer; font-size: 12px; }
+  .pop .opt:hover { border-color: #10b981; background: #f0fdf4; }
+  .pop .opt b { display: block; font-size: 13px; }
+  .demo { margin-top: 16px; padding: 12px 14px; font-size: 12px; color: #475569; }
+  .demo label { margin-right: 14px; cursor: pointer; }
+  .notes { margin-top: 16px; padding: 12px 16px; }
+  .notes h2 { margin: 0 0 6px; font-size: 15px; }
+  .notes ol { margin: 0 0 0 18px; padding: 0; line-height: 1.6; }
+  .key { display: inline-block; border: 1px dashed #cbd5e1; border-radius: 5px; padding: 0 6px; font-style: italic; color: #64748b; }
+  .key.t { border: 1px solid #059669; background: #ecfdf5; color: #0f172a; font-style: normal; font-weight: 800; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Step 4 · Route 2 Weekday <span class="tag">MOCK-UP · sample data</span></h1>
+  <p>Each trip has a Target headway. The system fills in a first estimate; type over any of them. New parts have a dashed outline or a green column.</p>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <div class="toolbar">
+      <button class="btn" id="showChanges">Show changes</button>
+      <button class="btn" id="undo" disabled>↶ Undo</button>
+      <span class="spacer"></span>
+      <div class="fix new">
+        <span><span class="key">30</span> estimate &nbsp; <span class="key t">60</span> you typed</span>
+        <button class="btn go" id="fixBtn">Fix headways</button>
+      </div>
+    </div>
+    <div class="scroll" id="scroll">
+      <table>
+        <thead><tr><th>Block</th><th>Departs</th><th>Run time</th><th>Last recovery</th><th>Next trip leaves</th><th>HDWY</th><th class="newcol">Target HDWY</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card demo">
+    <b>Demo only (not part of the design):</b>
+    <label><input type="radio" name="pm" value="70" checked> PM peak run time 70 (fits)</label>
+    <label><input type="radio" name="pm" value="87"> PM peak run time 87 (some trips cannot fit)</label>
+  </div>
+
+  <div class="card notes">
+    <h2>Try it</h2>
+    <ol>
+      <li>Look at the <b>Target HDWY</b> column. The grey dashed values are the system's estimates. In the evening the trips run 56, 36, 56, 36, and the estimate is <b>60</b>.</li>
+      <li>Hover an estimate to see how it was made: the block's cycle ÷ buses in service, rounded to a standard headway (10, 15, 20, 30, 60).</li>
+      <li>Type over any target, for example 20 on a midday trip. Your value turns green and bold. The <b>×</b> next to it puts the estimate back.</li>
+      <li>Click <b>Fix headways</b>. Recoveries change so each trip leaves at its target. Run times do not change.</li>
+      <li>Click <b>Show changes</b> to see old recovery values. <b>Undo</b> puts the table back.</li>
+      <li>Pick "PM peak 87" below the table, then Fix. Red recovery cells cannot fit the 5-min minimum. Click one for the three choices.</li>
+    </ol>
+  </div>
+</div>
+
+<div class="pop" id="pop">
+  <h4 id="popTitle"></h4>
+  <p id="popBody"></p>
+  <div class="opt" data-c="accept"><b>Accept short recovery</b><span id="oAccept"></span></div>
+  <div class="opt" data-c="cycle"><b>Use a longer headway</b><span id="oCycle"></span></div>
+  <div class="opt" data-c="block"><b>Add a block</b><span id="oBlock"></span></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const FIRST_DEP = 6 * 60 + 4, LAST_DEP = 22 * 60 + 34, MIN_REC = 5, FIXED_REC = 26;
+const STANDARD = [10, 15, 20, 30, 60];
+const state = { pm: 70, fixed: null, history: [], showChanges: false, accepted: new Set(), typed: {}, maxBuses: 3 };
+
+const fmt = m => { m = ((m % 1440) + 1440) % 1440; let h = Math.floor(m / 60); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${String(m % 60).padStart(2, '0')} ${ap}`; };
+const runAt = t => t >= 21 * 60 ? 62 : t >= 18 * 60 ? 66 : t >= 14 * 60 ? state.pm : t >= 9 * 60 ? 64 : 62;
+const blockName = i => `2-${i + 1}`;
+// Nearest standard headway, measured as a ratio so 46 rounds to 60, not 30.
+const snap = v => STANDARD.reduce((a, c) => (Math.abs(Math.log(c / v)) < Math.abs(Math.log(a / v)) ? c : a));
+
+function finish(trips) {
+  trips.forEach((tr, i) => {
+    const next = trips.slice(i + 1).find(x => x.block === tr.block);
+    tr.next = next ? next.start : null;
+    tr.rec = next ? next.start - (tr.start + tr.run) : null;
+    tr.hw = i > 0 ? tr.start - trips[i - 1].start : null;
+    tr.key = tr.block + '#' + trips.slice(0, i + 1).filter(x => x.block === tr.block).length;
+  });
+  return trips;
+}
+
+// The table as generated: one fixed recovery all day, 3 buses until 7 PM, then 2.
+function buildOriginal() {
+  const trips = [];
+  for (let i = 0; i < 3; i++) {
+    let t = FIRST_DEP + i * 30;
+    while (t <= LAST_DEP) {
+      if (i === 2 && t >= 19 * 60) break;
+      trips.push({ block: blockName(i), start: t, run: runAt(t) });
+      t += runAt(t) + FIXED_REC;
+    }
+  }
+  trips.sort((a, b) => a.start - b.start);
+  finish(trips);
+  estimate(trips);
+  return trips;
+}
+
+// First estimate for each trip: block cycle ÷ buses in service, snapped to a standard headway.
+function estimate(trips) {
+  const span = {};
+  trips.forEach(t => {
+    span[t.block] = span[t.block] || { first: t.start, last: t.start + t.run };
+    span[t.block].last = Math.max(span[t.block].last, t.start + t.run);
+  });
+  trips.forEach((t, i) => {
+    if (i === 0) return;
+    const prev = trips[i - 1];
+    const ref = prev.next !== null ? prev : trips.slice(0, i).reverse().find(x => x.next !== null) || prev;
+    const cycle = ref.next - ref.start;
+    // A bus counts if it is out now, or pulls out within one cycle.
+    const buses = Object.values(span).filter(s => s.first < t.start + cycle && s.last >= t.start).length || 1;
+    t.est = snap(cycle / buses);
+    t.why = `now ${t.hw} · cycle ${cycle} ÷ ${buses} buses = ${Math.round(cycle / buses)} → ${t.est}`;
+  });
+}
+
+let ORIGINAL = buildOriginal();
+const targetOfOrig = i => state.typed[i] ?? ORIGINAL[i].est;
+// The headway wanted after a departure at s: the target of the next original trip.
+const gapAfter = s => {
+  const i = ORIGINAL.findIndex((t, k) => k > 0 && t.start > s);
+  return targetOfOrig(i === -1 ? ORIGINAL.length - 1 : i);
+};
+const nearestOrig = s => ORIGINAL.reduce((best, t, i) => (i > 0 && Math.abs(t.start - s) < Math.abs(ORIGINAL[best].start - s) ? i : best), 1);
+
+// Fixed table: departures at the targets; each goes to the bus that is free first.
+function buildFixed() {
+  const slots = [FIRST_DEP];
+  while (true) { const s = slots[slots.length - 1]; const n = s + gapAfter(s); if (n > LAST_DEP) break; slots.push(n); }
+  const free = {}, retired = new Set(), trips = [];
+  slots.forEach((t, si) => {
+    const h = si + 1 < slots.length ? slots[si + 1] - t : gapAfter(t);
+    const want = Math.min(state.maxBuses, Math.ceil((runAt(t) + MIN_REC) / h));
+    const inService = Object.keys(free).filter(b => !retired.has(b));
+    const unused = Array.from({ length: 8 }, (_, i) => blockName(i)).filter(b => free[b] === undefined && !retired.has(b));
+    const b = inService.length < want && unused.length ? unused[0] : inService.reduce((a, c) => (free[c] < free[a] ? c : a));
+    const rest = inService.filter(x => x !== b).sort((x, y) => free[y] - free[x]);
+    while (rest.length + 1 > want && rest.length) retired.add(rest.shift());
+    trips.push({ block: b, start: t, run: runAt(t), target: si > 0 ? t - slots[si - 1] : null });
+    free[b] = t + runAt(t);
+  });
+  return finish(trips);
+}
+
+function render() {
+  const list = state.fixed || ORIGINAL;
+  const was = {}; (state.history[state.history.length - 1] || ORIGINAL).forEach(t => { was[t.key] = t.rec; });
+  document.getElementById('rows').innerHTML = list.map((t, i) => {
+    let rec = '<span class="muted">–</span>';
+    if (t.rec !== null) {
+      const bad = state.fixed && t.rec < MIN_REC && !state.accepted.has(t.key);
+      const changed = state.showChanges && state.fixed && was[t.key] !== undefined && was[t.key] !== t.rec;
+      rec = `<span class="rec ${bad ? 'bad' : changed ? 'changed' : ''}" ${bad ? `data-bad="${i}"` : ''}>${t.rec}${changed ? `<span class="was">was ${was[t.key] ?? '–'}</span>` : ''}</span>`;
+    }
+    let tgtCell = '';
+    let target = null;
+    if (i > 0) {
+      const oi = state.fixed ? nearestOrig(t.start) : i;
+      const typed = state.typed[oi] !== undefined;
+      target = state.fixed ? t.target : targetOfOrig(oi);
+      const o = ORIGINAL[oi];
+      tgtCell = `<span class="tgt"><input class="${typed ? 'typed' : 'est'}" value="${target}" data-o="${oi}" title="${typed ? 'You typed this' : 'Estimate: ' + o.why}">
+        ${typed ? `<button class="reset" data-reset="${oi}" title="Back to estimate (${o.est})">×</button>` : `<span class="why">est.</span>`}</span>`;
+    }
+    const hw = t.hw === null ? '' : `<span class="hw ${t.hw === target ? 'ok' : 'off'}">${t.hw}</span>`;
+    return `<tr>
+      <td class="blk">${t.block}${t.next === null ? '<span class="end">END</span>' : ''}</td>
+      <td>${fmt(t.start)}</td><td>${t.run}</td><td>${rec}</td>
+      <td>${t.next === null ? '<span class="muted">–</span>' : fmt(t.next)}</td><td>${hw}</td>
+      <td class="newcol">${tgtCell}</td></tr>`;
+  }).join('');
+  document.getElementById('undo').disabled = state.history.length === 0;
+  document.getElementById('showChanges').classList.toggle('on', state.showChanges);
+  window._list = list;
+}
+
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 3500); }
+
+function fix() {
+  const before = state.fixed || ORIGINAL;
+  state.history.push(before);
+  state.fixed = buildFixed();
+  const old = {}; before.forEach(t => { old[t.key] = t.rec; });
+  const changed = state.fixed.filter(t => t.rec !== null && old[t.key] !== t.rec).length;
+  const bad = state.fixed.filter(t => t.rec !== null && t.rec < MIN_REC && !state.accepted.has(t.key)).length;
+  render();
+  toast(`Set ${changed} recoveries.` + (bad ? ` ${bad} trip${bad > 1 ? 's' : ''} need a decision (red cells).` : ' All headways on target.'));
+}
+
+const rows = document.getElementById('rows');
+rows.addEventListener('change', e => {
+  const oi = e.target.dataset.o; if (oi === undefined) return;
+  const v = Math.round(Number(e.target.value));
+  if (!Number.isFinite(v) || v < 3) { render(); return; }
+  if (v === ORIGINAL[oi].est) delete state.typed[oi]; else state.typed[oi] = v;
+  render();
+});
+rows.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset.o !== undefined) e.target.blur(); });
+document.getElementById('fixBtn').onclick = fix;
+document.getElementById('undo').onclick = () => { state.fixed = state.history.pop() || null; if (state.history.length === 0) state.fixed = null; render(); };
+document.getElementById('showChanges').onclick = () => { state.showChanges = !state.showChanges; render(); };
+document.querySelectorAll('input[name=pm]').forEach(r => r.onchange = () => {
+  state.pm = Number(r.value); Object.assign(state, { fixed: null, history: [], typed: {}, maxBuses: 3 }); state.accepted.clear();
+  ORIGINAL = buildOriginal(); render();
+});
+
+// Red cell → three choices
+const pop = document.getElementById('pop');
+let popTrip = null;
+rows.addEventListener('click', e => {
+  const reset = e.target.dataset.reset;
+  if (reset !== undefined) { delete state.typed[reset]; render(); return; }
+  const cell = e.target.closest('[data-bad]'); if (!cell) return;
+  e.stopPropagation();
+  const t = window._list[Number(cell.dataset.bad)];
+  const h = gapAfter(t.start);
+  const buses = state.maxBuses;
+  popTrip = t;
+  document.getElementById('popTitle').textContent = `Block ${t.block} at ${fmt(t.start)}: only ${t.rec} min recovery`;
+  document.getElementById('popBody').textContent = `Run time ${t.run} + ${MIN_REC} min minimum does not fit ${buses} buses × ${h} min = ${buses * h} min cycle.`;
+  document.getElementById('oAccept').textContent = `Keep ${t.rec} min on these trips.`;
+  popTrip.longer = Math.ceil((t.run + MIN_REC) / buses);
+  document.getElementById('oCycle').textContent = `Type ${popTrip.longer} as the target on the trips that do not fit.`;
+  document.getElementById('oBlock').textContent = `${buses + 1} buses at ${h} min. Costs one more bus.`;
+  const r = cell.getBoundingClientRect();
+  pop.style.left = (r.left + window.scrollX) + 'px';
+  pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  pop.style.display = 'block';
+});
+document.addEventListener('click', e => { if (!pop.contains(e.target)) pop.style.display = 'none'; });
+pop.querySelectorAll('.opt').forEach(o => o.onclick = () => {
+  pop.style.display = 'none';
+  const bad = state.fixed.filter(t => t.rec !== null && t.rec < MIN_REC);
+  if (o.dataset.c === 'accept') { bad.forEach(t => state.accepted.add(t.key)); render(); toast('Short recovery accepted.'); return; }
+  if (o.dataset.c === 'cycle') bad.forEach(t => { state.typed[nearestOrig(t.start + gapAfter(t.start))] = popTrip.longer; state.typed[nearestOrig(t.start)] = popTrip.longer; });
+  if (o.dataset.c === 'block') state.maxBuses += 1;
+  fix();
+});
+
+render();
+</script>
+</body>
+</html>

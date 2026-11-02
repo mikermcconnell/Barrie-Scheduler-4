@@ -58,7 +58,7 @@ describe('computeSuggestedStrictCycle', () => {
         const suggestion = computeSuggestedStrictCycle(analysis, []);
 
         expect(suggestion.quality).toBe('high');
-        expect(suggestion.basisLabel).toBe('filtered observed cycle totals');
+        expect(suggestion.basisLabel).toBe('filtered segment runtime totals');
         expect(suggestion.minutes).toBe(112);
     });
 
@@ -75,7 +75,7 @@ describe('computeSuggestedStrictCycle', () => {
         expect(suggestion.minutes).toBe(103);
     });
 
-    it('prefers full observed cycle totals over synthetic segment sums when they exist', () => {
+    it('uses the segment sums the generator builds, not observed cycle totals', () => {
         const analysis: TripBucketAnalysis[] = [
             {
                 timeBucket: '06:00 - 06:29',
@@ -112,6 +112,6 @@ describe('computeSuggestedStrictCycle', () => {
         const suggestion = computeSuggestedStrictCycle(analysis, []);
 
         expect(suggestion.quality).toBe('high');
-        expect(suggestion.minutes).toBe(53);
+        expect(suggestion.minutes).toBe(33);
     });
 });
