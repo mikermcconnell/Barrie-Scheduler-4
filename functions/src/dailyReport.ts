@@ -45,6 +45,11 @@ function buildReportSubject(latestDay: PerformanceDataSummary['dailySummaries'][
   return `${TEAM_NAME} Performance — ${latestDay.date} — OTP ${latestDay.system.otp.onTimePercent.toFixed(1)}%`;
 }
 
+/** Test sends use a different subject so mail rules for the real report don't fire. */
+function buildTestReportSubject(latestDay: PerformanceDataSummary['dailySummaries'][number]): string {
+  return `[Test] Email layout preview — ${latestDay.date}`;
+}
+
 function buildNoDataReportSubject(): string {
   return `${TEAM_NAME} Performance — No New Data Available`;
 }
@@ -628,7 +633,7 @@ export const testDailyReport = onRequest(
     await queueMail({
       db,
       to: [to],
-      subject: buildReportSubject(latestDay),
+      subject: buildTestReportSubject(latestDay),
       html: buildReportHtml(reportData),
     });
     res.json({
@@ -647,7 +652,7 @@ export const testDailyReport = onRequest(
       featuredTrip: featuredTrip
         ? `Route ${featuredTrip.routeId} ${featuredTrip.direction} ${featuredTrip.departure} (${featuredTrip.reason})`
         : null,
-      subject: buildReportSubject(latestDay),
+      subject: buildTestReportSubject(latestDay),
       summarySource: summaryResult.source,
       useFullSummary,
     });

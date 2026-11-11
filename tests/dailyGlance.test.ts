@@ -116,7 +116,8 @@ describe('buildGlance', () => {
 
     expect(glance.status).toBe('REVIEW');
     expect(glance.headline).toBe('A busy weekday with normal on-time. Route A ran well below its usual.');
-    expect(glance.comparisons[1].verdict).toBe('▲ 8% · busiest weekday in 4 weeks');
+    expect(glance.comparisons[1].verdict).toBe('▲ 8%');
+    expect(glance.comparisons[1].detail).toBe('busiest weekday in 4 weeks');
     expect(glance.standouts.map(s => s.routeId)).toEqual(['A']);
     expect(glance.standouts[0].sentence).toBe('on-time 86.0%, usually 94.0%.');
     expect(glance.standouts[0].latePattern).toBe('Late trips mostly 12:50–15:20.');
@@ -130,10 +131,12 @@ describe('buildGlance', () => {
   it('ranks a busy or quiet day against the same day type, in weeks', () => {
     const history = priorWeekdays(20).map((date, i) => day(date, { riders: i < 4 ? 9500 : 8400 }));
     const busy = buildGlance(input(day(LATEST, { riders: 9100 }), history));
-    expect(busy.comparisons[1].verdict).toBe('▲ 8% · 5th busiest weekday in 4 weeks');
+    expect(busy.comparisons[1].verdict).toBe('▲ 8%');
+    expect(busy.comparisons[1].detail).toBe('5th busiest weekday in 4 weeks');
 
     const quiet = buildGlance(input(day(LATEST, { riders: 7500 }), normalHistory()));
-    expect(quiet.comparisons[1].verdict).toBe('▼ 11% · quietest weekday in 4 weeks');
+    expect(quiet.comparisons[1].verdict).toBe('▼ 11%');
+    expect(quiet.comparisons[1].detail).toBe('quietest weekday in 4 weeks');
   });
 
   it('counts how many days in a row a route has stood out and raises severity', () => {

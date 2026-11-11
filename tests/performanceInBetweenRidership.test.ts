@@ -168,5 +168,6 @@ it('passes corrected counts through route-filtered ridership reads and email ren
     const html = buildReportHtml({ latestDay: day, trendDays: [day], teamName: 'Barrie Transit' });
     expect(html).toContain('Total ridership');
     expect(html).toContain('1,005');
-    expect(html).toContain('204 alightings');
+    const stops = html.slice(html.indexOf('Top 10 Stops by Ridership'));
+    expect(stops).toContain('>1,002<');
 });

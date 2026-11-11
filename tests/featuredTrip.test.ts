@@ -145,7 +145,7 @@ describe('buildReportHtml Trip of the Day', () => {
     schemaVersion: 8,
   } as unknown as DailySummary;
 
-  it('renders a plain-language card with a load line and major stops above operator dwell', () => {
+  it('renders a plain-language card with a load line and major stops as the last section', () => {
     const featuredTrip = selectFeaturedTrip(day([heatmap('8A', [tripCarrying(60)])]));
     const html = buildReportHtml({ latestDay: base, trendDays: [base], teamName: 'Barrie Transit', featuredTrip });
 
@@ -164,7 +164,8 @@ describe('buildReportHtml Trip of the Day', () => {
     expect(majorStops).toContain('Stop F');
     expect(majorStops).not.toContain('Stop C');
     expect(majorStops).not.toContain('Stop D');
-    expect(html.indexOf('Trip of the Day')).toBeLessThan(html.indexOf('<!-- ═══ 8. OPERATOR DWELL BY STOP ═══ -->'));
+    expect(html.indexOf('Trip of the Day')).toBeGreaterThan(html.indexOf('<!-- ═══ 7. TOP 10 STOPS ═══ -->'));
+    expect(html.indexOf('Trip of the Day')).toBeLessThan(html.indexOf('<!-- Footer -->'));
   });
 
   it('omits the section when no trip was picked', () => {

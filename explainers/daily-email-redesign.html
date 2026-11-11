@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Email: Proposed Layout</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background: #e2e8f0; color: #0f172a; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; display: grid; grid-template-columns: 340px 760px; gap: 28px; align-items: start; justify-content: center; }
+  @media (max-width: 1160px) { .page { grid-template-columns: minmax(0, 760px); } .notes { position: static !important; } }
+
+  /* ---- Review notes (not part of the email) ---- */
+  .notes { position: sticky; top: 16px; background: #fff; border-radius: 12px; padding: 18px 18px 14px; box-shadow: 0 2px 10px rgba(15,23,42,.08); font-size: 13px; line-height: 1.5; }
+  .notes h1 { font-size: 18px; margin: 0 0 4px; color: #082b63; }
+  .notes p { margin: 0 0 12px; color: #475569; }
+  .notes ol { list-style: none; margin: 0; padding: 0; }
+  .notes li { display: flex; gap: 9px; padding: 7px 0; border-top: 1px solid #f1f5f9; color: #334155; }
+  .notes li b { color: #0f172a; }
+  .notes label { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0; color: #475569; cursor: pointer; }
+  .sample { background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
+  .mk { flex: none; display: inline-block; width: 20px; height: 20px; line-height: 20px; border-radius: 50%; background: #db2777; color: #fff; font-size: 11px; font-weight: 800; text-align: center; }
+  .email .mk { position: absolute; left: -10px; top: -10px; box-shadow: 0 0 0 2px #fff; z-index: 2; }
+  .hide-mk .email .mk, .hide-mk .ghost { display: none; }
+  .rel { position: relative; }
+
+  /* ---- Mail client frame ---- */
+  .client { background: #fff; border-radius: 10px 10px 0 0; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #475569; position: relative; }
+  .client .subj { font-size: 16px; color: #0f172a; font-weight: 600; margin-bottom: 4px; }
+
+  /* ---- Email ---- */
+  .email { background: #f8fafc; border-radius: 0 0 10px 10px; box-shadow: 0 6px 20px rgba(15,23,42,.12); }
+  .head { background: #082f69; border-bottom: 4px solid #3b82f6; padding: 16px 20px; color: #fff; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .head .t1 { font-size: 20px; font-weight: 900; line-height: 1.2; }
+  .head .t2 { font-size: 13px; color: #93c5fd; font-weight: 700; margin-top: 3px; }
+  .head a { flex: none; color: #fff; text-decoration: none; border: 1px solid #60a5fa; border-radius: 7px; padding: 8px 14px; font-size: 13px; font-weight: 800; }
+  .verdict { background: #fff; border-bottom: 1px solid #e5e7eb; padding: 14px 20px; font-size: 16px; font-weight: 700; line-height: 1.4; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .3px; vertical-align: 2px; margin-right: 8px; background: #fef3c7; color: #92400e; }
+  .body { padding: 16px 18px 20px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .kpi { background: #fff; border: 1px solid #e5e7eb; border-left: 4px solid var(--c); border-radius: 12px; padding: 12px 12px 11px; box-shadow: 0 2px 8px rgba(15,23,42,.05); text-align: center; }
+  .kpi .l { font-size: 12px; font-weight: 700; color: #1e3a5f; }
+  .kpi .v { font-size: 27px; font-weight: 800; color: var(--c); letter-spacing: -.5px; margin: 4px 0 2px; line-height: 1.15; }
+  .kpi .v small { font-size: 12px; font-weight: 700; color: #94a3b8; letter-spacing: 0; }
+  .kpi .u { font-size: 11px; color: #64748b; }
+  .kpi .d { font-size: 11px; color: #94a3b8; margin-top: 5px; padding-top: 5px; border-top: 1px solid #f1f5f9; }
+  .ok { color: #64748b; font-weight: 700; }
+  .good { color: #16a34a; font-weight: 700; }
+  .bad { color: #dc2626; font-weight: 700; }
+
+  h2 { font-size: 16px; font-weight: 800; color: #082b63; margin: 20px 0 8px; }
+  h2 span { font-size: 11px; font-weight: 400; color: #94a3b8; margin-left: 6px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 13px 15px; box-shadow: 0 2px 8px rgba(15,23,42,.05); }
+  .two { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; }
+  .two h2 { margin-top: 18px; }
+  .so { display: flex; gap: 8px; font-size: 13px; line-height: 1.5; color: #374151; }
+  .so i { color: #dc2626; font-style: normal; font-weight: 800; }
+  .so div div { font-size: 12px; color: #64748b; }
+  .ongoing { margin-top: 12px; padding: 9px 11px; background: #f8fafc; border-radius: 8px; font-size: 12px; line-height: 1.55; color: #64748b; }
+  .cap { font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: .4px; text-transform: uppercase; margin-bottom: 3px; }
+  .act { background: #fff; border-left: 4px solid var(--c); border-radius: 8px; padding: 9px 11px; }
+  .act + .act { margin-top: 8px; }
+  .act b { display: block; font-size: 13px; color: #082b63; }
+  .act span { display: block; font-size: 12px; color: #475569; line-height: 1.45; margin-top: 2px; }
+  .act a { font-size: 12px; color: #2563eb; font-weight: 600; text-decoration: none; }
+
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  .tw { border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(15,23,42,.05); }
+  th { background: #f9fafb; font-size: 11px; color: #6b7280; text-align: right; padding: 6px 10px; border-bottom: 1px solid #e5e7eb; font-weight: 700; }
+  td { font-size: 12px; text-align: right; padding: 7px 10px; border-bottom: 1px solid #f3f4f6; color: #374151; }
+  tr:last-child td { border-bottom: 0; }
+  th.L, td.L { text-align: left; }
+  td.r { font-weight: 800; color: #082b63; }
+  tr.hot td { background: #fef2f2; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 12px; }
+  .pg { background: #f0fdf4; color: #16a34a; } .po { background: #fffbeb; color: #d97706; }
+  .el { display: block; font-size: 10px; color: #94a3b8; margin-top: 3px; }
+  .flag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; margin-right: 4px; }
+  .f-otp { background: #fee2e2; color: #991b1b; } .f-apc { background: #dbeafe; color: #1d4ed8; } .f-old { background: #f1f5f9; color: #64748b; } .f-dw { background: #fffbeb; color: #b45309; }
+  .fn { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+
+  .charts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .ct { font-size: 12px; font-weight: 700; color: #374151; margin-bottom: 6px; }
+  .ct span { font-weight: 400; color: #94a3b8; }
+  .bars { display: flex; align-items: flex-end; height: 92px; border-bottom: 1px solid #9ca3af; }
+  .bars div { flex: 1; margin: 0 3px; border-radius: 3px 3px 0 0; position: relative; }
+  .bars span { position: absolute; top: -14px; left: -6px; right: -6px; text-align: center; font-size: 10px; color: #64748b; }
+  .bars .last span { color: #0f172a; font-weight: 800; }
+  .days { display: flex; }
+  .days span { flex: 1; text-align: center; font-size: 10px; color: #6b7280; padding-top: 3px; }
+  .days span:last-child { color: #0f172a; font-weight: 800; }
+
+  .ghost { border: 2px dashed #f9a8d4; background: #fdf2f8; color: #9d174d; border-radius: 10px; padding: 10px 12px; font-size: 12px; line-height: 1.5; margin-top: 16px; }
+  .foot { background: #eaf2ff; border-top: 1px solid #bfdbfe; padding: 14px 20px; font-size: 11px; color: #64748b; line-height: 1.6; border-radius: 0 0 10px 10px; }
+  .foot a { color: #2563eb; font-weight: 600; text-decoration: none; }
+  .foot b { color: #334155; }
+</style>
+</head>
+<body>
+<div class="page" id="page">
+
+  <aside class="notes">
+    <h1>Proposed daily email</h1>
+    <p>Pink numbers on the email match this list.</p>
+    <div class="sample"><b>Sample data.</b> The four headline figures are from the Nov 10 email. Route, stop and trend figures, "usual" values and action items are examples.</div>
+    <ol>
+      <li><span class="mk">1</span><span><b>Sender.</b> Verified domain sender, so no "outside your organization" banner. The subject is unchanged.</span></li>
+      <li><span class="mk">2</span><span><b>Compact header.</b> One title line. "Historical Service Data" is replaced by the day type.</span></li>
+      <li><span class="mk">3</span><span><b>Verdict first.</b> Status and headline are on the first screen.</span></li>
+      <li><span class="mk">4</span><span><b>KPI cards carry "usual".</b> This replaces the OTP Distribution bar, the alightings line and the comparison table. Dwell says "Total", not "Today".</span></li>
+      <li><span class="mk">5</span><span><b>Glance block is shorter.</b> Only standouts and ongoing items stay.</span></li>
+      <li><span class="mk">6</span><span><b>Scorecard.</b> Ranked by boardings per hour, highest first. Dwell and APC columns become one Flags column, shown only when there is something to see.</span></li>
+      <li><span class="mk">7</span><span><b>Last 7 days is a graph.</b> Three small charts replace the table. Dwell uses the same unit as the KPI card.</span></li>
+      <li><span class="mk">8</span><span><b>Missed trips.</b> Shown only when trips were missed, and only for yesterday.</span></li>
+      <li><span class="mk">9</span><span><b>Top 10 stops.</b> Kept. The "Lowest OTP stops" table is removed.</span></li>
+      <li><span class="mk">10</span><span><b>Trip of the day.</b> Kept at the bottom.</span></li>
+      <li><span class="mk">11</span><span><b>Footer.</b> Definitions in one place. Hourly and dwell-by-stop detail stay on the dashboard.</span></li>
+    </ol>
+    <label><input type="checkbox" id="tog" checked> Show review markers</label>
+  </aside>
+
+  <main>
+    <div class="client">
+      <span class="mk" style="position:absolute;left:-10px;top:-10px;">1</span>
+      <div class="subj">Barrie Transit Performance — 2026-11-10 — OTP 88.5%</div>
+      Barrie Transit Reports &lt;reports@transitscheduler.ca&gt;
+    </div>
+
+    <div class="email">
+      <div class="head rel">
+        <span class="mk">2</span>
+        <div>
+          <div class="t1">Barrie Transit Daily Performance Report</div>
+          <div class="t2">Tuesday, November 10, 2026 · Weekday service</div>
+        </div>
+        <a href="#">Open dashboard →</a>
+      </div>
+
+      <div class="verdict rel">
+        <span class="mk">3</span>
+        <span class="badge">REVIEW</span>A normal weekday. Route 8A ran well below its usual.
+      </div>
+
+      <div class="body">
+
+        <div class="kpis rel">
+          <span class="mk">4</span>
+          <div class="kpi" style="--c:#16a34a">
+            <div class="l">On-time performance</div>
+            <div class="v">88.5%</div>
+            <div class="u">usual 89.1% · <span class="ok">normal</span></div>
+            <div class="d">1.9% early · 9.6% late</div>
+          </div>
+          <div class="kpi" style="--c:#2563eb">
+            <div class="l">Total ridership</div>
+            <div class="v">9,326</div>
+            <div class="u">usual 9,105 · <span class="ok">normal</span></div>
+          </div>
+          <div class="kpi" style="--c:#6d28d9">
+            <div class="l">Trips operated</div>
+            <div class="v">540 <small>of 540</small></div>
+            <div class="u">all scheduled trips operated</div>
+          </div>
+          <div class="kpi" style="--c:#0891b2">
+            <div class="l">Operator Dwell</div>
+            <div class="v">76 <small>min / 100 trips</small></div>
+            <div class="u">usual 70 · <span class="ok">normal</span></div>
+            <div class="d">Total: 6.9 hrs</div>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="rel">
+            <h2>What Stood Out</h2>
+            <span class="mk" style="top:8px;">5</span>
+            <div class="card">
+              <div class="so">
+                <i>▼</i>
+                <div><b>Route 8A</b> on-time 78.4%, usually 87.9%.
+                  <div>Late trips mostly 15:10–17:40, southbound.</div>
+                </div>
+              </div>
+              <div class="ongoing">
+                <div class="cap">Ongoing</div>
+                Route 400 lowest after 8A (84.6%). Normal for 400: lowest on 14 of the last 20 weekdays.<br>
+                APC counts flagged in the last 60 days: 12B on 9 days.
+              </div>
+            </div>
+          </div>
+          <div>
+            <h2>Action Focus</h2>
+            <div class="card" style="background:#eff6ff;">
+              <div class="act" style="--c:#d97706">
+                <b>1. Route 8A late trips</b>
+                <span>9 of 62 trips late, 7 of them 15:10–17:40, southbound. 2nd weekday in a row.</span>
+                <a href="#">Open on-time dashboard →</a>
+              </div>
+              <div class="act" style="--c:#94a3b8">
+                <b>2. Route 11 APC counts</b>
+                <span>Boardings and alightings differ by 14%. Not flagged in the 7 days before.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="rel">
+          <h2>Route Scorecard <span>Ranked by boardings per service hour (BPH), highest first</span></h2>
+          <span class="mk" style="top:-6px;">6</span>
+          <div class="tw"><table id="score"></table></div>
+          <div class="fn">A flag shows only when a route needs a look: on-time well below its usual, APC counts that do not agree, or 0.5 hours or more of operator dwell.</div>
+        </div>
+
+        <div class="rel">
+          <h2>Last 7 Days</h2>
+          <span class="mk" style="top:-6px;">7</span>
+          <div class="card">
+            <div class="charts">
+              <div><div class="ct">On-time <span>(scale 70–100%)</span></div><div class="bars" id="c1"></div><div class="days"></div></div>
+              <div><div class="ct">Riders</div><div class="bars" id="c2"></div><div class="days"></div></div>
+              <div><div class="ct">Operator dwell <span>(min / 100 trips)</span></div><div class="bars" id="c3"></div><div class="days"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ghost rel">
+          <span class="mk">8</span>
+          <b>Missed trips section goes here, only on days with missed trips.</b><br>
+          One line ("3 of 540 scheduled trips missed, Routes 2A and 8B") and one table of yesterday's trips: Route, Scheduled departure, Reason (late 15+ min or no data recorded).
+        </div>
+
+        <div class="rel">
+          <h2>Top 10 Stops by Ridership <span>Boardings plus alightings; terminal platforms count as one stop</span></h2>
+          <span class="mk" style="top:-6px;">9</span>
+          <div class="tw">
+            <table>
+              <tr><th class="L">Stop</th><th>Boardings</th><th>Alightings</th><th>Routes</th></tr>
+              <tr><td class="L r">Downtown</td><td>1,486</td><td>1,512</td><td>9</td></tr>
+              <tr><td class="L r">Allandale Terminal</td><td>1,204</td><td>1,168</td><td>11</td></tr>
+              <tr><td class="L r">Georgian College</td><td>1,142</td><td>1,097</td><td>4</td></tr>
+              <tr><td class="L r">Park Place</td><td>604</td><td>631</td><td>3</td></tr>
+              <tr><td class="L r">Barrie South GO</td><td>318</td><td>342</td><td>2</td></tr>
+              <tr><td class="L r">RVH</td><td>296</td><td>301</td><td>2</td></tr>
+              <tr><td class="L r">Georgian Mall</td><td>271</td><td>258</td><td>3</td></tr>
+              <tr><td class="L r">Bayfield Mall</td><td>244</td><td>236</td><td>2</td></tr>
+              <tr><td class="L r">Yonge at Big Bay Point</td><td>187</td><td>174</td><td>2</td></tr>
+              <tr><td class="L r">Mapleview at Bryne</td><td>163</td><td>171</td><td>2</td></tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="rel">
+          <h2>Trip of the Day <span>One notable trip from yesterday, picked automatically</span></h2>
+          <span class="mk" style="top:-6px;">10</span>
+          <div class="card">
+            <span class="flag" style="background:#fffbeb;color:#b45309;font-size:12px;padding:3px 10px;">Busy and late</span>
+            <div style="font-size:18px;font-weight:800;color:#082b63;margin:8px 0 6px;">Route 8A southbound · 4:10 PM departure</div>
+            <div style="font-size:13px;line-height:1.6;color:#374151;">
+              Up to <b>41 people</b> were on the bus at once, near <b>Georgian College</b>. The bus never got full (full is 55+ riders).<br>
+              58 people got on during the trip. It ran about <b>9 minutes late</b>.
+            </div>
+            <div style="font-size:12px;font-weight:700;color:#374151;margin:14px 0 6px;">Load along the route (people on board)</div>
+            <div id="load" style="display:flex;align-items:flex-end;height:96px;border-bottom:1px solid #9ca3af;"></div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-top:3px;">
+              <span>Downtown Terminal</span><span style="font-weight:800;color:#111827;">Georgian College</span><span>RVH</span><span>Park Place</span>
+            </div>
+            <table style="margin-top:12px;">
+              <tr><th class="L">Major stop</th><th>On</th><th>Off</th><th>Load after</th></tr>
+              <tr><td class="L">Downtown Terminal</td><td>6</td><td>0</td><td>6</td></tr>
+              <tr><td class="L">Bayfield at Grove</td><td>7</td><td>1</td><td>24</td></tr>
+              <tr><td class="L"><b>Georgian College</b></td><td>10</td><td>3</td><td><b>41</b></td></tr>
+              <tr><td class="L">RVH</td><td>4</td><td>7</td><td>33</td></tr>
+              <tr><td class="L">Park Place</td><td>0</td><td>8</td><td>0</td></tr>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="foot rel">
+        <span class="mk">11</span>
+        Boardings by hour, stop detail and operator dwell by stop are on the <a href="#">dashboard</a>.<br>
+        <b>On-time:</b> between 3 min early and 5 min late. <b>Usual:</b> median of recent days of the same day type. <b>BPH:</b> boardings per service hour. <b>APC:</b> automatic passenger counter; a flag means boardings and alightings do not agree. <b>Dwell:</b> moderate and high operator dwell only.<br>
+        The Monday edition adds the weekly operator dwell chart. Automated report · Scheduler 4 · 2026-11-11
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+  // Route scorecard: [route, name, BPH, riders, on-time, early, late, flags]
+  var below = '<span class="flag f-otp">▼ 9.5 pts below usual</span><span class="flag f-dw">Dwell 0.8 hrs</span>';
+  var routes = [
+    ['8A', 'RVH / Yonge', 27.1, '1,284', 78.4, 1.2, 20.4, below],
+    ['8B', 'Crosstown / Essa', 25.4, '1,197', 86.3, 2.1, 11.6, ''],
+    ['100', 'Red Express', 24.9, '1,102', 88.7, 1.8, 9.5, ''],
+    ['101', 'Blue Express', 22.7, '968', 90.2, 2.0, 7.8, ''],
+    ['2A', 'Dunlop / Park Place', 20.6, '742', 91.2, 1.6, 7.2, ''],
+    ['2B', 'Dunlop / Park Place', 19.5, '688', 90.4, 2.3, 7.3, ''],
+    ['7A', 'Grove / Bryne', 18.3, '655', 89.6, 1.9, 8.5, ''],
+    ['7B', 'Grove / Bryne', 17.2, '601', 88.1, 2.4, 9.5, ''],
+    ['10', 'Mapleview', 15.9, '498', 92.8, 1.4, 5.8, ''],
+    ['12A', 'Barrie South GO', 14.2, '431', 90.9, 2.2, 6.9, ''],
+    ['12B', 'Barrie South GO', 13.6, '405', 89.3, 1.7, 9.0, '<span class="flag f-old">APC ongoing</span>'],
+    ['11', 'Lockhart', 12.4, '372', 94.1, 1.1, 4.8, '<span class="flag f-apc">APC new</span>'],
+    ['400', 'Express', 11.8, '383', 84.6, 3.2, 12.2, '']
+  ];
+  document.getElementById('score').innerHTML =
+    '<tr><th class="L">Route</th><th class="L">Name</th><th>BPH</th><th>Riders</th><th>On-time</th><th class="L">Flags</th></tr>' +
+    routes.map(function (r) {
+      return '<tr' + (r[7].indexOf('f-otp') > -1 ? ' class="hot"' : '') + '><td class="L r">' + r[0] + '</td><td class="L">' + r[1] + '</td><td><b>' + r[2].toFixed(1) + '</b></td><td>' + r[3] + '</td>' +
+        '<td><span class="pill ' + (r[4] >= 85 ? 'pg' : 'po') + '">' + r[4].toFixed(1) + '%</span><span class="el">' + r[5].toFixed(1) + '% early • ' + r[6].toFixed(1) + '% late</span></td>' +
+        '<td class="L">' + r[7] + '</td></tr>';
+    }).join('');
+
+  // Last 7 days charts
+  var days = ['Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue'];
+  function chart(id, values, label, min, max, dark, light) {
+    var el = document.getElementById(id);
+    el.innerHTML = values.map(function (v, i) {
+      var last = i === values.length - 1;
+      var h = Math.max(2, Math.round((v - min) / (max - min) * 74));
+      return '<div class="' + (last ? 'last' : '') + '" style="height:' + h + 'px;background:' + (last ? dark : light) + ';"><span>' + label(v) + '</span></div>';
+    }).join('');
+    el.nextElementSibling.innerHTML = days.map(function (d) { return '<span>' + d + '</span>'; }).join('');
+  }
+  chart('c1', [89.4, 90.1, 87.2, 91.6, 93.0, 88.9, 88.5], function (v) { return v.toFixed(1); }, 70, 100, '#16a34a', '#86efac');
+  chart('c2', [9212, 9087, 8954, 5318, 3476, 9140, 9326], function (v) { return (v / 1000).toFixed(1) + 'k'; }, 0, 9326, '#2563eb', '#bfdbfe');
+  chart('c3', [68, 71, 74, 52, 47, 72, 76], function (v) { return v; }, 0, 76, '#0891b2', '#a5f3fc');
+
+  // Trip of the day load
+  var loads = [6, 9, 12, 14, 19, 24, 31, 38, 41, 39, 36, 33, 30, 26, 22, 17, 12, 8, 4, 1];
+  document.getElementById('load').innerHTML = loads.map(function (n) {
+    var peak = n === 41;
+    return '<div title="' + n + ' on board" style="flex:1;margin:0 1px;height:' + Math.round(n / 41 * 80) + 'px;background:' + (peak ? '#2563eb' : '#bfdbfe') + ';border-radius:2px 2px 0 0;position:relative;">'
+      + (peak ? '<span style="position:absolute;top:-15px;left:0;right:0;text-align:center;font-size:11px;font-weight:800;">41</span>' : '') + '</div>';
+  }).join('');
+
+  document.getElementById('tog').addEventListener('change', function (e) {
+    document.getElementById('page').classList.toggle('hide-mk', !e.target.checked);
+  });
+</script>
+</body>
+</html>

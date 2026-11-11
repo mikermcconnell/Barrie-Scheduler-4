@@ -78,6 +78,8 @@ export interface GlanceComparison {
   value: string;
   usual: string;
   verdict: string;
+  /** Extra context under the verdict, e.g. "busiest weekday in 4 weeks". */
+  detail?: string;
   tone: GlanceTone;
 }
 
@@ -247,13 +249,14 @@ function buildComparisons(latest: DailySummary, prior: DailySummary[]): {
   const busierDays = prior.filter(day => day.system.totalRidership > riders).length;
   const quieterDays = prior.filter(day => day.system.totalRidership < riders).length;
   let riderVerdict = 'normal';
+  let riderDetail: string | undefined;
   if (!ridersNormal) {
     const up = ridersDiffPct > 0;
     const rank = (up ? busierDays : quieterDays) + 1;
-    riderVerdict = `${up ? '▲' : '▼'} ${Math.round(Math.abs(ridersDiffPct))}%`
-      + (rank <= GLANCE_RULES.ridersRankMax
-        ? ` · ${rank === 1 ? '' : `${ordinal(rank)} `}${up ? 'busiest' : 'quietest'} ${DAY_LABEL[latest.dayType]} in ${weeks} weeks`
-        : '');
+    riderVerdict = `${up ? '▲' : '▼'} ${Math.round(Math.abs(ridersDiffPct))}%`;
+    if (rank <= GLANCE_RULES.ridersRankMax) {
+      riderDetail = `${rank === 1 ? '' : `${ordinal(rank)} `}${up ? 'busiest' : 'quietest'} ${DAY_LABEL[latest.dayType]} in ${weeks} weeks`;
+    }
   }
 
   return {
@@ -272,6 +275,7 @@ function buildComparisons(latest: DailySummary, prior: DailySummary[]): {
         value: formatNumber(riders),
         usual: `usual ${formatNumber(usualRiders)}`,
         verdict: riderVerdict,
+        ...(riderDetail ? { detail: riderDetail } : {}),
         tone: ridersNormal ? 'neutral' : ridersDiffPct > 0 ? 'good' : 'warn',
       },
     ],

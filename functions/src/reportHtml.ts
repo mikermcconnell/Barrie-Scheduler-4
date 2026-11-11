@@ -1,4 +1,4 @@
-import { DailySummary, RouteMetrics, HourMetrics, StopMetrics, DwellIncident, TripMetrics } from './types';
+import { DailySummary, RouteMetrics, StopMetrics, DwellIncident, TripMetrics } from './types';
 import { FULL_LOAD } from '../../utils/performanceRouteLoad';
 import type { FeaturedTrip } from './featuredTrip';
 import { EMAIL_ICON_PNG } from './emailIconData';
@@ -24,8 +24,8 @@ export interface ReportData {
 // Reset dwell comparison baselines from the current report rollout onward.
 // The morning report currently uses 2026-03-09 as its latest service day.
 const DWELL_AVG_BASELINE_START_DATE = '2026-03-09';
-// Fixed height keeps all four KPI cards the same size; fits up to three grey lines.
-const KPI_CARD_HEIGHT_PX = 190;
+// Fixed height keeps all four KPI cards the same size; fits a "usual" line and a two-line detail.
+const KPI_CARD_HEIGHT_PX = 200;
 const DWELL_MEDIAN_MIN_DAYS = 3;
 const DWELL_DAY_TYPE_LABEL: Record<DailySummary['dayType'], string> = {
   weekday: 'Weekday',
@@ -212,9 +212,8 @@ function emailIconKey(name: EmailIconName, color: string): string {
   return EMAIL_ICON_PNG[key] ? key : `${name}-${EMAIL_ICON_DEFAULT_COLOR[name].slice(1)}`;
 }
 
-/** Icon badge as an embedded PNG; the badge background is part of the image. */
-function iconBadge(name: EmailIconName, color: string, size: number): string {
-  const box = size + 14;
+/** Illustrated icon as an embedded PNG; `box` must match the size it was rendered at in generate-email-icons.mjs. */
+function iconBadge(name: EmailIconName, color: string, box: number): string {
   return `<img src="cid:icon-${emailIconKey(name, color)}" width="${box}" height="${box}" alt="${EMAIL_ICON_ALT[name]}" style="display:inline-block;width:${box}px;height:${box}px;border:0;outline:none;text-decoration:none;vertical-align:middle;" />`;
 }
 
@@ -232,23 +231,19 @@ export function emailIconAttachments(html: string): Array<{ filename: string; co
     }));
 }
 
-function kpiCard(label: string, value: string, subtitle?: string, accentColor = '#2563eb', subtitleColor?: string, icon?: EmailIconName): string {
-  const subColor = subtitleColor || '#9ca3af';
+function kpiCard(label: string, value: string, subtitle?: string, accentColor = '#2563eb', subtitleColor?: string, icon?: EmailIconName, detail?: string): string {
+  const subColor = subtitleColor || '#64748b';
   const subWeight = subtitleColor ? 'font-weight:600;' : '';
   return `
     <td style="width:25%;padding:6px;vertical-align:top;">
       <div style="box-sizing:border-box;height:${KPI_CARD_HEIGHT_PX}px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
-        ${icon ? `<div style="line-height:1;margin-bottom:8px;">${iconBadge(icon, accentColor, 18)}</div>` : ''}
+        ${icon ? `<div style="line-height:1;margin-bottom:8px;">${iconBadge(icon, accentColor, 48)}</div>` : ''}
         <div style="font-size:13px;color:#1e3a5f;font-weight:700;">${label}</div>
         <div style="font-size:28px;font-weight:800;color:${accentColor};margin:8px 0 4px;letter-spacing:-0.5px;">${value}</div>
         ${subtitle ? `<div style="font-size:11px;color:${subColor};${subWeight}">${subtitle}</div>` : ''}
+        ${detail ? `<div style="font-size:11px;color:#94a3b8;margin-top:5px;padding-top:5px;border-top:1px solid #f1f5f9;">${detail}</div>` : ''}
       </div>
     </td>`;
-}
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr + 'T12:00:00');
-  return d.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function formatDateLong(dateStr: string): string {
@@ -274,38 +269,6 @@ function bphPill(value: number): string {
   return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:12px;">${value.toFixed(1)}</span>`;
 }
 
-
-function apcStatusBg(status: 'ok' | 'review' | 'suspect'): string {
-  if (status === 'suspect') return '#fef2f2';
-  if (status === 'review') return '#fffbeb';
-  return '#f3f4f6';
-}
-
-function apcStatusColor(status: 'ok' | 'review' | 'suspect'): string {
-  if (status === 'suspect') return '#b91c1c';
-  if (status === 'review') return '#b45309';
-  return '#4b5563';
-}
-
-function apcStatusLabel(status: 'ok' | 'review' | 'suspect'): string {
-  if (status === 'suspect') return 'Suspect';
-  if (status === 'review') return 'Review';
-  return 'OK';
-}
-
-function apcPill(status: 'ok' | 'review' | 'suspect'): string {
-  return `<span style="background:${apcStatusBg(status)};color:${apcStatusColor(status)};padding:2px 8px;border-radius:999px;font-weight:700;font-size:11px;">${apcStatusLabel(status)}</span>`;
-}
-
-function apcStatusCellStyle(status: 'ok' | 'review' | 'suspect'): string {
-  if (status === 'suspect') {
-    return 'background:#fef2f2;box-shadow: inset 3px 0 0 #dc2626;';
-  }
-  if (status === 'review') {
-    return 'background:#fffbeb;box-shadow: inset 3px 0 0 #f59e0b;';
-  }
-  return '';
-}
 
 function stopLabel(name: string, id: string): string {
   const safeName = escapeHtml(name);
@@ -473,22 +436,20 @@ function buildRouteDwellLeader(latestDay: DailySummary): { routeId: string | nul
   return top ? { routeId: top[0], hours: top[1] / 3600 } : { routeId: null, hours: 0 };
 }
 
-/** "Yesterday at a Glance" from the glance model: headline, usual comparisons, standouts, ongoing. */
-function buildGlanceSummary(glance: GlanceModel): string {
+/** Status badge and headline, shown directly under the header. */
+function buildStatusStrip(glance: GlanceModel): string {
   const status = GLANCE_STATUS_STYLE[glance.status];
-  const comparisons = glance.comparisons.length === 0 ? '' : `
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 4px;">
-      ${glance.comparisons.map(row => `
-        <tr>
-          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:#64748b;width:24%;">${row.label}</td>
-          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:13px;color:#0f172a;font-weight:700;width:20%;">${row.value}</td>
-          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:#94a3b8;width:22%;">${row.usual}</td>
-          <td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:12px;color:${GLANCE_TONE_COLOR[row.tone]};font-weight:${row.tone === 'neutral' ? 600 : 700};text-align:right;">${row.verdict}</td>
-        </tr>`).join('')}
-    </table>`;
-  const standouts = glance.standouts.length === 0 ? '' : `
-    <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:0.4px;text-transform:uppercase;margin:12px 0 6px;">What stood out</div>
-    ${glance.standouts.map(standout => `
+  return `
+    <div style="background:#ffffff;border-bottom:1px solid #e5e7eb;padding:14px 20px;font-size:16px;font-weight:700;color:#0f172a;line-height:1.4;">
+      <span style="display:inline-block;background:${status.bg};color:${status.color};padding:3px 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:0.3px;vertical-align:2px;margin-right:8px;">${glance.status}</span>${escapeHtml(glance.headline)}
+    </div>`;
+}
+
+/** "What Stood Out" from the glance model: routes well below their usual, then ongoing items. */
+function buildGlanceSummary(glance: GlanceModel): string {
+  const standouts = glance.standouts.length === 0
+    ? '<div style="font-size:13px;line-height:1.5;color:#64748b;">No route ran well below its usual.</div>'
+    : glance.standouts.map(standout => `
       <table cellpadding="0" cellspacing="0" style="margin:6px 0;">
         <tr>
           <td style="width:18px;vertical-align:top;font-size:13px;line-height:1.5;color:#dc2626;font-weight:800;">&#9660;</td>
@@ -497,7 +458,7 @@ function buildGlanceSummary(glance: GlanceModel): string {
             ${standout.latePattern ? `<div style="font-size:12px;line-height:1.45;color:#64748b;">${escapeHtml(standout.latePattern)}</div>` : ''}
           </td>
         </tr>
-      </table>`).join('')}`;
+      </table>`).join('');
   const newTag = (routeId: string) => `<span style="background:#dbeafe;color:#1d4ed8;font-weight:700;padding:0 5px;border-radius:4px;">${escapeHtml(routeId)} new</span>`;
   const ongoing = glance.ongoing.length === 0 ? '' : `
     <div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border-radius:8px;">
@@ -508,12 +469,8 @@ function buildGlanceSummary(glance: GlanceModel): string {
     </div>`;
 
   return `
-    ${sectionHeader('Yesterday at a Glance')}
-    ${cardWrap(`
-      <div style="font-size:15px;font-weight:700;color:#0f172a;line-height:1.4;">
-        <span style="display:inline-block;background:${status.bg};color:${status.color};padding:3px 9px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.3px;vertical-align:2px;margin-right:6px;">${glance.status}</span>${escapeHtml(glance.headline)}
-      </div>
-      ${comparisons}${standouts}${ongoing}`)}`;
+    ${sectionHeader('What Stood Out')}
+    ${cardWrap(`${standouts}${ongoing}`)}`;
 }
 
 /** Ranked follow-ups from the glance model; a quiet note when there are none. */
@@ -559,6 +516,13 @@ function dwellComparison(latestDay: DailySummary, trendDays: DailySummary[]): {
   return { per100, typicalPer100, elevated };
 }
 
+/** "usual 89.1% · normal" for a KPI card, from the glance comparison with this label. */
+function usualLine(glance: GlanceModel | null, label: string): string | undefined {
+  const comparison = glance?.comparisons.find(row => row.label === label);
+  if (!comparison) return undefined;
+  return `${escapeHtml(comparison.usual)} · <span style="color:${GLANCE_TONE_COLOR[comparison.tone]};font-weight:700;">${escapeHtml(comparison.verdict)}</span>`;
+}
+
 function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): string {
   const comparison = dwellComparison(latestDay, trendDays);
   if (!comparison) {
@@ -569,19 +533,18 @@ function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): 
   const minutesPer100 = Math.round(comparison.per100);
   const { typicalPer100, elevated } = comparison;
   const accentColor = elevated ? '#d97706' : '#0891b2';
-  const medianLine = typicalPer100 !== null
-    ? `<div>${DWELL_DAY_TYPE_LABEL[latestDay.dayType]} median:<br>${Math.round(typicalPer100)} min / 100 trips</div>`
-    : '';
-  // Gap and "Today" label keep the total from reading as part of the median.
-  const totalLine = `<div style="margin-top:${medianLine ? 8 : 0}px;">Today: ${totalHours} hrs total</div>`;
+  const usual = typicalPer100 !== null
+    ? `usual ${Math.round(typicalPer100)} · <span style="color:${elevated ? '#d97706' : GLANCE_TONE_COLOR.neutral};font-weight:700;">${elevated ? 'high' : 'normal'}</span>`
+    : undefined;
 
   return kpiCard(
     'Operator Dwell',
     `${minutesPer100} <span style="font-size:12px;font-weight:700;">min / 100 trips</span>`,
-    `${medianLine}${totalLine}`,
+    usual,
     accentColor,
     undefined,
     'dwell',
+    `Total: ${totalHours} hrs`,
   );
 }
 
@@ -636,134 +599,6 @@ function buildRouteDwellMap(day: DailySummary): Map<string, number> {
   return totals;
 }
 
-function parseServiceHour(time: string): number | null {
-  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(time.trim());
-  if (!match) return null;
-
-  const hour = Number.parseInt(match[1] || '', 10);
-  const minute = Number.parseInt(match[2] || '', 10);
-  const second = match[3] ? Number.parseInt(match[3], 10) : 0;
-
-  if (!Number.isFinite(hour) || !Number.isFinite(minute) || !Number.isFinite(second)) return null;
-  if (hour < 0 || minute < 0 || minute > 59 || second < 0 || second > 59) return null;
-
-  return hour % 24;
-}
-
-function buildHourlyDwellMap(day: DailySummary): Map<number, number> {
-  const totals = new Map<number, number>();
-
-  for (const incident of getReportableDwellIncidents(day)) {
-    const hour = parseServiceHour(incident.observedDepartureTime);
-    if (hour === null) continue;
-    totals.set(hour, (totals.get(hour) ?? 0) + incident.trackedDwellSeconds);
-  }
-
-  return totals;
-}
-
-function buildStopDwellTable(day: DailySummary): string {
-  type StopDwellRow = {
-    stopName: string;
-    stopId: string;
-    routes: Set<string>;
-    incidentCount: number;
-    highCount: number;
-    moderateCount: number;
-    totalDwellSeconds: number;
-  };
-
-  const rowsByStop = new Map<string, StopDwellRow>();
-
-  for (const incident of getReportableDwellIncidents(day)) {
-    const stopId = incident.stopId?.trim() || '';
-    const hubName = getHubNameForStopId(stopId);
-    const stopName = hubName || incident.stopName?.trim() || 'Unknown stop';
-    const displayStopId = hubName ? '' : stopId;
-    const key = hubName ? `hub||${hubName}` : `${displayStopId}||${stopName}`;
-    let row = rowsByStop.get(key);
-    if (!row) {
-      row = {
-        stopName,
-        stopId: displayStopId,
-        routes: new Set<string>(),
-        incidentCount: 0,
-        highCount: 0,
-        moderateCount: 0,
-        totalDwellSeconds: 0,
-      };
-      rowsByStop.set(key, row);
-    }
-
-    const routeId = getIncidentRouteId(incident);
-    if (routeId) row.routes.add(routeId);
-    row.incidentCount += 1;
-    row.totalDwellSeconds += incident.trackedDwellSeconds;
-    if (incident.severity === 'high') row.highCount += 1;
-    if (incident.severity === 'moderate') row.moderateCount += 1;
-  }
-
-  const rows = [...rowsByStop.values()]
-    .filter(row => row.incidentCount >= 3 || row.totalDwellSeconds >= 1800)
-    .sort((a, b) =>
-      b.totalDwellSeconds - a.totalDwellSeconds
-      || b.incidentCount - a.incidentCount
-      || a.stopName.localeCompare(b.stopName)
-    );
-
-  if (rows.length === 0) return '';
-
-  return `
-    ${sectionHeader('Operator Dwell by Stop', 'Moderate/high dwell only; showing stops with 3+ incidents or at least 0.5 dwell hours')}
-    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
-      <tr style="background:#f9fafb;">
-        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Stop</th>
-        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Routes</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Incidents</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">High</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Moderate</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Dwell (hrs)</th>
-      </tr>
-      ${rows.map((row, i) => {
-        const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
-        const routes = [...row.routes].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-        return `
-      <tr style="background:${bg};">
-        <td style="padding:6px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${stopLabel(row.stopName, row.stopId)}</td>
-        <td style="padding:6px 10px;font-size:12px;color:#6b7280;border-bottom:1px solid #f3f4f6;">${routes.length > 0 ? formatRouteList(routes, 5) : '—'}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(row.incidentCount)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#991b1b;border-bottom:1px solid #f3f4f6;">${num(row.highCount)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#92400e;border-bottom:1px solid #f3f4f6;">${num(row.moderateCount)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${formatDwellHours(row.totalDwellSeconds)}</td>
-      </tr>`;
-      }).join('')}
-    </table>
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">Dwell is grouped by STREETS stop/timepoint, merged across known terminal/platform groups, and displayed to 0.1 hours.</div>`;
-}
-
-
-function buildTrendRows(trendDays: DailySummary[]): Array<{
-  day: DailySummary;
-  dwellSeconds: number;
-  rollingAverageSeconds: number;
-}> {
-  const dwellSeconds = trendDays.map(getDailyReportableDwellSeconds);
-
-  return trendDays.map((day, index) => {
-    const windowStart = Math.max(0, index - 6);
-    const window = dwellSeconds.slice(windowStart, index + 1);
-    const windowAverage = window.length > 0
-      ? window.reduce((sum, value) => sum + value, 0) / window.length
-      : 0;
-
-    return {
-      day,
-      dwellSeconds: dwellSeconds[index] ?? 0,
-      rollingAverageSeconds: windowAverage,
-    };
-  });
-}
-
 function buildActionFocus(latestDay: DailySummary): string {
   const actions: string[] = [];
   const mt = latestDay.missedTrips;
@@ -806,41 +641,174 @@ function buildActionFocus(latestDay: DailySummary): string {
     `, '#eff6ff')}`;
 }
 
-function buildTrendTable(trendRows: Array<{ day: DailySummary; dwellSeconds: number; rollingAverageSeconds: number }>, latestDate: string): string {
-  const recentTrend = trendRows.slice(-7);
-  if (recentTrend.length <= 1) return '';
+const TREND_CHART_HEIGHT = 74;
+const TREND_LABEL_HEIGHT = 14;
+const TREND_BAR_MIN_PX = 2;
+const TREND_OTP_SCALE_MIN = 70;
+const TREND_OTP_SCALE_MAX = 100;
+/** Each bar is compared with the same weekday over the 4 weeks before it. */
+const TREND_BASELINE_WEEKS = 4;
+const TREND_BASELINE_MIN_SAMPLES = 2;
+const TREND_AVERAGE_LINE = '2px dashed #0f172a';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-  const maxDwell = Math.max(...recentTrend.map(row => row.rollingAverageSeconds), 1);
-  const rows = recentTrend.map(({ day, dwellSeconds, rollingAverageSeconds }, i) => {
-    const isLatest = day.date === latestDate;
-    const bg = isLatest ? '#eff6ff' : (i % 2 === 0 ? '#ffffff' : '#f9fafb');
-    const sparkWidth = Math.max(8, Math.round((rollingAverageSeconds / maxDwell) * 64));
-    return `
-      <tr style="background:${bg};">
-        <td style="padding:6px 8px;font-size:11px;color:#374151;border-bottom:1px solid #f3f4f6;font-weight:${isLatest ? '800' : '600'};">${formatDate(day.date)}</td>
-        <td style="padding:6px 8px;font-size:11px;text-align:right;border-bottom:1px solid #f3f4f6;">${otpPill(day.system.otp.onTimePercent)}</td>
-        <td style="padding:6px 8px;font-size:11px;text-align:right;color:#082b63;border-bottom:1px solid #f3f4f6;font-weight:${isLatest ? '800' : '600'};">${num(day.system.totalRidership)}</td>
-        <td style="padding:6px 8px;font-size:11px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${formatDwellHours(dwellSeconds)}</td>
-        <td style="padding:6px 8px;text-align:right;color:#374151;font-size:11px;border-bottom:1px solid #f3f4f6;">
-          <span>${formatDwellHours(rollingAverageSeconds)}</span>
-          <div style="height:4px;width:${sparkWidth}px;background:#2563eb;border-radius:999px;margin-left:auto;"></div>
-        </td>
-      </tr>`;
+type TrendVerdict = 'better' | 'worse' | 'usual';
+
+const TREND_COLORS: Record<TrendVerdict, { latest: string; earlier: string }> = {
+  better: { latest: '#16a34a', earlier: '#86efac' },
+  worse: { latest: '#dc2626', earlier: '#fca5a5' },
+  usual: { latest: '#64748b', earlier: '#cbd5e1' },
+};
+
+interface TrendBar {
+  date: string;
+  value: number | null;
+  average: number | null;
+  label: string;
+  color: string;
+}
+
+interface TrendMetric {
+  value: (day: DailySummary) => number | null;
+  /** Differences smaller than this count as about usual. */
+  isUsual: (value: number, average: number) => boolean;
+  higherIsBetter: boolean;
+  format: (value: number) => string;
+}
+
+/** Mean of the same weekday over the prior 4 weeks, or null when there are too few samples. */
+function sameWeekdayAverage(date: string, history: DailySummary[], value: (day: DailySummary) => number | null): number | null {
+  const time = Date.parse(`${date}T12:00:00Z`);
+  const samples = history
+    .filter(day => {
+      const daysBack = Math.round((time - Date.parse(`${day.date}T12:00:00Z`)) / DAY_MS);
+      return daysBack > 0 && daysBack % 7 === 0 && daysBack <= TREND_BASELINE_WEEKS * 7;
+    })
+    .map(value)
+    .filter((sample): sample is number => sample !== null);
+  if (samples.length < TREND_BASELINE_MIN_SAMPLES) return null;
+  return samples.reduce((sum, sample) => sum + sample, 0) / samples.length;
+}
+
+function trendBar(day: DailySummary, history: DailySummary[], metric: TrendMetric, latestDate: string): TrendBar {
+  const value = metric.value(day);
+  const average = sameWeekdayAverage(day.date, history, metric.value);
+  let verdict: TrendVerdict = 'usual';
+  if (value !== null && average !== null && !metric.isUsual(value, average)) {
+    verdict = (value > average) === metric.higherIsBetter ? 'better' : 'worse';
+  }
+  const palette = TREND_COLORS[verdict];
+  return {
+    date: day.date,
+    value,
+    average,
+    label: value === null ? '—' : metric.format(value),
+    color: day.date === latestDate ? palette.latest : palette.earlier,
+  };
+}
+
+function trendSegment(px: number, background: string, averageLine: boolean, rounded: boolean): string {
+  if (px <= 0) return '';
+  const lineStyle = averageLine ? `border-top:${TREND_AVERAGE_LINE};` : '';
+  const radius = rounded ? 'border-radius:3px 3px 0 0;' : '';
+  const height = averageLine ? Math.max(0, px - 2) : px;
+  return `<div style="height:${height}px;margin:0 3px;background:${background};${lineStyle}${radius}font-size:0;line-height:0;">&nbsp;</div>`;
+}
+
+/** One small bar chart: a value label over each bar, a dashed same-weekday average, short weekday names under the axis. */
+function buildTrendBarChart(title: string, bars: TrendBar[], heightFor: (value: number) => number, latestDate: string): string {
+  const columns = bars.map(bar => {
+    const isLatest = bar.date === latestDate;
+    const height = bar.value === null
+      ? 0
+      : Math.min(TREND_CHART_HEIGHT, Math.max(TREND_BAR_MIN_PX, Math.round(heightFor(bar.value))));
+    const averageHeight = bar.average === null
+      ? null
+      : Math.min(TREND_CHART_HEIGHT, Math.max(2, Math.round(heightFor(bar.average))));
+    const label = `<div style="font-size:10px;line-height:${TREND_LABEL_HEIGHT}px;text-align:center;white-space:nowrap;color:${isLatest ? '#0f172a' : '#64748b'};font-weight:${isLatest ? 800 : 400};">${bar.label}</div>`;
+    let block: string;
+    if (averageHeight === null) {
+      block = trendSegment(height, bar.color, false, true);
+    } else if (averageHeight > height) {
+      // Average above the bar: dashed line, empty space, then the bar.
+      block = trendSegment(averageHeight - height, 'transparent', true, false) + trendSegment(height, bar.color, false, true);
+    } else {
+      // Average inside the bar: split the bar at the average.
+      block = trendSegment(height - averageHeight, bar.color, false, true) + trendSegment(averageHeight, bar.color, true, height === averageHeight);
+    }
+    return `<td valign="bottom" style="height:${TREND_CHART_HEIGHT + TREND_LABEL_HEIGHT}px;padding:0;vertical-align:bottom;border-bottom:1px solid #9ca3af;">${label}${block}</td>`;
+  }).join('');
+  const days = bars.map(bar => {
+    const isLatest = bar.date === latestDate;
+    const weekday = new Date(`${bar.date}T12:00:00`).toLocaleDateString('en-CA', { weekday: 'short' }).replace('.', '');
+    return `<td style="padding:3px 0 0;font-size:10px;text-align:center;color:${isLatest ? '#0f172a' : '#6b7280'};font-weight:${isLatest ? 800 : 400};">${weekday}</td>`;
   }).join('');
 
   return `
-    ${sectionHeader(`Last ${recentTrend.length} Days Trend`, 'Dwell reflects moderate/high incidents only')}
-    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
-      <tr style="background:#f9fafb;">
-        <th style="padding:6px 8px;text-align:left;font-size:10px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Date</th>
-        <th style="padding:6px 8px;text-align:right;font-size:10px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
-        <th style="padding:6px 8px;text-align:right;font-size:10px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Riders</th>
-        <th style="padding:6px 8px;text-align:right;font-size:10px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Dwell</th>
-        <th style="padding:6px 8px;text-align:right;font-size:10px;color:#6b7280;border-bottom:1px solid #e5e7eb;">7-day avg dwell (hrs)</th>
+    <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:6px;">${title}</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;">
+      <tr>${columns}</tr>
+      <tr>${days}</tr>
+    </table>`;
+}
+
+function compactCount(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(Math.round(value));
+}
+
+const OTP_TREND: TrendMetric = {
+  value: day => day.system.otp.onTimePercent,
+  isUsual: (value, average) => Math.abs(value - average) < 1,
+  higherIsBetter: true,
+  format: value => value.toFixed(1),
+};
+const RIDERS_TREND: TrendMetric = {
+  value: day => day.system.totalRidership,
+  isUsual: (value, average) => average <= 0 || Math.abs(value - average) / average < 0.05,
+  higherIsBetter: true,
+  format: compactCount,
+};
+const DWELL_TREND: TrendMetric = {
+  value: day => (day.system.tripCount > 0 && day.byOperatorDwell ? dwellMinutesPer100Trips(day) : null),
+  isUsual: (value, average) => average <= 0 || Math.abs(value - average) / average < 0.1,
+  higherIsBetter: false,
+  format: value => String(Math.round(value)),
+};
+
+/** Last 7 days as three bar charts (on-time, riders, operator dwell), each against its same-weekday average. */
+function buildTrendCharts(trendDays: DailySummary[], latestDate: string): string {
+  const history = trendDays.filter(day => day.date <= latestDate);
+  const days = [...history]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-7);
+  if (days.length < 2) return '';
+
+  const otpBars = days.map(day => trendBar(day, history, OTP_TREND, latestDate));
+  const riderBars = days.map(day => trendBar(day, history, RIDERS_TREND, latestDate));
+  const dwellBars = days.map(day => trendBar(day, history, DWELL_TREND, latestDate));
+
+  const chartMax = (bars: TrendBar[]): number => Math.max(0, ...bars.flatMap(bar => [bar.value ?? 0, bar.average ?? 0]));
+  const scaled = (max: number) => (value: number): number => (max > 0 ? (value / max) * TREND_CHART_HEIGHT : 0);
+  const otpHeight = (value: number): number =>
+    ((value - TREND_OTP_SCALE_MIN) / (TREND_OTP_SCALE_MAX - TREND_OTP_SCALE_MIN)) * TREND_CHART_HEIGHT;
+  const note = (text: string) => ` <span style="font-weight:400;color:#94a3b8;">${text}</span>`;
+  const swatch = (color: string) =>
+    `<span style="display:inline-block;width:9px;height:9px;background:${color};border-radius:2px;margin:0 4px 0 12px;vertical-align:middle;"></span>`;
+  const hasAverage = [...otpBars, ...riderBars, ...dwellBars].some(bar => bar.average !== null);
+  const legend = hasAverage
+    ? `<div style="margin-top:10px;font-size:10px;color:#64748b;line-height:1.6;"><span style="display:inline-block;width:16px;border-top:${TREND_AVERAGE_LINE};vertical-align:middle;margin-right:4px;"></span>Average for the same day of the week, past 4 weeks${swatch(TREND_COLORS.better.earlier)}Better${swatch(TREND_COLORS.worse.earlier)}Worse${swatch(TREND_COLORS.usual.earlier)}About usual</div>`
+    : '';
+
+  const content = `
+    <table width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;">
+      <tr>
+        <td style="width:33%;padding:0 11px 0 0;vertical-align:top;">${buildTrendBarChart(`On-time${note('(scale 70–100%)')}`, otpBars, otpHeight, latestDate)}</td>
+        <td style="width:34%;padding:0 11px;vertical-align:top;">${buildTrendBarChart('Riders', riderBars, scaled(chartMax(riderBars)), latestDate)}</td>
+        <td style="width:33%;padding:0 0 0 11px;vertical-align:top;">${buildTrendBarChart(`Operator dwell${note('(min / 100 trips)')}`, dwellBars, scaled(chartMax(dwellBars)), latestDate)}</td>
       </tr>
-      ${rows}
-    </table>
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">7-day avg dwell is the rolling average of reportable operator dwell hours for that day and the prior six days.</div>`;
+    </table>${legend}`;
+
+  return `${sectionHeader(`Last ${days.length} Days`)}${cardWrap(content)}`;
 }
 
 const WEEKLY_DWELL_CHART_HEIGHT = 120;
@@ -993,77 +961,12 @@ function buildWeeklyDwellSection(weekly: WeeklyDwellSummary | null | undefined):
   return `${sectionHeader('Weekly Operator Dwell', 'Monday to Sunday weeks. Higher means more dwell.')}${cardWrap(content)}`;
 }
 
-/** Horizontal stacked bar showing early/on-time/late distribution */
-function otpBar(earlyPct: number, onTimePct: number, latePct: number): string {
-  return `
-    <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;box-shadow:0 2px 8px rgba(15,23,42,0.05);margin:10px 0 16px;">
-      <div style="font-size:16px;font-weight:800;color:#082b63;margin-bottom:10px;">OTP Distribution</div>
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="background:#f59e0b;height:24px;width:${earlyPct}%;border-radius:5px 0 0 5px;text-align:center;">
-            ${earlyPct >= 8 ? `<span style="font-size:11px;color:#fff;font-weight:700;">${pct(earlyPct)}</span>` : ''}
-          </td>
-          <td style="background:#18a765;height:24px;width:${onTimePct}%;text-align:center;">
-            <span style="font-size:12px;color:#fff;font-weight:800;">${pct(onTimePct)}</span>
-          </td>
-          <td style="background:#ef4444;height:24px;width:${latePct}%;border-radius:0 5px 5px 0;text-align:center;">
-            ${latePct >= 8 ? `<span style="font-size:11px;color:#fff;font-weight:700;">${pct(latePct)}</span>` : ''}
-          </td>
-        </tr>
-      </table>
-      <div style="text-align:center;font-size:11px;color:#6b7280;margin-top:12px;">
-        <span style="color:#f59e0b;">●</span> Early ${pct(earlyPct)} &nbsp;
-        <span style="color:#18a765;">●</span> On time ${pct(onTimePct)} &nbsp;
-        <span style="color:#ef4444;">●</span> Late ${pct(latePct)}
-      </div>
-    </div>`;
-}
-
-function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[]): string {
+function buildMissedTripsTable(latestDay: DailySummary): string {
   const mt = latestDay.missedTrips;
   if (!mt || mt.totalScheduled <= 0) return '';
-  const impactedRoutes = mt.trips?.map(trip => trip.routeId) ?? mt.byRoute.map(route => route.routeId);
-  const missedTripSummary = `
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 12px;">
-      <tr>
-        <td style="width:25%;padding:0 4px 8px 0;">
-          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#6b7280;">Missed Trips</div>
-            <div style="font-size:22px;font-weight:700;color:#111827;margin-top:2px;">${num(mt.totalMissed)}</div>
-          </div>
-        </td>
-        <td style="width:25%;padding:0 0 8px 4px;">
-          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#6b7280;">No Data Recorded</div>
-            <div style="font-size:22px;font-weight:700;color:#991b1b;margin-top:2px;">${num(mt.notPerformedCount)}</div>
-          </div>
-        </td>
-      </tr>
-      <tr>
-        <td style="width:25%;padding:0 4px 0 0;">
-          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#6b7280;">Late 15+ Min</div>
-            <div style="font-size:22px;font-weight:700;color:#92400e;margin-top:2px;">${num(mt.lateOver15Count)}</div>
-          </div>
-        </td>
-        <td style="width:75%;padding:0 0 0 4px;">
-          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#6b7280;">Impacted Routes</div>
-            <div style="font-size:14px;font-weight:700;color:#111827;margin-top:4px;">${formatRouteList(impactedRoutes, 6)}</div>
-          </div>
-        </td>
-      </tr>
-    </table>`;
-
-  if (mt.totalMissed === 0) {
-    return `
-      ${sectionHeader('Missed Trips', `0 of ${num(mt.totalScheduled)} scheduled trips missed (0.0%)`)}
-      ${missedTripSummary}
-      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:10px 12px;">
-        <div style="font-size:12px;font-weight:700;color:#166534;">All scheduled trips operated.</div>
-        <div style="font-size:11px;color:#15803d;margin-top:2px;">No missed trips were detected for this service day.</div>
-      </div>`;
-  }
+  const header = sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`);
+  const th = 'padding:6px 10px;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;';
+  const td = 'padding:6px 10px;font-size:12px;border-bottom:1px solid #f3f4f6;';
 
   const departureSortMinutes = (time: string): number => {
     const [hRaw, mRaw] = time.split(':');
@@ -1083,132 +986,31 @@ function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[
       return a.tripId.localeCompare(b.tripId);
     });
 
-  const allTrips = mt.trips || [];
+  const trips = sortTrips(mt.trips);
+  if (trips.length > 0) {
+    const rows = trips.map((t, i) => {
+      const late = t.missType === 'late_over_15';
+      const reason = late
+        ? `Late ${t.lateByMinutes ? `${Math.round(t.lateByMinutes)} min` : '15+ min'}`
+        : 'No data recorded';
+      return `
+      <tr style="background:${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
+        <td style="${td}font-weight:700;color:#374151;">${escapeHtml(t.routeId)}</td>
+        <td style="${td}text-align:right;color:#374151;">${escapeHtml(t.departure)}</td>
+        <td style="${td}color:${late ? '#b45309' : '#991b1b'};">${reason}</td>
+      </tr>`;
+    }).join('');
 
-  // Split into two categories
-  const lateTrips = sortTrips(allTrips.filter(t => t.missType === 'late_over_15'));
-  const noDataTrips = sortTrips(allTrips.filter(t => t.missType === 'not_performed'));
-
-  // Late trips table is built from a rolling multi-day window (min 3 days).
-  const tripDaysWithRows = trendDays.filter(d => (d.missedTrips?.trips?.length ?? 0) > 0);
-  const lateTrendDays = tripDaysWithRows.slice(-7);
-  const canBuildLateTrend = lateTrendDays.length >= 3;
-  const lateTrendRangeLabel = lateTrendDays.length > 0
-    ? `${formatDate(lateTrendDays[0].date)} to ${formatDate(lateTrendDays[lateTrendDays.length - 1].date)}`
-    : '';
-
-  type LateTrendAggregate = {
-    routeId: string;
-    departure: string;
-    occurrences: number;
-    totalLateMinutes: number;
-    lateSamples: number;
-  };
-
-  const lateTrendMap = new Map<string, LateTrendAggregate>();
-  if (canBuildLateTrend) {
-    for (const day of lateTrendDays) {
-      const dayTrips = day.missedTrips?.trips || [];
-      for (const t of dayTrips) {
-        if (t.missType !== 'late_over_15') continue;
-        const key = `${t.routeId}|${t.departure}`;
-        const prev = lateTrendMap.get(key);
-        if (!prev) {
-          lateTrendMap.set(key, {
-            routeId: t.routeId,
-            departure: t.departure,
-            occurrences: 1,
-            totalLateMinutes: t.lateByMinutes ?? 0,
-            lateSamples: t.lateByMinutes ? 1 : 0,
-          });
-        } else {
-          prev.occurrences += 1;
-          if (t.lateByMinutes) {
-            prev.totalLateMinutes += t.lateByMinutes;
-            prev.lateSamples += 1;
-          }
-        }
-      }
-    }
-  }
-
-  const lateTrendRows = [...lateTrendMap.values()].sort((a, b) => {
-    const occCmp = b.occurrences - a.occurrences;
-    if (occCmp !== 0) return occCmp;
-    const aAvg = a.lateSamples > 0 ? a.totalLateMinutes / a.lateSamples : 0;
-    const bAvg = b.lateSamples > 0 ? b.totalLateMinutes / b.lateSamples : 0;
-    const avgCmp = bAvg - aAvg;
-    if (avgCmp !== 0) return avgCmp;
-    const depCmp = departureSortMinutes(a.departure) - departureSortMinutes(b.departure);
-    if (depCmp !== 0) return depCmp;
-    return a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
-  });
-
-  // If we have trip-level data, render the two-section layout
-  if (allTrips.length > 0) {
-    let html = sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`);
-    html += missedTripSummary;
-
-    // --- Late departures (15+ min), aggregated over a multi-day window ---
-    if (canBuildLateTrend && lateTrendRows.length > 0) {
-      const totalLateOccurrences = lateTrendRows.reduce((sum, row) => sum + row.occurrences, 0);
-      const lateRows = lateTrendRows.map((t, i) => {
-        const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
-        const avgDelay = t.lateSamples > 0
-          ? `${Math.round(t.totalLateMinutes / t.lateSamples)} min`
-          : '15+ min';
-        return `
-        <tr style="background:${bg};">
-          <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
-          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.departure}</td>
-          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(t.occurrences)}</td>
-          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#d97706;border-bottom:1px solid #f3f4f6;">${avgDelay}</td>
-        </tr>`;
-      }).join('');
-
-      html += `
-      <div style="font-size:12px;font-weight:600;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin:8px 0 6px;">Late Departures (15+ min) — ${num(totalLateOccurrences)} occurrence${totalLateOccurrences !== 1 ? 's' : ''} over ${lateTrendDays.length} days</div>
-      <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;">Window: ${lateTrendRangeLabel}</div>
-      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:12px;">
-        <tr style="background:#f9fafb;">
-          <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
-          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Sched. Departure</th>
-          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Late Trips</th>
-          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Avg Delay</th>
-        </tr>
-        ${lateRows}
-      </table>`;
-    } else if (!canBuildLateTrend && lateTrips.length > 0) {
-      html += `
-      <div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin:8px 0 12px;">
-        Late departures table is shown after at least 3 days of trip-level data (currently ${lateTrendDays.length} day${lateTrendDays.length === 1 ? '' : 's'}).
-      </div>`;
-    }
-
-    // --- No data trips ---
-    if (noDataTrips.length > 0) {
-      const noDataRows = noDataTrips.map((t, i) => {
-        const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
-        return `
-        <tr style="background:${bg};">
-          <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
-          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.departure}</td>
-        </tr>`;
-      }).join('');
-
-      html += `
-      <div style="font-size:12px;font-weight:600;color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:8px 10px;margin:8px 0 6px;">No Data Recorded — ${num(noDataTrips.length)} trip${noDataTrips.length !== 1 ? 's' : ''}</div>
-      <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;">No AVL/APC records found for these scheduled trips.</div>
-      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
-        <tr style="background:#f9fafb;">
-          <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
-          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Sched. Departure</th>
-        </tr>
-        ${noDataRows}
-      </table>`;
-    }
-
-    return html;
+    return `
+    ${header}
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
+      <tr style="background:#f9fafb;">
+        <th style="${th}text-align:left;">Route</th>
+        <th style="${th}text-align:right;">Sched. Departure</th>
+        <th style="${th}text-align:left;">Reason</th>
+      </tr>
+      ${rows}
+    </table>`;
   }
 
   // Fallback: no trip-level data, show route-level summary
@@ -1217,9 +1019,9 @@ function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[
       const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
       return `
       <tr style="background:${bg};">
-        <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${r.routeId}</td>
+        <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${escapeHtml(r.routeId)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.count)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${r.earliestDep}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${escapeHtml(r.earliestDep)}</td>
       </tr>`;
     }).join('')
     : `
@@ -1230,8 +1032,7 @@ function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[
       </tr>`;
 
   return `
-    ${sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`)}
-    ${missedTripSummary}
+    ${header}
     <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Trip-level rows unavailable; showing route-level summary for this dataset.</div>
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
       <tr style="background:#f9fafb;">
@@ -1243,147 +1044,127 @@ function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[
     </table>`;
 }
 
-function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number, dwellByHour: Map<number, number>): string {
-  const active = byHour.filter(h => h.boardings > 0).sort((a, b) => a.hour - b.hour);
-  if (active.length === 0) return '';
-
-  const peakHour = active.reduce((a, b) => b.boardings > a.boardings ? b : a);
-  const maxBoards = peakHour.boardings;
-  const serviceHoursPerHour = active.length > 0 ? totalServiceHours / active.length : 1;
-
-  const rows = active.map((h, i) => {
-    const hourLabel = `${h.hour.toString().padStart(2, '0')}:00`;
-    const isPeak = h.hour === peakHour.hour;
-    const bg = isPeak ? '#ecfdf5' : (i % 2 === 0 ? '#ffffff' : '#f9fafb');
-    // Scale bars relative to peak hour for clear differentiation
-    const barWidth = maxBoards > 0 ? Math.max(3, Math.round((h.boardings / maxBoards) * 100)) : 3;
-    const bph = serviceHoursPerHour > 0 ? (h.boardings / serviceHoursPerHour).toFixed(1) : '—';
-    const dwellHours = formatDwellHours(dwellByHour.get(h.hour) ?? 0);
-    return `
-      <tr style="background:${bg};">
-        <td style="padding:5px 10px;font-size:12px;color:#374151;border-bottom:1px solid #f3f4f6;font-weight:${isPeak ? '700' : '400'};">${hourLabel}${isPeak ? ' ★' : ''}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(h.boardings)}</td>
-        <td style="padding:5px 10px;font-size:12px;border-bottom:1px solid #f3f4f6;">
-          <div style="background:#06b6d4;height:24px;width:${barWidth}%;border-radius:3px;min-width:4px;"></div>
-        </td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:600;color:#0891b2;border-bottom:1px solid #f3f4f6;">${bph}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${dwellHours}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${h.otp.total > 0 ? otpPill(h.otp.onTimePercent) : '<span style="color:#d1d5db;">—</span>'}</td>
-      </tr>`;
-  }).join('');
-
-  return `
-    ${sectionHeader('Boardings by Hour', `Peak: ${peakHour.hour.toString().padStart(2, '0')}:00 with ${num(peakHour.boardings)} boardings`)}
-    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
-      <tr style="background:#f9fafb;">
-        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Hour</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Boards</th>
-        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;"></th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">BPH</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Dwell (hrs)</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
-      </tr>
-      ${rows}
-    </table>
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">Displayed dwell values are rounded to 0.1 hours.</div>`;
+function scorecardFlag(text: string, bg: string, color: string): string {
+  return `<span style="display:inline-block;background:${bg};color:${color};padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;margin:1px 4px 1px 0;">${text}</span>`;
 }
 
-function buildRouteScorecard(routes: RouteMetrics[], dwellByRoute: Map<string, number>): string {
+/** Flags for a scorecard row: on-time well below usual, APC counts that disagree, high dwell. */
+function scorecardFlags(route: RouteMetrics, dwellSeconds: number, glance: GlanceModel | null): { html: string; standout: boolean } {
+  const flags: string[] = [];
+  const standout = glance?.standouts.find(entry => entry.routeId === route.routeId);
+  if (standout) {
+    flags.push(scorecardFlag(`&#9660; ${(standout.usualOtp - standout.otp).toFixed(1)} pts below usual`, '#fee2e2', '#991b1b'));
+  }
+  if (apcStatusForRoute(route) !== 'ok') {
+    if (!glance) flags.push(scorecardFlag('APC check', '#f1f5f9', '#64748b'));
+    else if (glance.ongoing.some(item => item.newRoutes?.includes(route.routeId))) flags.push(scorecardFlag('APC new', '#dbeafe', '#1d4ed8'));
+    else flags.push(scorecardFlag('APC ongoing', '#f1f5f9', '#64748b'));
+  }
+  if (dwellSeconds >= 1800) {
+    flags.push(scorecardFlag(`Dwell ${formatDwellHours(dwellSeconds)} hrs`, '#fffbeb', '#b45309'));
+  }
+  return { html: flags.join(''), standout: Boolean(standout) };
+}
+
+/** Official route colours. Copy of utils/config/routeColors.ts: functions cannot import from outside src. */
+const ROUTE_BADGE_COLORS: Record<string, string> = {
+  '2': '#006838',
+  '7': '#F58220',
+  '8': '#000000',
+  '10': '#681757',
+  '11': '#B2D235',
+  '12': '#F8A1BE',
+  '100': '#910005',
+  '101': '#2464A2',
+  '400': '#00C4DC',
+};
+const ROUTE_BADGE_FALLBACK = '#6B7280';
+
+function routeBadgeColor(routeId: string): string {
+  const normalized = routeId.toUpperCase().trim();
+  const base = normalized.match(/\d+/)?.[0];
+  return ROUTE_BADGE_COLORS[normalized] ?? (base ? ROUTE_BADGE_COLORS[base] : undefined) ?? ROUTE_BADGE_FALLBACK;
+}
+
+function routeBadgeTextColor(background: string): string {
+  const r = parseInt(background.slice(1, 3), 16);
+  const g = parseInt(background.slice(3, 5), 16);
+  const b = parseInt(background.slice(5, 7), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5 ? '#000000' : '#ffffff';
+}
+
+/** Route number in a filled circle in the route's colour. */
+function routeBadge(routeId: string): string {
+  const background = routeBadgeColor(routeId);
+  const fontSize = routeId.length >= 3 ? 10 : 12;
+  return `<span style="display:inline-block;width:30px;height:30px;line-height:30px;border-radius:999px;background:${background};color:${routeBadgeTextColor(background)};font-size:${fontSize}px;font-weight:800;text-align:center;white-space:nowrap;">${escapeHtml(routeId)}</span>`;
+}
+
+function buildRouteScorecard(routes: RouteMetrics[], dwellByRoute: Map<string, number>, glance: GlanceModel | null): string {
   const routesWithBph = routes.map(r => ({
     ...r,
     bph: r.serviceHours > 0 ? Math.round(r.ridership / r.serviceHours * 10) / 10 : 0,
   }));
   const sorted = [...routesWithBph].sort((a, b) => b.bph - a.bph);
+  const cell = 'padding:8px 10px;font-size:12px;border-bottom:1px solid #f3f4f6;';
+  const head = 'padding:6px 10px;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;';
 
   const rows = sorted.map((r, i) => {
-    const discrepancyPct = apcDiscrepancyPctForRoute(r);
-    const apcStatus = apcStatusForRoute(r);
-    const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
-    const dwellHours = formatDwellHours(dwellByRoute.get(r.routeId) ?? 0);
+    const flags = scorecardFlags(r, dwellByRoute.get(r.routeId) ?? 0, glance);
+    const bg = flags.standout ? '#fef2f2' : i % 2 === 0 ? '#ffffff' : '#f9fafb';
     return `
       <tr style="background:${bg};">
-        <td style="padding:8px 10px;font-size:12px;font-weight:800;color:#082b63;border-bottom:1px solid #f3f4f6;">${escapeHtml(r.routeId)}</td>
-        <td style="padding:8px 10px;font-size:12px;color:#1f2a44;border-bottom:1px solid #f3f4f6;">${escapeHtml(r.routeName)}</td>
-        <td style="padding:8px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${routeOtpCell(r.otp)}</td>
-        <td style="padding:8px 10px;font-size:12px;text-align:right;color:#082b63;border-bottom:1px solid #f3f4f6;">${num(r.ridership)}</td>
-        <td style="padding:8px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${dwellHours}</td>
-        <td style="padding:8px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;${apcStatusCellStyle(apcStatus)}">
-          ${apcPill(apcStatus)}
-          <div style="font-size:10px;color:#9ca3af;margin-top:2px;">${pct(discrepancyPct)} gap</div>
-        </td>
-        <td style="padding:8px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${bphPill(r.bph)}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid #f3f4f6;width:30px;">${routeBadge(r.routeId)}</td>
+        <td style="${cell}color:#1f2a44;">${escapeHtml(r.routeName)}</td>
+        <td style="${cell}text-align:right;">${bphPill(r.bph)}</td>
+        <td style="${cell}text-align:right;color:#082b63;">${num(r.ridership)}</td>
+        <td style="${cell}text-align:right;">${routeOtpCell(r.otp)}</td>
+        <td style="${cell}text-align:left;">${flags.html}</td>
       </tr>`;
   }).join('');
 
   return `
-    ${sectionHeader('Route Scorecard', 'Sorted by BPH (highest to lowest) — OTP shows on-time % with early/late % below')}
+    ${sectionHeader('Route Scorecard', 'Ranked by boardings per service hour (BPH), highest first')}
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(15,23,42,0.05);">
       <tr style="background:#f9fafb;">
-        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
-        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Name</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Riders</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Dwell (hrs)</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">APC</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">BPH</th>
+        <th style="${head}text-align:left;">Route</th>
+        <th style="${head}text-align:left;">Name</th>
+        <th style="${head}text-align:right;">BPH</th>
+        <th style="${head}text-align:right;">Riders</th>
+        <th style="${head}text-align:right;">On-time</th>
+        <th style="${head}text-align:left;">Flags</th>
       </tr>
       ${rows}
     </table>
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">Dwell hours reflect moderate/high dwell incidents only. Displayed route dwell values are rounded to 0.1 hours. OTP subline shows the share of observations outside the -3 to +5 minute window. APC status is based on the daily difference between route boardings and alightings. For review/suspect rows, only the lower of Boards/Alights is highlighted.</div>`;
+    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">A flag shows only when a route needs a look: on-time well below its usual, APC counts that do not agree, or 0.5 hours or more of operator dwell.</div>`;
 }
 
 function buildTopStops(stops: StopMetrics[]): string {
   if (stops.length === 0) return '';
 
-  const hubMerged = mergeHubStops(stops);
-
-  const busiestStops = [...hubMerged]
+  const busiestStops = mergeHubStops(stops)
     .sort((a, b) => (b.boardings + b.alightings) - (a.boardings + a.alightings))
     .slice(0, 10);
-  const worstOtpStops = [...hubMerged]
-    .filter(s => s.otp.total >= 10)
-    .sort((a, b) => a.otp.onTimePercent - b.otp.onTimePercent)
-    .slice(0, 5);
+  const th = 'padding:5px 10px;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;';
+  const td = 'padding:5px 10px;font-size:12px;border-bottom:1px solid #f3f4f6;';
 
-  let html = sectionHeader('Stop Highlights', 'Busiest stops and lowest-performing timepoints');
-
-  // Busiest stops
-  html += `<div style="font-size:11px;font-weight:600;color:#1e3a5f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Busiest Stops</div>`;
-  html += `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:12px;">
-    <tr style="background:#f9fafb;">
-      <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Stop</th>
-      <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Boards</th>
-      <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Alights</th>
-      <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Routes</th>
-    </tr>
-    ${busiestStops.map((s, i) => `
-    <tr style="background:${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-      <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${stopLabel(s.stopName, s.stopId)}</td>
-      <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(s.boardings)}</td>
-      <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(s.alightings)}</td>
-      <td style="padding:5px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${s.routeCount}</td>
-    </tr>`).join('')}
-  </table>`;
-
-  // Worst OTP stops
-  if (worstOtpStops.length > 0 && worstOtpStops[0].otp.onTimePercent < 85) {
-    html += `<div style="font-size:11px;font-weight:600;color:#1e3a5f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Lowest OTP Stops</div>`;
-    html += `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
+  return `
+    ${sectionHeader('Top 10 Stops by Ridership', 'Boardings plus alightings; terminal platforms count as one stop')}
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
       <tr style="background:#f9fafb;">
-        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Stop</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Measured</th>
+        <th style="${th}text-align:left;">Stop</th>
+        <th style="${th}text-align:right;">Boardings</th>
+        <th style="${th}text-align:right;">Alightings</th>
+        <th style="${th}text-align:right;">Routes</th>
       </tr>
-      ${worstOtpStops.filter(s => s.otp.onTimePercent < 85).map((s, i) => `
+      ${busiestStops.map((s, i) => `
       <tr style="background:${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-        <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${stopLabel(s.stopName, s.stopId)}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${otpPill(s.otp.onTimePercent)}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${num(s.otp.total)} obs</td>
+        <td style="${td}font-weight:600;color:#374151;">${stopLabel(s.stopName, s.stopId)}</td>
+        <td style="${td}text-align:right;color:#374151;">${num(s.boardings)}</td>
+        <td style="${td}text-align:right;color:#374151;">${num(s.alightings)}</td>
+        <td style="${td}text-align:right;color:#6b7280;">${s.routeCount}</td>
       </tr>`).join('')}
     </table>`;
-  }
-
-  return html;
 }
 
 const TRIP_CHART_HEIGHT = 110;
@@ -1626,44 +1407,20 @@ export function buildReportGlance(data: ReportData): GlanceModel | null {
   });
 }
 
+const DASHBOARD_URL = 'https://transitscheduler.ca/#operations/performance';
+
 export function buildReportHtml(data: ReportData): string {
   const { latestDay, trendDays, teamName, featuredTrip, weeklyDwell, showWeeklyDwellSection } = data;
   const sys = latestDay.system;
   // System totals
   const totalServiceHours = latestDay.byRoute.reduce((s, r) => s + r.serviceHours, 0);
   const dwellByRoute = buildRouteDwellMap(latestDay);
-  const dwellByHour = buildHourlyDwellMap(latestDay);
-  const trendRows = buildTrendRows(trendDays);
-  const status = deriveReportStatus(latestDay);
   const glance = buildReportGlance(data);
+  const statusLabel = glance ? glance.status : deriveReportStatus(latestDay).label;
   const missedTripsSection = latestDay.missedTrips && latestDay.missedTrips.totalMissed > 0
-    ? buildMissedTripsTable(latestDay, trendDays)
+    ? buildMissedTripsTable(latestDay)
     : '';
 
-  // Derive date range label from trend data
-  const dateRangeLabel = (() => {
-    const days = trendDays.length;
-    if (days <= 1) {
-      // Single day — check if it's yesterday
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dayDate = new Date(latestDay.date + 'T12:00:00');
-      const diffMs = today.getTime() - dayDate.getTime();
-      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-      if (diffDays === 1) return 'Yesterday Service Data';
-      if (diffDays === 0) return 'Today Service Data';
-      return `${formatDateLong(latestDay.date)} Data`;
-    }
-    // Multi-day ranges
-    if (days <= 7) return 'Past Week of Service Data';
-    if (days <= 31) return 'Past Month of Service Data';
-    return 'Historical Service Data';
-  })();
-
-  // Day type summary for multi-day
-  const dayTypeLabel = trendDays.length <= 1
-    ? `${latestDay.dayType.charAt(0).toUpperCase() + latestDay.dayType.slice(1)} Service`
-    : '';
   const tripsOperatedValue = (() => {
     const mt = latestDay.missedTrips;
     if (mt && mt.totalScheduled > 0) {
@@ -1680,6 +1437,10 @@ export function buildReportHtml(data: ReportData): string {
     }
     return `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`;
   })();
+  const otpEarlyLate = `${pct(sys.otp.earlyPercent)} early · ${pct(sys.otp.latePercent)} late`;
+  const otpUsual = usualLine(glance, 'On-time');
+  const ridersDetail = glance?.comparisons.find(row => row.label === 'Riders')?.detail;
+  const tripsAlert = statusLabel === 'NEEDS ATTENTION';
 
   return `<!DOCTYPE html>
 <html>
@@ -1687,33 +1448,42 @@ export function buildReportHtml(data: ReportData): string {
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
   <div style="max-width:760px;margin:0 auto;background:#ffffff;">
     <!-- Header -->
-    <div style="background:#082f69;padding:26px 24px 20px;text-align:center;border-bottom:4px solid #3b82f6;">
-      <div style="line-height:1;margin-bottom:8px;">${iconBadge('bus', '#ffffff', 24)}</div>
-      <div style="font-size:30px;font-weight:900;color:#ffffff;line-height:1.15;">${teamName}</div>
-      <div style="font-size:27px;font-weight:900;color:#ffffff;margin-top:8px;line-height:1.15;">Daily Performance Report</div>
-      <div style="font-size:17px;color:#60a5fa;font-weight:800;margin-top:10px;">${formatDateLong(latestDay.date)}</div>
-      <div style="margin-top:16px;">
-        <a href="https://transitscheduler.ca/#operations/performance" style="display:inline-block;color:#ffffff;text-decoration:none;border:1px solid #60a5fa;border-radius:7px;padding:9px 16px;font-size:14px;font-weight:800;">Open full dashboard →</a>
-      </div>
-      <div style="font-size:13px;color:#dbeafe;font-weight:700;margin-top:14px;">${dateRangeLabel}${dayTypeLabel ? ` · ${dayTypeLabel}` : ''}</div>
+    <div style="background:#082f69;padding:16px 20px;border-bottom:4px solid #3b82f6;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="vertical-align:middle;">
+            <table cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="vertical-align:middle;padding-right:12px;">${iconBadge('bus', '#ffffff', 44)}</td>
+                <td style="vertical-align:middle;">
+                  <div style="font-size:20px;font-weight:900;color:#ffffff;line-height:1.2;">${escapeHtml(teamName)} Daily Performance Report</div>
+                  <div style="font-size:13px;color:#93c5fd;font-weight:700;margin-top:3px;">${formatDateLong(latestDay.date)} · ${DWELL_DAY_TYPE_LABEL[latestDay.dayType]} service</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+          <td style="vertical-align:middle;text-align:right;white-space:nowrap;padding-left:16px;">
+            <a href="${DASHBOARD_URL}" style="display:inline-block;color:#ffffff;text-decoration:none;border:1px solid #60a5fa;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:800;">Open full dashboard →</a>
+          </td>
+        </tr>
+      </table>
     </div>
+
+    ${glance ? buildStatusStrip(glance) : ''}
 
     <div style="padding:18px;background:#f8fafc;">
 
       <!-- ═══ 1. KPI CARDS ═══ -->
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
         <tr>
-          ${kpiCard('On-time performance', pct(sys.otp.onTimePercent), `${pct(sys.otp.earlyPercent)} early · ${pct(sys.otp.latePercent)} late`, otpColor(sys.otp.onTimePercent), undefined, 'performance')}
-          ${kpiCard('Total ridership', num(sys.totalRidership), `${num(sys.totalAlightings)} alightings`, '#2563eb', undefined, 'ridership')}
-          ${kpiCard('Trips operated', tripsOperatedValue, tripsOperatedSubtitle, status.label === 'NEEDS ATTENTION' ? '#dc2626' : '#6d28d9', status.label === 'NEEDS ATTENTION' ? '#dc2626' : undefined, 'trips')}
+          ${kpiCard('On-time performance', pct(sys.otp.onTimePercent), otpUsual ?? otpEarlyLate, otpColor(sys.otp.onTimePercent), undefined, 'performance', otpUsual ? otpEarlyLate : undefined)}
+          ${kpiCard('Total ridership', num(sys.totalRidership), usualLine(glance, 'Riders'), '#2563eb', undefined, 'ridership', ridersDetail ? escapeHtml(ridersDetail) : undefined)}
+          ${kpiCard('Trips operated', tripsOperatedValue, tripsOperatedSubtitle, tripsAlert ? '#dc2626' : '#6d28d9', tripsAlert ? '#dc2626' : undefined, 'trips')}
           ${buildDwellKpiCard(latestDay, trendDays)}
         </tr>
       </table>
 
-      <!-- OTP Distribution Bar -->
-      ${otpBar(sys.otp.earlyPercent, sys.otp.onTimePercent, sys.otp.latePercent)}
-
-      <!-- ═══ 2. EXECUTIVE SUMMARY ═══ -->
+      <!-- ═══ 2. WHAT STOOD OUT / ACTION FOCUS ═══ -->
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
           <td style="width:${glance ? 60 : 62}%;padding:0 6px 0 0;vertical-align:top;">${glance ? buildGlanceSummary(glance) : buildExecutiveSummary(latestDay)}</td>
@@ -1722,34 +1492,30 @@ export function buildReportHtml(data: ReportData): string {
       </table>
 
       <!-- ═══ 3. ROUTE SCORECARD ═══ -->
-      ${buildRouteScorecard(latestDay.byRoute, dwellByRoute)}
+      ${buildRouteScorecard(latestDay.byRoute, dwellByRoute, glance)}
 
-      <!-- ═══ 4. LAST 7 DAYS TREND ═══ -->
-      ${buildTrendTable(trendRows, latestDay.date)}
+      <!-- ═══ 4. LAST 7 DAYS ═══ -->
+      ${buildTrendCharts(trendDays, latestDay.date)}
 
-      <!-- ═══ 5. BOARDINGS BY HOUR ═══ -->
-      ${buildHourlyTable(latestDay.byHour, totalServiceHours, dwellByHour)}
+      <!-- ═══ 5. WEEKLY OPERATOR DWELL (MONDAYS) ═══ -->
+      ${showWeeklyDwellSection ? buildWeeklyDwellSection(weeklyDwell) : ''}
 
       <!-- ═══ 6. MISSED TRIPS - EXCEPTION ONLY ═══ -->
       ${missedTripsSection}
 
-      <!-- ═══ 7. TRIP OF THE DAY ═══ -->
-      ${buildFeaturedTripSection(featuredTrip)}
-
-      <!-- ═══ 8a. WEEKLY OPERATOR DWELL (MONDAYS) ═══ -->
-      ${showWeeklyDwellSection ? buildWeeklyDwellSection(weeklyDwell) : ''}
-
-      <!-- ═══ 8. OPERATOR DWELL BY STOP ═══ -->
-      ${buildStopDwellTable(latestDay)}
-
-      <!-- ═══ 9. STOP HIGHLIGHTS ═══ -->
+      <!-- ═══ 7. TOP 10 STOPS ═══ -->
       ${buildTopStops(latestDay.byStop)}
+
+      <!-- ═══ 8. TRIP OF THE DAY ═══ -->
+      ${buildFeaturedTripSection(featuredTrip)}
 
     </div>
 
     <!-- Footer -->
-    <div style="background:#eaf2ff;border-top:1px solid #bfdbfe;padding:18px 22px;">
-      <div style="font-size:11px;color:#64748b;">This is an automated report. Generated by Scheduler 4 · ${new Date().toISOString().slice(0, 10)}</div>
+    <div style="background:#eaf2ff;border-top:1px solid #bfdbfe;padding:14px 20px;font-size:11px;color:#64748b;line-height:1.6;">
+      <div>Boardings by hour, stop detail and operator dwell by stop are on the <a href="${DASHBOARD_URL}" style="color:#2563eb;font-weight:600;text-decoration:none;">dashboard</a>.</div>
+      <div style="margin-top:4px;"><b style="color:#334155;">On-time:</b> between 3 min early and 5 min late. <b style="color:#334155;">Usual:</b> median of recent days of the same day type. <b style="color:#334155;">BPH:</b> boardings per service hour. <b style="color:#334155;">APC:</b> automatic passenger counter; a flag means boardings and alightings do not agree. <b style="color:#334155;">Dwell:</b> moderate and high operator dwell only.</div>
+      <div style="margin-top:4px;">This is an automated report. Generated by Scheduler 4 · ${new Date().toISOString().slice(0, 10)}</div>
     </div>
   </div>
 </body>

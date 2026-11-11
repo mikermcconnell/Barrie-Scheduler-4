@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Email: Custom Illustrated Icon Sets</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #0f172a; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 28px 24px 60px; }
+  h1 { font-size: 24px; margin: 0 0 4px; color: #082b63; }
+  .lead { color: #475569; font-size: 14px; margin: 0 0 8px; line-height: 1.55; max-width: 800px; }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 6px; }
+  .toc a { font-size: 13px; font-weight: 600; color: #1e3a8a; background: #fff; border: 1px solid #cbd5e1; border-radius: 99px; padding: 5px 12px; text-decoration: none; }
+
+  .option { background: #fff; border-radius: 14px; margin-top: 26px; box-shadow: 0 1px 3px rgba(15,23,42,.08); overflow: hidden; }
+  .opt-head { padding: 16px 20px 12px; display: flex; gap: 16px; align-items: flex-start; }
+  .opt-letter { flex: none; width: 34px; height: 34px; border-radius: 9px; background: #082b63; color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .opt-title { font-size: 17px; font-weight: 700; color: #082b63; margin: 0; }
+  .opt-desc { font-size: 13px; color: #475569; margin: 3px 0 0; line-height: 1.5; max-width: 760px; }
+  .tags { margin-top: 7px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: #f1f5f9; color: #334155; }
+  .tag.good { background: #dcfce7; color: #166534; }
+  .tag.warn { background: #fef3c7; color: #92400e; }
+
+  .gallery { display: flex; gap: 14px; padding: 4px 20px 18px; flex-wrap: wrap; }
+  .gal { width: 150px; text-align: center; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 12px; padding: 14px 8px 10px; }
+  .gal .cap { font-size: 11.5px; color: #64748b; font-weight: 600; margin-top: 6px; }
+  .gal .small { display: flex; gap: 8px; justify-content: center; align-items: center; margin-top: 8px; }
+
+  .email { background: #f8fafc; padding: 0 0 18px; border-top: 1px solid #e2e8f0; }
+  .hdr { background: #0a2d63; padding: 16px 20px; display: flex; align-items: center; gap: 14px; border-bottom: 4px solid #3b82f6; }
+  .hdr-title { color: #fff; font-weight: 800; font-size: 19px; }
+  .hdr-sub { color: #93c5fd; font-weight: 600; font-size: 12.5px; margin-top: 2px; }
+  .hdr-btn { margin-left: auto; color: #fff; font-weight: 700; font-size: 13px; border: 1.5px solid #60a5fa; border-radius: 8px; padding: 8px 14px; white-space: nowrap; }
+  .hdr-tile { flex: none; width: 48px; height: 48px; border-radius: 12px; background: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 18px 18px 0; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 12px; text-align: center; box-shadow: 0 2px 8px rgba(15,23,42,.06); }
+  .card .ico { line-height: 0; margin-bottom: 8px; display: flex; justify-content: center; }
+  .card .lbl { font-size: 13px; color: #1e3a5f; font-weight: 700; }
+  .card .val { font-size: 28px; font-weight: 800; margin: 8px 0 4px; letter-spacing: -.5px; }
+  .card .val small { font-size: 12px; color: #94a3b8; font-weight: 700; letter-spacing: 0; }
+  .card .sub { font-size: 11px; color: #64748b; }
+  .card .det { font-size: 11px; color: #94a3b8; margin-top: 6px; padding-top: 6px; border-top: 1px solid #f1f5f9; }
+
+  .note { font-size: 13px; color: #475569; background: #fff; border-radius: 12px; padding: 14px 18px; margin-top: 28px; line-height: 1.55; }
+  .note b { color: #082b63; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Daily email: custom illustrated icons</h1>
+  <p class="lead">An original set drawn for this report: a bus, an alarm clock with an on-time check, riders, a route to a pin, and a stopwatch with the dwell time shaded.
+  Each icon uses the colour of its KPI card, with amber as a shared second colour. Gradients and shadows are fine here, because the generator turns each icon into a PNG before it goes into the email.
+  Each style is shown large, at email size, and in the real email layout.</p>
+  <div class="toc" id="toc"></div>
+  <div id="options"></div>
+  <div class="note">
+    <b>Fit with email:</b> each icon would be saved as a PNG at 3x (about 4–10 KB each, 5 icons per email) and attached the same way the current icons are. No new email code.<br>
+    <b>Dark mode:</b> style 1 sits on a white tile in the header, and style 3 has its own solid tile, so both stay readable if a mail app darkens the email. Style 2's tinted circle is part of the image, so it is safe too.
+  </div>
+</div>
+
+<script>
+const PAL = {
+  bus:         { light: '#93c5fd', mid: '#3b82f6', dark: '#1d4ed8', deep: '#1e3a8a', tint: '#dbeafe' },
+  performance: { light: '#86efac', mid: '#22c55e', dark: '#15803d', deep: '#14532d', tint: '#dcfce7' },
+  ridership:   { light: '#93c5fd', mid: '#3b82f6', dark: '#1d4ed8', deep: '#1e3a8a', tint: '#dbeafe' },
+  trips:       { light: '#c4b5fd', mid: '#8b5cf6', dark: '#6d28d9', deep: '#4c1d95', tint: '#ede9fe' },
+  dwell:       { light: '#67e8f9', mid: '#06b6d4', dark: '#0e7490', deep: '#164e63', tint: '#cffafe' },
+};
+const KPIS = [
+  { key: 'performance', label: 'On-time performance', value: '88.5%', color: '#16a34a', sub: 'usual 89.8% · <b>normal</b>', det: '1.9% early · 9.6% late' },
+  { key: 'ridership', label: 'Total ridership', value: '9,326', color: '#2563eb', sub: 'usual 9,086 · <b>normal</b>' },
+  { key: 'trips', label: 'Trips operated', value: '540 <small>of 540</small>', color: '#6d28d9', sub: 'all scheduled trips operated' },
+  { key: 'dwell', label: 'Operator dwell', value: '76 <small>min / 100 trips</small>', color: '#0891b2', sub: 'usual 70 · <b>normal</b>', det: 'Total: 6.9 hrs' },
+];
+const NAMES = { bus: 'Bus (header)', performance: 'On-time', ridership: 'Ridership', trips: 'Trips', dwell: 'Dwell' };
+
+let uidN = 0;
+const wrapSvg = (size, inner, vb = 64) => `<svg viewBox="0 0 ${vb} ${vb}" width="${size}" height="${size}" fill="none" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+
+// ---------- Shared drawings (64 x 64). F(key) = paint, hl() = 3D-only detail, sh() = ground shadow ----------
+const DRAW = {
+  bus: (P, F, hl, sh) => `
+    ${sh(32, 58.5, 20)}
+    <rect x="7" y="18" width="5" height="10" rx="2.5" fill="${P.deep}"/>
+    <rect x="52" y="18" width="5" height="10" rx="2.5" fill="${P.deep}"/>
+    <rect x="16" y="47" width="9" height="11" rx="3" fill="#1e293b"/>
+    <rect x="39" y="47" width="9" height="11" rx="3" fill="#1e293b"/>
+    <rect x="11" y="5" width="42" height="47" rx="10" fill="${F('m')}"/>
+    <rect x="19" y="8.5" width="26" height="6" rx="3" fill="${F('a')}"/>
+    <rect x="15" y="18" width="34" height="17" rx="4.5" fill="${F('g')}"/>
+    ${hl(`<path d="M17 34 L29 18.5 H35 L23 34z" fill="#fff" opacity=".5"/><path d="M37 34 L46 22 V27 L41 34z" fill="#fff" opacity=".35"/>`)}
+    <rect x="14" y="40" width="36" height="8" rx="4" fill="${P.deep}" opacity=".28"/>
+    <circle cx="20" cy="44" r="3" fill="#fef9c3"/><circle cx="44" cy="44" r="3" fill="#fef9c3"/>
+    <rect x="27" y="43" width="10" height="2" rx="1" fill="#fff" opacity=".65"/>`,
+
+  performance: (P, F, hl, sh) => `
+    ${sh(30, 58.5, 17)}
+    <path d="M19 50l-4.5 6.5M45 50l4.5 6.5" stroke="${P.deep}" stroke-width="4"/>
+    <circle cx="14.5" cy="13" r="7.5" fill="${F('a')}"/><circle cx="49.5" cy="13" r="7.5" fill="${F('a')}"/>
+    <path d="M27 9.5h10" stroke="${P.deep}" stroke-width="3.5"/>
+    <circle cx="32" cy="33" r="23" fill="${F('m')}"/>
+    <circle cx="32" cy="33" r="18" fill="${F('f')}"/>
+    ${hl(`<path d="M12.7 26A20.5 20.5 0 0 1 23.3 14.4" stroke="#fff" stroke-width="2.6" opacity=".55"/>`)}
+    <g fill="${P.mid}" opacity=".55"><rect x="31" y="17.5" width="2" height="4" rx="1"/><rect x="31" y="44.5" width="2" height="4" rx="1"/><rect x="44.5" y="32" width="4" height="2" rx="1"/><rect x="15.5" y="32" width="4" height="2" rx="1"/></g>
+    <path d="M32 33V22.5M32 33l7.5 4.5" stroke="${P.deep}" stroke-width="3.2"/>
+    <circle cx="32" cy="33" r="2.6" fill="${P.deep}"/>
+    <circle cx="49" cy="49" r="10.5" fill="#fff"/><circle cx="49" cy="49" r="8.2" fill="${F('m')}"/>
+    <path d="M45 49.2l2.8 2.8 5.4-5.6" stroke="#fff" stroke-width="2.7"/>`,
+
+  ridership: (P, F, hl, sh) => `
+    ${sh(32, 58.5, 22)}
+    <circle cx="43" cy="18.5" r="7.5" fill="${F('s')}"/>
+    <path d="M28 51c0-9.5 6.5-15.5 15-15.5S58 41.5 58 51v1.5a2.5 2.5 0 0 1-2.5 2.5h-25A2.5 2.5 0 0 1 28 52.5z" fill="${F('s')}"/>
+    <circle cx="25" cy="21" r="9.5" fill="${F('m')}" stroke="#fff" stroke-width="2.5"/>
+    <path d="M6 54c0-12 8.5-19.5 19-19.5S44 42 44 54v1a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z" fill="${F('m')}" stroke="#fff" stroke-width="2.5"/>
+    ${hl(`<ellipse cx="21.5" cy="17" rx="3.3" ry="2.2" fill="#fff" opacity=".5"/><ellipse cx="40.5" cy="15" rx="2.6" ry="1.7" fill="#fff" opacity=".45"/><path d="M11 50c.6-4.5 3-8 6.5-10" stroke="#fff" stroke-width="2.2" opacity=".35"/>`)}`,
+
+  trips: (P, F, hl, sh) => `
+    ${sh(32, 58.5, 22)}
+    <path d="M10 51C15 37 29 47 33 37S43 27 49 27" stroke="${F('m')}" stroke-width="9.5"/>
+    <path d="M10 51C15 37 29 47 33 37S43 27 49 27" stroke="#fff" stroke-width="1.9" stroke-dasharray="3 4.2" opacity=".9"/>
+    <circle cx="10" cy="51" r="5.5" fill="#fff" stroke="${P.dark}" stroke-width="3.2"/>
+    <path d="M50 31s-11-9-11-16.8a11 11 0 0 1 22 0C61 22 50 31 50 31z" fill="${F('a')}"/>
+    <circle cx="50" cy="14.5" r="4.2" fill="#fff"/>
+    ${hl(`<ellipse cx="45" cy="9.5" rx="2.6" ry="1.6" fill="#fff" opacity=".55" transform="rotate(-30 45 9.5)"/>`)}`,
+
+  dwell: (P, F, hl, sh) => `
+    ${sh(32, 59.5, 18)}
+    <rect x="29" y="9" width="6" height="6" fill="${P.deep}"/>
+    <rect x="25" y="3" width="14" height="7" rx="3" fill="${F('a')}"/>
+    <rect x="46" y="12" width="7" height="6" rx="2" fill="${P.deep}" transform="rotate(45 49.5 15)"/>
+    <circle cx="32" cy="36" r="22" fill="${F('m')}"/>
+    <circle cx="32" cy="36" r="17" fill="${F('f')}"/>
+    <path d="M32 36V19a17 17 0 0 1 16.17 11.75z" fill="${P.light}" opacity=".75"/>
+    ${hl(`<path d="M13.7 29.3A19.5 19.5 0 0 1 23.8 18.3" stroke="#fff" stroke-width="2.6" opacity=".55"/>`)}
+    <g fill="${P.mid}" opacity=".55"><circle cx="45.5" cy="36" r="1.4"/><circle cx="32" cy="49.5" r="1.4"/><circle cx="18.5" cy="36" r="1.4"/></g>
+    <path d="M32 36l12-3.9" stroke="${P.deep}" stroke-width="3.2"/>
+    <circle cx="32" cy="36" r="2.6" fill="${P.deep}"/>`,
+};
+
+function illustrated(name, size, mode) {
+  const u = 'u' + (uidN++), P = PAL[name], is3d = mode === '3d';
+  const lg = (id, stops, x2 = '.85', y2 = '1') => `<linearGradient id="${u}${id}" x1="0" y1="0" x2="${x2}" y2="${y2}">${stops.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('')}</linearGradient>`;
+  const defs = is3d ? `<defs>
+    ${lg('m', [[0, P.light], [.45, P.mid], [1, P.dark]])}
+    ${lg('s', [[0, P.tint], [1, P.light]])}
+    ${lg('f', [[0, '#ffffff'], [1, P.tint]], '0')}
+    ${lg('a', [[0, '#fde68a'], [.5, '#fbbf24'], [1, '#d97706']])}
+    ${lg('g', [[0, '#f0f9ff'], [1, '#7dd3fc']], '.4')}
+    <radialGradient id="${u}sh"><stop offset="0" stop-color="#0f172a" stop-opacity=".32"/><stop offset="1" stop-color="#0f172a" stop-opacity="0"/></radialGradient>
+  </defs>` : '';
+  const FLAT = { m: P.mid, s: P.light, f: '#ffffff', a: '#fbbf24', g: '#bae6fd' };
+  const F = k => is3d ? `url(#${u}${k})` : FLAT[k];
+  const hl = s => is3d ? s : '';
+  const sh = (cx, cy, rx) => is3d ? `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="3.6" fill="url(#${u}sh)"/>` : '';
+  const bg = is3d ? '' : `<circle cx="32" cy="33" r="29" fill="${P.tint}"/>`;
+  return wrapSvg(size, defs + bg + DRAW[name](P, F, hl, sh));
+}
+
+// ---------- Style 3: gradient app tile with white solid glyph (24-grid glyphs scaled into 64) ----------
+const TILE_GLYPH = {
+  bus: k => `<rect x="4" y="2.5" width="16" height="16.5" rx="3.5" fill="#fff"/><rect x="6.5" y="5.5" width="11" height="6" rx="1.3" fill="${k}"/><circle cx="8.2" cy="15.2" r="1.3" fill="${k}"/><circle cx="15.8" cy="15.2" r="1.3" fill="${k}"/><path d="M7.5 19v2.2M16.5 19v2.2" stroke="#fff" stroke-width="2.6"/>`,
+  performance: k => `<circle cx="12" cy="12" r="10" fill="#fff"/><path d="M12 6.8V12l3.6 2.1" stroke="${k}" stroke-width="2.2"/>`,
+  ridership: k => `<circle cx="16.8" cy="7.8" r="2.9" fill="#fff" opacity=".6"/><path d="M15.2 13.1a5.8 5.8 0 0 1 7.3 5.9v1h-4.3a8.6 8.6 0 0 0-3-6.9z" fill="#fff" opacity=".6"/><circle cx="9" cy="7.2" r="3.8" fill="#fff"/><path d="M1.8 20a7.2 7.2 0 0 1 14.4 0v.5H1.8z" fill="#fff"/>`,
+  trips: k => `<path d="M7 18.5h9a3.5 3.5 0 0 0 0-7H8a3.5 3.5 0 0 1 0-7h9" stroke="#fff" stroke-width="2.4"/><circle cx="5.5" cy="18.5" r="3" fill="#fff"/><path d="M18.5 9s-3.6-3-3.6-5.6a3.6 3.6 0 0 1 7.2 0C22.1 6 18.5 9 18.5 9z" fill="#fde68a"/>`,
+  dwell: k => `<path d="M6 2.5h12v2c0 3-2.6 5-4.6 7.5 2 2.5 4.6 4.5 4.6 7.5v2H6v-2c0-3 2.6-5 4.6-7.5C8.6 9.5 6 7.5 6 4.5z" fill="#fff"/><path d="M8.6 4.6h6.8c-.2 1.7-1.7 3.2-3.4 4.8-1.7-1.6-3.2-3.1-3.4-4.8z" fill="${k}"/>`,
+};
+function appTile(name, size) {
+  const u = 'u' + (uidN++), P = PAL[name];
+  const glyph = TILE_GLYPH[name](P.dark);
+  return wrapSvg(size, `<defs>
+      <linearGradient id="${u}t" x1="0" y1="0" x2=".6" y2="1"><stop offset="0" stop-color="${P.light}"/><stop offset=".35" stop-color="${P.mid}"/><stop offset="1" stop-color="${P.dark}"/></linearGradient>
+    </defs>
+    <rect x="2" y="2" width="60" height="60" rx="17" fill="url(#${u}t)"/>
+    <path d="M2 19A17 17 0 0 1 19 2h26a17 17 0 0 1 17 17v6C44 33 20 33 2 25z" fill="#fff" opacity=".16"/>
+    <rect x="2.5" y="2.5" width="59" height="59" rx="16.5" stroke="#fff" stroke-opacity=".25"/>
+    <g transform="translate(15 16.5) scale(1.42)" opacity=".22"><g fill="${P.deep}" stroke="${P.deep}">${TILE_GLYPH[name](P.deep).replace(/fill="#fff"|fill="#fde68a"/g, `fill="${P.deep}"`).replace(/stroke="#fff"/g, `stroke="${P.deep}"`)}</g></g>
+    <g transform="translate(15 15) scale(1.42)">${glyph}</g>`);
+}
+
+const STYLES = [
+  {
+    id: '1', title: 'Soft 3D',
+    desc: 'Rounded objects with gradients, a gloss highlight and a soft ground shadow. Rich and friendly, but still about the data. Closest to the "higher quality" feel you described.',
+    tags: [['good', 'Recommended'], ['', 'Illustrated'], ['', 'Card colour + amber']],
+    icon: (n, s) => illustrated(n, s, '3d'), cardSize: 54, hdr: s => `<div class="hdr-tile">${illustrated('bus', 40, '3d')}</div>`,
+  },
+  {
+    id: '2', title: 'Flat spot illustration',
+    desc: 'The same drawings in flat colour, set on a tinted circle. The look you see in modern product onboarding (Notion, Slack, Intercom). Cleaner than 3D, still clearly illustrated.',
+    tags: [['', 'Flat'], ['good', 'Crisp at small size'], ['', 'Built-in backdrop']],
+    icon: (n, s) => illustrated(n, s, 'flat'), cardSize: 54, hdr: s => `<div class="hdr-tile">${illustrated('bus', 42, 'flat')}</div>`,
+  },
+  {
+    id: '3', title: 'Glossy app tile',
+    desc: 'A gradient tile in the card colour with a top shine and a white glyph, like an iPhone app icon. The most polished and uniform, but less "illustrated" than 1 or 2.',
+    tags: [['', 'App icon'], ['good', 'Most uniform'], ['warn', 'Less character']],
+    icon: (n, s) => appTile(n, s), cardSize: 44, hdr: () => appTile('bus', 46),
+  },
+];
+
+function cardHtml(st, k) {
+  return `<div class="card" style="border-left:4px solid ${k.color};">
+    <div class="ico">${st.icon(k.key, st.cardSize)}</div>
+    <div class="lbl">${k.label}</div>
+    <div class="val" style="color:${k.color}">${k.value}</div>
+    <div class="sub">${k.sub}</div>
+    ${k.det ? `<div class="det">${k.det}</div>` : ''}
+  </div>`;
+}
+
+function styleHtml(st) {
+  const gallery = Object.keys(DRAW).map(n => `<div class="gal">${st.icon(n, 96)}
+      <div class="cap">${NAMES[n]}</div>
+      <div class="small">${st.icon(n, 48)}${st.icon(n, 32)}</div></div>`).join('');
+  return `<section class="option" id="st-${st.id}">
+    <div class="opt-head">
+      <div class="opt-letter">${st.id}</div>
+      <div>
+        <h2 class="opt-title">${st.title}</h2>
+        <p class="opt-desc">${st.desc}</p>
+        <div class="tags">${st.tags.map(([c, t]) => `<span class="tag ${c}">${t}</span>`).join('')}</div>
+      </div>
+    </div>
+    <div class="gallery">${gallery}</div>
+    <div class="email">
+      <div class="hdr">${st.hdr()}<div><div class="hdr-title">Barrie Transit Daily Performance Report</div><div class="hdr-sub">Tuesday, November 10, 2026 · Weekday service</div></div><div class="hdr-btn">Open full dashboard →</div></div>
+      <div class="cards">${KPIS.map(k => cardHtml(st, k)).join('')}</div>
+    </div>
+  </section>`;
+}
+
+document.getElementById('options').innerHTML = STYLES.map(styleHtml).join('');
+document.getElementById('toc').innerHTML = STYLES.map(s => `<a href="#st-${s.id}">${s.id} · ${s.title}</a>`).join('');
+</script>
+</body>
+</html>
