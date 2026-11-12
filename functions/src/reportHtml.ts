@@ -3,7 +3,7 @@ import { FULL_LOAD } from '../../utils/performanceRouteLoad';
 import type { FeaturedTrip } from './featuredTrip';
 import { EMAIL_ICON_PNG } from './emailIconData';
 import { apcDiscrepancyPctForRoute, apcStatusForRoute } from './routeApc';
-import { buildGlance, type GlanceModel, type GlanceTone, type RouteHistoryDay } from './dailyGlance';
+import { buildGlance, type GlanceAction, type GlanceModel, type GlanceTone, type RouteHistoryDay } from './dailyGlance';
 import { median, type WeeklyDwellSummary } from '../../utils/performanceDwellHistory';
 
 export interface ReportData {
@@ -176,9 +176,9 @@ function routeOtpCell(otp: RouteMetrics['otp']): string {
   }
 
   return `
-    <div style="display:inline-block;min-width:104px;text-align:right;">
+    <div class="otp-cell" style="display:inline-block;min-width:104px;text-align:right;">
       ${otpPill(otp.onTimePercent)}
-      <div style="margin-top:4px;font-size:10px;line-height:1.35;color:#64748b;white-space:nowrap;letter-spacing:0.01em;">
+      <div class="otp-split" style="margin-top:4px;font-size:10px;line-height:1.35;color:#64748b;white-space:nowrap;letter-spacing:0.01em;">
         <span style="font-weight:700;color:${earlyPctColor(otp.earlyPercent)};">${pct(otp.earlyPercent)}</span> early
         <span style="color:#cbd5e1;padding:0 4px;">•</span>
         <span style="font-weight:700;color:${latePctColor(otp.latePercent)};">${pct(otp.latePercent)}</span> late
@@ -235,14 +235,12 @@ function kpiCard(label: string, value: string, subtitle?: string, accentColor = 
   const subColor = subtitleColor || '#64748b';
   const subWeight = subtitleColor ? 'font-weight:600;' : '';
   return `
-    <td style="width:25%;padding:6px;vertical-align:top;">
-      <div style="box-sizing:border-box;height:${KPI_CARD_HEIGHT_PX}px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
+    <td class="kpi-cell" style="width:25%;height:${KPI_CARD_HEIGHT_PX}px;vertical-align:top;box-sizing:border-box;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 10px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);overflow-wrap:break-word;word-break:break-word;">
         ${icon ? `<div style="line-height:1;margin-bottom:8px;">${iconBadge(icon, accentColor, 48)}</div>` : ''}
         <div style="font-size:13px;color:#1e3a5f;font-weight:700;">${label}</div>
-        <div style="font-size:28px;font-weight:800;color:${accentColor};margin:8px 0 4px;letter-spacing:-0.5px;">${value}</div>
+        <div class="kpi-value" style="font-size:28px;font-weight:800;color:${accentColor};margin:8px 0 4px;letter-spacing:-0.5px;">${value}</div>
         ${subtitle ? `<div style="font-size:11px;color:${subColor};${subWeight}">${subtitle}</div>` : ''}
         ${detail ? `<div style="font-size:11px;color:#94a3b8;margin-top:5px;padding-top:5px;border-top:1px solid #f1f5f9;">${detail}</div>` : ''}
-      </div>
     </td>`;
 }
 
@@ -418,11 +416,6 @@ function buildExecutiveSummary(latestDay: DailySummary): string {
 
 const DASHBOARD_OTP_URL = 'https://transitscheduler.ca/#operations/performance/otp';
 
-const GLANCE_STATUS_STYLE: Record<GlanceModel['status'], { bg: string; color: string }> = {
-  STABLE: { bg: '#dcfce7', color: '#166534' },
-  REVIEW: { bg: '#fef3c7', color: '#92400e' },
-  'NEEDS ATTENTION': { bg: '#fee2e2', color: '#991b1b' },
-};
 const GLANCE_TONE_COLOR: Record<GlanceTone, string> = {
   neutral: '#64748b',
   good: '#16a34a',
@@ -436,58 +429,56 @@ function buildRouteDwellLeader(latestDay: DailySummary): { routeId: string | nul
   return top ? { routeId: top[0], hours: top[1] / 3600 } : { routeId: null, hours: 0 };
 }
 
-/** Status badge and headline, shown directly under the header. */
+/** Headline, shown directly under the header. */
 function buildStatusStrip(glance: GlanceModel): string {
-  const status = GLANCE_STATUS_STYLE[glance.status];
   return `
     <div style="background:#ffffff;border-bottom:1px solid #e5e7eb;padding:14px 20px;font-size:16px;font-weight:700;color:#0f172a;line-height:1.4;">
-      <span style="display:inline-block;background:${status.bg};color:${status.color};padding:3px 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:0.3px;vertical-align:2px;margin-right:8px;">${glance.status}</span>${escapeHtml(glance.headline)}
+      ${escapeHtml(glance.headline)}
     </div>`;
 }
 
-/** "What Stood Out" from the glance model: routes well below their usual, then ongoing items. */
-function buildGlanceSummary(glance: GlanceModel): string {
-  const standouts = glance.standouts.length === 0
-    ? '<div style="font-size:13px;line-height:1.5;color:#64748b;">No route ran well below its usual.</div>'
-    : glance.standouts.map(standout => `
-      <table cellpadding="0" cellspacing="0" style="margin:6px 0;">
-        <tr>
-          <td style="width:18px;vertical-align:top;font-size:13px;line-height:1.5;color:#dc2626;font-weight:800;">&#9660;</td>
-          <td style="vertical-align:top;">
-            <div style="font-size:13px;line-height:1.5;color:#374151;"><b>Route ${escapeHtml(standout.routeId)}</b> ${escapeHtml(standout.sentence)}</div>
-            ${standout.latePattern ? `<div style="font-size:12px;line-height:1.45;color:#64748b;">${escapeHtml(standout.latePattern)}</div>` : ''}
-          </td>
-        </tr>
-      </table>`).join('');
+/**
+ * "What Stood Out": one item per finding. A route that ran well below its usual shows once,
+ * with its late-trip detail, then the other follow-ups (missed trips, dwell, APC, data feed), then ongoing items.
+ */
+function buildGlanceFindings(glance: GlanceModel): string {
+  const item = (severity: GlanceAction['severity'], title: string, detail: string | null, link?: string) => `
+      <div style="background:#ffffff;border:1px solid #eef2f7;border-left:4px solid ${GLANCE_SEVERITY_COLOR[severity]};border-radius:8px;padding:9px 12px;margin:0 0 8px;">
+        <div style="font-size:13px;line-height:1.45;color:#082b63;">${title}</div>
+        ${detail ? `<div style="font-size:12px;color:#475569;line-height:1.45;margin-top:2px;">${escapeHtml(detail)}</div>` : ''}
+        ${link ? `<div style="font-size:12px;margin-top:4px;"><a href="${link}" style="color:#2563eb;font-weight:600;text-decoration:none;">Open on-time dashboard &rarr;</a></div>` : ''}
+      </div>`;
+
+  const routeItems = glance.standouts.map(standout => {
+    const action = glance.actions.find(entry => entry.routeId === standout.routeId);
+    return item(
+      action?.severity ?? 'medium',
+      `<b>Route ${escapeHtml(standout.routeId)}</b> ${escapeHtml(standout.sentence)}`,
+      // With no trip list the action detail only repeats the on-time sentence, so use the late pattern.
+      standout.trips > 0 && action ? action.detail : standout.latePattern,
+      action?.link,
+    );
+  });
+  const otherItems = glance.actions
+    .filter(action => !action.routeId)
+    .map(action => item(action.severity, `<b>${escapeHtml(action.title)}</b>`, action.detail, action.link));
+  const items = [...routeItems, ...otherItems];
+
+  const body = items.length === 0
+    ? '<div style="font-size:13px;line-height:1.5;color:#64748b;margin-bottom:8px;">No route ran well below its usual, and nothing new to follow up.</div>'
+    : items.join('');
   const newTag = (routeId: string) => `<span style="background:#dbeafe;color:#1d4ed8;font-weight:700;padding:0 5px;border-radius:4px;">${escapeHtml(routeId)} new</span>`;
   const ongoing = glance.ongoing.length === 0 ? '' : `
-    <div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border-radius:8px;">
+    <div style="margin-top:6px;padding:10px 12px;background:#f8fafc;border-radius:8px;">
       <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:0.4px;text-transform:uppercase;margin-bottom:4px;">Ongoing</div>
       <div style="font-size:12px;line-height:1.55;color:#64748b;">
-        ${glance.ongoing.map(item => `${escapeHtml(item.text)}${(item.newRoutes ?? []).map(routeId => ` ${newTag(routeId)}`).join('')}`).join('<br>')}
+        ${glance.ongoing.map(entry => `${escapeHtml(entry.text)}${(entry.newRoutes ?? []).map(routeId => ` ${newTag(routeId)}`).join('')}`).join('<br>')}
       </div>
     </div>`;
 
   return `
     ${sectionHeader('What Stood Out')}
-    ${cardWrap(`${standouts}${ongoing}`)}`;
-}
-
-/** Ranked follow-ups from the glance model; a quiet note when there are none. */
-function buildGlanceActions(glance: GlanceModel): string {
-  const body = glance.actions.length === 0
-    ? `<div style="font-size:13px;color:#475569;line-height:1.5;">Nothing new to follow up today.</div>
-       ${glance.ongoing.length > 0 ? '<div style="font-size:12px;color:#94a3b8;line-height:1.5;margin-top:6px;">Ongoing items are listed on the left.</div>' : ''}`
-    : glance.actions.map((action, i) => `
-      <div style="background:#ffffff;border-left:4px solid ${GLANCE_SEVERITY_COLOR[action.severity]};border-radius:8px;padding:9px 11px;margin:${i === 0 ? 0 : 8}px 0 0;">
-        <div style="font-size:13px;font-weight:700;color:#082b63;">${i + 1}. ${escapeHtml(action.title)}</div>
-        <div style="font-size:12px;color:#475569;line-height:1.45;margin-top:2px;">${escapeHtml(action.detail)}</div>
-        ${action.link ? `<div style="font-size:12px;margin-top:4px;"><a href="${action.link}" style="color:#2563eb;font-weight:600;text-decoration:none;">Open on-time dashboard &rarr;</a></div>` : ''}
-      </div>`).join('');
-
-  return `
-    ${sectionHeader('Action Focus')}
-    ${cardWrap(body, '#eff6ff')}`;
+    ${cardWrap(`${body}${ongoing}`)}`;
 }
 
 /** Today's dwell rate against the same day type's median; null when there is no dwell data. */
@@ -1045,7 +1036,7 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
 }
 
 function scorecardFlag(text: string, bg: string, color: string): string {
-  return `<span style="display:inline-block;background:${bg};color:${color};padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;margin:1px 4px 1px 0;">${text}</span>`;
+  return `<span class="sc-flag" style="display:inline-block;background:${bg};color:${color};padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;margin:1px 4px 1px 0;">${text}</span>`;
 }
 
 /** Flags for a scorecard row: on-time well below usual, APC counts that disagree, high dwell. */
@@ -1056,9 +1047,8 @@ function scorecardFlags(route: RouteMetrics, dwellSeconds: number, glance: Glanc
     flags.push(scorecardFlag(`&#9660; ${(standout.usualOtp - standout.otp).toFixed(1)} pts below usual`, '#fee2e2', '#991b1b'));
   }
   if (apcStatusForRoute(route) !== 'ok') {
-    if (!glance) flags.push(scorecardFlag('APC check', '#f1f5f9', '#64748b'));
-    else if (glance.ongoing.some(item => item.newRoutes?.includes(route.routeId))) flags.push(scorecardFlag('APC new', '#dbeafe', '#1d4ed8'));
-    else flags.push(scorecardFlag('APC ongoing', '#f1f5f9', '#64748b'));
+    const isNew = glance?.ongoing.some(item => item.newRoutes?.includes(route.routeId));
+    flags.push(isNew ? scorecardFlag('APC issue · new', '#dbeafe', '#1d4ed8') : scorecardFlag('APC issue', '#f1f5f9', '#64748b'));
   }
   if (dwellSeconds >= 1800) {
     flags.push(scorecardFlag(`Dwell ${formatDwellHours(dwellSeconds)} hrs`, '#fffbeb', '#b45309'));
@@ -1112,12 +1102,15 @@ function buildRouteScorecard(routes: RouteMetrics[], dwellByRoute: Map<string, n
   const rows = sorted.map((r, i) => {
     const flags = scorecardFlags(r, dwellByRoute.get(r.routeId) ?? 0, glance);
     const bg = flags.standout ? '#fef2f2' : i % 2 === 0 ? '#ffffff' : '#f9fafb';
+    // APC counts disagree: keep riders and BPH visible but greyed, so they read as unreliable.
+    const apcIssue = apcStatusForRoute(r) !== 'ok';
+    const greyed = 'background:#f3f4f6;color:#9ca3af;';
     return `
       <tr style="background:${bg};">
         <td style="padding:5px 10px;border-bottom:1px solid #f3f4f6;width:30px;">${routeBadge(r.routeId)}</td>
         <td style="${cell}color:#1f2a44;">${escapeHtml(r.routeName)}</td>
-        <td style="${cell}text-align:right;">${bphPill(r.bph)}</td>
-        <td style="${cell}text-align:right;color:#082b63;">${num(r.ridership)}</td>
+        <td style="${cell}text-align:right;${apcIssue ? greyed : ''}">${apcIssue ? `<span style="padding:2px 8px;font-weight:700;font-size:12px;color:#9ca3af;">${r.bph.toFixed(1)}</span>` : bphPill(r.bph)}</td>
+        <td style="${cell}text-align:right;${apcIssue ? greyed : 'color:#082b63;'}">${num(r.ridership)}</td>
         <td style="${cell}text-align:right;">${routeOtpCell(r.otp)}</td>
         <td style="${cell}text-align:left;">${flags.html}</td>
       </tr>`;
@@ -1136,7 +1129,7 @@ function buildRouteScorecard(routes: RouteMetrics[], dwellByRoute: Map<string, n
       </tr>
       ${rows}
     </table>
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">A flag shows only when a route needs a look: on-time well below its usual, APC counts that do not agree, or 0.5 hours or more of operator dwell.</div>`;
+    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">A flag shows only when a route needs a look: on-time well below its usual, APC counts that do not agree, or 0.5 hours or more of operator dwell. Greyed riders and BPH mean an APC issue, so treat those figures with care.</div>`;
 }
 
 function buildTopStops(stops: StopMetrics[]): string {
@@ -1444,7 +1437,21 @@ export function buildReportHtml(data: ReportData): string {
 
   return `<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  @media only screen and (max-width: 620px) {
+    .kpi-table { border-spacing: 0 !important; }
+    .kpi-cell { display: inline-block !important; width: 48% !important; height: auto !important; min-height: 190px; margin: 0 1% 10px !important; }
+    .kpi-value { font-size: 24px !important; }
+    .hdr-cell { display: block !important; text-align: left !important; padding: 12px 0 0 !important; }
+    .otp-cell { min-width: 0 !important; }
+    .otp-split { display: none !important; }
+    .sc-flag { white-space: normal !important; }
+  }
+</style>
+</head>
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
   <div style="max-width:760px;margin:0 auto;background:#ffffff;">
     <!-- Header -->
@@ -1462,7 +1469,7 @@ export function buildReportHtml(data: ReportData): string {
               </tr>
             </table>
           </td>
-          <td style="vertical-align:middle;text-align:right;white-space:nowrap;padding-left:16px;">
+          <td class="hdr-cell" style="vertical-align:middle;text-align:right;white-space:nowrap;padding-left:16px;">
             <a href="${DASHBOARD_URL}" style="display:inline-block;color:#ffffff;text-decoration:none;border:1px solid #60a5fa;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:800;">Open full dashboard →</a>
           </td>
         </tr>
@@ -1474,7 +1481,7 @@ export function buildReportHtml(data: ReportData): string {
     <div style="padding:18px;background:#f8fafc;">
 
       <!-- ═══ 1. KPI CARDS ═══ -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
+      <table class="kpi-table" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;border-collapse:separate;border-spacing:10px 0;">
         <tr>
           ${kpiCard('On-time performance', pct(sys.otp.onTimePercent), otpUsual ?? otpEarlyLate, otpColor(sys.otp.onTimePercent), undefined, 'performance', otpUsual ? otpEarlyLate : undefined)}
           ${kpiCard('Total ridership', num(sys.totalRidership), usualLine(glance, 'Riders'), '#2563eb', undefined, 'ridership', ridersDetail ? escapeHtml(ridersDetail) : undefined)}
@@ -1483,13 +1490,14 @@ export function buildReportHtml(data: ReportData): string {
         </tr>
       </table>
 
-      <!-- ═══ 2. WHAT STOOD OUT / ACTION FOCUS ═══ -->
+      <!-- ═══ 2. WHAT STOOD OUT ═══ -->
+      ${glance ? buildGlanceFindings(glance) : `
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="width:${glance ? 60 : 62}%;padding:0 6px 0 0;vertical-align:top;">${glance ? buildGlanceSummary(glance) : buildExecutiveSummary(latestDay)}</td>
-          <td style="width:${glance ? 40 : 38}%;padding:0 0 0 6px;vertical-align:top;">${glance ? buildGlanceActions(glance) : buildActionFocus(latestDay)}</td>
+          <td style="width:62%;padding:0 6px 0 0;vertical-align:top;">${buildExecutiveSummary(latestDay)}</td>
+          <td style="width:38%;padding:0 0 0 6px;vertical-align:top;">${buildActionFocus(latestDay)}</td>
         </tr>
-      </table>
+      </table>`}
 
       <!-- ═══ 3. ROUTE SCORECARD ═══ -->
       ${buildRouteScorecard(latestDay.byRoute, dwellByRoute, glance)}
