@@ -620,7 +620,7 @@ describe('buildReportHtml dwell reporting', () => {
 
     const glanceHtml = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit', routeHistory, lastMissedTripDataDate: '2026-04-20' });
     const strip = between(glanceHtml, '<!-- Header -->', '<!-- ═══ 1. KPI CARDS ═══ -->');
-    expect(strip).toMatch(/>(STABLE|REVIEW|NEEDS ATTENTION)<\/span>/);
+    expect(strip).not.toMatch(/>(STABLE|REVIEW|NEEDS ATTENTION)</);
     expect(strip).toContain('No route ran well below its usual.');
 
     const olderHtml = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit' });
@@ -792,10 +792,12 @@ describe('buildReportHtml dwell KPI card median', () => {
 });
 
 describe('buildReportHtml KPI card sizing', () => {
-  it('gives all four KPI cards the same fixed height', () => {
+  it('gives all four KPI cards the same base height, and lets them grow and wrap on small screens', () => {
     const latestDay = makeSummary({ date: '2026-04-20' });
     const html = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit' });
-    const heights = [...html.matchAll(/box-sizing:border-box;height:(\d+)px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center/g)].map(m => m[1]);
+    const heights = [...html.matchAll(/class="kpi-cell" style="width:25%;height:(\d+)px;/g)].map(m => m[1]);
+    expect(html).toContain('@media only screen and (max-width: 620px)');
+    expect(html).toContain('.kpi-cell { display: inline-block !important; width: 48% !important; height: auto !important;');
 
     expect(heights).toHaveLength(4);
     expect(new Set(heights).size).toBe(1);
@@ -803,16 +805,34 @@ describe('buildReportHtml KPI card sizing', () => {
 });
 
 describe('buildReportHtml glance section', () => {
+  it('shows a route well below its usual once, with its late-trip detail, and no Action Focus column', () => {
+    const priorWeekdays = ['2026-04-13', '2026-04-14', '2026-04-15', '2026-04-16', '2026-04-17'];
+    const routesFor = (otp2: number) => [
+      makeRoute('2', 'Route 2', { otp: makeOtp({ total: 60, onTimePercent: otp2 }) }),
+      makeRoute('5', 'Route 5', { otp: makeOtp({ total: 60, onTimePercent: 90 }) }),
+    ];
+    const history = priorWeekdays.map(date => makeSummary({ date, routes: routesFor(92) }));
+    const latestDay = makeSummary({ date: '2026-04-20', routes: routesFor(80) });
+    const routeHistory = [...history, latestDay].map(day => ({ date: day.date, dayType: day.dayType, byRoute: day.byRoute }));
+
+    const html = buildReportHtml({ latestDay, trendDays: [...history, latestDay], teamName: 'Barrie Transit', routeHistory, lastMissedTripDataDate: '2026-04-20' });
+    const section = between(html, 'What Stood Out', 'Route Scorecard');
+
+    expect(html).not.toContain('Action Focus');
+    expect(section.match(/Route 2/g)).toHaveLength(1);
+    expect(section).toContain('Open on-time dashboard');
+  });
+
   it('uses the glance section when route history is given, and the older summary otherwise', () => {
     const latestDay = makeSummary({ date: '2026-04-20' });
     const routeHistory = [{ date: latestDay.date, dayType: latestDay.dayType, byRoute: latestDay.byRoute }];
 
     const glanceHtml = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit', routeHistory, lastMissedTripDataDate: '2026-04-20' });
     expect(glanceHtml).not.toContain('Yesterday at a Glance');
-    const glanceSection = between(glanceHtml, 'What Stood Out', 'Action Focus');
-    expect(glanceSection).toContain('No route ran well below its usual.');
+    const glanceSection = between(glanceHtml, 'What Stood Out', 'Route Scorecard');
+    expect(glanceSection).toContain('No route ran well below its usual, and nothing new to follow up.');
     expect(glanceSection).not.toContain('Service delivery was');
-    expect(between(glanceHtml, 'Action Focus', 'Route Scorecard')).toContain('Nothing new to follow up today.');
+    expect(glanceHtml).not.toContain('Action Focus');
 
     const olderHtml = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit' });
     expect(between(olderHtml, 'Yesterday at a Glance', 'Action Focus')).toContain('Service delivery was');
@@ -867,8 +887,12 @@ describe('buildReportHtml route scorecard flags', () => {
 
     expect(route2Row).toContain('&#9660; 12.0 pts below usual');
     expect(route2Row).toContain('background:#fef2f2;');
-    expect(rowForText(routeSection, 'Route 5')).toContain('APC ongoing');
-    expect(rowForText(routeSection, 'Route 7')).toContain('APC new');
+    const route5Row = rowForText(routeSection, 'Route 5');
+    expect(route5Row).toContain('>APC issue<');
+    expect(route5Row).not.toContain('ongoing');
+    expect(route5Row).toContain('background:#f3f4f6;color:#9ca3af;');
+    expect(rowForText(routeSection, 'Route 7')).toContain('APC issue · new');
+    expect(route2Row).not.toContain('background:#f3f4f6;color:#9ca3af;');
     expect(routeSection).toContain('A flag shows only when a route needs a look');
   });
 
@@ -877,7 +901,7 @@ describe('buildReportHtml route scorecard flags', () => {
     const html = buildReportHtml({ latestDay, trendDays: [latestDay], teamName: 'Barrie Transit' });
     const routeSection = between(html, 'Route Scorecard', '<!-- Footer -->');
 
-    expect(rowForText(routeSection, 'Route 5')).toContain('APC check');
+    expect(rowForText(routeSection, 'Route 5')).toContain('>APC issue<');
     expect(rowForText(routeSection, 'Route 7')).not.toContain('APC');
   });
 });

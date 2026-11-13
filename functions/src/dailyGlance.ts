@@ -106,6 +106,8 @@ export interface GlanceAction {
   detail: string;
   severity: 'high' | 'medium' | 'low';
   link?: string;
+  /** Set on late-trip actions, so the email can show them with their standout instead of twice. */
+  routeId?: string;
 }
 
 export interface GlanceModel {
@@ -399,6 +401,7 @@ function buildActions(input: GlanceInput, standouts: GlanceStandout[], newApcRou
         : `On-time ${formatPct(standout.otp)}, usually ${formatPct(standout.usualOtp)}.${streak}`,
       severity: standout.usualOtp - standout.otp >= 10 || standout.daysInRow >= 3 ? 'high' : 'medium',
       link: input.routeLink,
+      routeId: standout.routeId,
     });
   }
 
