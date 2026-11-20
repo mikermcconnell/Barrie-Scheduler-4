@@ -220,6 +220,18 @@ service cloud.firestore {
         allow delete: if isTeamOwnerOrAdmin(teamId) || canSupportWriteTeamData(teamId);
       }
 
+      // Barrie Simulator: Network editor scenarios, shared by the team
+      // (Barrie-Simulator src/network/cloud.ts). One document per scenario; `file` is the
+      // simulator's option file as JSON.
+      match /simulatorNetworkScenarios/{scenarioId} {
+        allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
+        allow delete: if isTeamMember(teamId) || canSupportWriteTeamData(teamId);
+        allow create, update: if (isTeamMember(teamId) || canSupportWriteTeamData(teamId)) &&
+                                 request.resource.data.keys().hasOnly(['file', 'name', 'updatedAt', 'updatedBy']) &&
+                                 request.resource.data.file is string &&
+                                 request.resource.data.name is string;
+      }
+
       // Shared connection library
       match /connectionLibrary/{libraryId} {
         allow read: if isTeamMember(teamId) || canSupportReadTeamData(teamId);
