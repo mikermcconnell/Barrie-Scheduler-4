@@ -28,7 +28,10 @@ import { DEFAULT_BARRIE_CONTEXT, PEER_AGENCIES, PeerAgency } from './peerDigestS
 
 export const PEER_DIGEST_MODEL = 'claude-opus-5-5';
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
-const AGENCY_CONCURRENCY = 5;
+const AGENCY_CONCURRENCY = 3;
+/** Kept back from a run's budget: the editor call, plus agency calls already in flight. */
+const EDITOR_RESERVE_USD = 1.5;
+const AGENCY_ALLOWANCE_USD = 1.5;
 const MAX_CONTINUATIONS = 4;
 const NO_NEWS = 'NO NEWS';
 
@@ -41,6 +44,8 @@ export interface ResearchInput {
   recentTitles?: string[];
   /** Research only these agency ids (tuning runs). Default: all. */
   agencyIds?: string[];
+  /** Estimated spend ceiling for this run (USD). Agencies not yet started when it nears are skipped. */
+  budgetUsd?: number;
   log?: (message: string) => void;
   /** Tests pass a stand-in; production builds a client from apiKey. */
   client?: Anthropic;
@@ -125,9 +130,11 @@ async function researchAgency(
   client: Anthropic,
   agency: PeerAgency,
   coverage: { start: string; end: string },
-): Promise<{ notes: AgencyNotes; usage: Omit<PeerDigestUsage, 'estimatedCostUsd'>[] }> {
+  overBudget: () => boolean,
+  /** Called after every API response, so failed and declined calls are counted too. */
+  onUsage: (part: Omit<PeerDigestUsage, 'estimatedCostUsd'>) => void,
+): Promise<AgencyNotes> {
   const messages: BetaMessageParam[] = [{ role: 'user', content: researchPrompt(agency, coverage) }];
-  const usage: Omit<PeerDigestUsage, 'estimatedCostUsd'>[] = [];
   const urls: string[] = [];
   let text = '';
 
@@ -143,15 +150,15 @@ async function researchAgency(
         {
           type: 'web_search_20260209',
           name: 'web_search',
-          max_uses: 6,
+          max_uses: 5,
           user_location: { type: 'approximate', country: 'CA', region: 'Ontario', timezone: 'America/Toronto' },
         },
-        { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 6 },
+        { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 4, max_content_tokens: 15000 },
       ],
       messages,
     }).finalMessage();
 
-    usage.push(usagePart(response.usage));
+    onUsage(usagePart(response.usage));
     urls.push(...seenUrls(response.content));
     text += textOf(response.content);
 
@@ -160,12 +167,13 @@ async function researchAgency(
     }
     // A long server-tool turn pauses; send it back as-is and the server carries on.
     if (response.stop_reason === 'pause_turn') {
+      if (overBudget()) break;
       messages.push({ role: 'assistant', content: response.content });
       continue;
     }
     break;
   }
-  return { notes: { agency, notes: text, urls }, usage };
+  return { agency, notes: text, urls };
 }
 
 /** Runs tasks with at most `limit` in flight; results keep input order. */
@@ -230,12 +238,37 @@ export async function researchPeerDigest(input: ResearchInput): Promise<Research
   const runs: PeerDigestAgencyRun[] = [];
   const notes: AgencyNotes[] = [];
 
-  const results = await mapLimited(agencies, AGENCY_CONCURRENCY, agency => researchAgency(client, agency, input.coverage));
+  // Agencies run in list order (benchmark peers first), so a budget stop drops the least central ones.
+  const budget = input.budgetUsd ?? Number.POSITIVE_INFINITY;
+  let running = emptyUsage();
+  let inFlight = 0;
+  let finished = 0;
+  const results = await mapLimited(agencies, AGENCY_CONCURRENCY, async agency => {
+    // Allow for this call and those still running at the larger of the default allowance and
+    // the run's own average so far, plus the editor; skip the agency if that would pass the budget.
+    const perAgency = Math.max(AGENCY_ALLOWANCE_USD, finished ? (running.estimatedCostUsd / finished) * 1.25 : 0);
+    if (running.estimatedCostUsd + (inFlight + 1) * perAgency + EDITOR_RESERVE_USD > budget) {
+      throw new Error('skipped: run budget reached');
+    }
+    inFlight += 1;
+    try {
+      return await researchAgency(
+        client,
+        agency,
+        input.coverage,
+        () => running.estimatedCostUsd >= budget - EDITOR_RESERVE_USD,
+        part => { running = addUsage(running, part); },
+      );
+    } finally {
+      inFlight -= 1;
+      finished += 1;
+    }
+  });
+  usage = running;
   results.forEach((result, index) => {
     const agency = agencies[index];
     if (result.status === 'fulfilled') {
-      for (const part of result.value.usage) usage = addUsage(usage, part);
-      const { notes: agencyNotes } = result.value;
+      const agencyNotes = result.value;
       const noNews = !agencyNotes.notes || agencyNotes.notes.trim().toUpperCase().startsWith(NO_NEWS);
       runs.push({ id: agency.id, name: agency.name, ok: true, noNews, urlCount: new Set(agencyNotes.urls).size });
       notes.push(agencyNotes);
@@ -247,7 +280,30 @@ export async function researchPeerDigest(input: ResearchInput): Promise<Research
     }
   });
 
-  if (notes.length === 0) throw new Error('Every agency failed; nothing to edit.');
+  try {
+    return await editDigest(client, input, notes, runs, usage, log);
+  } catch (error) {
+    // Carry what was spent, so a failed run still counts against the monthly budget.
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { usage });
+  }
+}
+
+/** Usage attached to an error thrown by researchPeerDigest, if any. */
+export function usageFromError(error: unknown): PeerDigestUsage | null {
+  const usage = (error as { usage?: PeerDigestUsage } | null)?.usage;
+  return usage && typeof usage.estimatedCostUsd === 'number' ? usage : null;
+}
+
+async function editDigest(
+  client: Anthropic,
+  input: ResearchInput,
+  notes: AgencyNotes[],
+  runs: PeerDigestAgencyRun[],
+  usageSoFar: PeerDigestUsage,
+  log: (message: string) => void,
+): Promise<ResearchResult> {
+  let usage = usageSoFar;
+  if (notes.length === 0) throw new Error('Every agency failed or was skipped; nothing to edit.');
 
   const withNews = notes.filter(entry => !runs.find(run => run.id === entry.agency.id)?.noNews);
   const quietNames = notes.filter(entry => !withNews.includes(entry)).map(entry => entry.agency.name);

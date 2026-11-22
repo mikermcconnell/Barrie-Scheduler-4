@@ -1,0 +1,239 @@
+{
+  "weekOf": "2026-11-23",
+  "coverageStart": "2026-11-16",
+  "coverageEnd": "2026-11-22",
+  "status": "ready",
+  "content": {
+    "headline": [
+      "Thunder Bay, one of our three benchmark peers, now lets specialized transit riders book online and by app. It is the first phase of a wider on-demand rollout planned for 2027–2028.",
+      "Guelph's public input on its transit plan update closes Friday. The update covers network design, Sunday service and on-demand, so the questions are close to those in Barrie's strategic plan.",
+      "A quiet week otherwise: 15 of 18 sources had nothing new. Sudbury stops accepting paper fares on December 31, which makes it a useful reference for Barrie's fare technology work."
+    ],
+    "items": [
+      {
+        "agency": "Thunder Bay Transit",
+        "title": "Thunder Bay launches online and app booking for Lift+ specialized transit",
+        "category": "on-demand",
+        "date": "2026-11-20",
+        "summary": "Registered Lift+ riders can now book trips up to seven days ahead, review bookings and cancel trips on a new website and app, Thunder Bay Transit On-Demand. Phone booking stays, with the same hours. The City calls this phase one: further phases run through 2027–2028, and on-demand for conventional riders has not launched yet.",
+        "barrieRelevance": "A benchmark peer has digitized paratransit booking ahead of a wider on-demand platform. It is worth a call to ask about the vendor, cost and uptake before Barrie scopes Specialized Transit and Transit ON Demand booking.",
+        "importance": "high",
+        "sourceUrls": [
+          "https://www.tbnewswatch.com/local-news/new-app-online-bookings-promise-to-improve-lift-service-13041148",
+          "https://yourthunderbay.ca/city-launches-website-app-for-municipal-on-demand-transit-service/"
+        ]
+      },
+      {
+        "agency": "Canadian Urban Transit Association (CUTA)",
+        "title": "CUTA names its 2026 Public Transit Award winners, with a new accessibility award",
+        "category": "other",
+        "date": "2026-11-17",
+        "summary": "CUTA's annual conference ran in Winnipeg from November 14 to 18, with sessions on zero-emission fleet transition, planning for growing communities, and bus procurement. CUTA says 19 award winners were chosen, and this year adds the Lorna Stewart Corporate Leadership Award for systems and businesses that improve accessible service. The full winners list was not in the sources found.",
+        "barrieRelevance": "Watch the winners list for mid-size Ontario systems. Projects that won the new accessible-transit award are ready-made precedents for AODA work.",
+        "importance": "low",
+        "sourceUrls": [
+          "https://cutaactu.ca/",
+          "https://cutaactufall2026.vfairs.com/"
+        ]
+      }
+    ],
+    "upcoming": [
+      {
+        "agency": "OPTA",
+        "date": "2026-11-26",
+        "what": "OPTALive webinar: battery-electric bus garage readiness (FleetZero)",
+        "sourceUrl": "https://opta.wildapricot.org/events"
+      },
+      {
+        "agency": "Guelph Transit",
+        "date": "2026-11-27",
+        "what": "Public feedback closes on the Future Ready Action Plan update (network design, Sunday and holiday service, on-demand)",
+        "sourceUrl": "https://guelph.ca/2026/11/guelph-transit-seeks-public-input-proposed-updates-future-ready-action-plan/"
+      },
+      {
+        "agency": "GOVA Transit",
+        "date": "2026-11-28",
+        "what": "New GOVA schedule takes effect (changes not yet published)",
+        "sourceUrl": "https://www.greatersudbury.ca/live/transit/gova-routes-and-schedules/"
+      },
+      {
+        "agency": "Peterborough Transit",
+        "date": "2026-11-30",
+        "what": "Draft 2027 City budget, including transit, goes to General Committee. Public budget consultation on January 7.",
+        "sourceUrl": "https://www.peterborough.ca/council-city-hall/city-budget/"
+      },
+      {
+        "agency": "GOVA Transit",
+        "date": "2026-12-31",
+        "what": "Last day paper tickets, ride cards and passes are accepted. Riders move to the GOVA Pass smart card (launched June 1, $5.25 card fee) or the GOVA Pass app; paper sales ended in May.",
+        "sourceUrl": "https://www.greatersudbury.ca/live/transit/fares-and-passes/"
+      },
+      {
+        "agency": "Housing, Infrastructure and Communities Canada",
+        "date": "2027-01-14",
+        "what": "Applications close for the Zero Emission Bus Planning Support Program (up to $15M, Canada Public Transit Fund). Only not-for-profits and academic institutions that deliver ZEB planning to transit agencies can apply. A capital intake is expected next.",
+        "sourceUrl": "https://www.masstransitmag.com/management/news/55415931/housing-infrastructure-and-communities-canada-government-of-canada-seeking-planning-and-advisory-services-for-zeb-transition"
+      }
+    ],
+    "quietAgencies": [
+      "Kingston Transit",
+      "Peterborough Transit",
+      "GOVA Transit",
+      "Belleville Transit",
+      "Sault Ste. Marie Transit",
+      "Orillia Transit",
+      "Innisfil Transit",
+      "LINX Transit",
+      "York Region Transit",
+      "Metrolinx (GO Transit, Barrie line)",
+      "Grand River Transit",
+      "London Transit Commission",
+      "Durham Region Transit",
+      "OPTA",
+      "Provincial and federal transit funding"
+    ]
+  },
+  "agencies": [
+    {
+      "id": "guelph",
+      "name": "Guelph Transit",
+      "ok": true,
+      "noNews": false,
+      "urlCount": 0
+    },
+    {
+      "id": "kingston",
+      "name": "Kingston Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "thunder-bay",
+      "name": "Thunder Bay Transit",
+      "ok": true,
+      "noNews": false,
+      "urlCount": 0
+    },
+    {
+      "id": "peterborough",
+      "name": "Peterborough Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "sudbury",
+      "name": "GOVA Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "belleville",
+      "name": "Belleville Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "sault",
+      "name": "Sault Ste. Marie Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "orillia",
+      "name": "Orillia Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "innisfil",
+      "name": "Innisfil Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "linx",
+      "name": "LINX Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "yrt",
+      "name": "York Region Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "metrolinx",
+      "name": "Metrolinx (GO Transit, Barrie line)",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "grt",
+      "name": "Grand River Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "london",
+      "name": "London Transit Commission",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "durham",
+      "name": "Durham Region Transit",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "cuta",
+      "name": "Canadian Urban Transit Association (CUTA)",
+      "ok": true,
+      "noNews": false,
+      "urlCount": 0
+    },
+    {
+      "id": "opta",
+      "name": "Ontario Public Transit Association (OPTA)",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    },
+    {
+      "id": "funding",
+      "name": "Provincial and federal transit funding",
+      "ok": true,
+      "noNews": true,
+      "urlCount": 0
+    }
+  ],
+  "droppedItems": 0,
+  "usage": {
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0,
+    "webSearches": 0,
+    "webFetches": 0,
+    "estimatedCostUsd": 0
+  },
+  "model": "manual: researched in a Claude Code session, no API call",
+  "builtAt": "2026-11-22T22:30:00.000Z",
+  "durationSeconds": 0,
+  "source": "manual",
+  "includedInReportAt": null
+}

@@ -57,7 +57,7 @@ describe('settings', () => {
   test('default to draft mode', () => {
     expect(parsePeerDigestSettings(undefined).mode).toBe('draft');
     expect(parsePeerDigestSettings({ mode: 'LIVE' }).mode).toBe('draft');
-    expect(parsePeerDigestSettings({ mode: 'live', editorNotes: '  more fares ' })).toEqual({ mode: 'live', editorNotes: 'more fares', barrieContext: '' });
+    expect(parsePeerDigestSettings({ mode: 'live', editorNotes: '  more fares ' })).toMatchObject({ mode: 'live', editorNotes: 'more fares', barrieContext: '' });
   });
 });
 

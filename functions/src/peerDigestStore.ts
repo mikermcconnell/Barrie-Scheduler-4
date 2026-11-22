@@ -34,6 +34,29 @@ export async function loadLatestPeerDigest(db: Db, teamId: string): Promise<Peer
   return full ? full.data() as PeerDigestDoc : null;
 }
 
+/**
+ * Monthly spend ledger, teams/{team}/peerDigestConfig/spend-{YYYY-MM}: { estimatedCostUsd, runs }.
+ * Only ever incremented, so re-running a week (which overwrites its digest) still counts.
+ */
+function spendRef(db: Db, teamId: string, month: string): admin.firestore.DocumentReference {
+  return db.doc(`teams/${teamId}/peerDigestConfig/spend-${month}`);
+}
+
+export async function loadMonthSpendUsd(db: Db, teamId: string, month: string): Promise<number> {
+  const snap = await spendRef(db, teamId, month).get();
+  const value = snap.exists ? snap.data()?.estimatedCostUsd : 0;
+  return typeof value === 'number' ? value : 0;
+}
+
+export async function recordMonthSpend(db: Db, teamId: string, month: string, costUsd: number): Promise<void> {
+  await spendRef(db, teamId, month).set({
+    month,
+    estimatedCostUsd: admin.firestore.FieldValue.increment(costUsd),
+    runs: admin.firestore.FieldValue.increment(1),
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+}
+
 /** Item titles from the digests before this week, so the editor doesn't repeat a story. */
 export async function loadRecentPeerTitles(db: Db, teamId: string, beforeWeekOf: string, weeks = 4): Promise<string[]> {
   const snap = await db.collection(`teams/${teamId}/peerDigests`)

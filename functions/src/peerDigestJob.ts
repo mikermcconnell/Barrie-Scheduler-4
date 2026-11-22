@@ -12,16 +12,18 @@ import * as admin from 'firebase-admin';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
-import { digestCoverage, digestWeekOf, emptyUsage, PeerDigestDoc, PeerDigestMode } from './peerDigest';
+import { digestCoverage, digestWeekOf, emptyUsage, PeerDigestDoc, PeerDigestMode, runBudgetUsd } from './peerDigest';
 import { buildPeerDigestDraftHtml } from './peerDigestHtml';
-import { PEER_DIGEST_MODEL, researchPeerDigest } from './peerDigestResearch';
+import { PEER_DIGEST_MODEL, researchPeerDigest, usageFromError } from './peerDigestResearch';
 import {
   loadLatestPeerDigest,
+  loadMonthSpendUsd,
   loadPeerDigest,
   loadPeerDigestSettings,
   loadRecentPeerTitles,
   peerDigestRef,
   peerDigestSettingsRef,
+  recordMonthSpend,
 } from './peerDigestStore';
 import { hasValidApiKey } from './requestAuth';
 
@@ -51,19 +53,72 @@ async function queueDraft(db: admin.firestore.Firestore, to: string[], doc: Peer
   });
 }
 
-/** Researches, edits and saves one digest. Saves a failed digest instead of throwing. */
+export interface PeerDigestBuild {
+  doc: PeerDigestDoc;
+  /** Set when no API call was made: 'exists' (this week already has a ready digest) or 'budget'. */
+  skipped?: 'exists' | 'budget';
+  spentThisMonthUsd: number;
+  monthlyBudgetUsd: number;
+}
+
+function emptyDoc(weekOf: string, error: string, durationSeconds = 0): PeerDigestDoc {
+  const coverage = digestCoverage(weekOf);
+  return {
+    weekOf,
+    coverageStart: coverage.start,
+    coverageEnd: coverage.end,
+    status: 'failed',
+    error: error.slice(0, 500),
+    content: null,
+    agencies: [],
+    droppedItems: 0,
+    usage: emptyUsage(),
+    model: PEER_DIGEST_MODEL,
+    builtAt: new Date().toISOString(),
+    durationSeconds,
+    includedInReportAt: null,
+    source: 'api',
+  };
+}
+
+/**
+ * Researches, edits and saves one digest. Saves a failed digest instead of throwing.
+ * No API call when this week already has a ready digest (unless `force`), or when the month's
+ * budget (settings.monthlyBudgetUsd, default US$100) can't cover a run.
+ */
 export async function buildAndStorePeerDigest(params: {
   db: admin.firestore.Firestore;
   apiKey: string;
   today: string;
   weekOf?: string;
   agencyIds?: string[];
-}): Promise<PeerDigestDoc> {
+  force?: boolean;
+}): Promise<PeerDigestBuild> {
   const startedAt = Date.now();
   const weekOf = params.weekOf ?? digestWeekOf(params.today);
   const coverage = digestCoverage(weekOf);
   const partial = !!params.agencyIds?.length;
+  const docId = partial ? `${weekOf}_partial` : weekOf;
+  const month = params.today.slice(0, 7);
   const settings = await loadPeerDigestSettings(params.db, TEAM_ID);
+  const spent = await loadMonthSpendUsd(params.db, TEAM_ID, month);
+  const budgetInfo = { spentThisMonthUsd: spent, monthlyBudgetUsd: settings.monthlyBudgetUsd };
+
+  if (!partial && !params.force) {
+    const existing = await loadPeerDigest(params.db, TEAM_ID, weekOf);
+    if (existing?.status === 'ready') {
+      console.log(`Peer digest ${weekOf} already built (${existing.source ?? 'api'}); no API call.`);
+      return { doc: existing, skipped: 'exists', ...budgetInfo };
+    }
+  }
+
+  const budgetUsd = runBudgetUsd(settings, spent, partial);
+  if (budgetUsd === null) {
+    const doc = emptyDoc(weekOf, `Monthly budget reached: about US$${spent.toFixed(2)} of US$${settings.monthlyBudgetUsd} used in ${month}. No API call made.`);
+    if (!partial) await peerDigestRef(params.db, TEAM_ID, docId).set(doc);
+    console.warn(doc.error);
+    return { doc, skipped: 'budget', ...budgetInfo };
+  }
 
   let doc: PeerDigestDoc;
   try {
@@ -74,6 +129,7 @@ export async function buildAndStorePeerDigest(params: {
       editorNotes: settings.editorNotes,
       recentTitles: await loadRecentPeerTitles(params.db, TEAM_ID, weekOf),
       agencyIds: params.agencyIds,
+      budgetUsd,
       log: message => console.log(message),
     });
     doc = {
@@ -89,29 +145,17 @@ export async function buildAndStorePeerDigest(params: {
       builtAt: new Date().toISOString(),
       durationSeconds: Math.round((Date.now() - startedAt) / 1000),
       includedInReportAt: null,
+      source: 'api',
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     console.error('Peer digest build failed:', error);
-    doc = {
-      weekOf,
-      coverageStart: coverage.start,
-      coverageEnd: coverage.end,
-      status: 'failed',
-      error: message.slice(0, 500),
-      content: null,
-      agencies: [],
-      droppedItems: 0,
-      usage: emptyUsage(),
-      model: PEER_DIGEST_MODEL,
-      builtAt: new Date().toISOString(),
-      durationSeconds: Math.round((Date.now() - startedAt) / 1000),
-      includedInReportAt: null,
-    };
+    doc = emptyDoc(weekOf, error instanceof Error ? error.message : String(error), Math.round((Date.now() - startedAt) / 1000));
+    doc.usage = usageFromError(error) ?? doc.usage;
   }
 
-  await peerDigestRef(params.db, TEAM_ID, partial ? `${weekOf}_partial` : weekOf).set(doc);
-  return doc;
+  if (doc.usage.estimatedCostUsd > 0) await recordMonthSpend(params.db, TEAM_ID, month, doc.usage.estimatedCostUsd);
+  await peerDigestRef(params.db, TEAM_ID, docId).set(doc);
+  return { ...budgetInfo, doc, spentThisMonthUsd: spent + doc.usage.estimatedCostUsd };
 }
 
 export const buildPeerDigest = onSchedule(
@@ -127,7 +171,9 @@ export const buildPeerDigest = onSchedule(
   },
   async () => {
     const db = admin.firestore();
-    const doc = await buildAndStorePeerDigest({ db, apiKey: ANTHROPIC_API_KEY.value(), today: todayInToronto() });
+    const build = await buildAndStorePeerDigest({ db, apiKey: ANTHROPIC_API_KEY.value(), today: todayInToronto() });
+    const { doc } = build;
+    if (build.skipped === 'exists') return;
     const settings = await loadPeerDigestSettings(db, TEAM_ID);
     const draftTo = parseEmails(PEER_DIGEST_DRAFT_TO.value());
 
@@ -135,15 +181,17 @@ export const buildPeerDigest = onSchedule(
     if (draftTo.length > 0 && (settings.mode === 'draft' || doc.status === 'failed')) {
       await queueDraft(db, draftTo, doc);
     }
-    console.log(`Peer digest ${doc.weekOf}: ${doc.status}, ${doc.content?.items.length ?? 0} items, ~$${doc.usage.estimatedCostUsd}, mode ${settings.mode}`);
+    console.log(`Peer digest ${doc.weekOf}: ${doc.status}, ${doc.content?.items.length ?? 0} items, ~$${doc.usage.estimatedCostUsd}, month ~$${build.spentThisMonthUsd.toFixed(2)} of $${build.monthlyBudgetUsd}, mode ${settings.mode}`);
   },
 );
 
 /**
  * Tuning endpoint. Every call needs the REPORT_TEST_API_KEY (as for testDailyReport).
- *   ?action=run[&agencies=guelph,kingston][&week=YYYY-MM-DD][&to=email][&send=0]
+ *   ?action=run[&agencies=guelph,kingston][&week=YYYY-MM-DD][&to=email][&send=0][&force=1]
  *       Build now. With agencies, a cheap partial run saved as {week}_partial (never sent to
  *       management). Emails the draft to `to`, or to PEER_DIGEST_DRAFT_TO, unless send=0.
+ *       A full run skips the API when the week already has a ready digest; force=1 rebuilds it.
+ *       Every run counts against the monthly budget (settings.monthlyBudgetUsd, default 100).
  *   ?action=preview[&week=YYYY-MM-DD | &id={week}_partial]   Draft HTML of a saved digest.
  *   ?action=json[&week=… | &id=…]                            The saved digest document.
  *   ?action=send&to=email[&week=… | &id=…]                    Email a saved digest's draft.
@@ -181,21 +229,28 @@ export const testPeerDigest = onRequest(
     }
 
     if (action === 'settings') {
-      res.json(await loadPeerDigestSettings(db, TEAM_ID));
+      const month = todayInToronto().slice(0, 7);
+      res.json({
+        ...(await loadPeerDigestSettings(db, TEAM_ID)),
+        month,
+        spentThisMonthUsd: await loadMonthSpendUsd(db, TEAM_ID, month),
+      });
       return;
     }
 
     if (action === 'run') {
       const agencyIds = query('agencies').split(',').map(value => value.trim()).filter(Boolean);
-      const doc = await buildAndStorePeerDigest({
+      const build = await buildAndStorePeerDigest({
         db,
         apiKey: ANTHROPIC_API_KEY.value(),
         today: todayInToronto(),
         weekOf: week,
         agencyIds: agencyIds.length ? agencyIds : undefined,
+        force: query('force') === '1',
       });
+      const { doc } = build;
       const to = query('to') ? parseEmails(query('to')) : parseEmails(PEER_DIGEST_DRAFT_TO.value());
-      const sent = query('send') !== '0' && to.length > 0;
+      const sent = query('send') !== '0' && to.length > 0 && !build.skipped;
       if (sent) await queueDraft(db, to, doc);
       res.json({
         success: doc.status === 'ready',
@@ -205,6 +260,9 @@ export const testPeerDigest = onRequest(
         droppedItems: doc.droppedItems,
         failedAgencies: doc.agencies.filter(agency => !agency.ok),
         usage: doc.usage,
+        skipped: build.skipped ?? null,
+        spentThisMonthUsd: build.spentThisMonthUsd,
+        monthlyBudgetUsd: build.monthlyBudgetUsd,
         error: doc.error,
         sentTo: sent ? to : [],
       });

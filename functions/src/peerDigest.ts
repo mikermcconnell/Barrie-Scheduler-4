@@ -95,6 +95,8 @@ export interface PeerDigestDoc {
   builtAt: string;
   durationSeconds: number;
   includedInReportAt?: string | null;
+  /** 'manual': loaded by hand (seed-peer-digest.mjs), no API cost. Missing means an API run. */
+  source?: 'api' | 'manual';
 }
 
 export type PeerDigestMode = 'draft' | 'live';
@@ -106,6 +108,17 @@ export interface PeerDigestSettings {
   editorNotes: string;
   /** Replaces DEFAULT_BARRIE_CONTEXT when set. */
   barrieContext: string;
+  /** Ceiling on estimated API spend per calendar month, all runs together (USD). */
+  monthlyBudgetUsd: number;
+  /** Ceiling on one run's estimated spend (USD). */
+  maxRunUsd: number;
+}
+
+export const DEFAULT_MONTHLY_BUDGET_USD = 100;
+export const DEFAULT_MAX_RUN_USD = 20;
+
+function positiveNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 export function parsePeerDigestSettings(raw: Record<string, unknown> | undefined): PeerDigestSettings {
@@ -113,7 +126,22 @@ export function parsePeerDigestSettings(raw: Record<string, unknown> | undefined
     mode: raw?.mode === 'live' ? 'live' : 'draft',
     editorNotes: typeof raw?.editorNotes === 'string' ? raw.editorNotes.trim() : '',
     barrieContext: typeof raw?.barrieContext === 'string' ? raw.barrieContext.trim() : '',
+    monthlyBudgetUsd: positiveNumber(raw?.monthlyBudgetUsd, DEFAULT_MONTHLY_BUDGET_USD),
+    maxRunUsd: positiveNumber(raw?.maxRunUsd, DEFAULT_MAX_RUN_USD),
   };
+}
+
+/** Smallest budget worth starting a run with: a partial run, or a full run of 18 agencies. */
+export const MIN_RUN_BUDGET_USD = { partial: 5, full: 12 } as const;
+
+/**
+ * How much this run may spend: the per-run ceiling, cut to what is left of the month.
+ * Null when that is too little to be worth starting.
+ */
+export function runBudgetUsd(settings: PeerDigestSettings, spentThisMonthUsd: number, partial: boolean): number | null {
+  const remaining = settings.monthlyBudgetUsd - spentThisMonthUsd;
+  const budget = Math.min(settings.maxRunUsd, remaining);
+  return budget >= MIN_RUN_BUDGET_USD[partial ? 'partial' : 'full'] ? Math.floor(budget * 100) / 100 : null;
 }
 
 // ─── Dates (calendar dates as YYYY-MM-DD, no time zone math) ───────────────────
