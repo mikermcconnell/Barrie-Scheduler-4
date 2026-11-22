@@ -96,7 +96,7 @@ Rules:
 - Also note any dated event coming up in the next 60 days that you find: council or committee meetings with transit items, public consultations, RFP closing dates, service launches.
 - Be specific: route numbers, dollar amounts, dates, percentages, vehicle counts, vote results.
 - Every item must list the exact URLs you opened or saw in search results. Never write a URL you did not see.
-- Do not pad. If you find nothing relevant in the window, answer exactly: ${NO_NEWS}`;
+- Do not pad. If you find nothing relevant in the window, start your answer with ${NO_NEWS} (upcoming events may follow it).`;
 
 function researchPrompt(agency: PeerAgency, coverage: { start: string; end: string }): string {
   const themes = Object.values(PEER_DIGEST_CATEGORY_LABEL).filter(label => label !== 'Other').join(', ');
@@ -115,10 +115,10 @@ DATE: <YYYY-MM-DD published or decided>
 WHAT: <two to four sentences with the specifics>
 SOURCES: <URL>, <URL>
 
-Then, if any, one block per upcoming event:
+Then, if any, one line per upcoming event:
 UPCOMING: <YYYY-MM-DD> | <what> | <URL>
 
-Or answer exactly ${NO_NEWS}.`;
+If there is no news in the window, the first line of your answer is exactly ${NO_NEWS}. Still list any UPCOMING lines after it.`;
 }
 
 async function researchAgency(

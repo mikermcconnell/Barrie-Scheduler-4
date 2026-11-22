@@ -4,7 +4,8 @@
  *
  * `start` pages are where the researcher begins (news, council, service changes). `news` are
  * local outlets that cover the agency. Both are hints, not limits: the researcher may search
- * the open web.
+ * the open web. Leave out outlets whose sites refuse search crawlers (the 2026-11-22 sample run found
+ * guelphmercury.com, thewhig.com, intelligencer.ca and saultstar.com refused); they only waste searches.
  */
 
 export interface PeerAgency {
@@ -21,13 +22,13 @@ export const PEER_AGENCIES: PeerAgency[] = [
   // Barrie's benchmark peers
   { id: 'guelph', name: 'Guelph Transit', area: 'City of Guelph', group: 'benchmark',
     start: ['https://guelph.ca/living/getting-around/bus/', 'https://guelph.ca/news/'],
-    news: ['guelphtoday.com', 'guelphmercury.com'] },
+    news: ['guelphtoday.com'] },
   { id: 'kingston', name: 'Kingston Transit', area: 'City of Kingston', group: 'benchmark',
     start: ['https://www.cityofkingston.ca/residents/transit', 'https://www.cityofkingston.ca/news'],
-    news: ['kingstonist.com', 'thewhig.com', 'yourkingston.ca'] },
+    news: ['kingstonist.com', 'yourkingston.ca'] },
   { id: 'thunder-bay', name: 'Thunder Bay Transit', area: 'City of Thunder Bay', group: 'benchmark',
     start: ['https://www.thunderbay.ca/en/city-services/transit.aspx', 'https://www.thunderbay.ca/en/news/'],
-    news: ['tbnewswatch.com', 'netnewsledger.com'] },
+    news: ['tbnewswatch.com', 'yourthunderbay.ca', 'netnewsledger.com'] },
 
   // Similar-size Ontario systems
   { id: 'peterborough', name: 'Peterborough Transit', area: 'City of Peterborough', group: 'similar',
@@ -38,10 +39,10 @@ export const PEER_AGENCIES: PeerAgency[] = [
     news: ['sudbury.com', 'ctvnews.ca/northern-ontario'] },
   { id: 'belleville', name: 'Belleville Transit', area: 'City of Belleville', group: 'similar',
     start: ['https://www.belleville.ca/en/getting-around/transit.aspx'],
-    news: ['quintenewsnow.com', 'intelligencer.ca', 'inquinte.ca'] },
+    news: ['quintenewsnow.com', 'inquinte.ca'] },
   { id: 'sault', name: 'Sault Ste. Marie Transit', area: 'City of Sault Ste. Marie', group: 'similar',
     start: ['https://saultstemarie.ca/City-Hall/City-Departments/Community-Development-Enterprise-Services/Transit-and-Parking.aspx'],
-    news: ['sootoday.com', 'saultstar.com'] },
+    news: ['sootoday.com'] },
 
   // Neighbours
   { id: 'orillia', name: 'Orillia Transit', area: 'City of Orillia', group: 'neighbour',
