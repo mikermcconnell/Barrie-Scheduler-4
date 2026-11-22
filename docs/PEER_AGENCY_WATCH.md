@@ -89,4 +89,4 @@ To tune without a deploy, set `editorNotes` in `teams/{teamId}/peerDigestConfig/
 
 ## Hand-made editions
 
-`functions/scripts/seed-peer-digest.mjs` loads a `PeerDigestDoc` JSON file (see `scripts/peer-digest-samples/`) with `source: 'manual'`. It checks that `weekOf` is a Monday, the status is ready, and every item has a title, summary and source. A week with a ready digest is skipped by the Sunday build, so a hand-made edition costs nothing.
+`functions/scripts/seed-peer-digest.mjs` loads a `PeerDigestDoc` JSON file (see `functions/scripts/peer-digest-samples/`) with `source: 'manual'`. It checks that `weekOf` is a Monday, the status is ready, and every item has a title, summary and source. A week with a ready digest is skipped by the Sunday build, so a hand-made edition costs nothing.
