@@ -6,6 +6,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { parseSTREETSCSV } from './parser';
 export { sendDailyReport, testDailyReport, testStaleReportAlert } from './dailyReport';
 export { sendMonthlyRidershipReport, testMonthlyRidershipReport } from './monthlyRidershipReport';
+export { buildPeerDigest, testPeerDigest } from './peerDigestJob';
 export { optimizeSchedule } from './optimize';
 export { sharedWorkspaceData } from './sharedWorkspaceData';
 export { developerSupportAccess } from './developerSupportAccess';

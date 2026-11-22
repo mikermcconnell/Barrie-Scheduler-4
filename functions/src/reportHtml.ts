@@ -19,6 +19,8 @@ export interface ReportData {
   /** Latest day's trips, for late-trip patterns in the glance section. */
   latestTrips?: TripMetrics[];
   lastMissedTripDataDate?: string | null;
+  /** Peer Agency Watch section (peerDigestHtml.ts), on the first report of a week in live mode. */
+  peerDigestHtml?: string;
 }
 
 // Reset dwell comparison baselines from the current report rollout onward.
@@ -1516,6 +1518,9 @@ export function buildReportHtml(data: ReportData): string {
 
       <!-- ═══ 8. TRIP OF THE DAY ═══ -->
       ${buildFeaturedTripSection(featuredTrip)}
+
+      <!-- ═══ 9. PEER AGENCY WATCH (FIRST REPORT OF THE WEEK) ═══ -->
+      ${data.peerDigestHtml ?? ''}
 
     </div>
 

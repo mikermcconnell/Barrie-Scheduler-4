@@ -16,6 +16,8 @@ import { DwellIncident, PerformanceDataSummary } from './types';
 import { inferDayTripLoads } from '../../utils/performanceRouteLoad';
 import { buildDwellHistory, summarizeWeeklyDwell, WeeklyDwellSummary } from '../../utils/performanceDwellHistory';
 import { hasValidApiKey } from './requestAuth';
+import { buildPeerDigestSection } from './peerDigestHtml';
+import { loadLatestPeerDigest, loadPeerDigestForReport } from './peerDigestStore';
 
 const REPORT_RECIPIENTS = defineSecret('REPORT_RECIPIENTS');
 const REPORT_TEST_API_KEY = defineSecret('REPORT_TEST_API_KEY');
@@ -415,6 +417,11 @@ export const sendDailyReport = onSchedule(
 
     const { featuredTrip, history, tripDay } = await pickFeaturedTrip({ db, bucket, meta, latestDay });
     const glanceInputs = await loadGlanceInputs({ bucket, meta, summary, latestDay });
+    const peerDigest = await loadPeerDigestForReport({
+      db,
+      teamId: DEFAULT_TEAM_ID,
+      today: formatDateInTimeZone(new Date(), REPORT_TIME_ZONE),
+    });
 
     await queueMail({
       db,
@@ -428,8 +435,14 @@ export const sendDailyReport = onSchedule(
         ...weeklyDwellForReport(summary, latestDay.date),
         ...glanceInputs,
         latestTrips: tripDay.byTrip ?? [],
+        peerDigestHtml: buildPeerDigestSection(peerDigest?.doc),
       }),
     });
+
+    if (peerDigest) {
+      await peerDigest.ref.set({ includedInReportAt: new Date().toISOString() }, { merge: true })
+        .catch(error => console.warn('Could not mark the peer digest as sent:', error));
+    }
 
     await metadataRef.set({
       lastReportSentServiceDate: latestServiceDate,
@@ -468,6 +481,8 @@ export const testDailyReport = onRequest(
     const useFullSummary = ((req.query.useFullSummary as string) || '') === '1';
     const debug = ((req.query.debug as string) || '') === '1';
     const forceWeeklyDwell = ((req.query.weeklyDwell as string) || '') === '1';
+    // ?peerDigest=1 adds the newest saved Peer Agency Watch, whatever its mode (preview and test sends).
+    const withPeerDigest = ((req.query.peerDigest as string) || '') === '1';
 
     const db = admin.firestore();
     const bucket = admin.storage().bucket();
@@ -507,6 +522,7 @@ export const testDailyReport = onRequest(
       ...weekly,
       ...glanceInputs,
       latestTrips: tripDay.byTrip ?? [],
+      peerDigestHtml: withPeerDigest ? buildPeerDigestSection(await loadLatestPeerDigest(db, DEFAULT_TEAM_ID)) : '',
     };
 
     // ?preview=1 returns the email HTML instead of sending it. Icons are cid attachments, so they show as broken images here.
