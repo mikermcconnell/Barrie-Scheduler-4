@@ -93,7 +93,7 @@ const RESEARCH_SYSTEM = `You research public news about Canadian transit agencie
 
 Rules:
 - Report only news published, decided or announced inside the date window you are given. Ignore older stories, even if they appear first in search results.
-- Also note any dated event coming up in the next 60 days that you find: council or committee meetings with transit items, public consultations, RFP closing dates, service launches.
+- Also look on purpose for dated changes coming up in the next 60 days, even if they were announced months ago: fare changes, paper ticket or pass retirement, new fare cards or apps, service changes taking effect, launches, council or committee meetings with transit items, public consultations, RFP closing dates. Check the agency's fares and service-change pages for these, not only its news page.
 - Be specific: route numbers, dollar amounts, dates, percentages, vehicle counts, vote results.
 - Every item must list the exact URLs you opened or saw in search results. Never write a URL you did not see.
 - Do not pad. If you find nothing relevant in the window, start your answer with ${NO_NEWS} (upcoming events may follow it).`;
