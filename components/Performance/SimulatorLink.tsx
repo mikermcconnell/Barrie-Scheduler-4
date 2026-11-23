@@ -151,7 +151,7 @@ export const SimulatorWorkspaceCard: React.FC = () => {
                     <p className="mb-4 line-clamp-3 text-sm font-bold text-rose-300">{error}</p>
                 ) : (
                     <p className="mb-4 line-clamp-3 text-sm font-bold text-slate-300">
-                        {!limitedTabs
+                        {!limitedTabs || limitedTabs.includes('Operations')
                             ? 'See every bus on the map, or replay a past day trip by trip.'
                             : limitedTabs.includes('Service Desk')
                               ? 'Live departures at Allandale and Downtown, plus planning and parking layers, on the city map.'

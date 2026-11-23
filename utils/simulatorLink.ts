@@ -17,10 +17,15 @@ export const SIMULATOR_ACCESS_LEVELS: readonly WorkspaceAccessLevel[] = ['planne
 export const SIMULATOR_LIMITED_TABS: Partial<Record<WorkspaceAccessLevel, readonly string[]>> = { parking: ['Parking', 'Planning'] };
 
 /**
- * Teams the simulator signs in to some tabs only, whatever the member's level here (its ONTARIO_NORTHLAND_TEAM):
- * the Ontario Northland team sees the tabs built on public data, and no operations, rider or internal City data.
+ * Teams the simulator signs in to some tabs only, whatever the member's level here (its ONTARIO_NORTHLAND_TEAM
+ * and DILLON_TEAM): the Ontario Northland team sees the tabs built on public data, and no operations, rider or
+ * internal City data. The Dillon team (Strategic Plan consultant) sees every deployed tab except Parking and the
+ * Service Desk.
  */
-export const SIMULATOR_TEAM_TABS: Record<string, readonly string[]> = { VieLReKaKrIfaSh44kEj: ['Service Desk', 'Planning', 'Parking'] };
+export const SIMULATOR_TEAM_TABS: Record<string, readonly string[]> = {
+    VieLReKaKrIfaSh44kEj: ['Service Desk', 'Planning', 'Parking'],
+    RWraIPI33Bn0jD7zBiO6: ['Operations', 'Riders', 'Stops', 'Planning', 'Feedback'],
+};
 
 /** The only simulator tabs this user gets, or undefined when they get every deployed tab. */
 export function simulatorLimitedTabs(accessLevel: WorkspaceAccessLevel, teamId?: string | null): readonly string[] | undefined {

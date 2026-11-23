@@ -30,4 +30,9 @@ describe('simulator link', () => {
         expect(simulatorLimitedTabs('planner', 'PHICwXGlvDen0RGt7fCG')).toBeUndefined();
         expect(simulatorLimitedTabs('parking', 'qx5rgBibRmPzvjbBdAMA')).toEqual(['Parking', 'Planning']);
     });
+
+    it('is offered to the Dillon team, whatever its level, without Parking or the Service Desk', () => {
+        expect(canOpenSimulator('none', 'RWraIPI33Bn0jD7zBiO6')).toBe(true);
+        expect(simulatorLimitedTabs('none', 'RWraIPI33Bn0jD7zBiO6')).toEqual(['Operations', 'Riders', 'Stops', 'Planning', 'Feedback']);
+    });
 });
